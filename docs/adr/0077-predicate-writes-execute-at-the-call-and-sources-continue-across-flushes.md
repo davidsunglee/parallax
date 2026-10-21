@@ -1,34 +1,26 @@
 # Predicate writes execute at the call and sources continue across flushes
 
-A nonempty predicate-selected write executes at its call. It runs inside one
-`predicate-write` Flush, which first runs the writes its unit of work buffered
-before it, and the verb returns the affected-row count its one statement
-reported (`m-batch-write`). An empty amendment or a key-only replacement runs no
-statement, opens no Flush, and returns `0`. Statement failures surface at the
-call and doom the attempt; deferred constraints still fail at commit. This
-supersedes ADR 0043. Since a predicate write never enters the buffer, nothing
-partitions the buffer into regions: the planner orders, coalesces, and groups
-what is buffered as one stream, and a predicate step is planned on its own.
+A nonempty predicate-selected write executes at its call, inside a
+`predicate-write` Flush that first runs what its unit of work buffered before
+it, and the verb returns its statement's affected-row count (`m-batch-write`
+*A predicate-selected write executes at its call*). This supersedes ADR 0043.
+A predicate write no longer enters the buffer, so it no longer partitions
+buffered work: the regions it defined, and the compositions chained across
+them, are gone. Removal-dependent insertion still starts a region of its own
+(`m-unit-work` *Write Group formation*).
 
 Running earlier writes at the call is affordable only if doing so leaves their
-sources usable. A source therefore continues across its own successful writes,
-in any Flush. It authorizes the surviving state that those writes produced,
-until a known destruction ends it (`m-unit-work`, `m-temporal-write`). The
-continuation is narrow. The source's values and original evidence stay as
-observed. A caller-addressed condition, a stated `version` or `tx_start`,
-remains literal and never advances through what earlier writes of the unit of
-work derived. A stale condition fails as its caller stated it. A row a
-predicate write deleted was identified by nothing, so a later keyed write of it
-fails its ordinary affected-row expectation rather than being refused as ended
-evidence.
+sources usable. A source therefore continues across its own successful writes
+in any Flush (`m-unit-work` *Observation ownership and lifetime*). The
+continuation is narrow: a caller-stated condition stays literal, so a stale
+caller still fails as stated rather than being advanced through what the unit
+of work wrote.
 
-The count is the same everywhere: an update counts every row it matched,
-unchanged ones included, and a delete counts the rows it deleted. That is
-PostgreSQL's native report. MariaDB reports only changed rows unless a
-connection sets `CLIENT_FOUND_ROWS`, so `m-dialect` requires that flag on every
-MariaDB connection rather than let the public result depend on the vendor.
-The same flag already decides which rows the temporal unchanged-milestone
-guards count. Cascades and trigger side effects are never counted.
+The count has one meaning on every dialect. PostgreSQL's native report already
+counts unchanged matched rows; MariaDB's does only with `CLIENT_FOUND_ROWS`, the
+flag that already decides what its temporal unchanged-milestone guards count,
+so `m-dialect` *Unchanged-row count* requires it rather than let the public
+result depend on the vendor.
 
 The barrier carried a cost into every structure it touched. Its regions,
 sealing, follower wrappers, and chained compositions existed only to keep
