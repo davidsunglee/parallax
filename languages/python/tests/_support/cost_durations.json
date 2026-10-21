@@ -3,6 +3,7 @@
  "tests/unit/conformance/test_budget_contract.py::test_the_advisory_allowances_beside_the_gates_are_the_reports_own": 0.0,
  "tests/unit/conformance/test_budget_contract.py::test_the_derivation_is_indifferent_to_the_counter_vocabulary": 0.0,
  "tests/unit/conformance/test_cost_envelope.py::test_validation_of_committed_evidence_asks_git_nothing": 0.3,
+ "tests/unit/core/_execution/_unit_work/test_source_continuation_cost.py::test_releasing_published_sources_leaves_nothing_of_their_registrations": 22.6,
  "tests/unit/core/_execution/_unit_work/test_write_planning_allocation_shape.py::test_a_flush_allocates_nothing_per_entity": 1.7,
  "tests/unit/core/_execution/_unit_work/test_write_planning_allocation_shape.py::test_a_key_derivation_costs_the_same_whatever_else_the_model_declares": 1.7,
  "tests/unit/core/_execution/_unit_work/test_write_planning_allocation_shape.py::test_a_model_scoped_planner_keeps_nothing_per_entity": 0.9,
