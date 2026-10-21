@@ -15,6 +15,7 @@ when:
                 - eq: {path: parallax.compatibility.LeaseNote.lease.term, value: 24mo}
                 - eq: {path: parallax.compatibility.LeaseNote.text, value: signed}
       databaseCalls: 1
+      expectAffectedRows: 1
       statements:
         - sql:
             postgres: delete from lease_note where id in (select t0.id from lease_note t0 left join lease t1 on t1.id = t0.lease_id and t1.out_z = ? where t1.term = ? and t0.note_text = ?)

@@ -84,7 +84,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | typed bind normalization | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind adapted to the max sentinel |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
 | error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062`/`1022`/`1169`/`1859` duplicate, `1213`/`1020` deadlock, `1205` lock timeout |
-| **unchanged-row count** (`m-unit-work` / `m-db-port`) | yes — an `UPDATE`'s count includes every row it matched | no — the default count reports only rows whose values changed (see below) |
+| **unchanged-row count** (`m-unit-work` / `m-db-port`) | yes — an `UPDATE`'s count includes every row it matched | yes — every connection negotiates `CLIENT_FOUND_ROWS`, so an `UPDATE`'s count includes every row it matched (see below) |
 
 The read-lock application and infinity representation are the original two
 decision points the second dialect was chosen to exercise; they are detailed
@@ -618,12 +618,17 @@ Postgres answers **yes**: its command tag counts every row the `UPDATE` wrote,
 including matched rows whose values did not change. A row a `BEFORE UPDATE`
 trigger skips — `suppress_redundant_updates_trigger` skips exactly the unchanged
 ones — is not written and not counted, so a guard on such a table matches nothing
-and fails as the milestone's conflict rather than passing unproven. MariaDB answers **no**: its
-default count reports only rows whose values changed, so an unchanged match and
-a missing row both count zero; a connection flag that would count matched rows is
-no part of this contract. A dialect answering no keeps every write's ordinary
-close-and-chain, and no planning or lowering step substitutes another proof for
-the count.
+and fails as the milestone's conflict rather than passing unproven. MariaDB
+answers **yes** too, under a connection requirement: its default count reports
+only rows whose values changed, so an unchanged match and a missing row would
+both count zero, and every connection an adapter opens — a transaction's own, a
+held session, and a peer alike — therefore negotiates the `CLIENT_FOUND_ROWS`
+capability, under which the server reports every row an `UPDATE` matched. The
+requirement is not caller-selectable, and it governs every write's count:
+predicate-selected writes' public counts (`m-batch-write`), affected-row
+enforcement (`m-unit-work`), and the unchanged-milestone guard alike. A dialect
+answering no keeps every write's ordinary close-and-chain, and no planning or
+lowering step substitutes another proof for the count.
 
 ### Identifier byte limit
 

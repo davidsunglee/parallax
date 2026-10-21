@@ -157,8 +157,9 @@ def create_then_delete_a_parent_child_pair(db: ScopedDatabase) -> None:
         tx.insert(OrderItem(id=200, order_id=100, sku="X-1", quantity=3))
 
     def teardown(tx: TxnContext) -> None:
-        tx.delete_where(OrderItem.where(OrderItem.id == 200))
-        tx.delete_where(Order.where(Order.id == 100))
+        items = tx.delete_where(OrderItem.where(OrderItem.id == 200))
+        orders = tx.delete_where(Order.where(Order.id == 100))
+        assert (items, orders) == (1, 1)
 
     db.transact(create)
     db.transact(teardown)
@@ -316,7 +317,8 @@ def locking_conditional_deletion_reads_its_row_under_the_shared_lock(db: ScopedD
 
 def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: TxnContext) -> list[Entity]:
-        tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
+        deleted = tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
+        assert deleted == 2
         return list(tx.find(Wallet.where(Wallet.balance < Decimal("200.00"))).results())
 
     return db.transact(fn)
@@ -324,11 +326,12 @@ def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
 
 def wallet_predicate_amend_is_readless(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: TxnContext) -> list[Entity]:
-        tx.amend_where(
+        amended = tx.amend_where(
             Wallet.where(Wallet.balance < Decimal("200.00")),
             Wallet.balance.set(Decimal("150.00")),
             Wallet.owner.set("Updated"),
         )
+        assert amended == 2
         return list(tx.find(Wallet.where(Wallet.owner == "Updated")).results())
 
     return db.transact(fn)

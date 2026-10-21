@@ -213,9 +213,10 @@ TemporalUpperBound = Finite(Instant) | Infinity
 - A **Resolved Mutation Selection** is legal only for a **readless** unversioned
   Non-Temporal Planned Update or Planned Delete. It carries the exact target and
   producer-owned resolved Predicate and nothing else — no materialized keys,
-  observation, pin, concurrency data, or barrier flag. Its presence already
-  implies `Unversioned`, `AnyCount`, and barrier behavior; mutation lowering never
-  fabricates an Object Query around it.
+  observation, pin, or concurrency data. Its presence already implies
+  `Unversioned` and `AnyCount`; the step is planned and executed alone, at its
+  predicate write's call (`m-unit-work` *Write Planner*), and mutation lowering
+  never fabricates an Object Query around it.
 - A **Milestone Target** addresses the current milestone slot a close,
   revision, or removal acts on: one complete key tuple plus one write-required
   **exclusive upper bound per As-Of Axis** — the observed predecessor's

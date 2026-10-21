@@ -25,12 +25,18 @@ from parallax.core.write_plan.plan import (
     WritePlan,
 )
 from parallax.core.write_plan.predecessor_rows import PredecessorRows
-from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
+from parallax.core.write_plan.steps import (
+    PlannedDelete,
+    PlannedStep,
+    PlannedTemporalRevision,
+    PlannedUpdate,
+    WriteRow,
+)
 
 if TYPE_CHECKING:
     from parallax.core._execution._unit_work.uow import UnitOfWork
 
-__all__ = ["ExecuteWriteSteps", "acquire_and_bind_range", "run_write_plan"]
+__all__ = ["ExecuteCountedStep", "ExecuteWriteSteps", "acquire_and_bind_range", "run_write_plan"]
 
 
 class ExecuteWriteSteps(Protocol):
@@ -61,6 +67,14 @@ class ExecuteWriteSteps(Protocol):
         capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
         | None = None,
     ) -> tuple[object, ...]: ...
+
+
+class ExecuteCountedStep(Protocol):
+    """How a predicate-selected write's one statement executes: lowered,
+    executed, and enforced as a step of a Write Group is, answering the
+    affected-row count its configured driver reported for it."""
+
+    def __call__(self, step: PlannedUpdate | PlannedDelete, /) -> int: ...
 
 
 class _CurrentRowCapture:
@@ -221,7 +235,7 @@ def acquire_and_bind_range(
     completion = retained_completion(description, current or _never_current)
     reused = None if completion is None else acquire_rows(completion, consume_coverage)
     acquired: list[PredecessorRows] = []
-    for request in coverage_reads(description, reused, ownership):
+    for request in coverage_reads(description, reused):
         rows = acquire_rows(request, consume_coverage)
         if rows is not None:
             acquired.append(rows)

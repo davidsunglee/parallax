@@ -306,6 +306,33 @@ def test_lock_waits_reports_a_session_waiting_on_its_peers_row_lock(provider) ->
     assert provider.lock_waits() == 0
 
 
+def test_every_connection_counts_matched_rows_unchanged_ones_included(provider) -> None:
+    # `m-dialect` *Unchanged-row count*: an UPDATE reports every row its
+    # predicate matched, a row it left unchanged included; one matching nothing
+    # reports zero; a DELETE reports the rows it removed. The provider's own
+    # connection, a held session, and a peer all answer so.
+    provider.reset()
+    provider.apply_ddl(["create table gauge (id bigint primary key, v int not null)"])
+    provider.execute("insert into gauge (id, v) values (?, ?), (?, ?)", [1, 0, 2, 5])
+
+    def counts(executor) -> list[int]:
+        return [
+            executor.execute("update gauge set v = ? where id = ?", [7, 1]),
+            executor.execute("update gauge set v = ? where id = ?", [7, 1]),
+            executor.execute("update gauge set v = v where id < ?", [3]),
+            executor.execute("update gauge set v = ? where id = ?", [7, 99]),
+        ]
+
+    observed = [counts(provider)]
+    with provider.open_session("read-committed") as session:
+        observed.append(counts(session))
+        session.commit()
+    with provider.open_peer() as peer:
+        observed.append(counts(peer))
+        assert peer.execute("delete from gauge where v < ?", [7]) == 1
+    assert observed == [[1, 1, 2, 0]] * 3
+
+
 @pytest.mark.parametrize("case", CASES, ids=[_case_id(c) for c in CASES])
 def test_case(case, provider) -> None:
     run_case(case, provider)

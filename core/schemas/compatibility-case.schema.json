@@ -1110,6 +1110,19 @@
                 "then": { "not": { "required": ["on"] } }
               },
               {
+                "description": "`expectAffectedRows` is the observable of a DIRECT predicate-selected write step — one whose `write` is a single `$defs/predicateWrite` instruction — and every such step states it: its public verb executes at the call and returns the count, which is the step's own observation. A buffered write step names no count, a predicate submission inside a state-graded buffer included, and no read or action step returns one.",
+                "if": {
+                  "anyOf": [
+                    { "required": ["expectAffectedRows"] },
+                    { "required": ["write"], "properties": { "write": { "type": "object" } } }
+                  ]
+                },
+                "then": {
+                  "required": ["write", "expectAffectedRows"],
+                  "properties": { "write": { "type": "object" } }
+                }
+              },
+              {
                 "description": "`rollback` is an UNGROUPED write step's own fate. A `uow` group's fate is the group's, stated once in `then.units`.",
                 "if": { "required": ["uow"] },
                 "then": { "not": { "required": ["rollback"] } }
@@ -1161,6 +1174,11 @@
               },
               "databaseCalls": {
                 "description": "How many Database Calls this step costs. A READ cache HIT costs 0; a read cache MISS that executes one statement costs 1. A WRITE step's Database Calls equal the committed DML statements it lists. MUST equal the number of golden SQL statements this step lists for each dialect.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "expectAffectedRows": {
+                "description": "The count a direct predicate-selected write step's public verb returns at its call (m-case-format *Predicate-selected write instruction*): the rows its one statement matched, unchanged updated rows included, or deleted, and `0` for an empty amendment or a key-only replacement, which runs no statement. Every direct predicate-write step states it; no other step carries it.",
                 "type": "integer",
                 "minimum": 0
               },
@@ -2440,11 +2458,11 @@
       }
     },
     "lifecycleFlushStarted": {
-      "description": "A nonempty unit-of-work buffer is being flushed, naming the CLOSED `m-unit-work` trigger that produced it: `read-dependency` for the flush a dependent read forced — which finishes before the Read it enabled starts — or `pre-commit` for the boundary-owned final flush. An empty buffer emits nothing at all, so a Flush in the stream always had something to write.",
+      "description": "A Flush is starting, naming the CLOSED `m-unit-work` trigger that produced it: `read-dependency` for the flush a dependent read forced — which finishes before the Read it enabled starts — `predicate-write` for the flush a nonempty predicate-selected write executes in, after what is buffered before it, or `pre-commit` for the boundary-owned final flush. An empty buffer opens no read-dependency or pre-commit Flush, and an empty predicate-selected write opens none, so a Flush in the stream always had something to write.",
       "type": "object",
       "additionalProperties": false,
       "required": ["trigger"],
-      "properties": {"trigger": {"enum": ["read-dependency", "pre-commit"]}}
+      "properties": {"trigger": {"enum": ["read-dependency", "predicate-write", "pre-commit"]}}
     },
     "lifecycleDatabaseCallStarted": {
       "description": "One Database Call is about to be presented to the port. `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds, which is what keeps `then.statements` the sole SQL and bind oracle — and is OMITTED where the authored order holds no statement to name: on a lane that authors no golden SQL at all (`api-conformance`), where `kind` and the outcome are the whole portable oracle, and on the resolving read a keyed write owes, which the case counts in `then.databaseCalls` and authors no golden for. The indexes the remaining calls name are that order exactly, in delivery order and once each. `kind` keeps a FAILED call classifiable without parsing SQL. The index rides Started alone: its Finished peer is the same activity, so repeating it would state one fact twice.",
@@ -2860,7 +2878,7 @@
       ]
     },
     "submission": {
-      "description": "One entry of an ordered buffer, addressed by the pointer `/scenario/<n>/write/<k>`, dispatched on the member it carries: `rows` a keyed instruction, `row` a caller-addressed one, and `target` a predicate write — a readless ordering barrier (state-graded cases only). Each references the canonical write-instruction vocabulary; a keyed or caller-addressed entry layers only the `at` / `validFrom` / `until` authoring surface, plus the entry's own `on` and `expectError`.",
+      "description": "One entry of an ordered buffer, addressed by the pointer `/scenario/<n>/write/<k>`, dispatched on the member it carries: `rows` a keyed instruction, `row` a caller-addressed one, and `target` a predicate write, which executes at its submission after a Flush of the entries before it (state-graded cases only). Each references the canonical write-instruction vocabulary; a keyed or caller-addressed entry layers only the `at` / `validFrom` / `until` authoring surface, plus the entry's own `on` and `expectError`.",
       "oneOf": [
         { "$ref": "#/$defs/keyedWrite" },
         { "$ref": "#/$defs/targetSubmission" },
@@ -2902,7 +2920,7 @@
       "then": { "properties": { "outcome": { "const": "rolledBack" } } }
     },
     "bufferedWriteSequence": {
-      "description": "The ORDERED buffer a single unit of work accumulates and flushes together (m-unit-work) — one or more submissions, in the order they were requested. This is a GENERAL ordered buffer: entries MAY name different entities and different primary-key identities (a mixed-object flush — an insert of one object, an amendment of another, a delete of a third — such as `m-unit-work-009`), and a buffer MAY hold a single keyed instruction (a buffer of one — the single INSERT / UPDATE / DELETE writes). Same-object folding at flush IS the coalescing rule, and it is a RUNTIME / planner property, not a structural one: when two buffered entries name the SAME entity and primary-key identity the flush combines them (a same-transaction insert-then-amend writes the final value in place with no intermediate milestone; insert-then-delete cancels to no DML). The two-keyed same-object insert-then-amend / insert-then-delete pair is that rule's single-object SPECIAL CASE, not a separate shape — the three same-transaction coalescing witnesses (`m-temporal-write-008`, `m-temporal-write-030`, `m-unit-work-010`) are exactly that pair. The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of the flush (one final-value write, NO DML, or the ordered per-object statements of a mixed flush), so a scenario encodes every requested mutation here explicitly rather than in a prose note. Under `grading: state` an entry MAY also be a caller-addressed submission or a predicate write — an ordering barrier inside the buffer (`$defs/submission`); a golden-graded buffer stays keyed.",
+      "description": "The ORDERED buffer a single unit of work accumulates and flushes together (m-unit-work) — one or more submissions, in the order they were requested. This is a GENERAL ordered buffer: entries MAY name different entities and different primary-key identities (a mixed-object flush — an insert of one object, an amendment of another, a delete of a third — such as `m-unit-work-009`), and a buffer MAY hold a single keyed instruction (a buffer of one — the single INSERT / UPDATE / DELETE writes). Same-object folding at flush IS the coalescing rule, and it is a RUNTIME / planner property, not a structural one: when two buffered entries name the SAME entity and primary-key identity the flush combines them (a same-transaction insert-then-amend writes the final value in place with no intermediate milestone; insert-then-delete cancels to no DML). The two-keyed same-object insert-then-amend / insert-then-delete pair is that rule's single-object SPECIAL CASE, not a separate shape — the three same-transaction coalescing witnesses (`m-temporal-write-008`, `m-temporal-write-030`, `m-unit-work-010`) are exactly that pair. The step's golden SQL (`statements`) is the INDEPENDENT expected lowering of the flush (one final-value write, NO DML, or the ordered per-object statements of a mixed flush), so a scenario encodes every requested mutation here explicitly rather than in a prose note. Under `grading: state` an entry MAY also be a caller-addressed submission or a predicate write, which executes at its submission after a Flush of the entries before it (`$defs/submission`); a golden-graded buffer stays keyed.",
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/submission" }

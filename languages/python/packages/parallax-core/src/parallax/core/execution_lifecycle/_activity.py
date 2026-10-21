@@ -680,7 +680,7 @@ class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
         ...
 
     def flush(self, trigger: FlushTrigger, /) -> FlushActivity:
-        """Open the Flush one flush of this attempt's buffer runs inside."""
+        """Open the Flush one flush of this attempt runs inside."""
         ...
 
     def stream(

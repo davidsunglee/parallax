@@ -29,9 +29,11 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.write_plan.payload import PatchedDocument, WritePayloadPreparer
 from parallax.core.write_plan.steps import (
+    PlannedDelete,
     PlannedInsert,
     PlannedStep,
     PlannedTemporalRevision,
+    PlannedUpdate,
     WriteRow,
 )
 
@@ -146,6 +148,15 @@ class WriteStepExecutor:
             step = cursor.take()
         return tuple(allocated)
 
+    def execute_with_count(
+        self, step: PlannedUpdate | PlannedDelete, /, *, flush: FlushActivity
+    ) -> int:
+        """Lower, execute, and enforce ``step`` alone as one call of
+        ``flush``, exactly as :meth:`execute` runs a step alone, and answer the
+        affected-row count the driver reported once enforcement accepted it."""
+        cursor = LoweringCursor((step,), self._payloads, self._meta, self._connection.dialect)
+        return self._run_single(step, cursor.lowered(step), flush)
+
     def _run_ordered(
         self,
         first: PlannedStep,
@@ -239,7 +250,7 @@ class WriteStepExecutor:
 
     def _run_single(
         self, step: PlannedStep, statement: LoweredStatement, flush: FlushActivity
-    ) -> None:
+    ) -> int:
         connection = self._connection
         with flush.database_call(statement, "write", step.entity) as call:
             affected = connection.execute_write(
@@ -248,6 +259,7 @@ class WriteStepExecutor:
             call.write_completed(affected)
         with flush.enforcing(call):
             enforce_affected_rows(step, affected)
+        return affected
 
     def _run_returning_insert(
         self, step: PlannedInsert, statement: LoweredStatement, flush: FlushActivity

@@ -183,7 +183,7 @@ def _lower(
 
 
 def _flush_and_lower(
-    buffer: list[KeyedWriteInstruction | PredicateWriteInstruction],
+    buffer: list[KeyedWriteInstruction],
     model: Metamodel,
     *,
     concurrency: Concurrency = "locking",
@@ -817,9 +817,9 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # inheritance family is REJECTED BEFORE SQL with the corpus's
     # `subtype-write-set-based-unsupported` classification (m-inheritance-089)".
     #
-    # The buffer-time seams (`TxnAttempt.predicate_write` /
-    # `UnitOfWork.buffer_predicate`) guard the developer `_where` verbs and the
-    # engine's buffering translation — but they are NOT on every road here.
+    # The call-time seams (`TxnAttempt.predicate_write` /
+    # `UnitOfWork.execute_predicate`) guard the developer `_where` verbs and the
+    # engine's translation — but they are NOT on every road here.
     # The conformance engine's readless predicate-write step
     # (`scenario._lower_predicate_write_step`) reaches `stream_physical` straight
     # from a deserialized instruction. The lowering-side guard must

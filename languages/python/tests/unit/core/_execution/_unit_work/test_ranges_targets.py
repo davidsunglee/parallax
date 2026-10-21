@@ -1,9 +1,9 @@
 """What a temporal object's composed writes bind to (`m-temporal-write`
 *Caller-addressed writes span their requested extent*), driven through range
 binding without a database: the caller's start, a replacement's extent,
-destruction, disjoint operations under one transform, what a range after an
-ordering barrier binds to once earlier settled writes of its flush have run, and
-what a range leaves for the sources the attempt may still continue."""
+destruction, disjoint operations under one transform, what a range binds to
+once earlier writes of its object completed, and what a range leaves for the
+sources the attempt may still continue."""
 
 from __future__ import annotations
 
@@ -15,21 +15,14 @@ import pytest
 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import CoverageReadRequest
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, coverage_reads
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    CoalescedTemporalWrite,
-    ObservedKeyedWrite,
-    TargetKeyedWrite,
-    chained_temporal_write,
 )
 from parallax.core.base import INFINITY
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
-    OptimisticLockConflictError,
     RetainedObservation,
-    StaleWriteError,
     TransactionInstant,
     WritePlanningRequest,
     WritePreconditionError,
@@ -38,6 +31,7 @@ from parallax.core.write_plan import (
     PlannedClose,
     PlannedInsert,
     PredecessorRow,
+    WritePlan,
 )
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -59,7 +53,12 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, settled_writes
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    admitted_writes,
+    plan_steps,
+    settled_writes,
+)
 from tests.unit.core._execution._unit_work._acquired_rows_support import bind_held, coverage_read
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -96,18 +95,39 @@ from tests.unit.core._execution._unit_work._temporal_targets_support import (
 def _deferred_write(
     *writes: AdmittedWrite, concurrency: str = "optimistic", guards: bool = False
 ) -> SettledWrite:
-    plan = build_write_planner(POSITION).finalize(
+    write = _planned_write(*writes, concurrency=concurrency, guards=guards)
+    assert write.deferred is not None
+    return write
+
+
+def _planned_write(
+    *writes: AdmittedWrite,
+    concurrency: str = "optimistic",
+    guards: bool = False,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
+) -> SettledWrite:
+    (write,) = settled_writes(
+        _plan(*writes, concurrency=concurrency, guards=guards, ownership=ownership)
+    )
+    return write
+
+
+def _plan(
+    *writes: AdmittedWrite,
+    concurrency: str = "optimistic",
+    guards: bool = False,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
+) -> WritePlan:
+    return build_write_planner(POSITION).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
             concurrency=concurrency,  # type: ignore[arg-type]
             buffered_writes=admitted_writes(POSITION, list(writes)),
+            ownership=ownership,
             counts_unchanged_rows=guards,
         )
     )
-    (write,) = settled_writes(plan)
-    assert write.deferred is not None
-    return write
 
 
 def _bound(
@@ -408,23 +428,8 @@ def test_a_replacement_fills_only_its_own_window_beside_a_disjoint_destruction()
 
 
 # --------------------------------------------------------------------------- #
-# A range an ordering barrier kept after earlier writes of its object.          #
+# A range planned once earlier writes of its object completed.                  #
 # --------------------------------------------------------------------------- #
-def _chained_write(*writes: AdmittedWrite, concurrency: str = "optimistic") -> SettledWrite:
-    (composed,) = admitted_writes(POSITION, list(writes))
-    assert isinstance(composed, CoalescedTemporalWrite | TargetKeyedWrite | ObservedKeyedWrite)
-    plan = build_write_planner(POSITION).finalize(
-        WritePlanningRequest(
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
-            concurrency=concurrency,  # type: ignore[arg-type]
-            buffered_writes=(chained_temporal_write(composed, "id"),),
-        )
-    )
-    (write,) = settled_writes(plan)
-    return write
-
-
 def _coordinates(end: object) -> TemporalRowCoordinates:
     ends = OPEN_BITEMPORAL_ENDS if end is INFINITY else (Finite(instant=end), OPEN_END)
     return TemporalRowCoordinates(ENTITY, (1,), ends)
@@ -457,11 +462,10 @@ def _opened(start: dt.datetime, value: str = "100.00", **cells: object) -> Prede
         pytest.param([], id="removed"),
     ],
 )
-def test_a_following_start_the_earlier_write_replaced_is_the_callers_precondition(
+def test_a_later_start_the_earlier_write_replaced_is_the_callers_precondition(
     coverage: list[PredecessorRow],
 ) -> None:
-    settled = _chained_write(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
-    assert settled.deferred is not None
+    settled = _deferred_write(addressed_write(valid_from=JUN, until=AUG, value="175.00"))
     assert _coverage(settled).terms[0].valid_time_windows == (TimeInterval(JUN, AUG),)
     # The caller's condition is literal: what the earlier write derived from
     # the state it names proves nothing for it.
@@ -470,8 +474,10 @@ def test_a_following_start_the_earlier_write_replaced_is_the_callers_preconditio
     assert refused.value.expected == T0
 
 
-def test_a_following_start_stated_at_the_row_the_earlier_write_left_revises_it() -> None:
-    settled = _chained_write(addressed_write(valid_from=JUN, until=AUG, tx_start=T, value="175.00"))
+def test_a_later_start_stated_at_the_row_the_earlier_write_left_revises_it() -> None:
+    settled = _deferred_write(
+        addressed_write(valid_from=JUN, until=AUG, tx_start=T, value="175.00")
+    )
     bound = _bound(settled, [_opened(APR)], ownership=_changed())
     # That row is the attempt's own, so it is revised in place rather than
     # closed, and its start is the caller's to state.
@@ -484,10 +490,14 @@ def test_a_following_start_stated_at_the_row_the_earlier_write_left_revises_it()
     ]
 
 
-def test_a_following_observed_write_binds_to_the_values_the_earlier_write_left() -> None:
-    settled = _chained_write(
+def test_a_continuing_observed_write_binds_to_the_values_the_earlier_write_left() -> None:
+    # The attempt holds none of the rows the earlier write left, so the range
+    # reads them as ordinary coverage.
+    settled = _planned_write(
         observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
+        ownership=_changed(),
     )
+    assert settled.deferred is not None
     bound = _bound(settled, [_opened(APR, "150.00")], ownership=_changed())
     opened = [
         {identity.name: value for identity, value in step.entries[0].row.attributes.items()}
@@ -501,78 +511,33 @@ def test_a_following_observed_write_binds_to_the_values_the_earlier_write_left()
     ]
 
 
-def test_a_following_observed_write_binds_without_reading_rows_the_attempt_holds() -> None:
+def test_a_continuing_observed_write_binds_rows_the_attempt_holds_without_reading() -> None:
     held = _opened(APR, "150.00")
     ownership = OpenedRows(
         frozenset(_coordinates(end) for _start, end in _LEFT),
         continuing={WHOLE: tuple(TimeInterval(start, end) for start, end in _LEFT)},
         current={OBJECT: (held,)},
     )
-    settled = _chained_write(
+    plan = _plan(
         observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
+        ownership=ownership,
     )
-    deferred = settled.deferred
-    assert isinstance(deferred, DeferredTemporalRange)
-    assert coverage_reads(deferred, None, ownership) == ()
-    bound = _bound(settled, [], ownership=ownership)
-    assert [cells[1:] for cells in _windows(bound)] == [
+    (write,) = settled_writes(plan)
+    assert write.deferred is None
+    opened = [
+        {identity.name: value for identity, value in step.entries[0].row.attributes.items()}
+        for step in plan_steps(plan)
+        if isinstance(step, PlannedInsert)
+    ]
+    assert [(cells["validEnd"], cells["value"]) for cells in opened] == [
         (JUN, Decimal("150.00")),
         (AUG, Decimal("150.00")),
     ]
 
 
-@pytest.mark.parametrize(
-    ("concurrency", "error"),
-    [("optimistic", OptimisticLockConflictError), ("locking", StaleWriteError)],
-)
-def test_a_following_observed_state_neither_standing_nor_continuing_fails_as_its_own_shortfall(
-    concurrency: str, error: type[Exception]
-) -> None:
-    settled = _chained_write(
-        observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
-        concurrency=concurrency,
-    )
-    with pytest.raises(error):
-        _bound(
-            settled,
-            [rectangle(APR, INFINITY, "100.00", tx_start=T1)],
-            ownership=OpenedRows(frozenset()),
-        )
-    # So does one whose observed state the earlier write left nothing of at
-    # its pin.
-    with pytest.raises(error):
-        _bound(
-            settled,
-            [_opened(APR)],
-            ownership=OpenedRows(frozenset(), continuing={WHOLE: ()}),
-        )
-
-
-def test_a_following_observed_state_still_standing_binds_as_any_predecessor() -> None:
-    settled = _chained_write(
-        observed_write("amendUntil", WHOLE, valid_from=JUN, until=AUG, acctNum="O"),
-    )
-    bound = _bound(settled, [WHOLE.evidence.predecessor], ownership=OpenedRows(frozenset()))  # type: ignore[union-attr]
-    (close,) = (step for step in bound.steps if isinstance(step, PlannedClose))
-    assert close.concurrency.observed_start == T0  # type: ignore[union-attr]
-
-
-def test_a_following_callers_precondition_outranks_a_lost_observation() -> None:
-    settled = _chained_write(
-        observed_write("amendUntil", WHOLE, valid_from=FEB, until=APR, acctNum="O"),
-        addressed_write(valid_from=JUN, until=AUG, value="175.00"),
-    )
-    with pytest.raises(WritePreconditionError):
-        _bound(
-            settled,
-            [rectangle(JAN, INFINITY, "100.00", tx_start=T1)],
-            ownership=OpenedRows(frozenset()),
-        )
-
-
-def test_a_following_start_untouched_at_its_stated_start_is_judged_as_usual() -> None:
+def test_a_later_start_untouched_at_its_stated_start_is_judged_as_usual() -> None:
     later = rectangle(JUN, INFINITY, "200.00", tx_start=T1)
-    settled = _chained_write(
+    settled = _deferred_write(
         addressed_write(valid_from=JUL, until=AUG, tx_start=T1, value="175.00"),
     )
     bound = _bound(settled, [later], ownership=OpenedRows(frozenset()))
@@ -651,7 +616,7 @@ _MERGED_ROW = rectangle(MAR, SEP, "150.00", tx_start=T)
 def test_a_start_in_a_merged_row_stated_at_a_predecessors_revision_is_refused(
     valid_from: dt.datetime, until: dt.datetime, tx_start: dt.datetime
 ) -> None:
-    settled = _chained_write(
+    settled = _deferred_write(
         addressed_write(valid_from=valid_from, until=until, tx_start=tx_start, value="175.00")
     )
     with pytest.raises(WritePreconditionError):
@@ -659,7 +624,9 @@ def test_a_start_in_a_merged_row_stated_at_a_predecessors_revision_is_refused(
 
 
 def test_a_start_in_a_merged_row_stated_at_its_own_revision_revises_it_in_place() -> None:
-    settled = _chained_write(addressed_write(valid_from=APR, until=MAY, tx_start=T, value="175.00"))
+    settled = _deferred_write(
+        addressed_write(valid_from=APR, until=MAY, tx_start=T, value="175.00")
+    )
     bound = _bound(settled, [_MERGED_ROW], ownership=OpenedRows(frozenset({_coordinates(SEP)})))
     assert not any(isinstance(step, PlannedClose) for step in bound.steps)
     assert any(isinstance(step, PlannedTemporalRevision) for step in bound.steps)

@@ -33,6 +33,7 @@ import contextlib
 from typing import Any
 
 from .._case_execution import CaseExecution
+from ..case_assertions import CaseFailure
 from ..providers import DatabaseProvider
 from ..table_state import assert_table_state
 from .compile import (
@@ -101,8 +102,11 @@ def _apply_grouped_write(
     (:func:`.settlement.finish_group`), never this step alone, so what the step
     contributes is the executed statements the group's fate is graded on.
     """
+    counts: list[int] = []
     for statement, binds in step.statements.pairs(dialect):
-        state.executed.append((step.index, statement, binds, session.execute(statement, binds)))
+        counts.append(session.execute(statement, binds))
+        state.executed.append((step.index, statement, binds, counts[-1]))
+    _assert_affected_rows(step, counts)
 
 
 def _apply_ungrouped_write(
@@ -122,13 +126,29 @@ def _apply_ungrouped_write(
     """
     pairs = step.statements.pairs(dialect)
     if not step.rolls_back:
-        for statement, binds in pairs:
-            execution.execute(statement, binds)
+        _assert_affected_rows(
+            step, [execution.execute(statement, binds) for statement, binds in pairs]
+        )
         return
     with execution.open_session(scenario.case.isolation) as session:
-        for statement, binds in pairs:
-            session.execute(statement, binds)
+        counts = [session.execute(statement, binds) for statement, binds in pairs]
         session.rollback()
+    _assert_affected_rows(step, counts)
+
+
+def _assert_affected_rows(step: _GroupedWrite | _UngroupedWrite, counts: list[int]) -> None:
+    """Grade a direct predicate write's stated count against what its own
+    statement — the step's last — reported, or zero where the step runs none
+    (`m-batch-write` *Predicate-selected readless forms*)."""
+    expected = step.affected_rows
+    if expected is None:
+        return
+    observed = counts[-1] if counts else 0
+    if observed != expected:
+        raise CaseFailure(
+            f"scenario[{step.index}] states its predicate write returns {expected}, and its "
+            f"statement reported {observed} affected row(s)"
+        )
 
 
 def _apply_boundary_action(step: _BoundaryAction, execution: CaseExecution, dialect: str) -> None:

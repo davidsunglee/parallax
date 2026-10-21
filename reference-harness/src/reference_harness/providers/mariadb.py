@@ -8,6 +8,11 @@ not:
 * **Read-lock divergence.** MariaDB has no ``for share``; the shared row lock is
   ``lock in share mode`` (MDEV-17514). The golden SQL carries that form per
   dialect; the m-sql normalizer renders it through the seam.
+* **Matched-row counts.** MariaDB's default ``UPDATE`` count reports only the
+  rows whose values changed. Every connection this provider opens negotiates
+  ``CLIENT_FOUND_ROWS`` (:data:`CONNECTION_FLAGS`), so the count reports every
+  row the statement matched, unchanged ones included, as Postgres's does
+  (m-dialect *Unchanged-row count*).
 * **No native timestamp infinity.** MariaDB's ``DATETIME`` has no ``'infinity'``,
   so the open temporal upper bound (m-core/m-dialect) maps to a documented **max-sentinel**
   — ``9999-12-31 23:59:59.999999`` (the largest ``DATETIME(6)``). This provider
@@ -33,7 +38,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal
 
 import pymysql
-from pymysql.constants import FIELD_TYPE
+from pymysql.constants import CLIENT, FIELD_TYPE
 from testcontainers.community.mysql import MySqlContainer
 
 from .. import errors
@@ -51,6 +56,10 @@ if TYPE_CHECKING:
 # that writer finishes (MDEV-36639) or lets a write that waited on such a writer
 # overwrite its commit (MDEV-39263), the lost update Repeatable Read forbids.
 MARIADB_RELEASE_FLOOR = (12, 3, 2)
+
+# The client capabilities every connection negotiates: an UPDATE's count then
+# includes the rows it matched and left unchanged (m-dialect *Unchanged-row count*).
+CONNECTION_FLAGS = CLIENT.FOUND_ROWS
 
 # The provisioning seam pins the current MariaDB long-term-support series
 # (m-case-format/DQ15), by digest so every run boots the same release. That release
@@ -426,8 +435,9 @@ class MariaDbProvider:
         no body failure the first cleanup failure is raised, noting its phase and
         the outcome the session's transaction had already reached.
         """
-        params = {**self._connect_params, "autocommit": False}
-        conn = pymysql.connect(database=self._dbname, **params)
+        conn = pymysql.connect(
+            database=self._dbname, **_counting(self._connect_params, autocommit=False)
+        )
         try:
             saved = _configure_session(conn, isolation, access_mode)
         except BaseException as failure:
@@ -461,8 +471,9 @@ class MariaDbProvider:
         query, not a read inside the stale snapshot. (Postgres' provider is already
         autocommit, so this aligns the two dialects.)
         """
-        peer_params = {**self._connect_params, "autocommit": True}
-        connection = pymysql.connect(database=self._dbname, **peer_params)
+        connection = pymysql.connect(
+            database=self._dbname, **_counting(self._connect_params, autocommit=True)
+        )
         peer = MariaDbProvider(connection, self._dbname, self._connect_params)
         try:
             yield peer
@@ -644,7 +655,9 @@ def mariadb_provider() -> Iterator[MariaDbProvider]:
     try:
         connect_params = _connect_params(container)
         _grant_lock_wait_view(container, connect_params)
-        connection = _connect_with_retry(connect_params, container.dbname)
+        connection = _connect_with_retry(
+            _counting(connect_params, autocommit=False), container.dbname
+        )
         provider = MariaDbProvider(connection, container.dbname, connect_params)
         yield provider
     finally:
@@ -655,11 +668,19 @@ def mariadb_provider() -> Iterator[MariaDbProvider]:
         container.stop()
 
 
+def _counting(params: dict[str, Any], *, autocommit: bool) -> dict[str, Any]:
+    """``params`` for one more connection: in the ``autocommit`` mode it opens in,
+    negotiating :data:`CONNECTION_FLAGS` whatever the parameters it was given."""
+    return {**params, "autocommit": autocommit, "client_flag": CONNECTION_FLAGS}
+
+
 def _connect_params(container: MySqlContainer) -> dict[str, Any]:
     """The pymysql connection parameters for the booted container (sans database).
 
-    Shared by the provider's own connection and the peer connection, so a
-    coherence case's node B reaches the same server with the same credentials.
+    Shared by the provider's own connection, the peer connection, and every held
+    session, so a coherence case's node B reaches the same server with the same
+    credentials; each of them adds the capabilities it negotiates
+    (:func:`_counting`).
     """
     return {
         "host": container.get_container_host_ip(),
@@ -677,7 +698,10 @@ def _grant_lock_wait_view(container: MySqlContainer, connect_params: dict[str, A
     so it precedes every connection the provider opens as that user.
     """
     root = _connect_with_retry(
-        {**connect_params, "user": "root", "password": container.root_password},
+        _counting(
+            {**connect_params, "user": "root", "password": container.root_password},
+            autocommit=False,
+        ),
         container.dbname,
     )
     try:

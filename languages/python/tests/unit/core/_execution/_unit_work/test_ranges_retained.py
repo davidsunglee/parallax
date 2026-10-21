@@ -21,13 +21,12 @@ from parallax.core._execution._unit_work.retain import RetainedTargetState
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     TargetKeyedWrite,
-    chained_temporal_write,
 )
 from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core.base import INFINITY
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import RetainedObservation, WritePlanningRequest
+from parallax.core.unit_work import WritePlanningRequest
 from parallax.core.write_plan import PlannedClose, PlannedInsert, PredecessorRow
 from parallax.core.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, BoundRange, SettledWrite
@@ -74,14 +73,8 @@ def _holding(item: TargetKeyedWrite, state: RetainedTargetState) -> TargetKeyedW
     return dataclasses.replace(item, retained=state)
 
 
-def _planned(
-    *writes: AdmittedWrite, concurrency: str = "locking", follows: bool = False
-) -> SettledWrite:
+def _planned(*writes: AdmittedWrite, concurrency: str = "locking") -> SettledWrite:
     buffered = admitted_writes(POSITION, list(writes))
-    if follows:
-        (composed,) = buffered
-        assert not isinstance(composed, RetainedObservation)
-        buffered = [chained_temporal_write(composed, "id")]  # type: ignore[arg-type]
     plan = build_write_planner(POSITION).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
@@ -94,10 +87,8 @@ def _planned(
     return write
 
 
-def _settled(
-    *writes: AdmittedWrite, concurrency: str = "locking", follows: bool = False
-) -> SettledWrite:
-    settled = _planned(*writes, concurrency=concurrency, follows=follows)
+def _settled(*writes: AdmittedWrite, concurrency: str = "locking") -> SettledWrite:
+    settled = _planned(*writes, concurrency=concurrency)
     assert isinstance(settled.deferred, DeferredTemporalRange)
     return settled
 
@@ -269,14 +260,6 @@ def test_an_optimistic_range_reuses_no_retained_row() -> None:
     assert not any(isinstance(request, CompletionRequest) for request in held.requests)
     assert _coverage_windows(held) == [(TimeInterval(MAR, SEP),)]
     assert state.take() is None
-
-
-def test_a_range_after_a_barrier_reuses_a_current_row_and_reads_the_rest() -> None:
-    settled = _settled(_holding(addressed_write(value="150.00"), _held(_START)), follows=True)
-    bound, held = _bind(settled, [_START, _LATER])
-    assert isinstance(held.requests[0], CompletionRequest)
-    assert _coverage_windows(held) == [(TimeInterval(JUN, SEP),)]
-    assert _windows(bound)[0][:2] == (JAN, MAR)
 
 
 def test_a_retained_row_is_released_by_a_range_that_binds_twice() -> None:

@@ -24,6 +24,7 @@ when:
                 stops:
                   - { port: Oslo }
       databaseCalls: 1
+      expectAffectedRows: 1
       statements:
         - sql:
             postgres: update nested_route set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?

@@ -27,7 +27,8 @@ Each buffered entry is a **submission**, addressed by its own pointer
 ``then.units``. The rules those readings settle are refused here too: a
 submission's ``on`` names an earlier find of its own group or an earlier,
 unrefused insert of it; every label ``then.units`` names is a group; a flush
-failure is reported where the group last flushes; a group's submissions share one
+failure is reported where the group last flushes, a find or a predicate
+submission flushing what the group has pending; a group's submissions share one
 Transaction Instant; and the submission forms and refusals only a state-graded
 case may carry appear nowhere else.
 """
@@ -157,11 +158,13 @@ class _GroupedWrite(_Step):
     write grading takes them in, which is why they are carried rather than
     resolved: the rows and mutations are :mod:`..write_plan`'s vocabulary, not a
     Scenario one. ``submissions`` are the same entries as this package reads
-    them.
+    them. ``affected_rows`` is the count a direct predicate write states its
+    verb returns, ``None`` for any other write.
     """
 
     entries: tuple[dict[str, Any], ...]
     submissions: tuple[Submission, ...]
+    affected_rows: int | None
 
 
 @dataclass(frozen=True)
@@ -170,11 +173,13 @@ class _UngroupedWrite(_Step):
     autocommit connection, or applied and discarded in a session of its own.
 
     ``entries`` are its buffered keyed instructions, carried in the neutral form
-    write grading takes them in, exactly as :class:`_GroupedWrite`'s are.
+    write grading takes them in, exactly as :class:`_GroupedWrite`'s are, and
+    ``affected_rows`` is the count a direct predicate write states.
     """
 
     entries: tuple[dict[str, Any], ...]
     rolls_back: bool
+    affected_rows: int | None
 
 
 @dataclass(frozen=True)
@@ -324,9 +329,12 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
 
     if "write" in step:
         entries = _write_entries(step)
+        affected_rows = step.get("expectAffectedRows")
         if group is not None:
-            return _GroupedWrite(*common, entries, _submissions(case, index, entries))
-        return _UngroupedWrite(*common, entries, step.get("rollback") is True)
+            return _GroupedWrite(
+                *common, entries, _submissions(case, index, entries), affected_rows
+            )
+        return _UngroupedWrite(*common, entries, step.get("rollback") is True, affected_rows)
 
     if (
         not case.state_graded
@@ -549,10 +557,11 @@ def _unit_fates(
 
     A golden-graded group the case states no fate for commits; a state-graded
     case states every group's. A flush failure is reported where the group's
-    work last reaches the database: at its last step where that is a find with
-    writes pending before it, and otherwise at commit, which flushes what is
-    still pending. Every submission of a group states the same instant, because
-    one unit of work holds one Transaction Instant.
+    last flush runs: at its last step where that is a find with writes pending
+    before it or a write step whose last flush a predicate submission ran, and
+    otherwise at commit, which flushes what is still pending. Every submission
+    of a group states the same instant, because one unit of work holds one
+    Transaction Instant.
     """
     authored = case.then.get("units") or {}
     groups: dict[str, list[_CompiledStep]] = {}
@@ -588,10 +597,10 @@ def _flush_failure(
 ) -> FlushFailure | None:
     if not isinstance(authored, Mapping):
         return None
-    last = members[-1]
+    flushes = _group_flushes(members)
     candidates: dict[int | Literal["commit"], tuple[str, ...]] = {}
-    for at, flushed in _group_flushes(members):
-        if flushed and at in ("commit", last.index):
+    for at, flushed in flushes:
+        if at == flushes[-1][0] and at in ("commit", members[-1].index):
             candidates[at] = candidates.get(at, ()) + flushed
     if authored.get("at") not in candidates:
         where = (
@@ -616,9 +625,10 @@ def _flush_failure(
 def _group_flushes(
     members: list[_CompiledStep],
 ) -> list[tuple[int | Literal["commit"], tuple[str, ...]]]:
-    """Each flush a group runs, in order: where it runs — a find's step or
-    ``"commit"`` — beside the pointers of the submissions still pending when it
-    began."""
+    """Each nonempty flush a group runs, in order: where it runs — a find's or a
+    predicate submission's step, or ``"commit"`` — beside the pointers of the
+    submissions it ran: those still pending when it began, and a predicate
+    submission's own, which executes in the flush its call runs."""
     flushes: list[tuple[int | Literal["commit"], tuple[str, ...]]] = []
     pending: list[str] = []
     for step in members:
@@ -627,7 +637,10 @@ def _group_flushes(
                 if submission.refusal is not None:
                     continue
                 pending.append(submission.pointer)
-        elif isinstance(step, _RowPublishingStep):
+                if submission.kind == "predicate":
+                    flushes.append((step.index, tuple(pending)))
+                    pending = []
+        elif isinstance(step, _RowPublishingStep) and pending:
             flushes.append((step.index, tuple(pending)))
             pending = []
     if pending:

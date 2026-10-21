@@ -14,6 +14,7 @@ when:
               path: parallax.compatibility.Wallet.balance
               value: "200.00"
       databaseCalls: 1
+      expectAffectedRows: 2
       statements:
         - sql:
             postgres: delete from wallet where balance < ?

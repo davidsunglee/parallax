@@ -1547,6 +1547,7 @@ these final spellings; no translation alias is conforming.
     assignments:
       - { attr: Account.balance, value: 100.00 }
   databaseCalls: 1
+  expectAffectedRows: 2
 ```
 
 The canonical case pointer for this input is **`/scenario/<n>/write`**. Its fields
@@ -1559,6 +1560,15 @@ are deliberately small and structural:
 | `target.predicate` | yes | one schema-valid `m-predicate` node; a set-based write shapes no result, so the Object Query clauses have no spelling in this position |
 | `assignments` | only `amend` | ordered `{attr, value}` data, unique, and empty for the empty amendment, which emits no statement (`m-batch-write`); `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
 | `row` | only `replace` | the selected objects' complete writable state, keyed by member name like a keyed row and possibly `{}`; it is completed as every replacement is (`m-unit-work`), and a primary-key member it states is accepted and never written (`m-batch-write`) |
+
+The step carrying this instruction states **`expectAffectedRows`**, the count
+its public verb returns at the call (`m-batch-write`): the rows its one statement
+matched — an updated row whose values it left unchanged included — or deleted, and
+`0` for an empty mutation, which runs no statement. Every such step states it, and
+no other step carries it, a predicate submission inside a buffer included. An
+adapter reports the count as the step's `stepAffectedRows` observation
+(`m-conformance-adapter`), and a statement's own affected rows in the execution
+lifecycle are a separate observation.
 
 A delete carries **no** assignments and no row, and a replace carries a row and
 no assignments. Neither assignment list order nor row member order is SQL
@@ -1596,8 +1606,9 @@ buffer MAY also carry such a replacement, whose coverage depends on what its
 flush reads, a **caller-addressed** submission
 (`row` with exactly one of `ifVersion` and `ifTxStart`, the
 `targetWriteInstruction`) and a
-**predicate** write (*State-graded scenarios*, below). A predicate write is an
-ordering barrier inside the buffer. The step's golden SQL (`statements`) is the **independent expected
+**predicate** write (*State-graded scenarios*, below). A predicate write executes
+at its submission, after a Flush of the entries buffered before it, so a later
+entry flushes after it. The step's golden SQL (`statements`) is the **independent expected
 lowering of that flush**, never the source an adapter deduces the writes from, so
 the step encodes **every** requested mutation explicitly and an adapter exercises
 the flush from the instructions themselves. Valid-Time bounds are `validFrom` and
@@ -1734,9 +1745,11 @@ Shortfall can arise from. The document's own rules are
 refused before any database: a submission's `on` resolves as *Settling against a
 grouped find* states, every `then.units` label names a group, a flush failure is
 reported where the group last flushes, and one group's submissions state one
-Transaction Instant. A find flushes what its group has pending, so neither an
+Transaction Instant. A find flushes what its group has pending, and so does a
+predicate submission, which then executes in that flush; so neither an
 already-claimed refusal's earlier write nor a failing flush's submissions are
-separated from it by one. For a committed group the independent evidence that the
+separated from it by either, and a flush failure a predicate submission's flush
+reports is at that submission's step. For a committed group the independent evidence that the
 stated rows are right is each language runner's real-database run against them.
 
 An adapter runs a state-graded case through its public verbs alone and reports
@@ -1752,7 +1765,8 @@ fate a golden-graded group stating none takes — or `rolledBack`: the group rol
 back after its last step instead. A rolled-back group stating no flush failure is
 one its callback abandons once its last step has run. A group stating a
 **`flushFailure`** is one a flush ended: `at` is where that flush ran — the
-group's last step, where that is a find, or `commit`, where
+group's last step, where that is a find or a write step whose predicate
+submission runs the group's last flush, or `commit`, where
 the group's last step leaves writes pending — and `entity`, `key`,
 and `shortfall` are the object the failure reports and its Shortfall
 (`missingTarget` / `staleWrite` / `optimisticConflict` / `failedPrecondition`,

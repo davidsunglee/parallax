@@ -56,7 +56,11 @@ from parallax.core._execution._unit_work.write_items import (
     target_write,
 )
 from parallax.core._execution._unit_work.write_planner import WritePlanner, WritePlanningRequest
-from parallax.core._execution._unit_work.write_runner import ExecuteWriteSteps, run_write_plan
+from parallax.core._execution._unit_work.write_runner import (
+    ExecuteCountedStep,
+    ExecuteWriteSteps,
+    run_write_plan,
+)
 from parallax.core.base import normalize_instant
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import EntityMetadata, Metamodel
@@ -92,15 +96,17 @@ __all__ = [
     "WriteEvidenceErrorCode",
 ]
 
-type FlushTrigger = Literal["read_dependency", "pre_commit"]
-"""The CLOSED set of reasons a unit of work flushes its buffer.
+type FlushTrigger = Literal["read_dependency", "predicate_write", "pre_commit"]
+"""The CLOSED set of reasons a unit of work flushes.
 
 ``read_dependency`` is the flush :meth:`UnitOfWork.read` forces out so a
-dependent read observes it; ``pre_commit`` is the boundary-owned final flush
-the transaction attempt runs once its callback has returned. There
-is no size-based, periodic, or caller-invoked third trigger, which is what lets
-an observer state which of the two produced a flush instead of guessing from
-position.
+dependent read observes it; ``predicate_write`` is the flush a
+predicate-selected write executes in, after everything buffered before it
+(:meth:`UnitOfWork.execute_predicate`); ``pre_commit`` is the boundary-owned
+final flush the transaction attempt runs once its callback has returned. There
+is no size-based, periodic, or caller-invoked further trigger, which is what
+lets an observer state which of the three produced a flush instead of guessing
+from position.
 
 The second trigger is named for WHEN it runs rather than for what it does,
 because "finalization" already names the planner stage every flush of either
@@ -131,9 +137,10 @@ class FlushScope(Protocol):
 class OpenFlush(Protocol):
     """The composition-layer opener a flush announces itself to.
 
-    Called once per flush that has something to flush, BEFORE the buffered
-    writes are planned and therefore before any statement exists, and the scope
-    it answers spans planning as well as execution. A flush that fails in
+    Called once per flush that has something to flush — buffered writes, or a
+    predicate-selected write's own statement — BEFORE the buffered writes are
+    planned and therefore before any statement exists, and the scope it
+    answers spans planning as well as execution. A flush that fails in
     planning is therefore inside the scope and never executes a step, which
     is the whole distinction this exists to make available: an observer can tell
     a flush that failed before it ran anything from work that is not a flush at
@@ -204,7 +211,7 @@ class UnitOfWork:
     It is not the transaction: the attempt owns the native transaction and its
     lifetime, and hands this the lifetime to consult and doom rather than a
     state of its own. The attempt drives it with :meth:`buffer`,
-    :meth:`buffer_predicate`, :meth:`buffer_target`, :meth:`retain`, and
+    :meth:`buffer_target`, :meth:`execute_predicate`, :meth:`retain`, and
     :meth:`read`, asking :meth:`resolve_read_evidence` what a keyed write's
     source licenses here, flushes it once more before commit, and has it
     :meth:`discard` its state when the attempt does not commit.
@@ -227,6 +234,7 @@ class UnitOfWork:
         "_transaction_instant",
         "acquire_rows",
         "clock",
+        "execute_counted_step",
         "execute_write_steps",
         "flush_opening",
         "meta",
@@ -241,6 +249,7 @@ class UnitOfWork:
         clock: Clock,
         meta: Metamodel,
         execute_write_steps: ExecuteWriteSteps,
+        execute_counted_step: ExecuteCountedStep,
         acquire_rows: AcquireRows,
         planner: WritePlanner,
         actor_identity: ActorIdentity,
@@ -252,6 +261,7 @@ class UnitOfWork:
         self.clock = clock
         self.meta = meta
         self.execute_write_steps = execute_write_steps
+        self.execute_counted_step = execute_counted_step
         self.acquire_rows = acquire_rows
         self.flush_opening = flush_opening
         # The injected Write Planner (`m-unit-work`'s single finalization
@@ -359,20 +369,49 @@ class UnitOfWork:
             item, confirm_target=self._confirm_target, insertion_advice=insertion_advice
         )
 
-    def buffer_predicate(self, prepared: PreparedPredicateWrite) -> None:
-        """Buffer a prepared predicate-selected write, which settles as one
-        readless statement (`m-batch-write` "Predicate-selected readless
-        forms"): preparation has refused every target that needs an
-        observation.
+    def execute_predicate(self, prepared: PreparedPredicateWrite) -> int:
+        """Execute a prepared predicate-selected write now, as one readless
+        statement (`m-batch-write` "Predicate-selected readless forms"), and
+        answer the affected-row count its driver reported: preparation has
+        refused every target that needs an observation.
 
         An amendment that assigns no member is the empty write, and so is a
         replacement of an Entity whose only writable member is its key: having
-        been validated, it is dropped here rather than buffered, so it seals no
-        barrier region between the writes around it."""
+        been validated, it answers ``0`` here, opening no Flush and leaving the
+        buffered writes pending. Any other runs in one ``predicate_write``
+        Flush: everything buffered before it executes and completes first,
+        exactly as a dependent read's flush runs it, and the predicate's one
+        statement after. It never enters the buffer, claims nothing, and
+        publishes nothing about the rows it reached.
+
+        A refusal planning the buffered writes leaves them pending and the
+        transaction usable, and a failure executing them dooms it before the
+        predicate is planned. A refusal planning the predicate's own statement
+        fails the Flush without dooming the transaction or restoring the
+        buffered writes it already executed; a failure lowering, executing, or
+        enforcing that statement dooms it."""
         self._ensure_open()
         if prepared.mutation in ASSIGNMENT_MUTATIONS and not prepared.assigns:
-            return
-        self.buffer(prepared)
+            return 0
+        opening = self.flush_opening
+        if opening is None:
+            return self._execute_predicate(prepared)
+        with opening("predicate_write"):
+            return self._execute_predicate(prepared)
+
+    def _execute_predicate(self, prepared: PreparedPredicateWrite) -> int:
+        if self._admission:
+            self._flush_buffer("predicate_write")
+        step = self._planner.predicate_step(
+            prepared,
+            actor_identity=self._actor_identity,
+            transaction_instant=self._transaction_instant,
+        )
+        try:
+            return self.execute_counted_step(step)
+        except BaseException as failure:
+            self._lifetime.doom(failure)
+            raise
 
     def buffer_target(self, prepared: PreparedTargetWrite) -> None:
         """Admit a caller-addressed write and buffer it — all of it, or nothing.
@@ -722,9 +761,9 @@ class UnitOfWork:
         Group, each group's steps executed and enforced through the injected
         :class:`~parallax.core._execution._unit_work.write_runner.ExecuteWriteSteps`.
 
-        ``trigger`` names which of the two flush reasons this call is, and every
-        caller already knows its own: :meth:`read` serves a read dependency and
-        the attempt runs the boundary's pre-commit flush. The whole
+        ``trigger`` names which flush reason this call is, and every caller
+        already knows its own: :meth:`read` serves a read dependency and the
+        attempt runs the boundary's pre-commit flush. The whole
         flush runs inside the injected :class:`OpenFlush`'s scope, so a
         planning refusal is inside the Flush rather than beside it and a Flush
         planning reduces to no DML at all still ends the way it began.
@@ -737,9 +776,9 @@ class UnitOfWork:
         binds at its turn against what every earlier one published. What a
         flush's writes leave for its sources outlives the flush, and the
         current rows a later submission may continue from are captured as they
-        execute. The pre-commit flush, which no submission follows, captures
-        none and records only what a later barrier region of it continues
-        from.
+        execute. The pre-commit flush, which no submission follows and none of
+        whose writes continues from another, captures none and records nothing
+        its writes leave for a source.
 
         A failure while executing, binding, or completing dooms the attempt's
         lifetime before it propagates, so a caller that catches it can do no

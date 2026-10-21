@@ -1,5 +1,5 @@
 model: models/buffered-sequence-layout-twin-columns.yaml
-tags: [m-unit-work, m-batch-write, m-opt-lock, m-read-lock, m-storage-layout, m-sql, scenario, readless, barrier, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-batch-write, m-opt-lock, m-read-lock, m-storage-layout, m-sql, scenario, readless, predicate-write, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: scenario
 grading: state
 compileEligibility:
@@ -43,7 +43,7 @@ when:
           entity: parallax.compatibility.SequenceTag
           rows:
             - { id: 1, quantity: 7 }
-      note: "quantity 1, the barrier, then quantity 7"
+      note: "quantity 1, the predicate write, which executes it first, then quantity 7 through the same source"
     - uow: versioned
       objectQuery:
         target: parallax.compatibility.SequenceAccount
@@ -75,7 +75,7 @@ when:
           entity: parallax.compatibility.SequenceAccount
           rows:
             - { id: 1, memo: { note: after } }
-      note: "two writes of version 1, apart"
+      note: "two writes through the source of version 1, either side of a predicate write: the later one continues from the version the earlier one produced"
     - uow: inserted
       write:
         - mutation: insert
@@ -96,7 +96,7 @@ when:
           entity: parallax.compatibility.SequenceTag
           rows:
             - { id: 3, quantity: 8 }
-      note: "the insert executes before the barrier, the revision after it"
+      note: "the predicate write executes the insert first; the revision after it writes the row the insert opened"
     - uow: reinserted
       write:
         - mutation: insert
@@ -121,7 +121,7 @@ when:
           entity: parallax.compatibility.SequenceTag
           rows:
             - { id: 4, quantity: 6, label: again }
-      note: "the insert, the barrier, its removal, then a fresh insert of the key"
+      note: "the insert, the predicate write that executes it, its removal, then a fresh insert of the key"
 then:
   units:
     same-state: { outcome: committed }

@@ -39,15 +39,14 @@ __all__ = [
     "WriteOwnership",
 ]
 
-type PendingInsertionState = Literal["opening", "before_removal", "ended_opening"]
+type PendingInsertionState = Literal["opening", "ended_opening"]
 """How an insertion of the buffer stands, while the buffer links it.
 
-``opening`` is the object's current insertion, still to execute; a write folds
-into it only from its own barrier region. ``before_removal`` is an insertion a
-later write of the buffer removes whole, already counted as stored.
-``ended_opening`` is a Bitemporal opening whose writes left nothing of it while
-a composed replacement still reaches the object's older stored coverage, so it
-folds nothing and its object is opened again only after that replacement.
+``opening`` is the object's current insertion, still to execute, which a later
+write of the object folds into. ``ended_opening`` is a Bitemporal opening whose
+writes left nothing of it while a composed replacement still reaches the
+object's older stored coverage, so it folds nothing and its object is opened
+again only after that replacement.
 """
 
 

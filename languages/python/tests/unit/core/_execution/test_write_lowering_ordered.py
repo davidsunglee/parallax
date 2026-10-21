@@ -23,6 +23,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core._execution import _write_lowering
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
+    PreparedPredicateWrite,
     PreparedTargetWrite,
     prepare_typed_write,
 )
@@ -243,8 +244,13 @@ def _planned(
 ) -> PlannedStep:
     prepared = prepare_typed_write(instruction, meta)
     assert not isinstance(prepared, PreparedTargetWrite)
+    planner = build_write_planner(meta)
+    if isinstance(prepared, PreparedPredicateWrite):
+        return planner.predicate_step(
+            prepared, actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=inert_instant()
+        )
     (step,) = plan_steps(
-        build_write_planner(meta).finalize(
+        planner.finalize(
             WritePlanningRequest(
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),

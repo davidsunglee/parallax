@@ -657,14 +657,14 @@ def test_a_failed_reinsertion_after_its_removal_rolls_the_attempt_back() -> None
 
 
 # --------------------------------------------------------------------------- #
-# A readless predicate write keeps a pending opening from the writes after it:  #
-# the opening executes before the barrier, so only what those writes destroy    #
-# removes it, and only a removal of all of it admits a fresh insertion.         #
+# A predicate write executes a pending opening before it, so only what the     #
+# writes after it destroy removes the stored opening, and only a removal of all #
+# of it admits a fresh insertion.                                               #
 # --------------------------------------------------------------------------- #
-_BARRIER_MODEL = DomainModel(WherePosition, Wallet)
+_PREDICATE_MODEL = DomainModel(WherePosition, Wallet)
 
 
-def _barrier(tx: TxnContext) -> None:
+def _low(tx: TxnContext) -> None:
     tx.amend_where(Wallet.where(Wallet.balance < Decimal("2.00")), Wallet.owner.set("Low"))
 
 
@@ -679,7 +679,7 @@ class _Abandoned(Exception):
 
 
 @pytest.mark.parametrize("opening_end", [None, _SEP], ids=["unbounded", "finite"])
-def test_an_opening_a_barrier_kept_back_and_removed_whole_admits_a_reinsertion(
+def test_an_opening_a_predicate_write_flushed_and_removed_whole_admits_a_reinsertion(
     opening_end: dt.datetime | None,
 ) -> None:
     opened = _rectangle(_JAN, INFINITY_INSTANT if opening_end is None else opening_end)
@@ -691,12 +691,12 @@ def test_an_opening_a_barrier_kept_back_and_removed_whole_admits_a_reinsertion(
             tx.insert(first, valid_from=_JAN)
         else:
             tx.insert(first, valid_from=_JAN, until=opening_end)
-        _barrier(tx)
+        _low(tx)
         tx.terminate(first)
         tx.insert(_position("200.00"), valid_from=_JAN)
         _refused_as_not_stored(lambda: tx.amend(first.edit(value=Decimal("1.00"))))
 
-    db_for(_BARRIER_MODEL, port).transact(fn)
+    db_for(_PREDICATE_MODEL, port).transact(fn)
     assert [call.sql.split(" ", 1)[0] for call in _writes(port)] == [
         "insert",
         "update",
@@ -709,24 +709,24 @@ def test_an_opening_a_barrier_kept_back_and_removed_whole_admits_a_reinsertion(
     ]
 
 
-def test_an_opening_a_barrier_kept_back_and_removed_in_part_refuses_a_reinsertion() -> None:
-    port = ScriptedAdapter(Transact())
+def test_an_opening_a_predicate_write_flushed_and_removed_in_part_refuses_a_reinsertion() -> None:
+    port = ScriptedAdapter(Transact(Write(times=2)))
 
     def fn(tx: TxnContext) -> None:
         first = _position()
         tx.insert(first, valid_from=_JAN)
-        _barrier(tx)
+        _low(tx)
         tx.terminate(first, until=_MAR)
         _refused_as_a_repeat(lambda: tx.insert(_position("200.00"), valid_from=_JAN))
         raise _Abandoned
 
     with raises_contextualized(_Abandoned):
-        db_for(_BARRIER_MODEL, port).transact(fn)
+        db_for(_PREDICATE_MODEL, port).transact(fn)
 
 
 def test_a_removal_before_a_pending_reinsertion_never_counts_against_it() -> None:
     # The first insertion's stored coverage is removed before the reinsertion
-    # opens; only what the writes after the reinsertion destroy removes it, and
+    # opens; only what the writes of the reinsertion destroy remove it, and
     # those leave its coverage from March standing.
     row = _rectangle(_MAR, INFINITY_INSTANT)
     port = ScriptedAdapter(Transact(Write(), Read(rows=[row])))
@@ -738,13 +738,12 @@ def test_a_removal_before_a_pending_reinsertion_never_counts_against_it() -> Non
         tx.terminate(first)
         second = _position("200.00")
         tx.insert(second, valid_from=_JAN)
-        _barrier(tx)
         tx.terminate(second, until=_MAR)
         _refused_as_a_repeat(lambda: tx.insert(_position("300.00"), valid_from=_JAN))
         raise _Abandoned
 
     with raises_contextualized(_Abandoned):
-        db_for(_BARRIER_MODEL, port).transact(fn)
+        db_for(_PREDICATE_MODEL, port).transact(fn)
 
 
 def _balance_row(key: int, in_z: dt.datetime, value: str = "1.00") -> MappingRow:

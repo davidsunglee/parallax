@@ -60,7 +60,11 @@ from parallax.core.unit_work import (
     object_key,
 )
 from parallax.core.write_plan import ObjectKey, PredecessorRow, TemporalObservation
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, retained_observation
+from tests._support.planner_probes import (
+    NO_COUNTED_STEPS,
+    TEST_ACTOR_IDENTITY,
+    retained_observation,
+)
 from tests.unit._where_position_model import WHERE_POSITION_META
 
 _META: Final = model_of(WHERE_POSITION_META)
@@ -130,6 +134,7 @@ class _Session:
             clock=FixedClock(_NOW),
             meta=_META,
             execute_write_steps=self.simulated if execute is None else execute(self.simulated),
+            execute_counted_step=NO_COUNTED_STEPS,
             acquire_rows=self._acquire,
             planner=build_write_planner(_META),
             actor_identity=TEST_ACTOR_IDENTITY,

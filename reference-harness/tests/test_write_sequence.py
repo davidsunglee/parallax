@@ -17,6 +17,7 @@ from typing import Any, cast
 
 import pytest
 
+from reference_harness import case_runner
 from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
@@ -275,13 +276,16 @@ def test_a_guard_golden_its_history_does_not_prove_is_refused(
         _assert_write_input_columns(_guard_case(mutate), "postgres")
 
 
-def test_a_guard_golden_is_refused_for_a_dialect_whose_count_cannot_prove_it() -> None:
-    def stated_for_mariadb(raw: dict[str, Any]) -> None:
-        for statement in raw["then"]["statements"]:
-            statement["sql"]["mariadb"] = statement["sql"]["postgres"]
+def test_a_guard_golden_is_graded_on_mariadb_whose_count_includes_an_unchanged_match() -> None:
+    _assert_write_input_columns(_temporal_target_case("m-temporal-write-015"), "mariadb")
 
+
+def test_a_guard_golden_is_refused_for_a_dialect_whose_count_cannot_prove_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(case_runner, "_COUNTS_UNCHANGED_ROWS", frozenset({"postgres"}))
     with pytest.raises(CaseFailure, match="does not report an unchanged row"):
-        _assert_write_input_columns(_guard_case(stated_for_mariadb), "mariadb")
+        _assert_write_input_columns(_temporal_target_case("m-temporal-write-015"), "mariadb")
 
 
 class _CountingExecutor:

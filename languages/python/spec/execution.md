@@ -167,7 +167,10 @@ selected Entity. A replacement payload's key addresses nothing and is never
 written. A set-based write is one readless statement, so it takes no window, and
 over a versioned or temporal Entity it is refused at the call with a
 `WriteInstructionError` naming the keyed and conditional verbs that write such
-an Entity (`m-batch-write`).
+an Entity (`m-batch-write`). Every verb of the family returns an `int`, the
+affected-row count `m-batch-write` defines: the statement runs at the call,
+after the writes the transaction buffered before it, so its database errors
+raise there.
 
 The method names the authority. `amend`, `replace`, `delete`, and `terminate`
 take a source — a value a read of the writing transaction attempt published, a

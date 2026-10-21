@@ -5,7 +5,7 @@ given:
   fixtures: true
 when:
   scenario:
-    - uow: barrier
+    - uow: predicated
       objectQuery:
         target: parallax.compatibility.OrderItem
         predicate:
@@ -20,19 +20,19 @@ when:
           binds: [12]
       expectRows:
         - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }
-    - uow: barrier
+    - uow: predicated
       write:
         - mutation: delete
           entity: parallax.compatibility.OrderItem
           rows:
             - { id: 12 }
       databaseCalls: 1
-      note: buffered before the barrier, so it is delivered before it rather than after every insert
+      note: buffered before the predicate write, whose flush delivers it first rather than after every insert
       statements:
         - sql:
             postgres: delete from order_item where id = ?
           binds: [12]
-    - uow: barrier
+    - uow: predicated
       write:
         mutation: amend
         target:
@@ -44,12 +44,13 @@ when:
         assignments:
           - { attr: parallax.compatibility.OrderItem.sku, value: Z }
       databaseCalls: 1
-      note: the readless barrier; it matches item 11 alone, because item 12 is already deleted and item 13 is not yet inserted
+      expectAffectedRows: 1
+      note: the readless predicate write runs at its call, after the delete; it matches item 11 alone, because item 12 is already deleted and item 13 is not yet inserted
       statements:
         - sql:
             postgres: update order_item set sku = ? where quantity < ?
           binds: [Z, 3]
-    - uow: barrier
+    - uow: predicated
       write:
         - mutation: insert
           entity: parallax.compatibility.OrderItem
@@ -60,7 +61,7 @@ when:
           rows:
             - { id: 7, name: Barrier, sku: G-7, qty: 1, price: "1.00", active: true, orderedOn: "2024-09-01" }
       databaseCalls: 2
-      note: buffered after the barrier and delivered after it, parent Order before the line item that references it; the unit of work commits after this, its last step
+      note: buffered after the predicate write and delivered by the pre-commit flush, parent Order before the line item that references it; the unit of work commits after this, its last step
       statements:
         - sql:
             postgres: insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)

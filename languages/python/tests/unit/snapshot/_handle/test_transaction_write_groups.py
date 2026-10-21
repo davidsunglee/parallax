@@ -324,9 +324,9 @@ def test_inserts_of_distinct_objects_share_a_statement_where_their_members_agree
 @pytest.mark.parametrize(
     ("assigns", "statements"),
     [(True, ["insert", "update", "insert"]), (False, ["insert"])],
-    ids=["a-readless-barrier", "a-dropped-amendment"],
+    ids=["a-predicate-write", "a-dropped-amendment"],
 )
-def test_no_group_crosses_a_readless_barrier_and_a_dropped_amendment_is_none(
+def test_no_group_crosses_a_predicate_write_and_a_dropped_amendment_is_none(
     assigns: bool, statements: list[str]
 ) -> None:
     port = ScriptedAdapter(Transact(Write(times=len(statements))))

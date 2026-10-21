@@ -249,6 +249,35 @@ def test_run_rejects_non_string_rejected_rule() -> None:
     assert list(_validator().iter_errors(_valid_run(observations)))
 
 
+# --- per-step affected-row counts: stepAffectedRows ---------------------------
+
+
+def test_run_accepts_each_predicate_write_steps_returned_count() -> None:
+    observations = {
+        "databaseCalls": 2,
+        "stepAffectedRows": [
+            {"at": "/scenario/1", "affectedRows": 3},
+            {"at": "/scenario/2", "affectedRows": 0},
+        ],
+    }
+    assert list(_validator().iter_errors(_valid_run(observations))) == []
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"at": "/scenario/1"},
+        {"affectedRows": 1},
+        {"at": "/scenario/1", "affectedRows": -1},
+        {"at": "/scenario/1", "affectedRows": 1, "rows": []},
+    ],
+    ids=["no-count", "no-pointer", "a-negative-count", "an-extra-member"],
+)
+def test_run_rejects_a_malformed_step_count(entry: dict) -> None:
+    observations = {"databaseCalls": 1, "stepAffectedRows": [entry]}
+    assert list(_validator().iter_errors(_valid_run(observations)))
+
+
 def test_describe_accepts_case_tag_claims() -> None:
     errors = list(_validator().iter_errors(_valid_describe()))
     assert errors == []

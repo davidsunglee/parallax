@@ -55,7 +55,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.db_port import OrderedCall, ScriptedAdapter, WriteCall
-from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
 
 POSITIONS: Final = MODELS["position"]
 POSITION_META: Final = model_of(POSITIONS)
@@ -277,6 +277,7 @@ def run_plan(
         clock=FixedClock(T1),
         meta=meta,
         execute_write_steps=execute,
+        execute_counted_step=NO_COUNTED_STEPS,
         acquire_rows=NO_ROW_READS,
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,

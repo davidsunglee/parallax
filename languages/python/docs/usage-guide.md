@@ -446,7 +446,8 @@ Corpus case: `m-batch-write-005`
 ```python
 def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: TxnContext) -> list[Entity]:
-        tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
+        deleted = tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
+        assert deleted == 2
         return list(tx.find(Wallet.where(Wallet.balance < Decimal("200.00"))).results())
 
     return db.transact(fn)
@@ -459,11 +460,12 @@ Corpus case: `m-batch-write-006`
 ```python
 def wallet_predicate_amend_is_readless(db: ScopedDatabase) -> list[Entity]:
     def fn(tx: TxnContext) -> list[Entity]:
-        tx.amend_where(
+        amended = tx.amend_where(
             Wallet.where(Wallet.balance < Decimal("200.00")),
             Wallet.balance.set(Decimal("150.00")),
             Wallet.owner.set("Updated"),
         )
+        assert amended == 2
         return list(tx.find(Wallet.where(Wallet.owner == "Updated")).results())
 
     return db.transact(fn)

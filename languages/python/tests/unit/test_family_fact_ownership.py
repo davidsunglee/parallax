@@ -36,7 +36,6 @@ from parallax.core import (
     opt_lock,
     temporal_read,
 )
-from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -54,8 +53,6 @@ from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWriteInstruction,
-    PredicateSelection,
-    PredicateWriteInstruction,
     TransactionSettings,
     UnitOfWork,
     WritePlanningRequest,
@@ -96,6 +93,7 @@ from tests._support.db_port import (
 from tests._support.lowering_probes import lowered_steps
 from tests._support.model_capabilities import graph_construction_for
 from tests._support.planner_probes import (
+    NO_COUNTED_STEPS,
     NO_ROW_READS,
     TEST_ACTOR_IDENTITY,
     observed_buffer,
@@ -172,7 +170,7 @@ def _trace_declarations(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> li
 def _prepared_writes() -> list[OrderedWrite]:
     """Every non-temporal arm version settlement forks on: a versioned insert,
     observed updates and deletes of a standalone Entity and of an inherited
-    position, a collapsing unversioned run, and a readless predicate write."""
+    position, and a collapsing unversioned run."""
     fridge_update = KeyedWriteInstruction("amend", "Fridge", ({"id": 1, "name": "Chill"},))
     account_delete = KeyedWriteInstruction("delete", "Account", ({"id": 3},))
     fridge_key = object_key(fridge_update, _MODEL)
@@ -190,15 +188,6 @@ def _prepared_writes() -> list[OrderedWrite]:
                 account_delete,
                 KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("2.00")},)),
                 KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("2.00")},)),
-                PredicateWriteInstruction(
-                    "delete",
-                    PredicateSelection(
-                        "Wallet",
-                        predicate_algebra.Comparison(
-                            "eq", predicate_algebra.FieldSubject("Wallet.id"), 7
-                        ),
-                    ),
-                ),
             ],
             _MODEL,
             {
@@ -549,6 +538,7 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
         clock=FixedClock(_OPENED),
         meta=meta,
         execute_write_steps=_no_flush,
+        execute_counted_step=NO_COUNTED_STEPS,
         acquire_rows=NO_ROW_READS,
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,

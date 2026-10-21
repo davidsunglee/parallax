@@ -34,10 +34,11 @@ Columns transaction:
   object, over ``size / 2`` stored intervals each followed by a gap, so stored
   coverage spans replacement segments; the window is the whole transaction,
   including the coverage read and gap filling at flush;
-* ``destruction-merge`` — an insertion stored as ``size`` tagged rows, each
-  terminated in a barrier region of its own, authored in an order that differs
-  from Valid-Time order; the window is the reinsertion verb whose admission
-  depends on that destruction coverage;
+* ``destruction-composition`` — an insertion stored as ``size`` tagged rows,
+  each terminated by a pending termination of its own, authored in an order
+  that differs from Valid-Time order and composed into one pending write; the
+  window is the reinsertion verb whose admission judges that composition's
+  destroyed coverage;
 * ``removal-window`` — the same stored insertion, admitted over the pending
   removal of an earlier insertion from an earlier anchor, so the flush storing
   it moves the retained anchor, and then given a pending partial removal; the
@@ -138,7 +139,7 @@ type Flow = Literal["source-keyed", "target-patch", "target-replace", "read-eage
 type Interface = Literal["typed", "wire"]
 type Layout = Literal["columns", "document"]
 type Mode = Literal["preparation-inclusive", "reused-execution"]
-type Algorithm = Literal["replacement-gaps", "destruction-merge", "removal-window"]
+type Algorithm = Literal["replacement-gaps", "destruction-composition", "removal-window"]
 
 FLOWS: Final[tuple[Flow, ...]] = (
     "source-keyed",
@@ -152,7 +153,7 @@ LAYOUTS: Final[tuple[Layout, ...]] = ("columns", "document")
 MODES: Final[tuple[Mode, ...]] = ("preparation-inclusive", "reused-execution")
 ALGORITHMS: Final[tuple[Algorithm, ...]] = (
     "replacement-gaps",
-    "destruction-merge",
+    "destruction-composition",
     "removal-window",
 )
 SIZES: Final[tuple[int, ...]] = (8, 32, 128)
@@ -306,7 +307,7 @@ def expected_outcome(cell: Cell) -> Outcome:
         # The insertion is stored, then its split revises the stored row in
         # place and inserts the size - 1 rows after it.
         split = 2 + _inserts(size - 1)
-        if cell.algorithm == "destruction-merge":
+        if cell.algorithm == "destruction-composition":
             return Outcome(statements=split, reads=size // 2 + size, admitted=1)
         # The superseded insertion is stored and then terminated before the
         # split, and the first row's termination is flushed between windows.
@@ -371,11 +372,12 @@ _ALGORITHM_STAGES: Final[Mapping[Algorithm, str]] = {
         "coverage read over size/2 stored intervals with gaps, composition, gap filling, SQL "
         "lowering, bind adaptation and dump, and transact's return"
     ),
-    "destruction-merge": (
+    "destruction-composition": (
         "one tx.insert reinserting an object whose stored insertion spans size tagged rows, "
-        "each terminated in its own barrier region in an order differing from Valid-Time "
-        "order: the verb's repeated-insertion and removal checks over that destruction "
-        "coverage, and buffering"
+        "each terminated by its own pending termination in an order differing from "
+        "Valid-Time order, all composed into one pending write: the verb's "
+        "repeated-insertion and removal checks over that composition's destroyed coverage, "
+        "and buffering"
     ),
     "removal-window": (
         "four refused reinsertions of an object whose stored insertion spans size tagged rows "
@@ -860,21 +862,13 @@ class _Insertion:
         return refused
 
 
-def _barrier(tx: TxnContext, index: int) -> None:
-    """A readless predicate write, which keeps the writes after it in a later
-    barrier region."""
-    entity = cast("Any", lowering_support.PlainColumns)
-    tx.amend_where(entity.where(entity.id == 1), entity.title.set(f"barrier-{index}"))
-
-
 def _destruction(insertion: _Insertion, stopwatch: Stopwatch) -> Outcome:
     insertion.split()
     size = insertion.size
     order = [(index * _STRIDE) % size for index in range(size)]
     sources = [insertion.source(row) for row in order]
-    for index, (row, source) in enumerate(zip(order, sources, strict=True)):
+    for row, source in zip(order, sources, strict=True):
         insertion.terminate(row, source)
-        _barrier(insertion.tx, index)
     stopwatch.start()
     admitted = insertion.reinsert()
     stopwatch.stop()
@@ -892,7 +886,7 @@ def _removal(insertion: _Insertion, stopwatch: Stopwatch) -> Outcome:
 
 
 _ALGORITHM_RUNS: Final[Mapping[Algorithm, Callable[[_Insertion, Stopwatch], Outcome]]] = {
-    "destruction-merge": _destruction,
+    "destruction-composition": _destruction,
     "removal-window": _removal,
 }
 

@@ -30,7 +30,6 @@ from parallax.core._execution._unit_work.write_items import (
     AfterRemoval,
     CoalescedTemporalWrite,
     CoalescedWrite,
-    FollowingKeyedWrite,
     InsertionKeyedWrite,
     MutationPhase,
     ObjectClaimedBatch,
@@ -42,6 +41,7 @@ from parallax.core._execution._unit_work.write_items import (
     buffered_instruction,
 )
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
+from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
@@ -50,7 +50,9 @@ from parallax.core.write_plan.plan import (
     TemporalWriteOwnership,
     WritePlan,
 )
+from parallax.core.write_plan.planned_rows import entity_view, planned_assignments
 from parallax.core.write_plan.predecessor_rows import PredecessorRows
+from parallax.core.write_plan.steps import ANY_COUNT, UNVERSIONED, PlannedDelete, PlannedUpdate
 
 __all__ = [
     "WritePlanner",
@@ -92,10 +94,11 @@ class WritePlanner:
     """The model-scoped, stateless Write Planner (`m-unit-work`).
 
     Constructed once per accepted Metamodel with its strategy adapters already
-    wired; :meth:`finalize` plans a flush, and :meth:`bind_range` binds a
-    deferred range of a plan it finalized once that range's coverage is read.
-    No caller sequences coalescing, batching, ordering, temporal expansion,
-    observation validation, instant acquisition, or audit by hand.
+    wired; :meth:`finalize` plans a flush, :meth:`bind_range` binds a
+    deferred range of a plan it finalized once that range's coverage is read,
+    and :meth:`predicate_step` plans a predicate-selected write's one
+    statement. No caller sequences coalescing, batching, ordering, temporal
+    expansion, observation validation, instant acquisition, or audit by hand.
 
     The compiler it constructs here is its own, built over the same model and
     compiled facets and living exactly as long: a prepared Model Selection
@@ -228,6 +231,27 @@ class WritePlanner:
             payloads=self._payloads,
         )
 
+    def predicate_step(
+        self,
+        prepared: PreparedPredicateWrite,
+        /,
+        *,
+        actor_identity: ActorIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> PlannedUpdate | PlannedDelete:
+        """The one readless statement ``prepared`` executes as over every row
+        its selection matches, unversioned and expecting any count, an update
+        decorated once by the configured audit with ``actor_identity`` and
+        ``transaction_instant``.
+
+        It is planned alone, outside every buffered Write Plan: no buffered
+        write is ordered around it, and it publishes no completion."""
+        return _predicate_step(
+            prepared,
+            entity_view(self._families, prepared.selection.target),
+            AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled),
+        )
+
     def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity | None:
         """The Attribute carrying ``entity``'s optimistic version, or ``None``
         for an unversioned Entity."""
@@ -308,24 +332,18 @@ class WritePlanner:
         return result
 
     def _order(self, items: Sequence[CoalescedWrite]) -> list[MutationPhase]:
-        """``items`` as mutation phases in flush order: each readless predicate
-        write is a phase of its own where it was authored, and within each
-        region between them the inserts in ascending referential rank, then the
-        updates in authored order, then the deletes in descending rank are a
-        phase each, an empty one omitted. Both sorts are stable. Inserts that
-        depend on an earlier removal open a new region, as a barrier does, so
-        the removal precedes them while they still order with what follows
-        them."""
+        """``items`` as mutation phases in flush order: within each region the
+        inserts in ascending referential rank, then the updates in authored
+        order, then the deletes in descending rank are a phase each, an empty
+        one omitted. Both sorts are stable. Inserts that depend on an earlier
+        removal open a new region, so the removal precedes them while they
+        still order with what follows them."""
         phases: list[MutationPhase] = []
         inserts: list[tuple[int, OrderedWrite]] = []
         updates: list[OrderedWrite] = []
         deletes: list[tuple[int, OrderedWrite]] = []
 
         for item in items:
-            if isinstance(item, PreparedPredicateWrite):
-                _close_region(phases, inserts, updates, deletes)
-                phases.append((item,))
-                continue
             if isinstance(item, AfterRemoval):
                 # Everything authored before the removal-dependent insert
                 # executes first, the removal it depends on included; what is
@@ -357,6 +375,26 @@ class WritePlanner:
 
 
 _RANK = itemgetter(0)
+
+
+def _predicate_step(
+    instruction: PreparedPredicateWrite, view: InheritanceEntityView, audit: AuditDecoration
+) -> PlannedUpdate | PlannedDelete:
+    entity = instruction.selection.target
+    target = instruction.selection
+    if instruction.mutation == "delete":
+        return PlannedDelete(
+            entity=entity.identity, target=target, concurrency=UNVERSIONED, affected_rows=ANY_COUNT
+        )
+    return audit.decorate_update(
+        PlannedUpdate(
+            entity=entity.identity,
+            target=target,
+            assignments=planned_assignments(entity, view, instruction.row),
+            concurrency=UNVERSIONED,
+            affected_rows=ANY_COUNT,
+        )
+    )
 
 
 def _close_region(
@@ -500,12 +538,7 @@ def _without_noop_rows(
     narrower instruction.
     """
     if isinstance(
-        item,
-        CoalescedTemporalWrite
-        | PendingOpening
-        | AfterRemoval
-        | FollowingKeyedWrite
-        | ObjectClaimedBatch,
+        item, CoalescedTemporalWrite | PendingOpening | AfterRemoval | ObjectClaimedBatch
     ):
         return item
     if isinstance(item, TargetKeyedWrite) and isinstance(item.expectation, ExpectedVersion):
@@ -513,10 +546,7 @@ def _without_noop_rows(
         # version, which is the revision its caller asked for.
         return item
     instruction = buffered_instruction(item)
-    if (
-        not isinstance(instruction, PreparedKeyedWrite)
-        or instruction.mutation not in AMEND_MUTATIONS
-    ):
+    if instruction.mutation not in AMEND_MUTATIONS:
         return item
     entity = instruction.target
     if len(instruction.rows) > 1 and _is_temporal(temporal_facet, entity):
@@ -567,13 +597,10 @@ def _ordered_instruction(
     | ObjectClaimedBatch
     | InsertionKeyedWrite
     | TargetKeyedWrite
-    | FollowingKeyedWrite
     | PendingOpening,
 ) -> PreparedKeyedWrite:
     """The instruction ordering ranks ``item`` by: a pending opening's own
-    insert, and the write a barrier keeps after earlier ones."""
-    if isinstance(item, FollowingKeyedWrite):
-        return item.write.instruction
+    insert."""
     if isinstance(item, PendingOpening):
         return item.insert
     if isinstance(item, PreparedKeyedWrite):

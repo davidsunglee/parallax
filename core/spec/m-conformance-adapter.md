@@ -431,6 +431,7 @@ assert different things:
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `databaseCalls`, plus `stepRows` for the
   values their read steps and row-observing `mutate` steps published,
+  `stepAffectedRows` for the count each direct predicate-write step's verb returned,
   `errors` for any step or submission declaring
   `expectError`, `units` for the fate of each `uow` group, and `tableState` where
   the case states one; a state-graded scenario reports no emissions (see *Unit fates*,
@@ -600,8 +601,8 @@ omits it, so an existing `run` output (`databaseCalls` plus
 The optional **`units`** observation reports each `uow` group's fate as the run
 observed it, keyed by its label: `{ outcome, flushFailure? }`, `outcome` being
 `committed` or `rolledBack`, and `flushFailure` — for a group a flush failure ended —
-`{ at, entity, key, shortfall }`: where that flush ran (the step whose read flushed,
-or `commit`), the canonical Entity spelling and primary key the failure reported,
+`{ at, entity, key, shortfall }`: where that flush ran (the step whose read or
+predicate write flushed, or `commit`), the canonical Entity spelling and primary key the failure reported,
 and its Shortfall (`m-write-plan` *Affected Rows Policy*). It is compared against the
 case's `then.units` (`m-case-format` *Unit fates*), where a group the case states
 no fate for commits. What is reported is what the failure itself carries, never a
@@ -654,6 +655,23 @@ unanswered oracle rather than a pass.
 It is additive and optional in the same sense as `errors` /
 `stepGraphs`: a run reporting no such step omits it, and every existing `run`
 output stays valid unchanged.
+
+### Per-step affected-row counts (`stepAffectedRows`)
+
+A predicate-selected write's public verb executes at its call and returns a count
+(`m-batch-write`), which is that step's own observation. `stepAffectedRows` is the
+optional `observations` array carrying it — one `{ at, affectedRows }` entry per
+direct predicate-write scenario step, `at` the JSON Pointer naming the step and
+`affectedRows` the integer the verb returned — in step order, compared exactly
+against the step's `expectAffectedRows` (`m-case-format` *Predicate-selected write
+instruction*). What is reported is the verb's return value, never a count read off
+the execution lifecycle or summed over the statements of the step's Flush, which
+also delivers the writes buffered before it. A step stating the oracle whose entry
+is missing is an unanswered oracle rather than a pass, and an entry naming a step
+that states none is a mismatch.
+
+It is additive and optional in the same sense as `errors`: a run reporting no such
+step omits it, and every existing `run` output stays valid unchanged.
 
 ### Per-step graph observations (`stepGraphs`)
 

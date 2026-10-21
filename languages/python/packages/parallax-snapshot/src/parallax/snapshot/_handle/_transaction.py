@@ -52,13 +52,13 @@ class TxnContext:
     — :meth:`amend_where`, :meth:`replace_where`, and :meth:`delete_where` —
     writes every row a
     mutation-compatible Object Query selects in one readless statement over an
-    unversioned, non-temporal target, takes no window, and preparation refuses
-    every other target (ADR 0075). Every windowed verb selects its bounded form
-    with keyword-only ``until``, and a stated ``valid_from`` or ``until`` of
-    ``None`` is refused rather than read as omission. A reference used after its
-    attempt ended
-    raises ``EscapedTransactionError``: the attempt's lifetime fences every
-    verb.
+    unversioned, non-temporal target, executed at the call after everything
+    buffered before it, and answers how many rows that statement affected; it
+    takes no window, and preparation refuses every other target (ADR 0075).
+    Every windowed verb selects its bounded form with keyword-only ``until``,
+    and a stated ``valid_from`` or ``until`` of ``None`` is refused rather than
+    read as omission. A reference used after its attempt ended raises
+    ``EscapedTransactionError``: the attempt's lifetime fences every verb.
 
     :attr:`wire` is the Wire read AND write interface over this same transaction
     — a view, not a second lifecycle, so a Wire read participates exactly as
@@ -494,23 +494,29 @@ class TxnContext:
 
     def amend_where[E: EntityBase](
         self, query: ObjectQuery[E, Any], *assignments: AttributeAssignment[E]
-    ) -> None:
-        """Buffer an amendment of every row ``query`` selects, in one readless
-        statement: the members ``assignments`` names, every other member kept.
+    ) -> int:
+        """Amend every row ``query`` selects now, in one readless statement —
+        the members ``assignments`` names, every other member kept — and answer
+        how many rows it matched, unchanged ones included.
 
-        ``query`` carries nothing but its target and predicate
-        (``query-not-mutation-compatible`` otherwise), and ``assignments`` are
-        ``Attr.set(...)`` calls naming members of its exact target, each at
-        most once. Naming none is the empty amendment, judged and then dropped,
-        so no statement runs. A versioned or temporal target, which each
-        object's write must observe, is refused before anything else is judged
+        Every write buffered before it executes first, in the same flush, so the
+        statement sees them, and its errors are raised here; nothing about the
+        rows it reached is remembered. ``query`` carries nothing but its target
+        and predicate (``query-not-mutation-compatible`` otherwise), and
+        ``assignments`` are ``Attr.set(...)`` calls naming members of its exact
+        target, each at most once. Naming none is the empty amendment, judged
+        and then answered ``0``, so no statement runs and nothing buffered is
+        flushed. A versioned or temporal target, which each object's write must
+        observe, is refused before anything else is judged
         (``set-based-write-target-unsupported``)."""
-        self._attempt.predicate_write(TypedPredicateWriteAdapter(query, assignments), "amend")
+        return self._attempt.predicate_write(
+            TypedPredicateWriteAdapter(query, assignments), "amend"
+        )
 
-    def replace_where[E: EntityBase](self, query: ObjectQuery[E, Any], payload: E) -> None:
-        """Buffer a replacement of every row ``query`` selects, in one readless
-        statement, with ``payload``'s whole writable state, under
-        :meth:`amend_where`'s query and target rules.
+    def replace_where[E: EntityBase](self, query: ObjectQuery[E, Any], payload: E) -> int:
+        """Replace every row ``query`` selects now, in one readless statement,
+        with ``payload``'s whole writable state, under :meth:`amend_where`'s
+        query, target, timing, and count rules.
 
         ``payload`` is an instance of the queried Entity, used only as data, as
         :meth:`replace_if` uses it: whatever produced it is not consulted. Its
@@ -519,12 +525,13 @@ class TxnContext:
         collection, and an omitted required member is refused — and its key
         addresses nothing, since ``query`` selects the rows, so it is never
         written."""
-        self._attempt.predicate_write(TypedPredicateWriteAdapter(query, payload), "replace")
+        return self._attempt.predicate_write(TypedPredicateWriteAdapter(query, payload), "replace")
 
-    def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
-        """Buffer a deletion of every row ``query`` selects, in one readless
-        statement, under :meth:`amend_where`'s query and target rules."""
-        self._attempt.predicate_write(TypedPredicateWriteAdapter(query, ()), "delete")
+    def delete_where(self, query: ObjectQuery[Any, Any]) -> int:
+        """Delete every row ``query`` selects now, in one readless statement,
+        under :meth:`amend_where`'s query, target, and timing rules, and answer
+        how many rows it deleted."""
+        return self._attempt.predicate_write(TypedPredicateWriteAdapter(query, ()), "delete")
 
 
 def transaction_for(attempt: TxnAttempt) -> TxnContext:

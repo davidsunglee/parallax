@@ -25,6 +25,7 @@ from parallax.conformance._lanes.scenario import (
     run_group_step,
     run_standalone_find,
     scenario_group_step_indices,
+    step_affected_rows,
     step_query,
     step_rows,
 )
@@ -287,10 +288,11 @@ def run_interleaved_scenario_case(
 
     Reports a :class:`~parallax.conformance._mechanism.envelope.ScenarioRun`:
     the ordered emissions, total Database Calls, EVERY find step's `stepRows`
-    observation (grouped or ungrouped, in scenario step order), each group's
-    fate by label — committed, or rolled back by the conflict its flush
-    reported — and, where the case states `then.tableState`, the tables read
-    back once both groups have joined. Routed to explicitly by the
+    observation (grouped or ungrouped, in scenario step order), the count each
+    predicate-write step's verb returned, each group's fate by label —
+    committed, or rolled back by the conflict its flush reported — and, where
+    the case states `then.tableState`, the tables read back once both groups
+    have joined. Routed to explicitly by the
     run sweep (`test_run_sweep.py`) rather than through `run_scenario_case`/
     `adapter.run_case` — this shape's own peer requirement has no seat in the
     ordinary shape-dispatched entry points, the SAME reasoning the rounds
@@ -429,4 +431,14 @@ def run_interleaved_scenario_case(
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )
-    return ScenarioRun(emissions, database_calls, [], observed_rows, [], units, table_state)
+    affected = {**result_a.state.affected, **result_b.state.affected}
+    return ScenarioRun(
+        emissions,
+        database_calls,
+        [],
+        observed_rows,
+        [],
+        units,
+        table_state,
+        step_affected_rows(affected),
+    )

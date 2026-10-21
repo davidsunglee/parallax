@@ -24,6 +24,7 @@ when:
           - attr: parallax.compatibility.CollectionTwinItem.counts
             value: [5, 5]
       databaseCalls: 1
+      expectAffectedRows: 2
       statements:
         - sql:
             postgres: update collection_twin set payload = jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id < ?

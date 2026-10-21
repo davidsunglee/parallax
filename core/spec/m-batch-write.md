@@ -8,7 +8,8 @@
    canonical instruction is supplied by `m-case-format`.
 
 It owns only the set-based/readless vocabulary for the second family, including
-which targets that family can write at all. Versioning,
+which targets that family can write at all, when its statement runs, and the count
+its verb returns. Versioning,
 locking, conflict abort, and temporal chaining belong respectively to `m-opt-lock`,
 `m-read-lock`, and `m-temporal-write`. The canonical golden SQL is
 fixed by `m-sql`.
@@ -158,7 +159,7 @@ PostgreSQL's Repeatable Read the same race raises the snapshot conflict
 `replace` states a whole state rather than changes. Its `row` is completed as
 every replacement's is (`m-unit-work` *Source-authorized replacement*): an
 omitted nullable member is written null, an omitted collection is written
-empty, and an omitted required member is refused before anything is buffered
+empty, and an omitted required member is refused before anything executes
 (`write-required-attribute-missing` / `write-required-value-object-missing`).
 The completed state then lowers exactly as an `amend` assigning every one of its
 members does — the same Table Layout order, the same binds ahead of the
@@ -175,7 +176,7 @@ survives any amendment.
 `m-batch-write-051`–`-055` pin the replacement.
 
 A readless statement that **matches zero rows succeeds with zero affected rows —
-never an error.** Ordinary SQL set semantics already make `update … where
+never an error** — and its verb returns `0`. Ordinary SQL set semantics already make `update … where
 <predicate>` and `delete … where <predicate>` no-ops when nothing matches; a
 predicate-selected write that matches nothing simply wrote nothing. This is
 categorically distinct from the shortfall an
@@ -187,33 +188,56 @@ one a Stale Write (`m-unit-work`). Matching nothing is never either.
 
 An `amend` whose assignment list is empty is the **empty amendment**. It is
 judged exactly as any other predicate-selected write is — its target, including
-the refusal above, its predicate, and its inheritance family — and is then
-dropped before it is buffered: it emits no statement and makes no database call,
-and, being unbuffered, it is no ordering barrier. A keyed amendment expressing
-no member is empty in the same way (`m-unit-work`). `m-batch-write-050`
-witnesses it. A `replace` of an Entity whose only writable member is its key
-writes nothing either, since the key is never written, and is dropped the same
-way.
+the refusal above, its predicate, and its inheritance family, and the attempt's
+lifetime — and its verb then returns `0`: it emits no statement, makes no
+database call, opens no Flush, and leaves every buffered write pending. A keyed
+amendment expressing no member is empty in the same way (`m-unit-work`).
+`m-batch-write-050` witnesses it. A `replace` of an Entity whose only writable
+member is its key writes nothing either, since the key is never written, and
+returns `0` the same way. An amendment assigning a member the value it already
+stores is not empty.
 
-### A readless predicate write is an ordering barrier
+### A predicate-selected write executes at its call
 
-A readless predicate write **MUST** keep its authored position in the flush. It
-partitions the buffered sequence into **regions**: the writes before it and the
-writes after it. Batching and dependency ordering (`m-unit-work`) apply freely
-**within** each region — order there is unconstrained, so the collapse and
-foreign-key rules operate exactly as they otherwise would — but **no write may
-cross the barrier in either direction**.
+Unlike a keyed write, a readless predicate never reveals which rows it touches:
+its read/write set is whatever the predicate matches when its statement runs.
+Its statement therefore runs **at the call**, never from the buffer, and every
+write buffered before it reaches the database first. A nonempty
+predicate-selected write opens one Flush with the `predicate-write` trigger
+(`m-unit-work`, `m-execution-lifecycle`), which executes and completes every
+Write Group the unit of work buffered before it and then the predicate's one
+statement; with nothing buffered, that statement is the Flush's only work. It is
+never buffered, claims nothing, joins no Write Group, and is planned apart from
+every buffered write, so no write is ordered across it and its statement executes
+exactly once. The statements a transaction emits are therefore those of an
+authored order in which every write buffered before the predicate write precedes
+it and every later write follows it.
 
-Unlike a keyed write, a readless predicate never reveals which
-rows it touches: its read/write set is whatever the predicate matches at
-execution time. Moving another write across it could therefore change which rows
-it matches, and so change what the transaction wrote. Treating the whole buffer
-as globally reorderable could produce larger batches, but only by assuming a
-non-overlap no implementation can prove.
+The verb returns the **affected-row count** of that one statement as an integer:
 
-The barrier is **planning structure only**. It introduces no group, wrapper,
-flag, or identifier into the emitted result; the sole observable is that the
-emitted statement order never carries a write past a readless predicate write.
+- an `amend` or `replace` counts every row its predicate matched, including a
+  matched row whose stored values it left unchanged;
+- a `delete` counts the target rows it deleted;
+- a statement matching nothing counts `0`.
+
+The count is the outer statement's own result as the configured driver reports
+it (`m-db-port`, `m-dialect` *Unchanged-row count*), not a count of value
+transitions, of separately selected keys, or of rows a cascade or trigger
+changed. A Postgres `UPDATE` a `BEFORE UPDATE` trigger skips for a row writes and
+counts nothing for it. The key-selecting form's isolation differences above are
+unchanged: a normalized count does not normalize which rows a concurrent
+transaction leaves the selection to match.
+
+Preparation judges the write — its target, predicate, inheritance family,
+payload, and the attempt's lifetime — before anything buffered executes, and a
+refusal there executes nothing. A refusal planning the buffered writes fails the
+Flush and leaves them pending in a usable attempt, and a failure executing them
+dooms the attempt before the predicate's statement is built. Once they
+completed, a refusal building or auditing the predicate's own statement fails
+the Flush without dooming the attempt or returning the completed writes to the
+buffer, while a failure lowering, executing, or enforcing it dooms the attempt
+(`m-unit-work` *Abort*). A statement error therefore surfaces at the verb; a
+constraint the database defers still fails at commit.
 
 ## What the suite pins down
 
@@ -228,7 +252,7 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | `m-batch-write-009` | unversioned, non-temporal document-mapped `Traveler` update | one readless update replacing a top-level document-resident `many` whole at its path, every other key kept |
 | `m-batch-write-010` | unversioned, non-temporal document-mapped `NestedRoute` update | one readless update replacing a `one` whose authored content holds a nested `many`, its whole subtree included |
 | `m-batch-write-012`/`-013` | unversioned, non-temporal `CollectionTwinItem` update under each layout | one readless update assigning whole scalar collections and a `many` holding one, in Table Layout order |
-| `m-batch-write-050` | non-versioned `Wallet` update assigning nothing | judged, then dropped: no statement and no database call |
+| `m-batch-write-050` | non-versioned `Wallet` update assigning nothing | judged, then returns `0`: no statement and no database call |
 | `m-batch-write-051` | non-versioned `Wallet` replacement | one readless update; a reversed authored row still emits Table Layout order and assignment-before-predicate binds |
 | `m-batch-write-052` | non-versioned `Wallet` replacement stating a key | the key is accepted and never written |
 | `m-batch-write-053` | unversioned, non-temporal `OrderItem` replacement through a shared to-one join | the key-selecting form; the omitted nullable `shippedOn` written null |
@@ -237,6 +261,8 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | `m-batch-write-047` | versioned `Account` update | refused before its predicate and assignments: `set-based-write-target-unsupported` |
 | `m-batch-write-048` | Transaction-Time-Only `Balance` delete | refused: `set-based-write-target-unsupported` |
 | `m-batch-write-049` | Bitemporal `Position` replacement | refused: `set-based-write-target-unsupported` |
+| `m-batch-write-011` | unversioned, non-temporal `OrderItem` update after a buffered delete and before buffered inserts | runs at its call after the delete; the inserts follow at commit |
+| `m-execution-lifecycle-011` | non-versioned `Wallet` updates and deletes after a buffered insert | each nonempty write is one `predicate-write` Flush returning its count, an unchanged match and a match of nothing included; the empty one opens none |
 
 The two families share SQL terminology but not an observation contract: an `IN`
 list can collapse an already tracked set, whereas a predicate write starts from an

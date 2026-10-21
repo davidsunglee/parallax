@@ -47,6 +47,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.write_runner import (
+    ExecuteCountedStep,
     ExecuteWriteSteps,
     _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
     run_write_plan,
@@ -92,6 +93,7 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import PlannedStep
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
+    NO_COUNTED_STEPS,
     NO_ROW_READS,
     TEST_ACTOR_IDENTITY,
     retained_observation,
@@ -124,6 +126,7 @@ def _uow(
     *,
     rows: AcquireRows = NO_ROW_READS,
     concurrency: Concurrency = "optimistic",
+    counted: ExecuteCountedStep = NO_COUNTED_STEPS,
 ) -> UnitOfWork:
     return UnitOfWork(
         settings=TransactionSettings(concurrency=concurrency),
@@ -131,6 +134,7 @@ def _uow(
         clock=FixedClock(_FIXED),
         meta=meta,
         execute_write_steps=steps,
+        execute_counted_step=counted,
         acquire_rows=rows,
         planner=build_write_planner(meta),
         actor_identity=TEST_ACTOR_IDENTITY,
@@ -584,16 +588,16 @@ class RunnerTag(Entity, table="runner_tag", namespace="parallax.compatibility"):
     label: Attr[str] = attr(max_length=16)
 
 
-_BARRIERED: Final = model_of(DomainModel(WherePosition, RunnerTag))
-_BARRIERED_ENTITY: Final = entity_by_name(_BARRIERED, "WherePosition")
-assert _BARRIERED_ENTITY is not None
-_BARRIERED_POSITION: Final = _BARRIERED_ENTITY
+_PREDICATED: Final = model_of(DomainModel(WherePosition, RunnerTag))
+_PREDICATED_ENTITY: Final = entity_by_name(_PREDICATED, "WherePosition")
+assert _PREDICATED_ENTITY is not None
+_PREDICATED_POSITION: Final = _PREDICATED_ENTITY
 _T0: Final = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
 _FEB, _AUG = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (2, 8))
 
 
-def _barrier() -> PreparedPredicateWrite:
-    barrier = prepare_wire_write(
+def _tag_predicate_write() -> PreparedPredicateWrite:
+    prepared = prepare_wire_write(
         PredicateWriteInstruction(
             "amend",
             PredicateSelection(
@@ -604,19 +608,17 @@ def _barrier() -> PreparedPredicateWrite:
             ),
             assignments=(WriteAssignment("RunnerTag.label", "q"),),
         ),
-        _BARRIERED,
+        _PREDICATED,
     )
-    assert isinstance(barrier, PreparedPredicateWrite)
-    return barrier
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return prepared
 
 
-def test_a_write_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_writes_left() -> (
-    None
-):
+def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_left() -> None:
     store = SimulatedTemporalStore()
     store.seed_fixtures(
-        _BARRIERED,
-        _BARRIERED_POSITION,
+        _PREDICATED,
+        _PREDICATED_POSITION,
         [
             {
                 "id": 1,
@@ -629,20 +631,18 @@ def test_a_write_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_w
             }
         ],
     )
-    observation = store.predecessor_for(_BARRIERED, _BARRIERED_POSITION, {"id": 1})
+    observation = store.predecessor_for(_PREDICATED, _PREDICATED_POSITION, {"id": 1})
     assert observation is not None
     simulated = SimulatedWriteSteps(
-        build_write_planner(_BARRIERED).payloads, _BARRIERED, POSTGRES, store=store
+        build_write_planner(_PREDICATED).payloads, _PREDICATED, POSTGRES, store=store
     )
-    seen: list[tuple[int, list[tuple[object, ...]]]] = []
-
-    def watch(request: RowRequest) -> None:
-        seen.append((len(simulated.statements), _stored(store, _BARRIERED, _BARRIERED_POSITION, 1)))
+    seen: list[RowRequest] = []
 
     uow = _uow(
-        _BARRIERED,
+        _PREDICATED,
         simulated,
-        rows=_Watched(store.acquisition(_BARRIERED), watch),
+        rows=_Watched(store.acquisition(_PREDICATED), seen.append),
+        counted=simulated.counted,
     )
     amendment = prepare_wire_write(
         KeyedWriteInstruction(
@@ -652,7 +652,7 @@ def test_a_write_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_w
             valid_from=_FEB,
             until=_APR,
         ),
-        _BARRIERED,
+        _PREDICATED,
     )
     assert isinstance(amendment, PreparedKeyedWrite)
     later = prepare_wire_write(
@@ -663,26 +663,25 @@ def test_a_write_kept_behind_a_barrier_binds_on_the_rows_and_ownership_earlier_w
             valid_from=_JUN,
             until=_AUG,
         ),
-        _BARRIERED,
+        _PREDICATED,
     )
     assert isinstance(later, PreparedKeyedWrite)
-    observed = uow.retain(retained_observation(amendment, _BARRIERED, observation))
+    observed = uow.retain(retained_observation(amendment, _PREDICATED, observation))
     with store.transaction(rollback=False):
         uow.buffer(buffered_write(amendment, observed))
-        uow.buffer_predicate(_barrier())
-        # A later write of the same source, kept behind the barrier, continues
-        # through what the earlier write left of the state they observed.
+        # The predicate write executes the earlier amendment in its own flush.
+        uow.execute_predicate(_tag_predicate_write())
+        executed = len(simulated.statements)
+        # A later write of the same source continues through what the earlier
+        # write left of the state they observed.
         uow.buffer(buffered_write(later, observed))
         uow.flush(trigger="pre_commit")
     hundred, changed = Decimal("100.00"), Decimal("175.00")
-    # The kept-back write read its coverage once the earlier write had
-    # executed, and found the row that write opened.
-    ((executed, stored),) = seen
-    assert executed > 0
-    assert (_APR, INFINITY, _FIXED, "A", hundred) in stored
-    # That row is the attempt's own, so it is revised rather than closed.
+    # The later write reads nothing: the attempt holds the row the earlier
+    # write opened, and revises it rather than closing it.
+    assert seen == []
     assert "close" not in statement_kinds(simulated.statements[executed:])
-    assert _stored(store, _BARRIERED, _BARRIERED_POSITION, 1) == [
+    assert _stored(store, _PREDICATED, _PREDICATED_POSITION, 1) == [
         (_JAN, _FEB, _FIXED, "A", hundred),
         (_FEB, _APR, _FIXED, "O", hundred),
         (_APR, _JUN, _FIXED, "A", hundred),

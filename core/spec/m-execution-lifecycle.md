@@ -209,12 +209,18 @@ FlushStarted(trigger)
 FlushFinished(FlushCompleted | FlushFailed(failure))
 ```
 
-`trigger` is `read-dependency` or `pre-commit`. A Flush exists only for a
-nonempty unit-of-work buffer and starts before planning. It spans planning,
-lowering, every Database Call, and affected-row enforcement. It completes even
-when planning reduces the flush to zero DML. An empty read dependency or
-pre-commit boundary emits no Flush. A dependency Flush and the Read it
-enables are siblings in that order under their current Transaction Attempt.
+`trigger` is `read-dependency`, `predicate-write`, or `pre-commit`
+(`m-unit-work`). A Flush exists only for a nonempty unit-of-work buffer, or for
+a nonempty predicate-selected write, and starts before planning. It spans
+planning, lowering, every Database Call, and affected-row enforcement. It
+completes even when planning reduces the flush to zero DML. An empty read
+dependency or pre-commit boundary emits no Flush, and neither does an empty
+predicate-selected write. A dependency Flush and the Read it enables are
+siblings in that order under their current Transaction Attempt. A
+`predicate-write` Flush holds the Database Calls of the writes buffered before
+the predicate write, then the predicate write's own one call; no activity of its
+own brackets that call or any Write Group, and the count the verb returns is
+that call's own result rather than anything this stream records.
 
 The database-call transitions are:
 
@@ -372,7 +378,7 @@ attempt with no second Started transition.
 | `retryEligible` | classifier verdict under the effective policy, independent of remaining budget |
 
 `callback` includes the callback, joined invocations, reads, and
-read-dependency Flushes. `pre-commit` is the final automatic nonempty Flush
+read-dependency and predicate-write Flushes. `pre-commit` is the final automatic nonempty Flush
 after the callback returns. `commit` is the durability call.
 
 The transaction topology is:
@@ -695,7 +701,7 @@ write. The adapter observation uses the identical shape and indexes its own
 emissions. The shape is a case assertion format, not a public serialization
 contract.
 
-This module owns ten cases:
+This module owns eleven cases:
 
 | Case | Observable distinction |
 |---|---|
@@ -709,6 +715,7 @@ This module owns ten cases:
 | isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin, acquires a connection, finishes `beginFailed` `direct` with no callback and no retry, and releases what it took; the invocation finishes failed caused by it |
 | acquisition failure | the attempt's Acquisition grants nothing, carries the partial cleanup it ran and is followed by no Release, and the attempt finishes `beginFailed` caused by it |
 | cleanup after commit | a Release reporting an unconfirmed release leaves the attempt committed and the invocation committed |
+| predicate write | each nonempty predicate-selected write is one `predicate-write` Flush holding the writes buffered before it and then its own call, a matching-nothing one included; an empty one emits no Flush |
 
 Every Started transition of an adoption-owning activity in those cases — a
 standalone Read, a standalone Stream, and every Transaction Attempt —

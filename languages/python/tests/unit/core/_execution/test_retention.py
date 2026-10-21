@@ -66,7 +66,7 @@ from parallax.core.write_plan import (
     object_state_key_from_observation,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
-from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._judged_evidence_support import judged_evidence
 from tests.unit._prepared_read_support import bound_read
@@ -139,6 +139,7 @@ def _unit_of_work(model: AcceptedMetamodel) -> UnitOfWork:
         clock=FixedClock(_FIXED),
         meta=model,
         execute_write_steps=SimulatedWriteSteps(planner.payloads, model, POSTGRES),
+        execute_counted_step=NO_COUNTED_STEPS,
         acquire_rows=NO_ROW_READS,
         planner=planner,
         actor_identity=TEST_ACTOR_IDENTITY,

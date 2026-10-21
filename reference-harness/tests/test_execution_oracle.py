@@ -1490,7 +1490,7 @@ def test_an_envelope_reporting_no_lifecycle_has_nothing_to_walk() -> None:
 
 
 def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
-    """Every case authoring the oracle, named: the ten `m-execution-lifecycle`
+    """Every case authoring the oracle, named: the eleven `m-execution-lifecycle`
     cases, the one optimistic-lock success whose resolving read makes it the
     corpus witness for a Database Call that names no golden statement, the
     auto-retry cases whose streams are the only place one requested Isolation
@@ -1527,6 +1527,7 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-execution-lifecycle-008-isolation-setup-failure-fails-the-attempt.yaml",
         "m-execution-lifecycle-009-acquisition-failure-fails-the-attempt.yaml",
         "m-execution-lifecycle-010-cleanup-after-commit-preserves-the-outcome.yaml",
+        "m-execution-lifecycle-011-a-predicate-write-flushes-what-its-unit-buffered.yaml",
         "m-opt-lock-006-success.yaml",
         "m-read-delivery-001-a-whole-result-read-delivers-every-selected-row-in-one-read.yaml",
         "m-unit-work-035-a-join-may-not-renegotiate-the-isolation-level.yaml",

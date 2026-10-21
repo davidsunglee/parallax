@@ -97,7 +97,7 @@ from parallax.core.write_plan.steps import (
 from parallax.descriptor._records import Metamodel
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
-from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._judged_evidence_support import judged_evidence
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
@@ -928,6 +928,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
             clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
             meta=model,
             execute_write_steps=_no_flush,
+            execute_counted_step=NO_COUNTED_STEPS,
             acquire_rows=NO_ROW_READS,
             planner=build_write_planner(model),
             actor_identity=TEST_ACTOR_IDENTITY,
@@ -971,6 +972,7 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
             clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
             meta=model,
             execute_write_steps=_no_flush,
+            execute_counted_step=NO_COUNTED_STEPS,
             acquire_rows=NO_ROW_READS,
             planner=build_write_planner(model),
             actor_identity=TEST_ACTOR_IDENTITY,

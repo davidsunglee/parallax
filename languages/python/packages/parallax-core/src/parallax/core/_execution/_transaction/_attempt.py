@@ -92,7 +92,13 @@ from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
 from parallax.core.write_plan.payload import PatchedDocument
-from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
+from parallax.core.write_plan.steps import (
+    PlannedDelete,
+    PlannedStep,
+    PlannedTemporalRevision,
+    PlannedUpdate,
+    WriteRow,
+)
 
 __all__ = [
     "PredicateWriteAdapter",
@@ -469,8 +475,9 @@ class TxnAttempt(_TxnAttemptBase):
         self._options = options
         # One flush is ONE Flush activity however many statements its plan
         # lowers to. The unit of work opens it before planning and executes
-        # every Write Group of the plan inside it, so each group's steps run
-        # under the activity its flush opened; a flush never nests.
+        # every Write Group of the plan inside it, and a predicate-selected
+        # write's own statement after them, so each step runs under the
+        # activity its flush opened; a flush never nests.
         self._flush: FlushActivity = INERT
         self._uow = UnitOfWork(
             settings=TransactionSettings(
@@ -481,6 +488,7 @@ class TxnAttempt(_TxnAttemptBase):
             clock=clock,
             meta=write.model.meta,
             execute_write_steps=self._execute_write_steps,
+            execute_counted_step=self._execute_counted_step,
             flush_opening=self._open_flush,
             acquire_rows=self._acquire_rows,
             # The adopted selection's Write Planner: retained by this unit of
@@ -564,17 +572,19 @@ class TxnAttempt(_TxnAttemptBase):
 
     def predicate_write(
         self, adapter: PredicateWriteAdapter, mutation: PredicateMutation, /
-    ) -> None:
-        """Run one predicate-selected write in its ingress order, then buffer it
-        readless.
+    ) -> int:
+        """Run one predicate-selected write in its ingress order, then execute
+        it readless, answering the affected-row count its statement reported.
 
         Re-entry is refused first, and only then is ``adapter`` asked to
         prepare the write under this attempt's write projection: the target's
         kind, the predicate, the family, and the payload are preparation's
-        to judge.
+        to judge. Only a prepared write executes, together with what is
+        buffered before it
+        (:meth:`~parallax.core._execution._unit_work.uow.UnitOfWork.execute_predicate`).
         """
         refuse_reentry(self._lifecycle)
-        self._uow.buffer_predicate(adapter.prepare(self._write, mutation))
+        return self._uow.execute_predicate(adapter.prepare(self._write, mutation))
 
     def target_write(
         self,
@@ -746,6 +756,11 @@ class TxnAttempt(_TxnAttemptBase):
         flush = self._activity.flush(trigger)
         self._flush = flush
         return flush
+
+    def _execute_counted_step(self, step: PlannedUpdate | PlannedDelete, /) -> int:
+        """Execute ``step`` as one call of the current flush's Flush activity,
+        answering its affected-row count."""
+        return self._step_executor.execute_with_count(step, flush=self._flush)
 
     def _execute_write_steps(
         self,

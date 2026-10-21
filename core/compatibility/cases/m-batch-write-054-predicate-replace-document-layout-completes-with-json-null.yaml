@@ -38,6 +38,7 @@ when:
           displayName: Dee
           score: 13
       databaseCalls: 1
+      expectAffectedRows: 1
       statements:
         - sql:
             postgres: update traveler set payload = jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?

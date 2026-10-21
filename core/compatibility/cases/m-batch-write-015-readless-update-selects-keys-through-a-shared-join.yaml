@@ -19,6 +19,7 @@ when:
         assignments:
           - { attr: parallax.compatibility.OrderItem.sku, value: Z }
       databaseCalls: 1
+      expectAffectedRows: 3
       statements:
         - sql:
             postgres: update order_item set sku = ? where id in (select t0.id from order_item t0 left join orders t1 on t1.id = t0.order_id where not (not t1.id is null and t1.name = ?))

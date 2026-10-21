@@ -1,0 +1,175 @@
+# Predicate write (m-execution-lifecycle, m-batch-write): each nonempty
+# predicate-selected write runs at its call in ONE Flush carrying the
+# `predicate-write` trigger, which first delivers what its unit of work buffered
+# and then the predicate's own statement, and the verb returns that statement's
+# count. An update counts every row it matched, one it left unchanged included;
+# a statement matching nothing counts zero; and an empty amendment runs no
+# statement and opens no Flush.
+model: models/wallet.yaml
+tags: [m-execution-lifecycle, m-batch-write, m-unit-work, m-dialect, predicate-write, readless, flush, scenario, slice-snapshot-1]
+shape: scenario
+given:
+  fixtures: true
+when:
+  scenario:
+    - uow: counted
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.Wallet
+          rows:
+            - { id: 4, owner: Turing, balance: "50.00" }
+      databaseCalls: 1
+      note: buffer an insert; nothing reads it back, so nothing flushes yet
+      statements:
+        - sql:
+            postgres: insert into wallet(id, owner, balance) values (?, ?, ?)
+            mariadb: insert into wallet(id, owner, balance) values (?, ?, ?)
+          binds: [4, Turing, "50.00"]
+    - uow: counted
+      write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.Wallet
+          predicate:
+            lessThan:
+              path: parallax.compatibility.Wallet.balance
+              value: "200.00"
+        assignments:
+          - { attr: parallax.compatibility.Wallet.owner, value: Ada }
+      databaseCalls: 1
+      expectAffectedRows: 3
+      note: its Flush delivers the buffered insert first, so the update matches wallets 1, 3, and 4; wallet 1 already belongs to Ada and still counts
+      statements:
+        - sql:
+            postgres: update wallet set owner = ? where balance < ?
+            mariadb: update wallet set owner = ? where balance < ?
+          binds: [Ada, "200.00"]
+    - uow: counted
+      write:
+        mutation: delete
+        target:
+          entity: parallax.compatibility.Wallet
+          predicate:
+            lessThan:
+              path: parallax.compatibility.Wallet.balance
+              value: "-1.00"
+      databaseCalls: 1
+      expectAffectedRows: 0
+      note: a Flush of its own holding only its statement, which matches nothing
+      statements:
+        - sql:
+            postgres: delete from wallet where balance < ?
+            mariadb: delete from wallet where balance < ?
+          binds: ["-1.00"]
+    - uow: counted
+      write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.Wallet
+          predicate:
+            lessThan:
+              path: parallax.compatibility.Wallet.balance
+              value: "200.00"
+        assignments: []
+      databaseCalls: 0
+      expectAffectedRows: 0
+      note: the empty amendment runs no statement and opens no Flush; the group commits after this, its last step
+then:
+  databaseCalls: 3
+  tableState:
+    wallet:
+      - { id: 1, owner: Ada, balance: "100.00" }
+      - { id: 2, owner: Linus, balance: "250.00" }
+      - { id: 3, owner: Ada, balance: "10.00" }
+      - { id: 4, owner: Ada, balance: "50.00" }
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              accessMode: read-write
+              concurrency: optimistic
+              retries: 10
+              isolation: read-committed
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {edition: wallet}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: {}
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            flushStarted: { trigger: predicate-write }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted:
+              target: parallax.compatibility.Wallet
+              kind: write
+              statement: 0
+          - sequence: 7
+            activity: 5
+            parent: 4
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 8
+            activity: 6
+            parent: 4
+            databaseCallStarted:
+              target: parallax.compatibility.Wallet
+              kind: write
+              statement: 1
+          - sequence: 9
+            activity: 6
+            parent: 4
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 3 }
+          - sequence: 10
+            activity: 4
+            parent: 2
+            flushFinished: { outcome: completed }
+          - sequence: 11
+            activity: 7
+            parent: 2
+            flushStarted: { trigger: predicate-write }
+          - sequence: 12
+            activity: 8
+            parent: 7
+            databaseCallStarted:
+              target: parallax.compatibility.Wallet
+              kind: write
+              statement: 2
+          - sequence: 13
+            activity: 8
+            parent: 7
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 0 }
+          - sequence: 14
+            activity: 7
+            parent: 2
+            flushFinished: { outcome: completed }
+          - sequence: 15
+            activity: 9
+            parent: 2
+            releaseStarted: {}
+          - sequence: 16
+            activity: 9
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 17
+            activity: 2
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 18
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }

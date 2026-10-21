@@ -81,6 +81,7 @@ def _uow(
         clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
         meta=meta,
         execute_write_steps=simulated if steps is None else steps,
+        execute_counted_step=simulated.counted,
         acquire_rows=HeldRows(meta),
         planner=build_write_planner(meta),
         actor_identity=TEST_ACTOR_IDENTITY,
@@ -336,8 +337,7 @@ def test_a_readless_write_neither_ends_nor_stales_a_source() -> None:
         _PERSON,
     )
     assert isinstance(predicate, PreparedPredicateWrite)
-    uow.buffer_predicate(predicate)
-    _flush(uow)
+    uow.execute_predicate(predicate)
     later = _published(uow, _person(1), read_at=read_at)
     _write(uow, _PERSON, source, "amend", name="Source")
     _write(uow, _PERSON, later, "amend", name="Later")

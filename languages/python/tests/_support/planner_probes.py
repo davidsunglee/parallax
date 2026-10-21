@@ -13,8 +13,6 @@ from parallax.core._execution._unit_work.acquisition import AcquireRows, RowCons
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
-    PreparedPredicateWrite,
-    PreparedWrite,
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.retain import (
@@ -29,11 +27,11 @@ from parallax.core._execution._unit_work.write_items import (
     OrderedWrite,
     TargetKeyedWrite,
 )
+from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     AdmittedWrite,
     KeyedWriteInstruction,
-    PredicateWriteInstruction,
     SubjectActor,
     buffered_write,
     object_key,
@@ -41,9 +39,10 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import ObjectKey, WriteObservation, WritePlan
 from parallax.core.write_plan.keys import object_state_key_from_observation
 from parallax.core.write_plan.plan import SettledWrite
-from parallax.core.write_plan.steps import PlannedStep
+from parallax.core.write_plan.steps import PlannedDelete, PlannedStep, PlannedUpdate
 
 __all__ = [
+    "NO_COUNTED_STEPS",
     "NO_ROW_READS",
     "TEST_ACTOR_IDENTITY",
     "admitted_writes",
@@ -75,6 +74,17 @@ class _NoRowReads:
 NO_ROW_READS: Final[AcquireRows] = _NoRowReads()
 
 
+class _NoCountedSteps:
+    """A counted step execution for a unit of work running no
+    predicate-selected write: any asked of it fails the suite."""
+
+    def __call__(self, step: PlannedUpdate | PlannedDelete, /) -> int:
+        raise AssertionError(f"no predicate-selected write expected, but {step!r} executed")
+
+
+NO_COUNTED_STEPS: Final[ExecuteCountedStep] = _NoCountedSteps()
+
+
 def object_source(
     target: ObjectKey, participation: ParticipationToken | None = None
 ) -> ReadEvidence:
@@ -91,9 +101,7 @@ def object_source(
 
 
 def observed_buffer(
-    buffer: Sequence[
-        AdmittedWrite | KeyedWriteInstruction | PredicateWriteInstruction | PreparedPredicateWrite
-    ],
+    buffer: Sequence[AdmittedWrite | KeyedWriteInstruction],
     model: Metamodel,
     observations: Mapping[ObjectKey, WriteObservation] | None,
 ) -> list[OrderedWrite]:
@@ -129,14 +137,12 @@ def observed_buffer(
 
 
 def observed_write(
-    instruction: PreparedWrite, model: Metamodel, observation: WriteObservation | None
+    instruction: PreparedKeyedWrite, model: Metamodel, observation: WriteObservation | None
 ) -> OrderedWrite:
     """``instruction`` buffered against ``observation``, as the one write a
-    buffer holds; a predicate write carries none."""
-    if isinstance(instruction, PreparedPredicateWrite):
-        assert observation is None  # a readless predicate write observes nothing
-        item: AdmittedWrite = instruction
-    elif observation is None:
+    buffer holds."""
+    item: AdmittedWrite
+    if observation is None:
         item = instruction
     else:
         item = buffered_write(instruction, retained_observation(instruction, model, observation))
@@ -185,18 +191,10 @@ def _settled(item: CoalescedWrite) -> OrderedWrite:
     return item
 
 
-def _prepared_item(
-    item: AdmittedWrite
-    | KeyedWriteInstruction
-    | PredicateWriteInstruction
-    | PreparedPredicateWrite,
-    model: Metamodel,
-) -> AdmittedWrite:
-    """``item`` as a unit of work buffers it: an authored keyed or predicate
-    write prepared."""
+def _prepared_item(item: AdmittedWrite | KeyedWriteInstruction, model: Metamodel) -> AdmittedWrite:
+    """``item`` as a unit of work buffers it: an authored keyed write
+    prepared."""
     if isinstance(item, KeyedWriteInstruction):
-        return prepare_typed_write(item, model)
-    if isinstance(item, PredicateWriteInstruction):
         return prepare_typed_write(item, model)
     return item
 
