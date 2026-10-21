@@ -39,7 +39,11 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata
-from parallax.core.unit_work import KeyedWriteInstruction, WriteRejectedError
+from parallax.core.unit_work import (
+    InstructionRejectedError,
+    KeyedWriteInstruction,
+    WriteRejectedError,
+)
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.case_corpus import case as corpus_case
@@ -721,7 +725,7 @@ def test_idiomatic_predicate_write_rejects_the_corpus_rule(case_id: str) -> None
     expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
     port = _KeyedSeedPort()
     db = own_root(Database.connect(port, MODELS[model])).using_database_login()
-    with raises_contextualized(instructions.InstructionRejectedError) as exc_info:
+    with raises_contextualized(InstructionRejectedError) as exc_info:
         db.transact(write)
     assert exc_info.value.rule == expected_rule
     assert port.statements() == []

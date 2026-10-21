@@ -123,3 +123,11 @@ def test_exported_closed_contributor_algebras_have_expected_variants(
     alias = getattr(import_module(defining_module), name)
     assert isinstance(alias, TypeAliasType)
     assert {variant.__name__ for variant in get_args(alias.__value__)} == set(variants)
+
+
+def test_unit_work_exports_the_classified_instruction_refusal() -> None:
+    unit_work = import_module("parallax.core.unit_work")
+    assert {"InstructionRejectedError", "WriteInstructionError"} <= set(
+        _public_api("parallax.core.unit_work")
+    )
+    assert issubclass(unit_work.InstructionRejectedError, unit_work.WriteInstructionError)
