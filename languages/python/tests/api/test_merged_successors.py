@@ -363,13 +363,13 @@ def test_a_source_continues_from_its_pin_however_its_rows_merged(
     ]
 
 
-def _barrier(tx: TxnContext) -> None:
+def _predicate_write(tx: TxnContext) -> None:
     tx.amend_where(Tag.where(Tag.id == 1), Tag.label.set("q"))
 
 
 @_SPAN_AXES
 @_STRATEGIES
-def test_a_write_admitted_before_a_barrier_reaches_the_merged_row_through_its_own_original(
+def test_a_write_after_a_predicate_flush_reaches_the_merged_row_through_its_own_original(
     profile_run: Any, entity: type[Any], concurrency: _Concurrency
 ) -> None:
     db = _seeded(profile_run, entity, _TA)
@@ -377,10 +377,10 @@ def test_a_write_admitted_before_a_barrier_reaches_the_merged_row_through_its_ow
     def fn(tx: TxnContext) -> None:
         early, may = _find(tx, entity, _FEB), _find(tx, entity, _MAY)
         tx.amend(early.edit(amount=150), until=_JUN)
-        _barrier(tx)
-        # Admitted on the second original before anything flushed: the merged
-        # row holds May in the part that original contributed, so its own
-        # proof carries the write there.
+        _predicate_write(tx)  # flushes the February amendment
+        # The flushed amendment rewrote the state the May original observed; that
+        # original continues through the merged row in the part it contributed,
+        # so its own proof carries the write there.
         tx.amend(may.edit(label="z"), until=_JUN)
 
     db.transact(fn, concurrency=concurrency)

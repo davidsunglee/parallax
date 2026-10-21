@@ -108,8 +108,8 @@ is no size-based, periodic, or caller-invoked further trigger, which is what
 lets an observer state which of the three produced a flush instead of guessing
 from position.
 
-The second trigger is named for WHEN it runs rather than for what it does,
-because "finalization" already names the planner stage every flush of either
+``pre_commit`` is named for WHEN it runs rather than for what it does,
+because "finalization" already names the planner stage every flush of any
 trigger goes through.
 """
 
