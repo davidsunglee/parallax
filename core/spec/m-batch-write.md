@@ -136,6 +136,12 @@ Predicate binds come after those assignment binds. `delete` is exactly:
 delete from <table> where <predicate>
 ```
 
+A `true` predicate selects every row of the target, exactly as it does in a read
+(`m-predicate`), and needs no further opt-in: the statement then carries no
+`where` clause at all — `update <table> set <column> = ?, …` or `delete from
+<table>` — never `where true`. The target refusal above still applies first, so
+only an unversioned, non-temporal target is ever written whole.
+
 Where a demand of the predicate reads a shared to-one join (`m-sql` *Shared
 to-one joins*), the `where` instead tests the membership of the target's physical
 primary key in a selection of the rows the predicate matches, `<key> in (select
@@ -252,6 +258,7 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | `m-batch-write-009` | unversioned, non-temporal document-mapped `Traveler` update | one readless update replacing a top-level document-resident `many` whole at its path, every other key kept |
 | `m-batch-write-010` | unversioned, non-temporal document-mapped `NestedRoute` update | one readless update replacing a `one` whose authored content holds a nested `many`, its whole subtree included |
 | `m-batch-write-012`/`-013` | unversioned, non-temporal `CollectionTwinItem` update under each layout | one readless update assigning whole scalar collections and a `many` holding one, in Table Layout order |
+| `m-batch-write-056`–`-061` | unversioned, non-temporal `LayoutTwinItem` amendment, replacement, and delete under each layout, selected by `true` | one readless statement with no `where` clause, counting every row |
 | `m-batch-write-050` | non-versioned `Wallet` update assigning nothing | judged, then returns `0`: no statement and no database call |
 | `m-batch-write-051` | non-versioned `Wallet` replacement | one readless update; a reversed authored row still emits Table Layout order and assignment-before-predicate binds |
 | `m-batch-write-052` | non-versioned `Wallet` replacement stating a key | the key is accepted and never written |

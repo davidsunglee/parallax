@@ -372,7 +372,7 @@ def _lower_insert(
 def _lower_update(
     step: PlannedUpdate, payload: AssignmentPayload, meta: Metamodel, dialect: Dialect
 ) -> LoweredStatement:
-    """`update <table> set <assigned columns> = ?, … where <target>[ and <gate>]`.
+    """`update <table> set <assigned columns> = ?, …[ where <target>[ and <gate>]]`.
 
     The assigned columns follow the Table Layout's slot order, with one
     exception: the optimistic-lock version renders LAST, after every other
@@ -390,7 +390,7 @@ def _lower_update(
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _gate(ctx, view, step.concurrency, meta, dialect)
     return ctx.finish(
-        f"update {view.layout.table.name} set {assignment_sql} where {where_sql}{gate_sql}"
+        f"update {view.layout.table.name} set {assignment_sql}{_where(where_sql, gate_sql)}"
     )
 
 
@@ -417,7 +417,7 @@ def _lower_milestone_update(
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
     return ctx.finish(
-        f"update {view.layout.table.name} set {assignment_sql} where {where_sql}{gate_sql}"
+        f"update {view.layout.table.name} set {assignment_sql}{_where(where_sql, gate_sql)}"
     )
 
 
@@ -430,7 +430,7 @@ def _lower_milestone_removal(
     ctx = _ctx(meta, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
-    return ctx.finish(f"delete from {view.layout.table.name} where {where_sql}{gate_sql}")
+    return ctx.finish(f"delete from {view.layout.table.name}{_where(where_sql, gate_sql)}")
 
 
 def _lower_milestone_guard(
@@ -448,18 +448,26 @@ def _lower_milestone_guard(
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
     return ctx.finish(
-        f"update {view.layout.table.name} set {column} = {column} where {where_sql}{gate_sql}"
+        f"update {view.layout.table.name} set {column} = {column}{_where(where_sql, gate_sql)}"
     )
 
 
 def _lower_delete(step: PlannedDelete, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
-    """`delete from <table> where <target>[ and <gate>]`."""
+    """`delete from <table>[ where <target>[ and <gate>]]`."""
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
     ctx = _ctx(meta, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _gate(ctx, view, step.concurrency, meta, dialect)
-    return ctx.finish(f"delete from {view.layout.table.name} where {where_sql}{gate_sql}")
+    return ctx.finish(f"delete from {view.layout.table.name}{_where(where_sql, gate_sql)}")
+
+
+def _where(*conditions: str) -> str:
+    """One `` where`` clause over the conditions that render, or nothing when
+    none does: a readless target selecting every row renders no condition
+    (`m-predicate` `true`), so its statement carries no `where` at all."""
+    rendered = [condition for condition in conditions if condition]
+    return f" where {' and '.join(rendered)}" if rendered else ""
 
 
 def _assignment_clause(
@@ -661,7 +669,7 @@ def _gate(
     meta: Metamodel,
     dialect: Dialect,
 ) -> str:
-    """`` and <version> = ?`` for a gated step, else nothing.
+    """``<version> = ?`` for a gated step, else nothing.
 
     The gate binds LAST, no exception (`m-opt-lock` "the version gate binds
     last"). Whether one exists at all was decided during planning, so nothing
@@ -675,7 +683,7 @@ def _gate(
             f"{view.entity.canonical}: the version gate's Attribute occupies no Column"
         )
     _bind(ctx, concurrency.gate.observed_version, _attribute(meta, concurrency.attribute).type)
-    return f" and {dialect.quote(slot.column.name)} = ?"
+    return f"{dialect.quote(slot.column.name)} = ?"
 
 
 def _temporal_gate(
@@ -686,7 +694,7 @@ def _temporal_gate(
     meta: Metamodel,
     dialect: Dialect,
 ) -> str:
-    """`` and <axis start> = ?`` for a gated close, else nothing.
+    """``<axis start> = ?`` for a gated close, else nothing.
 
     The gate binds LAST, after the whole address — the same absolute rule a
     version gate follows, with no inheritance exception for the tag guard the
@@ -696,7 +704,7 @@ def _temporal_gate(
         return ""
     column = _column(view, concurrency.start_attribute, entity)
     _bind(ctx, concurrency.observed_start, _attribute(meta, concurrency.start_attribute).type)
-    return f" and {dialect.quote(column)} = ?"
+    return f"{dialect.quote(column)} = ?"
 
 
 type _Placement = tuple[Sequence[str], Sequence[NeutralType | None], Sequence[bool]]

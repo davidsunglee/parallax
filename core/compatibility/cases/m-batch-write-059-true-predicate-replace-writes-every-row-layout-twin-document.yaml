@@ -1,0 +1,34 @@
+# Document half of the whole-table predicate replacement proof: the same statement
+# patches each member's path of every row's shared document, in canonical placement
+# order, with no `where` clause. Its twin authors the same write under Columns.
+model: models/storage-layout-transparency-layout-twin-document.yaml
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, replace, scenario, update, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        mutation: replace
+        target:
+          entity: parallax.compatibility.LayoutTwinItem
+          predicate:
+            "true": {}
+        row:
+          rank: 30
+          label: gamma
+      databaseCalls: 1
+      expectAffectedRows: 2
+      statements:
+        - sql:
+            postgres: update storage_layout_transparency set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb))
+            mariadb: update storage_layout_transparency set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'))
+          binds:
+            postgres: ['{label}', gamma, '{rank}', 30]
+            mariadb: ['$.label', gamma, '$.rank', 30]
+then:
+  databaseCalls: 1
+  tableState:
+    storage_layout_transparency:
+      - id: 1
+        payload: { label: gamma, rank: 30 }
+      - id: 2
+        payload: { label: gamma, rank: 30 }

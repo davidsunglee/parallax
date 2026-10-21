@@ -1,0 +1,26 @@
+# Columns half of the whole-table predicate delete proof: a predicate-selected
+# delete whose predicate is `true` removes every row in one statement with no
+# `where` clause and counts each one. Its twin authors the same write under
+# Relational Document Layout.
+model: models/storage-layout-transparency-layout-twin-columns.yaml
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, m-sql, predicate-write, readless, scenario, delete, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        mutation: delete
+        target:
+          entity: parallax.compatibility.LayoutTwinItem
+          predicate:
+            "true": {}
+      databaseCalls: 1
+      expectAffectedRows: 2
+      statements:
+        - sql:
+            postgres: delete from storage_layout_transparency
+            mariadb: delete from storage_layout_transparency
+          binds: []
+then:
+  databaseCalls: 1
+  tableState:
+    storage_layout_transparency: []
