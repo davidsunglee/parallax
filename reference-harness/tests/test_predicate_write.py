@@ -261,6 +261,29 @@ def test_a_replacement_literal_its_type_cannot_decode_is_refused_with_its_rule(
     assert refused.value.rule == "neutral-literal-type-mismatch"
 
 
+@pytest.mark.parametrize(
+    ("model", "member", "value"),
+    [
+        ("models/wallet.yaml", "balance", 7),
+        ("models/shipment.yaml", "destination", {"street": 1, "city": "X"}),
+        ("models/scalar-collection-layout-twin-columns.yaml", "counts", [5, "6"]),
+    ],
+    ids=["member", "value-object-leaf", "collection-element"],
+)
+def test_an_amendment_literal_its_type_cannot_decode_is_refused_with_its_rule(
+    model: str, member: str, value: object
+) -> None:
+    entity = load_model(_COMPATIBILITY_ROOT, model).root_entity
+    instruction = {
+        "mutation": "amend",
+        "target": {"entity": entity.name, "predicate": {"true": {}}},
+        "assignments": [{"attr": f"{entity.name}.{member}", "value": value}],
+    }
+    with pytest.raises(RejectionError) as refused:
+        validate_predicate_write(entity, instruction, [entity.definition])
+    assert refused.value.rule == "neutral-literal-type-mismatch"
+
+
 def test_schema_requires_an_amendment_to_state_its_assignments() -> None:
     instruction = _update_instruction()
     instruction.pop("assignments")
@@ -471,7 +494,9 @@ def test_rejected_oracle_does_not_certify_assignment_missing_required_nested_one
         model=model,
     )
 
-    with pytest.raises(PredicateWriteValidationError, match="Contact.address.geo.*non-nullable"):
+    with pytest.raises(
+        PredicateWriteValidationError, match="Contact.address.geo: required value object"
+    ):
         _validate_rejected_predicate_write(case, instruction)
 
 
@@ -502,7 +527,7 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
         "assignments": [{"attr": "Customer.address", "value": ["not a document"]}],
     }
 
-    with pytest.raises(PredicateWriteValidationError, match="value object"):
+    with pytest.raises(PredicateWriteValidationError, match="expected a value-object document"):
         validate_predicate_write(entity, instruction, [entity.definition])
 
 
@@ -540,7 +565,7 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
                 "target": {"entity": "Wallet", "predicate": {"true": {}}},
                 "assignments": [{"attr": "Wallet.id", "value": 2}],
             },
-            "primary key",
+            "primary-key",
         ),
     ],
 )
