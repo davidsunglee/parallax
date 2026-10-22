@@ -8,14 +8,12 @@ row against it.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterable
 
 import pytest
 
 from parallax.core import predicate as oa
 from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import MemberShape
 from parallax.core.read_delivery._row_decoding import (
     member_classifier,
     raw_member,
@@ -81,14 +79,8 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
     address_value, address_findings = address(
         raw_member(document.result_contract, row, person, "address")
     )
-    assert address_value == {"city": "Oslo", "geo": {"country": "NO"}}
+    assert address_value == ("Oslo", ("NO",))
     assert address_findings == ()
-
-    def object_output(_shape: MemberShape, values: Iterable[object]) -> tuple[object, ...]:
-        return tuple(values)
-
-    with pytest.raises(ValueError, match="must be supplied together"):
-        member_classifier(document.result_contract, person, "address", build_object=object_output)
     with pytest.raises(KeyError, match="missing"):
         member_classifier(document.result_contract, marker, "missing")
     with pytest.raises(KeyError, match="missing"):
@@ -98,15 +90,7 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         oa.TrueNode(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     classify_address = member_classifier(columns.result_contract, person, "address")
-    assert classify_address(_COLUMNS_CELLS["address"])[0] == {
-        "city": "Oslo",
-        "geo": {"country": "NO"},
-    }
-    incomplete_classifier = member_classifier(
-        columns.result_contract, person, "address", build_object=object_output
-    )
-    with pytest.raises(ValueError, match="must be supplied together"):
-        incomplete_classifier(_COLUMNS_CELLS["address"])
+    assert classify_address(_COLUMNS_CELLS["address"])[0] == ("Oslo", ("NO",))
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         classify_address({"city": "Oslo"})
     with pytest.raises(KeyError, match="missing"):
