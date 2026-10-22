@@ -78,6 +78,7 @@ def test_write_grading_offers_operations_and_no_lexical_primitive() -> None:
         "OPENING_MUTATIONS",
         "ObjectAddress",
         "assert_inheritance_write_routing",
+        "assigns_nothing",
         "assert_write_values",
         "classify_write_row",
         "close_address_binds",
@@ -315,8 +316,10 @@ def test_a_subquerys_own_predicate_is_not_this_statements_address(dialect: str) 
 # phase share reads in runs of at most 32.
 
 
-def _object(key: int, entity: str = "Span", phase: str = "update") -> SettledObject:
-    return SettledObject((entity, (repr(key),)), entity, phase)
+def _object(
+    key: int, entity: str = "Span", phase: str = "update", region: tuple = (None, None)
+) -> SettledObject:
+    return SettledObject((entity, (repr(key),)), entity, phase, region)
 
 
 def _deferred(objects: list[SettledObject], parts: dict[int, int]) -> dict:
@@ -395,6 +398,28 @@ def test_an_object_composed_after_another_beside_a_possible_span_is_refused() ->
         _reads(objects, {1: 1, 2: 1})
 
 
+def test_a_destruction_superseding_its_objects_assignment_settles_as_a_removal() -> None:
+    # An amendment then a termination of one region is one termination, so the
+    # object leaves the update phase and the next object's run.
+    march = ("2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z")
+    objects = [
+        _object(1, region=march),
+        _object(1, phase="delete", region=march),
+        _object(2, region=march),
+    ]
+    assert _reads(objects, {1: 1, 2: 1}) == 2
+
+
+def test_an_object_assigned_and_destroyed_over_other_regions_beside_a_span_is_refused() -> None:
+    objects = [
+        _object(1, region=("2024-03-01T00:00:00.000000Z", "2024-05-01T00:00:00.000000Z")),
+        _object(1, phase="delete", region=("2024-07-01T00:00:00.000000Z", None)),
+        _object(2),
+    ]
+    with pytest.raises(CaseFailure, match="assigned and destroyed over different regions"):
+        _reads(objects, {1: 1, 2: 1})
+
+
 def test_a_ranked_phase_of_several_entities_beside_a_possible_span_is_refused() -> None:
     objects = [
         _object(1, phase="delete"),
@@ -454,6 +479,26 @@ def test_a_units_bitemporal_target_writes_share_their_coverage_reads(
         until="2024-09-01T00:00:00.000000Z",
     )
     assert unit_resolving_reads(case, entries) == reads
+
+
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_a_units_target_amendment_assigning_nothing_owes_no_coverage_and_ends_no_run(
+    concurrency: str,
+) -> None:
+    # Of 33 target writes, the one assigning nothing settles nothing, so the
+    # other 32 fill one span.
+    case = _target_unit("models/position.yaml", concurrency)
+    entries = _targets(
+        "parallax.compatibility.Position",
+        range(1, 34),
+        validFrom="2024-03-01T00:00:00.000000Z",
+        until="2024-09-01T00:00:00.000000Z",
+    )
+    entries[1]["rows"] = [{"id": 2}]
+    acquisitions = 33 if concurrency == "locking" else 0
+    assert unit_resolving_reads(case, entries, acquired_start=lambda entry: None) == (
+        acquisitions + 1
+    )
 
 
 def test_a_units_transaction_time_only_target_writes_each_read_alone() -> None:
