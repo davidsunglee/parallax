@@ -744,35 +744,123 @@ def _delivered(model: Metamodel, entity: str, cells: Mapping[str, object]) -> _D
 
 
 @pytest.mark.parametrize(
-    ("model", "entity", "cells", "member", "value"),
+    ("model", "entity", "cells", "key", "members", "flat"),
     [
         pytest.param(
-            ORDERS, "Order", _ORDER, "orderedOn", dt.date(2024, 1, 1), id="native-columns"
+            ORDERS,
+            "Order",
+            _ORDER,
+            (1, ()),
+            {
+                "id": 1,
+                "name": "Ada",
+                "sku": None,
+                "qty": 2,
+                "price": decimal.Decimal("1.50"),
+                "active": True,
+                "orderedOn": dt.date(2024, 1, 1),
+            },
+            [
+                ("id", 1),
+                ("name", "Ada"),
+                ("sku", None),
+                ("qty", 2),
+                ("price", decimal.Decimal("1.50")),
+                ("active", True),
+                ("ordered_on", dt.date(2024, 1, 1)),
+            ],
+            id="native-columns",
         ),
         pytest.param(
-            SCALARS, "ScalarThing", _SCALAR_THING, "payload", b"\x0a\x1b", id="encoded-column"
+            SCALARS,
+            "ScalarThing",
+            _SCALAR_THING,
+            (1, ()),
+            {
+                "id": 1,
+                "f32": 1.5,
+                "f64": 2.5,
+                "payload": b"\x0a\x1b",
+                "localTime": dt.time(9, 30),
+                "externalId": None,
+            },
+            [
+                ("id", 1),
+                ("f32", 1.5),
+                ("f64", 2.5),
+                ("local_time", dt.time(9, 30)),
+                ("external_id", None),
+                ("payload_hex", "0a1b"),
+            ],
+            id="encoded-column",
         ),
-        pytest.param(POSITION, "Position", _position(), "validEnd", INFINITY, id="bitemporal"),
+        pytest.param(
+            POSITION,
+            "Position",
+            _position(),
+            (1, (_VALID_FROM, _OPENED)),
+            {
+                "id": 1,
+                "acctNum": "A-1",
+                "value": decimal.Decimal("1.50"),
+                "validStart": _VALID_FROM,
+                "validEnd": INFINITY,
+                "txStart": _OPENED,
+                "txEnd": INFINITY,
+            },
+            [
+                ("pos_id", 1),
+                ("acct_num", "A-1"),
+                ("val", decimal.Decimal("1.50")),
+                ("from_z", _VALID_FROM),
+                ("thru_z", INFINITY),
+                ("in_z", _OPENED),
+                ("out_z", INFINITY),
+            ],
+            id="bitemporal",
+        ),
         pytest.param(
             REGISTER,
             "Register",
             {"id": 1, "payload": PresentDocument(cast("DocumentValue", dict(_ADA)))},
-            "stamp",
-            dt.date(2026, 1, 15),
+            (1, ()),
+            {
+                "id": 1,
+                "label": "ada",
+                "note": "north wing",
+                "stamp": dt.date(2026, 1, 15),
+                "marks": ({"tag": "founder", "origin": {"port": "Oslo"}},),
+            },
+            [
+                ("id", 1),
+                ("label", "ada"),
+                ("note", "north wing"),
+                ("stamp", dt.date(2026, 1, 15)),
+                ("marks", ({"tag": "founder", "origin": {"port": "Oslo"}},)),
+            ],
             id="relational-document",
         ),
-        pytest.param(TWIN_COLUMNS, "Marker", {"id": 5}, "id", 5, id="singleton-width"),
+        pytest.param(
+            TWIN_COLUMNS, "Marker", {"id": 5}, (5, ()), {"id": 5}, [("id", 5)], id="singleton-width"
+        ),
     ],
 )
 def test_a_row_converts_and_publishes_its_members_whether_kept_or_reduced(
-    model: Metamodel, entity: str, cells: Mapping[str, object], member: str, value: object
+    model: Metamodel,
+    entity: str,
+    cells: Mapping[str, object],
+    key: tuple[object, tuple[object, ...]],
+    members: Mapping[str, object],
+    flat: list[tuple[str, object]],
 ) -> None:
     # A level either keeps a row's witness as its member row or reduces it.
-    # Neither choice is observable in the key, the judged members, or the issues.
+    # Neither choice is observable in the key, the judged members, the issues,
+    # or the published flat row.
     delivered = _delivered(model, entity, cells)
-    assert delivered.key is not None
-    assert delivered.members[member] == value
+    assert delivered.key == (target(model, entity).identity, *key)
+    assert delivered.members == members
     assert delivered.issues == ()
+    assert list(delivered.flat.items()) == flat
 
 
 def test_a_member_stored_at_another_members_result_key_reads_its_own_cell() -> None:
