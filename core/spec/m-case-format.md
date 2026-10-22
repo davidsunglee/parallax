@@ -1217,13 +1217,13 @@ state:
   and the revision. Under the Locking strategy its target Entity's Effective
   Concurrency Strategy takes, it owes instead **one acquisition per object** —
   the locked point read that participation requires (`m-unit-work` *Target
-  writes*) — and none under Optimistic. A temporal one also owes **one coverage
-  read per object**, the read of the coverage its window reaches that its flush
-  makes (`m-temporal-write`) — unless, under Locking, the rows its acquisitions
-  read already cover the window its entries reach together (`m-unit-work`
-  *Retained starting rows*): a Transaction-Time-Only object's always does, and a
-  Bitemporal one's does where the rectangles the case's own history leaves
-  current at each `validFrom` cover it.
+  writes*) — and none under Optimistic. A temporal one also owes the **coverage
+  reads** its flush makes for the window its entries reach together
+  (`m-temporal-write`), counted below — none for an object whose acquisitions,
+  under Locking, already read rows covering that window (`m-unit-work`
+  *Retained starting rows*): a Transaction-Time-Only object's always do, and a
+  Bitemporal one's do where the rectangles the case's own history leaves current
+  at each `validFrom` cover it.
 
 A **grouped** scenario write step owes none of its own: its group's find steps
 are what publish the values it settles against, and those finds already declare
@@ -1239,10 +1239,18 @@ was read (`m-temporal-write` *Observed writes span their requested extent*); one
 read per Entity becomes one per Entity and pin.
 
 A unit whose observed write reaches current coverage its sources did not observe
-also owes the **coverage read** its flush makes (`m-sql` *Requested ranges*),
+also owes the **coverage reads** its flush makes (`m-sql` *Requested ranges*),
 counted in the Database Calls of the step or entry that flushes it. Where a
 case's own fixtures and earlier entries leave that coverage known, the count is
-derivable like every other.
+derivable like every other. Coverage reads are the statements the flush
+actually issues, not one per object: taking the unit's objects in the order its
+flush settles them, consecutive Bitemporal objects of one Entity and mutation
+phase whose writes defer (`m-unit-work` *Shared coverage acquisition*) share
+reads in runs of at most 32 objects, and each run owes one read per 64
+uncovered parts it holds, rounded up — none where none is uncovered. Any other
+write between them ends a run. An object outside every run owes one read per 64
+of its own uncovered parts, rounded up, and a Transaction-Time-Only object that
+reads at all owes one.
 
 A resolving or coverage read is counted and never authored: `then.statements` is
 the DML a case states, so neither appears in it, and neither names a statement
@@ -2353,11 +2361,12 @@ indexes. A Database Call finishes with any `m-execution-lifecycle` outcome,
 category of the interruption that left it so. It omits UUIDs, durations and the
 timing identities calls share, implementation type names, messages, stack
 traces, and native database codes. A Database Call names its statement by
-zero-based index into the case's flattened authored golden statement order. Two
-calls name none: every call on the `api-conformance` lane, where a case authors
-no golden SQL at all, and a **resolving read** a keyed write owes (*Resolving
-reads a write owes*), which reaches the database and is counted but which the
-case authors no golden for. The indexes the remaining calls name ARE that order
+zero-based index into the case's flattened authored golden statement order.
+Three calls name none: every call on the `api-conformance` lane, where a case
+authors no golden SQL at all, a **resolving read** a keyed write owes
+(*Resolving reads a write owes*), and a **coverage read** a flush makes, a read
+inside the Flush that issues it (`m-sql` *Requested ranges*); each reaches the
+database and is counted, but the case authors no golden for it. The indexes the remaining calls name ARE that order
 — in delivery order, once each — so a record naming a statement twice, or
 leaving one unnamed, contradicts its own goldens. Each index is named by a call
 of the KIND its own statement is — a query by a read, DML by a write — so a

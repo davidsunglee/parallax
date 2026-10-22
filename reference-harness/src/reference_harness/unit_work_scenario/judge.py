@@ -24,16 +24,21 @@ from ..temporality import temporal_axes
 from ..value_object_resolve import RejectionError
 from ..write_plan import (
     ObjectAddress,
+    SettledObject,
     assert_inheritance_write_routing,
     assert_write_values,
     classify_write_row,
     close_address_binds,
+    flush_coverage_reads,
     is_existing_row_statement,
     parse_set_columns,
+    settled_object,
     statement_object,
     tag,
+    uncovered_parts,
     unit_resolving_reads,
     version_column,
+    window_instant,
 )
 from .compile import CompiledScenario, _GroupedWrite, _SettledOn, _UngroupedWrite
 from .report import reported_against
@@ -124,21 +129,33 @@ def _resolving_reads(case: Case, step: Any) -> int:
 
 
 def _coverage_reads(case: Case, step: _GroupedWrite) -> int:
-    """One read per Bitemporal object a settled step writes beyond the rectangle
-    its named find observed (`m-temporal-write` *Observed writes span their
-    requested extent*; `m-sql` *Requested ranges*).
+    """The coverage reads a settled step's flush makes for the Bitemporal objects
+    it writes beyond the rectangles their named finds observed (`m-temporal-write`
+    *Observed writes span their requested extent*; `m-sql` *Requested ranges*).
 
-    An object's requested extent is the union of its entries' ``[validFrom,
-    until)`` windows, through infinity where one states no ``until``; the
-    observed rectangle covers it exactly when it starts no later and ends no
-    earlier.
+    An object's requested extent encloses its entries' ``[validFrom, until)``
+    windows, through infinity where one states no ``until``, as separate
+    operations pending together read their enclosing window (`m-sql`), and what
+    its finds observed covers part of it; the rest is the parts its write reads.
+    Consecutive such writes share reads (:func:`write_plan.flush_coverage_reads`);
+    an object whose finds cover its extent settles at planning and ends a run.
     """
-    uncovered: set[tuple[str, Any]] = set()
+    settled: list[SettledObject] = []
+    requested: dict[tuple[str, tuple[Any, ...]], list[tuple[dt.datetime, dt.datetime]]] = {}
+    observed: dict[tuple[str, tuple[Any, ...]], list[tuple[dt.datetime, dt.datetime]]] = {}
     for submission in step.submissions:
+        entry = dict(submission.entry)
+        if submission.entity is None or submission.key is None:
+            settled.append(_unkeyed(submission.pointer))
+            continue
+        key = (
+            submission.entity.canonical_name,
+            tuple(repr(value) for value in submission.key.values()),
+        )
+        settled.append(settled_object(key, submission.mutation))
         origin = submission.settles_on
         if origin is None:
             continue
-        entry = dict(submission.entry)
         entity = case.model.entity(entry["entity"])
         axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
         valid_axis = axes.get("valid-time")
@@ -148,14 +165,34 @@ def _coverage_reads(case: Case, step: _GroupedWrite) -> int:
         _, pk, _set_cols, _observed = classify_write_row(
             case, entity, row, mutation=entry["mutation"], opening=True
         )
-        observed = _settled_observed_row(case, entity, step.index, origin, pk, "milestone")
-        start = observed.get(valid_axis.start.column)
-        end = observed.get(valid_axis.end.column)
-        if _instant(entry["validFrom"]) < _instant(start) or _instant(end) < _instant(
-            entry.get("until")
-        ):
-            uncovered.add((entity.canonical_name, pk))
-    return len(uncovered)
+        state = _settled_observed_row(case, entity, step.index, origin, pk, "milestone")
+        requested.setdefault(key, []).append(
+            (window_instant(entry["validFrom"]), window_instant(entry.get("until")))
+        )
+        observed.setdefault(key, []).append(
+            (
+                window_instant(state.get(valid_axis.start.column)),
+                window_instant(state.get(valid_axis.end.column)),
+            )
+        )
+    deferred = {
+        key: parts
+        for key, windows in requested.items()
+        if (parts := uncovered_parts([_enclosing(windows)], observed[key]))
+    }
+    return flush_coverage_reads(case, settled, deferred, bitemporal=frozenset(deferred))
+
+
+def _enclosing(
+    windows: list[tuple[dt.datetime, dt.datetime]],
+) -> tuple[dt.datetime, dt.datetime]:
+    return min(start for start, _ in windows), max(end for _, end in windows)
+
+
+def _unkeyed(pointer: str) -> SettledObject:
+    """A predicate submission, which names no one object: it ends any run of
+    shared coverage reads, as any other write does."""
+    return SettledObject(("", (pointer,)), "", "update")
 
 
 def _instant(value: Any) -> tuple[int, dt.datetime]:

@@ -379,21 +379,23 @@ def execution_lifecycle_observation(
     position in the run's own delivery order
     (:attr:`LifecycleRun.resolving_read_calls`): the source read a keyed write
     owes reaches the database and is counted, but the case authors no golden for
-    it, so it names no index. Everything else is indexed positionally.
+    it, so it names no index. A read a Flush makes is a coverage read, which
+    stands outside it for the same reason (`m-case-format` *The execution
+    lifecycle oracle*). Everything else is indexed positionally.
     """
     indexer = _StatementIndexer(statements, resolving_reads)
-    observation: dict[str, object] = {
-        "roots": [
+    portable: list[dict[str, object]] = []
+    for position, root in enumerate(roots, start=1):
+        indexer.enter(root)
+        portable.append(
             {
                 "execution": position,
                 "kind": _ROOT_KIND[root.execution.kind],
                 "events": [_portable(event, indexer) for event in root.events],
             }
-            for position, root in enumerate(roots, start=1)
-        ]
-    }
+        )
     indexer.exhausted()
-    return observation
+    return {"roots": portable}
 
 
 class _StatementIndexer:
@@ -414,29 +416,47 @@ class _StatementIndexer:
     wire space with exact-Decimal reconciliation. What is left here is the
     index's own question, which the SQL answers.
 
-    The positions the delivering lane charged to a keyed write's resolving reads
-    are the calls the emission order does not hold at all: they are skipped
-    WITHOUT consuming an emission, which is what keeps the correspondence
-    positional for every call that is in it. Read against that, the exhaustion
-    check is the other half of the same claim — an emission no call named means
-    the two orders disagree even though every index that was handed out landed.
+    The positions the delivering lane charged to a keyed write's resolving reads,
+    and every read a Flush makes, are the calls the emission order does not hold
+    at all: they are skipped WITHOUT consuming an emission, which is what keeps
+    the correspondence positional for every call that is in it. Read against
+    that, the exhaustion check is the other half of the same claim — an emission
+    no call named means the two orders disagree even though every index that was
+    handed out landed.
     """
 
-    __slots__ = ("_delivered", "_position", "_resolving", "_statements")
+    __slots__ = ("_delivered", "_flushes", "_position", "_resolving", "_statements")
 
     def __init__(self, statements: Sequence[str], resolving_reads: Collection[int] = ()) -> None:
         self._statements = statements
         self._resolving = frozenset(resolving_reads)
+        self._flushes: frozenset[int] = frozenset()
         self._delivered = 0
         self._position = 0
 
-    def take(self, statement: LoweredStatement) -> int | None:
-        """``statement``'s index, or ``None`` where the emission order holds none
-        — a lane reporting no emission at all, or a resolving read."""
+    def enter(self, root: RecordedRoot) -> None:
+        """Read ``root``'s calls next.
+
+        Activity IDs are scoped to their root, so which activities are Flushes
+        is too.
+        """
+        self._flushes = frozenset(
+            event.activity_id for event in root.events if isinstance(event, FlushStarted)
+        )
+
+    def take(self, call: DatabaseCallStarted) -> int | None:
+        """``call``'s statement index, or ``None`` where the emission order holds
+        none — a lane reporting no emission at all, a resolving read, or a
+        coverage read inside a Flush."""
         delivered = self._delivered
         self._delivered += 1
-        if not self._statements or delivered in self._resolving:
+        if (
+            not self._statements
+            or delivered in self._resolving
+            or (call.kind == "read" and call.parent_activity_id in self._flushes)
+        ):
             return None
+        statement = call.statement
         index = self._position
         self._position += 1
         if index >= len(self._statements):
@@ -522,12 +542,12 @@ def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, ob
             }
         case FlushStarted(trigger=trigger):
             return {"flushStarted": {"trigger": _FLUSH_TRIGGER[trigger]}}
-        case DatabaseCallStarted(target=target, kind=kind, statement=statement):
+        case DatabaseCallStarted(target=target, kind=kind):
             return {
                 "databaseCallStarted": {
                     "target": target,
                     "kind": _CALL_KIND[kind],
-                    **_stated("statement", indexer.take(statement)),
+                    **_stated("statement", indexer.take(event)),
                 }
             }
         case TransactionInvocationStarted(invocation=invocation):

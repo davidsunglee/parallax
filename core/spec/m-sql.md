@@ -1340,14 +1340,35 @@ already holds covers:
 | several uncovered parts | `… where t0.pos_id = ? and ((t0.thru_z > ? and t0.from_z < ?) or (t0.thru_z > ? and t0.from_z < ?)) and t0.out_z = ?` | `[pk, from₁, until₁, from₂, until₂, infinity]` |
 
 Uncovered parts are disjoint and never adjacent, each bounded by its own
-endpoints, and a statement names a bounded number of them, so many parts take
-several such reads, all before the range binds. A row overlapping a part is read
-whole however little of it the part reaches, and a row two statements both
-return is one row. Its projection is the predecessor projection (*Result form*),
-the Structured Column included under Relational Document Layout, and under
-Locking it carries the read-lock suffix below. The read belongs to the write step: it is
-counted in that step's Database Calls, and a case authors no golden for it
-(`m-case-format`). Once the rectangles are known, every rectangle's inactivation,
+endpoints, and a statement names at most 64 of them, so many parts take several
+such reads, all before the range binds. A row overlapping a part is read whole
+however little of it the part reaches, and a row two statements both return is
+one row. Its projection is the predecessor projection (*Result form*), the
+Structured Column included under Relational Document Layout, and under Locking
+it carries the read-lock suffix below. The read belongs to the write step: it is
+counted in that step's Database Calls, once per statement however many objects
+it names, and a case authors no golden for it (`m-case-format`).
+
+The writes of one acquisition span (`m-unit-work` *Shared coverage
+acquisition*) share these reads. One statement names several objects' parts,
+each object's key beside its own parts, and the 64-part bound counts the parts of
+every object it names:
+
+| Extent | Golden read | Binds |
+|---|---|---|
+| several objects' uncovered parts | `… where ((t0.pos_id = ? and ((t0.thru_z > ? and t0.from_z < ?) or (t0.thru_z > ? and t0.from_z < ?))) or (t0.pos_id = ? and t0.thru_z > ?)) and t0.out_z = ?` | `[pk₁, from₁, until₁, from₂, until₂, pk₂, uncoveredFrom, infinity]` |
+
+Parts are packed in the span's write order, each object's in Valid-Time order,
+and an object's parts that do not fit continue in the next statement. A row
+belongs to the object its own stored key names, wherever it stands in the
+result. The span's reads interleave with its writes' statements: before each
+coverage read, every leading write of the span with no part left unread binds and
+runs its statements below, so no coverage read is issued while the span's next
+write could execute. A
+Transaction-Time-Only object is never part of a span, and its read names it
+alone.
+
+Once a range's rectangles are known, every rectangle's inactivation,
 revision, or removal is emitted before any successor is inserted — rectangles in
 Valid-Time order, each rectangle's successors in Valid-Time order — so a lost
 condition fails before the range writes anything new. A row merged from several

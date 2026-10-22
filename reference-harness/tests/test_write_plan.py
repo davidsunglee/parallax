@@ -16,13 +16,18 @@ from pathlib import Path
 import pytest
 
 from reference_harness import write_plan
-from reference_harness.case import Case, discover_cases
+from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.write_plan import (
+    SettledObject,
+    flush_coverage_reads,
     insert_value_rows,
     parse_insert_columns,
     parse_set_columns,
     statement_object,
+    uncovered_parts,
+    unit_resolving_reads,
+    window_instant,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -83,10 +88,15 @@ def test_write_grading_offers_operations_and_no_lexical_primitive() -> None:
         "is_milestone_guard_statement",
         "parse_insert_columns",
         "parse_set_columns",
+        "SettledObject",
+        "settled_object",
+        "flush_coverage_reads",
         "statement_object",
         "tag",
+        "uncovered_parts",
         "unit_resolving_reads",
         "version_column",
+        "window_instant",
     }
 
 
@@ -295,3 +305,182 @@ def test_a_subquerys_own_predicate_is_not_this_statements_address(dialect: str) 
         )
         is None
     )
+
+
+# --- the coverage reads one flush makes --------------------------------------
+#
+# Counted from the spans `m-unit-work` *Shared coverage acquisition* defines and
+# the 64-part statement bound `m-sql` *Requested ranges* states, never from a
+# runtime's planner: consecutive deferred Bitemporal objects of one Entity and
+# phase share reads in runs of at most 32.
+
+
+def _object(key: int, entity: str = "Span", phase: str = "update") -> SettledObject:
+    return SettledObject((entity, (repr(key),)), entity, phase)
+
+
+def _deferred(objects: list[SettledObject], parts: dict[int, int]) -> dict:
+    """Each of ``objects`` whose key ``parts`` names, mapped to its parts."""
+    return {item.key: parts[key] for item in objects if (key := int(item.key[1][0])) in parts}
+
+
+def _reads(objects: list[SettledObject], parts: dict[int, int], shared: bool = True) -> int:
+    deferred = _deferred(objects, parts)
+    return flush_coverage_reads(
+        _a_case(), objects, deferred, bitemporal=frozenset(deferred) if shared else frozenset()
+    )
+
+
+@pytest.mark.parametrize(
+    ("parts", "reads"),
+    [
+        ([1, 1], 1),
+        ([1] * 32, 1),
+        ([1] * 33, 2),
+        ([2] * 32, 1),
+        ([33, 33, 1], 2),
+        ([0, 65, 0, 1], 2),
+        ([64], 1),
+        ([65], 2),
+        ([0, 0], 0),
+    ],
+    ids=[
+        "two-one-part-share-one",
+        "thirty-two-fill-one-span",
+        "the-thirty-third-starts-another",
+        "sixty-four-parts-fit-one-read",
+        "a-split-member-spans-two-reads",
+        "covered-members-add-no-read",
+        "sixty-four-parts-alone",
+        "sixty-five-parts-alone",
+        "all-covered",
+    ],
+)
+def test_a_span_owes_one_read_per_sixty_four_parts_it_holds(parts: list[int], reads: int) -> None:
+    objects = [_object(key) for key in range(len(parts))]
+    assert _reads(objects, dict(enumerate(parts))) == reads
+
+
+def test_objects_that_cannot_share_read_their_own_parts_alone() -> None:
+    # A Transaction-Time-Only object, or any other object a span cannot hold,
+    # reads alone however many deferred objects stand beside it.
+    objects = [_object(key) for key in range(3)]
+    assert _reads(objects, {0: 1, 1: 1, 2: 65}, shared=False) == 4
+
+
+@pytest.mark.parametrize(
+    ("objects", "reads"),
+    [
+        ([_object(1), _object(2, entity="Other"), _object(3)], 3),
+        ([_object(1), _object(3), _object(2, entity="Other")], 2),
+        ([_object(1), _object(9), _object(3)], 2),
+        ([_object(1), _object(3, phase="delete"), _object(2, phase="delete")], 2),
+    ],
+    ids=[
+        "another-entity-between-ends-the-run",
+        "another-entity-after-the-run",
+        "a-planned-write-between-ends-the-run",
+        "a-phase-boundary-ends-the-run",
+    ],
+)
+def test_a_run_ends_at_any_write_it_cannot_share_with(
+    objects: list[SettledObject], reads: int
+) -> None:
+    assert _reads(objects, {1: 1, 2: 1, 3: 1}) == reads
+
+
+def test_an_object_composed_after_another_beside_a_possible_span_is_refused() -> None:
+    objects = [_object(1), _object(2), _object(1)]
+    with pytest.raises(CaseFailure, match="written again after another object"):
+        _reads(objects, {1: 1, 2: 1})
+
+
+def test_a_ranked_phase_of_several_entities_beside_a_possible_span_is_refused() -> None:
+    objects = [
+        _object(1, phase="delete"),
+        _object(2, phase="delete"),
+        _object(3, "Other", "delete"),
+    ]
+    with pytest.raises(CaseFailure, match="referential rank"):
+        _reads(objects, {1: 1, 2: 1})
+
+
+def test_uncovered_parts_are_the_requested_union_less_what_is_held() -> None:
+    jan, mar, may, jul, sep = (
+        window_instant(f"2024-{month:02d}-01T00:00:00+00:00") for month in (1, 3, 5, 7, 9)
+    )
+    open_end = window_instant(None)
+    assert uncovered_parts([(jan, open_end)], [(jan, mar)]) == 1
+    assert uncovered_parts([(jan, open_end)], [(mar, may)]) == 2
+    assert uncovered_parts([(jan, sep)], [(mar, may), (jul, sep)]) == 2
+    assert uncovered_parts([(jan, mar), (may, jul)], []) == 2
+    assert uncovered_parts([(jan, may), (mar, jul)], [(jan, jul)]) == 0
+
+
+# --- what a unit's target writes owe -----------------------------------------
+
+
+def _target_unit(model: str, concurrency: str) -> Case:
+    return Case(
+        path=Path("synthetic.yaml"),
+        raw={"when": {"uow": {"concurrency": concurrency}}},
+        model=load_model(COMPATIBILITY_ROOT, model),
+    )
+
+
+def _targets(entity: str, keys: range, **window: str) -> list[dict]:
+    return [
+        {
+            "mutation": "amendUntil",
+            "target": True,
+            "entity": entity,
+            "rows": [{"id": key, "value": "1.00"}],
+            "ifTxStart": "2024-01-01T00:00:00.000000Z",
+            **window,
+        }
+        for key in keys
+    ]
+
+
+@pytest.mark.parametrize(("objects", "reads"), [(1, 1), (2, 1), (32, 1), (33, 2)])
+def test_a_units_bitemporal_target_writes_share_their_coverage_reads(
+    objects: int, reads: int
+) -> None:
+    case = _target_unit("models/position.yaml", "optimistic")
+    entries = _targets(
+        "parallax.compatibility.Position",
+        range(1, objects + 1),
+        validFrom="2024-03-01T00:00:00.000000Z",
+        until="2024-09-01T00:00:00.000000Z",
+    )
+    assert unit_resolving_reads(case, entries) == reads
+
+
+def test_a_units_transaction_time_only_target_writes_each_read_alone() -> None:
+    case = _target_unit("models/balance.yaml", "optimistic")
+    entries = _targets("parallax.compatibility.Balance", range(1, 3))
+    for entry in entries:
+        entry["mutation"] = "amend"
+    assert unit_resolving_reads(case, entries) == 2
+
+
+def test_held_target_windows_join_the_span_and_read_nothing() -> None:
+    case = _target_unit("models/position.yaml", "locking")
+    entries = _targets(
+        "parallax.compatibility.Position",
+        range(1, 4),
+        validFrom="2024-03-01T00:00:00.000000Z",
+        until="2024-09-01T00:00:00.000000Z",
+    )
+    held = {
+        1: ("2024-01-01T00:00:00.000000Z", "infinity"),
+        2: ("2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z"),
+        3: ("2024-01-01T00:00:00.000000Z", "infinity"),
+    }
+
+    def acquired(entry: dict) -> tuple[str, str]:
+        return held[entry["rows"][0]["id"]]
+
+    # Three acquisitions, and one shared read for the one object they leave
+    # uncovered.
+    assert unit_resolving_reads(case, entries, acquired_start=acquired) == 3 + 1

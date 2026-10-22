@@ -297,3 +297,149 @@ def test_an_observable_a_verb_may_not_declare_is_refused_before_its_anchor_is_bo
     mutate["sameObjectAs"] = len(case.scenario)
     with pytest.raises(CaseFailure, match="only the actions that always publish rows"):
         assert_unit_work_scenario(case, RefusingProvider())
+
+
+# --- the coverage reads a settled step's flush owes ---------------------------
+#
+# The corpus carries no step whose flush reaches the coverage of several objects,
+# so these vary m-unit-work-015 over objects of its own model: each finds the
+# head rectangle `[January, June)` of one position and amends it from March
+# onward, so its write defers and reads one uncovered part, `[June, infinity)`.
+# A covered write instead stays inside the head, settles at planning, and ends
+# any run of shared reads (`m-case-format` *Resolving reads a write owes*).
+
+_HEAD = ("2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z")
+_KNOWN = "2024-04-01T00:00:00.000000Z"
+_AT = "2024-10-01T00:00:00.000000Z"
+_CLOSE = "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
+_OPEN = "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values "
+_TUPLE = "(?, ?, ?, ?, ?, ?, ?)"
+
+
+def _reaching(key: int) -> tuple[dict, list[dict]]:
+    """A write past the head, closing it and the tail its flush reads."""
+    entry = {
+        "mutation": "amend",
+        "on": 0,
+        "entity": "parallax.compatibility.Position",
+        "rows": [{"id": key, "value": "150.00"}],
+        "validFrom": "2024-03-01T00:00:00.000000Z",
+        "at": _AT,
+    }
+    statements = [
+        {"sql": {"postgres": _CLOSE}, "binds": [_AT, key, _HEAD[1], "infinity", _KNOWN]},
+        {"sql": {"postgres": _CLOSE}, "binds": [_AT, key, "infinity", "infinity", _KNOWN]},
+        {
+            "sql": {"postgres": _OPEN + ", ".join([_TUPLE] * 2)},
+            "binds": [
+                *(key, "A", "100.00", _HEAD[0], "2024-03-01T00:00:00.000000Z", _AT, "infinity"),
+                *(key, "A", "150.00", "2024-03-01T00:00:00.000000Z", "infinity", _AT, "infinity"),
+            ],
+        },
+    ]
+    return entry, statements
+
+
+def _covered(key: int) -> tuple[dict, list[dict]]:
+    """A write inside the head, which the find observed whole."""
+    entry = {
+        "mutation": "amendUntil",
+        "on": 0,
+        "entity": "parallax.compatibility.Position",
+        "rows": [{"id": key, "value": "150.00"}],
+        "validFrom": "2024-03-01T00:00:00.000000Z",
+        "until": "2024-05-01T00:00:00.000000Z",
+        "at": _AT,
+    }
+    statements = [
+        {"sql": {"postgres": _CLOSE}, "binds": [_AT, key, _HEAD[1], "infinity", _KNOWN]},
+        {
+            "sql": {"postgres": _OPEN + ", ".join([_TUPLE] * 3)},
+            "binds": [
+                *(key, "A", "100.00", _HEAD[0], "2024-03-01T00:00:00.000000Z", _AT, "infinity"),
+                *(
+                    key,
+                    "A",
+                    "150.00",
+                    "2024-03-01T00:00:00.000000Z",
+                    "2024-05-01T00:00:00.000000Z",
+                    _AT,
+                    "infinity",
+                ),
+                *(key, "A", "100.00", "2024-05-01T00:00:00.000000Z", _HEAD[1], _AT, "infinity"),
+            ],
+        },
+    ]
+    return entry, statements
+
+
+def _settled_step_case(damaged_case, writes: list, coverage_reads: int):
+    """m-unit-work-015 varied into one find of every written position's head and
+    one settled step writing ``writes`` in order, declaring ``coverage_reads``."""
+    case = damaged_case(
+        "m-unit-work-015-close-settles-against-the-milestone-its-own-find-observed.yaml"
+    )
+    find, _tail_find, write = case.when["scenario"]
+    keys = range(1, len(writes) + 1)
+    find["expectRows"] = [
+        {
+            "pos_id": key,
+            "acct_num": "A",
+            "val": "100.00",
+            "from_z": _HEAD[0],
+            "thru_z": _HEAD[1],
+            "in_z": _KNOWN,
+            "out_z": "infinity",
+        }
+        for key in keys
+    ]
+    authored = [shape(key) for shape, key in zip(writes, keys, strict=True)]
+    write["write"] = [entry for entry, _ in authored]
+    write["statements"] = [statement for _, statements in authored for statement in statements]
+    write["databaseCalls"] = len(write["statements"]) + coverage_reads
+    case.when["scenario"] = [find, write]
+    case.then["databaseCalls"] = find["databaseCalls"] + write["databaseCalls"]
+    return case
+
+
+@pytest.mark.parametrize(
+    ("writes", "reads"),
+    [
+        ([_reaching], 1),
+        ([_reaching] * 2, 1),
+        ([_reaching] * 32, 1),
+        ([_reaching] * 33, 2),
+        ([_reaching] * 64, 2),
+        ([_reaching] * 65, 3),
+        ([_reaching, _reaching, _covered], 1),
+        ([_reaching, _covered, _reaching], 2),
+        ([_covered, _covered], 0),
+    ],
+    ids=[
+        "alone",
+        "two-share",
+        "thirty-two-share",
+        "thirty-three-start-another",
+        "sixty-four-fill-two",
+        "sixty-five-start-a-third",
+        "covered-after-the-run",
+        "covered-between-ends-the-run",
+        "all-covered",
+    ],
+)
+def test_a_settled_steps_deferred_writes_owe_the_reads_their_shared_spans_make(
+    damaged_case, writes, reads
+) -> None:
+    assert_judged(_settled_step_case(damaged_case, writes, reads))
+
+
+@pytest.mark.parametrize(
+    ("writes", "reads"),
+    [([_reaching] * 2, 2), ([_reaching] * 33, 1), ([_reaching, _covered, _reaching], 1)],
+    ids=["one-per-object", "past-the-span-bound", "across-a-planned-write"],
+)
+def test_a_settled_step_declaring_reads_its_spans_do_not_make_is_refused(
+    damaged_case, writes, reads
+) -> None:
+    with pytest.raises(CaseFailure, match="declares databaseCalls"):
+        assert_judged(_settled_step_case(damaged_case, writes, reads))
