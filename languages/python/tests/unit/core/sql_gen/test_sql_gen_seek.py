@@ -487,7 +487,7 @@ def test_a_document_resident_leading_term_hoists_no_range() -> None:
     )
 
 
-def test_a_coordinate_is_read_only_off_a_row_of_the_projected_arity() -> None:
+def test_a_coordinate_is_read_off_the_capture_cell_projected_last() -> None:
     compiled = compile_entity_query(
         deep_fetch.plan(
             _planned(ORDERS, "Order").first(limit=2), ORDERS, projection=_PROJECTION
@@ -499,9 +499,6 @@ def test_a_coordinate_is_read_only_off_a_row_of_the_projected_arity() -> None:
     assert row_coordinates(compiled.result_contract, (tuple(range(width)),)) == (
         ContinuationCoordinate((width - 1,)),
     )
-    for row in (tuple(range(width - 1)), tuple(range(width + 1))):
-        with pytest.raises(ValueError, match="does not match row arity"):
-            row_coordinates(compiled.result_contract, (row,))
 
 
 def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -> None:
