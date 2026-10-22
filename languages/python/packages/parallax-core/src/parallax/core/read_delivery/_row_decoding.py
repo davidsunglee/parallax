@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from types import MappingProxyType
 from typing import Final, cast
@@ -14,7 +14,6 @@ from parallax.core.base import (
 )
 from parallax.core.db_port import Row
 from parallax.core.document_codec import (
-    DecodedMember,
     DocumentFinding,
     MemberShape,
     Present,
@@ -24,7 +23,7 @@ from parallax.core.document_codec import (
     occurrence_shape,
     prepared_raw_member_classifier,
 )
-from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Multiplicity
+from parallax.core.metamodel import AttributeMetadata, EntityIdentity
 from parallax.core.object_query._resolved import ContinuationCoordinate
 from parallax.core.read_delivery._convert import build_positional_many, build_positional_object
 from parallax.core.sql_gen import SqlGenError
@@ -67,7 +66,7 @@ def row_identity(
             source.entity,
             None,
             None,
-            _observed_document(row[contract.index_by_key[shared.column]]),
+            unwrap_document_read(_document_read(row[contract.index_by_key[shared.column]])),
         )
     index_by_key = contract.index_by_key
     if isinstance(source, ByTag):
@@ -78,19 +77,22 @@ def row_identity(
         )
         if shared is None:
             return entity, variant, unknown, None
-        return entity, variant, unknown, _observed_document(row[index_by_key[shared.column]])
+        return (
+            entity,
+            variant,
+            unknown,
+            unwrap_document_read(_document_read(row[index_by_key[shared.column]])),
+        )
     entity, variant, unknown = source.by_spelling[row[index_by_key[source.column]]]
     if shared is None:
         return entity, variant, unknown, None
     document_key = source.result_keys.get(entity, _NO_KEYS).get(shared.column, shared.column)
-    return entity, variant, unknown, _observed_document(row[index_by_key[document_key]])
-
-
-def _observed_document(document_read: object) -> object | None:
-    """Unwrap a provider-neutral document carrier for predecessor retention."""
-    if not isinstance(document_read, (SqlNull, PresentDocument)):
-        raise _not_a_document_read(document_read)
-    return unwrap_document_read(document_read)
+    return (
+        entity,
+        variant,
+        unknown,
+        unwrap_document_read(_document_read(row[index_by_key[document_key]])),
+    )
 
 
 def raw_member(contract: ResultContract, row: Row, resolved: EntityIdentity, key: str) -> object:
@@ -126,23 +128,17 @@ def _shared_member(
 
 
 def member_classifier(
-    contract: ResultContract,
-    resolved: EntityIdentity,
-    key: str,
-    *,
-    build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
-    build_many: Callable[[Iterable[object]], object] | None = None,
+    contract: ResultContract, resolved: EntityIdentity, key: str
 ) -> MemberClassifier:
     """The prepared, row-independent decoding walk of one classified member of a
-    row resolving to ``resolved``.
+    row resolving to ``resolved``, building positional output.
 
     A member the shared document carries is located in it and decoded by its
     DECLARED Neutral Type through the codec, not by the JSON value's own shape;
     one absent or explicitly null in the document reads as `None`, the same one
     logical answer a NULL Column gives. Any other member is read from its own
     document Column against its declared definition. Raises ``KeyError`` for a
-    member neither carries; the output builders are supplied together or not at
-    all.
+    member neither carries.
     """
     shared = contract.shared_document
     if shared is not None:
@@ -152,8 +148,6 @@ def member_classifier(
                 None if entry is None else entry.shape,
                 _NO_PATHS if entry is None else entry.member_paths,
                 key,
-                build_object=build_object,
-                build_many=build_many,
             )
         except KeyError:
             pass
@@ -172,13 +166,13 @@ def member_classifier(
     shape = occurrence_shape(occurrence)
 
     def classify(document_read: object) -> tuple[object, tuple[DocumentFinding, ...]]:
-        decoded = _classified_occurrence(
+        decoded = decode_occurrence_classified(
             shape,
             _document_read(document_read),
             multiplicity=occurrence.multiplicity,
             nullable=occurrence.nullable,
-            build_object=build_object,
-            build_many=build_many,
+            build_object=build_positional_object,
+            build_many=build_positional_many,
         )
         findings = tuple(
             replace(finding, path=(occurrence.identity.path[-1], *finding.path))
@@ -194,23 +188,14 @@ def _located_classifier(
     shape: MemberShape | None,
     member_paths: Mapping[str, tuple[str, ...]],
     key: str,
-    *,
-    build_object: Callable[[MemberShape, Iterable[object]], object] | None,
-    build_many: Callable[[Iterable[object]], object] | None,
 ) -> MemberClassifier:
     if shape is None:
         raise KeyError(key)
     path = member_paths.get(key)
     if path is None:
         raise KeyError(key)
-    if (build_object is None) != (build_many is None):
-        raise ValueError("object and many output builders must be supplied together")
-    classifier = (
-        prepared_raw_member_classifier(shape, path[0])
-        if build_object is None or build_many is None
-        else prepared_raw_member_classifier(
-            shape, path[0], build_object=build_object, build_many=build_many
-        )
+    classifier = prepared_raw_member_classifier(
+        shape, path[0], build_object=build_positional_object, build_many=build_positional_many
     )
     return cast("MemberClassifier", classifier)
 
@@ -226,35 +211,6 @@ def _collection_classifier(attribute: AttributeMetadata) -> MemberClassifier:
         return value, findings
 
     return classify
-
-
-def _classified_occurrence(
-    shape: MemberShape,
-    document_read: SqlNull | PresentDocument,
-    *,
-    multiplicity: Multiplicity,
-    nullable: bool,
-    build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
-    build_many: Callable[[Iterable[object]], object] | None = None,
-) -> DecodedMember:
-    """Classify and construct one complete occurrence exactly once."""
-    if (build_object is None) != (build_many is None):
-        raise ValueError("object and many output builders must be supplied together")
-    if build_object is None or build_many is None:
-        return decode_occurrence_classified(
-            shape,
-            document_read,
-            multiplicity=multiplicity,
-            nullable=nullable,
-        )
-    return decode_occurrence_classified(
-        shape,
-        document_read,
-        multiplicity=multiplicity,
-        nullable=nullable,
-        build_object=build_object,
-        build_many=build_many,
-    )
 
 
 def member_sources(
@@ -274,10 +230,6 @@ def member_sources(
     carries no ordinal either.
     """
     classified = contract.classified_by_entity.get(resolved, _NOTHING_CLASSIFIED)
-    source = contract.resolve
-    renames = (
-        source.result_keys.get(resolved, _NO_KEYS) if isinstance(source, ByLiteral) else _NO_KEYS
-    )
     index_by_key = contract.index_by_key
     shared = contract.shared_document
     entry = None if shared is None else shared.by_entity.get(resolved)
@@ -285,18 +237,11 @@ def member_sources(
     return (
         classified,
         tuple(
-            None if key in classified else index_by_key.get(renames.get(key, key)) for key in keys
+            None if key in classified else index_by_key.get(_result_key(contract, resolved, key))
+            for key in keys
         ),
         tuple(
-            member_classifier(
-                contract,
-                resolved,
-                key,
-                build_object=build_positional_object,
-                build_many=build_positional_many,
-            )
-            if key in classified
-            else None
+            member_classifier(contract, resolved, key) if key in classified else None
             for key in keys
         ),
         tuple(None if (path := member_paths.get(key)) is None else path[0] for key in keys),

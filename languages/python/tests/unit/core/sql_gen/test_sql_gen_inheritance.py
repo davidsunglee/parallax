@@ -1177,7 +1177,7 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
     assert raw_member(compiled.result_contract, tagged, resolved, "x") == 7
     assert member_classifier(compiled.result_contract, resolved, "meta")(
         raw_member(compiled.result_contract, tagged, resolved, "meta")
-    ) == ({"note": "tagged"}, ())
+    ) == (("tagged",), ())
     resolved, _variant, unknown, _document = row_identity(
         compiled.result_contract,
         result_row(
@@ -1254,7 +1254,7 @@ def test_tpcs_literal_identity_selects_the_direct_value_object_contract() -> Non
     assert raw_member(compiled.result_contract, row, resolved, "payload_hex") == "00ff"
     assert member_classifier(compiled.result_contract, resolved, "meta")(
         raw_member(compiled.result_contract, row, resolved, "meta")
-    ) == ({"note": "literal"}, ())
+    ) == (("literal",), ())
 
 
 def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
@@ -1503,7 +1503,7 @@ def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() 
     )
     assert member_classifier(compiled.result_contract, resolved, "berth")(
         raw_member(compiled.result_contract, row, resolved, "berth")
-    ) == ({"code": "A1"}, ())
+    ) == (("A1",), ())
     assert raw_member(compiled.result_contract, row, resolved, "deck") is deck
     with pytest.raises(KeyError, match="deck"):
         member_classifier(compiled.result_contract, resolved, "deck")
