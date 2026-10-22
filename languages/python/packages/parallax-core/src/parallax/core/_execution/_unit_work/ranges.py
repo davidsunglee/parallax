@@ -1064,21 +1064,24 @@ class RangeBindings:
         pending = self._pending
         windows = 0
         for deferred in ranges:
+            # Each range's completed rows are held only by its record, which a
+            # failure releases, never by a local a later completion's failure
+            # frame would keep.
+            record = _PendingRange(deferred, None, None, 0)
+            pending.append(record)
             completion = _retained_completion(deferred, invocation.current)
-            reused = (
-                None
-                if completion is None
-                else invocation.acquire_rows(completion, consume_coverage)
-            )
-            term = _missing_coverage(deferred, reused)
-            ready = 0
+            if completion is not None:
+                record.reused = invocation.acquire_rows(completion, consume_coverage)
+            term = _missing_coverage(deferred, record.reused)
             if term is not None:
                 windows += len(term.valid_time_windows)
                 # A Transaction-Time-Only range, never shared, reads its one
                 # current row in one read of its own.
-                ready = -(-windows // _COVERAGE_WINDOWS) if term.valid_time_windows else 1
-                self._reads = ready
-            pending.append(_PendingRange(deferred, reused, term, ready))
+                record.ready_after_reads = (
+                    -(-windows // _COVERAGE_WINDOWS) if term.valid_time_windows else 1
+                )
+                record.missing_term = term
+                self._reads = record.ready_after_reads
         if len(pending) > 1:
             self._lookup = {
                 cast("ManagedValue", record.deferred.meaning.key_value): record
