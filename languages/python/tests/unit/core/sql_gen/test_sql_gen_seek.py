@@ -30,6 +30,7 @@ from parallax.core.object_query._resolved import (
     ResolvedSeek,
 )
 from parallax.core.predicate import Comparison, FieldSubject, TrueNode
+from parallax.core.read_delivery._row_decoding import publication_keys, raw_member, row_coordinates
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import LoweredStatement
@@ -193,7 +194,9 @@ def test_the_appended_key_still_captures_a_cell_of_its_own() -> None:
         POSTGRES,
     )
     assert compiled.result_contract.coordinate_reads == ("parallax_seek_0",)
-    assert "parallax_seek_0" not in compiled.publication_keys(compiled.target, None)
+    assert "parallax_seek_0" not in publication_keys(
+        compiled.result_contract, compiled.target, None
+    )
     assert compiled.statement.sql.startswith(
         "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
         "t0.id parallax_seek_0 from orders t0"
@@ -493,12 +496,12 @@ def test_a_coordinate_is_read_only_off_a_row_of_the_projected_arity() -> None:
         POSTGRES,
     )
     width = len(compiled.result_contract.result_keys)
-    assert compiled.row_coordinates((tuple(range(width)),)) == (
+    assert row_coordinates(compiled.result_contract, (tuple(range(width)),)) == (
         ContinuationCoordinate((width - 1,)),
     )
     for row in (tuple(range(width - 1)), tuple(range(width + 1))):
         with pytest.raises(ValueError, match="does not match row arity"):
-            compiled.row_coordinates((row,))
+            row_coordinates(compiled.result_contract, (row,))
 
 
 def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -> None:
@@ -526,9 +529,9 @@ def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -
         "parallax_seek_2": 1,
     }
     beacon = compiled.target
-    assert compiled.raw_member_of(row, beacon, "parallax_seek_0") == 3
-    assert compiled.publication_keys(beacon, None) == ("id",)
-    assert compiled.row_coordinates((row,)) == (ContinuationCoordinate((3, 1)),)
+    assert raw_member(compiled.result_contract, row, beacon, "parallax_seek_0") == 3
+    assert publication_keys(compiled.result_contract, beacon, None) == ("id",)
+    assert row_coordinates(compiled.result_contract, (row,)) == (ContinuationCoordinate((3, 1)),)
 
 
 def test_a_corrupt_text_compared_carrier_still_reports_the_text_it_crossed_as() -> None:

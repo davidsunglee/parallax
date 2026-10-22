@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Literal, assert_never
@@ -9,13 +8,10 @@ from parallax.core.base import (
     Bytes,
     DocumentReadOrdinals,
     ManagedValue,
-    UnknownFamilyTag,
-    inert_scalar,
 )
-from parallax.core.db_port import Row
 from parallax.core.deep_fetch import PlannedEntityQuery
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
-from parallax.core.document_codec import DocumentFinding, MemberShape, is_text_compared
+from parallax.core.document_codec import is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as _inheritance_view
 from parallax.core.metamodel import (
@@ -29,7 +25,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import (
-    ContinuationCoordinate,
     Paging,
     ResolvedSeek,
 )
@@ -57,7 +52,6 @@ from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
 from parallax.core.sql_gen._inheritance import direct_documents as _direct_documents
 from parallax.core.sql_gen._inheritance import document_projection as _document_projection
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
-from parallax.core.sql_gen._inheritance import observed_document as _observed_document
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
 from parallax.core.sql_gen._inheritance import position_documents as _position_documents
 from parallax.core.sql_gen._inheritance import position_layout as _position_layout
@@ -159,9 +153,9 @@ class CompiledRead:
 
     ``narrow_to`` is the read's own query-wide narrowing or ``None`` for a bare read: a
     table-per-concrete-subtype position resolving to exactly one concrete emits
-    no `familyVariant` column at all, so this is what lets
-    :meth:`row_identity` still names the row's own concrete identity. A deep-fetch
-    CHILD level's narrow is its own planned child query's.
+    no `familyVariant` column at all, so this is what still names the row's own
+    concrete identity. A deep-fetch CHILD level's narrow is its own planned child
+    query's.
 
     ``documents`` is the top-level Value Object occurrences the resolved position
     can carry, in Position Layout order — the scalar/document provenance a
@@ -185,154 +179,6 @@ class CompiledRead:
     projected_documents: tuple[ValueObjectMetadata, ...]
     document_reads: tuple[DocumentReadOrdinals, ...]
     result_contract: _ResultContract
-
-    def attribute_reads(self, entity: EntityIdentity) -> tuple[_AttributeReadContract, ...]:
-        """The compiled Attribute contracts for one resolved concrete Entity.
-
-        In that Entity's own applicable-Attribute order, which is the order every
-        consumer of the same position view derives — so a caller holding an exact
-        member layout reads the two by one position rather than by identity.
-
-        Answers nothing for an Entity this read projected no columns for: a
-        family root an unrecognized tag resolved to, or a sibling outside the
-        narrow. Every Attribute of such a row carries its own storage spelling.
-        """
-        return next(
-            (
-                reads
-                for identity, reads in self.result_contract.attribute_reads
-                if identity == entity
-            ),
-            (),
-        )
-
-    def row_identity(
-        self, row: Row | Mapping[str, object]
-    ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
-        """The Entity one row names, its `familyVariant` spelling, the stored tag no
-        composed concrete claimed, and the row's shared document."""
-        contract = self.result_contract
-        _require_arity(contract, row)
-        source = contract.resolve
-        resolved, variant, unknown_tag = source.resolve_value(
-            None if source.column is None else _value(contract, row, source.column)
-        )
-        shared = contract.shared_document
-        document = (
-            None
-            if shared is None
-            else _observed_document(
-                _value(contract, row, contract.result_key(resolved, shared.column))
-            )
-        )
-        return resolved, variant, unknown_tag, document
-
-    def row_coordinates(
-        self, rows: Sequence[Row | Mapping[str, object]]
-    ) -> tuple[ContinuationCoordinate | None, ...]:
-        """Each row's Continuation Order coordinate; absence for every row of a read
-        that pages through nothing."""
-        contract = self.result_contract
-        aliases = contract.coordinate_reads
-        if not aliases:
-            return (None,) * len(rows)
-        return tuple(_coordinate(contract, row, aliases) for row in rows)
-
-    def raw_member_of(
-        self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
-    ) -> object:
-        contract = self.result_contract
-        shared = contract.shared_document
-        if shared is not None:
-            try:
-                return shared.raw_member_from(
-                    _value(contract, row, contract.result_key(resolved, shared.column)),
-                    resolved,
-                    key,
-                )
-            except KeyError:
-                pass
-        return _value(contract, row, contract.result_key(resolved, key))
-
-    def raw_member_classifier(
-        self,
-        resolved: EntityIdentity,
-        key: str,
-        *,
-        build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
-        build_many: Callable[[Iterable[object]], object] | None = None,
-    ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
-        """Prepare one classified member's row-independent decoding walk."""
-        shared = self.result_contract.shared_document
-        if shared is not None:
-            try:
-                return shared.located_classifier(
-                    resolved,
-                    key,
-                    build_object=build_object,
-                    build_many=build_many,
-                )
-            except KeyError:
-                pass
-        direct = self.result_contract.direct_documents
-        if direct is None:
-            raise KeyError(key)
-        return direct.member_classifier(
-            resolved,
-            key,
-            build_object=build_object,
-            build_many=build_many,
-        )
-
-    def raw_member_location(self, resolved: EntityIdentity, key: str) -> str | None:
-        """Return a shared-document member key, or answer no shared carrier."""
-        shared = self.result_contract.shared_document
-        if shared is None:
-            return None
-        try:
-            return shared.raw_member_location(resolved, key)
-        except KeyError:
-            return None
-
-    def classified_members(self, resolved: EntityIdentity) -> frozenset[str]:
-        """Member keys whose projected document carriers require classification."""
-        return self.result_contract.classified_by_entity.get(resolved, frozenset())
-
-    def raw_member_ordinal(self, resolved: EntityIdentity, key: str) -> int | None:
-        """The direct positional result ordinal for ``key``, when it has one."""
-        if key in self.classified_members(resolved):
-            return None
-        contract = self.result_contract
-        return contract.index_by_key.get(contract.result_key(resolved, key))
-
-    def publication_keys(self, resolved: EntityIdentity, variant: str | None) -> tuple[str, ...]:
-        """The logical flat-row keys left by structural materialization stages."""
-        return self.result_contract.publication_keys(resolved, variant)
-
-
-def _coordinate(
-    contract: _ResultContract, row: Row | Mapping[str, object], aliases: tuple[str, ...]
-) -> ContinuationCoordinate:
-    _require_arity(contract, row)
-    return ContinuationCoordinate(
-        tuple(inert_scalar(_value(contract, row, alias)) for alias in aliases)
-    )
-
-
-def _require_arity(contract: _ResultContract, row: Row | Mapping[str, object]) -> None:
-    if isinstance(row, tuple) and len(row) != len(contract.result_keys):
-        raise ValueError(
-            f"result key count {len(contract.result_keys)} does not match row arity {len(row)}"
-        )
-
-
-def _value(contract: _ResultContract, row: Row | Mapping[str, object], key: str) -> object:
-    if isinstance(row, tuple):
-        try:
-            return row[contract.index_by_key[key]]
-        except KeyError as error:
-            raise KeyError(key) from error
-    return row[key]
 
 
 @dataclass(frozen=True, slots=True)
@@ -622,8 +468,8 @@ def _locking_base_join(
     cells' binds are appended to ``ctx`` in join order."""
     contracts = {
         contract.attribute.identity: contract
-        for identity in compiled.result_contract.resolvable
-        for contract in compiled.attribute_reads(identity)
+        for _identity, reads in compiled.result_contract.attribute_reads
+        for contract in reads
     }
     base_alias = "t0"
     join_terms: list[str] = []
@@ -742,7 +588,7 @@ def _compile_read_arm(
 
     statement = _normalize(ctx.finish(" ".join(parts)))
     # A non-family read projects no tag and no variant literal, so its rows'
-    # identity is fixed and the only document stages it can fill are the fan-out
+    # identity is fixed and the only document entries it can fill are the fan-out
     # its own projection decided and the occurrences that hold their own Column.
     view = _entity_view(facet, target.identity)
     position = tuple(view.concrete_subtypes)
@@ -994,7 +840,7 @@ def _compile_inheritance_read(
 
     Whether a read carries `familyVariant` is decided by the very same resolved
     position that decides what it projects, so the plan carries both: the
-    statement rendered here, and the row identity and document stages its
+    statement rendered here, and the row identity and document entries its
     result contract reads.
     """
     result_keys = (

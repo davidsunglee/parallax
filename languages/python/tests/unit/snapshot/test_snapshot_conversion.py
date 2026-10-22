@@ -1095,7 +1095,9 @@ _HULL_TO_SKIFF = compile_read(
     narrow_to=(target(HULL, "Skiff").identity,),
     result_form="instance",
 )
-_HULL_TO_SKIFF_READ = bind(CatalogedModel(HULL), _HULL_TO_SKIFF)
+_HULL_TO_SKIFF_READ = bind(
+    CatalogedModel(HULL), _HULL_TO_SKIFF.result_contract, _HULL_TO_SKIFF.projected_documents
+)
 
 
 def _narrowed_hull(row: Mapping[str, object]) -> _Projection:

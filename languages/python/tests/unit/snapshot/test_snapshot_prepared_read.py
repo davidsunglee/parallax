@@ -66,6 +66,7 @@ from parallax.core.read_delivery._page import (
     release_page_rows,
 )
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
+from parallax.core.read_delivery._row_decoding import raw_member, row_identity_reader
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import (
     Bitemporal,
@@ -245,7 +246,8 @@ def _compiled(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -
 
 def _prepared(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -> ReadRowConverter:
     """The read of ``name``, compiled and bound as a find binds it."""
-    return bind(CatalogedModel(model), _compiled(model, name, narrow_to=narrow_to))
+    compiled = _compiled(model, name, narrow_to=narrow_to)
+    return bind(CatalogedModel(model), compiled.result_contract, compiled.projected_documents)
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,7 +312,7 @@ def test_a_narrowed_read_converts_rows_of_every_entity_it_can_resolve() -> None:
     # resolve to the whole family — and a row of the position and a row outside
     # it each convert under their own concrete.
     compiled = _compiled(ANIMAL, "Animal", narrow_to=("Dog",))
-    prepared = bind(CatalogedModel(ANIMAL), compiled)
+    prepared = bind(CatalogedModel(ANIMAL), compiled.result_contract, compiled.projected_documents)
     rex = _converted(
         prepared,
         {"id": 1, "kind": "dog", "name": "Rex", "owner_id": 10, "bark_volume": 3},
@@ -396,8 +398,12 @@ def test_raw_witness_distinguishes_sql_null_from_a_present_empty_document() -> N
     compiled = _compiled(REGISTER, "Register")
     identity = target(REGISTER, "Register").identity
 
-    sql_null = compiled.raw_member_of({"id": 1, "payload": SQL_NULL}, identity, "label")
-    missing = compiled.raw_member_of({"id": 1, "payload": PresentDocument({})}, identity, "label")
+    sql_null = raw_member(
+        compiled.result_contract, {"id": 1, "payload": SQL_NULL}, identity, "label"
+    )
+    missing = raw_member(
+        compiled.result_contract, {"id": 1, "payload": PresentDocument({})}, identity, "label"
+    )
 
     assert sql_null is SQL_NULL
     assert missing is MISSING
@@ -1279,12 +1285,14 @@ def _host_checked_payload_cells(layout: Layout, owners: int) -> int:
         if compiled is None:
             continue
         for driver in level_rows:
-            resolved, _variant, _unknown, _document = compiled.row_identity(driver)
+            resolved, _variant, _unknown, _document = row_identity_reader(compiled.result_contract)(
+                driver
+            )
             entity_layout = model.layouts.entity(resolved)
             identity_positions = frozenset(
                 (*entity_layout.primary_key, *entity_layout.temporal_starts)
             )
-            contracts = compiled.attribute_reads(resolved)
+            contracts = compiled.result_contract.reads_by_entity.get(resolved, ())
             keys: Sequence[str] = [contract.result_key for contract in contracts]
             occurrence: object = (
                 resolved,

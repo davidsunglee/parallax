@@ -42,6 +42,7 @@ from parallax.core.read_delivery._page import (
 from parallax.core.read_delivery._paging import At, PagingPlan, TieFound, page_decision
 from parallax.core.read_delivery._read_plan import EmptyRead, ReadPlan, ReadPlanner
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
+from parallax.core.read_delivery._row_decoding import row_coordinates
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin, TemporalShape, resolved_query_pin
@@ -394,7 +395,7 @@ class PageReader:
         self.observer.statement_rendered(ROOT_LEVEL)
         rows = read()
         self.observer.statement_executed(ROOT_LEVEL, len(rows))
-        converter = converter or bind(model, compiled)
+        converter = converter or bind(model, compiled.result_contract, compiled.projected_documents)
         builder = PageBuilder(ViewSchema.of(), _page_observer(self.observer))
         converted = tuple(converter.convert_row(row, builder, source=ROOT_LEVEL) for row in rows)
         return FlatPageResult(
@@ -457,7 +458,7 @@ class PageReader:
             plan=plan,
             converter=converter,
             rows=list(driver_rows),
-            coordinates=compiled_read.row_coordinates(driver_rows),
+            coordinates=row_coordinates(compiled_read.result_contract, driver_rows),
             temporal=query.temporal,
             observer=self.observer,
         )

@@ -345,7 +345,10 @@ class PageFixture:
         bound = self._reads.get(entity)
         if bound is None:
             compiled = compiled_read(self._model, entity)
-            bound = self._reads[entity] = (compiled, bind(self._cataloged, compiled))
+            bound = self._reads[entity] = (
+                compiled,
+                bind(self._cataloged, compiled.result_contract, compiled.projected_documents),
+            )
         compiled, prepared = bound
         ref, _resolved, _document, _variant = prepared.convert_row(
             driver_row(compiled, columns), self._builder, source=ROOT_LEVEL

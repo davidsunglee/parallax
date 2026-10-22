@@ -1216,9 +1216,9 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
         "archive_profile": PresentDocument({"label": "archive"}),
     }
     builder = PageBuilder(ViewSchema.of())
-    ref, resolved, _document, _variant = bind(CatalogedModel(_VARIANT_MODEL), compiled).convert_row(
-        stored, builder, source=ROOT_LEVEL
-    )
+    ref, resolved, _document, _variant = bind(
+        CatalogedModel(_VARIANT_MODEL), compiled.result_contract, compiled.projected_documents
+    ).convert_row(stored, builder, source=ROOT_LEVEL)
     (root,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
         _VARIANT_MODEL,

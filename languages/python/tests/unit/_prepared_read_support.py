@@ -85,11 +85,13 @@ def bound_read(
     address = (id(model), entity, correlation_members)
     held = _BOUND.get(address)
     if held is None or held[0] is not model:
+        compiled = compiled_read(model, entity)
         held = _BOUND[address] = (
             model,
             bind(
                 CatalogedModel(model),
-                compiled_read(model, entity),
+                compiled.result_contract,
+                compiled.projected_documents,
                 correlation_members=correlation_members,
             ),
         )

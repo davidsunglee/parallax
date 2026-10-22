@@ -1,30 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal, Protocol, cast
+from typing import Literal
 
 from parallax.core.base import (
     JSON,
     DocumentReadOrdinals,
     NeutralType,
-    PresentDocument,
-    SqlNull,
     UnknownFamilyTag,
-    unwrap_document_read,
 )
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
-from parallax.core.document_codec import (
-    DecodedMember,
-    DocumentFinding,
-    MemberShape,
-    Present,
-    decode_occurrence_classified,
-    decode_scalar_many_classified,
-    locate_raw_entity_member,
-    occurrence_shape,
-    prepared_raw_member_classifier,
-)
+from parallax.core.document_codec import MemberShape
 from parallax.core.inheritance import (
     InheritanceEntityView,
     InheritanceFacet,
@@ -103,30 +90,6 @@ type ResolvedVariant = tuple[EntityIdentity, str | None, UnknownFamilyTag | None
 concrete subtype claimed."""
 
 
-class RowIdentity(Protocol):
-    """How one read's rows name their Entity.
-
-    ``column`` is the carrier a row is read at, or ``None`` for a source that
-    reads no row at all; it is declared read-only here so an adapter may carry
-    it as a plain field of a narrower type. ``resolvable`` is every Entity this
-    source can answer with. ``result_key`` maps one resolved Entity's rendered
-    key to the provider key that carries it, and ``publish`` leaves in
-    ``values`` the keys a published row keeps once its identity is known.
-    """
-
-    @property
-    def column(self) -> str | None: ...
-
-    @property
-    def resolvable(self) -> tuple[EntityIdentity, ...]: ...
-
-    def resolve_value(self, raw: object) -> ResolvedVariant: ...
-
-    def result_key(self, entity: EntityIdentity, rendered_key: str) -> str: ...
-
-    def publish(self, values: dict[str, object], variant: str | None) -> None: ...
-
-
 @dataclass(frozen=True, slots=True)
 class FixedIdentity:
     """Every row of this read names one Entity; no carrier is read.
@@ -138,30 +101,16 @@ class FixedIdentity:
     """
 
     entity: EntityIdentity
-    column: None = field(default=None, init=False, repr=False, compare=False)
     answer: ResolvedVariant = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "answer", (self.entity, None, None))
 
-    @property
-    def resolvable(self) -> tuple[EntityIdentity, ...]:
-        return (self.entity,)
-
-    def resolve_value(self, raw: object) -> ResolvedVariant:
-        return self.answer
-
-    def result_key(self, entity: EntityIdentity, rendered_key: str) -> str:
-        return rendered_key
-
-    def publish(self, values: dict[str, object], variant: str | None) -> None:
-        return None
-
 
 @dataclass(frozen=True, slots=True)
 class ByTag:
-    """Table-per-hierarchy: pop the framework-owned raw tag column (it never
-    reaches the caller) and map its value to the declaring concrete's name.
+    """Table-per-hierarchy: the framework-owned raw tag ``column`` names the row's
+    concrete, and never reaches the caller.
 
     ``tag_pairs`` is a `(tagValue, Identity, variant spelling)` mapping in the
     facet's canonical concrete-subtype order. For a homogeneous read it is the
@@ -171,12 +120,12 @@ class ByTag:
     which is the pairing the document shapes are keyed by. A tuple of pairs
     rather than a `Mapping` is what keeps `CompiledRead` hashable and its `repr`
     stable; ``by_tag`` holds the whole answer a hit gives, so a resolved row
-    allocates nothing here.
+    allocates nothing for it.
 
     "The whole family" is the family as this model COMPOSES it, which need not be
     the family the shared Table holds: a model may compose a family's concrete
     leaves partially (`m-inheritance`), and an abstract-root read injects no tag
-    predicate, so a row tagged for an uncomposed sibling can reach this stage.
+    predicate, so a row tagged for an uncomposed sibling can reach its reader.
     ``root`` is carried so that row is refused by name — the family it belongs to
     and the composed tags it could have matched — rather than by a bare mapping
     miss.
@@ -194,36 +143,20 @@ class ByTag:
             {tag: (identity, spelling, None) for tag, identity, spelling in self.tag_pairs},
         )
 
-    @property
-    def resolvable(self) -> tuple[EntityIdentity, ...]:
-        return (self.root, *(identity for _, identity, _ in self.tag_pairs))
-
-    def resolve_value(self, raw: object) -> ResolvedVariant:
-        """Resolve one provider carrier without mutating a payload row."""
-        resolved = self.by_tag.get(cast("str", raw))
-        if resolved is None:
-            return self.root, None, UnknownFamilyTag(raw)
-        return resolved
-
-    def result_key(self, entity: EntityIdentity, rendered_key: str) -> str:
-        return rendered_key
-
-    def publish(self, values: dict[str, object], variant: str | None) -> None:
-        values.pop(self.column)
-
 
 @dataclass(frozen=True, slots=True)
 class ByLiteral:
-    """Table-per-concrete-subtype `union all`: rename the per-branch projected
-    subtype-name literal column — there is no tag column to derive it from.
+    """Table-per-concrete-subtype `union all`: the per-branch projected
+    subtype-name literal ``column`` names the row's concrete — there is no tag
+    column to derive it from.
 
     The branch that produced a row owns some of the union's result aliases and
-    reads the rest as its siblings' typed `NULL` padding. ``drop`` is every alias
-    the read's own lane discards, compiled from ``projected_fields`` once: a
-    narrow-to-owned read keeps only what the resolved branch owns, while a
-    row-form read keeps a sibling's null padding under an unrenamed alias, as the
-    corpus expects. The moved values are lifted before the drop, so an alias may
-    be both a source and discarded.
+    reads the rest as its siblings' typed `NULL` padding. ``renames`` and
+    ``result_keys`` pair each branch's aliases with the rendered keys they carry.
+    ``drop`` is every alias the read's own lane discards, compiled from
+    ``projected_fields`` once: a narrow-to-owned read keeps only what the
+    resolved branch owns, while a row-form read keeps a sibling's null padding
+    under an unrenamed alias, as the corpus expects.
     """
 
     column: str
@@ -268,35 +201,10 @@ class ByLiteral:
             ),
         )
 
-    @property
-    def resolvable(self) -> tuple[EntityIdentity, ...]:
-        return tuple(identity for _, identity in self.variants)
 
-    def resolve_value(self, raw: object) -> ResolvedVariant:
-        """Resolve one provider carrier without mutating a payload row."""
-        return self.by_spelling[cast("str", raw)]
-
-    def result_key(self, entity: EntityIdentity, rendered_key: str) -> str:
-        """Return the UNION result alias that carries one branch-local key."""
-        return self.result_keys.get(entity, {}).get(rendered_key, rendered_key)
-
-    def resolve(self, values: dict[str, object]) -> None:
-        spelling = cast("str", values.pop(self.column))
-        moved = tuple(
-            (rendered_key, values[alias])
-            for alias, rendered_key in self.renames[spelling]
-            if alias in values
-        )
-        for alias in self.drop:
-            values.pop(alias, None)
-        for rendered_key, value in moved:
-            values[rendered_key] = value
-
-    def publish(self, values: dict[str, object], variant: str | None) -> None:
-        if variant is None:  # pragma: no cover - a literal resolution always names its branch
-            raise SqlGenError("a union row must name its resolved family variant")
-        values[self.column] = variant
-        self.resolve(values)
+type RowIdentity = FixedIdentity | ByTag | ByLiteral
+"""How one read's rows name their Entity: fixed when the read is compiled, by a
+table-per-hierarchy tag, or by a `union all` branch's variant literal."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,26 +228,15 @@ class DocumentFanOut:
     def __post_init__(self) -> None:
         object.__setattr__(self, "member_paths", dict(self.members))
 
-    @property
-    def classified(self) -> frozenset[str]:
-        """The keys this fan-out judged, which conversion must not judge again."""
-        if self.shape is None:
-            return frozenset(self.padding)
-        return frozenset(key for key, _path in self.members)
-
 
 @dataclass(frozen=True, slots=True)
 class SharedDocument:
-    """Relational Document Layout: fan the one projected Structured Column out
-    into the members the read asked for, and drop the raw document.
+    """Relational Document Layout: the one projected Structured Column the
+    members the read asked for are fanned out of.
 
-    The Structured Column is never a result field (`m-sql`), so ``column`` is
-    popped rather than renamed. Each member is decoded by its DECLARED Neutral
-    Type through the codec, not by the JSON value's own shape, and lands under
-    the very result key it would have carried as a direct Column — which is what
-    makes one read's logical output the same under either layout. A member that
-    is absent or explicitly null in the document reads as `None`, the same one
-    logical answer a NULL Column gives.
+    The Structured Column is never a result field (`m-sql`): each member lands
+    under the very result key it would have carried as a direct Column, which is
+    what makes one read's logical output the same under either layout.
 
     ``column`` is ONE row key for the whole read, including a `union all` whose
     branches each hold their own Structured Column: Storage Layout is root-owned,
@@ -357,70 +254,18 @@ class SharedDocument:
     def __post_init__(self) -> None:
         object.__setattr__(self, "by_entity", dict(self.per_entity))
 
-    def raw_member_from(self, document_read: object, resolved: EntityIdentity, key: str) -> object:
-        """Read one raw member from an already selected document carrier."""
-        entry = self.by_entity.get(resolved)
-        if entry is None:
-            raise KeyError(key)
-        path = entry.member_paths.get(key)
-        if path is None:
-            raise KeyError(key)
-        if isinstance(document_read, SqlNull):
-            return document_read
-        if not isinstance(document_read, PresentDocument):
-            raise SqlGenError(
-                f"the database port returned {type(document_read).__name__}, not a DocumentRead"
-            )
-        return locate_raw_entity_member(document_read.document, path[0])
-
-    def raw_member_location(self, resolved: EntityIdentity, key: str) -> str:
-        """Return a member's direct key in an already unwrapped document."""
-        entry = self.by_entity.get(resolved)
-        if entry is None or key not in entry.member_paths:
-            raise KeyError(key)
-        return entry.member_paths[key][0]
-
-    def located_classifier(
-        self,
-        resolved: EntityIdentity,
-        key: str,
-        *,
-        build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
-        build_many: Callable[[Iterable[object]], object] | None = None,
-    ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
-        """The prepared classifier for one located shared-document member."""
-        entry = self.by_entity.get(resolved)
-        if entry is None or entry.shape is None:
-            raise KeyError(key)
-        path = entry.member_paths.get(key)
-        if path is None:
-            raise KeyError(key)
-        if (build_object is None) != (build_many is None):
-            raise ValueError("object and many output builders must be supplied together")
-        classifier = (
-            prepared_raw_member_classifier(entry.shape, path[0])
-            if build_object is None or build_many is None
-            else prepared_raw_member_classifier(
-                entry.shape,
-                path[0],
-                build_object=build_object,
-                build_many=build_many,
-            )
-        )
-        return cast("Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]", classifier)
-
 
 @dataclass(frozen=True, slots=True)
 class DirectDocuments:
-    """Classify each projected document stored in a Column of its own.
+    """Each concrete's projected documents stored in a Column of their own.
 
     A provider folds every selected document pair before materialization,
     regardless of whether the carrier is the Table's shared Structured Column, a
-    Value Object's own Column, or a scalar collection's own Column. This stage
-    consumes the latter two carriers and decodes each against its member's
-    declared definition, resolved once at compile time rather than per row. It
-    keys on the concrete the row RESOLVED to, so a read whose position holds
-    several concretes classifies the documents of the one its row names.
+    Value Object's own Column, or a scalar collection's own Column. These are the
+    latter two carriers, each with its member's declared definition, resolved
+    once at compile time rather than per row. They are keyed by the concrete a
+    row RESOLVES to, so a read whose position holds several concretes classifies
+    the documents of the one its row names.
     """
 
     per_entity: tuple[
@@ -432,67 +277,6 @@ class DirectDocuments:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "by_entity", dict(self.per_entity))
-
-    def member_classifier(
-        self,
-        resolved: EntityIdentity,
-        key: str,
-        *,
-        build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
-        build_many: Callable[[Iterable[object]], object] | None = None,
-    ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
-        """The prepared classifier for one direct document member."""
-        member = next(
-            (item for item in self.by_entity.get(resolved, ()) if item.storage.name == key),
-            None,
-        )
-        if member is None:
-            raise KeyError(key)
-        if isinstance(member, AttributeMetadata):
-            return _collection_classifier(member)
-        occurrence = member
-        shape = occurrence_shape(occurrence)
-
-        def classify(document_read: object) -> tuple[object, tuple[DocumentFinding, ...]]:
-            decoded = _classified_occurrence(
-                shape,
-                _document_read(document_read),
-                multiplicity=occurrence.multiplicity,
-                nullable=occurrence.nullable,
-                build_object=build_object,
-                build_many=build_many,
-            )
-            findings = tuple(
-                replace(finding, path=(occurrence.identity.path[-1], *finding.path))
-                for finding in decoded.findings
-            )
-            value = decoded.presence.value if isinstance(decoded.presence, Present) else None
-            return value, findings
-
-        return classify
-
-
-def _collection_classifier(
-    attribute: AttributeMetadata,
-) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
-    leaf = attribute.definition
-    name = attribute.identity.name
-
-    def classify(document_read: object) -> tuple[object, tuple[DocumentFinding, ...]]:
-        value, findings = decode_scalar_many_classified(leaf, _document_read(document_read))
-        if findings:
-            findings = tuple(replace(finding, path=(name, *finding.path)) for finding in findings)
-        return value, findings
-
-    return classify
-
-
-def _document_read(document_read: object) -> SqlNull | PresentDocument:
-    if not isinstance(document_read, (SqlNull, PresentDocument)):
-        raise SqlGenError(
-            f"the database port returned {type(document_read).__name__}, not a DocumentRead"
-        )
-    return document_read
 
 
 @dataclass(frozen=True, slots=True)
@@ -527,28 +311,39 @@ class ResultContract:
     was compiled. A fixed identity — a non-family read, a concrete-target
     table-per-hierarchy read, or a table-per-concrete-subtype read whose position
     resolved to a single concrete — has no `familyVariant` to materialize. The
-    document stages are the projection's decision alone: a read fills them when
+    document entries are the projection's decision alone: a read fills them when
     it projected a document, however its rows are named.
 
     ``attribute_reads`` pairs each concrete of the read's resolved position with
-    its Attribute contracts, in that Entity's own applicable-Attribute order.
-    ``result_keys`` names every positional cell of a row, in order.
-    ``coordinate_reads`` is the hidden result aliases the statement allocated to
-    capture one Continuation Order coordinate per ordering term, in term order —
-    empty for every read that pages through nothing; publishing it here is what
-    makes the compiler the only interpreter of a carrier, since it chose the
-    expressions.
+    its Attribute contracts, in that Entity's own applicable-Attribute order,
+    which ``reads_by_entity`` keys by Entity. An Entity this read projected no
+    columns for — a family root an unrecognized tag resolved to, or a sibling
+    outside the narrow — has none, and every Attribute of such a row carries its
+    own storage spelling. ``result_keys`` names every positional cell of a row,
+    in order. ``coordinate_reads`` is the hidden result aliases the statement
+    allocated to capture one Continuation Order coordinate per ordering term, in
+    term order — empty for every read that pages through nothing; publishing it
+    here is what makes the compiler the only interpreter of a carrier, since it
+    chose the expressions.
 
     ``resolvable`` closes the set of Entities this read's rows can name, so a
     consumer preparing one structure per such Entity prepares them all at once
     instead of on the first row that reaches one: the position and whatever the
-    row identity source reaches past it. A homogeneous tag map is the WHOLE
-    family's rather than the read's narrow, so a narrowed abstract read still
-    resolves a sibling's row to that sibling, and a tag no composed concrete
-    claims resolves the row to the family root — which is never a concrete in
-    the position. ``classified_by_entity`` is the union of what both document
-    stages judge for one resolved concrete, compiled here because the two stages
-    are the only judges and their keys are fixed by the projection.
+    row identity reaches past it. A homogeneous tag map is the WHOLE family's
+    rather than the read's narrow, so a narrowed abstract read still resolves a
+    sibling's row to that sibling, and a tag no composed concrete claims
+    resolves the row to the family root — which is never a concrete in the
+    position. ``classified_by_entity`` is the union of the document members both
+    document entries carry for one resolved concrete, compiled here because
+    their keys are fixed by the projection.
+
+    ``structured_column`` is the Structured Column this read projected, or
+    absence for none. Fan-out keeps the raw column off a published row, so a
+    caller that needs the stored document — a temporal observation, which
+    retains it (`m-write-plan`'s Predecessor Row) — reads it off the driver row
+    by this name. Absence is the honest answer for every read that projected no
+    Structured Column: `Columns` layout, and a `Document`-layout read whose
+    members are all direct.
     """
 
     resolve: RowIdentity
@@ -559,11 +354,15 @@ class ResultContract:
     )
     result_keys: tuple[str, ...]
     coordinate_reads: tuple[str, ...]
+    reads_by_entity: Mapping[EntityIdentity, tuple[AttributeReadContract, ...]] = field(
+        init=False, repr=False, compare=False
+    )
     resolvable: tuple[EntityIdentity, ...] = field(init=False, repr=False, compare=False)
     index_by_key: Mapping[str, int] = field(init=False, repr=False, compare=False)
     classified_by_entity: Mapping[EntityIdentity, frozenset[str]] = field(
         init=False, compare=False, repr=False
     )
+    structured_column: str | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         index_by_key = {key: index for index, key in enumerate(self.result_keys)}
@@ -575,6 +374,7 @@ class ResultContract:
             )
             raise ValueError(f"duplicate result key {duplicate!r}")
         object.__setattr__(self, "index_by_key", index_by_key)
+        object.__setattr__(self, "reads_by_entity", dict(self.attribute_reads))
         object.__setattr__(
             self,
             "resolvable",
@@ -582,91 +382,52 @@ class ResultContract:
                 dict.fromkeys(
                     (
                         *(identity for identity, _reads in self.attribute_reads),
-                        *self.resolve.resolvable,
+                        *_named_entities(self.resolve),
                     )
                 )
             ),
         )
-        classified: dict[EntityIdentity, frozenset[str]] = {}
-        if self.shared_document is not None:
-            for identity, entry in self.shared_document.per_entity:
-                keys = entry.classified
-                if keys:
-                    classified[identity] = keys
-        if self.direct_documents is not None:
-            for identity, members in self.direct_documents.per_entity:
-                keys = frozenset(member.storage.name for member in members)
-                if keys:
-                    classified[identity] = classified.get(identity, frozenset()) | keys
-        object.__setattr__(self, "classified_by_entity", classified)
-
-    @property
-    def structured_column(self) -> str | None:
-        """The Structured Column this read projected, or absence for none.
-
-        The fan-out drops the raw column, so a caller that needs the stored
-        document — a temporal observation, which retains it (`m-write-plan`'s
-        Predecessor Row) — reads it off the driver row by this name. Absence is
-        the honest answer for every read that projected no Structured Column:
-        `Columns` layout, and a `Document`-layout read whose members are all
-        direct.
-        """
-        return None if self.shared_document is None else self.shared_document.column
-
-    def result_key(self, entity: EntityIdentity, rendered_key: str) -> str:
-        """Return the provider key carrying one resolved Entity's stored value."""
-        return self.resolve.result_key(entity, rendered_key)
-
-    def publication_keys(self, resolved: EntityIdentity, variant: str | None) -> tuple[str, ...]:
-        """The logical flat-row keys structural stages leave after decoding."""
-        values: dict[str, object] = {key: None for key in self.result_keys}
-        self.resolve.publish(values, variant)
-        if self.shared_document is not None:
-            values.pop(self.result_key(resolved, self.shared_document.column), None)
-            entry = self.shared_document.by_entity.get(resolved)
-            if entry is not None:
-                values.update(dict.fromkeys(entry.padding))
-        for alias in self.coordinate_reads:
-            values.pop(alias, None)
-        return tuple(values)
-
-
-def _classified_occurrence(
-    shape: MemberShape,
-    document_read: SqlNull | PresentDocument,
-    *,
-    multiplicity: Multiplicity,
-    nullable: bool,
-    build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
-    build_many: Callable[[Iterable[object]], object] | None = None,
-) -> DecodedMember:
-    """Classify and construct one complete occurrence exactly once."""
-    if (build_object is None) != (build_many is None):
-        raise ValueError("object and many output builders must be supplied together")
-    if build_object is None or build_many is None:
-        return decode_occurrence_classified(
-            shape,
-            document_read,
-            multiplicity=multiplicity,
-            nullable=nullable,
+        object.__setattr__(
+            self,
+            "classified_by_entity",
+            _classified_by_entity(self.shared_document, self.direct_documents),
         )
-    return decode_occurrence_classified(
-        shape,
-        document_read,
-        multiplicity=multiplicity,
-        nullable=nullable,
-        build_object=build_object,
-        build_many=build_many,
-    )
-
-
-def observed_document(document_read: object) -> object | None:
-    """Unwrap a provider-neutral document carrier for predecessor retention."""
-    if not isinstance(document_read, (SqlNull, PresentDocument)):
-        raise SqlGenError(
-            f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+        object.__setattr__(
+            self,
+            "structured_column",
+            None if self.shared_document is None else self.shared_document.column,
         )
-    return unwrap_document_read(document_read)
+
+
+def _named_entities(resolve: RowIdentity) -> tuple[EntityIdentity, ...]:
+    match resolve:
+        case FixedIdentity(entity=entity):
+            return (entity,)
+        case ByTag(root=root, tag_pairs=pairs):
+            return (root, *(identity for _, identity, _ in pairs))
+        case ByLiteral(variants=variants):
+            return tuple(identity for _, identity in variants)
+
+
+def _classified_by_entity(
+    shared: SharedDocument | None, direct: DirectDocuments | None
+) -> dict[EntityIdentity, frozenset[str]]:
+    classified: dict[EntityIdentity, frozenset[str]] = {}
+    if shared is not None:
+        for identity, entry in shared.per_entity:
+            keys = (
+                frozenset(entry.padding)
+                if entry.shape is None
+                else frozenset(key for key, _path in entry.members)
+            )
+            if keys:
+                classified[identity] = keys
+    if direct is not None:
+        for identity, members in direct.per_entity:
+            keys = frozenset(member.storage.name for member in members)
+            if keys:
+                classified[identity] = classified.get(identity, frozenset()) | keys
+    return classified
 
 
 def direct_documents(
@@ -679,11 +440,11 @@ def direct_documents(
         ]
     ],
 ) -> DirectDocuments | None:
-    """The direct-Column document stage, or absence when a read projects none.
+    """The direct-Column document entry, or absence when a read projects none.
 
     Each candidate names the Attributes and occurrences one concrete's rows
     carry; only the scalar collections and occurrences stored in a Column of
-    their own are classified here.
+    their own are kept.
     """
     per_entity = tuple(
         (
@@ -1446,7 +1207,7 @@ def _plan_tph_read(
     if document is not None:
         columns = (*columns, document)
     # `familyVariant` rides the SAME condition as the discriminator projection:
-    # the tag stage reads the column this read projects, or there is no column to
+    # a tag identity reads the column this read projects, or there is no column to
     # read and every row names the one concrete the target is. A heterogeneous
     # shared document is keyed by the concretes whose shapes it holds, so the two
     # agree on one pairing.

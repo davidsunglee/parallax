@@ -14,6 +14,7 @@ from parallax.core.base import PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import UNAVAILABLE, DocumentFinding
 from parallax.core.metamodel import EntityMetadata, entity_by_name
+from parallax.core.read_delivery._row_decoding import member_classifier
 from tests._support.sql import compile_read
 
 _COLUMNS = models.load_model(
@@ -32,14 +33,16 @@ def test_a_row_form_read_projects_every_collection_as_a_document_pair() -> None:
     )
     assert "encode(" not in compiled.statement.sql
     assert compiled.document_reads[0] == (1, 2)
-    assert {"tags", "blobs"} <= compiled.classified_members(_ITEM.identity)
+    assert {"tags", "blobs"} <= compiled.result_contract.classified_by_entity.get(
+        _ITEM.identity, frozenset()
+    )
 
 
 def test_a_bytes_collection_keeps_its_storage_key_rather_than_an_encoded_one() -> None:
     compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
     contracts = {
         contract.attribute.identity.name: contract
-        for contract in compiled.attribute_reads(_ITEM.identity)
+        for contract in compiled.result_contract.reads_by_entity.get(_ITEM.identity, ())
     }
 
     assert (contracts["blobs"].result_key, contracts["blobs"].encoded) == ("blobs", False)
@@ -47,7 +50,7 @@ def test_a_bytes_collection_keeps_its_storage_key_rather_than_an_encoded_one() -
 
 def test_a_collection_column_classifies_through_the_codec_with_its_logical_path() -> None:
     compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
-    classify = compiled.raw_member_classifier(_ITEM.identity, "tags")
+    classify = member_classifier(compiled.result_contract, _ITEM.identity, "tags")
 
     assert classify(PresentDocument(["b", "a", "b"])) == (("b", "a", "b"), ())
     assert classify(PresentDocument(["b", 5])) == (
