@@ -7,8 +7,9 @@ that contradicts its declared type), scalar provenance, Page identity claims
     (family normalization and projection independence), and the whole converted
     row with its documents decoded.
 
-Every row is a result-keyed driver row of a real compiled read, bound as a find
-binds it and converted through ``ReadRowConverter.convert_row``. A converted row is
+Every row is spelled by result key and laid out positionally for a real compiled
+read carrying exactly the cells it names, bound as a find binds it and converted
+through ``ReadRowConverter.convert_row``. A converted row is
 POSITIONAL: every applicable member occupies its declared position and ``ABSENT``
 stands where the read carried nothing, so what the suite asserts of a member is
 what the row holds at that member's own position.
@@ -49,6 +50,7 @@ from parallax.core.base import (
     NeutralType,
     PresentDocument,
 )
+from parallax.core.db_port import Row
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import encode_leaf
@@ -73,7 +75,7 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
     page_rows,
 )
-from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
+from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.descriptor._records import (
@@ -92,7 +94,7 @@ from tests._support.model_capabilities import graph_construction_for
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
-from tests.unit._prepared_read_support import bound_read, compiled_read
+from tests.unit._prepared_read_support import bound_cells, compiled_read
 from tests.unit.snapshot._encoded_identity_read import encoded_identity_page
 from tests.unit.snapshot._snapshot_page_support import (
     driver_row,
@@ -164,16 +166,15 @@ class _Projection:
 
 def _converted(model: Metamodel, entity: str, row: Mapping[str, object]) -> _Projection:
     """``row``, spelled by result key, converted through ``entity``'s bound read."""
-    return _converted_by(compiled_read(model, entity), bound_read(model, entity), row)
+    return _converted_by(model, compiled_read(model, entity), row)
 
 
 def _converted_by(
-    compiled: CompiledRead, prepared: ReadRowConverter, row: Mapping[str, object]
+    model: Metamodel, compiled: CompiledRead, row: Mapping[str, object]
 ) -> _Projection:
     builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, _variant = prepared.convert_row(
-        driver_row(compiled, row), builder, source=ROOT_LEVEL
-    )
+    prepared, cells = bound_cells(CatalogedModel(model), compiled, driver_row(compiled, row))
+    index, _resolved, _document, _variant = prepared.convert_row(cells, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)
@@ -183,6 +184,13 @@ def _converted_by(
         root.invalid_roots[0].issues if root.roots == (None,) else root.issues(0),
         rows.keys[index],
     )
+
+
+def _bound(
+    model: Metamodel, entity: str, cells: Mapping[str, object]
+) -> tuple[ReadRowConverter, Row]:
+    """``entity``'s read carrying exactly ``cells``, bound, beside their positional row."""
+    return bound_cells(CatalogedModel(model), compiled_read(model, entity), cells)
 
 
 def _state_row(model: Metamodel, entity: str, row: dict[str, object]) -> dict[str, object]:
@@ -698,12 +706,11 @@ _ITEM_ORDER_ID = AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "ord
 
 def test_a_back_reference_names_the_logical_claim_not_a_projection_winner() -> None:
     builder, items, item_order = _back_referenced_orders()
-    orders = bound_read(ORDERS, "Order")
-    first, *_ = orders.convert_row({"id": 1, "name": "Ada"}, builder, source=ROOT_LEVEL)
-    second, *_ = orders.convert_row({"id": 1, "name": "Ada"}, builder, source=ROOT_LEVEL)
-    item, *_ = bound_read(ORDERS, "OrderItem").convert_row(
-        {"id": 11, "order_id": 1}, builder, source=ROOT_LEVEL
-    )
+    orders, order_row = _bound(ORDERS, "Order", {"id": 1, "name": "Ada"})
+    first, *_ = orders.convert_row(order_row, builder, source=ROOT_LEVEL)
+    second, *_ = orders.convert_row(order_row, builder, source=ROOT_LEVEL)
+    order_items, item_row = _bound(ORDERS, "OrderItem", {"id": 11, "order_id": 1})
+    item, *_ = order_items.convert_row(item_row, builder, source=ROOT_LEVEL)
     assert first != second
     for order in (first, second):
         builder.write_view(order, items, (item,))
@@ -717,9 +724,8 @@ def test_a_back_reference_names_the_logical_claim_not_a_projection_winner() -> N
 
 def test_a_back_reference_to_a_key_the_builder_never_registered_is_refused() -> None:
     builder, _items, item_order = _back_referenced_orders()
-    item, *_ = bound_read(ORDERS, "OrderItem").convert_row(
-        {"id": 11, "order_id": 999}, builder, source=ROOT_LEVEL
-    )
+    order_items, item_row = _bound(ORDERS, "OrderItem", {"id": 11, "order_id": 999})
+    item, *_ = order_items.convert_row(item_row, builder, source=ROOT_LEVEL)
     with pytest.raises(ValueError, match="no already-converted"):
         builder.write_reference(
             item, item_order, EntityIdentity(_NAMESPACE, "Order"), _ITEM_ORDER_ID
@@ -800,9 +806,10 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
     # constraint have admitted it. The provider-normalized value is therefore an
     # identity claim, not fresh input to the host's scalar codec.
     builder = PageBuilder(ViewSchema.of())
-    ref, *_ = bound_read(CUSTOMER, "Customer").convert_row(
-        {"id": key, "name": "Ada", "address": SQL_NULL}, builder, source=ROOT_LEVEL
+    customers, customer = _bound(
+        CUSTOMER, "Customer", {"id": key, "name": "Ada", "address": SQL_NULL}
     )
+    ref, *_ = customers.convert_row(customer, builder, source=ROOT_LEVEL)
     page = builder.finish((ref,), Pin())
     assert page_rows(page).roots == (ref,)
     view = RootView(page, 0)
@@ -858,7 +865,7 @@ def test_entity_attribute_findings_use_attribute_specific_issue_codes(
 
 
 def test_encoded_identifier_findings_use_the_primary_key_issue_code() -> None:
-    page = encoded_identity_page({"id_wire": "not-a-key"})
+    page = encoded_identity_page(("not-a-key", None, SQL_NULL))
     root = RootView(page)
     assert [issue.code for record in root.invalid_roots for issue in record.issues] == [
         "stored-data-primary-key-undecodable"
@@ -1095,13 +1102,10 @@ _HULL_TO_SKIFF = compile_read(
     narrow_to=(target(HULL, "Skiff").identity,),
     result_form="instance",
 )
-_HULL_TO_SKIFF_READ = bind(
-    CatalogedModel(HULL), _HULL_TO_SKIFF.result_contract, _HULL_TO_SKIFF.projected_documents
-)
 
 
 def _narrowed_hull(row: Mapping[str, object]) -> _Projection:
-    return _converted_by(_HULL_TO_SKIFF, _HULL_TO_SKIFF_READ, row)
+    return _converted_by(HULL, _HULL_TO_SKIFF, row)
 
 
 _HULL_PROFILE_LABEL = ValueObjectAttributeIdentity(

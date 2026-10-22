@@ -66,7 +66,6 @@ from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import TrueNode
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, PageBuilder, ViewSchema
-from parallax.core.read_delivery._row_converter import bind
 from parallax.core.temporal_read import Edge, Pin
 from parallax.snapshot import (
     Database,
@@ -105,7 +104,7 @@ from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
 from tests._support.sql import compile_read
 from tests.unit._metamodel_support import Declaration, key, source
-from tests.unit._prepared_read_support import bound_read, compiled_read
+from tests.unit._prepared_read_support import bound_cells, compiled_read, convert_cells
 from tests.unit._transact_support import BALANCE, db_for
 from tests.unit.snapshot._snapshot_page_support import (
     driver_row,
@@ -436,20 +435,27 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     assert _mapping(root["address"])["phones"] == []
 
 
-def test_an_absent_many_publishes_empty_through_a_result_keyed_row_too() -> None:
-    # The same document reaching conversion as a result-keyed row rather than a
-    # positional one, so each member is located by its key. Its occurrence
-    # reduction has to answer exactly as the positional row's does, or one stored
-    # state publishes two nodes depending on which door it came in by.
-    identity = identity_of(CUSTOMER_META, "Customer")
-    builder = PageBuilder(ViewSchema.of())
-    ref, _resolved, _document, _variant = bound_read(CUSTOMER_META, "Customer").convert_row(
-        driver_row(
-            compiled_read(CUSTOMER_META, "Customer"),
-            {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
-        ),
+def _converted_customer(cells: Mapping[str, object], builder: PageBuilder) -> int:
+    """``cells`` converted into ``builder`` through the Customer read carrying them."""
+    compiled = compiled_read(CUSTOMER_META, "Customer")
+    return convert_cells(
+        CatalogedModel(CUSTOMER_META),
+        compiled,
+        driver_row(compiled, cells),
         builder,
         source=ROOT_LEVEL,
+    )
+
+
+def test_an_absent_many_publishes_empty_through_a_directly_converted_row_too() -> None:
+    # The same document converted straight through the bound read rather than
+    # reached by a find. Its occurrence reduction has to answer exactly as the
+    # find's does, or one stored state publishes two nodes depending on which
+    # door it came in by.
+    identity = identity_of(CUSTOMER_META, "Customer")
+    builder = PageBuilder(ViewSchema.of())
+    ref = _converted_customer(
+        {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}}, builder
     )
     (published,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
@@ -468,13 +474,8 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
     # depth a document can nest to.
     identity = identity_of(CUSTOMER_META, "Customer")
     builder = PageBuilder(ViewSchema.of())
-    ref, _resolved, _document, _variant = bound_read(CUSTOMER_META, "Customer").convert_row(
-        driver_row(
-            compiled_read(CUSTOMER_META, "Customer"),
-            {"id": 3, "address": {"street": "9 Beacon St", "geo": {"country": "NO"}}},
-        ),
-        builder,
-        source=ROOT_LEVEL,
+    ref = _converted_customer(
+        {"id": 3, "address": {"street": "9 Beacon St", "geo": {"country": "NO"}}}, builder
     )
     (published,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
@@ -1216,9 +1217,8 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
         "archive_profile": PresentDocument({"label": "archive"}),
     }
     builder = PageBuilder(ViewSchema.of())
-    ref, resolved, _document, _variant = bind(
-        CatalogedModel(_VARIANT_MODEL), compiled.result_contract, compiled.projected_documents
-    ).convert_row(stored, builder, source=ROOT_LEVEL)
+    prepared, row = bound_cells(CatalogedModel(_VARIANT_MODEL), compiled, stored)
+    ref, resolved, _document, _variant = prepared.convert_row(row, builder, source=ROOT_LEVEL)
     (root,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),
         _VARIANT_MODEL,

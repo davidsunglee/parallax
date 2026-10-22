@@ -44,7 +44,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._concurrency import CONCURRENCY
-from parallax.core.base import INFINITY, PresentDocument
+from parallax.core.base import INFINITY, SQL_NULL, PresentDocument
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import GraphConstructionError, IncludePath
 from parallax.core.entity._expressions import IncludeTraversal
@@ -254,7 +254,9 @@ def test_an_invalid_root_preserves_its_result_position_without_allocating_a_node
     # result position rather than a truncation, and the two survivors keep the
     # allocation indices their own walk order gives them.
     root_view = RootView(
-        encoded_identity_page({"id_wire": KEY_TEXT}, {"id_wire": None}, {"id_wire": OTHER_KEY_TEXT})
+        encoded_identity_page(
+            (KEY_TEXT, None, SQL_NULL), (None, None, SQL_NULL), (OTHER_KEY_TEXT, None, SQL_NULL)
+        )
     )
     assert root_view.roots == (0, None, 1)
     assert [issue.code for record in root_view.invalid_roots for issue in record.issues] == [
@@ -265,7 +267,7 @@ def test_an_invalid_root_preserves_its_result_position_without_allocating_a_node
 
 
 def test_publication_issue_reads_the_first_invalid_root_issue() -> None:
-    root_view = RootView(encoded_identity_page({"id_wire": None}))
+    root_view = RootView(encoded_identity_page((None, None, SQL_NULL)))
     assert publication_issue(root_view) is root_view.invalid_roots[0].issues[0]
 
 
@@ -273,21 +275,21 @@ def test_an_issue_bearing_root_view_is_refused_with_its_first_issue() -> None:
     # A lifecycle that has no in-band channel for a stored-data verdict refuses
     # the Root View before deriving anything from it, naming the issue the
     # publication order reaches first; a conforming one passes untouched.
-    root_view = RootView(encoded_identity_page({"id_wire": None}))
+    root_view = RootView(encoded_identity_page((None, None, SQL_NULL)))
     first = root_view.invalid_roots[0].issues[0]
 
     with pytest.raises(StoredDataDecodingError) as refused:
         require_publishable(root_view)
 
     assert (refused.value.entity, refused.value.member) == (first.entity, first.member)
-    require_publishable(RootView(encoded_identity_page({"id_wire": KEY_TEXT})))
+    require_publishable(RootView(encoded_identity_page((KEY_TEXT, None, SQL_NULL))))
 
 
 def test_flat_publication_preserves_a_classified_result_position() -> None:
     # Row publication has no record carrier of its own, so it publishes the same
     # InvalidData position the shared Page judgment produced rather than flattening
     # diagnostic state into an ordinary mapping.
-    stage = FlatPageResult((None,), (None,), encoded_identity_page({"id_wire": None}))
+    stage = FlatPageResult((None,), (None,), encoded_identity_page((None, None, SQL_NULL)))
     meta = ENCODED_IDENTITY
     prepared = encoded_identity_read()
 
@@ -298,10 +300,7 @@ def test_flat_publication_preserves_a_classified_result_position() -> None:
 
 def test_a_keyless_root_with_rejected_structured_evidence_dedupes_in_band() -> None:
     page = encoded_identity_page(
-        {
-            "id_wire": None,
-            "address": PresentDocument({"street": "1 Park Ave", "phones": {"type": "home"}}),
-        },
+        (None, None, PresentDocument({"street": "1 Park Ave", "phones": {"type": "home"}})),
     )
 
     root = RootView(page)
@@ -330,7 +329,7 @@ def test_an_invalid_root_ordinal_is_its_result_position_by_construction() -> Non
     # A caller never spells one: sealing derives the ordinal from the position
     # the root occupies, so the mismatch a whole-Page validation pass used to
     # look for is unrepresentable rather than checked.
-    root_view = RootView(encoded_identity_page({"id_wire": KEY_TEXT}, {"id_wire": None}))
+    root_view = RootView(encoded_identity_page((KEY_TEXT, None, SQL_NULL), (None, None, SQL_NULL)))
     assert [record.ordinal for record in root_view.invalid_roots] == [1]
 
 
@@ -677,7 +676,7 @@ def test_an_unrequested_invalid_projection_does_not_refuse_a_clean_root() -> Non
 
 
 def test_an_invalid_encoded_key_publishes_no_logical_identity() -> None:
-    page = encoded_identity_page({"id_wire": None})
+    page = encoded_identity_page((None, None, SQL_NULL))
     assert page_rows(page).keys[0] is None
     stage = FlatPageResult((None,), (None,), page)
     (record,) = _published_rows(
@@ -1216,7 +1215,9 @@ def test_every_root_view_accessor_answers_the_identical_object_on_a_second_call(
     first = fixture.node("EncodedOrderItem", _ENCODED_ITEM_ROW)
     second = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "id": 12})
     duplicate = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
-    keyless = encoded_identity_read().convert_row({"id_wire": None}, fixture.builder, source=0)[0]
+    keyless = encoded_identity_read().convert_row(
+        (None, None, SQL_NULL), fixture.builder, source=0
+    )[0]
     fixture.attach(order, _ENCODED_ITEMS, (first, second))
     root_view = RootView(fixture.page(order, keyless, duplicate))
 
@@ -1266,7 +1267,10 @@ def test_two_unreadable_projections_of_one_row_never_share_with_each_other() -> 
     # diagnosed twice — which is what keeps each physical finding attributable.
     root_view = RootView(
         encoded_identity_page(
-            {"id_wire": None}, {"id_wire": None}, {"id_wire": KEY_TEXT}, {"id_wire": KEY_TEXT}
+            (None, None, SQL_NULL),
+            (None, None, SQL_NULL),
+            (KEY_TEXT, None, SQL_NULL),
+            (KEY_TEXT, None, SQL_NULL),
         )
     )
     # Both unreadable roots are invalid-root holes, and the two readable ones

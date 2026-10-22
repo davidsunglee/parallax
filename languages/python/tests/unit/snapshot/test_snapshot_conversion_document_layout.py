@@ -35,7 +35,6 @@ import pytest
 from parallax.conformance import models
 from parallax.core import predicate as oa
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
-from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
@@ -46,12 +45,12 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
     page_rows,
 )
-from parallax.core.read_delivery._row_converter import bind
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
 from tests._support.sql import compile_read
 from tests.unit._document_layout_support import columns_model, document_model, entity
+from tests.unit._prepared_read_support import convert_cells
 from tests.unit.snapshot._snapshot_page_support import documents_of, rendered_members
 
 _CORPUS = models.load_models()["document-layout"]
@@ -67,28 +66,18 @@ class _Converted:
     issues: tuple[StoredDataIssueInput, ...]
 
 
-def _converted(model: Metamodel, name: str, stored: Row | Mapping[str, object]) -> _Converted:
-    """One stored row through the production read sequence, database aside."""
+def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Converted:
+    """One stored row, spelled by result key, through the production read
+    sequence, database aside."""
     compiled = compile_read(
         oa.TrueNode(), model, POSTGRES, entity(model, name), result_form="instance"
     )
-    prepared = bind(CatalogedModel(model), compiled.result_contract, compiled.projected_documents)
     builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, _variant = prepared.convert_row(stored, builder, source=ROOT_LEVEL)
+    index = convert_cells(CatalogedModel(model), compiled, stored, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     root = RootView(page)
     return _Converted(rendered_members(rows.layouts[index], root.member_values(0)), root.issues(0))
-
-
-def _positional(model: Metamodel, name: str, stored: Mapping[str, object]) -> Row:
-    """``stored`` laid out in the compiled read's own result order, as a port
-    returns a provider row."""
-    compiled = compile_read(
-        oa.TrueNode(), model, POSTGRES, entity(model, name), result_form="instance"
-    )
-    assert set(stored) == set(compiled.result_contract.result_keys)
-    return tuple(stored[key] for key in compiled.result_contract.result_keys)
 
 
 def _members(node: _Converted) -> Mapping[str, Any]:
@@ -294,16 +283,14 @@ def test_an_occurrence_column_requires_a_folded_document_read() -> None:
         pytest.param(SQL_NULL, [], id="sql-null-document"),
     ],
 )
-def test_a_positional_and_a_result_keyed_document_row_classify_alike(
+def test_a_document_row_classifies_each_member_by_what_its_document_holds(
     payload: object, codes: list[str]
 ) -> None:
-    # A positional row carries the Structured Column at its ordinal and a
-    # result-keyed one under its key; either way each document-resident member
-    # is located inside it and classified by what the document actually holds.
-    keyed: Mapping[str, object] = {"id": 2, "payload": payload}
-    positional = _converted(_CORPUS, "Traveler", _positional(_CORPUS, "Traveler", keyed))
-    assert positional == _converted(_CORPUS, "Traveler", keyed)
-    assert [issue.code for issue in positional.issues] == codes
+    # The row carries the Structured Column at its ordinal; each
+    # document-resident member is located inside it and classified by what the
+    # document actually holds.
+    node = _converted(_CORPUS, "Traveler", {"id": 2, "payload": payload})
+    assert [issue.code for issue in node.issues] == codes
 
 
 def test_an_sql_null_entity_document_converts_each_member_to_null() -> None:

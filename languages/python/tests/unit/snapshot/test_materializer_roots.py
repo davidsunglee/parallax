@@ -10,6 +10,7 @@ import pytest
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.core.base import SQL_NULL
 from parallax.core.deep_fetch import RelationshipViewKey
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import RelationshipIdentity
 from parallax.core.read_delivery._page import (
@@ -23,7 +24,7 @@ from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
 from tests.unit._corpus_model_support import model as corpus_model
-from tests.unit._prepared_read_support import bound_read
+from tests.unit._prepared_read_support import compiled_read, convert_cells
 from tests.unit.snapshot._encoded_identity_read import encoded_identity_page
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import (
@@ -65,9 +66,11 @@ def _page(
 ) -> tuple[object, tuple[int, ...]]:
     source_count = max((source for source, _row in occurrences), default=0) + 1
     builder = PageBuilder(ViewSchema(tuple(() for _ in range(source_count))), observer)
-    prepared = bound_read(_ENCODED, "EncodedOrder")
+    compiled = compiled_read(_ENCODED, "EncodedOrder")
+    cataloged = CatalogedModel(_ENCODED)
     roots = tuple(
-        prepared.convert_row(row, builder, source=source)[0] for source, row in occurrences
+        convert_cells(cataloged, compiled, row, builder, source=source)
+        for source, row in occurrences
     )
     return builder.finish(roots, Pin()), roots
 
@@ -100,9 +103,7 @@ def test_separate_roots_may_store_unequal_witnesses_for_one_logical_key() -> Non
 
 def test_keyless_occurrences_are_judged_only_when_their_root_is_requested() -> None:
     with recorded_conversion_dependencies() as calls:
-        page = encoded_identity_page(
-            {"id_wire": None, "token_hex": "0e"}, {"id_wire": None, "token_hex": "0f"}
-        )
+        page = encoded_identity_page((None, "0e", SQL_NULL), (None, "0f", SQL_NULL))
         assert calls.decoded == []
         assert page_rows(cast("Any", page)).roots == (0, 1)
 
@@ -190,10 +191,15 @@ def _shared_keyless_animal(owners: tuple[int, ...], animal_row: dict[str, object
     occurrence ``animal_row`` claims."""
     animals = RelationshipViewKey(RelationshipIdentity(identity_of(_ANIMAL, "Person"), "animals"))
     builder = PageBuilder(ViewSchema.of(animals))
-    animal, *_ = bound_read(_ANIMAL, "Animal").convert_row(animal_row, builder, source=ROOT_LEVEL)
-    people = bound_read(_ANIMAL, "Person")
+    cataloged = CatalogedModel(_ANIMAL)
+    animal = convert_cells(
+        cataloged, compiled_read(_ANIMAL, "Animal"), animal_row, builder, source=ROOT_LEVEL
+    )
+    people = compiled_read(_ANIMAL, "Person")
     roots = tuple(
-        people.convert_row({"id": owner, "name": f"P{owner}"}, builder, source=ROOT_LEVEL)[0]
+        convert_cells(
+            cataloged, people, {"id": owner, "name": f"P{owner}"}, builder, source=ROOT_LEVEL
+        )
         for owner in owners
     )
     for root in roots:

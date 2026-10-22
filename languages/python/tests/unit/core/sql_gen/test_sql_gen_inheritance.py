@@ -39,6 +39,7 @@ from parallax.core.sql_gen._inheritance import (
 from parallax.core.sql_gen._predicate import render_predicate
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
+from tests.unit._prepared_read_support import result_row
 from tests.unit.core.sql_gen._plan_reuse_support import record_plan_reuse
 
 PAYMENT = model("payment")
@@ -549,11 +550,14 @@ def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> Non
         result_form="instance",
     )
 
-    card = {
-        "id": 1,
-        "kind": "card",
-        "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
-    }
+    card = result_row(
+        compiled.result_contract,
+        {
+            "id": 1,
+            "kind": "card",
+            "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
+        },
+    )
     resolved, variant, _unknown, _document = row_identity(compiled.result_contract, card)
     assert resolved == target(DOCUMENT_LAYOUT, "CardPayment").identity
     assert variant == "CardPayment"
@@ -569,7 +573,10 @@ def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> Non
         raw_member(compiled.result_contract, card, resolved, "authorization_code")
     ) == ("AUTH-7", ())
 
-    cash = {"id": 2, "kind": "cash", "payload": PresentDocument({"detail": "12.50"})}
+    cash = result_row(
+        compiled.result_contract,
+        {"id": 2, "kind": "cash", "payload": PresentDocument({"detail": "12.50"})},
+    )
     resolved, variant, _unknown, _document = row_identity(compiled.result_contract, cash)
     assert resolved == target(DOCUMENT_LAYOUT, "CashPayment").identity
     assert variant == "CashPayment"
@@ -580,7 +587,10 @@ def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> Non
     ) == (Decimal("12.50"), ())
     _resolved, _variant, unknown, _document = row_identity(
         compiled.result_contract,
-        {"id": 3, "kind": "wire", "payload": PresentDocument({"detail": "x"})},
+        result_row(
+            compiled.result_contract,
+            {"id": 3, "kind": "wire", "payload": PresentDocument({"detail": "x"})},
+        ),
     )
     assert unknown is not None
 
@@ -590,10 +600,13 @@ def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
         oa.TrueNode(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "CardPayment")
     )
 
-    row = {
-        "id": 1,
-        "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
-    }
+    row = result_row(
+        compiled.result_contract,
+        {
+            "id": 1,
+            "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
+        },
+    )
     card = target(DOCUMENT_LAYOUT, "CardPayment").identity
     assert row_identity(compiled.result_contract, row)[0] == card
     assert publication_keys(compiled.result_contract, card, None) == ("id",)
@@ -619,7 +632,8 @@ def test_tph_concrete_target_names_its_rows_without_reading_a_carrier() -> None:
     card = target(PAYMENT, "CardPayment").identity
     assert "kind" not in compiled.result_contract.result_keys
     resolved, variant, unknown, _document = row_identity(
-        compiled.result_contract, {"id": 1, "amount": 10, "card_network": "visa"}
+        compiled.result_contract,
+        result_row(compiled.result_contract, {"id": 1, "amount": 10, "card_network": "visa"}),
     )
     assert (resolved, variant, unknown) == (card, None, None)
     assert compiled.result_contract.resolvable == (card,)
@@ -650,7 +664,7 @@ def test_tph_document_family_with_no_resident_members_projects_no_document() -> 
     compiled = compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "EmptyRoot"))
     assert compiled.statement.sql == "select t0.id, t0.kind from empty_root t0"
     resolved, variant, unknown, _document = row_identity(
-        compiled.result_contract, {"id": 1, "kind": "leaf"}
+        compiled.result_contract, result_row(compiled.result_contract, {"id": 1, "kind": "leaf"})
     )
     assert (resolved, variant, unknown) == (target(meta, "EmptyLeaf").identity, "EmptyLeaf", None)
 
@@ -1148,12 +1162,15 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
     assert compiled.statement.sql == (
         "select t0.id, t0.kind, t0.x, not t0.meta is null, t0.meta from root_tbl t0"
     )
-    tagged = {
-        "id": 1,
-        "kind": "leaf",
-        "x": 7,
-        "meta": PresentDocument({"note": "tagged"}),
-    }
+    tagged = result_row(
+        compiled.result_contract,
+        {
+            "id": 1,
+            "kind": "leaf",
+            "x": 7,
+            "meta": PresentDocument({"note": "tagged"}),
+        },
+    )
     resolved, variant, unknown, _document = row_identity(compiled.result_contract, tagged)
     assert (resolved, variant, unknown) == (target(meta, "Leaf").identity, "Leaf", None)
     assert publication_keys(compiled.result_contract, resolved, variant) == ("id", "x", "meta")
@@ -1163,12 +1180,15 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
     ) == ({"note": "tagged"}, ())
     resolved, _variant, unknown, _document = row_identity(
         compiled.result_contract,
-        {
-            "id": 2,
-            "kind": "unknown",
-            "x": None,
-            "meta": PresentDocument({"note": "unclassified"}),
-        },
+        result_row(
+            compiled.result_contract,
+            {
+                "id": 2,
+                "kind": "unknown",
+                "x": None,
+                "meta": PresentDocument({"note": "unclassified"}),
+            },
+        ),
     )
     assert unknown is not None
     assert resolved.name == "Root"
@@ -1215,12 +1235,15 @@ def test_tpcs_literal_identity_selects_the_direct_value_object_contract() -> Non
     compiled = compile_read(
         oa.TrueNode(), meta, POSTGRES, target(meta, "Root"), result_form="instance"
     )
-    row = {
-        "id": 1,
-        "payload": "00ff",
-        "meta": PresentDocument({"note": "literal"}),
-        "family_variant": "First",
-    }
+    row = result_row(
+        compiled.result_contract,
+        {
+            "id": 1,
+            "payload": "00ff",
+            "meta": PresentDocument({"note": "literal"}),
+            "family_variant": "First",
+        },
+    )
     resolved, variant, unknown, _document = row_identity(compiled.result_contract, row)
     assert (resolved, variant, unknown) == (target(meta, "First").identity, "First", None)
     assert publication_keys(compiled.result_contract, resolved, variant) == (
@@ -1246,7 +1269,7 @@ def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
         target(ANIMAL, "Animal"),
     )
     dog, dog_variant, dog_unknown, _document = row_identity(
-        compiled.result_contract, {"id": 1, "kind": "dog"}
+        compiled.result_contract, result_row(compiled.result_contract, {"id": 1, "kind": "dog"})
     )
     assert (dog, dog_variant, dog_unknown) == (target(ANIMAL, "Dog").identity, "Dog", None)
     # The sibling the narrow excluded is named ahead of any row: `resolvable`
@@ -1254,7 +1277,7 @@ def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
     # structure per Entity a row can carry prepares WildBoar's before the boar
     # row arrives rather than on reaching it.
     boar, _variant, _unknown, _document = row_identity(
-        compiled.result_contract, {"id": 2, "kind": "boar"}
+        compiled.result_contract, result_row(compiled.result_contract, {"id": 2, "kind": "boar"})
     )
     assert boar in compiled.result_contract.resolvable
     assert set(compiled.result_contract.resolvable) == {
@@ -1296,7 +1319,15 @@ def test_a_partially_composed_document_root_read_stays_unpartitioned_and_unfilte
     )
     resolved, _variant, unknown, _document = row_identity(
         compiled.result_contract,
-        {"id": 3, "kind": "bear", "leader_id": 1, "payload": PresentDocument({"name": "Bruno"})},
+        result_row(
+            compiled.result_contract,
+            {
+                "id": 3,
+                "kind": "bear",
+                "leader_id": 1,
+                "payload": PresentDocument({"name": "Bruno"}),
+            },
+        ),
     )
     assert unknown is not None
     assert resolved == target(COMPOSED_DOCUMENT_BEAST, "Beast").identity
@@ -1360,7 +1391,8 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
 
     assert compiled.statement.sql == "select t0.id, t0.kind, t0.howl from beast t0"
     wolf_identity, wolf_variant, wolf_unknown, _document = row_identity(
-        compiled.result_contract, {"id": 1, "kind": "wolf", "howl": "aooo"}
+        compiled.result_contract,
+        result_row(compiled.result_contract, {"id": 1, "kind": "wolf", "howl": "aooo"}),
     )
     assert (wolf_identity, wolf_variant, wolf_unknown) == (
         target(partial, "Wolf").identity,
@@ -1368,7 +1400,8 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
         None,
     )
     resolved, _variant, unknown, _document = row_identity(
-        compiled.result_contract, {"id": 2, "kind": "bear", "howl": None}
+        compiled.result_contract,
+        result_row(compiled.result_contract, {"id": 2, "kind": "bear", "howl": None}),
     )
     assert unknown is not None
     # That row resolves to the family ROOT, which no position holds — the root is
@@ -1459,7 +1492,10 @@ def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() 
         target(meta, "Tug").identity,
     )
     deck = PresentDocument({"area": "9"})
-    row = {"id": 1, "kind": "tug", "berth": PresentDocument({"code": "A1"}), "deck": deck}
+    row = result_row(
+        compiled.result_contract,
+        {"id": 1, "kind": "tug", "berth": PresentDocument({"code": "A1"}), "deck": deck},
+    )
     resolved, _variant, _unknown, _document = row_identity(compiled.result_contract, row)
     assert resolved == target(meta, "Tug").identity
     assert compiled.result_contract.classified_by_entity.get(resolved, frozenset()) == frozenset(
@@ -1494,11 +1530,14 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
     shared = compiled.result_contract.shared_document
     assert shared is not None and shared.column == "payload"
     for variant, member in (("Book", "pages"), ("Film", "minutes")):
-        row = {
-            "id": 1,
-            "payload": PresentDocument({"title": "Systems", "detail": "x", member: 320}),
-            "family_variant": variant,
-        }
+        row = result_row(
+            compiled.result_contract,
+            {
+                "id": 1,
+                "payload": PresentDocument({"title": "Systems", "detail": "x", member: 320}),
+                "family_variant": variant,
+            },
+        )
         resolved = row_identity(compiled.result_contract, row)[0]
         assert "payload" not in publication_keys(compiled.result_contract, resolved, variant)
         assert member_classifier(compiled.result_contract, resolved, member)(
@@ -1508,7 +1547,7 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
 
 def test_tpcs_union_read_resolves_the_projected_literal_column() -> None:
     compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
-    row = {"id": 1, "title": "A", "family_variant": "Invoice"}
+    row = result_row(compiled.result_contract, {"id": 1, "title": "A", "family_variant": "Invoice"})
     resolved, variant, unknown, _document = row_identity(compiled.result_contract, row)
     assert (resolved, variant, unknown) == (
         target(DOCUMENT, "Invoice").identity,
@@ -1565,12 +1604,15 @@ def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
         "union all select t0.id, cast(null as text) parallax_attr_0, t0.shared_label "
         "parallax_attr_1, 'catalog.SharedVariant' family_variant from catalog_shared t0"
     )
-    row = {
-        "id": 1,
-        "parallax_attr_0": "archived",
-        "parallax_attr_1": None,
-        "family_variant": "archive.SharedVariant",
-    }
+    row = result_row(
+        compiled.result_contract,
+        {
+            "id": 1,
+            "parallax_attr_0": "archived",
+            "parallax_attr_1": None,
+            "family_variant": "archive.SharedVariant",
+        },
+    )
     resolved, variant, _unknown, _document = row_identity(compiled.result_contract, row)
     assert resolved == EntityIdentity("archive", "SharedVariant")
     assert variant == "archive.SharedVariant"

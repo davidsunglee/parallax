@@ -31,7 +31,7 @@ from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
 from parallax.core import DomainModel
 from parallax.core._execution._concurrency import CONCURRENCY
-from parallax.core.base import INFINITY, PresentDocument
+from parallax.core.base import INFINITY, SQL_NULL, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -191,7 +191,7 @@ def test_the_ordinal_offset_positions_a_record_in_the_published_result() -> None
 
 
 def test_a_root_whose_key_never_decoded_locates_itself_by_ordinal_alone() -> None:
-    page = encoded_identity_page({"id_wire": None, "token_hex": "0e"})
+    page = encoded_identity_page((None, "0e", SQL_NULL))
     view = RootView(cast("Any", page), 0)
 
     (classified,) = classify_roots(view, ENCODED_IDENTITY, CONCURRENCY, ordinal_offset=3).roots
