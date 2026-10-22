@@ -87,8 +87,8 @@ def _positional(model: Metamodel, name: str, stored: Mapping[str, object]) -> Ro
     compiled = compile_read(
         oa.TrueNode(), model, POSTGRES, entity(model, name), result_form="instance"
     )
-    assert set(stored) == set(compiled.result_keys)
-    return tuple(stored[key] for key in compiled.result_keys)
+    assert set(stored) == set(compiled.result_contract.result_keys)
+    return tuple(stored[key] for key in compiled.result_contract.result_keys)
 
 
 def _members(node: _Converted) -> Mapping[str, Any]:

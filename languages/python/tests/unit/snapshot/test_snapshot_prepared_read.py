@@ -319,7 +319,10 @@ def test_a_narrowed_read_converts_rows_of_every_entity_it_can_resolve() -> None:
         prepared,
         {"id": 2, "kind": "boar", "name": "Bo", "owner_id": 10, "tusk_length": None},
     )
-    assert {identity.name for identity in compiled.resolvable} >= {"Dog", "WildBoar"}
+    assert {identity.name for identity in compiled.result_contract.resolvable} >= {
+        "Dog",
+        "WildBoar",
+    }
     assert (rex.concrete.name, boar.concrete.name) == ("Dog", "WildBoar")
 
 
@@ -702,7 +705,7 @@ def _position(**cells: object) -> dict[str, object]:
 def _positional(model: Metamodel, entity: str, cells: Mapping[str, object]) -> Row:
     """``cells`` laid out in the compiled read's own result order, as a port
     returns a provider row."""
-    keys = compiled_read(model, entity).result_keys
+    keys = compiled_read(model, entity).result_contract.result_keys
     assert set(cells) == set(keys)
     return tuple(cells[key] for key in keys)
 
@@ -1286,7 +1289,7 @@ def _host_checked_payload_cells(layout: Layout, owners: int) -> int:
             occurrence: object = (
                 resolved,
                 tuple(
-                    driver[compiled.result_keys.index(keys[position])]
+                    driver[compiled.result_contract.result_keys.index(keys[position])]
                     for position in identity_positions
                 ),
             )

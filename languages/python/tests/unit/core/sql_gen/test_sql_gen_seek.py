@@ -192,7 +192,7 @@ def test_the_appended_key_still_captures_a_cell_of_its_own() -> None:
         ORDERS,
         POSTGRES,
     )
-    assert compiled.coordinate_reads == ("parallax_seek_0",)
+    assert compiled.result_contract.coordinate_reads == ("parallax_seek_0",)
     assert "parallax_seek_0" not in compiled.publication_keys(compiled.target, None)
     assert compiled.statement.sql.startswith(
         "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
@@ -492,7 +492,7 @@ def test_a_coordinate_is_read_only_off_a_row_of_the_projected_arity() -> None:
         ORDERS,
         POSTGRES,
     )
-    width = len(compiled.result_keys)
+    width = len(compiled.result_contract.result_keys)
     assert compiled.row_coordinates((tuple(range(width)),)) == (
         ContinuationCoordinate((width - 1,)),
     )
@@ -518,7 +518,7 @@ def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -
         model,
         POSTGRES,
     )
-    assert compiled.coordinate_reads == ("parallax_seek_1", "parallax_seek_2")
+    assert compiled.result_contract.coordinate_reads == ("parallax_seek_1", "parallax_seek_2")
     row = {
         "id": 1,
         "payload": PresentDocument({"parallax_seek_0": 3}),

@@ -454,10 +454,10 @@ def _driver_row(
     discriminator = _discriminator(meta, entity)
     if discriminator is not None and len(compiled.resolved_position) > 1:
         row[discriminator[0]] = discriminator[1]
-    column = compiled.structured_column
+    column = compiled.result_contract.structured_column
     if column is not None:
         row[column] = PresentDocument(document)
-    return tuple(row.get(result_key) for result_key in compiled.result_keys)
+    return tuple(row.get(result_key) for result_key in compiled.result_contract.result_keys)
 
 
 def driver_rows(

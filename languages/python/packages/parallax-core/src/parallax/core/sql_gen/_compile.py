@@ -45,8 +45,10 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 # above, which is the metamodel module. Each name is aliased down to the
 # module-private spelling it had while this file owned it, so a use site below
 # never confuses the two.
+from parallax.core.sql_gen._inheritance import AttributeReadContract as _AttributeReadContract
+from parallax.core.sql_gen._inheritance import DirectDocuments as _DirectDocuments
 from parallax.core.sql_gen._inheritance import FixedIdentity as _FixedIdentity
-from parallax.core.sql_gen._inheritance import RowStages as _RowStages
+from parallax.core.sql_gen._inheritance import ResultContract as _ResultContract
 from parallax.core.sql_gen._inheritance import SharedDocument as _SharedDocument
 from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
@@ -144,32 +146,9 @@ class CompiledPredicate:
 
 
 @dataclass(frozen=True, slots=True)
-class AttributeReadContract:
-    """One projected Attribute's driver-result contract.
-
-    ``attribute`` is the accepted metadata itself, held by reference: the logical
-    identity, physical Column, Neutral Type, and nullability this contract reads
-    against are the compiler's INPUTS rather than its decisions, and copies of
-    them here would be a second place they could disagree with the model.
-
-    What the contract adds is what this statement decided. ``result_key`` is the
-    alias the projection actually rendered, which departs from the Column
-    spelling exactly when the cell is ``encoded`` and so arrives in a dialect's
-    wire spelling rather than its stored one. ``temporal_end`` marks the
-    Attribute a family's As-Of Axis may leave open, which admits the infinity
-    sentinel no other Attribute of its type admits.
-    """
-
-    attribute: AttributeMetadata
-    result_key: str
-    temporal_end: bool
-    encoded: bool
-
-
-@dataclass(frozen=True, slots=True)
 class CompiledRead:
     """One compiled read: its :class:`LoweredStatement`, the root narrow to materialize
-    under, and the row stages that name and locate what its driver rows carry.
+    under, and the result contract that names and locates what its driver rows carry.
 
     Self-contained by design: everything a caller needs to turn driver rows into
     observed rows travels WITH the compiled statement. Every materializing
@@ -195,21 +174,6 @@ class CompiledRead:
     ``projected_documents`` is the demand-specific subset the statement actually
     selected; conversion receives that subset so an unrequested occurrence is
     never judged merely because the position could have carried it.
-
-    ``coordinate_reads`` is the hidden result aliases this statement allocated
-    to capture one Continuation Order coordinate per ordering term, in term
-    order — empty for every read that pages through nothing; publishing it here
-    is what makes this compiler the only interpreter of a carrier, since the
-    expressions were chosen here. ``resolvable`` closes the set of Entities this
-    read's rows can name, so a consumer preparing one structure per such Entity
-    prepares them all at once instead of on the first row that reaches one: the
-    position and whatever the row identity source reaches past it, which for a
-    family read includes the family root an unrecognized tag names.
-    ``structured_column`` is the Structured Column this read projected, or
-    absence when it projected none, under `Columns` layout and for a
-    `Document`-layout read whose members are all direct; publication drops that
-    column from a row's keys, so a caller retaining the stored document
-    (`m-write-plan`'s Predecessor Row) reads it by this name off the driver row.
     """
 
     statement: LoweredStatement
@@ -219,36 +183,9 @@ class CompiledRead:
     documents: tuple[ValueObjectMetadata, ...]
     projected_documents: tuple[ValueObjectMetadata, ...]
     document_reads: tuple[DocumentReadOrdinals, ...]
-    result_keys: tuple[str, ...]
-    coordinate_reads: tuple[str, ...]
-    _scalar_contracts: tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...] = field(
-        repr=False
-    )
-    _stages: _RowStages
-    resolvable: tuple[EntityIdentity, ...] = field(init=False, repr=False, compare=False)
-    _index_by_key: Mapping[str, int] = field(init=False, repr=False, compare=False)
+    result_contract: _ResultContract
 
-    def __post_init__(self) -> None:
-        index_by_key = {key: index for index, key in enumerate(self.result_keys)}
-        if len(index_by_key) != len(self.result_keys):
-            duplicate = next(
-                key
-                for position, key in enumerate(self.result_keys)
-                if key in self.result_keys[:position]
-            )
-            raise ValueError(f"duplicate result key {duplicate!r}")
-        object.__setattr__(self, "_index_by_key", index_by_key)
-        object.__setattr__(
-            self,
-            "resolvable",
-            tuple(dict.fromkeys((*self.resolved_position, *self._stages.resolvable))),
-        )
-
-    @property
-    def structured_column(self) -> str | None:
-        return self._stages.structured_column
-
-    def attribute_reads(self, entity: EntityIdentity) -> tuple[AttributeReadContract, ...]:
+    def attribute_reads(self, entity: EntityIdentity) -> tuple[_AttributeReadContract, ...]:
         """The compiled Attribute contracts for one resolved concrete Entity.
 
         In that Entity's own applicable-Attribute order, which is the order every
@@ -259,24 +196,33 @@ class CompiledRead:
         family root an unrecognized tag resolved to, or a sibling outside the
         narrow. Every Attribute of such a row carries its own storage spelling.
         """
-        return next((reads for identity, reads in self._scalar_contracts if identity == entity), ())
+        return next(
+            (
+                reads
+                for identity, reads in self.result_contract.attribute_reads
+                if identity == entity
+            ),
+            (),
+        )
 
     def row_identity(
         self, row: Row | Mapping[str, object]
     ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
         """The Entity one row names, its `familyVariant` spelling, the stored tag no
         composed concrete claimed, and the row's shared document."""
-        self._require_arity(row)
-        stages = self._stages
-        source = stages.resolve
+        contract = self.result_contract
+        _require_arity(contract, row)
+        source = contract.resolve
         resolved, variant, unknown_tag = source.resolve_value(
-            None if source.column is None else self._value(row, source.column)
+            None if source.column is None else _value(contract, row, source.column)
         )
-        shared = stages.shared_document
+        shared = contract.shared_document
         document = (
             None
             if shared is None
-            else _observed_document(self._value(row, stages.result_key(resolved, shared.column)))
+            else _observed_document(
+                _value(contract, row, contract.result_key(resolved, shared.column))
+            )
         )
         return resolved, variant, unknown_tag, document
 
@@ -285,25 +231,27 @@ class CompiledRead:
     ) -> tuple[ContinuationCoordinate | None, ...]:
         """Each row's Continuation Order coordinate; absence for every row of a read
         that pages through nothing."""
-        aliases = self.coordinate_reads
+        contract = self.result_contract
+        aliases = contract.coordinate_reads
         if not aliases:
             return (None,) * len(rows)
-        return tuple(self._coordinate(row, aliases) for row in rows)
+        return tuple(_coordinate(contract, row, aliases) for row in rows)
 
     def raw_member_of(
         self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
     ) -> object:
-        shared = self._stages.shared_document
+        contract = self.result_contract
+        shared = contract.shared_document
         if shared is not None:
             try:
                 return shared.raw_member_from(
-                    self._value(row, self._stages.result_key(resolved, shared.column)),
+                    _value(contract, row, contract.result_key(resolved, shared.column)),
                     resolved,
                     key,
                 )
             except KeyError:
                 pass
-        return self._value(row, self._stages.result_key(resolved, key))
+        return _value(contract, row, contract.result_key(resolved, key))
 
     def raw_member_classifier(
         self,
@@ -314,7 +262,7 @@ class CompiledRead:
         build_many: Callable[[Iterable[object]], object] | None = None,
     ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]:
         """Prepare one classified member's row-independent decoding walk."""
-        shared = self._stages.shared_document
+        shared = self.result_contract.shared_document
         if shared is not None:
             try:
                 return shared.located_classifier(
@@ -325,7 +273,7 @@ class CompiledRead:
                 )
             except KeyError:
                 pass
-        direct = self._stages.direct_documents
+        direct = self.result_contract.direct_documents
         if direct is None:
             raise KeyError(key)
         return direct.member_classifier(
@@ -337,7 +285,7 @@ class CompiledRead:
 
     def raw_member_location(self, resolved: EntityIdentity, key: str) -> str | None:
         """Return a shared-document member key, or answer no shared carrier."""
-        shared = self._stages.shared_document
+        shared = self.result_contract.shared_document
         if shared is None:
             return None
         try:
@@ -347,41 +295,43 @@ class CompiledRead:
 
     def classified_members(self, resolved: EntityIdentity) -> frozenset[str]:
         """Member keys whose projected document carriers require classification."""
-        return self._stages.classified_by_entity.get(resolved, frozenset())
+        return self.result_contract.classified_by_entity.get(resolved, frozenset())
 
     def raw_member_ordinal(self, resolved: EntityIdentity, key: str) -> int | None:
         """The direct positional result ordinal for ``key``, when it has one."""
         if key in self.classified_members(resolved):
             return None
-        return self._index_by_key.get(self._stages.result_key(resolved, key))
+        contract = self.result_contract
+        return contract.index_by_key.get(contract.result_key(resolved, key))
 
     def publication_keys(self, resolved: EntityIdentity, variant: str | None) -> tuple[str, ...]:
         """The logical flat-row keys left by structural materialization stages."""
-        return self._stages.publication_keys(
-            self.result_keys, self.coordinate_reads, resolved, variant
+        return self.result_contract.publication_keys(resolved, variant)
+
+
+def _coordinate(
+    contract: _ResultContract, row: Row | Mapping[str, object], aliases: tuple[str, ...]
+) -> ContinuationCoordinate:
+    _require_arity(contract, row)
+    return ContinuationCoordinate(
+        tuple(inert_scalar(_value(contract, row, alias)) for alias in aliases)
+    )
+
+
+def _require_arity(contract: _ResultContract, row: Row | Mapping[str, object]) -> None:
+    if isinstance(row, tuple) and len(row) != len(contract.result_keys):
+        raise ValueError(
+            f"result key count {len(contract.result_keys)} does not match row arity {len(row)}"
         )
 
-    def _coordinate(
-        self, row: Row | Mapping[str, object], aliases: tuple[str, ...]
-    ) -> ContinuationCoordinate:
-        self._require_arity(row)
-        return ContinuationCoordinate(
-            tuple(inert_scalar(self._value(row, alias)) for alias in aliases)
-        )
 
-    def _require_arity(self, row: Row | Mapping[str, object]) -> None:
-        if isinstance(row, tuple) and len(row) != len(self.result_keys):
-            raise ValueError(
-                f"result key count {len(self.result_keys)} does not match row arity {len(row)}"
-            )
-
-    def _value(self, row: Row | Mapping[str, object], key: str) -> object:
-        if isinstance(row, tuple):
-            try:
-                return row[self._index_by_key[key]]
-            except KeyError as error:
-                raise KeyError(key) from error
-        return row[key]
+def _value(contract: _ResultContract, row: Row | Mapping[str, object], key: str) -> object:
+    if isinstance(row, tuple):
+        try:
+            return row[contract.index_by_key[key]]
+        except KeyError as error:
+            raise KeyError(key) from error
+    return row[key]
 
 
 @dataclass(frozen=True, slots=True)
@@ -444,7 +394,8 @@ def _projection(
     list[object],
     tuple[DocumentReadOrdinals, ...],
     tuple[str, ...],
-    _RowStages,
+    _SharedDocument | None,
+    _DirectDocuments | None,
 ]:
     """Render the resolved Value Object projection in canonical layout order.
 
@@ -466,12 +417,13 @@ def _projection(
     )
     if document is not None:
         columns = (*columns, document)
-    stages = _RowStages(
-        _FixedIdentity(entity.identity),
+    shared_document = (
         None
         if document is None or fan_out is None
-        else _SharedDocument(document.column, ((entity.identity, fan_out),)),
-        _direct_documents(((entity.identity, layout, entity.declared_attributes, projected_vos),)),
+        else _SharedDocument(document.column, ((entity.identity, fan_out),))
+    )
+    direct_documents = _direct_documents(
+        ((entity.identity, layout, entity.declared_attributes, projected_vos),)
     )
     sql, binds, document_reads = _render_projection(dialect, alias, columns)
     result_keys = tuple(
@@ -480,7 +432,7 @@ def _projection(
         else projection_result_key(projected.column, projected.type)
         for projected in columns
     )
-    return sql, list(binds), document_reads, result_keys, stages
+    return sql, list(binds), document_reads, result_keys, shared_document, direct_documents
 
 
 def _scalar_read_contracts(
@@ -489,8 +441,8 @@ def _scalar_read_contracts(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     position: tuple[EntityIdentity, ...],
-) -> tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...]:
-    contracts: list[tuple[EntityIdentity, tuple[AttributeReadContract, ...]]] = []
+) -> tuple[tuple[EntityIdentity, tuple[_AttributeReadContract, ...]], ...]:
+    contracts: list[tuple[EntityIdentity, tuple[_AttributeReadContract, ...]]] = []
     temporal = _temporal_view(model)
     for identity in position:
         view = _entity_view(facet, identity)
@@ -501,7 +453,7 @@ def _scalar_read_contracts(
             if shape is None
             else frozenset(axis.end_attribute for axis in _ranked_axes(shape))
         )
-        entity_contracts: list[AttributeReadContract] = []
+        entity_contracts: list[_AttributeReadContract] = []
         for attribute in view.applicable_attributes:
             # A scalar collection's own Column holds a structured document, never
             # a native scalar lane, so it keeps its storage key.
@@ -511,7 +463,7 @@ def _scalar_read_contracts(
             )
             projected_key = projection_result_key(attribute.storage.name, attribute.type)
             entity_contracts.append(
-                AttributeReadContract(
+                _AttributeReadContract(
                     attribute,
                     projected_key if direct else attribute.storage.name,
                     attribute.identity in temporal_ends,
@@ -605,7 +557,7 @@ def compile_read(
     projection_parts: list[str] = []
     document_presence = {presence for presence, _document in compiled.document_reads}
     ordinal = 0
-    for result_key in compiled.result_keys:
+    for result_key in compiled.result_contract.result_keys:
         expression = dialect.qualified(outer_alias, result_key)
         if ordinal in document_presence:
             projection_parts.extend(dialect.project_document_read(expression))
@@ -669,7 +621,7 @@ def _locking_base_join(
     cells' binds are appended to ``ctx`` in join order."""
     contracts = {
         contract.attribute.identity: contract
-        for identity in compiled.resolvable
+        for identity in compiled.result_contract.resolvable
         for contract in compiled.attribute_reads(identity)
     }
     base_alias = "t0"
@@ -723,7 +675,7 @@ def _compile_read_arm(
     narrow_to = query.narrow_to
     captured = _coordinate_reads(terms) if paging is not None else ()
     if inheritance_read is not None:
-        statement, document_reads, result_keys, stages = _compile_inheritance_read(
+        statement, document_reads, result_keys = _compile_inheritance_read(
             inheritance_read,
             statement_plan,
             target,
@@ -747,10 +699,14 @@ def _compile_read_arm(
             position_documents,
             position_documents if result_form == "instance" else (),
             document_reads,
-            (*result_keys, *captured),
-            captured,
-            _scalar_read_contracts(model, facet, storage, dialect, plan_position),
-            stages,
+            _ResultContract(
+                inheritance_read.resolve,
+                inheritance_read.shared_document,
+                inheritance_read.direct_documents,
+                _scalar_read_contracts(model, facet, storage, dialect, plan_position),
+                (*result_keys, *captured),
+                captured,
+            ),
         )
     # One context per statement (the mutable accumulator), one row scope over it
     # (the immutable "what does a leaf resolve against" half).
@@ -758,13 +714,15 @@ def _compile_read_arm(
     layout = _table_layout(storage, facet, target.identity)
     scope = _EntityRowScope(ctx, target, layout)
 
-    proj_sql, proj_binds, document_reads, result_keys, stages = _projection(
-        target,
-        _storage_entity_view(storage, target.identity),
-        dialect,
-        scope.alias,
-        query.projection.value_objects,
-        observation=query.projection.observe_structured_document,
+    proj_sql, proj_binds, document_reads, result_keys, shared_document, direct_documents = (
+        _projection(
+            target,
+            _storage_entity_view(storage, target.identity),
+            dialect,
+            scope.alias,
+            query.projection.value_objects,
+            observation=query.projection.observe_structured_document,
+        )
     )
     ctx.bind_structural_all(proj_binds)
     parts = [
@@ -783,7 +741,7 @@ def _compile_read_arm(
 
     statement = _normalize(ctx.finish(" ".join(parts)))
     # A non-family read projects no tag and no variant literal, so its rows'
-    # identity is fixed and the only stages it can fill are the document fan-out
+    # identity is fixed and the only document stages it can fill are the fan-out
     # its own projection decided and the occurrences that hold their own Column.
     view = _entity_view(facet, target.identity)
     position = tuple(view.concrete_subtypes)
@@ -796,10 +754,14 @@ def _compile_read_arm(
         position_documents,
         query.projection.value_objects,
         document_reads,
-        (*result_keys, *captured),
-        captured,
-        _scalar_read_contracts(model, facet, storage, dialect, position),
-        stages,
+        _ResultContract(
+            _FixedIdentity(target.identity),
+            shared_document,
+            direct_documents,
+            _scalar_read_contracts(model, facet, storage, dialect, position),
+            (*result_keys, *captured),
+            captured,
+        ),
     )
 
 
@@ -1003,14 +965,14 @@ def _compile_inheritance_read(
     LoweredStatement,
     tuple[DocumentReadOrdinals, ...],
     tuple[str, ...],
-    _RowStages,
 ]:
     """Assemble an inheritance-family read from its inheritance plan and its
     statement plan.
 
-    Returns the statement AND its row materialization stages together: whether a
-    read carries `familyVariant` is decided by the very same resolved position
-    that decides what it projects, so the two travel together on one plan.
+    Whether a read carries `familyVariant` is decided by the very same resolved
+    position that decides what it projects, so the plan carries both: the
+    statement rendered here, and the row identity and document stages its
+    result contract reads.
     """
     result_keys = (
         (*(column.result_alias for column in plan.columns), "family_variant")
@@ -1024,7 +986,7 @@ def _compile_inheritance_read(
     )
     match plan:
         case _TphPlan():
-            statement, document_reads, stages = _compile_tph_read(
+            statement, document_reads = _compile_tph_read(
                 plan,
                 statement_plan,
                 entity,
@@ -1038,9 +1000,9 @@ def _compile_inheritance_read(
                 lock,
                 null_tail,
             )
-            return statement, document_reads, result_keys, stages
+            return statement, document_reads, result_keys
         case _TpcsSinglePlan():
-            statement, document_reads, stages = _compile_tpcs_single(
+            statement, document_reads = _compile_tpcs_single(
                 plan,
                 statement_plan,
                 entity,
@@ -1054,9 +1016,9 @@ def _compile_inheritance_read(
                 lock,
                 null_tail,
             )
-            return statement, document_reads, result_keys, stages
+            return statement, document_reads, result_keys
         case _TpcsUnionPlan():
-            statement, document_reads, stages = _compile_tpcs_read(
+            statement, document_reads = _compile_tpcs_read(
                 plan,
                 statement_plan,
                 entity,
@@ -1069,7 +1031,7 @@ def _compile_inheritance_read(
                 dialect,
                 null_tail,
             )
-            return statement, document_reads, result_keys, stages
+            return statement, document_reads, result_keys
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
 
@@ -1087,7 +1049,7 @@ def _compile_tph_read(
     dialect: Dialect,
     lock: LockMode | None,
     null_tail: bool,
-) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowStages]:
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...]]:
     """Assemble a table-per-hierarchy read: one shared correlated `EXISTS`-free
     single-table SELECT (m-sql "Inheritance — table-per-hierarchy lowering").
 
@@ -1097,22 +1059,19 @@ def _compile_tph_read(
     statement's context and sequences the four bind phases.
     """
     if statement_plan.requires_tph_partition:
-        return (
-            *_compile_tph_partitioned(
-                plan,
-                statement_plan,
-                entity,
-                terms,
-                paging,
-                limit,
-                model,
-                facet,
-                storage,
-                dialect,
-                lock,
-                null_tail,
-            ),
-            plan.stages,
+        return _compile_tph_partitioned(
+            plan,
+            statement_plan,
+            entity,
+            terms,
+            paging,
+            limit,
+            model,
+            facet,
+            storage,
+            dialect,
+            lock,
+            null_tail,
         )
     predicate = statement_plan.predicate
     ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
@@ -1140,7 +1099,7 @@ def _compile_tph_read(
 
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     statement = _normalize(ctx.finish(" ".join(parts)))
-    return statement, document_reads, plan.stages
+    return statement, document_reads
 
 
 def _compile_tph_partitioned(
@@ -1283,7 +1242,7 @@ def _compile_tpcs_read(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     null_tail: bool,
-) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowStages]:
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...]]:
     """Assemble a table-per-concrete-subtype `union all` read (m-sql "Inheritance —
     table-per-concrete-subtype lowering").
 
@@ -1335,7 +1294,7 @@ def _compile_tpcs_read(
         for branch in branch_statements:
             statement_ctx.append_fragment(branch)
         statement = _normalize(statement_ctx.finish(union))
-        return statement, document_reads or (), plan.stages
+        return statement, document_reads or ()
 
     # The outer select brackets the union in the emitted text — its capture
     # cells precede every branch and its tail follows them all — so its binds
@@ -1375,7 +1334,7 @@ def _compile_tpcs_read(
         statement_ctx.append_fragment(branch)
     statement_ctx.append_fragment(tail_ctx.finish(""))
     statement = _normalize(statement_ctx.finish(" ".join(outer_parts)))
-    return statement, outer_document_reads, plan.stages
+    return statement, outer_document_reads
 
 
 def _tpcs_subject(plan: _TpcsUnionPlan, scope: _EntityRowScope) -> _TermSubject:
@@ -1444,7 +1403,7 @@ def _compile_tpcs_single(
     dialect: Dialect,
     lock: LockMode | None,
     null_tail: bool,
-) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowStages]:
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...]]:
     """Assemble a table-per-concrete-subtype read resolving to exactly one
     concrete: an ordinary single-table read of that subtype's own table, no tag,
     no union, no `familyVariant` — attribute resolution still widens across the
@@ -1474,7 +1433,7 @@ def _compile_tpcs_single(
     )
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     statement = _normalize(ctx.finish(" ".join(parts)))
-    return statement, document_reads, plan.stages
+    return statement, document_reads
 
 
 def _normalize(statement: LoweredStatement) -> LoweredStatement:

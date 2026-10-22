@@ -559,11 +559,11 @@ def _claimed(builder: PageBuilder, model: Metamodel, identity: EntityIdentity, s
     compiled = compiled_read(model, identity)
     row = tuple(
         SQL_NULL
-        if key == compiled.structured_column
+        if key == compiled.result_contract.structured_column
         else f"{seed + position:04x}"
         if key.endswith("_hex")
         else seed + position
-        for position, key in enumerate(compiled.result_keys)
+        for position, key in enumerate(compiled.result_contract.result_keys)
     )
     ref, _resolved, _document, _variant = bound_read(model, identity).convert_row(
         row, builder, source=ROOT_LEVEL

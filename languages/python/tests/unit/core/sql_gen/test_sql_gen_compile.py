@@ -61,11 +61,11 @@ from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import (
-    AttributeReadContract,
     CompiledPredicate,
     CompiledRead,
 )
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.sql_gen._inheritance import AttributeReadContract
 from parallax.core.storage_layout import _compile as storage_layout_compile
 from parallax.core.temporal_read import _compile as temporal_read_compile
 from tests._support import fake_metamodel
@@ -190,7 +190,7 @@ def test_instance_form_projects_value_object_document_last() -> None:
         "select t0.id, t0.name, not t0.address is null, t0.address from customer t0"
     )
     assert instance.document_reads == ((2, 3),)
-    assert instance.result_keys == ("id", "name", "address")
+    assert instance.result_contract.result_keys == ("id", "name", "address")
     # Row-form (the default values lane) omits slot 4 — the scalars alone.
     row = compile_read(oa.TrueNode(), CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
     assert row.statement.sql == "select t0.id, t0.name from customer t0"
@@ -334,7 +334,7 @@ def test_compiled_row_validation_rejects_duplicate_keys_and_wrong_tuple_arity() 
     compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
     with pytest.raises(ValueError, match="duplicate result key 'id'"):
-        dataclasses.replace(compiled, result_keys=("id", "id"))
+        dataclasses.replace(compiled.result_contract, result_keys=("id", "id"))
     with pytest.raises(ValueError, match="does not match row arity"):
         compiled.row_identity(())
     with pytest.raises(KeyError, match="missing"):
@@ -344,13 +344,13 @@ def test_compiled_row_validation_rejects_duplicate_keys_and_wrong_tuple_arity() 
 def test_a_read_paging_through_nothing_reads_no_coordinate_off_any_row() -> None:
     compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
-    assert compiled.coordinate_reads == ()
+    assert compiled.result_contract.coordinate_reads == ()
     assert compiled.row_coordinates(((), ())) == (None, None)
 
 
 def test_compiled_read_repr_is_exact_and_stable() -> None:
-    # The default generated dataclass repr, pinned exactly. The row stages are a
-    # stored FIELD, not a closure, which is why they repr at all — a stored
+    # The default generated dataclass repr, pinned exactly. The result contract is
+    # a stored FIELD, not a closure, which is why it reprs at all — a stored
     # callable would print an address and make this untestable. A plain record
     # still names what its rows resolve to: an identity fixed at compile time,
     # which is all its rows can name.
@@ -362,10 +362,10 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         f"narrow_to=None, target={order}, "
         f"resolved_position=({order},), "
         "documents=(), projected_documents=(), document_reads=(), "
+        f"result_contract=ResultContract(resolve=FixedIdentity(entity={order}), "
+        "shared_document=None, direct_documents=None, "
         "result_keys=('id', 'name', 'sku', 'qty', 'price', 'active', 'ordered_on'), "
-        "coordinate_reads=(), "
-        f"_stages=RowStages(resolve=FixedIdentity(entity={order}), "
-        "shared_document=None, direct_documents=None))"
+        "coordinate_reads=()))"
     )
 
 
@@ -435,7 +435,7 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
     compiled = compile_read(oa.TrueNode(), SCALARS, POSTGRES, entity)
     payload = entity.attribute("payload")
     assert payload is not None
-    assert compiled.result_keys == (
+    assert compiled.result_contract.result_keys == (
         "id",
         "f32",
         "f64",
@@ -621,7 +621,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         assert rendered.statement.sql.count("union all") == branches - 1
         assert "__parallax_deferred_keys__" not in rendered.statement.sql
         assert rendered.statement.is_compiler_proven
-        assert rendered.result_keys == template.compiled.result_keys
+        assert rendered.result_contract.result_keys == template.compiled.result_contract.result_keys
         assert rendered.document_reads == template.compiled.document_reads
         assert rendered.resolved_position == template.compiled.resolved_position
         assert rendered.statement.sql.endswith("limit ?")
@@ -664,8 +664,8 @@ def test_attribute_contracts_align_by_position_with_each_resolvable_layout(
     # unrecognized tag names — answers nothing, and its rows read storage keys.
     cataloged = CatalogedModel(meta)
     compiled = compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, name), temporal=temporal)
-    assert compiled.resolvable
-    for identity in compiled.resolvable:
+    assert compiled.result_contract.resolvable
+    for identity in compiled.result_contract.resolvable:
         reads = compiled.attribute_reads(identity)
         if identity not in compiled.resolved_position:
             assert reads == ()

@@ -496,8 +496,31 @@ def _document_read(document_read: object) -> SqlNull | PresentDocument:
 
 
 @dataclass(frozen=True, slots=True)
-class RowStages:
-    """The stages one read's projection filled, and the facts they share.
+class AttributeReadContract:
+    """One projected Attribute's driver-result contract.
+
+    ``attribute`` is the accepted metadata itself, held by reference: the logical
+    identity, physical Column, Neutral Type, and nullability this contract reads
+    against are the compiler's INPUTS rather than its decisions, and copies of
+    them here would be a second place they could disagree with the model.
+
+    What the contract adds is what this statement decided. ``result_key`` is the
+    alias the projection actually rendered, which departs from the Column
+    spelling exactly when the cell is ``encoded`` and so arrives in a dialect's
+    wire spelling rather than its stored one. ``temporal_end`` marks the
+    Attribute a family's As-Of Axis may leave open, which admits the infinity
+    sentinel no other Attribute of its type admits.
+    """
+
+    attribute: AttributeMetadata
+    result_key: str
+    temporal_end: bool
+    encoded: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ResultContract:
+    """What one compiled read's driver rows carry, and where.
 
     ``resolve`` is how this read's rows name their Entity, and every read has
     one: a tag map, a union's variant literal, or an identity fixed when the read
@@ -506,19 +529,64 @@ class RowStages:
     resolved to a single concrete — has no `familyVariant` to materialize. The
     document stages are the projection's decision alone: a read fills them when
     it projected a document, however its rows are named.
-    ``classified_by_entity`` is the union of what both document stages judge for
-    one resolved concrete, compiled here because the two stages are the only
-    judges and their keys are fixed by the projection.
+
+    ``attribute_reads`` pairs each concrete of the read's resolved position with
+    its Attribute contracts, in that Entity's own applicable-Attribute order.
+    ``result_keys`` names every positional cell of a row, in order.
+    ``coordinate_reads`` is the hidden result aliases the statement allocated to
+    capture one Continuation Order coordinate per ordering term, in term order —
+    empty for every read that pages through nothing; publishing it here is what
+    makes the compiler the only interpreter of a carrier, since it chose the
+    expressions.
+
+    ``resolvable`` closes the set of Entities this read's rows can name, so a
+    consumer preparing one structure per such Entity prepares them all at once
+    instead of on the first row that reaches one: the position and whatever the
+    row identity source reaches past it. A homogeneous tag map is the WHOLE
+    family's rather than the read's narrow, so a narrowed abstract read still
+    resolves a sibling's row to that sibling, and a tag no composed concrete
+    claims resolves the row to the family root — which is never a concrete in
+    the position. ``classified_by_entity`` is the union of what both document
+    stages judge for one resolved concrete, compiled here because the two stages
+    are the only judges and their keys are fixed by the projection.
     """
 
     resolve: RowIdentity
-    shared_document: SharedDocument | None = None
-    direct_documents: DirectDocuments | None = None
+    shared_document: SharedDocument | None
+    direct_documents: DirectDocuments | None
+    attribute_reads: tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...] = field(
+        repr=False
+    )
+    result_keys: tuple[str, ...]
+    coordinate_reads: tuple[str, ...]
+    resolvable: tuple[EntityIdentity, ...] = field(init=False, repr=False, compare=False)
+    index_by_key: Mapping[str, int] = field(init=False, repr=False, compare=False)
     classified_by_entity: Mapping[EntityIdentity, frozenset[str]] = field(
         init=False, compare=False, repr=False
     )
 
     def __post_init__(self) -> None:
+        index_by_key = {key: index for index, key in enumerate(self.result_keys)}
+        if len(index_by_key) != len(self.result_keys):
+            duplicate = next(
+                key
+                for position, key in enumerate(self.result_keys)
+                if key in self.result_keys[:position]
+            )
+            raise ValueError(f"duplicate result key {duplicate!r}")
+        object.__setattr__(self, "index_by_key", index_by_key)
+        object.__setattr__(
+            self,
+            "resolvable",
+            tuple(
+                dict.fromkeys(
+                    (
+                        *(identity for identity, _reads in self.attribute_reads),
+                        *self.resolve.resolvable,
+                    )
+                )
+            ),
+        )
         classified: dict[EntityIdentity, frozenset[str]] = {}
         if self.shared_document is not None:
             for identity, entry in self.shared_document.per_entity:
@@ -534,49 +602,31 @@ class RowStages:
 
     @property
     def structured_column(self) -> str | None:
-        """The Structured Column these stages fan out, or absence for none.
+        """The Structured Column this read projected, or absence for none.
 
         The fan-out drops the raw column, so a caller that needs the stored
-        document — a temporal observation, which retains it (`m-write-plan`) —
-        reads it off the driver row by this name. Absence is the honest answer
-        for every read that projected no Structured Column, `Columns` layout
-        included.
+        document — a temporal observation, which retains it (`m-write-plan`'s
+        Predecessor Row) — reads it off the driver row by this name. Absence is
+        the honest answer for every read that projected no Structured Column:
+        `Columns` layout, and a `Document`-layout read whose members are all
+        direct.
         """
         return None if self.shared_document is None else self.shared_document.column
-
-    @property
-    def resolvable(self) -> tuple[EntityIdentity, ...]:
-        """Every Entity the identity source can name.
-
-        A homogeneous tag map is the WHOLE family's rather than the read's
-        narrow, so a narrowed abstract read still resolves a sibling's row to
-        that sibling, and a tag no composed concrete claims resolves the row to
-        the family root — which is never a concrete in the position. A consumer
-        preparing one structure per Entity a row can carry therefore cannot read
-        the position alone.
-        """
-        return self.resolve.resolvable
 
     def result_key(self, entity: EntityIdentity, rendered_key: str) -> str:
         """Return the provider key carrying one resolved Entity's stored value."""
         return self.resolve.result_key(entity, rendered_key)
 
-    def publication_keys(
-        self,
-        result_keys: tuple[str, ...],
-        coordinate_reads: tuple[str, ...],
-        resolved: EntityIdentity,
-        variant: str | None,
-    ) -> tuple[str, ...]:
+    def publication_keys(self, resolved: EntityIdentity, variant: str | None) -> tuple[str, ...]:
         """The logical flat-row keys structural stages leave after decoding."""
-        values: dict[str, object] = {key: None for key in result_keys}
+        values: dict[str, object] = {key: None for key in self.result_keys}
         self.resolve.publish(values, variant)
         if self.shared_document is not None:
             values.pop(self.result_key(resolved, self.shared_document.column), None)
             entry = self.shared_document.by_entity.get(resolved)
             if entry is not None:
                 values.update(dict.fromkeys(entry.padding))
-        for alias in coordinate_reads:
+        for alias in self.coordinate_reads:
             values.pop(alias, None)
         return tuple(values)
 
@@ -1061,7 +1111,9 @@ class TphPlan:
     layout: PositionLayoutView
     columns: tuple[ProjectedColumn, ...]
     tag: TagPredicate | None
-    stages: RowStages
+    resolve: RowIdentity
+    shared_document: SharedDocument | None
+    direct_documents: DirectDocuments | None
 
     @property
     def position(self) -> Sequence[EntityIdentity]:
@@ -1100,7 +1152,9 @@ class TpcsSinglePlan:
     resolved: InheritancePositionView
     layout: PositionLayoutView
     columns: tuple[ProjectedColumn, ...]
-    stages: RowStages
+    resolve: RowIdentity
+    shared_document: SharedDocument | None
+    direct_documents: DirectDocuments | None
 
     @property
     def position(self) -> Sequence[EntityIdentity]:
@@ -1252,7 +1306,9 @@ class TpcsUnionPlan:
     resolved: InheritancePositionView
     layout: PositionLayoutView
     columns: tuple[TpcsUnionColumn, ...]
-    stages: RowStages
+    resolve: RowIdentity
+    shared_document: SharedDocument | None
+    direct_documents: DirectDocuments | None
 
     @property
     def position(self) -> Sequence[EntityIdentity]:
@@ -1400,30 +1456,26 @@ def _plan_tph_read(
         layout=position_layout(storage, position.concrete_subtypes),
         columns=columns,
         tag=TagPredicate(tag_col, tuple(position.concrete_subtypes)) if guarded else None,
-        stages=RowStages(
-            ByTag(
-                tag_col,
-                view.root,
-                tag_pairs(facet, position.concrete_subtypes)
-                if shared is not None
-                else family_tag_pairs(facet, view.root),
-            )
-            if abstract_target
-            else FixedIdentity(position.concrete_subtypes[0]),
-            shared,
-            direct_documents(
-                tuple(
-                    (
-                        concrete,
-                        layout,
-                        entity_view(facet, concrete).applicable_attributes,
-                        entity_view(facet, concrete).applicable_value_objects
-                        if instance_form
-                        else (),
-                    )
-                    for concrete in position.concrete_subtypes
+        resolve=ByTag(
+            tag_col,
+            view.root,
+            tag_pairs(facet, position.concrete_subtypes)
+            if shared is not None
+            else family_tag_pairs(facet, view.root),
+        )
+        if abstract_target
+        else FixedIdentity(position.concrete_subtypes[0]),
+        shared_document=shared,
+        direct_documents=direct_documents(
+            tuple(
+                (
+                    concrete,
+                    layout,
+                    entity_view(facet, concrete).applicable_attributes,
+                    entity_view(facet, concrete).applicable_value_objects if instance_form else (),
                 )
-            ),
+                for concrete in position.concrete_subtypes
+            )
         ),
     )
 
@@ -1496,21 +1548,19 @@ def _plan_tpcs_read(
             # variant literal — the settled asymmetry with table-per-hierarchy,
             # whose abstract target keeps its tag however narrow the position
             # resolves — so every row of it names that concrete.
-            stages=RowStages(
-                FixedIdentity(concretes[0]),
-                None
-                if document is None or fan_out is None
-                else SharedDocument(document.column, ((concretes[0], fan_out),)),
-                direct_documents(
+            resolve=FixedIdentity(concretes[0]),
+            shared_document=None
+            if document is None or fan_out is None
+            else SharedDocument(document.column, ((concretes[0], fan_out),)),
+            direct_documents=direct_documents(
+                (
                     (
-                        (
-                            concretes[0],
-                            layout,
-                            position.superset_attributes,
-                            position.superset_value_objects if instance_form else (),
-                        ),
-                    )
-                ),
+                        concretes[0],
+                        layout,
+                        position.superset_attributes,
+                        position.superset_value_objects if instance_form else (),
+                    ),
+                )
             ),
         )
 
@@ -1645,15 +1695,19 @@ def _plan_tpcs_read(
         residents = storage_entity_view(storage, identity).document_residents
         return DocumentFanOut(None if residents is None else residents.shape, (), padding)
 
-    stages = RowStages(
-        literal,
-        None
+    return TpcsUnionPlan(
+        branches=branches,
+        resolved=position,
+        layout=layout_position,
+        columns=union_columns,
+        resolve=literal,
+        shared_document=None
         if document_column is None
         else SharedDocument(
             document_column,
             tuple((identity, padded(identity, fan_out)) for identity, fan_out in fan_outs),
         ),
-        direct_documents(
+        direct_documents=direct_documents(
             tuple(
                 (
                     concrete,
@@ -1664,13 +1718,6 @@ def _plan_tpcs_read(
                 for concrete in concretes
             )
         ),
-    )
-    return TpcsUnionPlan(
-        branches=branches,
-        resolved=position,
-        layout=layout_position,
-        columns=union_columns,
-        stages=stages,
     )
 
 

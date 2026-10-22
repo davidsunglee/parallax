@@ -22,13 +22,13 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.read_delivery._convert import (
-    AttributeReadContract,
     EntityReadMapping,
     build_positional_many,
     build_positional_object,
     register_reduced_row,
 )
 from parallax.core.read_delivery._page import ABSENT, LogicalKey, PageBuilder, SourceLevel
+from parallax.core.sql_gen._inheritance import AttributeReadContract, ResultContract
 from parallax.core.wire import encode_wire
 from parallax.core.write_plan.observe import occurrence_value
 
@@ -39,7 +39,7 @@ class _CompiledRead(Protocol):
     """What a row converter reads off the compiled read it is bound to."""
 
     @property
-    def resolvable(self) -> tuple[EntityIdentity, ...]: ...
+    def result_contract(self) -> ResultContract: ...
 
     @property
     def projected_documents(self) -> tuple[ValueObjectMetadata, ...]: ...
@@ -311,7 +311,7 @@ def bind(
         MappingProxyType(
             {
                 identity: _entity_read_mapping(model, compiled, identity, correlation_members)
-                for identity in compiled.resolvable
+                for identity in compiled.result_contract.resolvable
             }
         ),
     )
