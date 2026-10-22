@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
@@ -134,7 +134,8 @@ def unit_resolving_reads(
     flush makes for the window its entries reach together
     (:func:`flush_coverage_reads`), less what every such entry's acquisition
     already holds: a Transaction-Time-Only row holds it all, and a Bitemporal one
-    whatever ``acquired_start`` places it over.
+    whatever ``acquired_start`` places it over. An amendment assigning nothing
+    settles nothing, so it owes no coverage and ends no run of shared reads.
 
     Targets are counted by their canonical spelling, so two entries naming one
     Entity two ways owe one read between them.
@@ -147,17 +148,17 @@ def unit_resolving_reads(
     for entry in entries:
         entity = _entry_entity(case, entry)
         keys = _entry_object_keys(case, entry)
+        written = _settled_objects(entity, entry, keys)
+        settled.extend(written)
         if entry.get("target"):
             acquires = _acquires(case, entity)
             if acquires:
                 acquired.update(keys)
             if entity.is_temporal:
                 window = _target_window(entity, entry, acquires, acquired_start)
-                for key in keys:
-                    coverage.setdefault(key, []).append(window)
-            settled.extend(_settled_objects(entry, keys))
+                for item in written:
+                    coverage.setdefault(item.key, []).append(window)
             continue
-        settled.extend(_settled_objects(entry, keys))
         mutation = entry.get("mutation")
         if mutation in OPENING_MUTATIONS:
             opened.update(keys)
@@ -189,30 +190,49 @@ _ASSIGNING_MUTATIONS = ("amend", "replace", "amendUntil", "replaceUntil")
 
 class SettledObject(NamedTuple):
     """One object a unit's entry writes, as the flush that settles it orders it:
-    the object, its canonical Entity, and the mutation phase the entry states."""
+    the object, its canonical Entity, the mutation phase the entry states, and
+    the authored ``(validFrom, until)`` region it states that phase over."""
 
     key: tuple[str, tuple[Any, ...]]
     entity: str
     phase: str
+    region: tuple[Any, Any] = (None, None)
 
 
-def settled_object(key: tuple[str, tuple[Any, ...]], mutation: str) -> SettledObject:
-    """``key`` written by one entry of ``mutation``, in the mutation phase that
-    entry alone would put it in (`m-unit-work` *Write Group formation*): an
-    opening is an insert, an assignment an update, anything else a removal."""
+def settled_object(
+    key: tuple[str, tuple[Any, ...]], mutation: str, region: tuple[Any, Any] = (None, None)
+) -> SettledObject:
+    """``key`` written by one entry of ``mutation`` over ``region``, in the
+    mutation phase that entry alone would put it in (`m-unit-work` *Write Group
+    formation*): an opening is an insert, an assignment an update, anything else
+    a removal."""
     if mutation in OPENING_MUTATIONS:
         phase = "insert"
     elif mutation in _ASSIGNING_MUTATIONS:
         phase = "update"
     else:
         phase = "delete"
-    return SettledObject(key, key[0], phase)
+    return SettledObject(key, key[0], phase, region)
+
+
+def assigns_nothing(entity: Entity, entry: Mapping[str, Any]) -> bool:
+    """Whether ``entry`` is the empty write: an amendment naming nothing beside
+    its key, which is dropped once validated and settles nothing (`m-unit-work`
+    *Target writes*)."""
+    if entry.get("mutation") not in ("amend", "amendUntil"):
+        return False
+    rows = entry["rows"] if "rows" in entry else [entry.get("row") or {}]
+    keyed = {a["name"] for a in entity.attributes if a.get("primaryKey")}
+    return all(set(row) <= keyed | {_VERSION_OBSERVATION_KEY} for row in rows)
 
 
 def _settled_objects(
-    entry: dict[str, Any], keys: list[tuple[str, tuple[Any, ...]]]
+    entity: Entity, entry: dict[str, Any], keys: list[tuple[str, tuple[Any, ...]]]
 ) -> list[SettledObject]:
-    return [settled_object(key, str(entry.get("mutation"))) for key in keys]
+    if assigns_nothing(entity, entry):
+        return []
+    region = (entry.get("validFrom"), entry.get("until"))
+    return [settled_object(key, str(entry.get("mutation")), region) for key in keys]
 
 
 def flush_coverage_reads(
@@ -236,11 +256,12 @@ def flush_coverage_reads(
 
     Where two deferred objects could share, an order the planner alone decides is
     refused rather than guessed: a phase that sorts several Entities by
-    referential rank, or an object whose entries another object's interrupts.
+    referential rank, an object whose entries another object's interrupts, or an
+    object both assigned and destroyed over different regions.
     """
-    objects = _coalesced(settled)
-    if _shares_any(objects, deferred, bitemporal):
-        _refuse_planner_order(case, settled, objects)
+    objects, undecided = _coalesced(settled)
+    if _shares_any(objects, deferred, bitemporal, undecided):
+        _refuse_planner_order(case, settled, objects, undecided)
     reads = 0
     run: tuple[str, str] | None = None
     members = 0
@@ -264,34 +285,67 @@ def _statements(parts: int) -> int:
     return -(-parts // _COVERAGE_READ_PARTS)
 
 
-def _coalesced(settled: list[SettledObject]) -> list[SettledObject]:
-    """One entry per object, at its first entry, in the earliest phase any of
-    its entries states: an insertion composes what follows it, and an
-    assignment outranks a removal it composes with."""
-    first: dict[tuple[str, tuple[Any, ...]], SettledObject] = {}
+def _coalesced(
+    settled: list[SettledObject],
+) -> tuple[list[SettledObject], frozenset[tuple[str, tuple[Any, ...]]]]:
+    """One entry per object, at its first entry, in the phase its composed write
+    settles in (`m-unit-work` *Observed-State Coalescing*), beside the objects
+    whose phase no rule decides.
+
+    An insertion composes what follows it. A destruction supersedes the
+    assignments it shares one region with, so it settles as a removal; one
+    composed with assignments of other regions settles in a phase the contract
+    leaves to the planner, and is counted as a removal only where nothing could
+    share with it."""
+    entries: dict[tuple[str, tuple[Any, ...]], list[SettledObject]] = {}
     for item in settled:
-        known = first.get(item.key)
-        if known is None or _PHASES.index(item.phase) < _PHASES.index(known.phase):
-            first[item.key] = item if known is None else known._replace(phase=item.phase)
-    return list(first.values())
+        entries.setdefault(item.key, []).append(item)
+    objects: list[SettledObject] = []
+    undecided: set[tuple[str, tuple[Any, ...]]] = set()
+    for key, items in entries.items():
+        phases = {item.phase for item in items}
+        if "insert" in phases:
+            phase = "insert"
+        elif len(phases) == 1:
+            (phase,) = phases
+        else:
+            phase = "delete"
+            if len({item.region for item in items}) > 1:
+                undecided.add(key)
+        objects.append(items[0]._replace(phase=phase))
+    return objects, frozenset(undecided)
 
 
 def _shares_any(
     objects: list[SettledObject],
     deferred: dict[tuple[str, tuple[Any, ...]], int],
     bitemporal: frozenset[tuple[str, tuple[Any, ...]]],
+    undecided: frozenset[tuple[str, tuple[Any, ...]]],
 ) -> bool:
     candidates: dict[tuple[str, str], int] = {}
     for item in objects:
         if item.key in deferred and item.key in bitemporal:
-            group = (item.entity, item.phase)
-            candidates[group] = candidates.get(group, 0) + 1
+            phases = ("update", "delete") if item.key in undecided else (item.phase,)
+            for phase in phases:
+                group = (item.entity, phase)
+                candidates[group] = candidates.get(group, 0) + 1
     return any(count > 1 for count in candidates.values())
 
 
 def _refuse_planner_order(
-    case: Case, settled: list[SettledObject], objects: list[SettledObject]
+    case: Case,
+    settled: list[SettledObject],
+    objects: list[SettledObject],
+    undecided: frozenset[tuple[str, tuple[Any, ...]]],
 ) -> None:
+    for item in objects:
+        if item.key in undecided:
+            raise CaseFailure(
+                f"{case.path.name}: object {item.key} is both assigned and destroyed over "
+                f"different regions, beside objects that may share coverage reads; the "
+                f"reference count does not decide which mutation phase its composed write "
+                f"settles in."
+            )
     for phase in ("insert", "delete"):
         entities = {item.entity for item in objects if item.phase == phase}
         if len(entities) > 1:

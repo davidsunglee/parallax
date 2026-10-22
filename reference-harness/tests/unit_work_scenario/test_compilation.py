@@ -373,6 +373,18 @@ def _covered(key: int) -> tuple[dict, list[dict]]:
     return entry, statements
 
 
+def _empty(key: int) -> tuple[dict, list[dict]]:
+    """An amendment assigning nothing, which is dropped before it settles."""
+    entry = {
+        "mutation": "amend",
+        "entity": "parallax.compatibility.Position",
+        "rows": [{"id": key}],
+        "validFrom": "2024-03-01T00:00:00.000000Z",
+        "at": _AT,
+    }
+    return entry, []
+
+
 def _settled_step_case(damaged_case, writes: list, coverage_reads: int):
     """m-unit-work-015 varied into one find of every written position's head and
     one settled step writing ``writes`` in order, declaring ``coverage_reads``."""
@@ -413,6 +425,7 @@ def _settled_step_case(damaged_case, writes: list, coverage_reads: int):
         ([_reaching] * 65, 3),
         ([_reaching, _reaching, _covered], 1),
         ([_reaching, _covered, _reaching], 2),
+        ([_reaching, _empty, _reaching], 1),
         ([_covered, _covered], 0),
     ],
     ids=[
@@ -424,6 +437,7 @@ def _settled_step_case(damaged_case, writes: list, coverage_reads: int):
         "sixty-five-start-a-third",
         "covered-after-the-run",
         "covered-between-ends-the-run",
+        "an-empty-amendment-between-ends-no-run",
         "all-covered",
     ],
 )
@@ -443,3 +457,18 @@ def test_a_settled_step_declaring_reads_its_spans_do_not_make_is_refused(
 ) -> None:
     with pytest.raises(CaseFailure, match="declares databaseCalls"):
         assert_judged(_settled_step_case(damaged_case, writes, reads))
+
+
+def test_deferred_writes_one_flush_settles_from_several_steps_are_refused(damaged_case) -> None:
+    # Both steps buffer into the group's pre-commit flush, whose one shared read
+    # neither step's own Database Calls could hold.
+    case = _settled_step_case(damaged_case, [_reaching] * 2, 1)
+    find, write = case.when["scenario"]
+    later = {**write, "write": [write["write"][1]], "statements": write["statements"][3:]}
+    write["write"] = [write["write"][0]]
+    write["statements"] = write["statements"][:3]
+    write["databaseCalls"] = later["databaseCalls"] = 4
+    case.when["scenario"] = [find, write, later]
+    case.then["databaseCalls"] = find["databaseCalls"] + 8
+    with pytest.raises(CaseFailure, match="into one flush"):
+        assert_judged(case)

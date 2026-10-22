@@ -27,6 +27,7 @@ from ..write_plan import (
     SettledObject,
     assert_inheritance_write_routing,
     assert_write_values,
+    assigns_nothing,
     classify_write_row,
     close_address_binds,
     flush_coverage_reads,
@@ -40,7 +41,15 @@ from ..write_plan import (
     version_column,
     window_instant,
 )
-from .compile import CompiledScenario, _GroupedWrite, _SettledOn, _UngroupedWrite
+from .compile import (
+    CompiledScenario,
+    Submission,
+    _BoundaryAction,
+    _GroupedWrite,
+    _RowPublishingStep,
+    _SettledOn,
+    _UngroupedWrite,
+)
 from .report import reported_against
 
 # The projected output column that carries the table-per-concrete-subtype
@@ -87,6 +96,7 @@ def _assert_count_consistency(scenario: CompiledScenario, dialect: str) -> None:
     declared counts — the harness never compiles a query to SQL.
     """
     case = scenario.case
+    _assert_one_step_owns_each_shared_read(scenario)
     total = 0
     for step in scenario.steps:
         declared = step.database_calls
@@ -138,21 +148,31 @@ def _coverage_reads(case: Case, step: _GroupedWrite) -> int:
     operations pending together read their enclosing window (`m-sql`), and what
     its finds observed covers part of it; the rest is the parts its write reads.
     Consecutive such writes share reads (:func:`write_plan.flush_coverage_reads`);
-    an object whose finds cover its extent settles at planning and ends a run.
+    an object whose finds cover its extent settles at planning and ends a run,
+    and an amendment assigning nothing is dropped before it settles.
     """
+    settled, deferred = _step_coverage(case, step)
+    return flush_coverage_reads(case, settled, deferred, bitemporal=frozenset(deferred))
+
+
+def _step_coverage(
+    case: Case, step: _GroupedWrite
+) -> tuple[list[SettledObject], dict[tuple[str, tuple[Any, ...]], int]]:
+    """The objects a settled step's writes settle, in authored order, beside the
+    uncovered parts of each one whose write defers."""
     settled: list[SettledObject] = []
     requested: dict[tuple[str, tuple[Any, ...]], list[tuple[dt.datetime, dt.datetime]]] = {}
     observed: dict[tuple[str, tuple[Any, ...]], list[tuple[dt.datetime, dt.datetime]]] = {}
     for submission in step.submissions:
         entry = dict(submission.entry)
-        if submission.entity is None or submission.key is None:
+        key = _object_key(submission)
+        if submission.entity is None or key is None:
             settled.append(_unkeyed(submission.pointer))
             continue
-        key = (
-            submission.entity.canonical_name,
-            tuple(repr(value) for value in submission.key.values()),
-        )
-        settled.append(settled_object(key, submission.mutation))
+        if assigns_nothing(submission.entity, entry):
+            continue
+        region = (entry.get("validFrom"), entry.get("until"))
+        settled.append(settled_object(key, submission.mutation, region))
         origin = submission.settles_on
         if origin is None:
             continue
@@ -180,7 +200,58 @@ def _coverage_reads(case: Case, step: _GroupedWrite) -> int:
         for key, windows in requested.items()
         if (parts := uncovered_parts([_enclosing(windows)], observed[key]))
     }
-    return flush_coverage_reads(case, settled, deferred, bitemporal=frozenset(deferred))
+    return settled, deferred
+
+
+def _object_key(submission: Submission) -> tuple[str, tuple[Any, ...]] | None:
+    if submission.entity is None or submission.key is None:
+        return None
+    return (
+        submission.entity.canonical_name,
+        tuple(repr(value) for value in submission.key.values()),
+    )
+
+
+def _assert_one_step_owns_each_shared_read(scenario: CompiledScenario) -> None:
+    """Refuse deferred writes of one Entity that one flush settles but several
+    write steps author.
+
+    Those writes may share coverage reads, which are statements of the flush
+    rather than of any step (`m-case-format` *Resolving reads a write owes*), so
+    no step's own Database Calls can hold a read another step's write shares.
+    A find, a boundary verb, or a predicate submission that writes something
+    ends the flush its group has pending.
+    """
+    case = scenario.case
+    for unit in scenario.units.values():
+        authors: dict[str, set[int]] = {}
+        for index in unit.steps:
+            step = scenario.steps[index]
+            if isinstance(step, (_RowPublishingStep, _BoundaryAction)):
+                _refuse_shared_across_steps(case, authors)
+                authors = {}
+                continue
+            if not isinstance(step, _GroupedWrite):
+                continue
+            _, deferred = _step_coverage(case, step)
+            for submission in step.submissions:
+                key = _object_key(submission)
+                if submission.flushes:
+                    _refuse_shared_across_steps(case, authors)
+                    authors = {}
+                elif key is not None and key in deferred:
+                    authors.setdefault(key[0], set()).add(index)
+        _refuse_shared_across_steps(case, authors)
+
+
+def _refuse_shared_across_steps(case: Case, authors: dict[str, set[int]]) -> None:
+    for entity, steps in authors.items():
+        if len(steps) > 1:
+            raise CaseFailure(
+                f"{case.path.name}: scenario steps {sorted(steps)} buffer deferred writes of "
+                f"{entity} into one flush, whose coverage reads they may share; author them "
+                f"in one write step, whose Database Calls count the reads its flush makes."
+            )
 
 
 def _enclosing(
