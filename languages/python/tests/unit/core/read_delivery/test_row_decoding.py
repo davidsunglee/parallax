@@ -13,7 +13,12 @@ import pytest
 
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.read_delivery._row_decoding import publication_keys, row_identity_reader
+from parallax.core.object_query._resolved import ContinuationCoordinate
+from parallax.core.read_delivery._row_decoding import (
+    publication_keys,
+    row_coordinates,
+    row_identity_reader,
+)
 from parallax.core.sql_gen._inheritance import (
     ByLiteral,
     ByTag,
@@ -58,6 +63,16 @@ def test_a_positional_row_of_the_wrong_width_is_refused(contract: ResultContract
         ValueError, match=f"result key count {len(contract.result_keys)} does not match row arity 3"
     ):
         row_identity_reader(contract)((1, 2, 3))
+
+
+def test_a_coordinate_is_read_only_off_a_row_of_the_contracts_width() -> None:
+    contract = ResultContract(
+        FixedIdentity(_LEAF), None, None, (), ("id", "parallax_seek_0"), ("parallax_seek_0",)
+    )
+    assert row_coordinates(contract, ((1, 2),)) == (ContinuationCoordinate((2,)),)
+    for row in ((1,), (1, 2, 3)):
+        with pytest.raises(ValueError, match="does not match row arity"):
+            row_coordinates(contract, (row,))
 
 
 @pytest.mark.parametrize(

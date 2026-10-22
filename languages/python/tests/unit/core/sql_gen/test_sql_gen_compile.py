@@ -57,11 +57,7 @@ from parallax.core.predicate._resolved import (
     deferred_membership,
     managed_comparison,
 )
-from parallax.core.read_delivery._row_decoding import (
-    raw_member,
-    row_coordinates,
-    row_identity_reader,
-)
+from parallax.core.read_delivery._row_decoding import row_coordinates
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
@@ -335,15 +331,11 @@ def test_compiled_read_is_an_equatable_hashable_value() -> None:
     assert first != compile_read(oa.FalseNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
 
-def test_compiled_row_validation_rejects_duplicate_keys_and_wrong_tuple_arity() -> None:
+def test_a_result_contract_rejects_a_duplicate_result_key() -> None:
     compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
     with pytest.raises(ValueError, match="duplicate result key 'id'"):
         dataclasses.replace(compiled.result_contract, result_keys=("id", "id"))
-    with pytest.raises(ValueError, match="does not match row arity"):
-        row_identity_reader(compiled.result_contract)(())
-    with pytest.raises(KeyError, match="missing"):
-        raw_member(compiled.result_contract, (), compiled.target, "missing")
 
 
 def test_a_read_paging_through_nothing_reads_no_coordinate_off_any_row() -> None:
