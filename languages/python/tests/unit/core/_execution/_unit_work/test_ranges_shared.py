@@ -528,6 +528,30 @@ def test_a_failed_read_leaves_neither_the_scope_nor_its_frames_holding_an_earlie
     assert not any(reaches([bindings, *owned], rows) for rows in partial)
 
 
+def test_a_failed_completion_leaves_neither_the_scope_nor_its_frames_holding_an_earlier_one() -> (
+    None
+):
+    first, first_row = covered_target(ShareCols, 1)
+    second, second_row = covered_target(ShareCols, 2)
+    traced = _Traced(HeldRows(MODEL, [first_row, second_row], overlapping=True))
+    refused = _Refused()
+
+    def acquire[Request: RowRequest, Result](
+        request: Request, consumer: RowConsumer[Request, Result], /
+    ) -> Result:
+        if isinstance(request, CompletionRequest) and request.rows[0][0] == 2:
+            raise refused
+        return traced.acquire(request, consumer)
+
+    bindings = _bindings(_span(plan([first, second], concurrency="locking")), acquire)
+    with pytest.raises(_Refused) as raised, bindings:
+        next(bindings)
+    assert len(traced.answers) == 1
+    owned = _binding_frames(raised.value)
+    assert owned
+    assert not reaches([bindings, *owned], traced.answers[0])
+
+
 def test_a_failed_handoff_leaves_neither_the_scope_nor_its_frames_holding_the_reads_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
