@@ -271,25 +271,55 @@ def test_an_occurrence_column_requires_a_folded_document_read() -> None:
         _converted(_TWIN_COLUMNS, "Person", {**_COLUMNS_ROW, "address": {"city": "Oslo"}})
 
 
+_BO_ONLY: Mapping[str, object] = {
+    "id": 2,
+    "displayName": "Bo",
+    "score": None,
+    "joinedOn": None,
+    "note": None,
+    "address": None,
+    "tags": (),
+}
+
+
 @pytest.mark.parametrize(
-    ("payload", "codes"),
+    ("payload", "members", "codes"),
     [
-        pytest.param(PresentDocument(_ADA_DOCUMENT), [], id="carried"),
-        pytest.param(PresentDocument({"displayName": "Bo"}), [], id="members-absent"),
-        pytest.param(PresentDocument({"displayName": "Bo", "note": None}), [], id="json-null"),
         pytest.param(
-            PresentDocument({"displayName": 7}), ["stored-data-leaf-undecodable"], id="undecodable"
+            PresentDocument(_ADA_DOCUMENT),
+            {
+                "id": 2,
+                "displayName": "Ada",
+                "score": 7,
+                "joinedOn": dt.date(2026, 1, 15),
+                "note": "north wing",
+                "address": {"city": "Oslo", "geo": {"country": "NO"}},
+                "tags": ({"label": "founder"}, {"label": "staff"}),
+            },
+            [],
+            id="carried",
         ),
-        pytest.param(SQL_NULL, [], id="sql-null-document"),
+        pytest.param(PresentDocument({"displayName": "Bo"}), _BO_ONLY, [], id="members-absent"),
+        pytest.param(
+            PresentDocument({"displayName": "Bo", "note": None}), _BO_ONLY, [], id="json-null"
+        ),
+        pytest.param(
+            PresentDocument({"displayName": 7}),
+            {"id": 2, "score": None, "joinedOn": None, "note": None, "address": None, "tags": ()},
+            ["stored-data-leaf-undecodable"],
+            id="undecodable",
+        ),
+        pytest.param(SQL_NULL, {**_BO_ONLY, "displayName": None}, [], id="sql-null-document"),
     ],
 )
 def test_a_document_row_classifies_each_member_by_what_its_document_holds(
-    payload: object, codes: list[str]
+    payload: object, members: Mapping[str, object], codes: list[str]
 ) -> None:
     # The row carries the Structured Column at its ordinal; each
     # document-resident member is located inside it and classified by what the
     # document actually holds.
     node = _converted(_CORPUS, "Traveler", {"id": 2, "payload": payload})
+    assert node.members == members
     assert [issue.code for issue in node.issues] == codes
 
 
