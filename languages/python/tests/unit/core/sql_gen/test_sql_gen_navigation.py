@@ -1598,7 +1598,7 @@ def test_one_quantifier_object_in_two_predicate_slots_reads_each_slot_s_own_cell
         deep_fetch.PlannedEntityQuery(
             target=basket.identity,
             entity=basket,
-            predicate=_closed(ResolvedAnd((quantifier, quantifier)), None),
+            predicate=_closed(ResolvedAnd((quantifier, quantifier))),
             projection=deep_fetch.ResolvedReadProjection((), False),
         ),
         family,

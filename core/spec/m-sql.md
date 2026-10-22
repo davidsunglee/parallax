@@ -32,8 +32,8 @@ Neither entry point accepts a public Object Query, Predicate, Write Instruction,
 authored member name, or raw serialized literal, and the read entry point accepts
 no predicate whose temporal visibility is unclosed. A `PlannedEntityQuery`
 carries exact target/member identities, an elaborated predicate of managed values
-with its relationships' temporal perspectives and any root perspective it
-retains (`m-navigate`), resolved ordering, and compact result metadata sufficient for
+with its relationships' temporal perspectives and its injected as-of terms
+(`m-navigate`), resolved ordering, and compact result metadata sufficient for
 row decoding and deep-fetch key gathering. A `PlannedStep` carries the closed
 `m-write-plan` variant, exact member identities, managed values or generated-value
 expressions, target, concurrency decision, and affected-row policy. Its

@@ -6,7 +6,6 @@ from typing import Never
 from parallax.core import inheritance
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._resolved import ResolvedTemporalSelection
-from parallax.core.predicate._perspective import TemporalPerspective
 from parallax.core.predicate._resolved import (
     CurrentObject,
     ObjectPosition,
@@ -29,10 +28,14 @@ from parallax.core.predicate._resolved import (
     ScalarElement,
     SubjectPosition,
 )
-from parallax.core.temporal_read import inject_resolved_as_of, resolve_perspective
+from parallax.core.temporal_read import (
+    inject_resolved_as_of,
+    propagated_selections,
+    resolve_perspective,
+)
 
 __all__ = [
-    "ExistingRootConditions",
+    "NoRootSelections",
     "PropagatedRootSelections",
     "RootSelections",
     "TemporalResolution",
@@ -51,32 +54,30 @@ class RootSelections:
 
 @dataclass(frozen=True, slots=True)
 class PropagatedRootSelections:
-    """Restrict an Include child, and each target it reaches, to the perspective
+    """Restrict an Include child to the selections the original root's
+    selections propagate to it, and see each reached target at the perspective
     the original root's selections propagate."""
 
     selections: tuple[ResolvedTemporalSelection, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class ExistingRootConditions:
-    """Keep the root conditions the predicate already states, and see each
-    reached target at Latest."""
+class NoRootSelections:
+    """State no root conditions, and see each reached target at Latest."""
 
 
-type TemporalResolution = RootSelections | PropagatedRootSelections | ExistingRootConditions
+type TemporalResolution = RootSelections | PropagatedRootSelections | NoRootSelections
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class TemporallyResolvedPredicate:
     """A predicate whose every reached relationship carries its temporal
-    visibility, with the root restriction its resolution established.
+    visibility, with the root restriction its resolution established injected.
 
-    Only :func:`resolve_temporal_visibility` constructs one. A present
-    ``root_perspective`` restricts the root rows beside ``predicate``.
+    Only :func:`resolve_temporal_visibility` constructs one.
     """
 
     predicate: ResolvedPredicate
-    root_perspective: TemporalPerspective | None
 
     def __init__(self, _unconstructible: Never) -> None:
         raise TypeError("a TemporallyResolvedPredicate is obtained only by resolving")
@@ -100,23 +101,22 @@ def resolve_temporal_visibility(
     match resolution:
         case RootSelections(selections=selections):
             resolved = _Resolution(model, selections).predicate(predicate)
-            family_root = inheritance.root_metadata(inheritance.view(model), model, target.identity)
-            return _closed(inject_resolved_as_of(resolved, selections, family_root), None)
+            return _closed(inject_resolved_as_of(resolved, selections, _family_root(target, model)))
         case PropagatedRootSelections(selections=selections):
             resolved = _Resolution(model, selections).predicate(predicate)
-            return _closed(
-                resolved, resolve_perspective(target, model=model, root_selections=selections)
-            )
-        case ExistingRootConditions():
-            return _closed(_Resolution(model, ()).predicate(predicate), None)
+            propagated = propagated_selections(target, model=model, root_selections=selections)
+            return _closed(inject_resolved_as_of(resolved, propagated, _family_root(target, model)))
+        case NoRootSelections():
+            return _closed(_Resolution(model, ()).predicate(predicate))
 
 
-def _closed(
-    predicate: ResolvedPredicate, root_perspective: TemporalPerspective | None
-) -> TemporallyResolvedPredicate:
+def _family_root(target: EntityMetadata, model: Metamodel) -> EntityMetadata:
+    return inheritance.root_metadata(inheritance.view(model), model, target.identity)
+
+
+def _closed(predicate: ResolvedPredicate) -> TemporallyResolvedPredicate:
     closed = object.__new__(TemporallyResolvedPredicate)
     object.__setattr__(closed, "predicate", predicate)
-    object.__setattr__(closed, "root_perspective", root_perspective)
     return closed
 
 

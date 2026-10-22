@@ -79,7 +79,7 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.core.predicate import ModelRejectedError
-from parallax.core.predicate._perspective import TemporalPerspective
+from parallax.core.predicate._resolved import ResolvedMembership
 from parallax.core.read_delivery import (
     InvalidData,
     InvalidDataError,
@@ -2405,7 +2405,7 @@ def test_typed_and_wire_reads_share_resolved_include_work_within_each_delivery_m
         "PropagatedRootSelections",
     ]
     (eager_child,) = child_compiles
-    assert eager_child.predicate.root_perspective == TemporalPerspective()
+    assert isinstance(eager_child.predicate.predicate, ResolvedMembership)
 
     with db.stream(query, batch_size=2) as stream:
         assert [order.id for order in stream] == [1, 2, 3]

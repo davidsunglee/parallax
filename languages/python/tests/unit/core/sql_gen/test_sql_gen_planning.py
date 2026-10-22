@@ -283,7 +283,7 @@ def test_each_quantifier_occurrence_reads_its_own_owner_result_cell(identical: b
         quantifier = resolved_as_stated(
             oa.validate_predicate(basket, authored, family), family, basket
         ).predicate
-        predicate = _closed(ResolvedAnd((quantifier, quantifier)), None)
+        predicate = _closed(ResolvedAnd((quantifier, quantifier)))
     else:
         predicate = resolved_as_stated(
             oa.validate_predicate(basket, oa.And(operands=(authored, authored)), family),

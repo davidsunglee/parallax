@@ -24,7 +24,7 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import QueryTargetError
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
-from parallax.core.navigate import ExistingRootConditions, resolve_temporal_visibility
+from parallax.core.navigate import NoRootSelections, resolve_temporal_visibility
 from parallax.core.object_query import IncludeSegment, ObjectQueryNode, validate_object_query
 from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.predicate import ModelRejectedError, Narrow, TrueNode, validate_predicate
@@ -343,7 +343,7 @@ def _resolved_hop(model: Metamodel, position: EntityMetadata, op: oa.PredicateNo
     """The target of the one presence ``op`` reaches, once its visibility resolved."""
     product = validate_predicate(position, op, model)
     closed = resolve_temporal_visibility(
-        product, target=position, model=model, resolution=ExistingRootConditions()
+        product, target=position, model=model, resolution=NoRootSelections()
     ).predicate
     assert isinstance(product, ResolvedPresence) and isinstance(closed, ResolvedPresence)
     assert isinstance(closed.target, ResolvedRelationship)

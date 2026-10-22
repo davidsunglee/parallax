@@ -38,7 +38,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.navigate import (
-    ExistingRootConditions,
+    NoRootSelections,
     PropagatedRootSelections,
     RootSelections,
     TemporalResolution,
@@ -789,7 +789,7 @@ def test_a_record_free_model_lowers_navigation_and_value_object_paths() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A retained root perspective joins the selection exactly where injected      #
+# Propagated root selections join the selection exactly where a root's own    #
 # current-row terms would, before the family guard and grouping the predicate. #
 # --------------------------------------------------------------------------- #
 INSTRUMENT = model("instrument")
@@ -808,9 +808,9 @@ def _guarded_read(
     root = inheritance.root_metadata(inheritance.view(meta), meta, entity.identity)
     selections = tuple(ResolvedLatestSelection(axis) for axis in root.declared_as_of_axes)
     modes: dict[str, TemporalResolution] = {
-        "injected": RootSelections(selections),
-        "retained": PropagatedRootSelections(selections),
-        "stated": ExistingRootConditions(),
+        "root": RootSelections(selections),
+        "propagated": PropagatedRootSelections(selections),
+        "none": NoRootSelections(),
     }
     query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
@@ -826,8 +826,8 @@ def _guarded_read(
     return compile_entity_query(query, meta, POSTGRES)
 
 
-@pytest.mark.parametrize("resolution", ["injected", "retained"])
-def test_a_root_perspective_restricts_a_grouped_disjunction_before_the_tag_guard(
+@pytest.mark.parametrize("resolution", ["root", "propagated"])
+def test_injected_root_terms_restrict_a_grouped_disjunction_before_the_tag_guard(
     resolution: str,
 ) -> None:
     statement = _guarded_read(INSTRUMENT, "Bond", _EITHER_PRICE, resolution).statement
@@ -839,14 +839,14 @@ def test_a_root_perspective_restricts_a_grouped_disjunction_before_the_tag_guard
 
 
 def test_a_disjunction_without_a_root_restriction_is_grouped_beside_the_tag_guard() -> None:
-    statement = _guarded_read(INSTRUMENT, "Bond", _EITHER_PRICE, "stated").statement
+    statement = _guarded_read(INSTRUMENT, "Bond", _EITHER_PRICE, "none").statement
     assert statement.sql.endswith(
         "from instrument t0 where (t0.price < ? or t0.price > ?) and t0.kind = ?"
     )
     assert statement.binds == (Decimal("1.00"), Decimal("9.00"), "bond")
 
 
-def test_an_empty_root_perspective_adds_no_term_or_grouping() -> None:
+def test_propagating_to_a_non_temporal_target_adds_no_term_or_grouping() -> None:
     either = oa.Or(
         operands=(
             oa.Comparison(
@@ -857,10 +857,10 @@ def test_an_empty_root_perspective_adds_no_term_or_grouping() -> None:
             ),
         )
     )
-    retained = _guarded_read(PAYMENT, "CardPayment", either, "retained").statement
-    stated = _guarded_read(PAYMENT, "CardPayment", either, "stated").statement
-    assert retained.sql == stated.sql
-    assert retained.sql.endswith(
+    propagated = _guarded_read(PAYMENT, "CardPayment", either, "propagated").statement
+    none = _guarded_read(PAYMENT, "CardPayment", either, "none").statement
+    assert propagated.sql == none.sql
+    assert propagated.sql.endswith(
         "where (t0.card_network = ? or t0.card_network = ?) and t0.kind = ?"
     )
-    assert retained.binds == stated.binds == ("Visa", "Amex", "card")
+    assert propagated.binds == none.binds == ("Visa", "Amex", "card")

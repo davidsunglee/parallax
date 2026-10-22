@@ -26,7 +26,7 @@ from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.navigate import (
-    ExistingRootConditions,
+    NoRootSelections,
     PropagatedRootSelections,
     RootSelections,
     TemporallyResolvedPredicate,
@@ -351,8 +351,8 @@ def test_a_scanned_root_axis_sees_every_hop_at_latest_on_it() -> None:
 )
 @pytest.mark.parametrize(
     "resolution",
-    [RootSelections(()), PropagatedRootSelections(()), ExistingRootConditions()],
-    ids=["root", "propagated", "existing"],
+    [RootSelections(()), PropagatedRootSelections(()), NoRootSelections()],
+    ids=["root", "propagated", "none"],
 )
 def test_a_navigation_free_predicate_is_retained_by_every_resolution(
     op: oa.PredicateNode, resolution: TemporalResolution
@@ -373,7 +373,7 @@ def test_a_non_temporal_hop_is_resolved_to_a_perspective_without_axes() -> None:
     ):
         product = oa.validate_predicate(ORDER, op, ORDERS)
         closed = resolve_temporal_visibility(
-            product, target=ORDER, model=ORDERS, resolution=ExistingRootConditions()
+            product, target=ORDER, model=ORDERS, resolution=NoRootSelections()
         )
         assert closed.predicate is not product
         assert type(closed.predicate) is type(product)
@@ -407,7 +407,6 @@ def test_root_selections_append_the_root_terms_after_resolving_the_hops() -> Non
         query.predicate, target=query.root, model=POLICY, resolution=RootSelections(query.temporal)
     )
 
-    assert closed.root_perspective is None
     assert isinstance(closed.predicate, ResolvedAnd)
     hop, *terms = closed.predicate.operands
     assert isinstance(hop, ResolvedQuantifier)
@@ -421,7 +420,7 @@ def test_root_selections_append_the_root_terms_after_resolving_the_hops() -> Non
     ) == _root_terms(POLICY, "Policy")
 
 
-def test_propagated_root_selections_retain_the_targets_perspective_beside_the_predicate() -> None:
+def test_propagated_root_selections_inject_the_targets_terms_after_resolving_the_hops() -> None:
     query = _query(oa.Quantifier("any", "Coverage.claims"), POLICY, "Coverage", _PINNED)
 
     closed = resolve_temporal_visibility(
@@ -431,20 +430,96 @@ def test_propagated_root_selections_retain_the_targets_perspective_beside_the_pr
         resolution=PropagatedRootSelections(query.temporal),
     )
 
-    assert closed.root_perspective == _pinned(POLICY, "Coverage")
-    assert isinstance(closed.predicate, ResolvedQuantifier)
-    assert _relationships(closed.predicate)[0].temporal_visibility == _pinned(POLICY, "Claim")
+    assert isinstance(closed.predicate, ResolvedAnd)
+    hop, *terms = closed.predicate.operands
+    assert isinstance(hop, ResolvedQuantifier)
+    assert _relationships(hop)[0].temporal_visibility == _pinned(POLICY, "Claim")
+    assert tuple(
+        (term.op, term.member.identity.name)
+        for term in terms
+        if isinstance(term, ResolvedComparison)
+    ) == _root_terms(POLICY, "Coverage")
 
 
-def test_existing_root_conditions_add_nothing_but_still_resolve_each_hop_at_latest() -> None:
+def _held(name: str, temporality: str, *relationships: dict[str, object]) -> dict[str, object]:
+    """``name``, keyed by ``id``, held through ``ownerId`` by whatever holds it."""
+    return {
+        "name": name,
+        "table": name.lower(),
+        "temporality": temporality,
+        "attributes": [
+            {
+                "name": "id",
+                "type": "int64",
+                "column": "id",
+                "primaryKey": True,
+                "pkGeneration": "application-assigned",
+            },
+            {"name": "ownerId", "type": "int64", "column": "owner_id", "nullable": True},
+        ],
+        "relationships": list(relationships),
+    }
+
+
+def _holds(name: str, held: str) -> dict[str, object]:
+    return {
+        "name": name,
+        "cardinality": "one-to-many",
+        "join": {"source": "id", "target": {"entity": held, "attribute": "ownerId"}},
+    }
+
+
+# A Bitemporal Desk holds a Transaction-Time-Only Ledger, which holds Bitemporal
+# Rates: the selections a Desk propagates to a Ledger state no Valid Time.
+_DESK = models.accepted_model(
+    {
+        "entities": [
+            _held("Desk", "bitemporal", _holds("ledgers", "Ledger")),
+            _held("Ledger", "transaction-time", _holds("rates", "Rate")),
+            _held("Rate", "bitemporal"),
+        ]
+    }
+)
+
+
+def _transaction_time_terms(model: Metamodel, name: str) -> tuple[tuple[str, str], ...]:
+    shape = temporal_view(model).shape(target(model, name).identity)
+    assert isinstance(shape, TransactionTimeOnly)
+    axis = shape.transaction_time
+    return (
+        ("lessThanEquals", axis.start_attribute.name),
+        ("greaterThan", axis.end_attribute.name),
+    )
+
+
+def test_a_transaction_time_only_child_sees_a_bitemporal_hop_at_the_roots_valid_time() -> None:
+    root = _query(oa.TrueNode(), _DESK, "Desk", _PINNED)
+    ledger = target(_DESK, "Ledger")
+    product = oa.validate_predicate(ledger, oa.Quantifier("any", "Ledger.rates"), _DESK)
+
+    closed = resolve_temporal_visibility(
+        product, target=ledger, model=_DESK, resolution=PropagatedRootSelections(root.temporal)
+    )
+
+    assert isinstance(closed.predicate, ResolvedAnd)
+    hop, *terms = closed.predicate.operands
+    assert isinstance(hop, ResolvedQuantifier)
+    assert _relationships(hop)[0].temporal_visibility == _pinned(_DESK, "Rate")
+    assert tuple(
+        (term.op, term.member.identity.name)
+        for term in terms
+        if isinstance(term, ResolvedComparison)
+    ) == _transaction_time_terms(_DESK, "Ledger")
+
+
+def test_no_root_selections_add_nothing_but_still_resolve_each_hop_at_latest() -> None:
     claim = target(POLICY, "Claim")
     product = oa.validate_predicate(claim, _AUTO, POLICY)
 
     closed = resolve_temporal_visibility(
-        product, target=claim, model=POLICY, resolution=ExistingRootConditions()
+        product, target=claim, model=POLICY, resolution=NoRootSelections()
     )
 
-    assert closed.root_perspective is None
     assert isinstance(closed.predicate, ResolvedComparison)
     assert [found.temporal_visibility for found in _relationships(closed.predicate)] == [
         _latest(POLICY, "Coverage"),
@@ -472,7 +547,7 @@ if TYPE_CHECKING:
         """Typechecked, never called: closure yields the only compiler input, and
         neither a raw predicate nor a closed one crosses the wrong seam."""
         closed = resolve_temporal_visibility(
-            raw, target=entity, model=POLICY, resolution=ExistingRootConditions()
+            raw, target=entity, model=POLICY, resolution=NoRootSelections()
         )
         assert_type(closed, TemporallyResolvedPredicate)
         projection = ResolvedReadProjection((), False)
@@ -485,7 +560,7 @@ if TYPE_CHECKING:
             closed,  # pyright: ignore[reportArgumentType]
             target=entity,
             model=POLICY,
-            resolution=ExistingRootConditions(),
+            resolution=NoRootSelections(),
         )
 
 
