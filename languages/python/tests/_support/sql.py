@@ -10,7 +10,7 @@ from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.navigate import (
-    ExistingRootConditions,
+    NoRootSelections,
     TemporallyResolvedPredicate,
     resolve_temporal_visibility,
 )
@@ -136,5 +136,5 @@ def resolved_as_stated(
     """``predicate`` temporally resolved with its own root conditions kept, as
     specialized reads and readless writes resolve theirs."""
     return resolve_temporal_visibility(
-        predicate, target=target, model=model, resolution=ExistingRootConditions()
+        predicate, target=target, model=model, resolution=NoRootSelections()
     )

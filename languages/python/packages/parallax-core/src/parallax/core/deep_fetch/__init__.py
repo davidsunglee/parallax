@@ -20,7 +20,6 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.navigate import (
-    ExistingRootConditions,
     PropagatedRootSelections,
     RootSelections,
     TemporallyResolvedPredicate,
@@ -28,8 +27,11 @@ from parallax.core.navigate import (
 )
 from parallax.core.object_query._resolved import (
     Paging,
+    ResolvedAsOfSelection,
+    ResolvedHistorySelection,
     ResolvedIncludePath,
     ResolvedIncludeSegment,
+    ResolvedLatestSelection,
     ResolvedObjectQuery,
     ResolvedOrderTerm,
     ResolvedTemporalSelection,
@@ -43,7 +45,6 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.predicate._resolved import deferred_membership as _deferred_membership
 from parallax.core.predicate._resolved import disjunction as _disjunction
-from parallax.core.predicate._resolved import framework_comparison as _framework_comparison
 from parallax.core.predicate._resolved import managed_comparison as _managed_comparison
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import TimeInterval
@@ -260,18 +261,17 @@ def plan_coverage_read(
     root = inheritance.root_metadata(families, model, entity.identity)
     view = _entity_view(families, entity.identity)
     key_member = _declared_attribute(view, key)
-    # Each axis in declared order: Transaction Time's current-row term, or
-    # ``None`` where the object's own Valid-Time windows stand.
-    axes: list[ResolvedPredicate | None] = []
+    selections: list[ResolvedTemporalSelection] = []
     valid: tuple[AttributeMetadata, AttributeMetadata] | None = None
     for axis in root.declared_as_of_axes:
-        start = _declared_attribute(view, axis.start_attribute.name)
-        end = _declared_attribute(view, axis.end_attribute.name)
         if axis.dimension is TemporalDimension.TRANSACTION_TIME:
-            axes.append(_framework_comparison(op="eq", member=end, value=INFINITY))
+            selections.append(ResolvedLatestSelection(axis))
             continue
-        valid = (start, end)
-        axes.append(None)
+        selections.append(ResolvedHistorySelection(axis))
+        valid = (
+            _declared_attribute(view, axis.start_attribute.name),
+            _declared_attribute(view, axis.end_attribute.name),
+        )
 
     def overlapping(intervals: tuple[TimeInterval, ...]) -> ResolvedPredicate:
         assert valid is not None and intervals  # a Valid-Time axis bounds every range over it
@@ -285,25 +285,23 @@ def plan_coverage_read(
 
     if len(terms) == 1:
         ((key_value, intervals),) = terms
-        conjunction = _conjunction(
-            keyed(key_value),
-            *(overlapping(intervals) if term is None else term for term in axes),
+        named = (
+            keyed(key_value)
+            if valid is None
+            else _conjunction(keyed(key_value), overlapping(intervals))
         )
     else:
-        conjunction = _conjunction(
-            _disjunction(
-                *(
-                    _conjunction(keyed(key_value), overlapping(intervals))
-                    for key_value, intervals in terms
-                )
-            ),
-            *(term for term in axes if term is not None),
+        named = _disjunction(
+            *(
+                _conjunction(keyed(key_value), overlapping(intervals))
+                for key_value, intervals in terms
+            )
         )
     return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         predicate=resolve_temporal_visibility(
-            conjunction, target=entity, model=model, resolution=ExistingRootConditions()
+            named, target=entity, model=model, resolution=RootSelections(tuple(selections))
         ),
         projection=_projection_for(entity, families, ReadProjectionRequest("all", True)),
     )
@@ -338,21 +336,19 @@ def plan_target_read(
     families = inheritance.view(model)
     root = inheritance.root_metadata(families, model, entity.identity)
     view = _entity_view(families, entity.identity)
-    terms = [_managed_comparison(op="eq", member=_declared_attribute(view, key), value=key_value)]
+    keyed = _managed_comparison(op="eq", member=_declared_attribute(view, key), value=key_value)
+    selections: list[ResolvedTemporalSelection] = []
     for axis in root.declared_as_of_axes:
-        start = _declared_attribute(view, axis.start_attribute.name)
-        end = _declared_attribute(view, axis.end_attribute.name)
         if axis.dimension is TemporalDimension.TRANSACTION_TIME:
-            terms.append(_framework_comparison(op="eq", member=end, value=INFINITY))
+            selections.append(ResolvedLatestSelection(axis))
             continue
         assert valid_from is not None  # a Bitemporal target states its start
-        terms.append(_managed_comparison(op="lessThanEquals", member=start, value=valid_from))
-        terms.append(_managed_comparison(op="greaterThan", member=end, value=valid_from))
+        selections.append(ResolvedAsOfSelection(axis, valid_from))
     return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         predicate=resolve_temporal_visibility(
-            _conjunction(*terms), target=entity, model=model, resolution=ExistingRootConditions()
+            keyed, target=entity, model=model, resolution=RootSelections(tuple(selections))
         ),
         projection=_projection_for(
             entity,

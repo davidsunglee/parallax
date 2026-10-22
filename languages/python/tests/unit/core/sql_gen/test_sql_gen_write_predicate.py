@@ -268,13 +268,13 @@ def test_a_shared_to_one_hop_selects_the_target_s_keys_instead() -> None:
 
 
 @pytest.mark.parametrize(
-    "resolution", [RootSelections, PropagatedRootSelections], ids=["injected", "retained"]
+    "resolution", [RootSelections, PropagatedRootSelections], ids=["root", "propagated"]
 )
 def test_a_key_selection_projects_every_physical_key_column(
     resolution: type[RootSelections | PropagatedRootSelections],
 ) -> None:
-    # A root perspective retained beside the predicate restricts the selection
-    # exactly as the injected current-row terms do.
+    # Propagated root selections restrict the selection exactly as a root's own
+    # current-row terms do.
     predicate = _compiled_as(
         oa.Comparison(op="eq", subject=oa.FieldSubject("Coverage.policy.name"), value="P"),
         POLICY,
@@ -292,7 +292,7 @@ def test_a_key_selection_projects_every_physical_key_column(
     assert predicate.binds == (INFINITY, INFINITY, "P", INFINITY, INFINITY)
 
 
-def test_a_retained_root_perspective_restricts_every_alternative_in_place() -> None:
+def test_propagated_root_terms_restrict_every_alternative_in_place() -> None:
     amount = target(POLICY, "Coverage").attribute("amount")
     assert amount is not None
     valid, transaction = (

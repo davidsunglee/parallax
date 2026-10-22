@@ -3,7 +3,7 @@
 Exercises `parallax.core.deep_fetch.plan` independently of the Docker-gated
 compile/run sweeps: shared-prefix dedup, broad-vs-narrowed distinct hops,
 equivalent-narrowing convergence, the `1 + L` accounting, child-query
-composition (`in` membership + retained root perspective + declared relationship
+composition (`in` membership + injected as-of terms + declared relationship
 `orderBy`), narrowed view-key derivation, each level's correlation members
 beside their correlation columns, and back-reference (ancestor-revisit) cycle
 detection. The planner never compiles or executes anything — every assertion
@@ -74,11 +74,12 @@ from parallax.core.predicate._resolved import (
     ResolvedAnd,
     ResolvedComparison,
     ResolvedMembership,
+    ResolvedPredicate,
     framework_comparison,
     managed_comparison,
 )
 from parallax.core.sql_gen._compile import compile_read, compile_template
-from parallax.core.temporal_read import Bitemporal, TimeInterval
+from parallax.core.temporal_read import Bitemporal, TimeInterval, perspective_terms
 from parallax.core.temporal_read import view as temporal_view
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
@@ -134,6 +135,21 @@ def _at(
     return TemporalPerspective(
         valid_time=axis(shape.valid_time, valid), transaction_time=axis(shape.transaction_time, tx)
     )
+
+
+def _injected(
+    model: Metamodel, family: str, valid: dt.datetime | None, tx: dt.datetime | None
+) -> tuple[ResolvedPredicate, ...]:
+    """The terms restricting a child of ``family`` to :func:`_at` its instants."""
+    return perspective_terms(_at(model, family, valid, tx), entity_of(model, family))
+
+
+def _child_terms(query: deep_fetch.PlannedEntityQuery) -> tuple[ResolvedPredicate, ...]:
+    """The terms a child read's closed predicate injects after its `in` membership."""
+    predicate = query.predicate.predicate
+    membership, *terms = predicate.operands if isinstance(predicate, ResolvedAnd) else (predicate,)
+    assert isinstance(membership, ResolvedMembership)
+    return tuple(terms)
 
 
 def _order_attr(term: object) -> str:
@@ -475,13 +491,15 @@ def test_child_query_has_no_order_by_when_relationship_declares_none() -> None:
     assert isinstance(query.predicate.predicate, ResolvedMembership)
 
 
-def test_child_query_retains_the_propagated_root_perspective_beside_the_in_membership() -> None:
+def test_child_query_injects_the_propagated_root_selections_after_the_in_membership() -> None:
     plan = _plan(POLICY, "Policy", (_path(_seg("Policy.coverages")),), _PINNED)
     step = _query_step(plan)
     child_query = step.query
-    assert isinstance(child_query.predicate.predicate, ResolvedMembership)
-    assert isinstance(child_query.predicate.predicate.values, DeferredKeySet)
-    assert child_query.predicate.root_perspective == _at(POLICY, "Coverage", _VALID, _TX)
+    assert isinstance(child_query.predicate.predicate, ResolvedAnd)
+    membership = child_query.predicate.predicate.operands[0]
+    assert isinstance(membership, ResolvedMembership)
+    assert isinstance(membership.values, DeferredKeySet)
+    assert _child_terms(child_query) == _injected(POLICY, "Coverage", _VALID, _TX)
     assert _rendered_keys(POLICY, step, [1, 2]) == [1, 2]
 
 
@@ -709,9 +727,9 @@ def test_original_root_coordinates_survive_a_non_temporal_middle_level() -> None
     )
     rosters, members = _query_step(plan, 0), _query_step(plan, 1)
 
-    assert rosters.query.predicate.root_perspective == TemporalPerspective()
+    assert _child_terms(rosters.query) == ()
     assert _child_where(rosters) == (["t0.program_id = any(?)"], ("<keys>",))
-    assert members.query.predicate.root_perspective == _at(_PROGRAM, "Member", _VALID, _TX)
+    assert _child_terms(members.query) == _injected(_PROGRAM, "Member", _VALID, _TX)
     assert _child_where(members) == (
         [f"t0.roster_id = any(?) and {_PINNED_WHERE}"],
         ("<keys>", _VALID, _VALID, _TX, _TX),
@@ -747,7 +765,7 @@ def test_an_inherited_child_is_restricted_on_its_family_axes_in_every_branch(
 
     assert level.query.target.name == target
     family = "Rate" if segment.rel == "Program.rates" else "Creature"
-    assert level.query.predicate.root_perspective == _at(_PROGRAM, family, _VALID, _TX)
+    assert _child_terms(level.query) == _injected(_PROGRAM, family, _VALID, _TX)
     branches, binds = _child_where(level)
     assert branches == where
     branch_binds = ("<keys>", _VALID, _VALID, _TX, _TX)
@@ -764,7 +782,7 @@ def test_a_scanned_root_axis_leaves_every_level_at_latest_on_it() -> None:
     )
     members = _query_step(plan, 1)
 
-    assert members.query.predicate.root_perspective == _at(_PROGRAM, "Member", None, _TX)
+    assert _child_terms(members.query) == _injected(_PROGRAM, "Member", None, _TX)
     assert _child_where(members) == (
         ["t0.roster_id = any(?) and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?"],
         ("<keys>", INFINITY, _TX, _TX),
@@ -1409,7 +1427,6 @@ def test_an_acquisition_read_selects_current_transaction_time_by_managed_infinit
         else deep_fetch.plan_target_read(rate, model=RATE, key="id", key_value=1, valid_from=jan)
     )
 
-    assert query.predicate.root_perspective is None
     assert isinstance(query.predicate.predicate, ResolvedAnd)
     (current,) = (
         term

@@ -614,9 +614,9 @@ def test_an_include_child_binds_its_retained_perspective_after_its_keys() -> Non
 
 
 @pytest.mark.parametrize(
-    "resolution", [RootSelections, PropagatedRootSelections], ids=["injected", "retained"]
+    "resolution", [RootSelections, PropagatedRootSelections], ids=["root", "propagated"]
 )
-def test_a_write_root_perspective_follows_a_document_predicate_in_place(
+def test_a_write_root_restriction_follows_a_document_predicate_in_place(
     resolution: type[RootSelections | PropagatedRootSelections],
 ) -> None:
     ship = entity(_FLEETS, "Ship")

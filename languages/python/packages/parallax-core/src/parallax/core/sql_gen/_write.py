@@ -23,7 +23,7 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
 )
-from parallax.core.navigate import ExistingRootConditions, resolve_temporal_visibility
+from parallax.core.navigate import NoRootSelections, resolve_temporal_visibility
 from parallax.core.sql_gen._compile import compile_write_predicate
 from parallax.core.sql_gen._context import (
     LoweredStatement,
@@ -572,7 +572,7 @@ def _target_predicate(
     match target:
         case ResolvedMutationSelection(predicate=predicate):
             temporal = resolve_temporal_visibility(
-                predicate, target=entity, model=meta, resolution=ExistingRootConditions()
+                predicate, target=entity, model=meta, resolution=NoRootSelections()
             )
             compiled = compile_write_predicate(temporal, meta, dialect, entity)
             if compiled.lowered is None:  # pragma: no cover - compiler always retains proof

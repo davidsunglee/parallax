@@ -106,9 +106,9 @@ Propagated coordinates are managed Timestamp values. Navigation **closes** a
 resolved predicate's temporal visibility in one pass: every resolved relationship
 the predicate reaches retains a **temporal perspective** — for each axis its
 target's family declares, **latest** or **at** one propagated instant, and no
-axis for a non-temporal target — and a child read retains the perspective of its
-own target. A query root's own selections remain the injected terms of
-`m-temporal-read`. Every predicate is closed through this operation before it is
+axis for a non-temporal target. A query root's own selections, and the
+selections a child read's root propagates to its own target, are injected terms
+of `m-temporal-read`. Every predicate is closed through this operation before it is
 lowered, and a closed predicate is not closed again. A perspective names exact
 canonical axes and adopts each managed value directly, so neither navigation nor
 `m-sql`, which lowers it as above, encodes or decodes a literal or resolves a

@@ -569,9 +569,8 @@ class _StatementPlanner:
 
         Only the root row's own reads count: its predicate occurrences at the
         current object and its ordering terms, which order, cursor capture, and
-        seek all read. A root perspective reads As-Of Axis endpoints, which
-        always keep Columns of their own; a relationship candidate's reads
-        belong to another row, and broad projection reads none.
+        seek all read. A relationship candidate's reads belong to another row,
+        and broad projection reads none.
         """
         facet = self.facet
         layout = _table_layout(self.storage, facet, entity.identity)

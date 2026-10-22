@@ -79,7 +79,6 @@ from parallax.core.sql_gen._planning import plan_statement as _plan_statement
 # context in order.
 from parallax.core.sql_gen._predicate import EntityRowScope as _EntityRowScope
 from parallax.core.sql_gen._predicate import MemberSubject as _MemberSubject
-from parallax.core.sql_gen._predicate import render_perspective as _render_perspective
 from parallax.core.sql_gen._predicate import render_predicate as _render_predicate
 from parallax.core.sql_gen._predicate import render_shared_sources as _render_shared_sources
 
@@ -777,7 +776,7 @@ def _compile_read_arm(
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
     _append_where(
         parts,
-        _beside_a_guard(statement_plan.predicate, where_sql, guarded=bool(seek_sql)),
+        _where_as_conjunct(statement_plan.predicate, where_sql, conjoined=bool(seek_sql)),
         seek_sql,
     )
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
@@ -811,8 +810,6 @@ def compile_write_predicate(
     unaliased, every occurrence unshared, unless an occurrence reads through a
     shared source; then the selection of the target's physical key from the
     rows it matches, rendered as a read of the target's own Table selects them.
-    A present root perspective restricts the target's rows beside the predicate
-    either way.
     """
     facet = _inheritance_view(model)
     storage = _storage_view(model)
@@ -830,7 +827,11 @@ def compile_write_predicate(
     match statement_plan.write_filter_form:
         case _WriteFilterForm.DIRECT_PREDICATE:
             scope = _EntityRowScope(ctx, target, layout, unaliased=True)
-            statement = ctx.finish(_restricted(statement_plan, root, scope))
+            statement = ctx.finish(
+                _render_predicate(
+                    statement_plan=statement_plan, scope_id=root, path=(), scope=scope
+                )
+            )
             return CompiledPredicate(statement.sql, statement.binds, statement)
         case _WriteFilterForm.PRIMARY_KEY_SUBQUERY:
             scope = _EntityRowScope(ctx, target, layout)
@@ -861,26 +862,7 @@ def _selection(
     joins = _render_shared_sources(statement_plan, scope_id, scope)
     if joins:
         parts.append(joins)
-    return _restricted(statement_plan, scope_id, scope)
-
-
-def _restricted(
-    statement_plan: _StatementPlan, scope_id: _LexicalScopeId, scope: _EntityRowScope
-) -> str:
-    """The planned predicate, then the comparisons of its root perspective,
-    over the rows of ``scope``; a disjunctive predicate is grouped beside them
-    so they restrict every one of its alternatives."""
-    temporal = statement_plan.predicate
-    where_sql = _render_predicate(
-        statement_plan=statement_plan, scope_id=scope_id, path=(), scope=scope
-    )
-    perspective = temporal.root_perspective
-    restriction = () if perspective is None else _render_perspective(perspective, scope)
-    if not restriction:
-        return where_sql
-    if where_sql and disjunctive(temporal.predicate):
-        where_sql = f"({where_sql})"
-    return " and ".join((where_sql, *restriction) if where_sql else restriction)
+    return _render_predicate(statement_plan=statement_plan, scope_id=scope_id, path=(), scope=scope)
 
 
 def _reserved_result_keys(model: Metamodel, storage: _StorageLayoutFacet) -> frozenset[str]:
@@ -946,22 +928,17 @@ def _sought(
     )
 
 
-def _beside_a_guard(temporal: TemporallyResolvedPredicate, where_sql: str, *, guarded: bool) -> str:
-    """The selection's `where` fragment as a conjunct standing beside a seek or
+def _where_as_conjunct(
+    temporal: TemporallyResolvedPredicate, where_sql: str, *, conjoined: bool
+) -> str:
+    """The selection's `where` fragment, ready to join with `and` to a seek or
     a tag guard.
 
     An `or` binds looser than the enclosing `and`, so a top-level disjunction
     conjoined with either would silently re-associate the caller's own
-    predicate into the framework term's first branch. A nonempty root
-    perspective has already grouped the predicate it follows.
+    predicate into the framework term's first branch.
     """
-    perspective = temporal.root_perspective
-    if (
-        guarded
-        and where_sql
-        and disjunctive(temporal.predicate)
-        and (perspective is None or not perspective.is_temporal)
-    ):
+    if conjoined and where_sql and disjunctive(temporal.predicate):
         return f"({where_sql})"
     return where_sql
 
@@ -1150,8 +1127,8 @@ def _compile_tph_read(
 
     inner_sql = _selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    guarded = bool(seek_sql) or plan.tag is not None
-    where_terms = [_beside_a_guard(predicate, inner_sql, guarded=guarded), seek_sql]
+    conjoined = bool(seek_sql) or plan.tag is not None
+    where_terms = [_where_as_conjunct(predicate, inner_sql, conjoined=conjoined), seek_sql]
     if plan.tag is not None:
         # Planned, then bound HERE — after the user predicate and the seek above
         # have pushed their own binds (m-sql "Grouped branch predicates":
@@ -1492,7 +1469,9 @@ def _compile_tpcs_single(
     ]
     where_sql = _selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    _append_where(parts, _beside_a_guard(predicate, where_sql, guarded=bool(seek_sql)), seek_sql)
+    _append_where(
+        parts, _where_as_conjunct(predicate, where_sql, conjoined=bool(seek_sql)), seek_sql
+    )
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     statement = _normalize(ctx.finish(" ".join(parts)))
     return statement, document_reads, plan.stages
