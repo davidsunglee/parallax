@@ -838,16 +838,36 @@ class UnitOfWork:
 
         A deferred settled write binds at its turn, against the ownership every
         earlier one published, and executes and completes before the walk
-        advances. A settled write with no step still completes. A group that
-        fails completes none of its writes, and nothing after it is prepared,
-        bound, or executed.
+        advances. The deferred writes of an acquisition span share the reads
+        of their coverage, which can run before an earlier write of the span
+        completes, while each still binds, executes, and completes at its own
+        turn. A settled write with no step still completes. A group that fails
+        completes none of its writes, and nothing after it is prepared, bound,
+        or executed.
 
         Where it ``captures``, the current rows a write describes are captured
         as their payloads are demanded and published with its completion.
         """
         execute = self.execute_write_steps
         audit: AuditDecoration | None = None
-        for group in plan.groups:
+        groups = plan.groups
+        spans = iter(plan.acquisition_spans)
+        span = next(spans, None)
+        position = 0
+        while position < len(groups):
+            if span is not None and span.start == position:
+                if audit is None:
+                    audit = self._audit_decoration()
+                self._bind_deferred(
+                    tuple(group.writes[0].deferred for group in groups[span.start : span.stop]),
+                    audit,
+                    captures=captures,
+                )
+                position = span.stop
+                span = next(spans, None)
+                continue
+            group = groups[position]
+            position += 1
             writes = group.writes
             expected = sum(len(write.opened.allocated) for write in writes)
             capture = _CurrentRowCapture.of(writes) if captures else None
@@ -869,26 +889,30 @@ class UnitOfWork:
                     self._complete_write(write, allocated[first:stop], captured)
                 else:
                     if audit is None:
-                        audit = self._planner.audit_decoration(
-                            actor_identity=self._actor_identity,
-                            transaction_instant=self._transaction_instant,
-                        )
-                    self._bind_deferred(deferred, audit, captures=captures)
+                        audit = self._audit_decoration()
+                    self._bind_deferred((deferred,), audit, captures=captures)
                 first = stop
 
+    def _audit_decoration(self) -> AuditDecoration:
+        return self._planner.audit_decoration(
+            actor_identity=self._actor_identity, transaction_instant=self._transaction_instant
+        )
+
     def _bind_deferred(
-        self, deferred: DeferredRange, audit: AuditDecoration, *, captures: bool
+        self,
+        deferred: tuple[DeferredRange | None, ...],
+        audit: AuditDecoration,
+        *,
+        captures: bool,
     ) -> None:
-        """Bind, execute, and complete one deferred settled write's range.
+        """Bind, execute, and complete each of ``deferred``, one deferred
+        settled write's range or an acquisition span's, in order.
 
         A description this unit of work's planner did not finalize as a range
         is refused before anything is read."""
-        if not isinstance(deferred, DeferredTemporalRange):
-            raise TypeError(
-                f"a deferred range this planner did not finalize cannot be bound: {deferred!r}"
-            )
+        ranges = tuple(_finalized_range(description) for description in deferred)
         with RangeBindings(
-            (deferred,),
+            ranges,
             acquire_rows=self.acquire_rows,
             current=self._current,
             ownership=self._admission.ownership,
@@ -959,6 +983,14 @@ class UnitOfWork:
         self._admission.discard()
         self._observations.clear()
         self._changed.clear()
+
+
+def _finalized_range(deferred: DeferredRange | None) -> DeferredTemporalRange:
+    if not isinstance(deferred, DeferredTemporalRange):
+        raise TypeError(
+            f"a deferred range this planner did not finalize cannot be bound: {deferred!r}"
+        )
+    return deferred
 
 
 def _stale_source(identity: str, object_key: ObjectKey) -> WriteEvidenceError:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from parallax.core.base import ManagedValue
 from parallax.core.inheritance import EntityMemberSelection
@@ -21,6 +21,7 @@ __all__ = [
     "RowRequest",
     "TargetReadRequest",
     "consume_coverage",
+    "consume_coverage_by_key",
     "consume_target",
 ]
 
@@ -117,7 +118,8 @@ class AcquireRows(Protocol):
     returns once the read's resources are settled, however the consumer left.
 
     A target request reads in a Read of its own; a coverage request reads in
-    the Flush activity of the flush reaching its deferred range. A
+    the Flush activity of the flush reaching its deferred range or acquisition
+    span. A
     :class:`CompletionRequest` reads nothing: its rows are judged with no
     statement, Database Call, or activity, and its consumer runs over them.
     """
@@ -161,12 +163,7 @@ def consume_coverage(
     However it leaves, it drops the builder and its borrowed row and document
     references; only the returned evidence keeps what it adopted."""
     del root_count
-    evidence = PredecessorRowsBuilder(
-        selection,
-        key_position=selection.position(request.key_attribute),
-        absent=absent,
-        documents=documents is not None,
-    )
+    evidence = _builder(selection, selection.position(request.key_attribute), absent, documents)
     row: tuple[object, ...] | None = None
     try:
         for position, row in enumerate(rows):
@@ -174,3 +171,55 @@ def consume_coverage(
         return evidence.seal()
     finally:
         del evidence, rows, documents, row
+
+
+def consume_coverage_by_key(
+    request: CoverageReadRequest,
+    selection: EntityMemberSelection,
+    rows: Iterator[tuple[object, ...]],
+    absent: object,
+    documents: Sequence[object | None] | None,
+    root_count: int,
+) -> dict[ManagedValue, PredecessorRows]:
+    """Every current row a coverage read of several objects returned, as
+    complete Predecessor Rows of each object it returned any row of, keyed by
+    the key value the stored row holds.
+
+    Each row goes to its own object's evidence, in read order, with the
+    document it was read with, whatever order the objects' rows arrive in;
+    a row the read returns twice is kept twice. However it leaves, it drops
+    the builders, the evidence it sealed, and its borrowed row and document
+    references; only the returned evidence keeps what it adopted."""
+    del root_count
+    key_position = selection.position(request.key_attribute)
+    builders: dict[object, PredecessorRowsBuilder] = {}
+    evidence: dict[ManagedValue, PredecessorRows] = {}
+    builder: PredecessorRowsBuilder | None = None
+    sealed: PredecessorRows | None = None
+    row: tuple[object, ...] | None = None
+    try:
+        for position, row in enumerate(rows):
+            key = row[key_position]
+            builder = builders.get(key)
+            if builder is None:
+                builder = builders[key] = _builder(selection, key_position, absent, documents)
+            builder.append(row, None if documents is None else documents[position])
+        while builders:
+            key, builder = builders.popitem()
+            sealed = builder.seal()
+            assert sealed is not None  # a builder exists only for a key a row was appended for
+            evidence[cast("ManagedValue", key)] = sealed
+        return evidence
+    finally:
+        del builders, evidence, builder, sealed, rows, documents, row
+
+
+def _builder(
+    selection: EntityMemberSelection,
+    key_position: int,
+    absent: object,
+    documents: Sequence[object | None] | None,
+) -> PredecessorRowsBuilder:
+    return PredecessorRowsBuilder(
+        selection, key_position=key_position, absent=absent, documents=documents is not None
+    )

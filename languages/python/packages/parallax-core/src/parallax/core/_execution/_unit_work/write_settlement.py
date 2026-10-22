@@ -44,7 +44,7 @@ from parallax.core._execution._unit_work.write_items import (
     TargetKeyedWrite,
 )
 from parallax.core.inheritance import InheritanceFacet
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import (
     Bitemporal,
     TemporalFacet,
@@ -66,6 +66,7 @@ from parallax.core.write_plan.observe import StateObservation, TemporalObservati
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
+    AcquisitionSpan,
     AllocatedOpening,
     BoundRange,
     Openings,
@@ -124,6 +125,36 @@ type _GroupKey = tuple[AttributeIdentity, object]
 """One object a settled write writes: its family's primary-key Attribute and the
 value it holds, so two Entities of one Inheritance Family sharing a key value
 name one object and two unrelated Entities never do."""
+
+_ACQUISITION_RANGES: Final = 32
+"""The most deferred settled writes one acquisition span holds (`m-unit-work`
+*Shared coverage acquisition*): how many objects' coverage can be read ahead of
+their writes' turns. It bounds objects, not the parts or rows their reads
+return."""
+
+
+@dataclass(frozen=True, slots=True)
+class _AcquisitionCandidate:
+    """What a deferred settled write of a Bitemporal object shares a coverage
+    read by: the concrete Entity and key Attribute it reads, whether the read
+    takes the shared lock, and the object it writes."""
+
+    entity: EntityIdentity
+    key_attribute: AttributeIdentity
+    locking: bool
+    key: _GroupKey
+
+
+@dataclass(slots=True)
+class _AcquisitionRun:
+    """The acquisition span settlement is extending: its groups ``[start,
+    stop)``, the read its first write shares, and every object its writes
+    write."""
+
+    start: int
+    stop: int
+    first: _AcquisitionCandidate
+    keys: set[_GroupKey]
 
 
 class WritePlanCompiler:
@@ -206,9 +237,12 @@ class WritePlanCompiler:
         write whose insert the database allocates a key for, and a write naming
         no complete object key form a group of their own, and a write naming an
         object the open group already writes starts the next group.
-        ``ownership`` answers which current rows this attempt already opened,
-        so a write against one of them revises or removes that row instead of
-        closing it into history.
+        Consecutive groups of deferred writes of one mutation phase sharing a
+        coverage read and writing distinct objects, at most
+        :data:`_ACQUISITION_RANGES` of them, are recorded as one acquisition
+        span, which regroups nothing. ``ownership`` answers which current rows
+        this attempt already opened, so a write against one of them revises or
+        removes that row instead of closing it into history.
 
         A milestone a write leaves exactly as it was — whether its source
         observed it, an insertion authorized the write, or a caller's condition
@@ -223,11 +257,13 @@ class WritePlanCompiler:
         settled write of new lineages they leave of its window.
         """
         groups: list[WriteGroup] = []
+        spans: list[AcquisitionSpan] = []
         audit = AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled)
         families = self._families
         for phase in phases:
             members: list[tuple[SettledWrite, tuple[PlannedStep, ...]]] = []
             held: set[_GroupKey] = set()
+            run: _AcquisitionRun | None = None
             for item in phase:
                 write, steps = self._settled_write(
                     item, concurrency, transaction_instant, ownership, audit, counts_unchanged_rows
@@ -239,6 +275,10 @@ class WritePlanCompiler:
                 )
                 if keys is None:
                     _close_group(groups, members, held)
+                    if write.deferred is not None:
+                        run = _extend_run(
+                            spans, run, len(groups), _acquisition_candidate(write, item, families)
+                        )
                     groups.append(WriteGroup((write,), steps))
                     continue
                 if len(members) == _GROUP_WRITES or not held.isdisjoint(keys):
@@ -246,7 +286,8 @@ class WritePlanCompiler:
                 members.append((write, steps))
                 held.update(keys)
             _close_group(groups, members, held)
-        return WritePlan(tuple(groups))
+            _close_run(spans, run)
+        return WritePlan(tuple(groups), tuple(spans))
 
     def _settled_write(
         self,
@@ -708,6 +749,68 @@ def _object_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_Group
             return None
         keys.append((key, value))
     return tuple(keys)
+
+
+def _acquisition_candidate(
+    write: SettledWrite, item: OrderedWrite, families: InheritanceFacet
+) -> _AcquisitionCandidate | None:
+    """What ``write``'s deferred range shares a coverage read by, or ``None``
+    where it reads alone: a Transaction-Time-Only range, or one naming no
+    complete key the database does not allocate."""
+    deferred = write.deferred
+    if not isinstance(deferred, DeferredTemporalRange):
+        return None
+    meaning = deferred.meaning
+    if not isinstance(meaning.facts.shape, Bitemporal):
+        return None
+    keys = _object_keys(item, families)
+    if keys is None:
+        return None
+    (key,) = keys
+    return _AcquisitionCandidate(
+        meaning.facts.entity.identity, meaning.key_attribute, not meaning.gated, key
+    )
+
+
+def _acquisition_compatible(first: _AcquisitionCandidate, later: _AcquisitionCandidate) -> bool:
+    return (
+        first.entity == later.entity
+        and first.key_attribute == later.key_attribute
+        and first.locking == later.locking
+    )
+
+
+def _extend_run(
+    spans: list[AcquisitionSpan],
+    run: _AcquisitionRun | None,
+    position: int,
+    candidate: _AcquisitionCandidate | None,
+) -> _AcquisitionRun | None:
+    """The acquisition span open once the deferred write at group ``position``
+    joins it, or starts another where it cannot join ``run``: a group lies
+    between them, the run is full, the write reads differently, or it writes an
+    object the run already does. A write that reads alone ends the run."""
+    if run is not None and (
+        candidate is None
+        or position != run.stop
+        or run.stop - run.start == _ACQUISITION_RANGES
+        or not _acquisition_compatible(run.first, candidate)
+        or candidate.key in run.keys
+    ):
+        _close_run(spans, run)
+        run = None
+    if candidate is None:
+        return None
+    if run is None:
+        return _AcquisitionRun(position, position + 1, candidate, {candidate.key})
+    run.stop = position + 1
+    run.keys.add(candidate.key)
+    return run
+
+
+def _close_run(spans: list[AcquisitionSpan], run: _AcquisitionRun | None) -> None:
+    if run is not None and run.stop - run.start > 1:
+        spans.append(AcquisitionSpan(run.start, run.stop))
 
 
 def _close_group(

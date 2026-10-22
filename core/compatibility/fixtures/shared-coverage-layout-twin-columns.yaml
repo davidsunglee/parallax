@@ -1,0 +1,59 @@
+# Logical rows shared by both shared-coverage descriptors. Each row authors declared
+# member names rather than physical cells, so one file describes one logical state
+# under either layout.
+#
+# Spans 1 and 2 and ledger 1 each hold a head [2024-01-01, 2024-06-01) at amount 100
+# and a tail [2024-06-01, infinity) already at amount 150, so an amendment to 150
+# from March reads the tail, keeps it, and closes only the head. Span 3 is one
+# rectangle no case writes. Every row is known from T0 = 2023-12-01.
+parallax.compatibility.CoverageSpan:
+  - id: 1
+    amount: 100
+    label: a
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: "2024-06-01T00:00:00.000000Z"
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 1
+    amount: 150
+    label: a
+    validStart: "2024-06-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 2
+    amount: 100
+    label: b
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: "2024-06-01T00:00:00.000000Z"
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 2
+    amount: 150
+    label: b
+    validStart: "2024-06-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 3
+    amount: 100
+    label: c
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+parallax.compatibility.CoverageLedger:
+  - id: 1
+    amount: 100
+    label: l
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: "2024-06-01T00:00:00.000000Z"
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 1
+    amount: 150
+    label: l
+    validStart: "2024-06-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2023-12-01T00:00:00.000000Z"
+    txEnd: infinity

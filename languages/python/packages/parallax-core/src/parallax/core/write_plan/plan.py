@@ -22,6 +22,7 @@ __all__ = [
     "NO_TEMPORAL_WRITE_OWNERSHIP",
     "OPEN_BITEMPORAL_ENDS",
     "TRANSACTION_TIME_ENDS",
+    "AcquisitionSpan",
     "AllocatedOpening",
     "BoundRange",
     "CurrentRowOutput",
@@ -313,8 +314,21 @@ class WriteGroup:
 
 
 @dataclass(frozen=True, slots=True)
+class AcquisitionSpan:
+    """The Write Groups ``[start, stop)`` of a plan, at least two, each the
+    group of one deferred settled write, whose coverage is acquired together
+    (`m-unit-work` *Shared coverage acquisition*). It permits shared
+    acquisition only: every write still binds, executes, and completes at its
+    own group's turn."""
+
+    start: int
+    stop: int
+
+
+@dataclass(frozen=True, slots=True)
 class WritePlan:
-    """One flush's finalized Write Groups, in execution order.
+    """One flush's finalized Write Groups, in execution order, and the
+    acquisition spans among them, in order and never overlapping.
 
     A plan of no group is the one canonical result for complete cancellation or
     known no-op elimination; there is no empty-plan sentinel and no second
@@ -322,3 +336,4 @@ class WritePlan:
     """
 
     groups: tuple[WriteGroup, ...] = ()
+    acquisition_spans: tuple[AcquisitionSpan, ...] = ()

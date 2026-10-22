@@ -51,9 +51,11 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep, ExecuteWriteSteps
 from parallax.core.base import INFINITY
+from parallax.core.db_error import DatabaseError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel, entity_by_name
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     AdmittedWrite,
     Concurrency,
@@ -87,7 +89,8 @@ from parallax.core.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
-from parallax.core.write_plan.steps import PlannedStep
+from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
+from parallax.core.write_plan.steps import Finite, PlannedStep
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
@@ -97,6 +100,8 @@ from tests._support.planner_probes import (
 )
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import WherePosition
+from tests.unit.core._execution._shared_coverage_support import MODEL as SHARED_MODEL
+from tests.unit.core._execution._shared_coverage_support import ShareCols, day, frag, frag_rows
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 from tests.unit.core._execution._unit_work._flush_support import ObservedSteps, statement_kinds
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -437,23 +442,35 @@ def test_a_deferred_range_binds_only_once_every_earlier_write_completed() -> Non
     assert 0 < executed < len(simulated.statements)
 
 
-def test_each_deferred_range_reads_only_once_the_range_before_it_completed() -> None:
+def test_a_spans_ranges_share_one_read_yet_each_binds_once_the_one_before_it_completed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     simulated = _simulated(TARGET_POSITION)
-    reads: list[tuple[int, int]] = []
+    reads: list[tuple[int, int, tuple[object, ...]]] = []
+    bindings: list[tuple[int, int]] = []
     uow: UnitOfWork | None = None
 
     def watch(request: RowRequest) -> None:
         assert uow is not None and isinstance(request, CoverageReadRequest)
-        reads.append((uow.freshness, len(simulated.statements)))
+        keys = tuple(term.key_value for term in request.terms)
+        reads.append((uow.freshness, len(simulated.statements), keys))
 
+    def binding(*arguments: Any, **keywords: Any) -> BoundRange:
+        assert uow is not None
+        bindings.append((uow.freshness, len(simulated.statements)))
+        return _BIND_RANGE(*arguments, **keywords)
+
+    monkeypatch.setattr(ranges_module, "_bind_range", binding)
     rows = [{**rectangle(_JAN, INFINITY, "100.00").members, "id": key} for key in (1, 2)]
     held = HeldRows(TARGET_POSITION, [PredecessorRow(row) for row in rows], overlapping=True)
     uow = _uow(TARGET_POSITION, simulated, rows=_Watched(held, watch))
     uow.buffer_target(_target(_APR, _SEP, "150.00", key=1))
     uow.buffer_target(_target(_APR, _SEP, "150.00", key=2))
     uow.flush(trigger="pre_commit")
-    (first, second) = reads
-    # The second range read nothing until the first had executed and completed.
+    # One read serves both ranges before either binds; the second still binds
+    # only once the first executed and completed.
+    assert reads == [(0, 0, (1, 2))]
+    (first, second) = bindings
     assert first == (0, 0)
     assert second[0] == 1
     assert 0 < second[1] < len(simulated.statements)
@@ -717,3 +734,53 @@ def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_l
         (_JUN, _AUG, _FIXED, "A", changed),
         (_AUG, INFINITY, _FIXED, "A", hundred),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# An acquisition span's later read failing after earlier writes completed.   #
+# --------------------------------------------------------------------------- #
+def test_writes_a_span_completed_before_its_later_read_failed_stay_published_until_cleanup() -> (
+    None
+):
+    deadlock = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
+    parts = ((1, 1), (2, 64), (3, 1))
+    stored = [row for key, count in parts for row in frag_rows(ShareCols, key, count)]
+    held = HeldRows(SHARED_MODEL, stored, overlapping=True)
+    reads: list[CoverageReadRequest] = []
+
+    def acquire[Request: RowRequest, Result](
+        request: Request, consumer: RowConsumer[Request, Result], /
+    ) -> Result:
+        if isinstance(request, CoverageReadRequest):
+            reads.append(request)
+            if len(reads) == 2:
+                raise deadlock
+        return held(request, consumer)
+
+    simulated = _simulated(SHARED_MODEL)
+    uow = _uow(SHARED_MODEL, simulated, rows=acquire)
+    for key, count in parts:
+        for write in frag(ShareCols, key, count):
+            uow.buffer(write)
+    with pytest.raises(DatabaseError) as raised:
+        uow.flush(trigger="pre_commit")
+    assert raised.value is deadlock
+    # The first write executed and completed before the second read; no
+    # waiting write executed.
+    assert {_close_key(statement) for statement in simulated.statements} == {1}
+    assert uow._freshness == 1  # pyright: ignore[reportPrivateUsage] - the changes a doomed attempt still holds
+    ownership = uow._admission.ownership  # pyright: ignore[reportPrivateUsage] - what the completed write published
+    for ends in ((Finite(instant=day(2)), PLANNED_INFINITY), (PLANNED_INFINITY, PLANNED_INFINITY)):
+        assert ownership.owns(TemporalRowCoordinates(ShareCols.identity, (1,), ends))
+    with pytest.raises(RollbackOnlyError):
+        uow.read(lambda: None)
+    uow.discard()
+    assert not ownership.owns(
+        TemporalRowCoordinates(ShareCols.identity, (1,), (PLANNED_INFINITY, PLANNED_INFINITY))
+    )
+
+
+def _close_key(statement: LoweredStatement) -> object:
+    """The key of the object ``statement`` writes."""
+    binds = statement.binds
+    return binds[0] if statement.sql.startswith("insert") else binds[1]

@@ -3,6 +3,7 @@ an owner, through the references those hold directly."""
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterable, Iterator
 from types import FrameType, FunctionType, MethodType, ModuleType, TracebackType
 
@@ -48,7 +49,7 @@ def _referents(held: object) -> Iterator[object]:
         for key, value in held.items():  # pyright: ignore[reportUnknownVariableType]
             yield key
             yield value
-    elif isinstance(held, list | tuple | set | frozenset):
+    elif isinstance(held, list | tuple | set | frozenset | deque):
         yield from held
     else:
         yield from vars(held).values() if hasattr(held, "__dict__") else ()

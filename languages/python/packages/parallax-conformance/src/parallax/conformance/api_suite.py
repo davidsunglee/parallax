@@ -1562,6 +1562,14 @@ _UNCHANGED_MILESTONE_REASON: Final[str] = (
     "unchanged-milestone suite, so a story here would add no developer surface"
 )
 
+_SHARED_COVERAGE_REASON: Final[str] = (
+    "a layout-twin flush whose deferred writes share or do not share their coverage reads, "
+    "graded per arm by the run conformance lane and checked for consistency by the reference "
+    "harness; the reads a flush makes are no developer verb, and its developer spellings are "
+    "the real-database public witnesses of shared coverage acquisition, so a story here "
+    "would add no developer surface"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-relationship-005": _RELATIONSHIP_FORMATION_REASON,
     "m-relationship-006": _RELATIONSHIP_FORMATION_REASON,
@@ -1580,6 +1588,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-execution-lifecycle-002": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-003": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-011": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
+    "m-execution-lifecycle-012": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
+    "m-execution-lifecycle-013": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-004": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-005": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-007": _EXECUTION_LIFECYCLE_STREAMED_ROOT_REASON,
@@ -1604,6 +1614,10 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
     "m-unit-work-043": _TARGET_REPLACEMENT_TWIN_REASON,
     "m-unit-work-044": _TARGET_REPLACEMENT_TWIN_REASON,
+    **dict.fromkeys(
+        ("m-unit-work-061", "m-unit-work-062", "m-unit-work-063", "m-unit-work-064"),
+        _SHARED_COVERAGE_REASON,
+    ),
     # -- buffered sequences, state-graded ------------------------------------ #
     **dict.fromkeys(
         (
