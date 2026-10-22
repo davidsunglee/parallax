@@ -14,6 +14,7 @@ the private-module split must preserve.
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 from types import MappingProxyType
 from typing import Literal
 
@@ -986,6 +987,107 @@ def test_each_temporal_hop_is_proven_at_the_coordinates_propagated_to_it() -> No
         "and t2.thru_z > ? and t2.out_z = ? where t2.name = ? and t0.from_z <= ? "
         "and t0.thru_z > ? and t0.out_z = ?"
     )
+
+
+_HIERARCHY = "table-per-hierarchy"
+_CONCRETE_TABLES = "table-per-concrete-subtype"
+
+
+def _kennel_model(strategy: str) -> Metamodel:
+    """A bitemporal Kennel reaching the concrete ``Dog`` of a bitemporal family
+    whose root ``Pet`` declares the axes."""
+    hierarchy = strategy == _HIERARCHY
+    inheritance: dict[str, object] = {"role": "root", "strategy": strategy}
+    if hierarchy:
+        inheritance["tag"] = {"column": "kind"}
+    return _document_model(
+        _entity(
+            "Kennel",
+            "dogId",
+            temporality="bitemporal",
+            relationships=[
+                _rel("dog", "dogId", "Dog"),
+                _rel("dogs", "id", "Dog", "kennelId", "one-to-many"),
+            ],
+        ),
+        {
+            "name": "Pet",
+            **({"table": "pet"} if hierarchy else {}),
+            "inheritance": inheritance,
+            "temporality": "bitemporal",
+            "attributes": [
+                _KEY,
+                _reference("kennelId"),
+                {"name": "name", "type": "string", "maxLength": 8},
+            ],
+        },
+        *(
+            _concrete(name, "Pet", **{"tagValue" if hierarchy else "table": name.lower()})
+            for name in ("Dog", "Cat")
+        ),
+    )
+
+
+_MARCH_INSTANT = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+
+
+@pytest.mark.parametrize(
+    ("strategy", "table", "guard", "guard_binds"),
+    [
+        (_HIERARCHY, "pet", " and t{0}.kind = ?", ("dog",)),
+        (_CONCRETE_TABLES, "dog", "", ()),
+    ],
+)
+@pytest.mark.parametrize(
+    ("valid_time", "visible", "visible_binds"),
+    [
+        ("latest", "t{0}.thru_z = ? and t{0}.out_z = ?", (INFINITY, INFINITY)),
+        (
+            _MARCH,
+            "t{0}.from_z <= ? and t{0}.thru_z > ? and t{0}.out_z = ?",
+            (_MARCH_INSTANT, _MARCH_INSTANT, INFINITY),
+        ),
+    ],
+)
+def test_a_hop_to_a_concrete_subtype_is_visible_on_its_family_root_s_axes(
+    strategy: str,
+    table: str,
+    guard: str,
+    guard_binds: tuple[str, ...],
+    valid_time: str,
+    visible: str,
+    visible_binds: tuple[object, ...],
+) -> None:
+    # Both the shared join and the correlated exists reach `Dog`, which inherits
+    # its axes; each Latest end binds as a framework sentinel and each instant
+    # as a managed value, ahead of any tag guard.
+    family = _kennel_model(strategy)
+    op = oa.And(
+        (
+            oa.Comparison(op="eq", subject=oa.FieldSubject("Kennel.dog.name"), value="Rex"),
+            oa.Quantifier("any", "Kennel.dogs"),
+        )
+    )
+    statement = compile_read(
+        op,
+        family,
+        POSTGRES,
+        target(family, "Kennel"),
+        temporal={"valid-time": AsOf(valid_time), "transaction-time": AsOf("latest")},
+    ).statement
+    assert statement.sql.endswith(
+        f"from kennel t0 left join {table} t1 on t1.id = t0.dog_id and {visible.format(1)}"
+        f"{guard.format(1)} where t1.name = ? and exists (select 1 from {table} t2 where "
+        f"t2.kennel_id = t0.id and {visible.format(2)}{guard.format(2)}) and {visible.format(0)}"
+    )
+    binds = (*visible_binds, *guard_binds, "Rex", *visible_binds, *guard_binds, *visible_binds)
+    assert statement.binds == binds
+    managed = {index for span in statement.typed_bind_spans for index in span.indexes()}
+    assert managed == {
+        index
+        for index, value in enumerate(binds)
+        if value is not INFINITY and value not in guard_binds
+    }
 
 
 @pytest.mark.parametrize(

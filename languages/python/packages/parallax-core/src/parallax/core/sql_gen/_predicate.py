@@ -5,12 +5,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, assert_never
 
-from parallax.core.base import INFINITY, STRING, Bytes, ManagedValue, NeutralType
+from parallax.core.base import STRING, Bytes, ManagedValue, NeutralType
 from parallax.core.dialect import Dialect, projection_result_key
 from parallax.core.document_codec import comparison_text, is_text_compared
-from parallax.core.inheritance import InheritanceFacet
+from parallax.core.inheritance import InheritanceFacet, root_metadata
 from parallax.core.metamodel import (
-    AttributeIdentity,
     AttributeMetadata,
     EntityMetadata,
     Metamodel,
@@ -19,12 +18,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.predicate import ComparisonOp, MembershipOp, StringOp
-from parallax.core.predicate._perspective import (
-    AtPerspective,
-    LatestPerspective,
-    TemporalPerspective,
-)
+from parallax.core.predicate import MembershipOp, StringOp
 from parallax.core.predicate._resolved import (
     CurrentObject,
     DeferredKeySet,
@@ -102,6 +96,7 @@ from parallax.core.storage_layout import (
     DocumentPath,
     TableLayout,
 )
+from parallax.core.temporal_read import perspective_terms as _perspective_terms
 from parallax.core.wire._codec import encoded_json_kind
 
 _HOP_TOKENS: Final = itertools.count()
@@ -571,12 +566,8 @@ def _render_operation(
     else:
         subject = _subject_here(member, operation.position, scope)
     match operation:
-        case ResolvedComparison(op=tag, value=value, framework=framework):
-            _bind_operand(value, subject, scope, framework=framework)
-            # A Value Object leaf's inequality keeps its negated-equality form.
-            if tag == "notEq" and not isinstance(member, AttributeMetadata):
-                return f"not {subject.compared} = ?"
-            return f"{subject.compared} {_COMPARATORS[tag]} ?"
+        case ResolvedComparison():
+            return _compared(operation, subject, scope)
         case ResolvedRange(lower=lower, upper=upper):
             _bind_operand(lower, subject, scope)
             _bind_operand(upper, subject, scope)
@@ -781,38 +772,13 @@ def _bind_operand(
         scope.ctx.bind_managed(value, subject.type)
 
 
-def render_perspective(perspective: TemporalPerspective, scope: EntityRowScope) -> list[str]:
-    """The comparisons restricting ``scope``'s current object to ``perspective``,
-    in canonical axis rank, each pushing its binds as its text lands.
-
-    Latest fixes the axis end to the open bound; an instant lies within the
-    axis's half-open interval, its start compared before its end.
-    """
-    terms: list[str] = []
-    for axis_perspective in perspective.ranked_perspectives():
-        match axis_perspective:
-            case LatestPerspective(axis=axis):
-                terms.append(_endpoint(axis.end_attribute, "eq", INFINITY, scope, framework=True))
-            case AtPerspective(axis=axis, instant=instant):
-                terms.append(_endpoint(axis.start_attribute, "lessThanEquals", instant, scope))
-                terms.append(_endpoint(axis.end_attribute, "greaterThan", instant, scope))
-    return terms
-
-
-def _endpoint(
-    endpoint: AttributeIdentity,
-    op: ComparisonOp,
-    value: object,
-    scope: EntityRowScope,
-    *,
-    framework: bool = False,
-) -> str:
-    attribute = _entity_view(scope.facet, endpoint.entity).applicable_attribute(endpoint.name)
-    if attribute is None:  # pragma: no cover - an accepted axis names declared Attributes
-        raise SqlGenError(f"{endpoint}: an As-Of Axis endpoint is undeclared")
-    subject = scope.subject_for(attribute)
-    _bind_operand(value, subject, scope, framework=framework)
-    return f"{subject.compared} {_COMPARATORS[op]} ?"
+def _compared(comparison: ResolvedComparison, subject: MemberSubject, scope: PredicateScope) -> str:
+    """``comparison`` over its already resolved ``subject``, its operand bound."""
+    _bind_operand(comparison.value, subject, scope, framework=comparison.framework)
+    # A Value Object leaf's inequality keeps its negated-equality form.
+    if comparison.op == "notEq" and not isinstance(comparison.member, AttributeMetadata):
+        return f"not {subject.compared} = ?"
+    return f"{subject.compared} {_COMPARATORS[comparison.op]} ?"
 
 
 def _render_like(
@@ -1034,7 +1000,7 @@ def _candidate_where(
     terms = [rendered.correlation_sql]
     if interior:
         terms.append(interior)
-    terms.extend(render_perspective(_temporal_visibility(relationship), scope))
+    terms.extend(_visibility(relationship, scope))
     if rendered.family_guard_sql is not None:
         terms.append(rendered.family_guard_sql)
     scope.ctx.bind_framework_all(rendered.family_guard_binds)
@@ -1054,11 +1020,25 @@ def _join_terms(
     """A joined target's `on`: its correlation, its temporal visibility, then
     its family guard, each pushing its binds as its text lands."""
     terms = [rendered.correlation_sql]
-    terms.extend(render_perspective(_temporal_visibility(relationship), target))
+    terms.extend(_visibility(relationship, target))
     if rendered.family_guard_sql is not None:
         terms.append(rendered.family_guard_sql)
     target.ctx.bind_framework_all(rendered.family_guard_binds)
     return " and ".join(terms)
+
+
+def _visibility(relationship: ResolvedRelationship, scope: EntityRowScope) -> list[str]:
+    """The comparisons restricting ``scope``'s current object to
+    ``relationship``'s temporal visibility, each pushing its binds as its text
+    lands.
+
+    The terms are over the family root's members, which declare the axes.
+    """
+    root = root_metadata(scope.facet, scope.meta, scope.entity.identity)
+    return [
+        _compared(term, _subject(term.member, scope), scope)
+        for term in _perspective_terms(_temporal_visibility(relationship), root)
+    ]
 
 
 def _existential(fragments: Sequence[str], *, negate: bool) -> str:

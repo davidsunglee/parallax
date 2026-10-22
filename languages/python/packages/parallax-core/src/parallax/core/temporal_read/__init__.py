@@ -27,6 +27,7 @@ from parallax.core.predicate._perspective import (
     TemporalPerspective,
 )
 from parallax.core.predicate._resolved import (
+    ResolvedComparison,
     ResolvedPredicate,
 )
 from parallax.core.predicate._resolved import (
@@ -432,7 +433,7 @@ def inject_resolved_as_of(
 
 def perspective_terms(
     perspective: TemporalPerspective, target: EntityMetadata
-) -> tuple[ResolvedPredicate, ...]:
+) -> tuple[ResolvedComparison, ...]:
     """The comparisons restricting the current object to ``perspective``, in
     canonical axis rank.
 
@@ -448,7 +449,7 @@ def perspective_terms(
 
 def _selection_terms(
     selection: ResolvedTemporalSelection, entity: EntityMetadata
-) -> tuple[ResolvedPredicate, ...]:
+) -> tuple[ResolvedComparison, ...]:
     start = entity.attribute(selection.axis.start_attribute.name)
     end = entity.attribute(selection.axis.end_attribute.name)
     if start is None or end is None:
