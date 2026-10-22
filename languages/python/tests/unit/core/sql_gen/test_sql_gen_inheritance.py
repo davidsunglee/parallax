@@ -604,12 +604,12 @@ def test_tph_concrete_target_names_its_rows_without_reading_a_carrier() -> None:
     # concrete alone rather than the family the tag map would reach.
     compiled = compile_read(oa.TrueNode(), PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
     card = target(PAYMENT, "CardPayment").identity
-    assert "kind" not in compiled.result_keys
+    assert "kind" not in compiled.result_contract.result_keys
     resolved, variant, unknown, _document = compiled.row_identity(
         {"id": 1, "amount": 10, "card_network": "visa"}
     )
     assert (resolved, variant, unknown) == (card, None, None)
-    assert compiled.resolvable == (card,)
+    assert compiled.result_contract.resolvable == (card,)
 
 
 def test_tph_document_family_with_no_resident_members_projects_no_document() -> None:
@@ -746,7 +746,7 @@ def test_tph_abstract_superset_projection_follows_shared_table_layout_tiers() ->
         "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
         "t0.bark_volume, t0.tusk_length from animal t0"
     )
-    assert compiled.result_keys == (
+    assert compiled.result_contract.result_keys == (
         "id",
         "kind",
         "name",
@@ -816,7 +816,13 @@ def test_tpcs_single_concrete_is_an_ordinary_read_no_tag_no_union() -> None:
     assert compiled.statement.sql == (
         "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0"
     )
-    assert compiled.result_keys == ("id", "title", "folder_id", "currency", "amount_due")
+    assert compiled.result_contract.result_keys == (
+        "id",
+        "title",
+        "folder_id",
+        "currency",
+        "amount_due",
+    )
     assert "union" not in compiled.statement.sql
     assert "family_variant" not in compiled.statement.sql
 
@@ -825,7 +831,7 @@ def test_tpcs_union_all_branch_order_alias_restart_casts_and_literal() -> None:
     compiled = compile_read(
         oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "FinancialDocument")
     )
-    assert compiled.result_keys == (
+    assert compiled.result_contract.result_keys == (
         "id",
         "title",
         "folder_id",
@@ -1226,8 +1232,8 @@ def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
     # structure per Entity a row can carry prepares WildBoar's before the boar
     # row arrives rather than on reaching it.
     boar, _variant, _unknown, _document = compiled.row_identity({"id": 2, "kind": "boar"})
-    assert boar in compiled.resolvable
-    assert set(compiled.resolvable) == {
+    assert boar in compiled.result_contract.resolvable
+    assert set(compiled.result_contract.resolvable) == {
         target(ANIMAL, name).identity for name in ("Animal", "Cat", "Dog", "WildBoar")
     }
 
@@ -1345,7 +1351,7 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
     # consumer the Entity exists at all before a bear row proves it.
     assert resolved == target(partial, "Beast").identity
     assert resolved not in compiled.resolved_position
-    assert resolved in compiled.resolvable
+    assert resolved in compiled.result_contract.resolvable
 
 
 def _own_column_occurrences() -> Any:
@@ -1458,7 +1464,7 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
         "select t0.id, not t0.payload is null, t0.payload, 'Film' family_variant "
         "from publication_film t0"
     )
-    assert compiled.structured_column == "payload"
+    assert compiled.result_contract.structured_column == "payload"
     for variant, member in (("Book", "pages"), ("Film", "minutes")):
         row = {
             "id": 1,
@@ -1558,7 +1564,7 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
     assert "family_variant" not in compiled.statement.sql
     # Nothing discriminates, so every row of this read names the one concrete and
     # `resolvable` collapses to it — the fixed identity is the whole set.
-    assert compiled.resolvable == (target(DOCUMENT, "Invoice").identity,)
+    assert compiled.result_contract.resolvable == (target(DOCUMENT, "Invoice").identity,)
 
 
 # --------------------------------------------------------------------------- #

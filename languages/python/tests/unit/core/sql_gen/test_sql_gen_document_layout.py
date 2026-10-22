@@ -105,7 +105,7 @@ def test_a_row_form_read_needing_no_document_member_projects_no_document_at_all(
     # nothing: the rule is keyed to the members the read was asked for.
     compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"))
     assert compiled.statement.sql == "select t0.id from marker t0"
-    assert compiled.structured_column is None
+    assert compiled.result_contract.structured_column is None
 
 
 def _instance_form(target: EntityMetadata) -> CompiledRead:
@@ -130,7 +130,7 @@ def test_an_observing_read_of_the_same_shape_projects_the_structured_column(
     assert compiled.statement.sql == (
         "select t0.id, not t0.payload is null, t0.payload from marker t0"
     )
-    assert compiled.structured_column == "payload"
+    assert compiled.result_contract.structured_column == "payload"
     # The column is still never a result field: it carries no member here and the
     # raw value leaves the published row all the same.
     document: DocumentValue = {"berthCode": "NB-118"}

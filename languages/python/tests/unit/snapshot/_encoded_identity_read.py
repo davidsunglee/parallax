@@ -20,7 +20,8 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, ValueObjectMetadata
 from parallax.core.read_delivery._page import ROOT_LEVEL, Page, PageBuilder, ViewSchema
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
-from parallax.core.sql_gen._compile import AttributeReadContract, CompiledRead
+from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.sql_gen._inheritance import AttributeReadContract, ResultContract
 from parallax.core.temporal_read import Pin
 from tests.unit._prepared_read_support import compiled_read
 
@@ -43,8 +44,8 @@ class EncodedIdentityRead:
     compiled: CompiledRead
 
     @property
-    def resolvable(self) -> tuple[EntityIdentity, ...]:
-        return self.compiled.resolvable
+    def result_contract(self) -> ResultContract:
+        return self.compiled.result_contract
 
     @property
     def projected_documents(self) -> tuple[ValueObjectMetadata, ...]:

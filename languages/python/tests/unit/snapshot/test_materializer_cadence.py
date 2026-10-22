@@ -92,7 +92,9 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
     observer = RecordingObserver()
     materializer = PageReader(observer)
     meta, model, compiled = _order_read()
-    rows = tuple(tuple(_row(1)[key] for key in compiled.result_keys) for _ in range(2))
+    rows = tuple(
+        tuple(_row(1)[key] for key in compiled.result_contract.result_keys) for _ in range(2)
+    )
 
     stage = materializer.read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
 
@@ -119,7 +121,10 @@ def test_eager_row_publication_withholds_events_when_a_later_root_fails(
 ) -> None:
     observer = RecordingObserver()
     meta, model, compiled = _order_read()
-    rows = tuple(tuple(_row(order_id)[key] for key in compiled.result_keys) for order_id in (1, 2))
+    rows = tuple(
+        tuple(_row(order_id)[key] for key in compiled.result_contract.result_keys)
+        for order_id in (1, 2)
+    )
     stage = PageReader(observer).read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
 
     judged: list[int] = []
@@ -140,7 +145,7 @@ def test_eager_row_publication_withholds_events_when_a_later_root_fails(
 
 def test_a_flat_page_read_without_an_observer_records_none_and_publishes_inertly() -> None:
     _meta, model, compiled = _order_read()
-    rows = (tuple(_row(1)[key] for key in compiled.result_keys),)
+    rows = (tuple(_row(1)[key] for key in compiled.result_contract.result_keys),)
 
     stage = PageReader().read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
 

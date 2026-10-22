@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import InitVar, dataclass, field
 from operator import itemgetter
-from typing import Final, Protocol, cast
+from typing import Final, cast
 
 from parallax.core.base import (
     SQL_NULL,
@@ -46,33 +46,16 @@ from parallax.core.read_delivery._page import (
     StoredDataIssueCode,
     StoredDataIssueInput,
 )
+from parallax.core.sql_gen._inheritance import AttributeReadContract
 from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 
 __all__ = [
-    "AttributeReadContract",
     "EntityReadMapping",
     "build_positional_many",
     "build_positional_object",
     "complete_occurrences",
     "register_reduced_row",
 ]
-
-
-class AttributeReadContract(Protocol):
-    """What one projected Attribute's compiled contract carries, read structurally
-    because this scope may not import the compiler that decided it."""
-
-    @property
-    def attribute(self) -> AttributeMetadata: ...
-
-    @property
-    def result_key(self) -> str: ...
-
-    @property
-    def temporal_end(self) -> bool: ...
-
-    @property
-    def encoded(self) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True, eq=False)
