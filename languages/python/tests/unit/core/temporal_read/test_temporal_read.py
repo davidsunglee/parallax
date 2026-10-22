@@ -65,6 +65,8 @@ from parallax.core.temporal_read import (
     TimeInterval,
     inject_resolved_as_of,
     milestone_edge,
+    perspective_terms,
+    propagated_selections,
     resolve_perspective,
     resolved_query_pin,
     scans_resolved_axis,
@@ -1286,3 +1288,155 @@ def test_perspective_construction_refuses_a_coordinate_that_is_not_a_managed_dat
 
     with pytest.raises(TemporalReadError, match="not a managed datetime"):
         resolve_perspective(LEASE, model=_LEASE_MODEL, root_selections=selections)
+
+
+# --------------------------------------------------------------------------- #
+# Selection → injected terms, at a root and across a hop.                      #
+# --------------------------------------------------------------------------- #
+type _Term = tuple[str, str, object, bool]
+
+
+def _latest_term(end: str) -> tuple[_Term, ...]:
+    return (("eq", end, INFINITY, True),)
+
+
+def _within_terms(start: str, end: str, instant: str) -> tuple[_Term, ...]:
+    return (
+        ("lessThanEquals", start, _instant(instant), False),
+        ("greaterThan", end, _instant(instant), False),
+    )
+
+
+def _overlap_terms(start: str, end: str, window: tuple[str, str]) -> tuple[_Term, ...]:
+    return (
+        ("lessThan", start, _instant(window[1]), False),
+        ("greaterThan", end, _instant(window[0]), False),
+    )
+
+
+def _terms(predicate: object, entity: EntityMetadata) -> tuple[_Term, ...]:
+    if predicate == ResolvedConstant(True):
+        return ()
+    terms = predicate.operands if isinstance(predicate, ResolvedAnd) else (predicate,)
+    return _comparisons(cast("tuple[object, ...]", terms), entity)
+
+
+def _comparisons(terms: tuple[object, ...], entity: EntityMetadata) -> tuple[_Term, ...]:
+    observed: list[_Term] = []
+    for term in terms:
+        assert isinstance(term, ResolvedComparison)
+        assert term.member is _attribute(entity, term.member.identity.name)
+        observed.append((term.op, term.member.identity.name, term.value, term.framework))
+    return tuple(observed)
+
+
+_RANGE = (_P, _B)
+_POSITION_LATEST = _latest_term("validEnd") + _latest_term("txEnd")
+
+
+@pytest.mark.parametrize(
+    ("root", "temporal", "hop", "root_terms", "hop_terms"),
+    [
+        pytest.param(
+            BALANCE,
+            {"transaction-time": oq.AsOf("latest")},
+            BALANCE,
+            _latest_term("txEnd"),
+            _latest_term("txEnd"),
+            id="tx-only-latest",
+        ),
+        pytest.param(
+            BALANCE,
+            {"transaction-time": oq.AsOf(_D)},
+            BALANCE,
+            _within_terms("txStart", "txEnd", _D),
+            _within_terms("txStart", "txEnd", _D),
+            id="tx-only-instant",
+        ),
+        pytest.param(
+            BALANCE,
+            {"transaction-time": oq.AsOfRange(start=_RANGE[0], end=_RANGE[1])},
+            BALANCE,
+            _overlap_terms("txStart", "txEnd", _RANGE),
+            _latest_term("txEnd"),
+            id="tx-only-range",
+        ),
+        pytest.param(
+            BALANCE,
+            {"transaction-time": oq.History()},
+            BALANCE,
+            (),
+            _latest_term("txEnd"),
+            id="tx-only-history",
+        ),
+        pytest.param(
+            POSITION,
+            _bitemporal("latest", "latest"),
+            POSITION,
+            _POSITION_LATEST,
+            _POSITION_LATEST,
+            id="bitemporal-latest",
+        ),
+        pytest.param(
+            POSITION,
+            _bitemporal(_B, _P),
+            POSITION,
+            _within_terms("validStart", "validEnd", _B) + _within_terms("txStart", "txEnd", _P),
+            _within_terms("validStart", "validEnd", _B) + _within_terms("txStart", "txEnd", _P),
+            id="bitemporal-instant",
+        ),
+        pytest.param(
+            POSITION,
+            {
+                "valid-time": oq.AsOfRange(start=_RANGE[0], end=_RANGE[1]),
+                "transaction-time": oq.AsOf("latest"),
+            },
+            POSITION,
+            _overlap_terms("validStart", "validEnd", _RANGE) + _latest_term("txEnd"),
+            _POSITION_LATEST,
+            id="bitemporal-range",
+        ),
+        pytest.param(
+            POSITION,
+            {"valid-time": oq.History(), "transaction-time": oq.History()},
+            POSITION,
+            (),
+            _POSITION_LATEST,
+            id="bitemporal-history",
+        ),
+        pytest.param(
+            POSITION,
+            _bitemporal(_B, _P),
+            BALANCE,
+            _within_terms("validStart", "validEnd", _B) + _within_terms("txStart", "txEnd", _P),
+            _within_terms("txStart", "txEnd", _P),
+            id="undeclared-valid-time-ignored",
+        ),
+        pytest.param(
+            POSITION,
+            _bitemporal(_B, _P),
+            ORDERS,
+            _within_terms("validStart", "validEnd", _B) + _within_terms("txStart", "txEnd", _P),
+            (),
+            id="non-temporal-hop",
+        ),
+        pytest.param(ORDERS, None, ORDERS, (), (), id="non-temporal-root"),
+    ],
+)
+def test_root_selections_lower_to_injected_terms_and_propagate_to_hop_terms(
+    root: EntityMetadata,
+    temporal: dict[QueryTemporalDimension, oq.TemporalSelection] | None,
+    hop: EntityMetadata,
+    root_terms: tuple[_Term, ...],
+    hop_terms: tuple[_Term, ...],
+) -> None:
+    selections = _validated(root, temporal).temporal
+    hop_model = _ACCEPTED[hop.identity.name]
+    propagated = propagated_selections(hop, model=hop_model, root_selections=selections)
+    perspective = resolve_perspective(hop, model=hop_model, root_selections=selections)
+
+    assert _terms(inject_resolved_as_of(ResolvedConstant(True), selections, root), root) == (
+        root_terms
+    )
+    assert _terms(inject_resolved_as_of(ResolvedConstant(True), propagated, hop), hop) == hop_terms
+    assert _comparisons(perspective_terms(perspective, hop), hop) == hop_terms

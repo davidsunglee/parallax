@@ -70,6 +70,8 @@ __all__ = [
     "UndeclaredAxisError",
     "inject_resolved_as_of",
     "milestone_edge",
+    "perspective_terms",
+    "propagated_selections",
     "ranked_axes",
     "resolve_perspective",
     "resolved_query_pin",
@@ -424,34 +426,50 @@ def inject_resolved_as_of(
     entity: EntityMetadata,
 ) -> ResolvedPredicate:
     """Append temporal terms from managed, resolved selections."""
-    terms: list[ResolvedPredicate] = []
-    for selection in selections:
-        start = entity.attribute(selection.axis.start_attribute.name)
-        end = entity.attribute(selection.axis.end_attribute.name)
-        if start is None or end is None:
-            raise TemporalReadError(f"{entity.identity.name}: temporal axis member is undeclared")
-        match selection:
-            case ResolvedHistorySelection():
-                continue
-            case ResolvedLatestSelection():
-                terms.append(_framework_comparison(op="eq", member=end, value=INFINITY))
-            case ResolvedAsOfSelection(coordinate=coordinate):
-                terms.extend(
-                    (
-                        _managed_comparison(op="lessThanEquals", member=start, value=coordinate),
-                        _managed_comparison(op="greaterThan", member=end, value=coordinate),
-                    )
-                )
-            case ResolvedRangeSelection(start=window_start, end=window_end):
-                terms.extend(
-                    (
-                        _managed_comparison(op="lessThan", member=start, value=window_end),
-                        _managed_comparison(op="greaterThan", member=end, value=window_start),
-                    )
-                )
-            case _:
-                assert_never(selection)
+    terms = [term for selection in selections for term in _selection_terms(selection, entity)]
     return predicate if not terms else _conjunction(predicate, *terms)
+
+
+def perspective_terms(
+    perspective: TemporalPerspective, target: EntityMetadata
+) -> tuple[ResolvedPredicate, ...]:
+    """The comparisons restricting the current object to ``perspective``, in
+    canonical axis rank.
+
+    ``target`` is the Entity declaring the perspective's axes, so an inherited
+    target's terms are over its family root's members.
+    """
+    return tuple(
+        term
+        for axis_perspective in perspective.ranked_perspectives()
+        for term in _selection_terms(_selection_of(axis_perspective), target)
+    )
+
+
+def _selection_terms(
+    selection: ResolvedTemporalSelection, entity: EntityMetadata
+) -> tuple[ResolvedPredicate, ...]:
+    start = entity.attribute(selection.axis.start_attribute.name)
+    end = entity.attribute(selection.axis.end_attribute.name)
+    if start is None or end is None:
+        raise TemporalReadError(f"{entity.identity.name}: temporal axis member is undeclared")
+    match selection:
+        case ResolvedHistorySelection():
+            return ()
+        case ResolvedLatestSelection():
+            return (_framework_comparison(op="eq", member=end, value=INFINITY),)
+        case ResolvedAsOfSelection(coordinate=coordinate):
+            return (
+                _managed_comparison(op="lessThanEquals", member=start, value=coordinate),
+                _managed_comparison(op="greaterThan", member=end, value=coordinate),
+            )
+        case ResolvedRangeSelection(start=window_start, end=window_end):
+            return (
+                _managed_comparison(op="lessThan", member=start, value=window_end),
+                _managed_comparison(op="greaterThan", member=end, value=window_start),
+            )
+        case _:
+            assert_never(selection)
 
 
 def resolved_query_pin(selections: tuple[ResolvedTemporalSelection, ...]) -> Pin:
@@ -463,9 +481,7 @@ def resolved_query_pin(selections: tuple[ResolvedTemporalSelection, ...]) -> Pin
         if isinstance(selection, ResolvedLatestSelection):
             value = LATEST
         elif isinstance(selection, ResolvedAsOfSelection):
-            if not isinstance(selection.coordinate, _dt.datetime):
-                raise TemporalReadError("a temporal coordinate is not a managed datetime")
-            value = selection.coordinate
+            value = _instant_of(selection)
         else:
             continue
         if selection.axis.dimension is AcceptedDimension.TRANSACTION_TIME:
@@ -482,6 +498,42 @@ def scans_resolved_axis(selections: tuple[ResolvedTemporalSelection, ...]) -> bo
     )
 
 
+def propagated_selections(
+    target: EntityMetadata,
+    *,
+    model: Metamodel,
+    root_selections: tuple[ResolvedTemporalSelection, ...],
+) -> tuple[ResolvedLatestSelection | ResolvedAsOfSelection, ...]:
+    """The selections ``root_selections`` propagate to ``target``, one per As-Of
+    Axis of its family in canonical axis rank.
+
+    An axis is As-Of the coordinate of a finite AsOf selection in the same
+    dimension, and otherwise Latest; selections in a dimension the family does
+    not declare are ignored.
+    """
+    shape = view(model).shape(target.identity)
+    if shape is None:  # pragma: no cover - accepted metadata is total
+        raise TemporalReadError(f"{target.identity.canonical}: no temporal shape")
+    return tuple(_propagated(axis, root_selections) for axis in ranked_axes(shape))
+
+
+def _propagated(
+    axis: AsOfAxisMetadata, root_selections: tuple[ResolvedTemporalSelection, ...]
+) -> ResolvedLatestSelection | ResolvedAsOfSelection:
+    for selection in root_selections:
+        if selection.axis.dimension is axis.dimension and isinstance(
+            selection, ResolvedAsOfSelection
+        ):
+            return ResolvedAsOfSelection(axis, _instant_of(selection))
+    return ResolvedLatestSelection(axis)
+
+
+def _instant_of(selection: ResolvedAsOfSelection) -> _dt.datetime:
+    if not isinstance(selection.coordinate, _dt.datetime):
+        raise TemporalReadError("a temporal coordinate is not a managed datetime")
+    return selection.coordinate
+
+
 def resolve_perspective(
     target: EntityMetadata,
     *,
@@ -489,36 +541,34 @@ def resolve_perspective(
     root_selections: tuple[ResolvedTemporalSelection, ...],
 ) -> TemporalPerspective:
     """The perspective ``target`` is visible under from a root read through
-    ``root_selections``.
-
-    Each As-Of Axis of ``target``'s family is At the coordinate of a finite
-    AsOf selection in the same dimension, and otherwise Latest; selections in a
-    dimension the family does not declare are ignored.
-    """
-    match view(model).shape(target.identity):
-        case Bitemporal(valid_time=valid_time, transaction_time=transaction_time):
-            return TemporalPerspective(
-                valid_time=_axis_perspective(valid_time, root_selections),
-                transaction_time=_axis_perspective(transaction_time, root_selections),
-            )
-        case TransactionTimeOnly(transaction_time=transaction_time):
-            return TemporalPerspective(
-                transaction_time=_axis_perspective(transaction_time, root_selections)
-            )
-        case NonTemporal():
-            return TemporalPerspective()
-        case None:  # pragma: no cover - accepted metadata is total
-            raise TemporalReadError(f"{target.identity.canonical}: no temporal shape")
+    ``root_selections``: its :func:`propagated_selections`, each As-Of
+    selection At its coordinate."""
+    valid_time: AxisPerspective | None = None
+    transaction_time: AxisPerspective | None = None
+    for selection in propagated_selections(target, model=model, root_selections=root_selections):
+        perspective = _perspective_of(selection)
+        if selection.axis.dimension is AcceptedDimension.TRANSACTION_TIME:
+            transaction_time = perspective
+        else:
+            valid_time = perspective
+    return TemporalPerspective(valid_time=valid_time, transaction_time=transaction_time)
 
 
-def _axis_perspective(
-    axis: AsOfAxisMetadata, root_selections: tuple[ResolvedTemporalSelection, ...]
+def _perspective_of(
+    selection: ResolvedLatestSelection | ResolvedAsOfSelection,
 ) -> AxisPerspective:
-    for selection in root_selections:
-        if selection.axis.dimension is axis.dimension and isinstance(
-            selection, ResolvedAsOfSelection
-        ):
-            if not isinstance(selection.coordinate, _dt.datetime):
-                raise TemporalReadError("a temporal coordinate is not a managed datetime")
-            return AtPerspective(axis, selection.coordinate)
-    return LatestPerspective(axis)
+    match selection:
+        case ResolvedLatestSelection(axis=axis):
+            return LatestPerspective(axis)
+        case ResolvedAsOfSelection(axis=axis):
+            return AtPerspective(axis, _instant_of(selection))
+
+
+def _selection_of(
+    perspective: AxisPerspective,
+) -> ResolvedLatestSelection | ResolvedAsOfSelection:
+    match perspective:
+        case LatestPerspective(axis=axis):
+            return ResolvedLatestSelection(axis)
+        case AtPerspective(axis=axis, instant=instant):
+            return ResolvedAsOfSelection(axis, instant)
