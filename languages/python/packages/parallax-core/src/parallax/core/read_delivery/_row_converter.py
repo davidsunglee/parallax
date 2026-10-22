@@ -56,7 +56,7 @@ class ReadRowConverter:
 
     def convert_row(
         self,
-        row: Row | Mapping[str, object],
+        row: Row,
         builder: PageBuilder,
         *,
         source: SourceLevel,
@@ -72,7 +72,7 @@ class ReadRowConverter:
         """
         resolved, variant, unknown, document = row_identity(self._contract, row)
         mapping = self._mappings_by_entity[resolved]
-        if isinstance(row, tuple) and mapping.direct_row is not None:
+        if mapping.direct_row is not None:
             selected = mapping.direct_row(row)
             witness = (
                 cast("tuple[object, ...]", selected)
@@ -150,14 +150,14 @@ class ReadRowConverter:
 
     def _raw_driver_presence(
         self,
-        row: Row | Mapping[str, object],
+        row: Row,
         resolved: EntityIdentity,
         key: str,
         *,
         ordinal: int | None = None,
         default: object = ABSENT,
     ) -> tuple[object, bool]:
-        if isinstance(row, tuple) and ordinal is not None:
+        if ordinal is not None:
             return row[ordinal], True
         try:
             return raw_member(self._contract, row, resolved, key), True

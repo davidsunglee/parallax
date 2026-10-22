@@ -69,7 +69,7 @@ from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjec
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._judged_evidence_support import judged_evidence
-from tests.unit._prepared_read_support import bound_read
+from tests.unit._prepared_read_support import bound_read, compiled_read, result_row
 
 _MODELS = models.load_models()
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -546,9 +546,11 @@ def _instrument_root(builder: PageBuilder, tag: str, price: Decimal) -> int:
         "in_z": _TX_START,
         "out_z": _INFINITY,
     }
-    ref, _resolved, _document, _variant = bound_read(
-        _accepted("instrument"), "Instrument"
-    ).convert_row(stored, builder, source=ROOT_LEVEL)
+    model = _accepted("instrument")
+    row = result_row(compiled_read(model, "Instrument").result_contract, stored)
+    ref, _resolved, _document, _variant = bound_read(model, "Instrument").convert_row(
+        row, builder, source=ROOT_LEVEL
+    )
     return ref
 
 

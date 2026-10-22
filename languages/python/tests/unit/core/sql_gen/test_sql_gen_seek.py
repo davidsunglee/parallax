@@ -41,6 +41,7 @@ from parallax.descriptor import _records
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
+from tests.unit._prepared_read_support import result_row
 from tests.unit.core.sql_gen._plan_reuse_support import (
     reaches_compilation_state,
     record_plan_reuse,
@@ -519,12 +520,15 @@ def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -
         POSTGRES,
     )
     assert compiled.result_contract.coordinate_reads == ("parallax_seek_1", "parallax_seek_2")
-    row = {
-        "id": 1,
-        "payload": PresentDocument({"parallax_seek_0": 3}),
-        "parallax_seek_1": 3,
-        "parallax_seek_2": 1,
-    }
+    row = result_row(
+        compiled.result_contract,
+        {
+            "id": 1,
+            "payload": PresentDocument({"parallax_seek_0": 3}),
+            "parallax_seek_1": 3,
+            "parallax_seek_2": 1,
+        },
+    )
     beacon = compiled.target
     assert raw_member(compiled.result_contract, row, beacon, "parallax_seek_0") == 3
     assert publication_keys(compiled.result_contract, beacon, None) == ("id",)

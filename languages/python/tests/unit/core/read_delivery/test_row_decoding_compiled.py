@@ -1,7 +1,8 @@
 """Row decoding over compiled result contracts.
 
-Compilation supplies each contract; what is graded is how the decoder reads,
-classifies, and refuses a row against it.
+Compilation supplies each contract and every row is laid out positionally in its
+result order; what is graded is how the decoder reads, classifies, and refuses a
+row against it.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from collections.abc import Iterable
 import pytest
 
 from parallax.core import predicate as oa
-from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
+from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import MemberShape
 from parallax.core.read_delivery._row_decoding import (
@@ -24,6 +25,7 @@ from parallax.core.sql_gen import SqlGenError
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
 from tests.unit._document_layout_support import columns_model, document_model, entity
+from tests.unit._prepared_read_support import result_row
 
 ORDERS = model("orders")
 DOCUMENT = document_model()
@@ -39,11 +41,11 @@ _DOCUMENT_VALUE: DocumentValue = {
     "address": {"city": "Oslo", "geo": {"country": "NO"}},
     "tags": [{"label": "founder"}],
 }
-_DOCUMENT_ROW = {
+_DOCUMENT_CELLS = {
     "id": 1,
     "payload": PresentDocument(_DOCUMENT_VALUE),
 }
-_COLUMNS_ROW = {
+_COLUMNS_CELLS = {
     "id": 1,
     "display_name": "Ada",
     "score": 7,
@@ -68,21 +70,16 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
     document = compile_read(
         oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
     )
+    row = result_row(document.result_contract, _DOCUMENT_CELLS)
 
-    assert (
-        raw_member(document.result_contract, {"payload": SQL_NULL}, person, "display_name")
-        is SQL_NULL
-    )
     display_name = member_classifier(document.result_contract, person, "display_name")
-    assert display_name(
-        raw_member(document.result_contract, _DOCUMENT_ROW, person, "display_name")
-    ) == (
+    assert display_name(raw_member(document.result_contract, row, person, "display_name")) == (
         "Ada",
         (),
     )
     address = member_classifier(document.result_contract, person, "address")
     address_value, address_findings = address(
-        raw_member(document.result_contract, _DOCUMENT_ROW, person, "address")
+        raw_member(document.result_contract, row, person, "address")
     )
     assert address_value == {"city": "Oslo", "geo": {"country": "NO"}}
     assert address_findings == ()
@@ -96,18 +93,12 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         member_classifier(document.result_contract, marker, "missing")
     with pytest.raises(KeyError, match="missing"):
         member_classifier(document.result_contract, person, "missing")
-    with pytest.raises(KeyError, match="missing"):
-        raw_member(document.result_contract, _DOCUMENT_ROW, person, "missing")
-    with pytest.raises(KeyError, match="missing"):
-        raw_member(document.result_contract, _DOCUMENT_ROW, marker, "missing")
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        raw_member(document.result_contract, {"payload": _DOCUMENT_VALUE}, person, "display_name")
 
     columns = compile_read(
         oa.TrueNode(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
     classify_address = member_classifier(columns.result_contract, person, "address")
-    assert classify_address(_COLUMNS_ROW["address"])[0] == {
+    assert classify_address(_COLUMNS_CELLS["address"])[0] == {
         "city": "Oslo",
         "geo": {"country": "NO"},
     }
@@ -115,17 +106,11 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         columns.result_contract, person, "address", build_object=object_output
     )
     with pytest.raises(ValueError, match="must be supplied together"):
-        incomplete_classifier(_COLUMNS_ROW["address"])
+        incomplete_classifier(_COLUMNS_CELLS["address"])
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         classify_address({"city": "Oslo"})
     with pytest.raises(KeyError, match="missing"):
         member_classifier(columns.result_contract, person, "missing")
-
-
-def test_row_identity_refuses_a_raw_document_outside_the_database_port_contract() -> None:
-    compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        row_identity(compiled.result_contract, {"id": 1, "payload": _DOCUMENT_VALUE})
 
 
 def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() -> None:
@@ -161,7 +146,7 @@ def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() ->
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         raw_member(
             compiled.result_contract,
-            {"id": 1, "payload": {"profile": {"label": "x"}}},
+            result_row(compiled.result_contract, {"id": 1, "payload": {"profile": {"label": "x"}}}),
             compiled.target,
             "profile",
         )
@@ -172,4 +157,6 @@ def test_predecessor_document_retention_requires_a_folded_carrier() -> None:
         oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"), result_form="instance"
     )
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        row_identity(compiled.result_contract, {"id": 1, "payload": {}})
+        row_identity(
+            compiled.result_contract, result_row(compiled.result_contract, {"id": 1, "payload": {}})
+        )

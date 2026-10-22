@@ -66,7 +66,7 @@ from parallax.core.temporal_read import Pin
 from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.snapshot._handle._read import typed_publication
 from tests._support.model_capabilities import graph_construction_for
-from tests.unit._prepared_read_support import compiled_read
+from tests.unit._prepared_read_support import carrying, compiled_read
 
 __all__ = [
     "ConversionCalls",
@@ -120,8 +120,9 @@ def layout_of(model: Metamodel, identity: EntityIdentity) -> EntityLayout:
 
 
 def driver_row(compiled: CompiledRead, columns: Mapping[str, object]) -> dict[str, object]:
-    """``columns`` as a database port hands them over: every document carrier
-    ``compiled`` projects arrives as a SQL-null or a present document."""
+    """``columns`` with their document carriers folded as a database port folds
+    them: every one ``compiled`` projects arrives as a SQL-null or a present
+    document."""
     carriers = {member.storage.name for member in compiled.projected_documents}
     shared = compiled.result_contract.shared_document
     if shared is not None:
@@ -325,7 +326,7 @@ class PageFixture:
                 )
             )
         )
-        self._reads: dict[str, tuple[CompiledRead, ReadRowConverter]] = {}
+        self._reads: dict[tuple[str, tuple[str, ...]], ReadRowConverter] = {}
         self._sealed: tuple[tuple[tuple[int, ...], Pin], Page] | None = None
 
     def _declared(self, view: str | tuple[str, str]) -> RelationshipViewKey:
@@ -342,17 +343,18 @@ class PageFixture:
 
     def node(self, entity: str, columns: Mapping[str, object]) -> int:
         """Convert one driver row of ``entity``, spelled by result key, through
-        that Entity's read bound once for this fixture, as a read level would."""
-        bound = self._reads.get(entity)
-        if bound is None:
-            compiled = compiled_read(self._model, entity)
-            bound = self._reads[entity] = (
-                compiled,
-                bind(self._cataloged, compiled.result_contract, compiled.projected_documents),
+        that Entity's read carrying exactly those cells, bound once for this
+        fixture, as a read level would."""
+        compiled = compiled_read(self._model, entity)
+        contract, row = carrying(compiled.result_contract, driver_row(compiled, columns))
+        address = (entity, contract.result_keys)
+        prepared = self._reads.get(address)
+        if prepared is None:
+            prepared = self._reads[address] = bind(
+                self._cataloged, contract, compiled.projected_documents
             )
-        compiled, prepared = bound
         ref, _resolved, _document, _variant = prepared.convert_row(
-            driver_row(compiled, columns), self._builder, source=ROOT_LEVEL
+            row, self._builder, source=ROOT_LEVEL
         )
         return ref
 

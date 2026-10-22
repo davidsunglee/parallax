@@ -1,9 +1,10 @@
-"""Real compiled reads, bound as a read plan binds them, for unit suites that
-convert driver rows without a database.
+"""Real compiled reads, bound as a read plan binds them, and the positional rows
+they convert, for unit suites that convert driver rows without a database.
 
 Conversion is graded through the same ``bind`` plus ``ReadRowConverter.convert_row``
-boundary every production read crosses. These helpers only compile and bind;
-witness extraction and stored-value judgment stay in production code.
+boundary every production read crosses. These helpers only compile, bind, and lay
+cells out by result key; witness extraction and stored-value judgment stay in
+production code.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
@@ -12,19 +13,32 @@ carried by this MODULE's underscore. Never imported by production code.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import replace
+
 from parallax.core import predicate as oa
+from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel, entity_by_name
 from parallax.core.object_query import AsOf, TemporalSelection
 from parallax.core.object_query._nodes import TemporalDimension
+from parallax.core.read_delivery._page import PageBuilder, SourceLevel
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.sql_gen._inheritance import ResultContract
 from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.temporal_read import view as temporal_view
 from tests._support.sql import compile_read
 
-__all__ = ["bound_read", "compiled_read"]
+__all__ = [
+    "bound_cells",
+    "bound_read",
+    "carrying",
+    "compiled_read",
+    "convert_cells",
+    "result_row",
+]
 
 
 def _latest(
@@ -96,3 +110,62 @@ def bound_read(
             ),
         )
     return held[1]
+
+
+def result_row(contract: ResultContract, cells: Mapping[str, object]) -> Row:
+    """``cells`` laid out in ``contract``'s result order, as a port returns a
+    provider row; a cell ``cells`` leaves unnamed is NULL."""
+    unknown = set(cells) - set(contract.result_keys)
+    assert not unknown, f"{sorted(unknown)} are not result keys of {contract.result_keys}"
+    return tuple(cells.get(key) for key in contract.result_keys)
+
+
+def carrying(contract: ResultContract, cells: Mapping[str, object]) -> tuple[ResultContract, Row]:
+    """``contract`` narrowed to the result cells ``cells`` carries, beside
+    ``cells`` as its positional row.
+
+    The narrowed contract keeps ``contract``'s own result keys in their order,
+    less any ``cells`` leaves out, then adds any other cell ``cells`` names: a
+    statement that projected no cell for a member, or one more for it.
+    """
+    keys = (
+        *(key for key in contract.result_keys if key in cells),
+        *(key for key in cells if key not in contract.index_by_key),
+    )
+    return replace(contract, result_keys=keys), tuple(cells[key] for key in keys)
+
+
+def bound_cells(
+    model: CatalogedModel,
+    compiled: CompiledRead,
+    cells: Mapping[str, object],
+    *,
+    correlation_members: tuple[AttributeIdentity, ...] = (),
+) -> tuple[ReadRowConverter, Row]:
+    """``compiled``'s contract :func:`carrying` ``cells``, bound against ``model``
+    routing by ``correlation_members``, beside its positional row."""
+    contract, row = carrying(compiled.result_contract, cells)
+    return (
+        bind(
+            model,
+            contract,
+            compiled.projected_documents,
+            correlation_members=correlation_members,
+        ),
+        row,
+    )
+
+
+def convert_cells(
+    model: CatalogedModel,
+    compiled: CompiledRead,
+    cells: Mapping[str, object],
+    builder: PageBuilder,
+    *,
+    source: SourceLevel,
+    correlation_members: tuple[AttributeIdentity, ...] = (),
+) -> int:
+    """Convert ``cells`` into ``builder`` through :func:`bound_cells`, answering
+    the projection index."""
+    prepared, row = bound_cells(model, compiled, cells, correlation_members=correlation_members)
+    return prepared.convert_row(row, builder, source=source)[0]

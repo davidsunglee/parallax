@@ -50,6 +50,7 @@ from parallax.descriptor._ingest import ingest_document
 from tests._support.sql import compile_projected_read, compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import formed
 from tests.unit._document_layout_support import columns_model, document_model, entity
+from tests.unit._prepared_read_support import result_row
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -111,7 +112,7 @@ def test_an_observing_read_of_the_same_shape_projects_the_structured_column(
     # The column is still never a result field: it carries no member here and the
     # raw value leaves the published row all the same.
     document: DocumentValue = {"berthCode": "NB-118"}
-    row = {"id": 1, "payload": PresentDocument(document)}
+    row = result_row(compiled.result_contract, {"id": 1, "payload": PresentDocument(document)})
     assert publication_keys(compiled.result_contract, compiled.target, None) == ("id",)
     assert row_identity(compiled.result_contract, row)[3] == document
 

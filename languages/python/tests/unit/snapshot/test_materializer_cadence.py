@@ -36,7 +36,7 @@ from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
-from tests.unit._prepared_read_support import bound_read
+from tests.unit._prepared_read_support import bound_read, compiled_read, result_row
 from tests.unit.snapshot._snapshot_page_support import RecordingObserver
 
 
@@ -58,9 +58,11 @@ def _row(order_id: int) -> dict[str, object]:
 
 def _page(observer: MaterializationObserver, *order_ids: int) -> Page:
     builder = PageBuilder(ViewSchema.of(), observer)
-    prepared = bound_read(model_of(ORDERS_MODEL), "Order")
+    model = model_of(ORDERS_MODEL)
+    prepared = bound_read(model, "Order")
+    contract = compiled_read(model, "Order").result_contract
     roots = tuple(
-        prepared.convert_row(_row(order_id), builder, source=ROOT_LEVEL)[0]
+        prepared.convert_row(result_row(contract, _row(order_id)), builder, source=ROOT_LEVEL)[0]
         for order_id in order_ids
     )
     return builder.finish(roots, Pin())

@@ -47,15 +47,13 @@ _NOTHING_CLASSIFIED: Final[frozenset[str]] = frozenset()
 
 
 def row_identity(
-    contract: ResultContract, row: Row | Mapping[str, object]
+    contract: ResultContract, row: Row
 ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
     """The Entity ``row`` names, its `familyVariant` spelling, the stored tag no
     composed concrete claimed, and the row's shared document.
 
     Raises ``KeyError`` for a carrier the contract gives no result cell.
     """
-    if not isinstance(row, tuple):
-        return _keyed_identity(contract, row)
     if len(row) != len(contract.result_keys):
         raise _arity_error(len(contract.result_keys), len(row))
     source = contract.resolve
@@ -88,30 +86,6 @@ def row_identity(
     return entity, variant, unknown, _observed_document(row[index_by_key[document_key]])
 
 
-def _keyed_identity(
-    contract: ResultContract, row: Mapping[str, object]
-) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
-    source = contract.resolve
-    match source:
-        case FixedIdentity():
-            resolved, variant, unknown = source.entity, None, None
-        case ByTag():
-            raw = row[source.column]
-            answer = source.by_tag.get(raw)
-            resolved, variant, unknown = (
-                (source.root, None, UnknownFamilyTag(raw)) if answer is None else answer
-            )
-        case ByLiteral():
-            resolved, variant, unknown = source.by_spelling[row[source.column]]
-    shared = contract.shared_document
-    document = (
-        None
-        if shared is None
-        else _observed_document(row[_result_key(contract, resolved, shared.column)])
-    )
-    return resolved, variant, unknown, document
-
-
 def _observed_document(document_read: object) -> object | None:
     """Unwrap a provider-neutral document carrier for predecessor retention."""
     if not isinstance(document_read, (SqlNull, PresentDocument)):
@@ -119,9 +93,7 @@ def _observed_document(document_read: object) -> object | None:
     return unwrap_document_read(document_read)
 
 
-def raw_member(
-    contract: ResultContract, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
-) -> object:
+def raw_member(contract: ResultContract, row: Row, resolved: EntityIdentity, key: str) -> object:
     """``key``'s raw stored value on a row resolving to ``resolved``: located in
     the row's shared document when that document carries the member, and read
     from the row's own result cell otherwise.
@@ -332,7 +304,7 @@ def member_sources(
 
 
 def row_coordinates(
-    contract: ResultContract, rows: Sequence[Row | Mapping[str, object]]
+    contract: ResultContract, rows: Sequence[Row]
 ) -> tuple[ContinuationCoordinate | None, ...]:
     """Each row's Continuation Order coordinate; absence for every row of a read
     that pages through nothing."""
@@ -343,7 +315,7 @@ def row_coordinates(
 
 
 def _coordinate(
-    contract: ResultContract, row: Row | Mapping[str, object], aliases: tuple[str, ...]
+    contract: ResultContract, row: Row, aliases: tuple[str, ...]
 ) -> ContinuationCoordinate:
     _require_arity(contract, row)
     return ContinuationCoordinate(
@@ -408,8 +380,8 @@ def _result_key(contract: ResultContract, entity: EntityIdentity, rendered_key: 
     return rendered_key
 
 
-def _require_arity(contract: ResultContract, row: Row | Mapping[str, object]) -> None:
-    if isinstance(row, tuple) and len(row) != len(contract.result_keys):
+def _require_arity(contract: ResultContract, row: Row) -> None:
+    if len(row) != len(contract.result_keys):
         raise _arity_error(len(contract.result_keys), len(row))
 
 
@@ -417,13 +389,11 @@ def _arity_error(arity: int, width: int) -> ValueError:
     return ValueError(f"result key count {arity} does not match row arity {width}")
 
 
-def _value(contract: ResultContract, row: Row | Mapping[str, object], key: str) -> object:
-    if isinstance(row, tuple):
-        try:
-            return row[contract.index_by_key[key]]
-        except KeyError as error:
-            raise KeyError(key) from error
-    return row[key]
+def _value(contract: ResultContract, row: Row, key: str) -> object:
+    try:
+        return row[contract.index_by_key[key]]
+    except KeyError as error:
+        raise KeyError(key) from error
 
 
 def _document_read(document_read: object) -> SqlNull | PresentDocument:
