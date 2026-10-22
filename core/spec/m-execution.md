@@ -212,7 +212,7 @@ stopped early, never started, or raised. The request kind decides the bracket:
 | Request | Bracket |
 |---|---|
 | Target of a Locking target write | its own Read under the attempt, with no force-flush |
-| Coverage of a deferred range | a read Database Call inside the current Flush, opening no Read; one per bounded statement its uncovered parts need |
+| Coverage of a deferred range | a read Database Call inside the current Flush, opening no Read; one per bounded statement the uncovered parts of its range, or of its acquisition span (`m-unit-work` *Shared coverage acquisition*), need |
 | Completion of retained rows | none: no statement, Database Call, or activity, before the range's coverage is read |
 
 A row whose stored data is invalid is refused with the same judgement and
@@ -237,9 +237,11 @@ the port, and has the unit of work enforce each step's affected rows; for steps
 opening rows whose keys the database allocates, it answers those keys in step
 order. An execution returns once every step it was handed has succeeded, and
 holds nothing of them afterwards. Execution neither walks a plan's Write Groups
-nor interprets their settled writes' completions, so no later group's
-statement is prepared or lowered before the earlier group completes, and a
-later step's lowering failure cannot overtake it. A failed execution completes
+nor interprets their settled writes' completions, so no later group's Planned
+Step is prepared or lowered before the earlier group completes, and a later
+step's lowering failure cannot overtake it. A shared coverage read for a later
+write of an acquisition span is row acquisition, not a step, and may run
+before an earlier group completes (`m-unit-work` *Shared coverage acquisition*). A failed execution completes
 no settled write, and the failure dooms the attempt.
 
 Where the connection holds ordered write transport (`m-db-port`), a run of two

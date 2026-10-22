@@ -663,7 +663,8 @@ exact milestone it is, by its own coordinates rather than the caller's
 grants no authority — the condition the call proved stays the caller's — and it
 is no observation: no write is admitted on it.
 
-When the write's range reaches its turn, the row is **current** if no settled
+When the write's range reaches its turn — or its acquisition span's first
+write's turn (*Shared coverage acquisition*) — the row is **current** if no settled
 write completed since its read has changed that exact milestone (*Write Groups
 complete before later work runs*) — even one that kept its address and
 revision. A write that kept the milestone unchanged, or changed other states, does
@@ -687,8 +688,8 @@ acquisition*). A request describes what to read and performs no read:
 | Request | What it reads | When |
 |---|---|---|
 | **Target** | the one row a Locking target write addresses, at `validFrom` for a Bitemporal target, when no pending write or live read already proves it; a temporal one whole, retained with the write | when the write is buffered, with no force-flush |
-| **Coverage** | the current milestones of one or several objects overlapping the parts of each object's window no row it holds covers, in statements naming a bounded number of object/part terms each | when the flush reaches the deferred settled write, inside that flush |
-| **Completion** | nothing: the retained rows of a deferred settled write that are still current, each occurrence the target read left pending judged as a read judges it | when the flush reaches that write, before its coverage is read |
+| **Coverage** | the current milestones of one or several objects overlapping the parts of each object's window no row it holds covers, in statements naming a bounded number of object/part terms each | when the flush reaches the deferred settled write, inside that flush; within an acquisition span, between the span's first write's turn and each write's own (*Shared coverage acquisition*) |
+| **Completion** | nothing: the retained rows of a deferred settled write that are still current, each occurrence the target read left pending judged as a read judges it | when the flush reaches that write, or the first write of its acquisition span, before any of the span's coverage is read |
 
 The unit of work hands each request a consumer of its own and receives the
 consumer's result. The consumer reads the judged rows, and their aligned raw
@@ -843,7 +844,7 @@ fact about a settled write is decided twice.
 ### Write Plan and Planned Steps
 
 ```text
-WritePlan(groups: WriteGroups)
+WritePlan(groups: WriteGroups, acquisition_spans: AcquisitionSpans)
 
 WriteGroups: an immutable, ordered, possibly empty sequence of Write Groups
 WriteGroup(writes: SettledWrites, steps: PlannedSteps)
@@ -853,6 +854,9 @@ SettledWrites: the group's settled writes in order, at least one, each with the
     attempt-owned rows it removes and opens, and the current rows it leaves
 PlannedSteps: the immutable, ordered, possibly empty sequence of Planned Steps
     the group's settled writes execute, indexable and repeatable
+AcquisitionSpans: the immutable, ordered, possibly empty sequence of
+    non-overlapping half-open ranges of Write Group positions whose deferred
+    settled writes share coverage acquisition (*Shared coverage acquisition*)
 ```
 
 A **Write Plan** is the immutable, **execution-ordered** result of one planning
@@ -889,12 +893,13 @@ topology and correctness semantics already decided.
   assignments over that range, the source conditions, and the resolved instant —
   together with the one coverage read that range needs. Such a settled write
   carries no planned step, and its meaning is data: it retains no binder, Attempt
-  Ownership, clock, strategy, or Actor Identity. When the flush reaches it,
-  the unit of work acquires the object's current rows over the range not
-  already covered (*Row acquisition*) — inside the flush and under
-  `m-read-lock`'s shared lock when the effective strategy is Locking — and binds
-  those rows, or the absence of any, with the observed ones into the write's
-  physical steps before they run.
+  Ownership, clock, strategy, or Actor Identity. By the time the flush reaches
+  it, the unit of work has acquired the object's current rows over the range not
+  already covered (*Row acquisition*) — at that turn, or earlier through its
+  acquisition span's shared reads (*Shared coverage acquisition*), inside the
+  flush either way and under `m-read-lock`'s shared lock when the effective
+  strategy is Locking — and at that turn it binds those rows, or the absence of
+  any, with the observed ones into the write's physical steps before they run.
   Temporal meaning, concurrency, and gates are fixed when planning returns, and
   binding never recaptures the instant or consults the model: only the physical
   enumeration waits, for the rows read and for the Attempt Ownership and
@@ -907,8 +912,8 @@ topology and correctness semantics already decided.
   condition, which binding judges against the rows read before any step exists,
   and a replacement's extent, whose uncovered parts binding opens. Its meaning
   carries, too, the starting rows its callers' Locking acquisitions retained
-  (*Retained starting rows*): one still current at the write's turn is completed
-  and reused as coverage, a stale one is discarded unjudged, and only the parts
+  (*Retained starting rows*): one still current when its coverage is prepared is
+  completed and reused as coverage, a stale one is discarded unjudged, and only the parts
   of the window neither those rows, the observed originals, nor the current rows
   the attempt holds for a continuing source (*Write Groups complete before later
   work runs*) hold are read; a
@@ -955,7 +960,10 @@ successors of its own effects, and an insert-phase write produces only inserts,
 so the layout moves only successors, and only past other objects' steps: no
 insert moves behind an effect of another mutation phase. Nothing else is
 reordered: the phases, the referential order, and the authored order of updates
-are stage 4's, and no key sort applies.
+are stage 4's, and no key sort applies. As it forms the groups, settlement also
+records which consecutive groups of deferred settled writes share coverage
+acquisition (*Shared coverage acquisition*); that record reorders and regroups
+nothing.
 
 ### Write Groups complete before later work runs
 
@@ -966,7 +974,10 @@ port, which executes every step of the sequence and has its effect enforced. As
 soon as every step of a group has succeeded — at once for a group with no step
 — and before any step of a later group executes, the unit of work completes
 every settled write of the group synchronously, in order; a deferred settled
-write binds and executes its range at its turn first. No settled write of a
+write binds and executes its range at its turn first. A coverage read is no
+step: within an acquisition span a later write's coverage can be read before an
+earlier group completes, while its binding, steps, and completion still wait
+for its own turn (*Shared coverage acquisition*). No settled write of a
 group depends on another's completion, because their objects are distinct
 (*Write Group formation*). Completing a settled write:
 
@@ -1027,6 +1038,69 @@ These records serve every later submission of the attempt, whatever flush it
 reaches; nothing releases them at the end of a flush, and the attempt's end
 releases them all. The pre-commit flush, which no submission follows and none of
 whose writes continues from another, records none.
+
+### Shared coverage acquisition
+
+An **acquisition span** is a run of at least two and at most 32 consecutive Write
+Groups, each the group of one deferred settled write of a Bitemporal Entity that
+names its one complete Object Key, a key the database does not allocate. Its
+writes belong to one mutation phase, target one concrete Entity — so one key
+attribute and one member selection — and either all take the shared lock their
+coverage read takes under Locking or none do. Each names an object no earlier
+write of the span names under its Inheritance Family's primary key. A span never
+skips a group: any other group, a group of another Entity or lock requirement, a
+repeated object, a phase boundary, or the bound ends it, and the next eligible
+write may start another. A deferred write outside any span, a
+Transaction-Time-Only one included, acquires its coverage alone at its turn.
+
+A span grants acquisition permission, not execution grouping. Each write still
+owns its Write Group, binds against the rows read and the Attempt Ownership
+every earlier write published, executes, and completes at its own turn, in
+order (*Write Groups complete before later work runs*). A deferred dependency
+is not coverage: no write's coverage is read before an earlier write of its own
+object completes, because that write ends the span first.
+
+When the flush reaches a span's first write, the unit of work, before binding
+any write of the span or reading any of its coverage, completes every
+still-current retained starting row of every write in the span and discards the
+stale ones (*Retained starting rows*), then determines each write's uncovered
+parts once. It reads those parts in shared coverage statements (`m-sql`
+*Requested ranges*), packed in the span's write order and each write's
+Valid-Time order. A write is **ready** once every statement naming its parts has
+succeeded, whatever those statements returned; a write with no uncovered part
+needs no statement, takes no lock, and is ready at once. Before reading each
+statement, the flush binds, executes, and completes, one after another, every
+leading write of the span that is ready; a ready write never passes a write
+before it that is not. A statement is read only while the span's next write is
+not ready, and no statement is read once every write of the span is.
+
+That timing deliberately qualifies acquisition at each write's own turn:
+
+- **Observation.** Under Read Committed, each shared statement observes the
+  database as of its own execution, which can be earlier than a later write's
+  turn; under Repeatable Read, it observes the transaction's snapshot and the
+  attempt's own writes as any read does (*The Isolation Level beside it*).
+- **Locks.** Under Locking, the shared lock is taken on the physical rows each
+  statement selects, nothing wider (`m-read-lock`), when that statement runs.
+  No order of lock acquisition across objects or transactions is promised.
+- **Failures.** The failure actually encountered first propagates, and no
+  failure is collected, deferred, ranked, or replayed to reproduce acquisition
+  at each write's turn. A refusal completing any write's retained rows precedes
+  the span's first statement and every binding, even that of a write ready at
+  once. A statement's failure, or an invalid stored row it returns, precedes the
+  binding and execution of every write still waiting for that statement, an
+  earlier write's included; which of several invalid rows one statement returns
+  is reported is not promised. A ready write's binding or execution failure
+  precedes every statement the span would read after it. Writes that completed
+  before a later statement failed stay published until the doomed attempt ends
+  (*Abort*), and no waiting write binds or executes after any failure.
+  Classification, retry eligibility, and rollback are the encountered failure's
+  own (`m-db-error`, `m-auto-retry`); because which of two independent failures
+  is encountered can differ from acquisition at each write's turn, so can they.
+
+Each shared statement is one read Database Call of the enclosing flush; the
+flush adds no activity, call, or record per span or per write for it
+(`m-execution-lifecycle`).
 
 ## Planned Steps and Write Observations
 

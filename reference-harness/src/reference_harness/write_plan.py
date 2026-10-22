@@ -130,11 +130,11 @@ def unit_resolving_reads(
 
     A target entry resolves no source either. Under Locking it owes
     one acquisition of each object it writes instead, which a second write of
-    the same object reuses. A temporal one also owes the read of the coverage
-    its window reaches, which its flush makes once per object — unless every
-    such entry of the object acquired its row and those rows already hold the
-    object's whole window: a Transaction-Time-Only row always does, and a
-    Bitemporal one where ``acquired_start`` places it over the window.
+    the same object reuses. A temporal one also owes the coverage reads its
+    flush makes for the window its entries reach together
+    (:func:`flush_coverage_reads`), less what every such entry's acquisition
+    already holds: a Transaction-Time-Only row holds it all, and a Bitemporal one
+    whatever ``acquired_start`` places it over.
 
     Targets are counted by their canonical spelling, so two entries naming one
     Entity two ways owe one read between them.
@@ -143,31 +143,185 @@ def unit_resolving_reads(
     needed: set[str] = set()
     acquired: set[tuple[str, tuple[Any, ...]]] = set()
     coverage: dict[tuple[str, tuple[Any, ...]], list[_TargetWindow]] = {}
+    settled: list[SettledObject] = []
     for entry in entries:
+        entity = _entry_entity(case, entry)
+        keys = _entry_object_keys(case, entry)
         if entry.get("target"):
-            entity = _entry_entity(case, entry)
             acquires = _acquires(case, entity)
-            keys = _entry_object_keys(case, entry)
             if acquires:
                 acquired.update(keys)
             if entity.is_temporal:
                 window = _target_window(entity, entry, acquires, acquired_start)
                 for key in keys:
                     coverage.setdefault(key, []).append(window)
+            settled.extend(_settled_objects(entry, keys))
             continue
+        settled.extend(_settled_objects(entry, keys))
         mutation = entry.get("mutation")
         if mutation in OPENING_MUTATIONS:
-            opened.update(_entry_object_keys(case, entry))
+            opened.update(keys)
             continue
         if mutation not in _KEYED_MUTATIONS:
             continue
-        entity = _entry_entity(case, entry)
         if states_framework_marker(entity, entry):
             continue
-        if any(key not in opened for key in _entry_object_keys(case, entry)):
+        if any(key not in opened for key in keys):
             needed.add(entity.canonical_name)
-    covered = sum(1 for windows in coverage.values() if not _held_whole(windows))
+    deferred = {key: _uncovered_target_parts(windows) for key, windows in coverage.items()}
+    covered = flush_coverage_reads(
+        case, settled, deferred, bitemporal=_bitemporal_keys(case, coverage)
+    )
     return len(needed) + len(acquired) + covered
+
+
+# --- the coverage reads one flush makes ------------------------------------------
+
+# The most consecutive deferred writes one acquisition span shares coverage reads
+# across (`m-unit-work` *Shared coverage acquisition*), and the most uncovered
+# parts one coverage read names (`m-sql` *Requested ranges*).
+_ACQUISITION_SPAN_WRITES = 32
+_COVERAGE_READ_PARTS = 64
+
+_PHASES = ("insert", "update", "delete")
+_ASSIGNING_MUTATIONS = ("amend", "replace", "amendUntil", "replaceUntil")
+
+
+class SettledObject(NamedTuple):
+    """One object a unit's entry writes, as the flush that settles it orders it:
+    the object, its canonical Entity, and the mutation phase the entry states."""
+
+    key: tuple[str, tuple[Any, ...]]
+    entity: str
+    phase: str
+
+
+def settled_object(key: tuple[str, tuple[Any, ...]], mutation: str) -> SettledObject:
+    """``key`` written by one entry of ``mutation``, in the mutation phase that
+    entry alone would put it in (`m-unit-work` *Write Group formation*): an
+    opening is an insert, an assignment an update, anything else a removal."""
+    if mutation in OPENING_MUTATIONS:
+        phase = "insert"
+    elif mutation in _ASSIGNING_MUTATIONS:
+        phase = "update"
+    else:
+        phase = "delete"
+    return SettledObject(key, key[0], phase)
+
+
+def _settled_objects(
+    entry: dict[str, Any], keys: list[tuple[str, tuple[Any, ...]]]
+) -> list[SettledObject]:
+    return [settled_object(key, str(entry.get("mutation"))) for key in keys]
+
+
+def flush_coverage_reads(
+    case: Case,
+    settled: list[SettledObject],
+    deferred: dict[tuple[str, tuple[Any, ...]], int],
+    *,
+    bitemporal: frozenset[tuple[str, tuple[Any, ...]]],
+) -> int:
+    """The coverage reads one flush makes for ``settled``, the objects its
+    entries write in authored order (`m-case-format` *Resolving reads a write
+    owes*).
+
+    ``deferred`` maps each object whose write defers to the uncovered parts it
+    reads, and ``bitemporal`` names the deferred objects that may share an
+    acquisition span. Objects coalesce at their first entry and order by mutation
+    phase, each phase in authored order. Consecutive deferred Bitemporal objects
+    of one Entity and phase share reads in runs of at most 32, each run owing one
+    read per 64 parts, rounded up; any other object ends a run, and an object
+    outside every run reads its own parts alone.
+
+    Where two deferred objects could share, an order the planner alone decides is
+    refused rather than guessed: a phase that sorts several Entities by
+    referential rank, or an object whose entries another object's interrupts.
+    """
+    objects = _coalesced(settled)
+    if _shares_any(objects, deferred, bitemporal):
+        _refuse_planner_order(case, settled, objects)
+    reads = 0
+    run: tuple[str, str] | None = None
+    members = 0
+    parts = 0
+    for phase in _PHASES:
+        for item in (item for item in objects if item.phase == phase):
+            owed = deferred.get(item.key)
+            shares = (item.entity, phase) if owed is not None and item.key in bitemporal else None
+            if shares is None or shares != run or members == _ACQUISITION_SPAN_WRITES:
+                reads += _statements(parts)
+                run, members, parts = shares, 0, 0
+            if shares is None:
+                reads += _statements(owed or 0)
+                continue
+            members += 1
+            parts += owed or 0
+    return reads + _statements(parts)
+
+
+def _statements(parts: int) -> int:
+    return -(-parts // _COVERAGE_READ_PARTS)
+
+
+def _coalesced(settled: list[SettledObject]) -> list[SettledObject]:
+    """One entry per object, at its first entry, in the earliest phase any of
+    its entries states: an insertion composes what follows it, and an
+    assignment outranks a removal it composes with."""
+    first: dict[tuple[str, tuple[Any, ...]], SettledObject] = {}
+    for item in settled:
+        known = first.get(item.key)
+        if known is None or _PHASES.index(item.phase) < _PHASES.index(known.phase):
+            first[item.key] = item if known is None else known._replace(phase=item.phase)
+    return list(first.values())
+
+
+def _shares_any(
+    objects: list[SettledObject],
+    deferred: dict[tuple[str, tuple[Any, ...]], int],
+    bitemporal: frozenset[tuple[str, tuple[Any, ...]]],
+) -> bool:
+    candidates: dict[tuple[str, str], int] = {}
+    for item in objects:
+        if item.key in deferred and item.key in bitemporal:
+            group = (item.entity, item.phase)
+            candidates[group] = candidates.get(group, 0) + 1
+    return any(count > 1 for count in candidates.values())
+
+
+def _refuse_planner_order(
+    case: Case, settled: list[SettledObject], objects: list[SettledObject]
+) -> None:
+    for phase in ("insert", "delete"):
+        entities = {item.entity for item in objects if item.phase == phase}
+        if len(entities) > 1:
+            raise CaseFailure(
+                f"{case.path.name}: its {phase} phase writes {sorted(entities)}, which the "
+                f"flush orders by referential rank, beside objects that may share coverage "
+                f"reads; the reference count does not decide that order."
+            )
+    seen: list[tuple[str, tuple[Any, ...]]] = []
+    for item in settled:
+        if item.key in seen and seen[-1] != item.key:
+            raise CaseFailure(
+                f"{case.path.name}: object {item.key} is written again after another "
+                f"object, beside objects that may share coverage reads; the reference "
+                f"count does not decide where its composed write settles."
+            )
+        seen.append(item.key)
+
+
+def _bitemporal_keys(
+    case: Case, coverage: dict[tuple[str, tuple[Any, ...]], list[_TargetWindow]]
+) -> frozenset[tuple[str, tuple[Any, ...]]]:
+    return frozenset(
+        key
+        for key in coverage
+        if any(
+            axis.get("dimension") == "valid-time"
+            for axis in case.model.entity(key[0]).temporal_runtime_axes
+        )
+    )
 
 
 class _TargetWindow(NamedTuple):
@@ -196,37 +350,70 @@ def _target_window(
     return _TargetWindow(requested, held)
 
 
-def _held_whole(windows: list[_TargetWindow]) -> bool:
-    """Whether the rows one object's acquisitions hold cover the window its
-    target entries reach together, so its flush reads no coverage."""
-    if any(window.held is None for window in windows):
-        return False
+def _uncovered_target_parts(windows: list[_TargetWindow]) -> int:
+    """How many parts of the window one object's target entries reach together
+    its flush reads: none where its acquisitions hold it all, one where any
+    acquisition's rows are unknown or an object has no Valid Time to split."""
     if any(window.held is _WHOLE for window in windows):
-        return True
-    start = min(_instant(window.requested[0]) for window in windows if window.requested)
-    end = max(_instant(window.requested[1]) for window in windows if window.requested)
-    held = sorted(
-        (_instant(first), _instant(last))
+        return 0
+    if any(window.held is None for window in windows) or not any(
+        window.requested for window in windows
+    ):
+        return 1
+    start = min(window_instant(window.requested[0]) for window in windows if window.requested)
+    end = max(window_instant(window.requested[1]) for window in windows if window.requested)
+    held = [
+        (window_instant(first), window_instant(last))
         for first, last in (window.held for window in windows if isinstance(window.held, tuple))
-    )
-    cursor = start
-    for first, last in held:
-        if first > cursor:
-            return False
-        cursor = max(cursor, last)
-        if cursor >= end:
-            return True
-    return cursor >= end
+    ]
+    return uncovered_parts([(start, end)], held)
+
+
+def uncovered_parts(
+    requested: list[tuple[dt.datetime, dt.datetime]], held: list[tuple[dt.datetime, dt.datetime]]
+) -> int:
+    """How many disjoint, non-adjacent parts of ``requested``'s union no
+    ``held`` interval covers — the parts one coverage read names (`m-sql`
+    *Requested ranges*). Bounds are half-open and compare as instants."""
+    parts = 0
+    covered = sorted(held)
+    for start, end in _union(requested):
+        cursor = start
+        for first, last in covered:
+            if last <= cursor or first >= end:
+                continue
+            if first > cursor:
+                parts += 1
+            cursor = max(cursor, last)
+            if cursor >= end:
+                break
+        if cursor < end:
+            parts += 1
+    return parts
+
+
+def _union(
+    intervals: list[tuple[dt.datetime, dt.datetime]],
+) -> list[tuple[dt.datetime, dt.datetime]]:
+    merged: list[tuple[dt.datetime, dt.datetime]] = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 _OPEN: dt.datetime = dt.datetime.max.replace(tzinfo=dt.UTC)
 
 
-def _instant(value: Any) -> dt.datetime:
+def window_instant(value: Any) -> dt.datetime:
     """A window bound as an instant, ``None`` or ``infinity`` as the open one."""
     if value is None or value == "infinity":
         return _OPEN
-    return dt.datetime.fromisoformat(value)
+    if isinstance(value, dt.datetime):
+        return value
+    return dt.datetime.fromisoformat(str(value))
 
 
 def _acquires(case: Case, entity: Entity) -> bool:

@@ -52,6 +52,7 @@ from parallax.core.execution_lifecycle import (
     ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
+    DatabaseCallKind,
     DatabaseCallNotExecuted,
     DatabaseCallStarted,
     DatabaseCallUnconfirmed,
@@ -645,6 +646,70 @@ def test_a_resolving_read_takes_no_index_and_shifts_none() -> None:
     )
     events = cast("list[dict[str, Any]]", _roots(portable)[0]["events"])
     assert [event["databaseCallStarted"].get("statement") for event in events] == [None, 0, 1]
+
+
+def _flush_call(
+    sequence: int, activity: int, parent: int, kind: DatabaseCallKind, sql: str
+) -> DatabaseCallStarted:
+    return DatabaseCallStarted(
+        _EXECUTION, sequence, activity, parent, "Position", kind, LoweredStatement(sql, ())
+    )
+
+
+def _flush_with_coverage_reads() -> RecordedRoot:
+    """A Read beside a Flush whose shared coverage reads interleave with the DML
+    of the writes they made ready, the second read failing."""
+    failure = DatabaseCallFailed(DatabaseFailureDiagnostic(_diagnostic(), "deadlock", "40P01"))
+    covered = LoweredStatement("select coverage 1", ())
+    refused = LoweredStatement("select coverage 2", ())
+    return _root(
+        "transaction_invocation",
+        ReadStarted(_EXECUTION, 1, 1, None, "Position", "wire", "position"),
+        _flush_call(2, 2, 1, "read", "select source"),
+        FlushStarted(_EXECUTION, 3, 3, None, "pre_commit"),
+        _flush_call(4, 4, 3, "read", "select coverage 1"),
+        DatabaseCallFinished(_EXECUTION, 5, 4, 3, covered, 1, DatabaseReadCompleted(2)),
+        _flush_call(6, 5, 3, "write", "update 1"),
+        _flush_call(7, 6, 3, "write", "insert 1"),
+        _flush_call(8, 7, 3, "read", "select coverage 2"),
+        DatabaseCallFinished(_EXECUTION, 9, 7, 3, refused, 1, failure),
+    )
+
+
+def test_a_flushs_coverage_reads_take_no_index_and_shift_none() -> None:
+    """A coverage read is a Database Call of the Flush that issues it, and the case
+    authors no golden for it, so however many the Flush makes and however they
+    end, each names no index while its DML and every read outside a Flush keep
+    theirs."""
+    root = _flush_with_coverage_reads()
+    portable = execution_lifecycle_observation([root], ["select source", "update 1", "insert 1"])
+    events = cast("list[dict[str, Any]]", _roots(portable)[0]["events"])
+    assert [
+        event["databaseCallStarted"].get("statement")
+        for event in events
+        if "databaseCallStarted" in event
+    ] == [0, None, 1, 2, None]
+
+
+def test_a_flushs_coverage_reads_are_counted_like_any_database_call() -> None:
+    observation = LifecycleObservation()
+    handler = _Handler(observation)
+    handler.deliver(*_flush_with_coverage_reads().events)
+
+    assert observation.database_calls == 5
+    assert [statement.sql for statement in observation.reads] == [
+        "select source",
+        "select coverage 1",
+        "select coverage 2",
+    ]
+    assert [statement.sql for statement in observation.own_reads_since(0)] == ["select source"]
+
+
+def test_an_emission_naming_a_coverage_read_is_left_unnamed() -> None:
+    root = _flush_with_coverage_reads()
+    emitted = ["select source", "select coverage 1", "update 1", "insert 1"]
+    with pytest.raises(StatementIndexError, match="ran 'update 1'"):
+        execution_lifecycle_observation([root], emitted)
 
 
 def test_a_held_groups_delivered_writes_are_reported_under_the_steps_that_buffered_them() -> None:
