@@ -11,7 +11,7 @@ from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.core.read_delivery import RowsResult
 from parallax.snapshot._handle._read import Snapshot, typed_publication_for
-from parallax.snapshot._handle._stream import SnapshotStream
+from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._typed_writes import (
     TypedInstanceTargetWriteAdapter,
     TypedKeyedInsertSource,
@@ -445,7 +445,9 @@ class TxnContext:
         """
         return WireTransactionView(self._attempt)
 
-    def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
+    def stream[S](
+        self, query: ObjectQuery[Any, S], *, batch_size: int = DEFAULT_BATCH_SIZE
+    ) -> SnapshotStream[S]:
         """Deliver ``query``'s roots one at a time inside this transaction, as
         the scope-bound single-pass peer of :meth:`find`.
 
@@ -577,7 +579,9 @@ class ReadOnlyTxnContext:
             query, convert_query=typed_read_query, build_publication=typed_publication_for
         )
 
-    def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
+    def stream[S](
+        self, query: ObjectQuery[Any, S], *, batch_size: int = DEFAULT_BATCH_SIZE
+    ) -> SnapshotStream[S]:
         """Deliver ``query``'s roots one at a time inside this transaction.
 
         Delivery is attempt-local: a retried callback opens a fresh stream and

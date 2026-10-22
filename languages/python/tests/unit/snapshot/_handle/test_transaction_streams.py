@@ -299,6 +299,38 @@ def test_a_writing_loop_never_holds_more_than_one_pages_writes(size: int) -> Non
     assert max(flushed) == size
 
 
+@pytest.mark.parametrize("namespace", ["typed", "wire"])
+def test_a_default_page_delivers_1024_roots_so_a_writing_loop_flushes_1024_writes(
+    namespace: str,
+) -> None:
+    # The default sizes the page, and therefore the participating flush before
+    # the next page: the first page's 1024 writes reach the database before the
+    # second page's statement, which still asks for one root past its batch.
+    rows = [_account_row(account_id) for account_id in range(1, 1026)]
+    first, second = paged_reads(rows, size=1024)
+    port = ScriptedAdapter(Transact(first, Write(times=1024), second, Write()))
+
+    def fn(tx: TxnContext) -> None:
+        if namespace == "typed":
+            with tx.stream(_accounts()) as stream:
+                for account in stream:
+                    tx.amend(account.edit(owner="streamed"))
+            return
+        with tx.wire.stream(_accounts()) as stream:
+            for account in stream:
+                tx.wire.amend(account, {"owner": "streamed"})
+
+    account_db(port).transact(fn)
+    flushed = [
+        len(list(run))
+        for writes, run in groupby(_kinds(port), key=lambda kind: kind is WriteCall)
+        if writes
+    ]
+    assert flushed == [1024, 1]
+    reads = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert [read.binds[-1] for read in reads] == [1025, 1025]
+
+
 # --------------------------------------------------------------------------- #
 # Each level's read lock derives from that level's own target Entity.          #
 # --------------------------------------------------------------------------- #
