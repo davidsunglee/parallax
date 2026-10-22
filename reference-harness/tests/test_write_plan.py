@@ -24,6 +24,7 @@ from reference_harness.write_plan import (
     insert_value_rows,
     parse_insert_columns,
     parse_set_columns,
+    settled_object,
     statement_object,
     uncovered_parts,
     unit_resolving_reads,
@@ -406,6 +407,18 @@ def test_a_destruction_superseding_its_objects_assignment_settles_as_a_removal()
         _object(1, region=march),
         _object(1, phase="delete", region=march),
         _object(2, region=march),
+    ]
+    assert _reads(objects, {1: 1, 2: 1}) == 2
+
+
+def test_one_region_spelled_two_ways_is_one_region() -> None:
+    def written(key: int, mutation: str, region: tuple) -> SettledObject:
+        return settled_object(("Span", (repr(key),)), mutation, region)
+
+    objects = [
+        written(1, "amendUntil", ("2024-03-01T00:00:00Z", "2024-09-01T00:00:00Z")),
+        written(1, "terminateUntil", ("2024-03-01T00:00:00.000Z", "2024-09-01T00:00:00.000000Z")),
+        written(2, "amendUntil", ("2024-03-01T00:00:00Z", "2024-09-01T00:00:00Z")),
     ]
     assert _reads(objects, {1: 1, 2: 1}) == 2
 
