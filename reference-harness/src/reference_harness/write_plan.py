@@ -191,7 +191,7 @@ _ASSIGNING_MUTATIONS = ("amend", "replace", "amendUntil", "replaceUntil")
 class SettledObject(NamedTuple):
     """One object a unit's entry writes, as the flush that settles it orders it:
     the object, its canonical Entity, the mutation phase the entry states, and
-    the authored ``(validFrom, until)`` region it states that phase over."""
+    the ``(validFrom, until)`` region it states that phase over."""
 
     key: tuple[str, tuple[Any, ...]]
     entity: str
@@ -205,14 +205,16 @@ def settled_object(
     """``key`` written by one entry of ``mutation`` over ``region``, in the
     mutation phase that entry alone would put it in (`m-unit-work` *Write Group
     formation*): an opening is an insert, an assignment an update, anything else
-    a removal."""
+    a removal. The region's bounds become instants, so two spellings of one
+    bound state one region."""
     if mutation in OPENING_MUTATIONS:
         phase = "insert"
     elif mutation in _ASSIGNING_MUTATIONS:
         phase = "update"
     else:
         phase = "delete"
-    return SettledObject(key, key[0], phase, region)
+    first, last = region
+    return SettledObject(key, key[0], phase, (window_instant(first), window_instant(last)))
 
 
 def assigns_nothing(entity: Entity, entry: Mapping[str, Any]) -> bool:
