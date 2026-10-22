@@ -15,7 +15,7 @@ commits at 2024-10-15.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Any, Final
 
 import pytest
@@ -27,19 +27,10 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import IsolationLevel
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
-from parallax.core.execution_lifecycle import (
-    DatabaseCallFinished,
-    DatabaseCallStarted,
-    DatabaseReadCompleted,
-    ExecutionEvent,
-    ExecutionLifecycleHandler,
-    ExecutionLifecycleHandlerError,
-    FlushStarted,
-    RootExecution,
-)
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
+from tests.api._flush_calls import FlushCalls, call_runs
 from tests.api._peer_commit import commit_as_a_peer
 
 _NAMESPACE: Final = "shared.coverage"
@@ -240,44 +231,6 @@ def test_a_serialization_failure_after_a_snapshot_read_is_a_retryable_deadlock(
 # --------------------------------------------------------------------------- #
 # A peer commit between two shared reads.                                     #
 # --------------------------------------------------------------------------- #
-class _Calls:
-    """A Provider recording each Flush's Database Calls — ``read`` with the
-    rows it returned, or ``write`` — beside ``interleaving``'s handler."""
-
-    def __init__(self, interleaving: AfterCoverageRead) -> None:
-        self._interleaving = interleaving
-        self.flushes: list[list[tuple[str, int | None]]] = []
-
-    def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None:
-        return _Recording(self, self._interleaving.open(execution))
-
-    def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
-        self._interleaving.report_handler_error(error)
-
-
-class _Recording:
-    def __init__(self, calls: _Calls, inner: ExecutionLifecycleHandler | None) -> None:
-        self._calls = calls
-        self._inner = inner
-        self._started: dict[int, str] = {}
-
-    def handle(self, event: ExecutionEvent, /) -> None:
-        if isinstance(event, FlushStarted):
-            self._calls.flushes.append([])
-        elif isinstance(event, DatabaseCallStarted) and self._calls.flushes:
-            self._started[event.activity_id] = event.kind
-        elif isinstance(event, DatabaseCallFinished) and event.activity_id in self._started:
-            kind = self._started.pop(event.activity_id)
-            rows = (
-                event.outcome.returned_rows
-                if isinstance(event.outcome, DatabaseReadCompleted)
-                else None
-            )
-            self._calls.flushes[-1].append((kind, rows))
-        if self._inner is not None:
-            self._inner.handle(event)
-
-
 def _correct_fragmented(attempts: list[int]) -> Any:
     def fn(tx: TxnContext) -> None:
         attempts.append(1)
@@ -290,19 +243,6 @@ def _correct_fragmented(attempts: list[int]) -> Any:
     return fn
 
 
-def _flush_calls(calls: Sequence[tuple[str, int | None]]) -> list[tuple[str, int | None]]:
-    """``calls`` with each run of writes as one ``("write", count)``."""
-    runs: list[tuple[str, int | None]] = []
-    for kind, rows in calls:
-        if kind == "write" and runs and runs[-1][0] == "write":
-            count = runs[-1][1]
-            assert count is not None
-            runs[-1] = ("write", count + 1)
-        else:
-            runs.append((kind, 1 if kind == "write" else rows))
-    return runs
-
-
 @pytest.mark.parametrize(
     ("isolation", "attempted"), [("read_committed", 1), ("repeatable_read", 2)]
 )
@@ -312,19 +252,19 @@ def test_a_peer_commit_between_two_shared_reads_is_the_later_reads_to_observe(
     _seeded(profile_run, fragmented=True)
     # 65 finds read the table first, so the 66th read is the span's first.
     interleaving = AfterCoverageRead("share_span", _peer_change(profile_run), nth=66)
-    calls = _Calls(interleaving)
+    calls = FlushCalls(interleaving)
     attempts: list[int] = []
     _db(profile_run, _AT, calls).transact(_correct_fragmented(attempts), isolation=isolation)
     assert interleaving.failures == []
     assert len(attempts) == attempted
     # The first read finishes object 4, which completes before the second
     # read reads object 2.
-    first = next(flush for flush in calls.flushes if flush)
+    first = next(flush for flush in calls.flushes if flush.calls)
     expected = [("read", 64), ("write", 130), ("read", 1), ("write", 3)]
     if isolation == "repeatable_read":
-        assert _flush_calls(first)[:3] == expected[:3]
+        assert call_runs(first.calls)[:3] == expected[:3]
     else:
-        assert _flush_calls(first) == expected
+        assert call_runs(first.calls) == expected
     assert _rows(profile_run, 4) == _fragmented_history()
     assert _rows(profile_run, 2) == _corrected(2, tail=300, peer=True)
     assert _rows(profile_run, 3) == _UNCHANGED

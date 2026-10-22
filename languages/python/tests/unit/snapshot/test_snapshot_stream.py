@@ -419,14 +419,33 @@ def test_a_batch_size_that_is_not_a_positive_int_is_refused_at_the_call(size: ob
     assert _reads(port) == []
 
 
-def test_the_default_page_size_is_one_thousand_root_positions() -> None:
+def _delivered_ids(db: ScopedDatabase, namespace: str, **size: int) -> list[int]:
+    if namespace == "typed":
+        with db.stream(_all_orders(), **size) as roots:
+            return [root.id for root in roots]
+    with db.wire.stream(_all_orders(), **size) as rows:
+        return [cast("int", _entity(row)["id"]) for row in rows]
+
+
+@pytest.mark.parametrize("namespace", ["typed", "wire"])
+def test_the_default_page_delivers_1024_root_positions_and_asks_for_one_more(
+    namespace: str,
+) -> None:
     # The default counts ROOT POSITIONS a page delivers, and the statement asks
     # for one more than that: the extra root is what proves whether a further
-    # page exists, and it is never delivered.
-    port = ScriptedAdapter(Read(rows=[_order_row(1)]))
-    with _orders(port).stream(_all_orders()) as stream:
-        list(stream)
-    assert _reads(port)[0].binds[-1] == 1001
+    # page exists, and it is never delivered by that page.
+    rows = [_order_row(order_id) for order_id in range(1, 1026)]
+    port = ScriptedAdapter(*paged_reads(rows, size=1024))
+    assert _delivered_ids(_orders(port), namespace) == list(range(1, 1026))
+    assert [read.binds[-1] for read in _reads(port)] == [1025, 1025]
+
+
+@pytest.mark.parametrize("namespace", ["typed", "wire"])
+def test_an_explicit_page_size_still_governs_delivery_and_lookahead(namespace: str) -> None:
+    rows = [_order_row(order_id) for order_id in range(1, 1026)]
+    port = ScriptedAdapter(*paged_reads(rows, size=1000))
+    assert _delivered_ids(_orders(port), namespace, batch_size=1000) == list(range(1, 1026))
+    assert [read.binds[-1] for read in _reads(port)] == [1001, 1001]
 
 
 # --------------------------------------------------------------------------- #

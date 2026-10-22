@@ -192,7 +192,7 @@ reading `pin` / `edition` outside the entered scope raises
 the checked iterator returns their records. There are no arity accessors or
 whole-stream projection.
 
-`batch_size` defaults to 1000 and requires a positive exact built-in integer;
+`batch_size` defaults to 1024 and requires a positive exact built-in integer;
 it counts root positions. It is a per-call option only. Core determines page
 stability and continuation ordering. A non-total continuation raises
 `StreamContinuationError` with code

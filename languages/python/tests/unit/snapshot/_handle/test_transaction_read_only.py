@@ -34,6 +34,7 @@ from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import BeginCall, CommitCall, Read, ReadCall, ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root
+from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import (
     ACCOUNT,
     FIND_SQL_UNLOCKED,
@@ -129,6 +130,24 @@ def test_a_stream_that_escapes_its_read_only_attempt_reads_no_page() -> None:
     with pytest.raises(EscapedTransactionError), escaped as stream:
         next(iter(stream))
     assert [type(call) for call in port.calls] == [BeginCall, CommitCall]
+
+
+@pytest.mark.parametrize("namespace", ["typed", "wire"])
+def test_a_read_only_stream_delivers_1024_roots_per_default_page(namespace: str) -> None:
+    rows = [{**NEW_ROW, "id": account_id} for account_id in range(1, 1026)]
+    port = ScriptedAdapter(Transact(*paged_reads(rows, size=1024)))
+    query = mm.Account.where(mm.Account.id >= 1)
+
+    def read(rtx: ReadOnlyTxnContext) -> list[object]:
+        if namespace == "typed":
+            with rtx.stream(query) as roots:
+                return [root.id for root in roots]
+        with rtx.wire.stream(query) as nodes:
+            return [node["id"] for node in nodes]
+
+    assert account_db(port).read_only(read) == list(range(1, 1026))
+    reads = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert [call.binds[-1] for call in reads] == [1025, 1025]
 
 
 def test_a_failed_read_only_join_refuses_the_commit() -> None:

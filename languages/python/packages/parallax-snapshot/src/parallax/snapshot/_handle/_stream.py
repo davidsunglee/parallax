@@ -21,7 +21,9 @@ from parallax.snapshot._publication import _wire as wire_materialize
 from parallax.snapshot._publication._wire import EntityReader, WireEntity, WireWalk
 from parallax.snapshot._publication._wire_memo import WeakIdentityMemo
 
-__all__ = ["SnapshotStream", "StreamExecution"]
+__all__ = ["DEFAULT_BATCH_SIZE", "SnapshotStream", "StreamExecution"]
+
+DEFAULT_BATCH_SIZE: Final = 1024
 
 
 class _PageWireEncoder(Protocol):

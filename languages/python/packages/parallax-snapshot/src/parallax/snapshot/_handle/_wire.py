@@ -11,7 +11,7 @@ from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, T
 from parallax.core.object_query import ObjectQueryNode, deserialize
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
 from parallax.snapshot._handle._read import Snapshot, wire_publication_for
-from parallax.snapshot._handle._stream import SnapshotStream
+from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._wire_writes import (
     WireChanges,
     WirePredicateTarget,
@@ -94,7 +94,9 @@ class WireDatabaseView:
             query, convert_query=wire_read_query, build_publication=wire_publication_for
         )
 
-    def stream(self, query: WireQuery, *, batch_size: int = 1000) -> SnapshotStream[WireEntity]:
+    def stream(
+        self, query: WireQuery, *, batch_size: int = DEFAULT_BATCH_SIZE
+    ) -> SnapshotStream[WireEntity]:
         """Deliver ``query``'s roots one at a time, in the Continuation Order,
         as the scope-bound single-pass peer of :meth:`find`.
 

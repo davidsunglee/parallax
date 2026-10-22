@@ -23,7 +23,7 @@ from parallax.core.read_delivery._read_plan import (
 )
 from parallax.snapshot._handle._errors import SnapshotConnectionError
 from parallax.snapshot._handle._read import Snapshot, typed_publication_for
-from parallax.snapshot._handle._stream import SnapshotStream
+from parallax.snapshot._handle._stream import DEFAULT_BATCH_SIZE, SnapshotStream
 from parallax.snapshot._handle._transaction import (
     ReadOnlyTxnContext,
     TxnContext,
@@ -101,7 +101,9 @@ class ScopedDatabase:
             ),
         )
 
-    def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
+    def stream[S](
+        self, query: ObjectQuery[Any, S], *, batch_size: int = DEFAULT_BATCH_SIZE
+    ) -> SnapshotStream[S]:
         return SnapshotStream(
             self._execution,
             query,
