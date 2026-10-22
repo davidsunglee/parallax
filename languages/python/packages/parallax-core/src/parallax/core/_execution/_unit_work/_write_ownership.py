@@ -224,7 +224,7 @@ class _Contribution:
         self.coverage = coverage
 
 
-class _OriginalLineage:
+class _OriginLineage:
     """The surviving parts of current rows one origin's observed state
     contributed, in Valid-Time order.
 
@@ -279,14 +279,14 @@ class _Origin(weakref.ref[RetainedObservation]):
     __slots__ = ("key", "lineage")
 
     key: int
-    lineage: _OriginalLineage
+    lineage: _OriginLineage
 
     def __new__(
         cls, observation: RetainedObservation, callback: Callable[[_Origin], object]
     ) -> _Origin:
         origin = super().__new__(cls, observation, callback)
         origin.key = id(observation)
-        origin.lineage = _OriginalLineage()
+        origin.lineage = _OriginLineage()
         return origin
 
     def __init__(
@@ -296,7 +296,7 @@ class _Origin(weakref.ref[RetainedObservation]):
         del observation, callback
 
 
-class _CurrentRows:
+class _HeldCurrentRows:
     """The current rows of one object the attempt's completed writes produced
     and still hold for some source's continuation, in Valid-Time order: each
     at its coordinates, over its Valid Time, with its complete state.
@@ -449,7 +449,7 @@ class WriteOwnership:
         # completion is changing them is pruned once that completion is done.
         self._origins: dict[int, _Origin] = {}
         self._contributions: dict[TemporalRowCoordinates, list[_Contribution]] = {}
-        self._current_rows: dict[_ObjectAddress, _CurrentRows] = {}
+        self._current_rows: dict[_ObjectAddress, _HeldCurrentRows] = {}
         self._updating = False
         self._pending_prunes: list[_Origin] = []
         self._release = _Release(self)
@@ -716,7 +716,7 @@ class WriteOwnership:
                     record.identity = None
             if derived:
                 self._derive(derived, sources)
-            self._adopt(captured)
+            self._adopt_captured_rows(captured)
         finally:
             self._updating = False
             self._drain_prunes()
@@ -774,7 +774,9 @@ class WriteOwnership:
                 held.append(contribution)
                 origin.lineage.add(contribution)
 
-    def _adopt(self, captured: Iterable[tuple[CurrentRowOutput, object | None]]) -> None:
+    def _adopt_captured_rows(
+        self, captured: Iterable[tuple[CurrentRowOutput, object | None]]
+    ) -> None:
         """Hold each captured row some origin's part still reaches, at its
         coordinates, as the complete state its execution persisted."""
         contributions = self._contributions
@@ -789,7 +791,7 @@ class WriteOwnership:
             address = (coordinates.entity, coordinates.key)
             rows = self._current_rows.get(address)
             if rows is None:
-                rows = self._current_rows[address] = _CurrentRows()
+                rows = self._current_rows[address] = _HeldCurrentRows()
             rows.put(
                 coordinates,
                 output.valid_time_coverage,

@@ -771,7 +771,7 @@ detects a lost update are **separate** facts (ADR 0046). The **Milestone Target*
 (`m-write-plan`) is the address: the primary key together with one write-required
 exclusive upper bound **per As-Of Axis** — the observed predecessor's Valid-Time
 end, and the invariant Transaction-Time `Infinity` that keeps an operational close
-on the **current** rectangle. It carries no axis **start**, no Write Observation,
+on the **current** rectangle. It carries no axis **start**, no State Observation,
 no gate, and no Effective Concurrency Strategy, and the planner derives it
 **identically under both strategies**. Two axes are exactly why the Valid-Time end is required: a key
 plus the current Transaction-Time bound may still select several disjoint current

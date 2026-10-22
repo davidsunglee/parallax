@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Edge, TemporalShape, milestone_edge
-from parallax.core.write_plan.observe import TemporalObservation, WriteObservation
+from parallax.core.write_plan.observe import StateObservation, TemporalObservation
 
 __all__ = [
     "ObjectKey",
@@ -66,7 +66,7 @@ class TemporalObjectStateKey:
 
 
 type ObjectStateKey = VersionedObjectStateKey | TemporalObjectStateKey
-"""What one Write Observation is evidence ABOUT: one exact observed state.
+"""What one State Observation is evidence ABOUT: one exact observed state.
 
 Closed and structural. An insert and an unversioned Non-Temporal write observe
 no state and therefore have no Object State Key at all — the absence is the
@@ -75,7 +75,7 @@ missing arm, never a key with an empty coordinate.
 
 
 def object_state_key_from_observation(
-    object_key: ObjectKey, observation: WriteObservation, shape: TemporalShape
+    object_key: ObjectKey, observation: StateObservation, shape: TemporalShape
 ) -> ObjectStateKey:
     """The exact state ``observation`` is evidence about: ``object_key``
     qualified by the coordinate the observation itself carries.

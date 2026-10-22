@@ -719,9 +719,12 @@ class TxnAttempt(_TxnAttemptBase):
         consumer: RowConsumer[Request, Result],
     ) -> Result:
         """Execute ``compiled`` as one flat Page and run ``consumer`` over its
-        judged member rows, releasing the Page however the consumer left it —
-        before starting the rows, part way through them, or by raising. A
-        retaining target read's rows have only their Attributes judged."""
+        judged member rows, releasing the Page and dropping this reader's own
+        references to its staging, rows, and raw documents however the
+        consumer left it — before starting the rows, part way through them, or
+        by raising, whose failure keeps its traceback. What the consumer
+        returned keeps what it adopted. A retaining target read's rows have
+        only their Attributes judged."""
         model = self._write.model
         connection = self._connection
         layout = entity_layout(model.meta, request.entity)
@@ -750,6 +753,7 @@ class TxnAttempt(_TxnAttemptBase):
         finally:
             rows.close()
             release_page_rows(page)
+            del stage, page, rows
 
     def _target_read(self, request: TargetReadRequest) -> CompiledRead:
         """The point read of the row a target write starts from: the

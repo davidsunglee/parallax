@@ -139,9 +139,12 @@ def consume_target(
     one beside the raw document it was read with: no other root is judged, so
     a read returning several is decided by its count alone."""
     del request, selection, absent
-    if root_count != 1:
-        return root_count, None, None
-    return root_count, next(rows), None if documents is None else documents[0]
+    try:
+        if root_count != 1:
+            return root_count, None, None
+        return root_count, next(rows), None if documents is None else documents[0]
+    finally:
+        del rows, documents
 
 
 def consume_coverage(
@@ -153,7 +156,10 @@ def consume_coverage(
     root_count: int,
 ) -> PredecessorRows | None:
     """Every current row the coverage read returned, or the completion
-    completed, as complete Predecessor Rows, or ``None`` where there was none."""
+    completed, as complete Predecessor Rows, or ``None`` where there was none.
+
+    However it leaves, it drops the builder and its borrowed row and document
+    references; only the returned evidence keeps what it adopted."""
     del root_count
     evidence = PredecessorRowsBuilder(
         selection,
@@ -161,6 +167,10 @@ def consume_coverage(
         absent=absent,
         documents=documents is not None,
     )
-    for position, row in enumerate(rows):
-        evidence.append(row, None if documents is None else documents[position])
-    return evidence.seal()
+    row: tuple[object, ...] | None = None
+    try:
+        for position, row in enumerate(rows):
+            evidence.append(row, None if documents is None else documents[position])
+        return evidence.seal()
+    finally:
+        del evidence, rows, documents, row

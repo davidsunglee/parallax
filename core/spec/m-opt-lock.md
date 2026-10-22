@@ -160,7 +160,7 @@ that names a versioned target's Attribute.
 - The **advanced** version (`observed + 1`) and the close's Transaction-Time end
   are **assignments**, not gate members. A gate answers "which extra equality
   must hold", never "what does this write set".
-- A gate repeats **neither** the full Write Observation **nor** the transaction's
+- A gate repeats **neither** the full State Observation **nor** the transaction's
   Concurrency Preference or the Entity's Effective Concurrency Strategy. Those
   are consumed while planning: the effective strategy selects
   `VersionGate` / `TemporalGate` or `Ungated`, and the observation supplies the
@@ -181,7 +181,7 @@ ungated write is licensed by the **shared read lock** the observing read took â€
 that lock on exactly the row it closes, because the two derive from one value:
 the write's address is the milestone its own written value came from, and the
 observation the address comes from is the record of the read that locked that
-milestone (`m-write-plan` *Write Observation*). There is no separate license to
+milestone (`m-write-plan` *State Observation*). There is no separate license to
 check. A write whose value names a milestone the current unit of work never
 observed is already refused under **both** strategies, because only a read of
 the current attempt admits a source write (`m-unit-work` *Current-attempt source

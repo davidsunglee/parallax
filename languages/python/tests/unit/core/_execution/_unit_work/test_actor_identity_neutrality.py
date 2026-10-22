@@ -36,9 +36,9 @@ from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
     ObjectKey,
     PredecessorRow,
+    StateObservation,
     TemporalObservation,
     VersionObservation,
-    WriteObservation,
     WritePlan,
 )
 from tests._support.clock_probes import inert_instant, instant_at
@@ -85,7 +85,7 @@ def _assert_neutral(
     buffer: list[AdmittedWrite | KeyedWriteInstruction],
     model: Metamodel,
     *,
-    observations: dict[ObjectKey, WriteObservation] | None = None,
+    observations: dict[ObjectKey, StateObservation] | None = None,
     concurrency: Concurrency = "locking",
     tx_instant_literal: str | None = None,
 ) -> None:

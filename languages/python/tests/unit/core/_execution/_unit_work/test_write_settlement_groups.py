@@ -26,9 +26,9 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import (
     ObjectKey,
     PredecessorRow,
+    StateObservation,
     TemporalObservation,
     VersionObservation,
-    WriteObservation,
     WritePlan,
 )
 from parallax.core.write_plan.steps import (
@@ -89,7 +89,7 @@ def _finalize(
 def _plan(
     buffer: Sequence[KeyedWriteInstruction],
     model: Metamodel,
-    observations: Mapping[ObjectKey, WriteObservation] | None = None,
+    observations: Mapping[ObjectKey, StateObservation] | None = None,
     *,
     concurrency: Concurrency = "optimistic",
     instant: TransactionInstant = _INSTANT,
@@ -130,7 +130,7 @@ def _kinds(steps: Sequence[PlannedStep]) -> list[str]:
     return ["insert" if isinstance(step, PlannedInsert) else "effect" for step in steps]
 
 
-def _balance_observation(key: int, value: str = "1.00") -> WriteObservation:
+def _balance_observation(key: int, value: str = "1.00") -> StateObservation:
     return TemporalObservation(
         predecessor=PredecessorRow(
             members={
@@ -144,7 +144,7 @@ def _balance_observation(key: int, value: str = "1.00") -> WriteObservation:
     )
 
 
-def _position_observation(key: int) -> WriteObservation:
+def _position_observation(key: int) -> StateObservation:
     return TemporalObservation(
         predecessor=PredecessorRow(
             members={
@@ -163,9 +163,9 @@ def _position_observation(key: int) -> WriteObservation:
 def _observed(
     model: Metamodel,
     buffer: Sequence[KeyedWriteInstruction],
-    observe: Callable[[int], WriteObservation],
-) -> dict[ObjectKey, WriteObservation]:
-    observations: dict[ObjectKey, WriteObservation] = {}
+    observe: Callable[[int], StateObservation],
+) -> dict[ObjectKey, StateObservation]:
+    observations: dict[ObjectKey, StateObservation] = {}
     for instruction in buffer:
         key = object_key(instruction, model)
         assert key is not None

@@ -36,7 +36,7 @@ from parallax.core.metamodel import EntityMetadata
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform, Successor
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
-from parallax.core.write_plan.observe import WriteObservation
+from parallax.core.write_plan.observe import StateObservation
 
 __all__ = [
     "AdmittedWrite",
@@ -106,13 +106,13 @@ class ObservedKeyedWrite:
             raise ValueError(_REQUIRES_RETAINED_OBSERVATION)
         if self.instruction.mutation in INSERT_MUTATIONS:
             raise ValueError(
-                f"an insert carries no Write Observation: `{self.instruction.mutation}` on "
+                f"an insert carries no State Observation: `{self.instruction.mutation}` on "
                 f"{self.instruction.target.identity.canonical!r} buffers bare "
                 "(m-unit-work: absence is structural)"
             )
         if len(self.instruction.rows) != 1:
             raise ValueError(
-                "a Write Observation is evidence about one row: "
+                "a State Observation is evidence about one row: "
                 f"`{self.instruction.mutation}` on "
                 f"{self.instruction.target.identity.canonical!r} addresses "
                 f"{len(self.instruction.rows)} rows (m-unit-work: each observed version "
@@ -120,7 +120,7 @@ class ObservedKeyedWrite:
             )
 
     @property
-    def observation(self) -> WriteObservation:
+    def observation(self) -> StateObservation:
         return self.retained_observation.evidence
 
     @property
@@ -330,7 +330,7 @@ class TemporalContribution:
     source_evidence: tuple[ReadEvidence, ...] = field(default=(), compare=False)
 
     @property
-    def observation(self) -> WriteObservation | None:
+    def observation(self) -> StateObservation | None:
         retained = self.retained_observation
         return None if retained is None else retained.evidence
 

@@ -7,7 +7,7 @@ from parallax.core import opt_lock
 from parallax.core._execution._unit_work.strategy import VersionArithmetic
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.write_plan import WriteObservation
+from parallax.core.write_plan import StateObservation
 
 __all__ = ["CONCURRENCY"]
 
@@ -44,7 +44,7 @@ class _ConcurrencyAdapter:
     def version_arithmetic(self) -> VersionArithmetic:
         return _VERSION_ARITHMETIC
 
-    def require_version(self, entity: EntityIdentity, observation: WriteObservation | None) -> int:
+    def require_version(self, entity: EntityIdentity, observation: StateObservation | None) -> int:
         return opt_lock.require_observed(entity.name, observation)
 
     def reject_authored_version(self, entity: EntityIdentity, attribute: AttributeIdentity) -> None:

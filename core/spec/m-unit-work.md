@@ -6,7 +6,7 @@ read-correctness rules that make that attempt's reads safe. It is expressed enti
 and object state** (`m-predicate`): it depends on `m-predicate`, on `m-wire` for
 serialized write-literal conversion, on the execution port `m-db-port`, on
 `m-temporal-read` for the coverage it judges, on `m-write-plan` for the Planned
-Step algebra it produces and the Write Observations it carries, on
+Step algebra it produces and the State Observations it carries, on
 `m-temporal-write` for the temporal expansion it drives, and on `m-edit`, which distinguishes authored assignments from state carried by
 derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
@@ -342,7 +342,7 @@ one a writable attempt's read published.
 attempt** attaches beside that provenance. It records the concrete Entity, Object
 Key, source Pin, read participation, and retained observation when one exists.
 Read Evidence is an implementation-private selector for evidence; it is not
-itself a Write Observation, a lock, a database gate, or write authority, and a
+itself a State Observation, a lock, a database gate, or write authority, and a
 value carrying it must still satisfy the Effective Concurrency Strategy's
 evidence rule. A standalone read and a read-only transaction attach none: they
 collect no observation, participation, predecessor row, or raw document for a
@@ -1102,11 +1102,11 @@ Each shared statement is one read Database Call of the enclosing flush; the
 flush adds no activity, call, or record per span or per write for it
 (`m-execution-lifecycle`).
 
-## Planned Steps and Write Observations
+## Planned Steps and State Observations
 
 `m-write-plan` owns the Planned Step algebra — Row Origin and Close Cause,
 planned rows and assignments, the Write Target, the Write Gate and its
-concurrency decision, and the Affected Rows Policy — and the Write Observation
+concurrency decision, and the Affected Rows Policy — and the State Observation
 vocabulary: the Object Key and Object State Key that address evidence, and
 the Predecessor Row a Temporal Observation retains. This module settles
 buffered writes into that algebra, carries each observation to the write it
@@ -1576,7 +1576,7 @@ captured by the invoking Execution Scope (`m-execution-authority`): either the
 stable, nonempty, opaque application Subject Identity or the actual nonempty
 Database Login Identity. It is a **required** planning input and the first field
 of the planning request. Its value type is owned by this module, exactly as the
-Write Observation vocabulary is, so a planning request is well-typed before any
+State Observation vocabulary is, so a planning request is well-typed before any
 provenance behavior exists.
 
 An **audit-neutral** plan makes no use of it. Until provenance decoration is

@@ -22,6 +22,7 @@ from parallax.core._execution._unit_work.acquisition import (
     CompletionRequest,
     CoverageReadRequest,
     CoverageTerm,
+    RowConsumer,
     TargetReadRequest,
     consume_target,
 )
@@ -65,6 +66,7 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests.unit.core._execution._execution_support import ACCOUNT, account_insert, itself, scope
+from tests.unit.core._execution._reach_support import frames, reaches
 
 _META: Final = model_of(ACCOUNT)
 _BALANCE: Final = MODELS["balance"]
@@ -297,6 +299,72 @@ def test_the_read_is_settled_however_its_consumer_leaves(
     (outcome,) = _read_outcomes(recorder.roots[-1].events)
     assert isinstance(outcome, ReadFailed if answer is None else ReadCompleted)
     assert isinstance(port.calls[-1], CommitCall)
+
+
+def _ledger_request() -> TargetReadRequest:
+    target = _ledger_patch().target
+    return TargetReadRequest(target, ObjectKey(target.identity, (("id", 1),)), None)
+
+
+def _halting(
+    after: int, handed: list[Sequence[object | None] | None]
+) -> RowConsumer[TargetReadRequest, int]:
+    """A consumer recording the raw documents it is handed, then raising
+    after ``after`` rows."""
+
+    def consume(
+        request: TargetReadRequest,
+        selection: EntityMemberSelection,
+        rows: Iterator[tuple[object, ...]],
+        absent: object,
+        documents: Sequence[object | None] | None,
+        root_count: int,
+    ) -> int:
+        del request, selection, absent, root_count
+        handed.append(documents)
+        for _ in range(after):
+            next(rows)
+        raise _Refused
+
+    return consume
+
+
+@pytest.mark.parametrize("after", [0, 1], ids=["before-the-rows", "part-way"])
+def test_a_failed_consumer_leaves_the_reader_holding_none_of_the_reads_documents(
+    after: int,
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_ledger(), _ledger()])))
+    failures: list[_Refused] = []
+    handed: list[Sequence[object | None] | None] = []
+
+    def fn(tx: TxnAttempt) -> None:
+        try:
+            tx.uow.acquire_rows(_ledger_request(), _halting(after, handed))
+        except _Refused as failure:
+            failures.append(failure)
+
+    scope(port, _LEDGER).transact(fn, itself, concurrency="locking")
+    (failure,) = failures
+    (documents,) = handed
+    assert documents is not None and len(documents) == 2
+    # The failure keeps its traceback, through the reader's own frames.
+    reader = frames(failure.__traceback__, module=attempt_module.__file__)
+    assert reader
+    assert not reaches(reader, documents)
+
+
+def test_what_a_consumer_answers_keeps_the_document_it_adopted_once_the_reader_let_go() -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_ledger()])))
+    answers: list[tuple[int, tuple[object, ...] | None, object | None]] = []
+    scope(port, _LEDGER).transact(
+        lambda tx: answers.append(tx.uow.acquire_rows(_ledger_request(), consume_target)),
+        itself,
+        concurrency="locking",
+    )
+    ((count, row, document),) = answers
+    assert count == 1
+    assert row is not None
+    assert document == {"label": "A", "balance": "1.00", "details": {"code": "x"}}
 
 
 def test_a_coverage_read_is_a_read_call_of_the_flush_reaching_its_range() -> None:

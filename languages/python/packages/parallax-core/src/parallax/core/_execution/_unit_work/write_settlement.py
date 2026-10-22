@@ -62,7 +62,7 @@ from parallax.core.write_plan.keys import (
     ObjectStateKey,
     VersionedObjectStateKey,
 )
-from parallax.core.write_plan.observe import TemporalObservation, WriteObservation
+from parallax.core.write_plan.observe import StateObservation, TemporalObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -319,7 +319,7 @@ class WritePlanCompiler:
         audit: AuditDecoration,
     ) -> BoundRange:
         """One ordered keyed write's settled steps and completion."""
-        observation: WriteObservation | None = None
+        observation: StateObservation | None = None
         scope: ObjectStateKey | ObjectKey | None = None
         if isinstance(item, PreparedKeyedWrite):
             instruction = item
@@ -347,7 +347,7 @@ class WritePlanCompiler:
     def _settle(
         self,
         instruction: PreparedKeyedWrite,
-        observation: WriteObservation | None,
+        observation: StateObservation | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
         shape: TemporalShape | None,
@@ -653,7 +653,7 @@ class WritePlanCompiler:
         entity: EntityMetadata,
         instruction: PreparedKeyedWrite,
         version_attr: AttributeIdentity | None,
-        observation: WriteObservation | None,
+        observation: StateObservation | None,
     ) -> int | None:
         """The version an addressed write against a versioned row advances
         from, or ``None`` for an unversioned target.
@@ -812,7 +812,7 @@ def _decorated(audit: AuditDecoration, step: PlannedStep) -> PlannedStep:
 
 
 def _require_unobserved(
-    entity: EntityMetadata, mutation: str, observation: WriteObservation | None
+    entity: EntityMetadata, mutation: str, observation: StateObservation | None
 ) -> None:
     """Refuse ``observation`` when the target it arrived for is entitled to none.
 

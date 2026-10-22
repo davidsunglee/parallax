@@ -193,7 +193,7 @@ only at entry. A standalone read leases a connection for its read, and a
 standalone stream for each page (`m-read-delivery` *The connection a delivery
 holds*); a read inside an Attempt runs on the Attempt's connection.
 
-Execution retains each eligible Page's write observations, so that a published
+Execution retains each eligible Page's state observations, so that a published
 value can later serve as a write source (`m-unit-work` *Write value provenance*).
 It records projections while the Page is converted and constructs the origins
 lazily once the Page is sealed, handing them to the Publication by reference

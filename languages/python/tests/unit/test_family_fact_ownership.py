@@ -62,9 +62,9 @@ from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
     ObjectKey,
     PredecessorRow,
+    StateObservation,
     TemporalObservation,
     VersionObservation,
-    WriteObservation,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from parallax.core.write_plan.steps import (
@@ -268,7 +268,7 @@ def _temporal_writes() -> list[OrderedWrite]:
         (rate_update, {"id": 2, "amount": Decimal("1"), "grade": "A", **_BITEMPORAL}),
         (balance_terminate, {"id": 3, "acctNum": "B", "value": Decimal("1"), **_TRANSACTION_TIME}),
     ]
-    observations: dict[ObjectKey, WriteObservation] = {}
+    observations: dict[ObjectKey, StateObservation] = {}
     for write, members in predecessors:
         key = object_key(write, _TEMPORAL_MODEL)
         assert key is not None

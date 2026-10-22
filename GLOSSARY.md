@@ -32,7 +32,7 @@ contract owners; this index does not add requirements.
 | Mutation Phase | A region's inserts, its updates, or its deletes in flush order; no Write Group spans two | [Unit of work](core/spec/m-unit-work.md) |
 | Planned Step | One finalized semantic execution step, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |
 | Object Key / Object State Key | A logical object across its states versus one version or temporal milestone of that object | [Write plan](core/spec/m-write-plan.md) |
-| Write Observation / Predecessor Row | The evidence a write against existing state retains, and the complete observed row a temporal one carries | [Write plan](core/spec/m-write-plan.md) |
+| State Observation / Predecessor Row | The evidence a write against existing state retains, and the complete observed row a temporal one carries | [Write plan](core/spec/m-write-plan.md) |
 | Write Row / executed assignments | One represented row before its realization is chosen, and the members it states explicitly rather than carries | [Write plan](core/spec/m-write-plan.md) |
 | Write payload | What a planned step persists, prepared once and rendered by SQL lowering | [Write payload](core/spec/m-write-payload.md) |
 | Predecessor / Successor | An existing milestone a temporal write acts on, versus a row derived from exactly one predecessor over part of its coverage | [Temporal writes](core/spec/m-temporal-write.md) |

@@ -15,7 +15,7 @@ from parallax.core.metamodel import (
     Metamodel,
 )
 from parallax.core.write_plan.keys import ObjectKey
-from parallax.core.write_plan.observe import WriteObservation
+from parallax.core.write_plan.observe import StateObservation
 from parallax.core.write_plan.planned_rows import WritePlanningError
 from parallax.core.write_plan.steps import (
     PlannedAssignments,
@@ -175,7 +175,7 @@ class ConcurrencyStrategy(Protocol):
     def version_arithmetic(self) -> VersionArithmetic: ...
 
     def require_version(
-        self, entity: EntityIdentity, observation: WriteObservation | None
+        self, entity: EntityIdentity, observation: StateObservation | None
     ) -> int: ...
 
     def reject_authored_version(

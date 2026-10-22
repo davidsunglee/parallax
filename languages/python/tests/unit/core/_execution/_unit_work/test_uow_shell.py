@@ -368,7 +368,7 @@ def test_an_insert_refuses_to_carry_a_write_observation() -> None:
     # unwrapping it, opening-row canonicalization treats every carrier as a
     # revising write, and insert batching excludes carriers — so an insert that
     # reached planning wearing evidence would corrupt each in turn.
-    with pytest.raises(ValueError, match="an insert carries no Write Observation"):
+    with pytest.raises(ValueError, match="an insert carries no State Observation"):
         ObservedKeyedWrite(
             instruction=_prepared_keyed(
                 KeyedWriteInstruction(

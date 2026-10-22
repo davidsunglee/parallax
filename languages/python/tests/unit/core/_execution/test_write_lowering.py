@@ -108,8 +108,8 @@ from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
     ObjectKey,
     PlannedInsert,
+    StateObservation,
     VersionObservation,
-    WriteObservation,
     WritePlanningError,
 )
 from parallax.core.write_plan.payload import (
@@ -175,7 +175,7 @@ def _lower(
     instruction: WriteInstruction,
     model: Metamodel,
     *,
-    observation: WriteObservation | None = None,
+    observation: StateObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
 ) -> list[LoweredStatement]:
@@ -187,7 +187,7 @@ def _flush_and_lower(
     model: Metamodel,
     *,
     concurrency: Concurrency = "locking",
-    observations: Mapping[ObjectKey, WriteObservation] | None = None,
+    observations: Mapping[ObjectKey, StateObservation] | None = None,
 ) -> list[LoweredStatement]:
     instant = inert_instant()
     plan = build_write_planner(model).finalize(
@@ -1132,7 +1132,7 @@ def _finalize(
     instruction: WriteInstruction,
     model: Metamodel,
     *,
-    observation: WriteObservation | None = None,
+    observation: StateObservation | None = None,
     concurrency: Concurrency = "locking",
 ) -> tuple[PlannedStep, ...]:
     steps = lower_instruction_steps(
