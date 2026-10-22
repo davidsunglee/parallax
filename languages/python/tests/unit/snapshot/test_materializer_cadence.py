@@ -100,7 +100,15 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
 
     assert page_cadence(stage.page) is observer
     assert (
-        len(_published_rows(stage, meta, CONCURRENCY, bind(model, compiled).row_publisher())) == 2
+        len(
+            _published_rows(
+                stage,
+                meta,
+                CONCURRENCY,
+                bind(model, compiled.result_contract, compiled.projected_documents).row_publisher(),
+            )
+        )
+        == 2
     )
     assert observer.events == [
         ("prepared", 1),
@@ -138,7 +146,12 @@ def test_eager_row_publication_withholds_events_when_a_later_root_fails(
 
     monkeypatch.setattr(_row_lane, "state_for", fail_on_second_root)
     with pytest.raises(RuntimeError, match="later row failed"):
-        _published_rows(stage, meta, CONCURRENCY, bind(model, compiled).row_publisher())
+        _published_rows(
+            stage,
+            meta,
+            CONCURRENCY,
+            bind(model, compiled.result_contract, compiled.projected_documents).row_publisher(),
+        )
 
     assert [event for event in observer.events if event[0] == "root_published"] == []
 

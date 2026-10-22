@@ -86,6 +86,7 @@ from parallax.core.read_delivery import (
     PublishedRow,
     StoredDataIssue,
     _read_plan,
+    _row_converter,
 )
 from parallax.core.read_delivery._delivery import find, find_history
 from parallax.core.read_delivery._fetch import slot_table
@@ -104,8 +105,9 @@ from parallax.core.read_delivery._page_reader import (
     HistoryPageResult,
 )
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanCache, ReadPlanner
+from parallax.core.read_delivery._row_decoding import publication_keys
 from parallax.core.read_delivery._row_lane import find_rows
-from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.sql_gen._inheritance import ResultContract
 from parallax.core.temporal_read import Pin, valid_time_coverage
 from parallax.core.unit_work import ReadEvidence
 from parallax.core.write_plan import ObjectKey
@@ -1258,15 +1260,14 @@ def _row_form(
 
 def _counting_publication_keys(patched: pytest.MonkeyPatch) -> list[tuple[str, str | None]]:
     derived: list[tuple[str, str | None]] = []
-    publication_keys = CompiledRead.publication_keys
 
     def counting(
-        compiled: CompiledRead, resolved: EntityIdentity, variant: str | None
+        contract: ResultContract, resolved: EntityIdentity, variant: str | None
     ) -> tuple[str, ...]:
         derived.append((resolved.name, variant))
-        return publication_keys(compiled, resolved, variant)
+        return publication_keys(contract, resolved, variant)
 
-    patched.setattr(CompiledRead, "publication_keys", counting)
+    patched.setattr(_row_converter, "publication_keys", counting)
     return derived
 
 
@@ -1303,7 +1304,7 @@ def test_a_row_form_page_derives_afresh_without_a_post_bind_layout_lookup(
         del args, kwargs
         raise AssertionError("row publication looked a bound fact up again")
 
-    monkeypatch.setattr(CompiledRead, "attribute_reads", forbidden)
+    monkeypatch.setattr(_row_converter, "member_sources", forbidden)
     monkeypatch.setattr(LayoutCatalog, "entity", forbidden)
     derived = _counting_publication_keys(monkeypatch)
     second = _row_form(ANIMAL, "Animal", stored, cataloged=cataloged, planner=planner)
@@ -1317,7 +1318,7 @@ def test_history_reads_derive_no_row_publication(monkeypatch: pytest.MonkeyPatch
         del args, kwargs
         raise AssertionError("a history read derived a row publication")
 
-    monkeypatch.setattr(CompiledRead, "publication_keys", forbidden)
+    monkeypatch.setattr(_row_converter, "publication_keys", forbidden)
     port = QueuePort(
         [
             [

@@ -57,6 +57,11 @@ from parallax.core.predicate._resolved import (
     deferred_membership,
     managed_comparison,
 )
+from parallax.core.read_delivery._row_decoding import (
+    raw_member,
+    row_coordinates,
+    row_identity_reader,
+)
 from parallax.core.relationship import _compile as relationship_compile
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
@@ -336,16 +341,16 @@ def test_compiled_row_validation_rejects_duplicate_keys_and_wrong_tuple_arity() 
     with pytest.raises(ValueError, match="duplicate result key 'id'"):
         dataclasses.replace(compiled.result_contract, result_keys=("id", "id"))
     with pytest.raises(ValueError, match="does not match row arity"):
-        compiled.row_identity(())
+        row_identity_reader(compiled.result_contract)(())
     with pytest.raises(KeyError, match="missing"):
-        compiled.raw_member_of((), compiled.target, "missing")
+        raw_member(compiled.result_contract, (), compiled.target, "missing")
 
 
 def test_a_read_paging_through_nothing_reads_no_coordinate_off_any_row() -> None:
     compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
     assert compiled.result_contract.coordinate_reads == ()
-    assert compiled.row_coordinates(((), ())) == (None, None)
+    assert row_coordinates(compiled.result_contract, ((), ())) == (None, None)
 
 
 def test_compiled_read_repr_is_exact_and_stable() -> None:
@@ -448,7 +453,7 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
         result_key="payload_hex",
         temporal_end=False,
         encoded=True,
-    ) in compiled.attribute_reads(entity.identity)
+    ) in compiled.result_contract.reads_by_entity.get(entity.identity, ())
 
 
 _MARIADB = dataclasses.replace(POSTGRES, name="mariadb")
@@ -666,7 +671,7 @@ def test_attribute_contracts_align_by_position_with_each_resolvable_layout(
     compiled = compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, name), temporal=temporal)
     assert compiled.result_contract.resolvable
     for identity in compiled.result_contract.resolvable:
-        reads = compiled.attribute_reads(identity)
+        reads = compiled.result_contract.reads_by_entity.get(identity, ())
         if identity not in compiled.resolved_position:
             assert reads == ()
             continue

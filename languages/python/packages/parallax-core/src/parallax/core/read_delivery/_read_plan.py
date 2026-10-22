@@ -505,7 +505,12 @@ def _plan_uncached(
             (index for index, work in enumerate(fetches) if not isinstance(work, EmptyRead)),
         )
         fetch_rows = tuple(
-            bind(model, work.compiled, correlation_members=correlations[index + 1])
+            bind(
+                model,
+                work.compiled.result_contract,
+                work.compiled.projected_documents,
+                correlation_members=correlations[index + 1],
+            )
             if isinstance(work, CompiledTemplate)
             else None
             for index, work in enumerate(fetches)
@@ -530,7 +535,12 @@ def _plan_uncached(
         root,
         None
         if isinstance(root, EmptyRead)
-        else bind(model, root, correlation_members=correlations[0]),
+        else bind(
+            model,
+            root.result_contract,
+            root.projected_documents,
+            correlation_members=correlations[0],
+        ),
         schema,
         correlations,
         fetches,

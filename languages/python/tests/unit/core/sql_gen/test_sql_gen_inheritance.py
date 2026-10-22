@@ -23,6 +23,12 @@ from parallax.core.base import PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity
 from parallax.core.predicate import ModelRejectedError
+from parallax.core.read_delivery._row_decoding import (
+    member_classifier,
+    publication_keys,
+    raw_member,
+    row_identity_reader,
+)
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._inheritance import (
@@ -548,28 +554,31 @@ def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> Non
         "kind": "card",
         "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
     }
-    resolved, variant, _unknown, _document = compiled.row_identity(card)
+    resolved, variant, _unknown, _document = row_identity_reader(compiled.result_contract)(card)
     assert resolved == target(DOCUMENT_LAYOUT, "CardPayment").identity
     assert variant == "CardPayment"
-    assert compiled.publication_keys(resolved, variant) == ("id",)
-    assert compiled.classified_members(resolved) == {"detail", "authorization_code"}
-    assert compiled.raw_member_classifier(resolved, "detail")(
-        compiled.raw_member_of(card, resolved, "detail")
+    assert publication_keys(compiled.result_contract, resolved, variant) == ("id",)
+    assert compiled.result_contract.classified_by_entity.get(resolved, frozenset()) == {
+        "detail",
+        "authorization_code",
+    }
+    assert member_classifier(compiled.result_contract, resolved, "detail")(
+        raw_member(compiled.result_contract, card, resolved, "detail")
     ) == ("visa-4242", ())
-    assert compiled.raw_member_classifier(resolved, "authorization_code")(
-        compiled.raw_member_of(card, resolved, "authorization_code")
+    assert member_classifier(compiled.result_contract, resolved, "authorization_code")(
+        raw_member(compiled.result_contract, card, resolved, "authorization_code")
     ) == ("AUTH-7", ())
 
     cash = {"id": 2, "kind": "cash", "payload": PresentDocument({"detail": "12.50"})}
-    resolved, variant, _unknown, _document = compiled.row_identity(cash)
+    resolved, variant, _unknown, _document = row_identity_reader(compiled.result_contract)(cash)
     assert resolved == target(DOCUMENT_LAYOUT, "CashPayment").identity
     assert variant == "CashPayment"
-    assert compiled.publication_keys(resolved, variant) == ("id",)
-    assert compiled.classified_members(resolved) == {"detail"}
-    assert compiled.raw_member_classifier(resolved, "detail")(
-        compiled.raw_member_of(cash, resolved, "detail")
+    assert publication_keys(compiled.result_contract, resolved, variant) == ("id",)
+    assert compiled.result_contract.classified_by_entity.get(resolved, frozenset()) == {"detail"}
+    assert member_classifier(compiled.result_contract, resolved, "detail")(
+        raw_member(compiled.result_contract, cash, resolved, "detail")
     ) == (Decimal("12.50"), ())
-    _resolved, _variant, unknown, _document = compiled.row_identity(
+    _resolved, _variant, unknown, _document = row_identity_reader(compiled.result_contract)(
         {"id": 3, "kind": "wire", "payload": PresentDocument({"detail": "x"})}
     )
     assert unknown is not None
@@ -585,14 +594,17 @@ def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
         "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
     }
     card = target(DOCUMENT_LAYOUT, "CardPayment").identity
-    assert compiled.row_identity(row)[0] == card
-    assert compiled.publication_keys(card, None) == ("id",)
-    assert compiled.classified_members(card) == {"detail", "authorization_code"}
-    assert compiled.raw_member_classifier(card, "detail")(
-        compiled.raw_member_of(row, card, "detail")
+    assert row_identity_reader(compiled.result_contract)(row)[0] == card
+    assert publication_keys(compiled.result_contract, card, None) == ("id",)
+    assert compiled.result_contract.classified_by_entity.get(card, frozenset()) == {
+        "detail",
+        "authorization_code",
+    }
+    assert member_classifier(compiled.result_contract, card, "detail")(
+        raw_member(compiled.result_contract, row, card, "detail")
     ) == ("visa-4242", ())
-    assert compiled.raw_member_classifier(card, "authorization_code")(
-        compiled.raw_member_of(row, card, "authorization_code")
+    assert member_classifier(compiled.result_contract, card, "authorization_code")(
+        raw_member(compiled.result_contract, row, card, "authorization_code")
     ) == ("AUTH-7", ())
 
 
@@ -605,7 +617,7 @@ def test_tph_concrete_target_names_its_rows_without_reading_a_carrier() -> None:
     compiled = compile_read(oa.TrueNode(), PAYMENT, POSTGRES, target(PAYMENT, "CardPayment"))
     card = target(PAYMENT, "CardPayment").identity
     assert "kind" not in compiled.result_contract.result_keys
-    resolved, variant, unknown, _document = compiled.row_identity(
+    resolved, variant, unknown, _document = row_identity_reader(compiled.result_contract)(
         {"id": 1, "amount": 10, "card_network": "visa"}
     )
     assert (resolved, variant, unknown) == (card, None, None)
@@ -636,7 +648,9 @@ def test_tph_document_family_with_no_resident_members_projects_no_document() -> 
 
     compiled = compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "EmptyRoot"))
     assert compiled.statement.sql == "select t0.id, t0.kind from empty_root t0"
-    resolved, variant, unknown, _document = compiled.row_identity({"id": 1, "kind": "leaf"})
+    resolved, variant, unknown, _document = row_identity_reader(compiled.result_contract)(
+        {"id": 1, "kind": "leaf"}
+    )
     assert (resolved, variant, unknown) == (target(meta, "EmptyLeaf").identity, "EmptyLeaf", None)
 
 
@@ -1139,14 +1153,14 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
         "x": 7,
         "meta": PresentDocument({"note": "tagged"}),
     }
-    resolved, variant, unknown, _document = compiled.row_identity(tagged)
+    resolved, variant, unknown, _document = row_identity_reader(compiled.result_contract)(tagged)
     assert (resolved, variant, unknown) == (target(meta, "Leaf").identity, "Leaf", None)
-    assert compiled.publication_keys(resolved, variant) == ("id", "x", "meta")
-    assert compiled.raw_member_of(tagged, resolved, "x") == 7
-    assert compiled.raw_member_classifier(resolved, "meta")(
-        compiled.raw_member_of(tagged, resolved, "meta")
+    assert publication_keys(compiled.result_contract, resolved, variant) == ("id", "x", "meta")
+    assert raw_member(compiled.result_contract, tagged, resolved, "x") == 7
+    assert member_classifier(compiled.result_contract, resolved, "meta")(
+        raw_member(compiled.result_contract, tagged, resolved, "meta")
     ) == ({"note": "tagged"}, ())
-    resolved, _variant, unknown, _document = compiled.row_identity(
+    resolved, _variant, unknown, _document = row_identity_reader(compiled.result_contract)(
         {
             "id": 2,
             "kind": "unknown",
@@ -1205,12 +1219,16 @@ def test_tpcs_literal_identity_selects_the_direct_value_object_contract() -> Non
         "meta": PresentDocument({"note": "literal"}),
         "family_variant": "First",
     }
-    resolved, variant, unknown, _document = compiled.row_identity(row)
+    resolved, variant, unknown, _document = row_identity_reader(compiled.result_contract)(row)
     assert (resolved, variant, unknown) == (target(meta, "First").identity, "First", None)
-    assert compiled.publication_keys(resolved, variant) == ("id", "payload_hex", "meta")
-    assert compiled.raw_member_of(row, resolved, "payload_hex") == "00ff"
-    assert compiled.raw_member_classifier(resolved, "meta")(
-        compiled.raw_member_of(row, resolved, "meta")
+    assert publication_keys(compiled.result_contract, resolved, variant) == (
+        "id",
+        "payload_hex",
+        "meta",
+    )
+    assert raw_member(compiled.result_contract, row, resolved, "payload_hex") == "00ff"
+    assert member_classifier(compiled.result_contract, resolved, "meta")(
+        raw_member(compiled.result_contract, row, resolved, "meta")
     ) == ({"note": "literal"}, ())
 
 
@@ -1225,13 +1243,17 @@ def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
         POSTGRES,
         target(ANIMAL, "Animal"),
     )
-    dog, dog_variant, dog_unknown, _document = compiled.row_identity({"id": 1, "kind": "dog"})
+    dog, dog_variant, dog_unknown, _document = row_identity_reader(compiled.result_contract)(
+        {"id": 1, "kind": "dog"}
+    )
     assert (dog, dog_variant, dog_unknown) == (target(ANIMAL, "Dog").identity, "Dog", None)
     # The sibling the narrow excluded is named ahead of any row: `resolvable`
     # is the whole tag map plus the family root, so a consumer preparing one
     # structure per Entity a row can carry prepares WildBoar's before the boar
     # row arrives rather than on reaching it.
-    boar, _variant, _unknown, _document = compiled.row_identity({"id": 2, "kind": "boar"})
+    boar, _variant, _unknown, _document = row_identity_reader(compiled.result_contract)(
+        {"id": 2, "kind": "boar"}
+    )
     assert boar in compiled.result_contract.resolvable
     assert set(compiled.result_contract.resolvable) == {
         target(ANIMAL, name).identity for name in ("Animal", "Cat", "Dog", "WildBoar")
@@ -1270,7 +1292,7 @@ def test_a_partially_composed_document_root_read_stays_unpartitioned_and_unfilte
         "select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload "
         "from beast_document t0"
     )
-    resolved, _variant, unknown, _document = compiled.row_identity(
+    resolved, _variant, unknown, _document = row_identity_reader(compiled.result_contract)(
         {"id": 3, "kind": "bear", "leader_id": 1, "payload": PresentDocument({"name": "Bruno"})}
     )
     assert unknown is not None
@@ -1334,15 +1356,15 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
     compiled = compile_read(oa.TrueNode(), partial, POSTGRES, target(partial, "Beast"))
 
     assert compiled.statement.sql == "select t0.id, t0.kind, t0.howl from beast t0"
-    wolf_identity, wolf_variant, wolf_unknown, _document = compiled.row_identity(
-        {"id": 1, "kind": "wolf", "howl": "aooo"}
-    )
+    wolf_identity, wolf_variant, wolf_unknown, _document = row_identity_reader(
+        compiled.result_contract
+    )({"id": 1, "kind": "wolf", "howl": "aooo"})
     assert (wolf_identity, wolf_variant, wolf_unknown) == (
         target(partial, "Wolf").identity,
         "Wolf",
         None,
     )
-    resolved, _variant, unknown, _document = compiled.row_identity(
+    resolved, _variant, unknown, _document = row_identity_reader(compiled.result_contract)(
         {"id": 2, "kind": "bear", "howl": None}
     )
     assert unknown is not None
@@ -1435,15 +1457,17 @@ def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() 
     )
     deck = PresentDocument({"area": "9"})
     row = {"id": 1, "kind": "tug", "berth": PresentDocument({"code": "A1"}), "deck": deck}
-    resolved, _variant, _unknown, _document = compiled.row_identity(row)
+    resolved, _variant, _unknown, _document = row_identity_reader(compiled.result_contract)(row)
     assert resolved == target(meta, "Tug").identity
-    assert compiled.classified_members(resolved) == frozenset({"berth"})
-    assert compiled.raw_member_classifier(resolved, "berth")(
-        compiled.raw_member_of(row, resolved, "berth")
+    assert compiled.result_contract.classified_by_entity.get(resolved, frozenset()) == frozenset(
+        {"berth"}
+    )
+    assert member_classifier(compiled.result_contract, resolved, "berth")(
+        raw_member(compiled.result_contract, row, resolved, "berth")
     ) == ({"code": "A1"}, ())
-    assert compiled.raw_member_of(row, resolved, "deck") is deck
+    assert raw_member(compiled.result_contract, row, resolved, "deck") is deck
     with pytest.raises(KeyError, match="deck"):
-        compiled.raw_member_classifier(resolved, "deck")
+        member_classifier(compiled.result_contract, resolved, "deck")
 
 
 def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
@@ -1471,17 +1495,17 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
             "payload": PresentDocument({"title": "Systems", "detail": "x", member: 320}),
             "family_variant": variant,
         }
-        resolved = compiled.row_identity(row)[0]
-        assert "payload" not in compiled.publication_keys(resolved, variant)
-        assert compiled.raw_member_classifier(resolved, member)(
-            compiled.raw_member_of(row, resolved, member)
+        resolved = row_identity_reader(compiled.result_contract)(row)[0]
+        assert "payload" not in publication_keys(compiled.result_contract, resolved, variant)
+        assert member_classifier(compiled.result_contract, resolved, member)(
+            raw_member(compiled.result_contract, row, resolved, member)
         ) == (320, ())
 
 
 def test_tpcs_union_read_resolves_the_projected_literal_column() -> None:
     compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
     row = {"id": 1, "title": "A", "family_variant": "Invoice"}
-    resolved, variant, unknown, _document = compiled.row_identity(row)
+    resolved, variant, unknown, _document = row_identity_reader(compiled.result_contract)(row)
     assert (resolved, variant, unknown) == (
         target(DOCUMENT, "Invoice").identity,
         "Invoice",
@@ -1489,7 +1513,7 @@ def test_tpcs_union_read_resolves_the_projected_literal_column() -> None:
     )
     # The literal leaves the row, and a row-form read keeps its siblings' null
     # padding under the unrenamed alias.
-    assert compiled.publication_keys(resolved, variant) == (
+    assert publication_keys(compiled.result_contract, resolved, variant) == (
         "id",
         "title",
         "folder_id",
@@ -1498,7 +1522,7 @@ def test_tpcs_union_read_resolves_the_projected_literal_column() -> None:
         "body",
         "paid_amount",
     )
-    assert compiled.raw_member_of(row, resolved, "title") == "A"
+    assert raw_member(compiled.result_contract, row, resolved, "title") == "A"
 
 
 def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
@@ -1543,11 +1567,11 @@ def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
         "parallax_attr_1": None,
         "family_variant": "archive.SharedVariant",
     }
-    resolved, variant, _unknown, _document = compiled.row_identity(row)
+    resolved, variant, _unknown, _document = row_identity_reader(compiled.result_contract)(row)
     assert resolved == EntityIdentity("archive", "SharedVariant")
     assert variant == "archive.SharedVariant"
-    assert compiled.publication_keys(resolved, variant) == ("id", "shared_label")
-    assert compiled.raw_member_of(row, resolved, "shared_label") == "archived"
+    assert publication_keys(compiled.result_contract, resolved, variant) == ("id", "shared_label")
+    assert raw_member(compiled.result_contract, row, resolved, "shared_label") == "archived"
 
 
 def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
@@ -1728,13 +1752,13 @@ def test_tpcs_tuple_rows_read_branch_values_through_collision_safe_aliases() -> 
 
     observed: list[dict[str, object]] = []
     for row in rows:
-        resolved, _variant, _unknown, _document = compiled.row_identity(row)
+        resolved, _variant, _unknown, _document = row_identity_reader(compiled.result_contract)(row)
         observed.append(
             {
-                contract.attribute.identity.name: compiled.raw_member_of(
-                    row, resolved, contract.result_key
+                contract.attribute.identity.name: raw_member(
+                    compiled.result_contract, row, resolved, contract.result_key
                 )
-                for contract in compiled.attribute_reads(resolved)
+                for contract in compiled.result_contract.reads_by_entity.get(resolved, ())
             }
         )
 

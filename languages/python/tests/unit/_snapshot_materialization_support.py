@@ -409,7 +409,8 @@ def _driver_row(
     if storage_view is None:  # pragma: no cover - every materialized concrete owns rows
         raise AssertionError(f"{entity.canonical}: no storage layout view")
     contracts = {
-        contract.attribute.identity: contract for contract in compiled.attribute_reads(entity)
+        contract.attribute.identity: contract
+        for contract in compiled.result_contract.reads_by_entity.get(entity, ())
     }
     projected = frozenset(member.storage.name for member in compiled.projected_documents)
     row: dict[str, object] = {}

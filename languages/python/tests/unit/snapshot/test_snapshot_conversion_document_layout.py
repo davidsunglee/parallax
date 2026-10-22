@@ -72,7 +72,7 @@ def _converted(model: Metamodel, name: str, stored: Row | Mapping[str, object]) 
     compiled = compile_read(
         oa.TrueNode(), model, POSTGRES, entity(model, name), result_form="instance"
     )
-    prepared = bind(CatalogedModel(model), compiled)
+    prepared = bind(CatalogedModel(model), compiled.result_contract, compiled.projected_documents)
     builder = PageBuilder(ViewSchema.of())
     index, _resolved, _document, _variant = prepared.convert_row(stored, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())

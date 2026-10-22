@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Protocol, cast
+from typing import cast
 
 from parallax.core.base import (
     SQL_NULL,
     DocumentValue,
     ManagedValue,
     NeutralType,
-    UnknownFamilyTag,
 )
 from parallax.core.db_port import Row
-from parallax.core.document_codec import DocumentFinding, MemberShape, locate_raw_entity_member
+from parallax.core.document_codec import locate_raw_entity_member
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -21,62 +20,26 @@ from parallax.core.metamodel import (
     Occurrence,
     ValueObjectMetadata,
 )
-from parallax.core.read_delivery._convert import (
-    EntityReadMapping,
-    build_positional_many,
-    build_positional_object,
-    register_reduced_row,
-)
+from parallax.core.read_delivery._convert import EntityReadMapping, register_reduced_row
 from parallax.core.read_delivery._page import ABSENT, LogicalKey, PageBuilder, SourceLevel
-from parallax.core.sql_gen._inheritance import AttributeReadContract, ResultContract
+from parallax.core.read_delivery._row_decoding import (
+    RowIdentityReader,
+    member_sources,
+    publication_keys,
+    raw_member,
+    row_identity_reader,
+)
+from parallax.core.sql_gen._inheritance import ResultContract
 from parallax.core.wire import encode_wire
 from parallax.core.write_plan.observe import occurrence_value
 
 __all__ = ["ReadRowConverter", "RowPublisher", "bind"]
 
 
-class _CompiledRead(Protocol):
-    """What a row converter reads off the compiled read it is bound to."""
-
-    @property
-    def result_contract(self) -> ResultContract: ...
-
-    @property
-    def projected_documents(self) -> tuple[ValueObjectMetadata, ...]: ...
-
-    def attribute_reads(self, entity: EntityIdentity) -> tuple[AttributeReadContract, ...]: ...
-
-    def row_identity(
-        self, row: Row | Mapping[str, object]
-    ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]: ...
-
-    def raw_member_of(
-        self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
-    ) -> object: ...
-
-    def raw_member_classifier(
-        self,
-        resolved: EntityIdentity,
-        key: str,
-        *,
-        build_object: Callable[[MemberShape, Iterable[object]], object] | None = None,
-        build_many: Callable[[Iterable[object]], object] | None = None,
-    ) -> Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]: ...
-
-    def raw_member_location(self, resolved: EntityIdentity, key: str) -> str | None: ...
-
-    def classified_members(self, resolved: EntityIdentity) -> frozenset[str]: ...
-
-    def raw_member_ordinal(self, resolved: EntityIdentity, key: str) -> int | None: ...
-
-    def publication_keys(
-        self, resolved: EntityIdentity, variant: str | None
-    ) -> tuple[str, ...]: ...
-
-
 @dataclass(frozen=True, slots=True)
 class ReadRowConverter:
-    """One compiled read together with the entity mappings its rows convert under.
+    """One compiled read's result contract together with the entity mappings its
+    rows convert under.
 
     The whole of what a read lane needs to turn driver rows into projections:
     convert a raw provider row and observe it, with no mapping, contract,
@@ -84,12 +47,13 @@ class ReadRowConverter:
     of those would be coordinating a shape it does not own, and would be the
     second place the pairing of a row with its own mapping could go wrong.
 
-    Both halves it is built from are private for that reason: the mapping table
+    Everything it is built from is private for that reason: the mapping table
     is reachable only through conversion, so nothing outside can read a mapping,
-    replace one, or hold the compiled read apart from the mappings bound with it.
+    replace one, or hold the contract apart from the mappings bound with it.
     """
 
-    _compiled: _CompiledRead
+    _contract: ResultContract
+    _row_identity: RowIdentityReader
     _mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping]
 
     def convert_row(
@@ -108,7 +72,7 @@ class ReadRowConverter:
         correlation values judged for page assembly, and the rest of its
         payload judged when its Page-owned state is first needed.
         """
-        resolved, variant, unknown, document = self._compiled.row_identity(row)
+        resolved, variant, unknown, document = self._row_identity(row)
         mapping = self._mappings_by_entity[resolved]
         if isinstance(row, tuple) and mapping.direct_row is not None:
             selected = mapping.direct_row(row)
@@ -198,27 +162,27 @@ class ReadRowConverter:
         if isinstance(row, tuple) and ordinal is not None:
             return row[ordinal], True
         try:
-            return self._compiled.raw_member_of(row, resolved, key), True
+            return raw_member(self._contract, row, resolved, key), True
         except KeyError:
             return default, False
 
     def row_publisher(self) -> RowPublisher:
         """Open one Page's flat-row publisher; what it derives dies with it."""
-        return RowPublisher(self._compiled, self._mappings_by_entity)
+        return RowPublisher(self._contract, self._mappings_by_entity)
 
 
 class RowPublisher:
     """Publishes one Page's flat rows, deriving one operation per concrete
     Entity and `familyVariant` pair on first sight of that pair."""
 
-    __slots__ = ("_compiled", "_mappings_by_entity", "_operations")
+    __slots__ = ("_contract", "_mappings_by_entity", "_operations")
 
     def __init__(
         self,
-        compiled: _CompiledRead,
+        contract: ResultContract,
         mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping],
     ) -> None:
-        self._compiled = compiled
+        self._contract = contract
         self._mappings_by_entity = mappings_by_entity
         self._operations: dict[tuple[EntityIdentity, str | None], _RowOperation] = {}
 
@@ -231,7 +195,7 @@ class RowPublisher:
         if operation is None:
             operation = self._operations[pair] = _row_operation(
                 self._mappings_by_entity[concrete],
-                self._compiled.publication_keys(concrete, variant),
+                publication_keys(self._contract, concrete, variant),
                 variant,
             )
         return operation(row)
@@ -294,11 +258,13 @@ def _row_operation(
 
 def bind(
     model: CatalogedModel,
-    compiled: _CompiledRead,
+    contract: ResultContract,
+    projected_documents: tuple[ValueObjectMetadata, ...],
     *,
     correlation_members: tuple[AttributeIdentity, ...] = (),
 ) -> ReadRowConverter:
-    """Bind ``compiled`` to ``model``: one mapping per Entity it can resolve.
+    """Bind one compiled read's ``contract`` and ``projected_documents`` to
+    ``model``: one mapping per Entity its rows can resolve to.
 
     Paid once per compiled read, which is where the state belongs — the member
     layouts are the model's and the projected documents and Attribute contracts
@@ -307,11 +273,14 @@ def bind(
     routed by a different selection is bound separately.
     """
     return ReadRowConverter(
-        compiled,
+        contract,
+        row_identity_reader(contract),
         MappingProxyType(
             {
-                identity: _entity_read_mapping(model, compiled, identity, correlation_members)
-                for identity in compiled.result_contract.resolvable
+                identity: _entity_read_mapping(
+                    model, identity, contract, projected_documents, correlation_members
+                )
+                for identity in contract.resolvable
             }
         ),
     )
@@ -319,35 +288,26 @@ def bind(
 
 def _entity_read_mapping(
     model: CatalogedModel,
-    compiled: _CompiledRead,
     identity: EntityIdentity,
+    contract: ResultContract,
+    projected_documents: tuple[ValueObjectMetadata, ...],
     correlation_members: tuple[AttributeIdentity, ...],
 ) -> EntityReadMapping:
     layout = model.layouts.entity(identity)
-    reads = compiled.attribute_reads(identity)
+    reads = contract.reads_by_entity.get(identity, ())
     keys = tuple(
         attribute.storage.name if not reads else reads[position].result_key
         for position, attribute in enumerate(layout.attributes)
     ) + tuple(occurrence.storage.name for occurrence in layout.occurrences)
-    classified = compiled.classified_members(identity)
+    classified, ordinals, classifiers, locations = member_sources(contract, identity, keys)
     return EntityReadMapping(
         layout,
-        compiled.projected_documents,
+        projected_documents,
         reads,
         classified,
         keys,
-        tuple(compiled.raw_member_ordinal(identity, key) for key in keys),
-        tuple(
-            compiled.raw_member_classifier(
-                identity,
-                key,
-                build_object=build_positional_object,
-                build_many=build_positional_many,
-            )
-            if key in classified
-            else None
-            for key in keys
-        ),
-        tuple(compiled.raw_member_location(identity, key) for key in keys),
+        ordinals,
+        classifiers,
+        locations,
         correlation_members,
     )
