@@ -4474,6 +4474,68 @@
       "valueObject": {}
     }
   },
+  "models/shared-coverage-layout-twin-columns.yaml": {
+    "parallax.compatibility.CoverageLedger": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.CoverageSpan": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/shared-coverage-layout-twin-document.yaml": {
+    "parallax.compatibility.CoverageLedger": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {
+        "amount": "payload:amount",
+        "label": "payload:label"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.CoverageSpan": {
+      "attribute": {
+        "amount": "amount",
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {
+        "amount": "payload:amount",
+        "label": "payload:label"
+      },
+      "valueObject": {}
+    }
+  },
   "models/shared-local-name.yaml": {
     "archive.SharedVariant": {
       "attribute": {

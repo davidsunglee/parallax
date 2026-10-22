@@ -644,6 +644,12 @@ _BUFFERED_SEQUENCE_TWIN = (
     "root-owned layout `write-transparency-layout-twin-document` already proves"
 )
 
+_SHARED_COVERAGE_TWIN = (
+    "no mirror authored; its two Bitemporal Entities repeat the attribute shape of the "
+    "mirrored `position` declaration, and its Document arm the root-owned layout "
+    "`write-transparency-layout-twin-document` already proves"
+)
+
 _UNCHANGED_MILESTONE_TWIN = (
     "no mirror authored; its Bitemporal and Transaction-Time-Only Entities repeat the "
     "mirrored `position` and `balance` declarations with one nullable Value Object, and "
@@ -922,6 +928,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "cross-layout stored-data classification proof, and the twin-layout gate compares "
             "its logical model directly with the Columns arm"
         ),
+        "shared-coverage-layout-twin-columns": _SHARED_COVERAGE_TWIN,
+        "shared-coverage-layout-twin-document": _SHARED_COVERAGE_TWIN,
         "storage-layout-transparency-layout-twin-columns": (
             "no mirror authored; this production descriptor is the Columns arm of the "
             "cross-layout corpus proof, and the twin-layout gate compares its logical model "

@@ -6,7 +6,7 @@ closed."""
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from decimal import Decimal
 from typing import Any, Final, cast
 
@@ -16,6 +16,7 @@ from parallax.conformance import models
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
 from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, attr
+from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._transaction import _attempt as attempt_module
 from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work.acquisition import (
@@ -26,7 +27,11 @@ from parallax.core._execution._unit_work.acquisition import (
     TargetReadRequest,
     consume_target,
 )
-from parallax.core._execution._unit_work.instructions import PreparedTargetWrite, prepare_wire_write
+from parallax.core._execution._unit_work.instructions import (
+    PreparedPredicateWrite,
+    PreparedTargetWrite,
+    prepare_wire_write,
+)
 from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
@@ -51,7 +56,14 @@ from parallax.core.metamodel import (
 from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import CardinalityCorruptionError, TargetWriteInstruction
+from parallax.core.unit_work import (
+    CardinalityCorruptionError,
+    OptimisticLockConflictError,
+    PredicateSelection,
+    PredicateWriteInstruction,
+    TargetWriteInstruction,
+    WriteAssignment,
+)
 from parallax.core.write_plan import ObjectKey
 from parallax.descriptor import domain_model_from_document
 from tests._support.adoption import raises_contextualized
@@ -60,11 +72,14 @@ from tests._support.db_port import (
     CommitCall,
     Read,
     ReadCall,
+    RollbackCall,
     ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
+    inserted_rows,
 )
+from tests.unit.core._execution import _shared_coverage_support as shared
 from tests.unit.core._execution._execution_support import ACCOUNT, account_insert, itself, scope
 from tests.unit.core._execution._reach_support import frames, reaches
 
@@ -898,3 +913,179 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
         "tags" if attribute == "collection" else "amount" if entity is DocumentHull else "validEnd"
     )
     assert failure.member == AttributeIdentity(metadata.identity, member)
+
+
+# --------------------------------------------------------------------------- #
+# An acquisition span's shared reads: the failure encountered first           #
+# propagates (`m-unit-work` *Shared coverage acquisition*).                    #
+# --------------------------------------------------------------------------- #
+def _hull_target(metadata: Any, key: int) -> PreparedTargetWrite:
+    return prepare_wire_write(
+        TargetWriteInstruction(
+            "amend",
+            metadata.identity.canonical,
+            {"id": key, "amount": 5},
+            if_tx_start=_T0,
+            valid_from=_MAR,
+        ),
+        model_of(_HULLS),
+    )
+
+
+def test_a_later_writes_retained_row_fails_its_completion_before_the_span_binds_any_write() -> None:
+    # Both Locking target writes' retained rows cover their windows, so the
+    # first is ready at once; the second's invalid occurrence still fails
+    # first, as the span completes every retained row before binding.
+    spec, _failing = _INVALID_SPECS["leaf"]
+    valid = _hull_row(ColumnsHull, _VALID)
+    invalid = {**_hull_row(ColumnsHull, {**_VALID, "spec": spec}), "id": 2}
+    port = ScriptedAdapter(Transact(Read(rows=[valid]), Read(rows=[invalid])))
+    metadata, _key = _hull_keys(ColumnsHull)
+
+    def fn(tx: TxnAttempt) -> None:
+        tx.uow.buffer_target(_hull_target(metadata, 1))
+        tx.uow.buffer_target(_hull_target(metadata, 2))
+
+    with raises_contextualized(StoredDataDecodingError):
+        scope(port, _HULLS).transact(fn, itself, concurrency="locking")
+    # No coverage read, no write of either object, and no retry.
+    assert [type(call) for call in port.calls] == [BeginCall, ReadCall, ReadCall, RollbackCall]
+
+
+def _odd_rows(
+    entity: type[Bitemporal], key: int, parts: int, *, first: int = 0
+) -> list[MappingRow]:
+    """``frag(key, parts)``'s odd rectangles from ``R_{2 first + 1}`` on, as
+    the database answers the reads of their parts."""
+    rows = shared.frag_rows(entity, key, parts)
+    return [shared.physical_row(entity, rows[2 * pair + 1]) for pair in range(first, parts)]
+
+
+def _correct(*objects: tuple[type[Bitemporal], int, int]) -> Callable[[TxnAttempt], None]:
+    def fn(tx: TxnAttempt) -> None:
+        for entity, key, parts in objects:
+            for write in shared.frag(entity, key, parts):
+                tx.uow.buffer(write)
+
+    return fn
+
+
+def _written_keys(port: ScriptedAdapter) -> set[object]:
+    """The key of every object a write the port received names."""
+    keys: set[object] = set()
+    for call in port.calls:
+        if isinstance(call, WriteCall):
+            if call.sql.startswith("insert"):
+                keys.update(row[0] for row in inserted_rows(call))
+            else:
+                keys.add(call.binds[1])
+    return keys
+
+
+def _flush_calls(port: ScriptedAdapter) -> list[type[object]]:
+    return [type(call) for call in port.calls if not isinstance(call, BeginCall | RollbackCall)]
+
+
+def test_an_invalid_later_row_of_a_shared_read_fails_before_an_earlier_write_binds() -> None:
+    first = shared.physical_row(shared.ShareDoc, shared.frag_rows(shared.ShareDoc, 1, 1)[1])
+    second = shared.physical_row(shared.ShareDoc, shared.frag_rows(shared.ShareDoc, 2, 1)[1])
+    second["payload"] = PresentDocument({"amount": "x", "label": "k2"})
+    # The scripted write would make the first write's close a conflict.
+    port = ScriptedAdapter(Transact(Read(rows=[first, second]), Write(affected=0)))
+    with raises_contextualized(StoredDataDecodingError):
+        scope(port, shared.DOMAIN).transact(
+            _correct((shared.ShareDoc, 1, 1), (shared.ShareDoc, 2, 1)),
+            itself,
+            concurrency="optimistic",
+        )
+    # Not retry-eligible: one attempt, whose shared read failed before the
+    # first write executed anything.
+    assert _flush_calls(port) == [ReadCall]
+    assert sum(isinstance(call, BeginCall) for call in port.calls) == 1
+
+
+def test_a_ready_writes_failure_precedes_the_read_its_successor_waits_for() -> None:
+    deadlock = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=[*_odd_rows(shared.ShareCols, 1, 1), *_odd_rows(shared.ShareCols, 2, 63)]),
+            Write(affected=0),
+            Read(raises=deadlock),
+        )
+    )
+    with raises_contextualized(OptimisticLockConflictError):
+        scope(port, shared.DOMAIN).transact(
+            _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 64)),
+            itself,
+            concurrency="optimistic",
+            max_retries=0,
+        )
+    # The first write's close conflicted before the read its successor waits
+    # for; no write of the successor ran.
+    assert _flush_calls(port) == [ReadCall, WriteCall]
+    assert _written_keys(port) == {1}
+
+
+def test_a_later_reads_failure_leaves_the_writes_completed_before_it() -> None:
+    deadlock = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=[*_odd_rows(shared.ShareCols, 1, 1), *_odd_rows(shared.ShareCols, 2, 63)]),
+            Write(times=3),
+            Read(raises=deadlock),
+        )
+    )
+    with raises_contextualized(DatabaseError) as raised:
+        scope(port, shared.DOMAIN).transact(
+            _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 64), (shared.ShareCols, 3, 1)),
+            itself,
+            concurrency="optimistic",
+            max_retries=0,
+        )
+    assert raised.value.category == "deadlock"
+    assert _flush_calls(port) == [ReadCall, WriteCall, WriteCall, WriteCall, ReadCall]
+    assert _written_keys(port) == {1}
+
+
+def _tag_predicate() -> PreparedPredicateWrite:
+    tag = shared.ShareTag.identity.canonical
+    prepared = prepare_wire_write(
+        PredicateWriteInstruction(
+            "amend",
+            PredicateSelection(
+                tag,
+                predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject(f"{tag}.id"), 1),
+            ),
+            assignments=(WriteAssignment(f"{tag}.label", "q"),),
+        ),
+        model_of(shared.DOMAIN),
+    )
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return prepared
+
+
+@pytest.mark.parametrize("trigger", ["read_dependency", "predicate_write", "pre_commit"])
+def test_a_shared_coverage_read_is_one_read_call_of_the_flush_reaching_its_span(
+    trigger: str,
+) -> None:
+    recorder = RecordingLifecycleProvider()
+    stored = [*_odd_rows(shared.ShareCols, 1, 1), *_odd_rows(shared.ShareCols, 2, 1)]
+    predicate = (Write(),) if trigger == "predicate_write" else ()
+    port = ScriptedAdapter(Transact(Read(rows=stored), Write(times=6), *predicate))
+
+    def fn(tx: TxnAttempt) -> None:
+        _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 1))(tx)
+        if trigger == "read_dependency":
+            tx.uow.read(lambda: None)
+        elif trigger == "predicate_write":
+            tx.uow.execute_predicate(_tag_predicate())
+
+    scope(port, shared.DOMAIN, provider=recorder).transact(fn, itself, concurrency="optimistic")
+    events = recorder.roots[-1].events
+    (flush,) = [event for event in events if isinstance(event, FlushStarted)]
+    assert flush.trigger == trigger
+    calls = [event.kind for event in events if isinstance(event, DatabaseCallStarted)]
+    # One read names both objects' parts, ahead of each object's own writes.
+    assert calls == ["read", *(["write"] * (6 + len(predicate)))]
+    (read,) = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert read.sql.count("t0.id = ") == 2

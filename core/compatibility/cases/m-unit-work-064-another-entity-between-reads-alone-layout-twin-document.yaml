@@ -1,0 +1,88 @@
+model: models/shared-coverage-layout-twin-document.yaml
+tags: [m-unit-work, m-sql, m-temporal-write, m-read-lock, bitemporal, temporal, scenario, layout-twin, document, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the writes settle against the milestones a find step of their own unit of work observed (m-case-format 'Settling against a grouped find')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: correct
+      objectQuery:
+        target: parallax.compatibility.CoverageSpan
+        predicate:
+          lessThan: { path: parallax.compatibility.CoverageSpan.id, value: 3 }
+        orderBy:
+          - { attr: parallax.compatibility.CoverageSpan.id, direction: asc }
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-03-01T00:00:00.000000Z" } }
+      databaseCalls: 1
+      note: observe both spans' heads at March under the shared lock
+      statements:
+        - sql:
+            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from coverage_span t0 where t0.id < ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc for share of t0
+          binds: [3, "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity]
+      expectRows:
+        - { id: 1, amount: 100, label: a, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 2, amount: 100, label: b, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+    - uow: correct
+      objectQuery:
+        target: parallax.compatibility.CoverageLedger
+        predicate:
+          eq: { path: parallax.compatibility.CoverageLedger.id, value: 1 }
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-03-01T00:00:00.000000Z" } }
+      databaseCalls: 1
+      note: observe the ledger's head at March under the shared lock
+      statements:
+        - sql:
+            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.payload is null, t0.payload from coverage_ledger t0 where t0.id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? for share of t0
+          binds: [1, "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity]
+      expectRows:
+        - { id: 1, amount: 100, label: l, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+    - uow: correct
+      write:
+        - { mutation: amend, "on": 0, entity: parallax.compatibility.CoverageSpan, rows: [{ id: 1, amount: 150 }], validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
+        - { mutation: amend, "on": 1, entity: parallax.compatibility.CoverageLedger, rows: [{ id: 1, amount: 150 }], validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
+        - { mutation: amend, "on": 0, entity: parallax.compatibility.CoverageSpan, rows: [{ id: 2, amount: 150 }], validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
+      databaseCalls: 9
+      note: the ledger's write between the spans' ends their acquisition span, so each of the three objects reads its uncovered June onward alone, at its own turn
+      statements:
+        - sql:
+            postgres: update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
+          binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity]
+        - sql:
+            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
+          binds: [1, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 100, label: a }, 1, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 150, label: a }]
+        - sql:
+            postgres: update coverage_ledger set out_z = ? where id = ? and thru_z = ? and out_z = ?
+          binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity]
+        - sql:
+            postgres: insert into coverage_ledger(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
+          binds: [1, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 100, label: l }, 1, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 150, label: l }]
+        - sql:
+            postgres: update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
+          binds: ["2024-10-01T00:00:00.000000Z", 2, "2024-06-01T00:00:00.000000Z", infinity]
+        - sql:
+            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
+          binds: [2, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 100, label: b }, 2, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 150, label: b }]
+then:
+  databaseCalls: 11
+  tableState:
+    coverage_span:
+      - { id: 1, payload: { amount: 100, label: a }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+      - { id: 1, payload: { amount: 150, label: a }, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+      - { id: 1, payload: { amount: 100, label: a }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+      - { id: 1, payload: { amount: 150, label: a }, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+      - { id: 2, payload: { amount: 100, label: b }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+      - { id: 2, payload: { amount: 150, label: b }, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+      - { id: 2, payload: { amount: 100, label: b }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+      - { id: 2, payload: { amount: 150, label: b }, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+      - { id: 3, payload: { amount: 100, label: c }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+    coverage_ledger:
+      - { id: 1, payload: { amount: 100, label: l }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+      - { id: 1, payload: { amount: 150, label: l }, from_z: "2024-06-01T00:00:00.000000Z", thru_z: infinity, in_z: "2023-12-01T00:00:00.000000Z", out_z: infinity }
+      - { id: 1, payload: { amount: 100, label: l }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-03-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+      - { id: 1, payload: { amount: 150, label: l }, from_z: "2024-03-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }

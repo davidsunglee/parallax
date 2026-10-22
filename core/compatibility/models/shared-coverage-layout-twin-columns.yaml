@@ -1,0 +1,36 @@
+# Columns member of the shared-coverage twin. This descriptor is a production model
+# descriptor: omission is the only Columns spelling, and its Document twin differs
+# only by the root-owned layout block on each Entity. The fixture twin authors the
+# same logical rows and the case twins author the same submissions, so which coverage
+# reads a flush's deferred writes share is what the pair proves layout cannot change.
+#
+# Two Bitemporal Entities, so a write of the other Entity between two writes of one
+# ends their acquisition span. Every member name is its Column's name, so a read
+# publishes the same row under either layout.
+entities:
+  - name: CoverageSpan
+    namespace: parallax.compatibility
+    table: coverage_span
+    temporality: bitemporal
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: amount
+        type: int64
+      - name: label
+        type: string
+        maxLength: 16
+  - name: CoverageLedger
+    namespace: parallax.compatibility
+    table: coverage_ledger
+    temporality: bitemporal
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: amount
+        type: int64
+      - name: label
+        type: string
+        maxLength: 16

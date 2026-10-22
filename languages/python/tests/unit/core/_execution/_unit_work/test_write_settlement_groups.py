@@ -3,24 +3,34 @@ formation*)."""
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
-from parallax.core import MAX, Attr, DomainModel, Entity, TxTemporal, attr
+from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, TxTemporal, attr, inheritance
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.instructions import prepare_typed_write
-from parallax.core._execution._unit_work.write_items import CoalescedWrite
+from parallax.core._execution._unit_work import write_settlement as settlement
+from parallax.core._execution._unit_work.instructions import prepare_typed_write, prepare_wire_write
+from parallax.core._execution._unit_work.write_items import (
+    AdmittedWrite,
+    CoalescedTemporalWrite,
+    CoalescedWrite,
+    target_write,
+)
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWriteInstruction,
+    TargetWriteInstruction,
     TransactionInstant,
     WritePlanningRequest,
+    buffered_write,
     object_key,
 )
 from parallax.core.write_plan import (
@@ -31,6 +41,7 @@ from parallax.core.write_plan import (
     VersionObservation,
     WritePlan,
 )
+from parallax.core.write_plan.plan import AcquisitionSpan, SettledWrite
 from parallax.core.write_plan.steps import (
     KeyTarget,
     MilestoneTarget,
@@ -40,9 +51,25 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from tests._support.clock_probes import inert_instant, instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    admitted_writes,
+    observed_buffer,
+    plan_steps,
+)
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit.core._execution._shared_coverage_support import MODEL as SHARED_MODEL
+from tests.unit.core._execution._shared_coverage_support import (
+    ShareCols,
+    ShareDoc,
+    day,
+    frag,
+    frag_rows,
+    observation,
+    rectangle,
+)
+from tests.unit.core._execution._shared_coverage_support import plan as shared_plan
 
 _MODELS = corpus_records()
 _WALLET = corpus_model("wallet")
@@ -331,3 +358,151 @@ def test_an_insert_whose_key_the_database_decides_stands_alone(
 
 def _entity(model: Metamodel, name: str) -> EntityIdentity:
     return next(entity.identity for entity in model.entities if entity.identity.name == name)
+
+
+# --------------------------------------------------------------------------- #
+# Acquisition spans over consecutive groups of deferred writes                #
+# (`m-unit-work` *Shared coverage acquisition*).                              #
+# --------------------------------------------------------------------------- #
+def _spans(plan: WritePlan) -> list[tuple[int, int]]:
+    return [(span.start, span.stop) for span in plan.acquisition_spans]
+
+
+def _fragmented(*keys: int, entity: type[Bitemporal] = ShareCols) -> list[AdmittedWrite]:
+    return [write for key in keys for write in frag(entity, key, 1)]
+
+
+def _inside(key: int) -> AdmittedWrite:
+    """A write of object ``key`` its observation covers, so it binds at planning."""
+    observed = rectangle(ShareCols, key, 0, None, 0)
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction(
+            "amendUntil", ShareCols.identity.canonical, ({"id": key, "amount": 9},), day(0), day(1)
+        ),
+        SHARED_MODEL,
+    )
+    return buffered_write(prepared, observation(ShareCols, observed))
+
+
+def _terminated(key: int) -> AdmittedWrite:
+    """A termination of object ``key`` reaching past what it observed."""
+    observed = frag_rows(ShareCols, key, 1)[0]
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction(
+            "terminateUntil", ShareCols.identity.canonical, ({"id": key},), day(0), day(2)
+        ),
+        SHARED_MODEL,
+    )
+    return buffered_write(prepared, observation(ShareCols, observed))
+
+
+def test_a_plan_with_no_deferred_write_records_no_span() -> None:
+    assert _spans(_plan([], _WALLET)) == []
+    assert _spans(_plan([_amend_wallet(key, f"{key}.00") for key in (1, 2)], _WALLET)) == []
+    assert _spans(shared_plan([_inside(1), _inside(2)])) == []
+
+
+@pytest.mark.parametrize(
+    ("objects", "spans"),
+    [
+        (1, []),
+        (2, [(0, 2)]),
+        (31, [(0, 31)]),
+        (32, [(0, 32)]),
+        (33, [(0, 32)]),
+        (65, [(0, 32), (32, 64)]),
+        (66, [(0, 32), (32, 64), (64, 66)]),
+        (67, [(0, 32), (32, 64), (64, 67)]),
+    ],
+)
+def test_consecutive_deferred_writes_share_spans_of_at_most_32(
+    objects: int, spans: list[tuple[int, int]]
+) -> None:
+    plan = shared_plan(_fragmented(*range(1, objects + 1)))
+    # Every deferred write keeps its own group, whatever span it belongs to.
+    assert _sizes(plan) == [1] * objects
+    assert all(group.steps == () for group in plan.groups)
+    assert _spans(plan) == spans
+
+
+def test_a_span_never_skips_a_group_of_another_entity_or_a_write_bound_at_planning() -> None:
+    another = shared_plan([*_fragmented(1), *_fragmented(1, entity=ShareDoc), *_fragmented(2, 3)])
+    assert _sizes(another) == [1, 1, 1, 1]
+    assert _spans(another) == [(2, 4)]
+    planned = shared_plan([*_fragmented(1), _inside(4), *_fragmented(2, 3)])
+    assert _sizes(planned) == [1, 1, 1, 1]
+    assert planned.groups[1].writes[0].deferred is None
+    assert _spans(planned) == [(2, 4)]
+
+
+def test_a_span_never_crosses_a_mutation_phase() -> None:
+    plan = shared_plan([*_fragmented(1, 2), _terminated(3), _terminated(4)])
+    assert _sizes(plan) == [1, 1, 1, 1]
+    assert _spans(plan) == [(0, 2), (2, 4)]
+
+
+def test_a_transaction_time_only_deferred_write_reads_alone() -> None:
+    buffer = [
+        target_write(
+            prepare_wire_write(
+                TargetWriteInstruction(
+                    "amend", "Balance", {"id": key, "value": "9.00"}, if_tx_start=_JAN
+                ),
+                _BALANCE,
+            ),
+            inheritance.view(_BALANCE),
+        )
+        for key in (1, 2)
+    ]
+    plan = _finalize(admitted_writes(_BALANCE, buffer), _BALANCE)
+    assert [group.writes[0].deferred is not None for group in plan.groups] == [True, True]
+    assert _spans(plan) == []
+
+
+def _candidate(key: int, *, locking: bool = False, entity: str = "ShareCols") -> Any:
+    identity = EntityIdentity("parallax.execution.shared", entity)
+    key_attribute = AttributeIdentity(identity, "id")
+    return settlement._AcquisitionCandidate(  # pyright: ignore[reportPrivateUsage] - the facts a span compares
+        identity, key_attribute, locking, (key_attribute, key)
+    )
+
+
+@pytest.mark.parametrize(
+    ("later", "spans"),
+    [
+        (_candidate(2), [(0, 3)]),
+        (_candidate(1), [(1, 3)]),
+        (_candidate(2, locking=True), []),
+        (_candidate(2, entity="ShareDoc"), []),
+        (None, []),
+    ],
+    ids=["compatible", "same-object", "another-lock", "another-entity", "reads-alone"],
+)
+def test_a_deferred_write_joins_the_open_span_only_where_it_reads_alike_another_object(
+    later: Any, spans: list[tuple[int, int]]
+) -> None:
+    # Objects 1 and 3 read alike; ``later`` comes between them.
+    extend = settlement._extend_run  # pyright: ignore[reportPrivateUsage] - the span's boundary rule
+    recorded: list[AcquisitionSpan] = []
+    run = extend(recorded, None, 0, _candidate(1))
+    run = extend(recorded, run, 1, later)
+    run = extend(recorded, run, 2, _candidate(3))
+    settlement._close_run(recorded, run)  # pyright: ignore[reportPrivateUsage] - the span's boundary rule
+    assert [(span.start, span.stop) for span in recorded] == spans
+
+
+@pytest.mark.parametrize(
+    "key", [None, {"computed": "maxPlusOne"}], ids=["absent", "database-allocated"]
+)
+def test_a_deferred_write_naming_no_complete_key_reads_alone(key: object) -> None:
+    # Two parts' writes compose into one carrier naming the object's key.
+    (item,) = admitted_writes(SHARED_MODEL, frag(ShareCols, 1, 2))
+    assert isinstance(item, CoalescedTemporalWrite)
+    (write,) = shared_plan(frag(ShareCols, 1, 2)).groups[0].writes
+    candidate = settlement._acquisition_candidate  # pyright: ignore[reportPrivateUsage] - what a span compares
+    families = inheritance.view(SHARED_MODEL)
+    assert candidate(write, item, families) is not None
+    unkeyed = dataclasses.replace(item, key={} if key is None else {"id": key})
+    assert candidate(write, unkeyed, families) is None
+    # A settled write with no deferred range shares nothing either.
+    assert candidate(SettledWrite(), item, families) is None

@@ -12636,6 +12636,306 @@
       ]
     }
   },
+  "models/shared-coverage-layout-twin-columns.yaml": {
+    "coverage_ledger": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.id",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "amount",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.amount",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.label",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.validStart",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.validEnd",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.txStart",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.txEnd",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        4,
+        6
+      ]
+    },
+    "coverage_span": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.id",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "amount",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.amount",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.label",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.validStart",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.validEnd",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.txStart",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.txEnd",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        4,
+        6
+      ]
+    }
+  },
+  "models/shared-coverage-layout-twin-document.yaml": {
+    "coverage_ledger": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.id",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.validStart",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.validEnd",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.txStart",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.CoverageLedger.txEnd",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageLedger"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.CoverageLedger",
+          "declaringOwner": "parallax.compatibility.CoverageLedger",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        2,
+        4
+      ]
+    },
+    "coverage_span": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.id",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.validStart",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.validEnd",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.txStart",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.CoverageSpan.txEnd",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CoverageSpan"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.CoverageSpan",
+          "declaringOwner": "parallax.compatibility.CoverageSpan",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        2,
+        4
+      ]
+    }
+  },
   "models/shared-local-name.yaml": {
     "archive_shared": {
       "columns": [

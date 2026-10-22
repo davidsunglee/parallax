@@ -28,6 +28,7 @@ from parallax.core._execution._unit_work.acquisition import (
     RowRequest,
     TargetReadRequest,
     consume_coverage,
+    consume_coverage_by_key,
     consume_target,
 )
 from parallax.core._execution._unit_work.instructions import (
@@ -298,3 +299,59 @@ def test_a_consumer_a_row_fails_in_holds_none_of_the_rows_or_documents_it_was_ha
 def _key(request: TargetReadRequest) -> AttributeIdentity:
     ((name, _value),) = request.key.primary_key
     return AttributeIdentity(request.entity.identity, name)
+
+
+# --------------------------------------------------------------------------- #
+# A coverage read of several objects: each row goes to the object whose key   #
+# it holds.                                                                    #
+# --------------------------------------------------------------------------- #
+def _shared_request() -> CoverageReadRequest:
+    request = _target_request()
+    terms = (CoverageTerm(1, ()), CoverageTerm(2, ()), CoverageTerm(3, ()))
+    return CoverageReadRequest(request.entity, _key(request), terms, locking=False)
+
+
+def test_a_shared_reads_rows_and_documents_go_to_the_object_each_row_holds_the_key_of() -> None:
+    rows = [
+        (2, "Bea", Decimal("200.00"), 3),
+        (1, "Ada", Decimal("100.00"), 3),
+        (2, "Bea", Decimal("200.00"), 3),
+        (2, "Cy", Decimal("300.00"), 3),
+    ]
+    documents: list[object | None] = ["raw-2a", "raw-1", "raw-2a", "raw-2b"]
+    selection = _selection(_ACCOUNT, "Account")
+    evidence = consume_coverage_by_key(
+        _shared_request(), selection, iter(rows), _ABSENT, documents, len(rows)
+    )
+    # Object 3 returned no row and has no evidence; a row read twice is kept twice.
+    assert set(evidence) == {1, 2}
+    first, second = evidence[1], evidence[2]
+    assert [first.rows[index] for index in range(len(first))] == [rows[1]]
+    assert [first.document(index) for index in range(len(first))] == ["raw-1"]
+    assert [second.rows[index] for index in range(len(second))] == [rows[0], rows[2], rows[3]]
+    assert [second.document(index) for index in range(len(second))] == [
+        "raw-2a",
+        "raw-2a",
+        "raw-2b",
+    ]
+    # Each row is adopted by reference.
+    assert second.rows[0] is rows[0]
+
+
+def test_a_shared_read_returning_nothing_is_no_objects_evidence() -> None:
+    selection = _selection(_ACCOUNT, "Account")
+    assert consume_coverage_by_key(_shared_request(), selection, iter(()), _ABSENT, None, 0) == {}
+
+
+def test_a_shared_reads_consumer_a_row_fails_in_holds_none_of_the_rows_or_documents() -> None:
+    rows = [(1, "Ada", Decimal("100.00"), 3), (2, "Bea", Decimal("200.00"), 3)]
+    documents: list[object | None] = ["raw-1", "raw-2"]
+    selection = _selection(_ACCOUNT, "Account")
+    with pytest.raises(_Unjudged) as raised:
+        consume_coverage_by_key(
+            _shared_request(), selection, _failing_after(rows, 2), _ABSENT, documents, 2
+        )
+    consumer = frames(raised.value.__traceback__, module=acquisition_module.__file__)
+    assert consumer
+    assert not reaches(consumer, documents)
+    assert not any(reaches(consumer, row) for row in rows)

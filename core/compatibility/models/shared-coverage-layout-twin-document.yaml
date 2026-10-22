@@ -1,0 +1,44 @@
+# Relational Document Layout member of the shared-coverage twin. This is an ordinary
+# production descriptor consumed without a harness override: the root-owned layout
+# block on each Entity is its only difference from the Columns member, so every member
+# rides inside the shared `payload` document rather than in a Column of its own. The
+# fixture twin authors the same logical rows and the case twins author the same
+# submissions, so which coverage reads a flush's deferred writes share is what the
+# pair proves layout cannot change.
+#
+# Two Bitemporal Entities, so a write of the other Entity between two writes of one
+# ends their acquisition span. Every member name is its Column's name, so a read
+# publishes the same row under either layout.
+entities:
+  - name: CoverageSpan
+    namespace: parallax.compatibility
+    table: coverage_span
+    layout:
+      document:
+        column: payload
+    temporality: bitemporal
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: amount
+        type: int64
+      - name: label
+        type: string
+        maxLength: 16
+  - name: CoverageLedger
+    namespace: parallax.compatibility
+    table: coverage_ledger
+    layout:
+      document:
+        column: payload
+    temporality: bitemporal
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: amount
+        type: int64
+      - name: label
+        type: string
+        maxLength: 16
