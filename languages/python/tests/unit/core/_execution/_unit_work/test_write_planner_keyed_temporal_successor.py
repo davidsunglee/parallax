@@ -38,8 +38,8 @@ from parallax.core.write_plan import (
     ObjectKey,
     PlannedInsert,
     PredecessorRow,
+    StateObservation,
     TemporalObservation,
-    WriteObservation,
     WritePlan,
 )
 from parallax.core.write_plan.steps import (
@@ -75,7 +75,7 @@ def _plan(
     buffer: Sequence[_TestAdmittedWrite],
     model: Metamodel,
     *,
-    observations: dict[ObjectKey, WriteObservation] | None = None,
+    observations: dict[ObjectKey, StateObservation] | None = None,
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:

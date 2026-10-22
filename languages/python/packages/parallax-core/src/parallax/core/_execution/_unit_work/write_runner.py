@@ -1,30 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
-from parallax.core._execution._unit_work.acquisition import AcquireRows, consume_coverage
-from parallax.core._execution._unit_work.admission import UnitOfWorkError
-from parallax.core._execution._unit_work.clock import TransactionInstant
-from parallax.core._execution._unit_work.ranges import (
-    DeferredTemporalRange,
-    coverage_reads,
-    retained_completion,
-)
-from parallax.core._execution._unit_work.strategy import ActorIdentity
-from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.document_codec import apply_prepared_patches
-from parallax.core.write_plan.keys import ObjectStateKey
 from parallax.core.write_plan.payload import PatchedDocument
-from parallax.core.write_plan.plan import (
-    BoundRange,
-    CurrentRowOutput,
-    DeferredRange,
-    SettledWrite,
-    TemporalWriteOwnership,
-    WritePlan,
-)
-from parallax.core.write_plan.predecessor_rows import PredecessorRows
+from parallax.core.write_plan.plan import BoundRange, CurrentRowOutput, SettledWrite
 from parallax.core.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
@@ -33,10 +14,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 
-if TYPE_CHECKING:
-    from parallax.core._execution._unit_work.uow import UnitOfWork
-
-__all__ = ["ExecuteCountedStep", "ExecuteWriteSteps", "acquire_and_bind_range", "run_write_plan"]
+__all__ = ["ExecuteCountedStep", "ExecuteWriteSteps"]
 
 
 class ExecuteWriteSteps(Protocol):
@@ -78,14 +56,14 @@ class ExecuteCountedStep(Protocol):
 
 
 class _CurrentRowCapture:
-    """The current rows one running group's writes describe
+    """The current rows the writes of one running group or bound range describe
     (:attr:`~parallax.core.write_plan.plan.WriteCompletion.current_outputs`),
     each staged with the document its emitter's payload stores as normal
     lowering demands that payload, until its write completes.
 
-    The group's outputs are indexed by emitter once, so a captured entry or
-    revision finds its own description whatever the steps' order. What a
-    failed group staged is never taken.
+    The outputs are indexed by emitter once, so a captured entry or revision
+    finds its own description whatever the steps' order. What failed steps
+    staged is never taken.
     """
 
     __slots__ = ("_outputs", "_staged")
@@ -134,121 +112,3 @@ class _CurrentRowCapture:
             capture_insert=self.capture_insert,
             capture_revision=self.capture_revision,
         )
-
-
-def run_write_plan(
-    owner: UnitOfWork, plan: WritePlan, execute: ExecuteWriteSteps, /, *, captures: bool = True
-) -> None:
-    """Execute ``plan``'s Write Groups in order through ``execute``,
-    completing each settled write of a group in ``owner``, in order, as soon as
-    the group's steps succeeded and before any step of a later group executes.
-
-    A deferred settled write binds at its turn, against the ownership every
-    earlier one published: to the retained rows it reuses, the current rows
-    the attempt holds for continuing sources, and the coverage they leave. A
-    settled write with no step still completes. A group that fails completes
-    none of its writes, and nothing after it is prepared, bound, or executed.
-
-    Where it ``captures``, the current rows a group's writes describe are
-    captured as their payloads are demanded and published with each write's
-    completion; a flush no later submission follows captures none.
-    """
-    complete = owner._complete_write  # pyright: ignore[reportPrivateUsage] - the owner's completion
-    for group in plan.groups:
-        writes = group.writes
-        expected = sum(len(write.opened.allocated) for write in writes)
-        capture = _CurrentRowCapture.of(writes) if captures else None
-        if capture is None:
-            allocated = execute(group.steps, allocates=bool(expected))
-        else:
-            allocated = capture.execute(execute, group.steps, allocates=bool(expected))
-        if len(allocated) != expected:
-            raise UnitOfWorkError(
-                f"a Write Group opening {expected} row(s) whose keys the database allocates "
-                f"executed answering {len(allocated)} key(s)"
-            )
-        first = 0
-        for write in writes:
-            stop = first + len(write.opened.allocated)
-            deferred = write.deferred
-            if deferred is None:
-                captured = () if capture is None else capture.take_rows(write.current_outputs)
-                complete(write, allocated[first:stop], captured)
-            else:
-                bound, captured = _execute_deferred_range(owner, deferred, execute, captures)
-                complete(bound, allocated[first:stop], captured)
-            first = stop
-
-
-def _execute_deferred_range(
-    owner: UnitOfWork, deferred: DeferredRange, execute: ExecuteWriteSteps, captures: bool
-) -> tuple[BoundRange, tuple[tuple[CurrentRowOutput, object | None], ...]]:
-    """What ``deferred`` publishes once bound under ``owner``'s current
-    ownership and executed: the range's bound completion, and the current rows
-    its execution captured where it ``captures``."""
-    bound = acquire_and_bind_range(
-        deferred,
-        acquire_rows=owner.acquire_rows,
-        planner=owner._planner,  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
-        ownership=owner._admission.ownership,  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
-        actor_identity=owner._actor_identity,  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
-        transaction_instant=owner._transaction_instant,  # pyright: ignore[reportPrivateUsage] - the owner's binding inputs
-        current=owner._current,  # pyright: ignore[reportPrivateUsage] - the owner's freshness check
-    )
-    capture = _CurrentRowCapture.of((bound,)) if captures else None
-    if capture is None:
-        execute(bound.steps, allocates=False)
-        return bound, ()
-    capture.execute(execute, bound.steps, allocates=False)
-    return bound, capture.take_rows(bound.current_outputs)
-
-
-def acquire_and_bind_range(
-    description: DeferredRange,
-    /,
-    *,
-    acquire_rows: AcquireRows,
-    planner: WritePlanner,
-    ownership: TemporalWriteOwnership,
-    actor_identity: ActorIdentity,
-    transaction_instant: TransactionInstant,
-    current: Callable[[ObjectStateKey, int], bool] | None = None,
-) -> BoundRange:
-    """``description`` read and bound: the starting rows it retained that are
-    still ``current`` completed through ``acquire_rows``, which reads nothing
-    for them, then only the coverage nothing it holds or ``ownership`` holds
-    for it covers read through ``acquire_rows``, every row sealed as
-    Predecessor Rows while its read's resources are live, then bound by the
-    ``planner`` that finalized it under ``ownership``, each row it produces and
-    close it emits audited once.
-
-    Without ``current`` no retained row is judged current, so each is
-    discarded unjudged and its coverage read instead.
-
-    A description ``planner`` did not finalize as a range is refused before
-    anything is read.
-    """
-    if not isinstance(description, DeferredTemporalRange):
-        raise TypeError(
-            f"a deferred range this planner did not finalize cannot be bound: {description!r}"
-        )
-    completion = retained_completion(description, current or _never_current)
-    reused = None if completion is None else acquire_rows(completion, consume_coverage)
-    acquired: list[PredecessorRows] = []
-    for request in coverage_reads(description, reused):
-        rows = acquire_rows(request, consume_coverage)
-        if rows is not None:
-            acquired.append(rows)
-    return planner.bind_range(
-        description,
-        reused,
-        acquired,
-        ownership=ownership,
-        actor_identity=actor_identity,
-        transaction_instant=transaction_instant,
-    )
-
-
-def _never_current(state: ObjectStateKey, read_at: int) -> bool:
-    del state, read_at
-    return False

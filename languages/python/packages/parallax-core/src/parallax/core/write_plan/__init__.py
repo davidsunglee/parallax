@@ -9,9 +9,9 @@ from parallax.core.write_plan.keys import (
 from parallax.core.write_plan.observe import (
     EntityStateRow,
     PredecessorRow,
+    StateObservation,
     TemporalObservation,
     VersionObservation,
-    WriteObservation,
 )
 from parallax.core.write_plan.plan import WritePlan
 from parallax.core.write_plan.planned_rows import WritePlanningError
@@ -30,9 +30,9 @@ __all__ = [
     "PredecessorRow",
     "PredecessorRows",
     "PredecessorRowsBuilder",
+    "StateObservation",
     "TemporalObservation",
     "VersionObservation",
-    "WriteObservation",
     "WritePlan",
     "WritePlanningError",
     "object_state_key_from_observation",

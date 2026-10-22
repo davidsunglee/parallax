@@ -26,9 +26,9 @@ from parallax.core.write_plan import (
     ObjectKey,
     ObjectStateKey,
     PredecessorRow,
+    StateObservation,
     TemporalObservation,
     VersionObservation,
-    WriteObservation,
     object_state_key_from_observation,
 )
 
@@ -202,7 +202,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         except IndexError:
             raise KeyError(key) from None
         if resolved is None:
-            self._resolve_origin(key)
+            self._resolve_evidence(key)
             resolved = self._resolved[key]
         if resolved is None:
             raise KeyError(key)
@@ -214,7 +214,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
     def __len__(self) -> int:
         return self._resolved_count
 
-    def _resolve_origin(self, key: int) -> None:
+    def _resolve_evidence(self, key: int) -> None:
         try:
             pending = self._observations[key]
         except IndexError:  # pragma: no cover - publication requests Page projection indices only
@@ -238,7 +238,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
             return
         layout, member_row = admitted
         document = None if isinstance(pending, int) else pending.document
-        self._settle(
+        self._publish_evidence(
             key,
             _retain_observed(
                 layout,
@@ -261,7 +261,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         # Conforming roots carry identity, and the facet covers every accepted Entity.
         if primary_key is None or view is None:  # pragma: no cover
             return
-        self._settle(
+        self._publish_evidence(
             key,
             ReadEvidence.from_single_primary_key(
                 entity, view.primary_key.identity.name, primary_key, self._participation
@@ -274,9 +274,9 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
             raise RuntimeError(f"{entity.canonical}: a Transaction-Time key has no temporal shape")
         return shape
 
-    def _settle(self, key: int, origin: ReadEvidence) -> None:
-        self._evidence_context.register_read_evidence(origin, read_at=self._read_at)
-        self._resolved[key] = origin
+    def _publish_evidence(self, key: int, evidence: ReadEvidence) -> None:
+        self._evidence_context.register_read_evidence(evidence, read_at=self._read_at)
+        self._resolved[key] = evidence
         self._resolved_count += 1
         if self._resolved_count == len(self._observations):
             self._release_inputs()
@@ -385,7 +385,7 @@ def _observed_state(
     member_row: tuple[object, ...],
     document: object | None,
     locator: _Locator,
-) -> tuple[ObjectKey, WriteObservation, ObjectStateKey]:
+) -> tuple[ObjectKey, StateObservation, ObjectStateKey]:
     """One judged row's object, the evidence its family's ``locator`` reads off
     it, and the exact state that evidence is about.
 
@@ -400,7 +400,7 @@ def _observed_state(
         members = EntityStateRow.over_declared_members(
             layout.member_selection, member_row, absent=ABSENT
         )
-        observation: WriteObservation = VersionObservation(
+        observation: StateObservation = VersionObservation(
             observed_version=cast("int", members[locator.attribute.name])
         )
         return (

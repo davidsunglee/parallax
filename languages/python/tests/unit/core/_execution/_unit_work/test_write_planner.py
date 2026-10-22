@@ -76,9 +76,9 @@ from parallax.core.write_plan import (
     PlannedClose,
     PlannedInsert,
     PredecessorRow,
+    StateObservation,
     TemporalObservation,
     VersionObservation,
-    WriteObservation,
     WritePlan,
     WritePlanningError,
 )
@@ -144,7 +144,7 @@ def _plan(
     buffer: Sequence[_TestAdmittedWrite],
     model: Metamodel,
     *,
-    observations: dict[ObjectKey, WriteObservation] | None = None,
+    observations: dict[ObjectKey, StateObservation] | None = None,
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:
@@ -206,7 +206,7 @@ def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedK
 
 
 def _observed(
-    write: KeyedWriteInstruction, evidence: WriteObservation | RetainedObservation
+    write: KeyedWriteInstruction, evidence: StateObservation | RetainedObservation
 ) -> ObservedKeyedWrite:
     prepared = _prepared_keyed(write, _ACCOUNT)
     if not isinstance(evidence, RetainedObservation):
@@ -1329,7 +1329,7 @@ def test_a_pending_insertion_amended_into_one_state_opens_one_row_for_it() -> No
     ]
 
 
-def _bitemporal_observation() -> WriteObservation:
+def _bitemporal_observation() -> StateObservation:
     return TemporalObservation(
         predecessor=PredecessorRow(
             members={

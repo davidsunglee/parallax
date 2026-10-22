@@ -27,9 +27,9 @@ __all__ = [
     "AssignedComparison",
     "EntityStateRow",
     "PredecessorRow",
+    "StateObservation",
     "TemporalObservation",
     "VersionObservation",
-    "WriteObservation",
     "occurrence_value",
 ]
 
@@ -469,6 +469,6 @@ class TemporalObservation:
     predecessor: PredecessorRow
 
 
-type WriteObservation = VersionObservation | TemporalObservation
+type StateObservation = VersionObservation | TemporalObservation
 """The closed algebra of database evidence a write against existing state
 retains."""

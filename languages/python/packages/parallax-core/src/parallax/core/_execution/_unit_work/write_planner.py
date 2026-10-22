@@ -16,7 +16,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateWrite,
     derive_keyed_write,
 )
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, bind_range
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,
@@ -46,12 +45,10 @@ from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMet
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
-    BoundRange,
     TemporalWriteOwnership,
     WritePlan,
 )
 from parallax.core.write_plan.planned_rows import entity_view, planned_assignments
-from parallax.core.write_plan.predecessor_rows import PredecessorRows
 from parallax.core.write_plan.steps import ANY_COUNT, UNVERSIONED, PlannedDelete, PlannedUpdate
 
 __all__ = [
@@ -94,10 +91,10 @@ class WritePlanner:
     """The model-scoped, stateless Write Planner (`m-unit-work`).
 
     Constructed once per accepted Metamodel with its strategy adapters already
-    wired; :meth:`finalize` plans a flush, :meth:`bind_range` binds a
-    deferred range of a plan it finalized once that range's coverage is read,
-    and :meth:`predicate_step` plans a predicate-selected write's one
-    statement. No caller sequences coalescing, batching, ordering, temporal
+    wired; :meth:`finalize` plans a flush, :meth:`audit_decoration` supplies
+    the audit a deferred range of its plans binds under once that range's
+    coverage is read, and :meth:`predicate_step` plans a predicate-selected
+    write's one statement. No caller sequences coalescing, batching, ordering, temporal
     expansion, observation validation, instant acquisition, or audit by hand.
 
     The compiler it constructs here is its own, built over the same model and
@@ -156,7 +153,7 @@ class WritePlanner:
     @property
     def payloads(self) -> WritePayloadPreparer:
         """The model's write payload preparer, which lowers every plan this
-        planner answers and every range it binds."""
+        planner answers and every deferred range of those plans."""
         return self._payloads
 
     def finalize(self, request: WritePlanningRequest) -> WritePlan:
@@ -200,36 +197,13 @@ class WritePlanner:
             counts_unchanged_rows=request.counts_unchanged_rows,
         )
 
-    def bind_range(
-        self,
-        description: DeferredTemporalRange,
-        reused: PredecessorRows | None,
-        acquired: Sequence[PredecessorRows],
-        /,
-        *,
-        ownership: TemporalWriteOwnership,
-        actor_identity: ActorIdentity,
-        transaction_instant: TransactionInstant,
-    ) -> BoundRange:
-        """Bind a deferred range this planner finalized to the starting rows it
-        ``reused`` and the coverage ``acquired`` for it, each ``None`` or empty
-        where there was none.
-
-        Its temporal meaning, concurrency, and gates were fixed when the plan
-        was made; binding reads ``ownership`` as the attempt's completed Write
-        Groups left it and never recaptures the instant. The configured audit
-        finalizes each row the binding produces once, and decorates each close
-        it emits, with ``actor_identity`` and ``transaction_instant``, changing no
-        topology and classifying no gate.
-        """
-        return bind_range(
-            description,
-            reused,
-            acquired,
-            ownership=ownership,
-            audit=AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled),
-            payloads=self._payloads,
-        )
+    def audit_decoration(
+        self, *, actor_identity: ActorIdentity, transaction_instant: TransactionInstant
+    ) -> AuditDecoration:
+        """The configured audit applied with ``actor_identity`` and
+        ``transaction_instant``. Building it invokes no hook and resolves no
+        instant, so one serves every range a flush binds."""
+        return AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled)
 
     def predicate_step(
         self,
@@ -249,7 +223,9 @@ class WritePlanner:
         return _predicate_step(
             prepared,
             entity_view(self._families, prepared.selection.target),
-            AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled),
+            self.audit_decoration(
+                actor_identity=actor_identity, transaction_instant=transaction_instant
+            ),
         )
 
     def version_attribute(self, entity: EntityIdentity) -> AttributeIdentity | None:

@@ -16,7 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import gc
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -26,7 +26,6 @@ from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._execution._unit_work import ranges
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core._execution._unit_work.retain import RetainedTargetState
-from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import EntityIdentity
@@ -213,22 +212,21 @@ def test_a_deferred_range_is_bound_once_between_its_coverage_read_and_its_first_
     writes = () if acquired is None else (Write(times=6),)
     port = ScriptedAdapter(Transact(Read(rows=coverage), *writes))
     seen: list[tuple[int, int, int | None]] = []
-    bind = WritePlanner.bind_range
+    bind = ranges._bind_range  # pyright: ignore[reportPrivateUsage] - the binding a flush's range takes
 
     def recording(
-        planner: WritePlanner,
-        description: DeferredTemporalRange,
+        deferred: DeferredTemporalRange,
         reused: PredecessorRows | None,
-        acquired: tuple[PredecessorRows, ...],
+        acquired: Sequence[PredecessorRows],
         /,
         **supplied: Any,
     ) -> BoundRange:
         assert reused is None
         read = sum(len(rows) for rows in acquired) if acquired else None
         seen.append((len(_reads(port)), len(_writes(port)), read))
-        return bind(planner, description, reused, acquired, **supplied)
+        return bind(deferred, reused, acquired, **supplied)
 
-    monkeypatch.setattr(WritePlanner, "bind_range", recording)
+    monkeypatch.setattr(ranges, "_bind_range", recording)
     if acquired is None:
         with raises_contextualized(WritePreconditionError):
             _db(port).transact(lambda tx: _patch(tx, value="150.00"))
@@ -466,7 +464,7 @@ _FOUR = (
 def test_the_parts_two_acquired_starts_leave_are_read_together_up_to_the_term_cap(
     monkeypatch: pytest.MonkeyPatch, terms: int
 ) -> None:
-    monkeypatch.setattr(ranges, "_COVERAGE_TERMS", terms)
+    monkeypatch.setattr(ranges, "_COVERAGE_WINDOWS", terms)
     first, second, third, fourth = _calendar(*_FOUR)
     coverage = (
         [Read(rows=[second, fourth])] if terms > 1 else [Read(rows=[second]), Read(rows=[fourth])]

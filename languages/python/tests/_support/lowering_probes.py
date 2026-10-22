@@ -29,7 +29,7 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import Concurrency, TransactionInstant, WritePlanningRequest
 from parallax.core.write_payload import LayoutPayloadPreparer
-from parallax.core.write_plan import WriteObservation
+from parallax.core.write_plan import StateObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, TemporalWriteOwnership
 from parallax.core.write_plan.steps import PlannedStep
@@ -55,7 +55,7 @@ def lower_instruction(
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
     *,
-    observation: WriteObservation | None = None,
+    observation: StateObservation | None = None,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> list[LoweredStatement]:
     """Every statement one instruction plans and lowers to, in execution order,
@@ -75,7 +75,7 @@ def lower_instruction_steps(
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
     *,
-    observation: WriteObservation | None = None,
+    observation: StateObservation | None = None,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     """The same, paired with the settled step each statement came from."""
@@ -90,7 +90,7 @@ def _stream(
     dialect: Dialect,
     concurrency: Concurrency,
     tx_instant: TransactionInstant | None,
-    observation: WriteObservation | None,
+    observation: StateObservation | None,
     ownership: TemporalWriteOwnership,
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     instant = inert_instant() if tx_instant is None else tx_instant

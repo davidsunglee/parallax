@@ -118,7 +118,7 @@ type _WriteSurface = Literal["keyed", "target"]
 
 INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 """The keyed mutations that OPEN a row rather than write against an existing
-one, which is what makes them the mutations that carry no Write Observation
+one, which is what makes them the mutations that carry no State Observation
 (`m-unit-work` "Absence is structural"). Shared so the buffered carrier's own
 refusal and the planner's coalescing both answer "is this an insert?" from one
 definition."""

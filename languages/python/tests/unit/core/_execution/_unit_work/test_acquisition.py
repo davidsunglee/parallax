@@ -20,10 +20,14 @@ from parallax.core import inheritance, opt_lock
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
+from parallax.core._execution._unit_work import acquisition as acquisition_module
 from parallax.core._execution._unit_work.acquisition import (
+    CoverageReadRequest,
+    CoverageTerm,
     RowConsumer,
     RowRequest,
     TargetReadRequest,
+    consume_coverage,
     consume_target,
 )
 from parallax.core._execution._unit_work.instructions import (
@@ -35,7 +39,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.uow import FlushScope
 from parallax.core.dialect import POSTGRES
 from parallax.core.inheritance import EntityMemberSelection
-from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     Concurrency,
@@ -51,6 +55,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import ObjectKey, PredecessorRow
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
+from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 
 _MODELS = models.load_models()
@@ -252,3 +257,44 @@ def test_an_effectively_optimistic_target_reads_nothing() -> None:
     uow.buffer_target(_account_patch())
     uow.flush(trigger="pre_commit")
     assert len(flushes.simulated.statements) == 1
+
+
+# --------------------------------------------------------------------------- #
+# A consumer keeps no row or document it was handed once it fails.            #
+# --------------------------------------------------------------------------- #
+class _Unjudged(Exception):
+    pass
+
+
+def _failing_after(rows: Sequence[tuple[object, ...]], after: int) -> Iterator[tuple[object, ...]]:
+    yield from rows[:after]
+    raise _Unjudged
+
+
+@pytest.mark.parametrize("coverage", [False, True], ids=["target", "coverage"])
+def test_a_consumer_a_row_fails_in_holds_none_of_the_rows_or_documents_it_was_handed(
+    coverage: bool,
+) -> None:
+    rows = [(1, "Ada", Decimal("100.00"), 3), (2, "Bea", Decimal("200.00"), 3)]
+    documents: list[object | None] = ["raw-1", "raw-2"]
+    request = _target_request()
+    selection = _selection(_ACCOUNT, "Account")
+    with pytest.raises(_Unjudged) as raised:
+        if coverage:
+            coverage_request = CoverageReadRequest(
+                request.entity, _key(request), (CoverageTerm(1, ()),), locking=False
+            )
+            consume_coverage(
+                coverage_request, selection, _failing_after(rows, 1), _ABSENT, documents, 2
+            )
+        else:
+            consume_target(request, selection, _failing_after(rows, 0), _ABSENT, documents, 1)
+    consumer = frames(raised.value.__traceback__, module=acquisition_module.__file__)
+    assert consumer
+    assert not reaches(consumer, documents)
+    assert not reaches(consumer, rows[0])
+
+
+def _key(request: TargetReadRequest) -> AttributeIdentity:
+    ((name, _value),) = request.key.primary_key
+    return AttributeIdentity(request.entity.identity, name)

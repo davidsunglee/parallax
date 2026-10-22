@@ -15,7 +15,6 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import opt_lock
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work.write_runner import run_write_plan
 from parallax.core._execution._write_lowering import lowered, stream_physical
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import INFINITY as OPEN
@@ -285,7 +284,7 @@ def run_plan(
     )
     if units is not None:
         units.append(uow)
-    run_write_plan(uow, plan, execute)
+    uow._run_write_plan(plan, captures=True)  # pyright: ignore[reportPrivateUsage] - the flush's own plan walk over a plan built here
 
 
 def _recording(port: ScriptedAdapter, completed: list[int]) -> type[UnitOfWork]:

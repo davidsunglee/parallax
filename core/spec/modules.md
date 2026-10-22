@@ -125,7 +125,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-batch-write` | Set-based / batched writes | active | cases |
 | `m-cascade-delete` | Cascade delete | active | cases |
 | `m-unit-work` | Transactions & unit of work | active | cases |
-| `m-write-plan` | Planned Step algebra, Write Observations, and predecessor evidence | active | cases |
+| `m-write-plan` | Planned Step algebra, State Observations, and predecessor evidence | active | cases |
 | `m-write-payload` | Persisted write payload assembly and persisted-state comparison | active | cases |
 | `m-read-lock` | In-transaction shared read lock | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |

@@ -18,7 +18,7 @@ from parallax.core.opt_lock._facet import (
     view,
 )
 from parallax.core.opt_lock._rules import ISSUE_CODES, RULE_SET
-from parallax.core.write_plan import ObjectKey, VersionObservation, WriteObservation
+from parallax.core.write_plan import ObjectKey, StateObservation, VersionObservation
 
 __all__ = [
     "FACET_KEY",
@@ -74,7 +74,7 @@ class UnobservedVersionError(RuntimeError):
     """
 
 
-def require_observed(entity: str, observation: WriteObservation | None) -> int:
+def require_observed(entity: str, observation: StateObservation | None) -> int:
     """The version a keyed update/delete of a versioned row advances from.
 
     Raises :class:`UnobservedVersionError` when the write reached settlement

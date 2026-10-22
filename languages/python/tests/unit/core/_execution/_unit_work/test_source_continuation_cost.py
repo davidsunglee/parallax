@@ -25,7 +25,7 @@ from typing import Any, Final
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution._unit_work._write_ownership import (
-    _CurrentRows,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
+    _HeldCurrentRows,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
     _Origin,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
 )
 from parallax.snapshot import connect
@@ -202,7 +202,7 @@ def _held_for_continuation() -> tuple[int, int]:
     objects = tracked_objects()
     return (
         sum(1 for held in objects if isinstance(held, _Origin)),
-        sum(1 for held in objects if isinstance(held, _CurrentRows)),
+        sum(1 for held in objects if isinstance(held, _HeldCurrentRows)),
     )
 
 

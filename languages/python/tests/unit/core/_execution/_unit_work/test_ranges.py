@@ -8,8 +8,10 @@ each bound step once.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 from collections.abc import Iterable, Sequence
+from types import FrameType
 from typing import Any
 
 import pytest
@@ -17,12 +19,19 @@ import pytest
 import parallax.core._execution._planning as planning_composition
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.acquisition import CoverageReadRequest
+from parallax.core._execution._unit_work import ranges as ranges_module
+from parallax.core._execution._unit_work.acquisition import (
+    AcquireRows,
+    CoverageReadRequest,
+    RowConsumer,
+    RowRequest,
+)
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedTargetWrite,
     prepare_wire_write,
 )
+from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     CoalescedTemporalWrite,
@@ -30,7 +39,6 @@ from parallax.core._execution._unit_work.write_items import (
     TemporalContribution,
     target_write,
 )
-from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
@@ -54,7 +62,6 @@ from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjec
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
-    DeferredRange,
     Openings,
     SettledWrite,
     TemporalRowCoordinates,
@@ -80,10 +87,12 @@ from tests._support.planner_probes import (
     settled_writes,
 )
 from tests.unit._corpus_model_support import model
+from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
     HeldRows,
     bind_held,
     coverage_read,
+    range_bindings,
 )
 from tests.unit.core._execution._unit_work._audit_support import RecordingAudit
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
@@ -333,23 +342,6 @@ def _row_window(row: WriteRow) -> tuple[object, object, object]:
     return cells["validStart"], cells["validEnd"], cells["amount"]
 
 
-def test_a_deferred_range_its_planner_did_not_finalize_is_refused_before_any_read() -> None:
-    class _Foreign(DeferredRange):
-        __slots__ = ()
-
-    held = HeldRows(_SPANS)
-    with pytest.raises(TypeError, match="did not finalize"):
-        acquire_and_bind_range(
-            _Foreign(),
-            acquire_rows=held,
-            planner=build_write_planner(_SPANS),
-            ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=instant_at(_PLANNED_AT.isoformat()),
-        )
-    assert held.requests == []
-
-
 @pytest.mark.parametrize(
     ("ownership", "retired"),
     [
@@ -475,3 +467,89 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
     with pytest.raises(WritePlanningError, match="closes the current milestone"):
         _plan(item, instant=TransactionInstant(clock))
     assert clock.calls == 0
+
+
+# --------------------------------------------------------------------------- #
+# A flush's scoped binding: one range bound per advance, its references       #
+# dropped however the scope ends.                                              #
+# --------------------------------------------------------------------------- #
+class _Failed(Exception):
+    pass
+
+
+def _answering(held: AcquireRows, answers: list[object]) -> AcquireRows:
+    """``held``'s answers, each recorded in ``answers`` as it is handed back."""
+
+    def acquire[Request: RowRequest, Result](
+        request: Request, consumer: RowConsumer[Request, Result], /
+    ) -> Result:
+        answer = held(request, consumer)
+        answers.append(answer)
+        return answer
+
+    return acquire
+
+
+def _scoped(settled: SettledWrite, acquire: AcquireRows) -> RangeBindings:
+    deferred = settled.deferred
+    assert isinstance(deferred, DeferredTemporalRange)
+    return range_bindings(
+        _SPANS, deferred, acquire, transaction_instant=instant_at(_PLANNED_AT.isoformat())
+    )
+
+
+def _binding_frames(failure: BaseException) -> list[FrameType]:
+    return [
+        frame
+        for frame in frames(failure.__traceback__, module=ranges_module.__file__)
+        if frame.f_code.co_qualname.startswith(f"{RangeBindings.__name__}.")
+    ]
+
+
+def test_a_range_is_read_and_bound_only_once_the_flush_advances_to_it() -> None:
+    settled, _acquisition = _deferred(_plan(_update(_retained(_HEAD), _MAR, _SEP)))
+    held = HeldRows(_SPANS, [_TAIL])
+    with _scoped(settled, held) as bindings:
+        assert held.requests == []
+        bound = next(bindings)
+        assert [type(request) for request in held.requests] == [CoverageReadRequest]
+        assert next(bindings, None) is None
+        assert next(bindings, None) is None
+    assert _windows(bound.steps) == _MERGED
+
+
+@pytest.mark.parametrize("leaves", ["break", "raise"])
+def test_a_flush_leaving_its_bindings_leaves_them_holding_no_row_the_range_read(
+    leaves: str,
+) -> None:
+    settled, _acquisition = _deferred(_plan(_update(_retained(_HEAD), _MAR, _SEP)))
+    answers: list[object] = []
+    bound: list[BoundRange] = []
+    bindings = _scoped(settled, _answering(HeldRows(_SPANS, [_TAIL]), answers))
+    with contextlib.suppress(_Failed), bindings:
+        for each in bindings:
+            bound.append(each)
+            if leaves == "raise":
+                raise _Failed
+            break
+    (rows,) = answers
+    assert rows is not None
+    assert not reaches([bindings], rows)
+    assert next(bindings, None) is None
+    # What the bound range carries is the flush's, and stays usable.
+    (each,) = bound
+    assert _windows(each.steps) == _MERGED
+
+
+def test_a_failed_binding_leaves_neither_its_bindings_nor_their_frames_holding_its_rows() -> None:
+    settled, _acquisition = _deferred(_plan(_target(_MAR, _SEP)))
+    answers: list[object] = []
+    stored = HeldRows(_SPANS, [_span(_JAN, _JUN, 100, tx_start=_T1)])
+    bindings = _scoped(settled, _answering(stored, answers))
+    with pytest.raises(WritePreconditionError) as raised, bindings:
+        next(bindings)
+    (rows,) = answers
+    owned = _binding_frames(raised.value)
+    assert owned
+    assert not reaches([bindings, *owned], rows)
+    assert next(bindings, None) is None

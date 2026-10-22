@@ -388,7 +388,7 @@ def test_an_object_claimed_write_requires_the_source_it_was_admitted_through() -
 )
 def test_an_observed_write_requires_a_retained_observation(evidence: object) -> None:
     # Application ingress hands a write the retained observation its read
-    # produced; a plain Write Observation names no claim and spends nothing, so
+    # produced; a plain State Observation names no claim and spends nothing, so
     # it is refused where the carrier is built, before anything is buffered.
     prepared = _prepared_person_delete(1)
     with pytest.raises(ValueError, match="requires the retained observation"):

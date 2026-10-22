@@ -36,7 +36,7 @@ from parallax.core.unit_work import (
     buffered_write,
     object_key,
 )
-from parallax.core.write_plan import ObjectKey, WriteObservation, WritePlan
+from parallax.core.write_plan import ObjectKey, StateObservation, WritePlan
 from parallax.core.write_plan.keys import object_state_key_from_observation
 from parallax.core.write_plan.plan import SettledWrite
 from parallax.core.write_plan.steps import PlannedDelete, PlannedStep, PlannedUpdate
@@ -103,7 +103,7 @@ def object_source(
 def observed_buffer(
     buffer: Sequence[AdmittedWrite | KeyedWriteInstruction],
     model: Metamodel,
-    observations: Mapping[ObjectKey, WriteObservation] | None,
+    observations: Mapping[ObjectKey, StateObservation] | None,
 ) -> list[OrderedWrite]:
     """``buffer`` with every item ``observations`` names wrapped in its carrier,
     admitted in authored order as a unit of work admits it.
@@ -137,7 +137,7 @@ def observed_buffer(
 
 
 def observed_write(
-    instruction: PreparedKeyedWrite, model: Metamodel, observation: WriteObservation | None
+    instruction: PreparedKeyedWrite, model: Metamodel, observation: StateObservation | None
 ) -> OrderedWrite:
     """``instruction`` buffered against ``observation``, as the one write a
     buffer holds."""
@@ -171,7 +171,7 @@ def _no_insertion_authorizes(entity: EntityIdentity, advanced_from: int | None) 
 
 
 def retained_observation(
-    instruction: PreparedKeyedWrite, model: Metamodel, observation: WriteObservation
+    instruction: PreparedKeyedWrite, model: Metamodel, observation: StateObservation
 ) -> RetainedObservation:
     """``observation`` retained under the exact state of ``instruction``'s
     object it is evidence about, with no participating read."""

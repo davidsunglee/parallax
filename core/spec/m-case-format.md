@@ -1181,7 +1181,7 @@ is the DML it authors plus the **resolving reads** its choreography owes — the
 reads a unit runs to hold the state it writes against. This section states how
 many of those a case document accounts for and where they run, never what
 entitles a verb to write: `m-unit-work` *Write value provenance* owns which
-values a value-taking verb accepts, and `m-write-plan` *Write Observation*,
+values a value-taking verb accepts, and `m-write-plan` *State Observation*,
 with `m-unit-work` *Observation ownership and lifetime*, owns what a surviving
 write against existing state retains,
 which is what `delete`, `terminate`, and `terminateUntil` answer to — those

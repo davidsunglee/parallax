@@ -15,25 +15,34 @@ import pytest
 from parallax.core import inheritance
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import ranges as ranges_module
-from parallax.core._execution._unit_work.acquisition import CompletionRequest, CoverageReadRequest
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
+from parallax.core._execution._unit_work.acquisition import (
+    CompletionRequest,
+    CoverageReadRequest,
+    RowConsumer,
+    RowRequest,
+)
+from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
 from parallax.core._execution._unit_work.retain import RetainedTargetState
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     TargetKeyedWrite,
 )
-from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
 from parallax.core.base import INFINITY
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import WritePlanningRequest
 from parallax.core.write_plan import PlannedClose, PlannedInsert, PredecessorRow
 from parallax.core.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
-from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, BoundRange, SettledWrite
+from parallax.core.write_plan.plan import BoundRange, SettledWrite
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, settled_writes
 from tests.unit._positional_row_support import positional_row
-from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
+from tests.unit.core._execution._reach_support import frames, reaches
+from tests.unit.core._execution._unit_work._acquired_rows_support import (
+    HeldRows,
+    bind_deferred,
+    range_bindings,
+)
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     APR,
     AUG,
@@ -107,15 +116,7 @@ def _bind(
     deferred = settled.deferred
     assert isinstance(deferred, DeferredTemporalRange)
     held = HeldRows(POSITION, stored, overlapping=True)
-    bound = acquire_and_bind_range(
-        deferred,
-        acquire_rows=held,
-        planner=build_write_planner(POSITION),
-        ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
-        actor_identity=TEST_ACTOR_IDENTITY,
-        transaction_instant=_INSTANT,
-        current=current,
-    )
+    bound = bind_deferred(POSITION, deferred, held, transaction_instant=_INSTANT, current=current)
     return bound, held
 
 
@@ -173,14 +174,8 @@ def test_a_row_two_reads_both_return_is_bound_once() -> None:
     held_rows = HeldRows(POSITION, [_START, _LATER])
     deferred = settled.deferred
     assert isinstance(deferred, DeferredTemporalRange)
-    bound = acquire_and_bind_range(
-        deferred,
-        acquire_rows=held_rows,
-        planner=build_write_planner(POSITION),
-        ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
-        actor_identity=TEST_ACTOR_IDENTITY,
-        transaction_instant=_INSTANT,
-        current=_always,
+    bound = bind_deferred(
+        POSITION, deferred, held_rows, transaction_instant=_INSTANT, current=_always
     )
     closes = [step for step in bound.steps if isinstance(step, PlannedClose)]
     assert len(closes) == 2
@@ -227,7 +222,7 @@ def _two_starts() -> tuple[TargetKeyedWrite, TargetKeyedWrite]:
 def test_the_parts_retained_rows_leave_are_read_in_reads_of_bounded_terms(
     monkeypatch: pytest.MonkeyPatch, terms: int
 ) -> None:
-    monkeypatch.setattr(ranges_module, "_COVERAGE_TERMS", terms)
+    monkeypatch.setattr(ranges_module, "_COVERAGE_WINDOWS", terms)
     settled = _settled(*_two_starts())
     bound, held = _bind(settled, [_EARLY, _MIDDLE, _CENTRE, _LATE])
     parts = (TimeInterval(MAR, MAY), TimeInterval(JUL, AUG))
@@ -287,24 +282,6 @@ def test_a_retained_row_is_completed_as_one_original_beside_an_observed_one() ->
     assert state.take() is None
 
 
-def test_without_a_freshness_judge_every_retained_row_is_discarded() -> None:
-    state = _held(_START)
-    settled = _settled(_holding(addressed_write(value="150.00"), state))
-    deferred = settled.deferred
-    assert isinstance(deferred, DeferredTemporalRange)
-    held = HeldRows(POSITION, [_START, _LATER], overlapping=True)
-    acquire_and_bind_range(
-        deferred,
-        acquire_rows=held,
-        planner=build_write_planner(POSITION),
-        ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
-        actor_identity=TEST_ACTOR_IDENTITY,
-        transaction_instant=_INSTANT,
-    )
-    assert _coverage_windows(held) == [(TimeInterval(MAR, SEP),)]
-    assert state.take() is None
-
-
 def test_a_range_bound_at_planning_releases_the_row_it_retained() -> None:
     whole = rectangle(JAN, INFINITY, "100.00")
     state = _held(whole)
@@ -314,3 +291,43 @@ def test_a_range_bound_at_planning_releases_the_row_it_retained() -> None:
     )
     assert settled.deferred is None
     assert state.take() is None
+
+
+class _Failed(Exception):
+    pass
+
+
+def test_a_failed_coverage_read_leaves_its_bindings_holding_no_reused_row() -> None:
+    settled = _settled(_holding(addressed_write(value="150.00"), _held(_START)))
+    deferred = settled.deferred
+    assert isinstance(deferred, DeferredTemporalRange)
+    held = HeldRows(POSITION, [_START, _LATER], overlapping=True)
+    reused: list[object] = []
+    failure = _Failed()
+
+    def acquire[Request: RowRequest, Result](
+        request: Request, consumer: RowConsumer[Request, Result], /
+    ) -> Result:
+        if isinstance(request, CoverageReadRequest):
+            raise failure
+        answer = held(request, consumer)
+        reused.append(answer)
+        return answer
+
+    bindings = range_bindings(
+        POSITION, deferred, acquire, transaction_instant=_INSTANT, current=_always
+    )
+    with pytest.raises(_Failed) as raised, bindings:
+        next(bindings)
+    # The failure is the read's own, its traceback intact.
+    assert raised.value is failure
+    owned = [
+        frame
+        for frame in frames(raised.value.__traceback__, module=ranges_module.__file__)
+        if frame.f_code.co_qualname.startswith(f"{RangeBindings.__name__}.")
+    ]
+    assert owned
+    (rows,) = reused
+    assert rows is not None
+    assert not reaches([bindings, *owned], rows)
+    assert next(bindings, None) is None

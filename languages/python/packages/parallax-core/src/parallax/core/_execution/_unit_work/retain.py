@@ -6,7 +6,7 @@ from typing import Final, cast
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
-from parallax.core.write_plan.observe import WriteObservation
+from parallax.core.write_plan.observe import StateObservation
 
 __all__ = [
     "InsertionIdentity",
@@ -92,7 +92,7 @@ class RetainedObservation:
     def __init__(
         self,
         key: ObjectStateKey,
-        evidence: WriteObservation,
+        evidence: StateObservation,
         participation: ParticipationToken | None,
     ) -> None:
         self.key: Final = key

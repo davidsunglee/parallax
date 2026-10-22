@@ -68,8 +68,8 @@ from parallax.core.write_plan import (
     PlannedClose,
     PlannedInsert,
     PredecessorRow,
+    StateObservation,
     TemporalObservation,
-    WriteObservation,
     WritePlanningError,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey
@@ -168,7 +168,7 @@ def _lower_full(
     meta: Metamodel,
     tx_instant: str,
     *,
-    observation: WriteObservation | None = None,
+    observation: StateObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
 ) -> list[LoweredStatement]:
@@ -187,7 +187,7 @@ def _lower_steps(
     meta: Metamodel,
     tx_instant: str,
     *,
-    observation: WriteObservation | None = None,
+    observation: StateObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
@@ -207,7 +207,7 @@ def _finalize(
     meta: Metamodel,
     tx_instant: str,
     *,
-    observation: WriteObservation | None = None,
+    observation: StateObservation | None = None,
     concurrency: Concurrency = "locking",
 ) -> tuple[PlannedStep, ...]:
     steps = lower_instruction_steps(
@@ -226,7 +226,7 @@ def _lower(
     meta: Metamodel,
     tx_instant: str,
     *,
-    observation: WriteObservation | None = None,
+    observation: StateObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
 ) -> list[tuple[str, tuple[object, ...]]]:
@@ -888,7 +888,7 @@ def _retained(
     uow: UnitOfWork,
     entity: EntityIdentity,
     document: object | None = None,
-) -> WriteObservation | None:
+) -> StateObservation | None:
     """The evidence a read of the SpotQuote row retained for its milestone.
 
     Read off the read evidence the retention answered, and cross-checked against a
@@ -918,7 +918,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     # next milestone instead of carrying it forward.
     model, entity = _accepted("SpotQuote", QUOTE)
 
-    def observe(uow: UnitOfWork) -> WriteObservation | None:
+    def observe(uow: UnitOfWork) -> StateObservation | None:
         return _retained(model, uow, entity.identity)
 
     observation = observe(
@@ -962,7 +962,7 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
     model, entity = _accepted("SpotQuote", QUOTE)
     stored = {"price": "50.00", "symbol": "ACME", "charterCode": "NB-118"}
 
-    def observe(uow: UnitOfWork) -> WriteObservation | None:
+    def observe(uow: UnitOfWork) -> StateObservation | None:
         return _retained(model, uow, entity.identity, stored)
 
     observation = observe(
@@ -1487,7 +1487,7 @@ def _own_position(valid_end: dt.datetime | None = None) -> OpenedRows:
 def _owned_lowering(
     instruction: KeyedWriteInstruction,
     meta: Metamodel,
-    observation: WriteObservation,
+    observation: StateObservation,
     ownership: OpenedRows,
     *,
     concurrency: Concurrency = "locking",

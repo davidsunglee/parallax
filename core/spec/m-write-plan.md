@@ -1,8 +1,8 @@
-# m-write-plan — Planned Steps and Write Observations
+# m-write-plan — Planned Steps and State Observations
 
 `m-write-plan` specifies the finalized semantic form of a write — the Planned
 Step algebra and the Write Target, Write Gate, and Affected Rows Policy
-vocabulary it is built from — the Write Observation a write against existing
+vocabulary it is built from — the State Observation a write against existing
 state retains, including a temporal write's Predecessor Row, and the neutral
 vocabulary of the payload a write persists. Per the dependency graph it depends
 on `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-document-codec`,
@@ -291,15 +291,15 @@ no Affected Rows Policy.
 The tags are **neutral**: the plan names an outcome class, never a language's
 exception type.
 
-## Write Observation
+## State Observation
 
 ```text
-WriteObservation =
+StateObservation =
     VersionObservation(observed_version)
   | TemporalObservation(predecessor)
 ```
 
-A **Write Observation** is the database evidence a surviving write against
+A **State Observation** is the database evidence a surviving write against
 existing state retains. Transaction-Time-Only and Bitemporal entities have
 **identical** observation requirements; the accepted Temporal Facet — not a
 separate observation variant per temporal flavor — decides which topology

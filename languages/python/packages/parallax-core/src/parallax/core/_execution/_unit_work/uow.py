@@ -37,6 +37,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateWrite,
     PreparedTargetWrite,
 )
+from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
@@ -47,6 +48,7 @@ from parallax.core._execution._unit_work.retain import (
 )
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
+    AuditDecoration,
     Concurrency,
     EvidencePolicyLookup,
 )
@@ -59,7 +61,7 @@ from parallax.core._execution._unit_work.write_planner import WritePlanner, Writ
 from parallax.core._execution._unit_work.write_runner import (
     ExecuteCountedStep,
     ExecuteWriteSteps,
-    run_write_plan,
+    _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the flush's own capture support
 )
 from parallax.core.base import normalize_instant
 from parallax.core.inheritance import InheritanceEntityView
@@ -77,7 +79,13 @@ from parallax.core.write_plan.keys import (
     TemporalObjectStateKey,
 )
 from parallax.core.write_plan.observe import PredecessorRow
-from parallax.core.write_plan.plan import CurrentRowOutput, WriteCompletion
+from parallax.core.write_plan.plan import (
+    BoundRange,
+    CurrentRowOutput,
+    DeferredRange,
+    WriteCompletion,
+    WritePlan,
+)
 from parallax.core.write_plan.steps import KeyTarget
 
 __all__ = [
@@ -818,10 +826,88 @@ class UnitOfWork:
         )
         admission.drain_planned()
         try:
-            run_write_plan(self, plan, self.execute_write_steps, captures=not concluding)
+            self._run_write_plan(plan, captures=not concluding)
         except BaseException as failure:
             self._lifetime.doom(failure)
             raise
+
+    def _run_write_plan(self, plan: WritePlan, *, captures: bool) -> None:
+        """Execute ``plan``'s Write Groups in order, completing each settled
+        write of a group, in order, as soon as the group's steps succeeded and
+        before any step of a later group executes.
+
+        A deferred settled write binds at its turn, against the ownership every
+        earlier one published, and executes and completes before the walk
+        advances. A settled write with no step still completes. A group that
+        fails completes none of its writes, and nothing after it is prepared,
+        bound, or executed.
+
+        Where it ``captures``, the current rows a write describes are captured
+        as their payloads are demanded and published with its completion.
+        """
+        execute = self.execute_write_steps
+        audit: AuditDecoration | None = None
+        for group in plan.groups:
+            writes = group.writes
+            expected = sum(len(write.opened.allocated) for write in writes)
+            capture = _CurrentRowCapture.of(writes) if captures else None
+            if capture is None:
+                allocated = execute(group.steps, allocates=bool(expected))
+            else:
+                allocated = capture.execute(execute, group.steps, allocates=bool(expected))
+            if len(allocated) != expected:
+                raise UnitOfWorkError(
+                    f"a Write Group opening {expected} row(s) whose keys the database allocates "
+                    f"executed answering {len(allocated)} key(s)"
+                )
+            first = 0
+            for write in writes:
+                stop = first + len(write.opened.allocated)
+                deferred = write.deferred
+                if deferred is None:
+                    captured = () if capture is None else capture.take_rows(write.current_outputs)
+                    self._complete_write(write, allocated[first:stop], captured)
+                else:
+                    if audit is None:
+                        audit = self._planner.audit_decoration(
+                            actor_identity=self._actor_identity,
+                            transaction_instant=self._transaction_instant,
+                        )
+                    self._bind_deferred(deferred, audit, captures=captures)
+                first = stop
+
+    def _bind_deferred(
+        self, deferred: DeferredRange, audit: AuditDecoration, *, captures: bool
+    ) -> None:
+        """Bind, execute, and complete one deferred settled write's range.
+
+        A description this unit of work's planner did not finalize as a range
+        is refused before anything is read."""
+        if not isinstance(deferred, DeferredTemporalRange):
+            raise TypeError(
+                f"a deferred range this planner did not finalize cannot be bound: {deferred!r}"
+            )
+        with RangeBindings(
+            (deferred,),
+            acquire_rows=self.acquire_rows,
+            current=self._current,
+            ownership=self._admission.ownership,
+            audit=audit,
+            payloads=self._planner.payloads,
+        ) as bindings:
+            for bound in bindings:
+                self._execute_bound_range(bound, captures=captures)
+
+    def _execute_bound_range(self, bound: BoundRange, *, captures: bool) -> None:
+        """Execute ``bound``'s steps and publish its completion, with the
+        current rows its execution captured where it ``captures``."""
+        capture = _CurrentRowCapture.of((bound,)) if captures else None
+        if capture is None:
+            self.execute_write_steps(bound.steps, allocates=False)
+            self._complete_write(bound, ())
+            return
+        capture.execute(self.execute_write_steps, bound.steps, allocates=False)
+        self._complete_write(bound, (), capture.take_rows(bound.current_outputs))
 
     def _complete_write(
         self,

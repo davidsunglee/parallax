@@ -287,7 +287,7 @@ class WriteAdmission:
         later submission follows that flush, and no write of it continues from
         what another of its writes leaves, so nothing its writes leave is
         demanded."""
-        return _Concluding(self._ownership)
+        return _ConcludingOwnership(self._ownership)
 
     def admit(
         self,
@@ -1029,7 +1029,7 @@ class WriteAdmission:
 
 
 @final
-class _Concluding:
+class _ConcludingOwnership:
     """``ownership`` answering every question as it does, except that no
     predecessor is demanded."""
 

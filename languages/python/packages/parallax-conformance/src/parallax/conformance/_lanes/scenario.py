@@ -131,9 +131,9 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import (
     ObjectKey,
     ObjectStateKey,
+    StateObservation,
     TemporalObservation,
     VersionObservation,
-    WriteObservation,
     WritePlanningError,
     object_state_key_from_observation,
 )
@@ -320,7 +320,7 @@ class _ResolvedWrite:
     """
 
     instruction: PreparedWrite | PreparedTargetWrite
-    supplied_observation: WriteObservation | None
+    supplied_observation: StateObservation | None
     source_node: WireEntity | None = None
 
 
@@ -631,7 +631,7 @@ def _build_temporal_instruction(
 
 def _observation_from_source(
     entity_name: str, pk_key: ObjectKey | None, source: RetainedObservations
-) -> WriteObservation:
+) -> StateObservation:
     """The observation a write is supplied with when its step named the find it
     came from (`m-case-format` *Settling against a grouped find*).
 
@@ -1016,7 +1016,7 @@ def _build_instructions(
     out: list[_ResolvedWrite] = []
     opens_a_row = mutation in INSERT_MUTATIONS
     for clean_row, row_observation in durable:
-        observation: WriteObservation | None = row_observation
+        observation: StateObservation | None = row_observation
         clean_row = _seed_insert_version(model, entity_name, mutation, clean_row)
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
@@ -1197,7 +1197,7 @@ class _SimulatedUnit:
         self.inserted.clear()
         return answer
 
-    def _retained(self, key: ObjectStateKey, evidence: WriteObservation) -> RetainedObservation:
+    def _retained(self, key: ObjectStateKey, evidence: StateObservation) -> RetainedObservation:
         return self._uow.retain(RetainedObservation(key, evidence, None))
 
     def _authorized(self, instruction: PreparedKeyedWrite, key: ObjectKey | None) -> None:

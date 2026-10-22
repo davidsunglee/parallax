@@ -1,27 +1,29 @@
 """An in-memory row acquisition answering the rows a database holds, and
-deferred ranges read and bound through the unit of work's own acquisition and
-binding over it."""
+deferred ranges read and bound over it through the unit of work's own scoped
+range binding."""
 
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.acquisition import (
+    AcquireRows,
     CompletionRequest,
     CoverageReadRequest,
     RowConsumer,
     RowRequest,
 )
-from parallax.core._execution._unit_work.write_runner import acquire_and_bind_range
+from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import valid_time_coverage
 from parallax.core.unit_work import TransactionInstant
 from parallax.core.write_plan import PredecessorRow
+from parallax.core.write_plan.keys import ObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     BoundRange,
@@ -31,7 +33,14 @@ from parallax.core.write_plan.plan import (
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._positional_row_support import positional_row
 
-__all__ = ["HeldRows", "bind_held", "coverage_read"]
+__all__ = [
+    "HeldRows",
+    "bind_deferred",
+    "bind_held",
+    "coverage_read",
+    "never_current",
+    "range_bindings",
+]
 
 
 @dataclass(slots=True)
@@ -81,6 +90,59 @@ class HeldRows:
         return any(window.overlaps(coverage) for named in windows for window in named)
 
 
+def never_current(state: ObjectStateKey, read_at: int) -> bool:
+    """A freshness judge answering every retained row stale."""
+    del state, read_at
+    return False
+
+
+def range_bindings(
+    model: Metamodel,
+    deferred: DeferredTemporalRange,
+    acquire_rows: AcquireRows,
+    *,
+    transaction_instant: TransactionInstant,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
+    current: Callable[[ObjectStateKey, int], bool] = never_current,
+) -> RangeBindings:
+    """The scoped binding a flush binds ``deferred`` through, reading through
+    ``acquire_rows`` under ``ownership``, its retained rows judged by
+    ``current``."""
+    planner = build_write_planner(model)
+    return RangeBindings(
+        (deferred,),
+        acquire_rows=acquire_rows,
+        current=current,
+        ownership=ownership,
+        audit=planner.audit_decoration(
+            actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=transaction_instant
+        ),
+        payloads=planner.payloads,
+    )
+
+
+def bind_deferred(
+    model: Metamodel,
+    deferred: DeferredTemporalRange,
+    acquire_rows: AcquireRows,
+    *,
+    transaction_instant: TransactionInstant,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
+    current: Callable[[ObjectStateKey, int], bool] = never_current,
+) -> BoundRange:
+    """``deferred`` bound through its :func:`range_bindings`."""
+    with range_bindings(
+        model,
+        deferred,
+        acquire_rows,
+        transaction_instant=transaction_instant,
+        ownership=ownership,
+        current=current,
+    ) as bindings:
+        (bound,) = bindings
+    return bound
+
+
 def bind_held(
     model: Metamodel,
     settled: SettledWrite,
@@ -92,14 +154,13 @@ def bind_held(
     """``settled write``'s deferred range bound, as the unit of work binds it at
     execution, to a coverage read finding ``rows`` under ``ownership``."""
     deferred = settled.deferred
-    assert deferred is not None
-    return acquire_and_bind_range(
+    assert isinstance(deferred, DeferredTemporalRange)
+    return bind_deferred(
+        model,
         deferred,
-        acquire_rows=HeldRows(model, rows),
-        planner=build_write_planner(model),
-        ownership=ownership,
-        actor_identity=TEST_ACTOR_IDENTITY,
+        HeldRows(model, rows),
         transaction_instant=transaction_instant,
+        ownership=ownership,
     )
 
 
@@ -109,17 +170,10 @@ def coverage_read(
     """The coverage read ``settled write``'s deferred range asks for when the unit of
     work binds it, observed as the read is asked for and before any binding."""
     deferred = settled.deferred
-    assert deferred is not None
+    assert isinstance(deferred, DeferredTemporalRange)
     observed = _ObservedRead()
     with contextlib.suppress(_ObservedRead):
-        acquire_and_bind_range(
-            deferred,
-            acquire_rows=observed,
-            planner=build_write_planner(model),
-            ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
-            actor_identity=TEST_ACTOR_IDENTITY,
-            transaction_instant=transaction_instant,
-        )
+        bind_deferred(model, deferred, observed, transaction_instant=transaction_instant)
     assert isinstance(observed.request, CoverageReadRequest)
     return observed.request
 
