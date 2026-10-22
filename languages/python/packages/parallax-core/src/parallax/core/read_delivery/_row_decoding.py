@@ -31,176 +31,83 @@ from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._inheritance import ByLiteral, ByTag, FixedIdentity, ResultContract
 
 __all__ = [
-    "RowIdentityReader",
     "member_classifier",
     "member_sources",
     "publication_keys",
     "raw_member",
     "row_coordinates",
-    "row_identity_reader",
+    "row_identity",
 ]
-
-type RowIdentityReader = Callable[
-    [Row | Mapping[str, object]],
-    tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None],
-]
-"""Answers the Entity one row names, its `familyVariant` spelling, the stored tag
-no composed concrete claimed, and the row's shared document."""
 
 type MemberClassifier = Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]
 
-type _Identity = tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]
-type _Answer = tuple[EntityIdentity, str | None, UnknownFamilyTag | None]
-
 _NO_KEYS: Final[Mapping[str, str]] = MappingProxyType({})
 _NO_PATHS: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType({})
+_NOTHING_CLASSIFIED: Final[frozenset[str]] = frozenset()
 
 
-def row_identity_reader(contract: ResultContract) -> RowIdentityReader:
-    """The reader of ``contract``'s row identities, chosen once per bound read.
+def row_identity(
+    contract: ResultContract, row: Row | Mapping[str, object]
+) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
+    """The Entity ``row`` names, its `familyVariant` spelling, the stored tag no
+    composed concrete claimed, and the row's shared document.
 
-    The row identity is matched and every carrier's positional ordinal resolved
-    here, so a positional row costs an arity check and direct indexing. A
-    contract with no result cell for a carrier reads every row by key, which
-    refuses a row by the key it lacks.
+    Raises ``KeyError`` for a carrier the contract gives no result cell.
     """
+    if not isinstance(row, tuple):
+        return _keyed_identity(contract, row)
+    if len(row) != len(contract.result_keys):
+        raise _arity_error(len(contract.result_keys), len(row))
     source = contract.resolve
-    match source:
-        case FixedIdentity():
-            reader = _fixed_reader(contract, source)
-        case ByTag():
-            reader = _tag_reader(contract, source)
-        case ByLiteral():
-            reader = _literal_reader(contract, source)
-    if reader is not None:
-        return reader
-
-    def keyed(row: Row | Mapping[str, object]) -> _Identity:
-        return _row_identity(contract, row)
-
-    return keyed
-
-
-def _fixed_reader(contract: ResultContract, source: FixedIdentity) -> RowIdentityReader | None:
-    arity = len(contract.result_keys)
-    entity = source.entity
     shared = contract.shared_document
+    # An isinstance chain rather than a class-pattern match: this runs per row,
+    # and the match costs several times as much.
+    if isinstance(source, FixedIdentity):
+        if shared is None:
+            return source.entity, None, None, None
+        return (
+            source.entity,
+            None,
+            None,
+            _observed_document(row[contract.index_by_key[shared.column]]),
+        )
+    index_by_key = contract.index_by_key
+    if isinstance(source, ByTag):
+        raw = row[index_by_key[source.column]]
+        answer = source.by_tag.get(raw)
+        entity, variant, unknown = (
+            (source.root, None, UnknownFamilyTag(raw)) if answer is None else answer
+        )
+        if shared is None:
+            return entity, variant, unknown, None
+        return entity, variant, unknown, _observed_document(row[index_by_key[shared.column]])
+    entity, variant, unknown = source.by_spelling[row[index_by_key[source.column]]]
     if shared is None:
-        identity: _Identity = (entity, None, None, None)
-
-        def fixed(row: Row | Mapping[str, object]) -> _Identity:
-            if isinstance(row, tuple) and len(row) != arity:
-                raise _arity_error(arity, len(row))
-            return identity
-
-        return fixed
-    document = contract.index_by_key.get(shared.column)
-    if document is None:
-        return None
-
-    def documented(row: Row | Mapping[str, object]) -> _Identity:
-        if not isinstance(row, tuple):
-            return _row_identity(contract, row)
-        if len(row) != arity:
-            raise _arity_error(arity, len(row))
-        return entity, None, None, _observed_document(row[document])
-
-    return documented
+        return entity, variant, unknown, None
+    document_key = source.result_keys.get(entity, _NO_KEYS).get(shared.column, shared.column)
+    return entity, variant, unknown, _observed_document(row[index_by_key[document_key]])
 
 
-def _tag_reader(contract: ResultContract, source: ByTag) -> RowIdentityReader | None:
-    arity = len(contract.result_keys)
-    index_by_key = contract.index_by_key
-    shared = contract.shared_document
-    carrier = index_by_key.get(source.column)
-    document = None if shared is None else index_by_key.get(shared.column)
-    if carrier is None or (shared is not None and document is None):
-        return None
-    by_tag = cast("Mapping[object, _Answer]", source.by_tag)
-    root = source.root
-
-    def tagged(row: Row | Mapping[str, object]) -> _Identity:
-        if not isinstance(row, tuple):
-            return _row_identity(contract, row)
-        if len(row) != arity:
-            raise _arity_error(arity, len(row))
-        raw = row[carrier]
-        answer = by_tag.get(raw)
-        if answer is None:
-            answer = (root, None, UnknownFamilyTag(raw))
-        entity, variant, unknown = answer
-        return (
-            entity,
-            variant,
-            unknown,
-            None if document is None else _observed_document(row[document]),
-        )
-
-    return tagged
-
-
-def _literal_reader(contract: ResultContract, source: ByLiteral) -> RowIdentityReader | None:
-    arity = len(contract.result_keys)
-    index_by_key = contract.index_by_key
-    shared = contract.shared_document
-    carrier = index_by_key.get(source.column)
-    documents = (
-        None
-        if shared is None
-        else {
-            identity: ordinal
-            for _spelling, identity in source.variants
-            if (
-                ordinal := index_by_key.get(
-                    source.result_keys.get(identity, _NO_KEYS).get(shared.column, shared.column)
-                )
-            )
-            is not None
-        }
-    )
-    if carrier is None or (documents is not None and len(documents) != len(source.variants)):
-        return None
-    by_spelling = cast("Mapping[object, _Answer]", source.by_spelling)
-
-    def literal(row: Row | Mapping[str, object]) -> _Identity:
-        if not isinstance(row, tuple):
-            return _row_identity(contract, row)
-        if len(row) != arity:
-            raise _arity_error(arity, len(row))
-        entity, variant, unknown = by_spelling[row[carrier]]
-        return (
-            entity,
-            variant,
-            unknown,
-            None if documents is None else _observed_document(row[documents[entity]]),
-        )
-
-    return literal
-
-
-def _row_identity(contract: ResultContract, row: Row | Mapping[str, object]) -> _Identity:
-    _require_arity(contract, row)
+def _keyed_identity(
+    contract: ResultContract, row: Mapping[str, object]
+) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
     source = contract.resolve
     match source:
         case FixedIdentity():
-            resolved, variant, unknown = source.answer
+            resolved, variant, unknown = source.entity, None, None
         case ByTag():
-            raw = _value(contract, row, source.column)
-            answer = source.by_tag.get(cast("str", raw))
+            raw = row[source.column]
+            answer = source.by_tag.get(raw)
             resolved, variant, unknown = (
                 (source.root, None, UnknownFamilyTag(raw)) if answer is None else answer
             )
         case ByLiteral():
-            resolved, variant, unknown = source.by_spelling[
-                cast("str", _value(contract, row, source.column))
-            ]
+            resolved, variant, unknown = source.by_spelling[row[source.column]]
     shared = contract.shared_document
     document = (
         None
         if shared is None
-        else _observed_document(
-            _value(contract, row, _result_key(contract, resolved, shared.column))
-        )
+        else _observed_document(row[_result_key(contract, resolved, shared.column)])
     )
     return resolved, variant, unknown, document
 
@@ -394,7 +301,7 @@ def member_sources(
     has no ordinal, an unclassified one no classifier, and a key no result cell
     carries no ordinal either.
     """
-    classified = contract.classified_by_entity.get(resolved, frozenset())
+    classified = contract.classified_by_entity.get(resolved, _NOTHING_CLASSIFIED)
     source = contract.resolve
     renames = (
         source.result_keys.get(resolved, _NO_KEYS) if isinstance(source, ByLiteral) else _NO_KEYS

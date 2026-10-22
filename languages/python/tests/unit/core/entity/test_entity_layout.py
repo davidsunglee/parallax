@@ -557,9 +557,10 @@ def _claimed(builder: PageBuilder, model: Metamodel, identity: EntityIdentity, s
     """One driver row of ``identity``'s own read, every cell distinct and derived
     from ``seed``, converted into ``builder`` as a root provider row is."""
     compiled = compiled_read(model, identity)
+    shared = compiled.result_contract.shared_document
     row = tuple(
         SQL_NULL
-        if key == compiled.result_contract.structured_column
+        if shared is not None and key == shared.column
         else f"{seed + position:04x}"
         if key.endswith("_hex")
         else seed + position

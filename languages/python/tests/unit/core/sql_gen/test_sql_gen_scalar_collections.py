@@ -42,7 +42,7 @@ def test_a_bytes_collection_keeps_its_storage_key_rather_than_an_encoded_one() -
     compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
     contracts = {
         contract.attribute.identity.name: contract
-        for contract in compiled.result_contract.reads_by_entity.get(_ITEM.identity, ())
+        for contract in dict(compiled.result_contract.attribute_reads).get(_ITEM.identity, ())
     }
 
     assert (contracts["blobs"].result_key, contracts["blobs"].encoded) == ("blobs", False)

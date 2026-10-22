@@ -123,8 +123,9 @@ def driver_row(compiled: CompiledRead, columns: Mapping[str, object]) -> dict[st
     """``columns`` as a database port hands them over: every document carrier
     ``compiled`` projects arrives as a SQL-null or a present document."""
     carriers = {member.storage.name for member in compiled.projected_documents}
-    if compiled.result_contract.structured_column is not None:
-        carriers.add(compiled.result_contract.structured_column)
+    shared = compiled.result_contract.shared_document
+    if shared is not None:
+        carriers.add(shared.column)
     return {key: _carried(value) if key in carriers else value for key, value in columns.items()}
 
 

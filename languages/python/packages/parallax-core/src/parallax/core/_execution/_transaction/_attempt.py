@@ -747,7 +747,7 @@ class TxnAttempt(_TxnAttemptBase):
                 layout.member_selection,
                 rows,
                 ABSENT,
-                stage.documents if compiled.result_contract.structured_column is not None else None,
+                stage.documents if compiled.result_contract.shared_document is not None else None,
                 page.root_count,
             )
         finally:

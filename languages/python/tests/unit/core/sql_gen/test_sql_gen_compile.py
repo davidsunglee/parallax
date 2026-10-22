@@ -445,7 +445,7 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
         result_key="payload_hex",
         temporal_end=False,
         encoded=True,
-    ) in compiled.result_contract.reads_by_entity.get(entity.identity, ())
+    ) in dict(compiled.result_contract.attribute_reads).get(entity.identity, ())
 
 
 _MARIADB = dataclasses.replace(POSTGRES, name="mariadb")
@@ -663,7 +663,7 @@ def test_attribute_contracts_align_by_position_with_each_resolvable_layout(
     compiled = compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, name), temporal=temporal)
     assert compiled.result_contract.resolvable
     for identity in compiled.result_contract.resolvable:
-        reads = compiled.result_contract.reads_by_entity.get(identity, ())
+        reads = dict(compiled.result_contract.attribute_reads).get(identity, ())
         if identity not in compiled.resolved_position:
             assert reads == ()
             continue

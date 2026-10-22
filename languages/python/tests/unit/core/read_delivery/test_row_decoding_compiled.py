@@ -18,7 +18,7 @@ from parallax.core.document_codec import MemberShape
 from parallax.core.read_delivery._row_decoding import (
     member_classifier,
     raw_member,
-    row_identity_reader,
+    row_identity,
 )
 from parallax.core.sql_gen import SqlGenError
 from tests._support.sql import compile_read
@@ -57,7 +57,7 @@ def test_a_positional_row_is_refused_at_the_wrong_arity_and_an_unknown_member() 
     compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
     with pytest.raises(ValueError, match="does not match row arity"):
-        row_identity_reader(compiled.result_contract)(())
+        row_identity(compiled.result_contract, ())
     with pytest.raises(KeyError, match="missing"):
         raw_member(compiled.result_contract, (), compiled.target, "missing")
 
@@ -125,7 +125,7 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
 def test_row_identity_refuses_a_raw_document_outside_the_database_port_contract() -> None:
     compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        row_identity_reader(compiled.result_contract)({"id": 1, "payload": _DOCUMENT_VALUE})
+        row_identity(compiled.result_contract, {"id": 1, "payload": _DOCUMENT_VALUE})
 
 
 def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() -> None:
@@ -172,4 +172,4 @@ def test_predecessor_document_retention_requires_a_folded_carrier() -> None:
         oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"), result_form="instance"
     )
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        row_identity_reader(compiled.result_contract)({"id": 1, "payload": {}})
+        row_identity(compiled.result_contract, {"id": 1, "payload": {}})
