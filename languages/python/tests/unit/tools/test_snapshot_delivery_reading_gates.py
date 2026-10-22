@@ -35,7 +35,7 @@ from parallax.conformance.workloads import plan_levels
 from parallax.core.base import detach_json_container
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import MemberShape
-from parallax.core.read_delivery import _row_converter as prepared_reads
+from parallax.core.read_delivery import _row_decoding as row_decoding
 from parallax.core.read_delivery._convert import build_positional_object
 from parallax.core.read_delivery._read_plan import DEFAULT_READ_PLAN_CACHE_CAPACITY, ReadPlanCache
 from snapshot_delivery_reading import (
@@ -237,7 +237,7 @@ def test_a_seeded_reduced_tree_beside_every_positional_row_trips_the_retained_ga
     # gate behind under both layouts.
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(
-            prepared_reads,
+            row_decoding,
             "build_positional_object",
             _keeping_a_reduced_tree(build_positional_object),
         )

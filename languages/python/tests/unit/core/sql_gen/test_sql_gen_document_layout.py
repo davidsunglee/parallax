@@ -40,7 +40,7 @@ from parallax.core.navigate import (
     resolve_temporal_visibility,
 )
 from parallax.core.object_query._nodes import IncludePathNode, TemporalDimension
-from parallax.core.read_delivery._row_decoding import publication_keys, row_identity_reader
+from parallax.core.read_delivery._row_decoding import publication_keys, row_identity
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_template
 from parallax.core.sql_gen._compile import (
@@ -81,7 +81,7 @@ def test_a_row_form_read_needing_no_document_member_projects_no_document_at_all(
     # nothing: the rule is keyed to the members the read was asked for.
     compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"))
     assert compiled.statement.sql == "select t0.id from marker t0"
-    assert compiled.result_contract.structured_column is None
+    assert compiled.result_contract.shared_document is None
 
 
 def _instance_form(target: EntityMetadata) -> CompiledRead:
@@ -106,13 +106,14 @@ def test_an_observing_read_of_the_same_shape_projects_the_structured_column(
     assert compiled.statement.sql == (
         "select t0.id, not t0.payload is null, t0.payload from marker t0"
     )
-    assert compiled.result_contract.structured_column == "payload"
+    shared = compiled.result_contract.shared_document
+    assert shared is not None and shared.column == "payload"
     # The column is still never a result field: it carries no member here and the
     # raw value leaves the published row all the same.
     document: DocumentValue = {"berthCode": "NB-118"}
     row = {"id": 1, "payload": PresentDocument(document)}
     assert publication_keys(compiled.result_contract, compiled.target, None) == ("id",)
-    assert row_identity_reader(compiled.result_contract)(row)[3] == document
+    assert row_identity(compiled.result_contract, row)[3] == document
 
 
 def test_a_versioned_targets_narrowed_widening_still_projects_only_what_it_needs() -> None:

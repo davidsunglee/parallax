@@ -410,7 +410,7 @@ def _driver_row(
         raise AssertionError(f"{entity.canonical}: no storage layout view")
     contracts = {
         contract.attribute.identity: contract
-        for contract in compiled.result_contract.reads_by_entity.get(entity, ())
+        for contract in dict(compiled.result_contract.attribute_reads).get(entity, ())
     }
     projected = frozenset(member.storage.name for member in compiled.projected_documents)
     row: dict[str, object] = {}
@@ -455,9 +455,9 @@ def _driver_row(
     discriminator = _discriminator(meta, entity)
     if discriminator is not None and len(compiled.resolved_position) > 1:
         row[discriminator[0]] = discriminator[1]
-    column = compiled.result_contract.structured_column
-    if column is not None:
-        row[column] = PresentDocument(document)
+    shared = compiled.result_contract.shared_document
+    if shared is not None:
+        row[shared.column] = PresentDocument(document)
     return tuple(row.get(result_key) for result_key in compiled.result_contract.result_keys)
 
 

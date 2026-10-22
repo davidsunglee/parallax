@@ -101,10 +101,6 @@ class FixedIdentity:
     """
 
     entity: EntityIdentity
-    answer: ResolvedVariant = field(init=False, repr=False, compare=False)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "answer", (self.entity, None, None))
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +130,7 @@ class ByTag:
     column: str
     root: EntityIdentity
     tag_pairs: tuple[tuple[str, EntityIdentity, str], ...]
-    by_tag: Mapping[str, ResolvedVariant] = field(init=False, compare=False, repr=False)
+    by_tag: Mapping[object, ResolvedVariant] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -163,7 +159,7 @@ class ByLiteral:
     variants: tuple[tuple[str, EntityIdentity], ...]
     projected_fields: tuple[tuple[str, tuple[tuple[str, str], ...]], ...]
     narrow_to_owned: bool
-    by_spelling: Mapping[str, ResolvedVariant] = field(init=False, compare=False, repr=False)
+    by_spelling: Mapping[object, ResolvedVariant] = field(init=False, compare=False, repr=False)
     renames: Mapping[str, tuple[tuple[str, str], ...]] = field(
         init=False, compare=False, repr=False
     )
@@ -315,16 +311,15 @@ class ResultContract:
     it projected a document, however its rows are named.
 
     ``attribute_reads`` pairs each concrete of the read's resolved position with
-    its Attribute contracts, in that Entity's own applicable-Attribute order,
-    which ``reads_by_entity`` keys by Entity. An Entity this read projected no
-    columns for — a family root an unrecognized tag resolved to, or a sibling
-    outside the narrow — has none, and every Attribute of such a row carries its
-    own storage spelling. ``result_keys`` names every positional cell of a row,
-    in order. ``coordinate_reads`` is the hidden result aliases the statement
-    allocated to capture one Continuation Order coordinate per ordering term, in
-    term order — empty for every read that pages through nothing; publishing it
-    here is what makes the compiler the only interpreter of a carrier, since it
-    chose the expressions.
+    its Attribute contracts, in that Entity's own applicable-Attribute order. An
+    Entity this read projected no columns for — a family root an unrecognized
+    tag resolved to, or a sibling outside the narrow — has none, and every
+    Attribute of such a row carries its own storage spelling. ``result_keys``
+    names every positional cell of a row, in order. ``coordinate_reads`` is the
+    hidden result aliases the statement allocated to capture one Continuation
+    Order coordinate per ordering term, in term order — empty for every read
+    that pages through nothing; publishing it here is what makes the compiler
+    the only interpreter of a carrier, since it chose the expressions.
 
     ``resolvable`` closes the set of Entities this read's rows can name, so a
     consumer preparing one structure per such Entity prepares them all at once
@@ -337,13 +332,12 @@ class ResultContract:
     document entries carry for one resolved concrete, compiled here because
     their keys are fixed by the projection.
 
-    ``structured_column`` is the Structured Column this read projected, or
-    absence for none. Fan-out keeps the raw column off a published row, so a
-    caller that needs the stored document — a temporal observation, which
+    ``shared_document`` names the Structured Column this read projected, and
+    its absence means none: `Columns` layout, and a `Document`-layout read whose
+    members are all direct. Fan-out keeps the raw column off a published row, so
+    a caller that needs the stored document — a temporal observation, which
     retains it (`m-write-plan`'s Predecessor Row) — reads it off the driver row
-    by this name. Absence is the honest answer for every read that projected no
-    Structured Column: `Columns` layout, and a `Document`-layout read whose
-    members are all direct.
+    by that column.
     """
 
     resolve: RowIdentity
@@ -354,15 +348,11 @@ class ResultContract:
     )
     result_keys: tuple[str, ...]
     coordinate_reads: tuple[str, ...]
-    reads_by_entity: Mapping[EntityIdentity, tuple[AttributeReadContract, ...]] = field(
-        init=False, repr=False, compare=False
-    )
     resolvable: tuple[EntityIdentity, ...] = field(init=False, repr=False, compare=False)
     index_by_key: Mapping[str, int] = field(init=False, repr=False, compare=False)
     classified_by_entity: Mapping[EntityIdentity, frozenset[str]] = field(
         init=False, compare=False, repr=False
     )
-    structured_column: str | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         index_by_key = {key: index for index, key in enumerate(self.result_keys)}
@@ -374,7 +364,6 @@ class ResultContract:
             )
             raise ValueError(f"duplicate result key {duplicate!r}")
         object.__setattr__(self, "index_by_key", index_by_key)
-        object.__setattr__(self, "reads_by_entity", dict(self.attribute_reads))
         object.__setattr__(
             self,
             "resolvable",
@@ -391,11 +380,6 @@ class ResultContract:
             self,
             "classified_by_entity",
             _classified_by_entity(self.shared_document, self.direct_documents),
-        )
-        object.__setattr__(
-            self,
-            "structured_column",
-            None if self.shared_document is None else self.shared_document.column,
         )
 
 

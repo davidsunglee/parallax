@@ -23,11 +23,10 @@ from parallax.core.metamodel import (
 from parallax.core.read_delivery._convert import EntityReadMapping, register_reduced_row
 from parallax.core.read_delivery._page import ABSENT, LogicalKey, PageBuilder, SourceLevel
 from parallax.core.read_delivery._row_decoding import (
-    RowIdentityReader,
     member_sources,
     publication_keys,
     raw_member,
-    row_identity_reader,
+    row_identity,
 )
 from parallax.core.sql_gen._inheritance import ResultContract
 from parallax.core.wire import encode_wire
@@ -53,7 +52,6 @@ class ReadRowConverter:
     """
 
     _contract: ResultContract
-    _row_identity: RowIdentityReader
     _mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping]
 
     def convert_row(
@@ -72,7 +70,7 @@ class ReadRowConverter:
         correlation values judged for page assembly, and the rest of its
         payload judged when its Page-owned state is first needed.
         """
-        resolved, variant, unknown, document = self._row_identity(row)
+        resolved, variant, unknown, document = row_identity(self._contract, row)
         mapping = self._mappings_by_entity[resolved]
         if isinstance(row, tuple) and mapping.direct_row is not None:
             selected = mapping.direct_row(row)
@@ -274,7 +272,6 @@ def bind(
     """
     return ReadRowConverter(
         contract,
-        row_identity_reader(contract),
         MappingProxyType(
             {
                 identity: _entity_read_mapping(
@@ -294,7 +291,7 @@ def _entity_read_mapping(
     correlation_members: tuple[AttributeIdentity, ...],
 ) -> EntityReadMapping:
     layout = model.layouts.entity(identity)
-    reads = contract.reads_by_entity.get(identity, ())
+    reads = next((reads for entity, reads in contract.attribute_reads if entity == identity), ())
     keys = tuple(
         attribute.storage.name if not reads else reads[position].result_key
         for position, attribute in enumerate(layout.attributes)

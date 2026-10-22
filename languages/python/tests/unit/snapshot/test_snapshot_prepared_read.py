@@ -66,7 +66,7 @@ from parallax.core.read_delivery._page import (
     release_page_rows,
 )
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
-from parallax.core.read_delivery._row_decoding import raw_member, row_identity_reader
+from parallax.core.read_delivery._row_decoding import raw_member, row_identity
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import (
     Bitemporal,
@@ -1285,14 +1285,12 @@ def _host_checked_payload_cells(layout: Layout, owners: int) -> int:
         if compiled is None:
             continue
         for driver in level_rows:
-            resolved, _variant, _unknown, _document = row_identity_reader(compiled.result_contract)(
-                driver
-            )
+            resolved, _variant, _unknown, _document = row_identity(compiled.result_contract, driver)
             entity_layout = model.layouts.entity(resolved)
             identity_positions = frozenset(
                 (*entity_layout.primary_key, *entity_layout.temporal_starts)
             )
-            contracts = compiled.result_contract.reads_by_entity.get(resolved, ())
+            contracts = dict(compiled.result_contract.attribute_reads).get(resolved, ())
             keys: Sequence[str] = [contract.result_key for contract in contracts]
             occurrence: object = (
                 resolved,
