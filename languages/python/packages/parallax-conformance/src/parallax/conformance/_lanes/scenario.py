@@ -2218,7 +2218,7 @@ def _empty_opened() -> dict[ObjectKey, WireEntity]:
     return {}
 
 
-def _empty_answered() -> dict[str, WireEntity]:
+def _empty_answered() -> dict[str, list[WireEntity]]:
     return {}
 
 
@@ -2253,7 +2253,7 @@ class GroupState:
     published: list[WireEntity] = field(default_factory=_empty_published)
     finds: dict[int, tuple[WireEntity, ...]] = field(default_factory=_empty_group_finds)
     opened: dict[ObjectKey, WireEntity] = field(default_factory=_empty_opened)
-    insertions: dict[str, WireEntity] = field(default_factory=_empty_answered)
+    insertions: dict[str, list[WireEntity]] = field(default_factory=_empty_answered)
     buffered: list[tuple[int, int]] = field(default_factory=_empty_buffered)
     affected: dict[int, int] = field(default_factory=_empty_affected)
 
@@ -2483,7 +2483,7 @@ def _source_find_nodes(
 
 def _source_nodes(
     entry: Mapping[str, object], index: int, state: GroupState
-) -> tuple[WireEntity, ...] | None:
+) -> Sequence[WireEntity] | None:
     source = entry.get("on")
     if isinstance(source, str):
         opened = state.insertions.get(source)
@@ -2492,7 +2492,7 @@ def _source_nodes(
                 f"scenario[{index}]: writes through {source!r}, which opened no value "
                 "in this attempt of its own `uow` group"
             )
-        return (opened,)
+        return opened
     return _source_find_nodes(entry, index, state.finds)
 
 
@@ -2577,7 +2577,7 @@ def _buffer_wire_insert(
     )
     state.opened[_node_object_key(opened)] = opened
     if pointer is not None:
-        state.insertions[pointer] = opened
+        state.insertions.setdefault(pointer, []).append(opened)
     return opened
 
 
