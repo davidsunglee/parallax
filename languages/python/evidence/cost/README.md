@@ -9,7 +9,7 @@ owns what belongs in Git and how future runs are stored.
 
 | Capture | Role | Producing commit | Captured |
 |---|---|---|---|
-| [current](current/portfolio.json) | Current verification input and memory-gate basis | `90ff69ccbe4e4334b9c1f07adb35d67f42886947` | 2026-10-20 |
+| [current](current/portfolio.json) | Current verification input and memory-gate basis | `c51ca3eacf1f89b5d039853a9cd66179a8e6d4b7` | 2026-10-23 |
 | [structural-metadata-before](structural-metadata-before/portfolio.json) | Fixed recovery reference | `b7abe2d055fd3e0974829616f2de99b94ad5af97` | 2026-09-16 |
 | [structural-metadata-after](structural-metadata-after/portfolio.json) | Fixed regression comparison base | `1636e9f0ce072dce25ddd1ebeabd0b1368b65031` | 2026-09-17 |
 
@@ -35,53 +35,52 @@ ancestor of the inspected checkout; write-lowering redigest accepts the exact
 resolvable producing commit after proving its captured sources and workload
 identity. Prefer capturing at a commit already on `main`, so source history
 remains available. The current capture was taken on its change's branch because
-that change made the previous capture stale. Its producing commit remains the
-original branch commit after the rebase merge. Its write-lowering workload
-digest was subsequently re-stated without new measurements; the amendment in
-[conditions](current/conditions.json) records both digests and preserves that
-producing commit and the original instrument hashes.
+that change made the previous capture stale; its producing commit remains the
+original branch commit after a rebase merge.
 
-The current collector completed on 2026-10-20, 19:14:27–20:13:55 UTC, in
-59m28s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
-27.0.1 build 26A434, with CPython 3.13.16 and 3.14.8 and PostgreSQL 18.6.
+The current collector completed on 2026-10-23, 03:46:44–04:56:15 UTC, in
+69m30s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
+27.0.1, with CPython 3.13.17 and 3.14.8 and PostgreSQL 18.6.
 [Conditions](current/conditions.json) record interpreter identities and instrument
 source hashes; [durations](current/durations.json) record collection telemetry.
 The dependency lock SHA-256 is
-`bc4f54c3d6fbf5268d3a324ecb0409c2bcf2e0b0d0920f3ec0a7e0f1c4494557`.
+`35b64b5d8e2caf6927fe70d5714a73d3bdf9ba4e3d6f2244a8767d054f4af870`.
 The portfolio SHA-256 is
-`631ca85dc9f727f5f98b9c647a1181ce105eef03d53dbd84a1b64c2a43196ecf`.
+`1c1d73f2f5028051f51ea158f21c6c44ac1d6fd97d70dfa2503fa7bd6f7e7707`.
 
-No competing tests or measurements ran, but other interactive sessions and
-system indexing were active: the one-minute load average reached 5.7 in the
-first 15 minutes and stayed between 1.9 and 3.4 afterward. The OrbStack VM was not restarted, and the host moved
-from AC to battery power 13 minutes in, with Low Power Mode off. The run is not
-evidence of quiet-machine timing stability. The historical bases used macOS
-26.6.2 and CPython 3.13.15/3.14.7 on the same machine, so current-versus-base
-timings cross host and interpreter conditions as well as implementation
-changes.
+No competing measurements ran, but other interactive sessions were active: the
+load average was 3.6 (one minute) and 7.4 (five minutes) at the start. Power
+state was not recorded. The run is not evidence of quiet-machine timing
+stability. The historical bases used macOS 26.6.2 and CPython 3.13.15/3.14.7 on
+the same machine, so current-versus-base timings cross host and interpreter
+conditions as well as implementation changes.
 
-Against the superseded `581c5475b` capture, taken under the same host,
-interpreters, lock, and Budget Contract, no memory reading rose past its former
-gate and every gate address was kept. Write lowering adds the `cross-object-flush`
-window and its 12 gates. Keyed single-write windows allocate 416–576 B/row fewer
-transient bytes, because Write Groups own plain step tuples in place of step
-segments, offsets, and borrowed views. Transaction-Time target writes are the
-exception at 72–80 B/row more (0.4%): their high-water falls inside deferred
-binding, before any bound step exists, while the plan's singleton Write Group
-is held. Retained bytes did not move, and Snapshot memory moved within noise.
-Snapshot's advisory Budget Contract timing outcomes went from 2 to 16 outside.
-The two already outside, `duplicate-include` provider-free eager time and
-throughput, stayed outside; the 14 new ones are all live or first-result cells.
-No read path changed, and a same-condition ABBA diagnostic of the superseded
-tree reproduced the slower `versioned-document` timings, so these are
-attributed to run conditions. The cross-object family took 1m49s of the
-collection. These span `581c5475b..90ff69ccb` and are not attributed to
-individual commits. The raw capture, the superseded capture (`superseded/`),
-the ABBA diagnostic (`snapshot-abba/`), and the deferred-binding peak
-attribution (`target-bisect/`) are archived at
-`~/.local/share/parallax/evidence/cor-226/phase-5-capture/`; its `SHA256SUMS`
-manifest has SHA-256
-`f92d383aac02c40c3f18836ca7d92ea91f6c8d99cfcb64be3daadd624d71c2c2`.
+Against the superseded `90ff69ccb` capture, no memory reading rose past its
+former gate and every gate address was kept; the comparison crosses a CPython
+3.13 patch release (3.13.16 to 3.13.17) and a dependency lock change
+(`bc4f54c3…` to `35b64b5d…`) as well as implementation changes. Write lowering
+adds five deferred-span `cross-object-flush` workloads, whose flushes also
+answer a range-binding region and their coverage reads, and 30 gates, for 352.
+Rederivation moves 236 existing gates: 208 rise and 28 fall, 156 of the rises
+by at most 1%. The largest rises are the changed-ancestor successors' retained
+bytes, 924 to 1012 B/row (9.5%), and transient bytes, up to 7.3%; target
+writes' transient bytes rise 3.0–5.4%. Read from the source at the base of the
+deferred-grouping change, the changed-ancestor retained bytes and a Bitemporal
+target replacement's transient bytes already stand at their new levels, so those
+rises predate that change. Cross-object plan retention falls 1.9–2.4%, which the
+same base-against-result reading attributes to immutable sharing in planning,
+and Transaction-Time unchanged amendments' transient bytes fall up to 3.9%.
+Snapshot memory gates moved by at most 2%. Snapshot's advisory
+Budget Contract timing outcomes went from 16 to 22 outside: eight new live,
+first-result, or provider-free cells and two former ones back within. No read
+path changed, so these are attributed to run conditions. The cross-object
+family took 11m12s of the collection, 9m15s of it the deferred spans. These
+span `90ff69ccb..c51ca3eac` and are not attributed to individual commits
+except where stated. The raw capture, its frozen predecessor gates, the
+automated old-address assessment and derivation deltas, and the per-source
+attribution readings are archived at
+`~/.local/share/parallax/evidence/cor-227/`; its `SHA256SUMS` manifest has
+SHA-256 `024612b5447c013001cbaa3f2d2bb6cebc55c1884154c862871e5dbd649ba8e6`.
 
 ## Method and interpretation
 
