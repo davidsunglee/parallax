@@ -1406,13 +1406,12 @@ A claim addresses one object, so a keyed instruction naming **several** rows
 reaches no arm's scope: it has no single Object Key and no single observed state,
 and an implementation **MUST NOT** claim it at either grain. Only a caller
 holding a pre-formed multi-row instruction can author one; a keyed verb writes
-the one row the value it was handed names. Where that caller supplies no evidence
-of its own, the derivation answers none and the write is buffered **bare** —
-neither coalesced with another write nor refused for a claim — and a target
-entitled to evidence still fails the required-observation rule when the write is
-settled. Evidence such a caller **does** supply travels with the write it was
-supplied for, and one observation is evidence about **one** row, so an
-implementation **MUST** refuse the pairing rather than drop the evidence.
+the one row the value it was handed names. An implementation **MUST** refuse
+such an instruction whatever evidence its caller supplies. Without evidence,
+neither a read nor an insertion's authority licenses it, so nothing admits it as
+a write. Evidence supplied with it cannot travel with it: one observation is
+evidence about **one** row, so the pairing is refused rather than the evidence
+dropped.
 
 That refusal is a judgment about the write's own admitted form, and both it and
 the refusal of an arriving intent the buffer's existing claim cannot absorb are made
