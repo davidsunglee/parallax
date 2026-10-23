@@ -671,7 +671,7 @@ def test_table_per_concrete_subtype_keys_by_the_logical_family() -> None:
 
 def test_a_narrowed_abstract_read_and_a_direct_concrete_read_key_alike() -> None:
     # A table-per-concrete-subtype position resolving to exactly one concrete
-    # emits no `familyVariant` column at all (`m-sql`'s `_compile_tpcs_single`);
+    # emits no `familyVariant` column at all (`m-sql`'s `_render_single_table_read`);
     # the compiled read still names the resolved concrete, which is what keeps
     # the two routes' keys identical.
     narrowed = _converted(DOCUMENT, "Invoice", _INVOICE_ROW)

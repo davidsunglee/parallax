@@ -298,10 +298,8 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
     # reproduce a flat `then.rows` comparison for that shape — a table-per-
     # hierarchy multi-concrete row's own typed instance carries only ITS OWN
     # concrete class's fields (never a sibling's nullable column the wire
-    # row's superset includes), and table-per-concrete-subtype instance-form
-    # projection over 2+ resolved concretes has no goldened lowering at all
-    # yet (`SqlGenError`, `sql_gen._compile._compile_tpcs_read`) — a genuine
-    # engine gap, not a partition-honesty concern to paper over. See
+    # row's superset includes), and a table-per-concrete-subtype union row's
+    # instance likewise publishes only its own branch's fields. See
     # `api_suite.CASE_SKIP_REASONS` for the reasoned skip.
     ReadStory(
         "m-inheritance-005",

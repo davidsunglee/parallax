@@ -37,6 +37,7 @@ from parallax.core.execution import (
 from parallax.core.inheritance import InheritanceError
 from parallax.core.inheritance._facet import _InheritanceFacet
 from parallax.core.metamodel import EntityIdentity, TablePerConcreteSubtype
+from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.storage_layout._facet import _StorageLayoutFacet
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
@@ -291,6 +292,44 @@ def test_a_single_page_stream_resolves_only_what_its_plan_has_not(
 
     assert spies.counts() == read.counts
     assert served.misses() == 1
+    assert _sorted(rows) == read.rows
+
+
+@pytest.mark.parametrize("shape", ["tph-root", "tpcs-root"])
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
+def test_a_continuing_stream_resolves_once_per_compiled_page(
+    profile_run: Any,
+    spies: _Spies,
+    representation: Representation,
+    shape: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One root per page: the first page and the first continuing page each
+    # compile, the continuing page as two arms over one physical plan, and the
+    # last page reuses the continuing page's plan.
+    read = _READS[shape]
+    served = _served(profile_run, spies)
+    db = served.db
+    spies.clear()
+    unions: list[object] = []
+    union_null_tail = sql_compile._union_null_tail
+
+    def recording_union(*args: Any, **kwargs: Any) -> Any:
+        unions.append(args[0])
+        return union_null_tail(*args, **kwargs)
+
+    monkeypatch.setattr(sql_compile, "_union_null_tail", recording_union)
+
+    if representation == "typed":
+        with db.stream(read.typed(), batch_size=1) as stream:
+            rows = [_typed_row(root) for root in stream]
+    else:
+        with db.wire.stream(read.wire, batch_size=1) as stream:
+            rows = [_wire_row(node, read) for node in stream]
+
+    assert served.misses() == 2
+    assert len(unions) == 1
+    assert spies.counts() == _Counts(0, 2, 0)
     assert _sorted(rows) == read.rows
 
 

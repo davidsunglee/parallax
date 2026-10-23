@@ -791,7 +791,7 @@ def test_a_narrowed_to_one_view_carries_a_single_node_or_loaded_null() -> None:
 
 def test_a_table_per_concrete_subtype_row_materializes_its_resolved_concrete() -> None:
     # A table-per-concrete-subtype position resolving to exactly ONE concrete
-    # emits no `familyVariant` at all (`m-sql`'s `_compile_tpcs_single`); the
+    # emits no `familyVariant` at all (`m-sql`'s `_render_single_table_read`); the
     # concrete Entity the compiled read resolved is what still selects the class.
     fixture = PageFixture(_DOCUMENT)
     invoice = fixture.node(

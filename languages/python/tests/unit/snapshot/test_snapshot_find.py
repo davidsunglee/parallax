@@ -716,7 +716,7 @@ def test_a_broad_include_over_a_partial_family_diagnoses_its_unknown_child_at_th
 def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     # A table-per-concrete-subtype abstract root narrowed to exactly one
     # concrete compiles to an ordinary
-    # single-table read (`m-sql`'s `_compile_tpcs_single`) — the row carries no
+    # single-table read (`m-sql`'s `_render_single_table_read`) — the row carries no
     # `familyVariant` at all. `CompiledRead.narrow_to` is what lets the converted
     # row still name the row's own concrete identity, rather than the abstract
     # queried `target`.

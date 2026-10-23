@@ -74,6 +74,7 @@ from tests._support.binary32 import narrowed
 from tests._support.sql import compile_read, read_position, resolved_as_stated
 from tests.unit._corpus_model_support import model, target
 from tests.unit.core.sql_gen._plan_reuse_support import (
+    assert_planned_once,
     reaches_compilation_state,
     record_plan_reuse,
 )
@@ -599,6 +600,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
     original = template.compiled.statement
     branches = 1 if narrow else 3
     (plan,) = reuse.plans
+    assert_planned_once(reuse)
     assert len(reuse.roots) == branches
     assert all(root.statement_plan is plan for root in reuse.roots)
     assert len({id(root.row.ctx) for root in reuse.roots}) == branches
@@ -608,6 +610,8 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         raise AssertionError("render must reuse prepared access and assemble only once")
 
     monkeypatch.setattr(sql_compile, "compile_read", forbidden)
+    monkeypatch.setattr(sql_compile, "_plan_read_shape", forbidden)
+    monkeypatch.setattr(sql_compile, "_plan_statement", forbidden)
     monkeypatch.setattr(LoweredStatement, "deferred_key_markers", forbidden)
     for keys in ([10], [10, 20, 30], [40, 50]):
         original_keys = tuple(keys)
@@ -625,7 +629,8 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         assert rendered.statement.sql.count("union all") == branches - 1
         assert "__parallax_deferred_keys__" not in rendered.statement.sql
         assert rendered.statement.is_compiler_proven
-        assert rendered.result_contract.result_keys == template.compiled.result_contract.result_keys
+        assert rendered.result_contract is template.compiled.result_contract
+        assert rendered.projection is template.compiled.projection
         assert rendered.document_reads == template.compiled.document_reads
         assert rendered.resolved_position == template.compiled.resolved_position
         assert rendered.statement.sql.endswith("limit ?")
@@ -634,6 +639,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
             assert rendered.statement.typed_bind_spans is original.typed_bind_spans
         assert tuple(keys) == original_keys
     assert template.compiled.statement is original
+    assert len(reuse.result_contracts) == 1
 
 
 @pytest.mark.parametrize(

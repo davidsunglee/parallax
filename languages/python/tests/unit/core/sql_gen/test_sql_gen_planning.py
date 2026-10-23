@@ -678,10 +678,8 @@ def test_each_compilation_plans_its_physical_read_and_documents_once(
     assert isinstance(shape, SingleTableReadPlan if single_table else TpcsUnionReadPlan)
     (plan,) = reuse.plans
     assert plan.requires_tph_partition is False
-    contract = compiled.result_contract
-    assert contract.row_identity is shape.row_identity
+    assert reuse.compiled_reads[0] is compiled
     assert shape.shared_document is not None
-    assert contract.shared_document is shape.shared_document
     assert compiled.resolved_position == tuple(shape.concrete_types)
 
 
