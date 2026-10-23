@@ -19,6 +19,7 @@ import pytest
 
 from parallax.conformance import _case_ingress, adapter, case_format, engine, models
 from parallax.conformance._database_control import CaseDatabase
+from parallax.conformance._lanes import scenario
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance._mechanism import model_facts
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
@@ -1618,9 +1619,24 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_as_one_grouped_insert() -> None
     # statement. The registry UPDATE's `{increment: 3}` marker folds into a
     # self-referential `next_val = next_val + ?` SET.
     case_path = case_format.default_cases_dir() / "m-pk-gen-008-sequence-batch-partial.yaml"
-    envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_WritePort()))
+    with (
+        mock.patch.object(
+            scenario,
+            "_lower_marker_unit",
+            wraps=scenario._lower_marker_unit,  # pyright: ignore[reportPrivateUsage] - observe marker routing
+        ) as marker,
+        mock.patch.object(
+            scenario,
+            "_resolve_entries",
+            wraps=scenario._resolve_entries,  # pyright: ignore[reportPrivateUsage] - observe ordinary routing
+        ) as ordinary,
+    ):
+        envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_WritePort()))
     assert envelope["status"] == "ok", envelope
     assert len(envelope["emissions"]) == 2, envelope["emissions"]
+    marker.assert_called_once()
+    ordinary.assert_called_once()
+    assert ordinary.call_args.args[0][0]["mutation"] == "insert"
 
 
 # --------------------------------------------------------------------------- #
