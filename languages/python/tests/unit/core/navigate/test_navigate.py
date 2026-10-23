@@ -24,6 +24,7 @@ from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
 from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
+from parallax.core.inheritance import InheritancePositionView
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.navigate import (
     NoRootSelections,
@@ -542,7 +543,10 @@ def test_the_closed_product_is_obtained_only_by_resolving() -> None:
 if TYPE_CHECKING:
 
     def _static_lifecycle_probes(  # pyright: ignore[reportUnusedFunction] - static contract probe
-        raw: ResolvedPredicate, entity: EntityMetadata, identity: EntityIdentity
+        raw: ResolvedPredicate,
+        entity: EntityMetadata,
+        identity: EntityIdentity,
+        position: InheritancePositionView,
     ) -> None:
         """Typechecked, never called: closure yields the only compiler input, and
         neither a raw predicate nor a closed one crosses the wrong seam."""
@@ -551,10 +555,12 @@ if TYPE_CHECKING:
         )
         assert_type(closed, TemporallyResolvedPredicate)
         projection = ResolvedReadProjection((), False)
-        assert_type(PlannedEntityQuery(identity, entity, closed, projection), PlannedEntityQuery)
+        assert_type(
+            PlannedEntityQuery(identity, entity, position, closed, projection), PlannedEntityQuery
+        )
         compile_write_predicate(closed, POLICY, POSTGRES, entity)
 
-        PlannedEntityQuery(identity, entity, raw, projection)  # pyright: ignore[reportArgumentType]
+        PlannedEntityQuery(identity, entity, position, raw, projection)  # pyright: ignore[reportArgumentType]
         compile_write_predicate(raw, POLICY, POSTGRES, entity)  # pyright: ignore[reportArgumentType]
         resolve_temporal_visibility(
             closed,  # pyright: ignore[reportArgumentType]

@@ -412,7 +412,7 @@ def _driver_row(
         contract.attribute.identity: contract
         for contract in dict(compiled.result_contract.attribute_reads).get(entity, ())
     }
-    projected = frozenset(member.storage.name for member in compiled.projected_documents)
+    projected = frozenset(member.storage.name for member in compiled.projection.value_objects)
     row: dict[str, object] = {}
     residents = storage_view.document_residents
     document = (

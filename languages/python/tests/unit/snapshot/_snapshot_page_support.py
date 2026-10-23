@@ -123,7 +123,7 @@ def driver_row(compiled: CompiledRead, columns: Mapping[str, object]) -> dict[st
     """``columns`` with their document carriers folded as a database port folds
     them: every one ``compiled`` projects arrives as a SQL-null or a present
     document."""
-    carriers = {member.storage.name for member in compiled.projected_documents}
+    carriers = {member.storage.name for member in compiled.projection.value_objects}
     shared = compiled.result_contract.shared_document
     if shared is not None:
         carriers.add(shared.column)
@@ -350,9 +350,7 @@ class PageFixture:
         address = (entity, contract.result_keys)
         prepared = self._reads.get(address)
         if prepared is None:
-            prepared = self._reads[address] = bind(
-                self._cataloged, contract, compiled.projected_documents
-            )
+            prepared = self._reads[address] = bind(self._cataloged, contract, compiled.projection)
         ref, _resolved, _document, _variant = prepared.convert_row(
             row, self._builder, source=ROOT_LEVEL
         )

@@ -10,7 +10,7 @@ from parallax.core.base import (
     NeutralType,
     UnknownFamilyTag,
 )
-from parallax.core.deep_fetch import ResolvedReadProjection
+from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
 from parallax.core.document_codec import MemberShape
 from parallax.core.inheritance import (
@@ -26,7 +26,6 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
-    Metamodel,
     Multiplicity,
     TablePerHierarchy,
     ValueObjectIdentity,
@@ -455,19 +454,6 @@ def direct_documents(
     return DirectDocuments(per_entity)
 
 
-def query_narrow_position(
-    facet: InheritanceFacet, to: tuple[EntityIdentity, ...]
-) -> InheritancePositionView:
-    """The canonical position denoted by an Entity Query's resolved narrowing."""
-    position = facet.position(to)
-    if position is None:
-        raise SqlGenError(
-            f"narrow to {[identity.canonical for identity in to]} spans more than one "
-            "inheritance family"
-        )
-    return position
-
-
 def tag_pairs(
     facet: InheritanceFacet, concretes: Sequence[EntityIdentity]
 ) -> tuple[tuple[str, EntityIdentity, str], ...]:
@@ -591,42 +577,6 @@ def position_slots(
     return tuple(slot for slot in layout.columns if slot.applicable_entities & selected)
 
 
-def position_documents(
-    position: InheritancePositionView, layout: PositionLayoutView
-) -> tuple[ValueObjectMetadata, ...]:
-    """The top-level Value Object occurrences one resolved position's rows can carry.
-
-    ``position`` and ``layout`` are the Inheritance and Storage Layout answers
-    for one concrete set, which the read already resolved; this only pairs them.
-
-    The compiled read carries this so materialization decodes documents from the
-    occurrences the position actually has, in the Position Layout's own order,
-    rather than re-projecting the family superset from a round-tripped name. It
-    is keyed to the position and not to the read's result form: a default
-    row-form read projects no document column, while a row-acquisition read
-    that widens its projection may project selected or complete documents.
-
-    Answered from the Position Layout's logical MEMBER sequence and each
-    branch's placements rather than from its physical columns, because an
-    occurrence is a member under either layout while it is a Column only under
-    `Columns` — under `Document` it is a subtree of the shared Structured Column
-    and contributes no column entry at all, which would leave this answering
-    nothing and materialization decoding nothing.
-    """
-    by_identity = {member.identity: member for member in position.superset_value_objects}
-    placed = {
-        member
-        for branch in layout.branches
-        for member, placement in zip(layout.members, branch.placements, strict=True)
-        if placement is not None
-    }
-    return tuple(
-        by_identity[member]
-        for member in layout.members
-        if member in by_identity and member in placed
-    )
-
-
 def _structured_column_slot(layout: TableLayout) -> ColumnSlot | None:
     """``layout``'s shared Structured Column slot, or absence under `Columns`.
 
@@ -640,46 +590,38 @@ def _structured_column_slot(layout: TableLayout) -> ColumnSlot | None:
 
 
 def document_projection(
-    view: EntityLayoutView,
-    attributes: Sequence[AttributeMetadata],
-    value_objects: Sequence[ValueObjectMetadata],
-    *,
-    observation: bool = False,
+    view: EntityLayoutView, projection: ResolvedReadProjection
 ) -> tuple[ProjectedColumn | None, DocumentFanOut | None]:
-    """The Structured Column a read projects, and the fan-out that reads it back
-    out (`m-sql` *Read projection*, rule 5).
+    """The Structured Column a read of ``view``'s Entity projects, and the
+    fan-out that reads it back out (`m-sql` *Read projection*, rule 5).
 
-    ``attributes`` and ``value_objects`` are the members this read must produce.
-    Each one's Member Placement decides whether it already has a Column of its
-    own; the ones placed at a Document Path are what make the Structured Column
+    The read produces every Attribute and ``projection``'s Value Objects. Each
+    one's Member Placement decides whether it already has a Column of its own;
+    the ones placed at a Document Path are what make the Structured Column
     needed, and it is then projected **once**, raw, whatever their number.
 
-    ``observation`` is the read's own lane: an instance-form read, or a
-    row-acquisition read that widens its projection to every declared member
-    (`m-sql` *Result form*). Such a read observes the stored document itself and not only
-    the members decoded out of it — a Predecessor Row retains the raw document
-    (`m-write-plan`) — so it projects the Table's Structured Column wherever there
-    is one, fanning out however many members it asked for, zero included. Outside
-    that lane a read whose members are all direct — every read under `Columns`
-    layout, and a `Document`-layout row-form read of direct members alone —
-    projects no document column and fans nothing out, so this is inert rather
-    than conditional at the call site.
+    A read observing the stored document itself and not only the members decoded
+    out of it — a Predecessor Row retains the raw document (`m-write-plan`) —
+    projects the Table's Structured Column wherever there is one, fanning out
+    however many members it asked for, zero included. Otherwise a read whose
+    members are all direct — every read under `Columns` layout, and a
+    `Document`-layout read of direct members alone — projects no document
+    column and fans nothing out, so this is inert rather than conditional at the
+    call site.
     """
     residents = view.document_residents
     if residents is None:
         return None, None
-    selected = {
-        *(attribute.identity for attribute in attributes),
-        *(value_object.identity for value_object in value_objects),
-    }
     members: list[tuple[str, tuple[str, ...]]] = []
     document_slot: ColumnSlot | None = None
     for position, placement in zip(residents.positions, residents.placements, strict=True):
         binding = residents.member_selection.bindings[position]
-        if binding.identity in selected:
+        if isinstance(binding, AttributeMetadata) or projection.includes_value_object(
+            binding.identity
+        ):
             document_slot = placement.slot
             members.append((binding.storage.name, placement.path))
-    if document_slot is None and observation:
+    if document_slot is None and projection.observe_structured_document:
         document_slot = _structured_column_slot(view.layout)
     if document_slot is None:
         return None, None
@@ -691,10 +633,9 @@ def document_projection(
 
 def _tph_document_projection(
     layout: TableLayout,
-    facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     concretes: Sequence[EntityIdentity],
-    demand: _FamilyDemand,
+    projection: ResolvedReadProjection,
     *,
     instance_form: bool,
     abstract_target: bool,
@@ -716,13 +657,8 @@ def _tph_document_projection(
 
     fan_outs: list[tuple[EntityIdentity, DocumentFanOut | None]] = []
     for concrete in concretes:
-        view = entity_view(facet, concrete)
-        storage_view = storage_entity_view(storage, concrete)
         _projected, fan_out = document_projection(
-            storage_view,
-            view.applicable_attributes,
-            demand.selected(view.applicable_value_objects),
-            observation=demand.observation,
+            storage_entity_view(storage, concrete), projection
         )
         fan_outs.append((concrete, fan_out))
     if all(fan_out is None for _identity, fan_out in fan_outs):
@@ -764,11 +700,11 @@ def select_projection(
     ``slots`` is already the canonical `Identity`, `Discriminator`, `Domain`,
     `Temporal`, `Audit`, `Document` tier sequence restricted to the read's
     position, so this selects rather than orders: a contributor absent from
-    ``attributes`` / ``value_objects`` is not projected, which is how a row-form
-    read omits every `Document` slot. The discriminator is projected iff the
-    read's own queried `target` is abstract, independently of what the position
-    resolved to, and keeps its own tier position rather than trailing the
-    scalars.
+    ``attributes`` / ``value_objects`` is not projected, which is how a read
+    requesting no Value Object omits their `Document` slots. The discriminator
+    is projected iff the read's own queried `target` is abstract, independently
+    of what the position resolved to, and keeps its own tier position rather
+    than trailing the scalars.
     """
     types: dict[object, tuple[NeutralType | None, bool]] = {
         attribute.identity: (
@@ -1117,14 +1053,11 @@ class BranchNarrowPlan:
 
 
 def plan_inheritance_read(
-    entity: EntityMetadata,
-    narrow_to: tuple[EntityIdentity, ...] | None,
-    model: Metamodel,
+    query: PlannedEntityQuery,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     instance_form: bool,
     lock: LockMode | None,
-    projection: ResolvedReadProjection,
 ) -> TphPlan | TpcsSinglePlan | TpcsUnionPlan:
     """Plan an inheritance-family read for its family's declared strategy.
 
@@ -1132,67 +1065,39 @@ def plan_inheritance_read(
     exactly two strategies, so the table-per-hierarchy test decides between them
     outright.
 
-    ``instance_form`` is the object lane (`result_form == "instance"`). A row-form
-    read fetches exactly ``projection``'s Value Objects and observes the Structured
-    Column exactly where it asks; an instance-form read fetches every Value Object
-    its position carries and observes the document. Result form alone decides
-    sibling padding and which branch-owned fields a row publishes.
+    The read covers ``query.position``, fetches exactly ``query.projection``'s
+    Value Objects, and observes the Structured Column exactly where it asks.
+    ``instance_form`` is the object lane (`result_form == "instance"`), which
+    decides only sibling padding and which branch-owned fields a row publishes.
     ``lock`` is here rather than at the assembly site because the union lane must
     REFUSE a genuinely requested shared row lock before any branch is assembled;
     ordering and the cap are the assembler's, since a union applies them to its
     own outer select rather than to any branch.
     """
+    entity = query.entity
     view = entity_view(facet, entity.identity)
-    position, narrowed = _read_position(view, narrow_to, facet)
-    demand = (
-        _FamilyDemand(None, observation=True)
-        if instance_form
-        else _FamilyDemand(
-            frozenset(member.identity for member in projection.value_objects),
-            observation=projection.observe_structured_document,
-        )
-    )
     if isinstance(view.strategy, TablePerHierarchy):
         return _plan_tph_read(
-            entity, view, position, facet, storage, demand, narrowed, instance_form=instance_form
+            entity,
+            view,
+            query.position,
+            facet,
+            storage,
+            query.projection,
+            narrowed=query.narrow_to is not None,
+            instance_form=instance_form,
         )
-    return _plan_tpcs_read(position, facet, storage, demand, lock, instance_form=instance_form)
+    return _plan_tpcs_read(
+        query.position, facet, storage, query.projection, lock, instance_form=instance_form
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class _FamilyDemand:
-    """The Value Objects one family read fetches and whether it observes the
-    Structured Column; ``identities`` is absent where every Value Object the
-    position carries is fetched."""
-
-    identities: frozenset[ValueObjectIdentity] | None
-    observation: bool
-
-    def selected(
-        self, candidates: Sequence[ValueObjectMetadata]
-    ) -> tuple[ValueObjectMetadata, ...]:
-        identities = self.identities
-        if identities is None:
-            return tuple(candidates)
-        return tuple(member for member in candidates if member.identity in identities)
-
-    def includes(self, identity: ValueObjectIdentity) -> bool:
-        return self.identities is None or identity in self.identities
-
-
-def _read_position(
-    view: InheritanceEntityView,
-    narrow_to: tuple[EntityIdentity, ...] | None,
-    facet: InheritanceFacet,
-) -> tuple[InheritancePositionView, bool]:
-    """The read's queried position, and whether result narrowing produced it.
-
-    Entity Query narrowing replaces the target's own position with its resolved
-    identity set. The predicate is separate and is lowered whole.
-    """
-    if narrow_to is not None:
-        return query_narrow_position(facet, narrow_to), True
-    return view, False
+def _requested(
+    projection: ResolvedReadProjection, candidates: Sequence[ValueObjectMetadata]
+) -> tuple[ValueObjectMetadata, ...]:
+    return tuple(
+        member for member in candidates if projection.includes_value_object(member.identity)
+    )
 
 
 def _plan_tph_read(
@@ -1201,9 +1106,9 @@ def _plan_tph_read(
     position: InheritancePositionView,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
-    demand: _FamilyDemand,
-    narrowed: bool,
+    projection: ResolvedReadProjection,
     *,
+    narrowed: bool,
     instance_form: bool,
 ) -> TphPlan:
     layout = _table_layout(storage, facet, view.entity)
@@ -1216,15 +1121,14 @@ def _plan_tph_read(
     columns = select_projection(
         position_slots(layout, position.concrete_subtypes),
         position.superset_attributes,
-        demand.selected(position.superset_value_objects),
+        projection.value_objects,
         project_discriminator=abstract_target,
     )
     document, shared = _tph_document_projection(
         layout,
-        facet,
         storage,
         position.concrete_subtypes,
-        demand,
+        projection,
         instance_form=instance_form,
         abstract_target=abstract_target,
     )
@@ -1257,7 +1161,7 @@ def _plan_tph_read(
                     concrete,
                     layout,
                     entity_view(facet, concrete).applicable_attributes,
-                    demand.selected(entity_view(facet, concrete).applicable_value_objects),
+                    _requested(projection, entity_view(facet, concrete).applicable_value_objects),
                 )
                 for concrete in position.concrete_subtypes
             )
@@ -1266,7 +1170,10 @@ def _plan_tph_read(
 
 
 def _projects_document_slot(
-    contributor: ColumnContributor, demand: _FamilyDemand, *, document_resident: bool
+    contributor: ColumnContributor,
+    projection: ResolvedReadProjection,
+    *,
+    document_resident: bool,
 ) -> bool:
     """Whether a `union all` branch projects ``contributor``'s `Document` slot.
 
@@ -1281,15 +1188,17 @@ def _projects_document_slot(
     if isinstance(contributor, AttributeIdentity):
         return True
     if isinstance(contributor, ValueObjectIdentity):
-        return demand.includes(contributor)
-    return isinstance(contributor, RelationalDocument) and (demand.observation or document_resident)
+        return projection.includes_value_object(contributor)
+    return isinstance(contributor, RelationalDocument) and (
+        projection.observe_structured_document or document_resident
+    )
 
 
 def _plan_tpcs_read(
     position: InheritancePositionView,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
-    demand: _FamilyDemand,
+    projection: ResolvedReadProjection,
     lock: LockMode | None,
     *,
     instance_form: bool,
@@ -1312,18 +1221,14 @@ def _plan_tpcs_read(
 
     if len(concretes) == 1:
         layout = _table_layout(storage, facet, concretes[0])
-        value_objects = demand.selected(position.superset_value_objects)
         columns = select_projection(
             position_slots(layout, concretes),
             position.superset_attributes,
-            value_objects,
+            projection.value_objects,
             project_discriminator=False,
         )
         document, fan_out = document_projection(
-            storage_entity_view(storage, concretes[0]),
-            position.superset_attributes,
-            value_objects,
-            observation=demand.observation,
+            storage_entity_view(storage, concretes[0]), projection
         )
         if document is not None:
             columns = (*columns, document)
@@ -1346,7 +1251,7 @@ def _plan_tpcs_read(
                         concretes[0],
                         layout,
                         position.superset_attributes,
-                        value_objects,
+                        _requested(projection, position.superset_value_objects),
                     ),
                 )
             ),
@@ -1366,12 +1271,12 @@ def _plan_tpcs_read(
         )
     layout_position = position_layout(storage, concretes)
     # An observing read projects the shared Structured Column whatever resides in it.
-    document_resident = not demand.observation and any(
+    document_resident = not projection.observe_structured_document and any(
         isinstance(_table_layout(storage, facet, concrete).placement(member.identity), DocumentPath)
         for concrete in concretes
         for members in (
             entity_view(facet, concrete).applicable_attributes,
-            demand.selected(entity_view(facet, concrete).applicable_value_objects),
+            _requested(projection, entity_view(facet, concrete).applicable_value_objects),
         )
         for member in members
     )
@@ -1379,7 +1284,9 @@ def _plan_tpcs_read(
         index
         for index, column in enumerate(layout_position.columns)
         if column.tier is not ColumnTier.DOCUMENT
-        or _projects_document_slot(column.contributor, demand, document_resident=document_resident)
+        or _projects_document_slot(
+            column.contributor, projection, document_resident=document_resident
+        )
     )
     # A scalar collection's Column holds a document, never its element type's
     # native scalar lane, so it projects and keys as a document.
@@ -1452,14 +1359,7 @@ def _plan_tpcs_read(
     fan_outs: list[tuple[EntityIdentity, DocumentFanOut | None]] = []
     document_column: str | None = None
     for concrete in concretes:
-        layout = _table_layout(storage, facet, concrete)
-        view = entity_view(facet, concrete)
-        projected, fan_out = document_projection(
-            storage_entity_view(storage, concrete),
-            view.applicable_attributes,
-            demand.selected(view.applicable_value_objects),
-            observation=demand.observation,
-        )
+        projected, fan_out = document_projection(storage_entity_view(storage, concrete), projection)
         if projected is not None and fan_out is not None and document_column is None:
             document_column = projected.column
         fan_outs.append((concrete, fan_out))
@@ -1502,7 +1402,7 @@ def _plan_tpcs_read(
                     concrete,
                     _table_layout(storage, facet, concrete),
                     entity_view(facet, concrete).applicable_attributes,
-                    demand.selected(entity_view(facet, concrete).applicable_value_objects),
+                    _requested(projection, entity_view(facet, concrete).applicable_value_objects),
                 )
                 for concrete in concretes
             )

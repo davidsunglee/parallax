@@ -13,7 +13,11 @@ import pytest
 
 from parallax.core import predicate as oa
 from parallax.core.base import DocumentValue, PresentDocument
+from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.metamodel import ValueObjectIdentity
+from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema
 from parallax.core.read_delivery._row_decoding import (
     member_classifier,
     raw_member,
@@ -23,7 +27,7 @@ from parallax.core.sql_gen import SqlGenError
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
 from tests.unit._document_layout_support import columns_model, document_model, entity
-from tests.unit._prepared_read_support import result_row
+from tests.unit._prepared_read_support import bound_cells, result_row
 
 ORDERS = model("orders")
 DOCUMENT = document_model()
@@ -144,3 +148,32 @@ def test_predecessor_document_retention_requires_a_folded_carrier() -> None:
         row_identity(
             compiled.result_contract, result_row(compiled.result_contract, {"id": 1, "payload": {}})
         )
+
+
+def test_binding_prepares_each_occurrence_selection_once_rather_than_per_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compiled = compile_read(
+        oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
+    )
+    model = CatalogedModel(DOCUMENT)
+    checked: list[ValueObjectIdentity] = []
+    includes = ResolvedReadProjection.includes_value_object
+
+    def counted(self: ResolvedReadProjection, identity: ValueObjectIdentity) -> bool:
+        checked.append(identity)
+        return includes(self, identity)
+
+    monkeypatch.setattr(ResolvedReadProjection, "includes_value_object", counted)
+    converter, row = bound_cells(model, compiled, _DOCUMENT_CELLS)
+    occurrences = [
+        occurrence.identity
+        for identity in compiled.result_contract.resolvable
+        for occurrence in model.layouts.entity(identity).occurrences
+    ]
+    assert sorted(map(repr, checked)) == sorted(map(repr, occurrences))
+
+    builder = PageBuilder(ViewSchema.of())
+    for _ in range(3):
+        converter.convert_row(row, builder, source=ROOT_LEVEL)
+    assert len(checked) == len(occurrences)

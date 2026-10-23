@@ -12,9 +12,9 @@ from parallax.core import predicate as oa
 from parallax.core.base import DATE, FLOAT32, INFINITY, INT64, STRING, TIMESTAMP, ManagedValue
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import JsonDocument
-from parallax.core.deep_fetch import ResolvedReadProjection
+from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.predicate._resolved import DeferredKeySet, ResolvedConstant
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import CompiledTemplate, compile_read
@@ -39,7 +39,7 @@ from parallax.core.sql_gen._predicate import EntityRowScope, render_shared_sourc
 from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.wire import loads
 from tests._support.lowering_probes import lower_instruction
-from tests._support.sql import resolved_as_stated
+from tests._support.sql import read_position, resolved_as_stated
 from tests.unit._corpus_model_support import model as corpus_model
 
 WALLET = corpus_model("wallet")
@@ -60,6 +60,7 @@ def _template(statement: LoweredStatement, *, postgres_array: bool) -> CompiledT
         deep_fetch.PlannedEntityQuery(
             target=entity.identity,
             entity=entity,
+            position=read_position(WALLET, entity),
             predicate=resolved_as_stated(ResolvedConstant(True), WALLET, entity),
             projection=deep_fetch.ResolvedReadProjection((), False),
         ),
@@ -96,7 +97,16 @@ def test_entity_row_scope_reference_front_doors_resolve_direct_members() -> None
 
 COLLECTIONS = corpus_model("predicate-collections")
 TRAVERSAL = corpus_model("predicate-traversal")
-_NO_DEMAND = ResolvedReadProjection((), False)
+
+
+def _family_read(family: Metamodel, entity: EntityMetadata) -> PlannedEntityQuery:
+    return PlannedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        position=read_position(family, entity),
+        predicate=resolved_as_stated(ResolvedConstant(True), family, entity),
+        projection=ResolvedReadProjection((), False),
+    )
 
 
 def _row_builder(family: Metamodel) -> StatementBuilder[EntityRowScope]:
@@ -109,7 +119,7 @@ def _statement_plan(family: Metamodel, root: str, node: oa.PredicateNode) -> Sta
     read = (
         None
         if entity.inheritance is None
-        else plan_inheritance_read(entity, None, family, facet, storage, False, None, _NO_DEMAND)
+        else plan_inheritance_read(_family_read(family, entity), facet, storage, False, None)
     )
     return plan_statement(
         resolved_as_stated(oa.validate_predicate(entity, node, family), family, entity),
@@ -221,7 +231,7 @@ def test_each_union_branch_builder_finishes_its_own_root_alone() -> None:
     plan = _statement_plan(TRAVERSAL, "Vehicle", op)
     vehicle = next(entity for entity in TRAVERSAL.entities if entity.identity.name == "Vehicle")
     facet, storage = inheritance.view(TRAVERSAL), storage_layout.view(TRAVERSAL)
-    read = plan_inheritance_read(vehicle, None, TRAVERSAL, facet, storage, False, None, _NO_DEMAND)
+    read = plan_inheritance_read(_family_read(TRAVERSAL, vehicle), facet, storage, False, None)
     assert isinstance(read, TpcsUnionPlan)
     assert list(plan.root_scopes) == [branch.identity for branch in read.branches]
     union = _row_builder(TRAVERSAL)

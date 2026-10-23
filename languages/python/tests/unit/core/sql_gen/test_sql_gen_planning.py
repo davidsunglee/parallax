@@ -12,7 +12,7 @@ import pytest
 from parallax.conformance.models import accepted_model
 from parallax.core import inheritance, storage_layout
 from parallax.core import predicate as oa
-from parallax.core.deep_fetch import ResolvedReadProjection
+from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.navigate import _closed  # pyright: ignore[reportPrivateUsage]
@@ -55,7 +55,12 @@ from parallax.core.sql_gen._planning import (
 )
 from parallax.core.temporal_read import Bitemporal
 from parallax.core.temporal_read import view as temporal_view
-from tests._support.sql import compile_read, compile_write_predicate, resolved_as_stated
+from tests._support.sql import (
+    compile_read,
+    compile_write_predicate,
+    read_position,
+    resolved_as_stated,
+)
 from tests.unit._corpus_model_support import model, target
 from tests.unit.core.sql_gen._badge_model_support import badge_model, temporal_badge_model
 from tests.unit.core.sql_gen._dormant_model_support import dormant_target_model
@@ -180,24 +185,30 @@ def _planned(
 ) -> StatementPlan:
     entity = target(family, root)
     facet, storage = inheritance.view(family), storage_layout.view(family)
+    narrowed = (
+        None if narrow_to is None else tuple(target(family, name).identity for name in narrow_to)
+    )
+    predicate = resolved_as_stated(oa.validate_predicate(entity, node, family), family, entity)
     read = (
         None
         if entity.inheritance is None
         else plan_inheritance_read(
-            entity,
-            None
-            if narrow_to is None
-            else tuple(target(family, name).identity for name in narrow_to),
-            family,
+            PlannedEntityQuery(
+                target=entity.identity,
+                entity=entity,
+                position=read_position(family, entity, narrowed),
+                predicate=predicate,
+                projection=ResolvedReadProjection((), False),
+                narrow_to=narrowed,
+            ),
             facet,
             storage,
             False,
             None,
-            ResolvedReadProjection((), False),
         )
     )
     return plan_statement(
-        resolved_as_stated(oa.validate_predicate(entity, node, family), family, entity),
+        predicate,
         evaluation_context=context,
         entity=entity,
         meta=family,

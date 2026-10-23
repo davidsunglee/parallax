@@ -71,7 +71,7 @@ from parallax.core.storage_layout import _compile as storage_layout_compile
 from parallax.core.temporal_read import _compile as temporal_read_compile
 from tests._support import fake_metamodel
 from tests._support.binary32 import narrowed
-from tests._support.sql import compile_read, resolved_as_stated
+from tests._support.sql import compile_read, read_position, resolved_as_stated
 from tests.unit._corpus_model_support import model, target
 from tests.unit.core.sql_gen._plan_reuse_support import (
     reaches_compilation_state,
@@ -93,6 +93,7 @@ def _compile_resolved_product(
     query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
+        position=read_position(meta, entity),
         predicate=resolved_as_stated(product, meta, entity),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
@@ -358,7 +359,8 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         "t0.qty, t0.price, t0.active, t0.ordered_on from orders t0', binds=()), "
         f"narrow_to=None, target={order}, "
         f"resolved_position=({order},), "
-        "documents=(), projected_documents=(), document_reads=(), "
+        "projection=ResolvedReadProjection(value_objects=(), "
+        "observe_structured_document=False), document_reads=(), "
         f"result_contract=ResultContract(resolve=FixedIdentity(entity={order}), "
         "shared_document=None, direct_documents=None, "
         "result_keys=('id', 'name', 'sku', 'qty', 'price', 'active', 'ordered_on'), "
@@ -460,6 +462,7 @@ def _child_template(
     query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
+        position=read_position(meta, entity),
         predicate=resolved_as_stated(deferred_membership(member=member), meta, entity),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
@@ -529,6 +532,7 @@ def test_child_template_refuses_a_query_without_one_deferred_key_set(dialect: Di
     query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
+        position=read_position(ACCOUNT, entity),
         predicate=resolved_as_stated(ResolvedConstant(True), ACCOUNT, entity),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
@@ -547,6 +551,7 @@ def test_child_template_refuses_distinct_markers_even_when_their_types_match(
     query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
+        position=read_position(ORDERS, entity),
         predicate=resolved_as_stated(
             conjunction(
                 deferred_membership(member=member),
@@ -571,9 +576,11 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
     member = entity.attribute("folderId")
     title = entity.attribute("title")
     assert member is not None and title is not None
+    narrow_to = (target(meta, "Invoice").identity,) if narrow else None
     query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
+        position=read_position(meta, entity, narrow_to),
         predicate=resolved_as_stated(
             conjunction(
                 managed_comparison(op="eq", member=title, value="before"),
@@ -583,7 +590,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
             meta,
             entity,
         ),
-        narrow_to=(target(meta, "Invoice").identity,) if narrow else None,
+        narrow_to=narrow_to,
         limit=7,
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
@@ -812,6 +819,7 @@ def _guarded_read(
     query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
+        position=read_position(meta, entity),
         predicate=resolve_temporal_visibility(
             oa.validate_predicate(entity, op, meta),
             target=entity,

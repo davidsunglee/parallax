@@ -9,7 +9,7 @@ from parallax.core.base import (
     DocumentReadOrdinals,
     ManagedValue,
 )
-from parallax.core.deep_fetch import PlannedEntityQuery
+from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
 from parallax.core.document_codec import is_text_compared
 from parallax.core.inheritance import InheritanceFacet
@@ -21,7 +21,6 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
-    ValueObjectMetadata,
 )
 from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import (
@@ -53,8 +52,6 @@ from parallax.core.sql_gen._inheritance import direct_documents as _direct_docum
 from parallax.core.sql_gen._inheritance import document_projection as _document_projection
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
-from parallax.core.sql_gen._inheritance import position_documents as _position_documents
-from parallax.core.sql_gen._inheritance import position_layout as _position_layout
 from parallax.core.sql_gen._inheritance import render_projection as _render_projection
 from parallax.core.sql_gen._inheritance import select_projection as _select_projection
 from parallax.core.sql_gen._inheritance import storage_entity_view as _storage_entity_view
@@ -105,11 +102,11 @@ __all__ = [
     "compile_write_predicate",
 ]
 
-# The read's consumption lane (m-sql *Read projection*, *Result form*): a
-# ``row``-form read (the values lane) projects scalars only by default, with a
-# row-acquisition read's widening for required documents; an ``instance``-form
-# read (the object lane — a find / snapshot / deep-fetch whose rows materialize
-# into instances) additionally projects the value-object document columns (slot 4).
+# The read's consumption lane (m-sql *Result form*): a ``row``-form read (the
+# values lane) publishes flat rows, an ``instance``-form read (the object lane —
+# a find / snapshot / deep-fetch whose rows materialize into instances) publishes
+# objects. What either projects is the planned query's own resolved demand; the
+# lane decides only the returned shape.
 # PRIVATE: `compile_read`'s ``result_form`` keyword and its semantics are part of
 # the supported interface, but the alias naming them is not — a caller spells the
 # two literals inline (`Literal["row", "instance"]`) rather than importing a name
@@ -156,26 +153,17 @@ class CompiledRead:
     concrete identity. A deep-fetch CHILD level's narrow is its own planned child
     query's.
 
-    ``documents`` is the top-level Value Object occurrences the resolved position
-    can carry, in Position Layout order — the scalar/document provenance a
-    materializing caller needs, carried here so no consumer re-projects a family
-    superset of its own. It is a property of the POSITION, not of the result form
-    or the layout: a default row-form read projects no document column, while a
-    row-acquisition read that widens its projection projects the documents it needs.
-    An occurrence is just as much a member when the layout stores it inside a
-    shared Structured Column rather than in one of its own. Raw ordinal access is
-    the metadata-preserving contract for Page and write consumers.
-    ``projected_documents`` is the demand-specific subset the statement actually
-    selected; conversion receives that subset so an unrequested occurrence is
-    never judged merely because the position could have carried it.
+    ``projection`` is the planned query's own resolved demand, which the
+    statement selected; binding judges exactly its occurrences, so an
+    unrequested occurrence is never judged merely because the position could
+    have carried it.
     """
 
     statement: LoweredStatement
     narrow_to: tuple[EntityIdentity, ...] | None
     target: EntityIdentity
     resolved_position: tuple[EntityIdentity, ...]
-    documents: tuple[ValueObjectMetadata, ...]
-    projected_documents: tuple[ValueObjectMetadata, ...]
+    projection: ResolvedReadProjection
     document_reads: tuple[DocumentReadOrdinals, ...]
     result_contract: _ResultContract
 
@@ -232,9 +220,7 @@ def _projection(
     view: _EntityLayoutView,
     dialect: Dialect,
     alias: str,
-    projected_vos: tuple[ValueObjectMetadata, ...],
-    *,
-    observation: bool,
+    projection: ResolvedReadProjection,
 ) -> tuple[
     str,
     list[object],
@@ -243,11 +229,11 @@ def _projection(
     _SharedDocument | None,
     _DirectDocuments | None,
 ]:
-    """Render the resolved Value Object projection in canonical layout order.
+    """Render deep fetch's resolved ``projection`` in canonical layout order.
 
-    ``projected_vos`` is deep fetch's exact retained selection. ``observation`` requests
-    the Structured Column needed for predecessor evidence even when no selected member
-    occupies it. Neither choice is inferred from result form in this compiler.
+    Its observation requests the Structured Column needed for predecessor
+    evidence even when no selected member occupies it. Neither choice is
+    inferred from result form in this compiler.
     """
 
     layout = view.layout
@@ -255,12 +241,10 @@ def _projection(
     columns = _select_projection(
         layout.columns,
         entity.declared_attributes,
-        projected_vos,
+        projection.value_objects,
         project_discriminator=False,
     )
-    document, fan_out = _document_projection(
-        view, entity.declared_attributes, projected_vos, observation=observation
-    )
+    document, fan_out = _document_projection(view, projection)
     if document is not None:
         columns = (*columns, document)
     shared_document = (
@@ -269,7 +253,7 @@ def _projection(
         else _SharedDocument(document.column, ((entity.identity, fan_out),))
     )
     direct_documents = _direct_documents(
-        ((entity.identity, layout, entity.declared_attributes, projected_vos),)
+        ((entity.identity, layout, entity.declared_attributes, projection.value_objects),)
     )
     sql, binds, document_reads = _render_projection(dialect, alias, columns)
     result_keys = tuple(
@@ -352,16 +336,7 @@ def compile_read(
     inheritance_read = (
         None
         if target.inheritance is None
-        else _plan_inheritance_read(
-            target,
-            query.narrow_to,
-            model,
-            facet,
-            storage,
-            result_form == "instance",
-            arm_lock,
-            query.projection,
-        )
+        else _plan_inheritance_read(query, facet, storage, result_form == "instance", arm_lock)
     )
     statement_plan = _plan_statement(
         query.predicate,
@@ -380,7 +355,6 @@ def compile_read(
         model,
         dialect,
         terms,
-        result_form=result_form,
         lock=arm_lock,
         null_tail=False,
     )
@@ -393,7 +367,6 @@ def compile_read(
         model,
         dialect,
         terms,
-        result_form=result_form,
         lock=arm_lock,
         null_tail=True,
     )
@@ -507,7 +480,6 @@ def _compile_read_arm(
     dialect: Dialect,
     terms: tuple[_LoweredTerm, ...],
     *,
-    result_form: _ResultForm,
     lock: LockMode | None,
     null_tail: bool,
 ) -> CompiledRead:
@@ -537,14 +509,12 @@ def _compile_read_arm(
             null_tail,
         )
         plan_position = tuple(inheritance_read.position)
-        position_documents = _position_documents(inheritance_read.resolved, inheritance_read.layout)
         return CompiledRead(
             statement,
             narrow_to,
             target.identity,
             plan_position,
-            position_documents,
-            position_documents if result_form == "instance" else query.projection.value_objects,
+            query.projection,
             document_reads,
             _ResultContract(
                 inheritance_read.resolve,
@@ -567,8 +537,7 @@ def _compile_read_arm(
             _storage_entity_view(storage, target.identity),
             dialect,
             scope.alias,
-            query.projection.value_objects,
-            observation=query.projection.observe_structured_document,
+            query.projection,
         )
     )
     ctx.bind_structural_all(proj_binds)
@@ -590,16 +559,13 @@ def _compile_read_arm(
     # A non-family read projects no tag and no variant literal, so its rows'
     # identity is fixed and the only document entries it can fill are the fan-out
     # its own projection decided and the occurrences that hold their own Column.
-    view = _entity_view(facet, target.identity)
-    position = tuple(view.concrete_subtypes)
-    position_documents = _position_documents(view, _position_layout(storage, position))
+    position = tuple(query.position.concrete_subtypes)
     return CompiledRead(
         statement,
         narrow_to,
         target.identity,
         position,
-        position_documents,
-        query.projection.value_objects,
+        query.projection,
         document_reads,
         _ResultContract(
             _FixedIdentity(target.identity),

@@ -61,7 +61,7 @@ def encoded_identity_read() -> ReadRowConverter:
     return bind(
         CatalogedModel(ENCODED_IDENTITY),
         _encoded_identity(compiled.result_contract),
-        compiled.projected_documents,
+        compiled.projection,
     )
 
 
