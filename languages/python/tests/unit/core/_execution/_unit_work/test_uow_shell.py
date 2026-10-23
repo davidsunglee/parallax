@@ -87,6 +87,7 @@ from parallax.core.unit_work import (
     WritePlanningRequest,
     WritePreconditionError,
     admitted_write,
+    object_key,
 )
 from parallax.core.write_plan import (
     ObjectStateKey,
@@ -116,6 +117,7 @@ from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admitted_writes,
     object_source,
+    observed_buffer,
     plan_steps,
     settled_writes,
 )
@@ -195,12 +197,50 @@ def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedK
     return prepared
 
 
-def _account_insert(account_id: int) -> PreparedKeyedInstruction:
-    return _prepared_keyed(
-        KeyedWriteInstruction(
-            "insert", "Account", ({"id": account_id, "owner": "N", "balance": Decimal("5.00")},)
+def _account_insert(account_id: int) -> AdmittedWrite:
+    return admitted_write(
+        _prepared_keyed(
+            KeyedWriteInstruction(
+                "insert",
+                "Account",
+                ({"id": account_id, "owner": "N", "balance": Decimal("5.00")},),
+            ),
+            _ACCOUNT,
         ),
-        _ACCOUNT,
+        None,
+    )
+
+
+def _inserted(meta: Metamodel, write: KeyedWriteInstruction) -> AdmittedWrite:
+    """``write`` admitted as the unit of work admits an insert."""
+    return admitted_write(_prepared_keyed(write, meta), None)
+
+
+def _insertion_write(
+    uow: UnitOfWork, meta: Metamodel, write: KeyedWriteInstruction
+) -> AdmittedWrite:
+    """``write`` licensed by ``uow``'s standing insertion of the object it
+    names, as a verb writing through the inserted value admits it."""
+    prepared = _prepared_keyed(write, meta)
+    key = object_key(prepared, meta)
+    assert key is not None
+    identity = uow.insertion_identity(key)
+    assert identity is not None
+    return admitted_write(prepared, None, authority=identity)
+
+
+def _unclosable(meta: Metamodel, write: KeyedWriteInstruction) -> AdmittedWrite:
+    """A temporal ``write`` admitted against a Version Observation, which no
+    close can address, gate on, or carry state forward from, so planning
+    refuses it."""
+    prepared = _prepared_keyed(write, meta)
+    key = object_key(prepared, meta)
+    assert key is not None
+    return admitted_write(
+        prepared,
+        RetainedObservation(
+            VersionedObjectStateKey(key, 1), VersionObservation(observed_version=1), None
+        ),
     )
 
 
@@ -307,11 +347,11 @@ def test_clock_supplies_the_flush_transaction_time_instant() -> None:
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(
-            _prepared_keyed(
+            _inserted(
+                _BALANCE,
                 KeyedWriteInstruction(
                     "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("100.00")},)
                 ),
-                _BALANCE,
             )
         )
 
@@ -411,7 +451,7 @@ def test_an_insertion_authority_licenses_no_insert_and_no_multi_row_write() -> N
     # rows names no single object at all.
     authority = InsertionIdentity(corpus_object_key("Account", ("id", 1)))
     with pytest.raises(ValueError, match="admitted by its own verb"):
-        InsertionAuthorizedWrite(instruction=_account_insert(1), identity=authority)
+        InsertionAuthorizedWrite(instruction=_account_insert(1).instruction, identity=authority)
     with pytest.raises(ValueError, match="the one object it opened"):
         admitted_write(
             _prepared_keyed(
@@ -521,20 +561,20 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
 
     def body(tx: UnitOfWork) -> None:
         tx.buffer(
-            _prepared_keyed(
+            _inserted(
+                _BALANCE,
                 KeyedWriteInstruction(
                     "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("1.00")},)
                 ),
-                _BALANCE,
             )
         )
         tx.read(lambda: "row")  # forces the first flush
         tx.buffer(
-            _prepared_keyed(
+            _inserted(
+                _BALANCE,
                 KeyedWriteInstruction(
                     "insert", "Balance", ({"id": 10, "acctNum": "E", "value": Decimal("2.00")},)
                 ),
-                _BALANCE,
             )
         )
 
@@ -821,7 +861,7 @@ def test_a_refused_admitted_write_or_claim_leaves_claims_and_pending_inserts_as_
                 )
             )
         _refused_as_claimed(uow, _account_write("amend", 1, 7))
-        assert uow.buffer(_account_delete(9)) is BufferOutcome.CANCELLED_PENDING_INSERT
+        assert uow.buffer(_account_delete(uow, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
         _refused_as_claimed(uow, _account_write("amend", 1, 7))
 
     _run(body)
@@ -834,9 +874,10 @@ class _Abandoned(Exception):
 # --------------------------------------------------------------------------- #
 # Buffering reports the pending-insert transition it made.                    #
 # --------------------------------------------------------------------------- #
-def _account_delete(account_id: int) -> PreparedKeyedInstruction:
-    return _prepared_keyed(
-        KeyedWriteInstruction("delete", "Account", ({"id": account_id},)), _ACCOUNT
+def _account_delete(uow: UnitOfWork, account_id: int) -> AdmittedWrite:
+    """A delete of the Account ``uow``'s standing insertion opened."""
+    return _insertion_write(
+        uow, _ACCOUNT, KeyedWriteInstruction("delete", "Account", ({"id": account_id},))
     )
 
 
@@ -845,11 +886,11 @@ def test_a_destructive_write_of_a_pending_insert_reports_the_cancellation() -> N
 
     def body(uow: UnitOfWork) -> None:
         assert uow.buffer(_account_insert(9)) is BufferOutcome.BUFFERED
-        assert uow.buffer(_account_delete(8)) is BufferOutcome.BUFFERED
-        assert uow.buffer(_account_delete(9)) is BufferOutcome.CANCELLED_PENDING_INSERT
+        assert uow.buffer(_account_write("delete", 8, 1)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_account_delete(uow, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
         assert uow.buffer(_account_insert(9)) is BufferOutcome.BUFFERED
-        assert uow.buffer(_account_delete(9)) is BufferOutcome.CANCELLED_PENDING_INSERT
-        assert uow.buffer(_account_delete(9)) is BufferOutcome.BUFFERED
+        assert uow.buffer(_account_delete(uow, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
+        assert uow.buffer(_account_write("delete", 9, 1)) is BufferOutcome.BUFFERED
         raise _Abandoned
 
     with pytest.raises(_Abandoned):
@@ -890,12 +931,12 @@ def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
 # --------------------------------------------------------------------------- #
 # Settled writes: completion, ownership, freshness and failure containment.   #
 # --------------------------------------------------------------------------- #
-def _balance_insert(key: int) -> PreparedKeyedInstruction:
-    return _prepared_keyed(
+def _balance_insert(key: int) -> AdmittedWrite:
+    return _inserted(
+        _BALANCE,
         KeyedWriteInstruction(
             "insert", "Balance", ({"id": key, "acctNum": "A", "value": Decimal("1.00")},)
         ),
-        _BALANCE,
     )
 
 
@@ -1066,12 +1107,13 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
 
 
 def test_a_planning_refusal_leaves_the_attempt_usable() -> None:
-    bare_close = _prepared_keyed(
-        KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("2.00")},)), _BALANCE
+    unclosable = _unclosable(
+        _BALANCE,
+        KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("2.00")},)),
     )
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(bare_close)
+        uow.buffer(unclosable)
         with pytest.raises(WritePlanningError):
             uow.read(lambda: None)
         assert uow.read(lambda: "still usable") == "still usable"
@@ -1137,7 +1179,8 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
 
     def body(uow: UnitOfWork) -> None:
         uow.buffer(
-            _prepared_keyed(
+            _inserted(
+                _POSITION,
                 KeyedWriteInstruction(
                     "insertUntil",
                     "Position",
@@ -1145,7 +1188,6 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
                     valid_from=_JAN,
                     until=_DEC,
                 ),
-                _POSITION,
             )
         )
         uow.read(lambda: None)
@@ -1570,9 +1612,9 @@ def _shell_predicate_write(
     return prepared
 
 
-def _tag_insert(tag_id: int) -> PreparedKeyedInstruction:
-    return _prepared_keyed(
-        KeyedWriteInstruction("insert", "ShellTag", ({"id": tag_id, "label": "t"},)), _PREDICATED
+def _tag_insert(tag_id: int) -> AdmittedWrite:
+    return _inserted(
+        _PREDICATED, KeyedWriteInstruction("insert", "ShellTag", ({"id": tag_id, "label": "t"},))
     )
 
 
@@ -1651,7 +1693,9 @@ def test_a_predicate_write_whose_buffered_writes_cancelled_executes_no_other_sta
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_tag_insert(2))
         assert uow.buffer(
-            _prepared_keyed(KeyedWriteInstruction("delete", "ShellTag", ({"id": 2},)), _PREDICATED)
+            _insertion_write(
+                uow, _PREDICATED, KeyedWriteInstruction("delete", "ShellTag", ({"id": 2},))
+            )
         ) is (BufferOutcome.CANCELLED_PENDING_INSERT)
         uow.execute_predicate(_shell_predicate_write())
 
@@ -1733,7 +1777,8 @@ def test_a_doomed_lifetime_refuses_an_empty_predicate_write() -> None:
 
 def test_a_planning_refusal_before_a_predicate_write_keeps_the_buffer_and_the_attempt() -> None:
     order: list[str] = []
-    bare_close = _prepared_keyed(
+    unclosable = _unclosable(
+        _PREDICATED,
         KeyedWriteInstruction(
             "amendUntil",
             "WherePosition",
@@ -1741,12 +1786,11 @@ def test_a_planning_refusal_before_a_predicate_write_keeps_the_buffer_and_the_at
             valid_from=_FEB,
             until=_APR,
         ),
-        _PREDICATED,
     )
     simulated = _simulated(_PREDICATED)
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(bare_close)
+        uow.buffer(unclosable)
         with pytest.raises(WritePlanningError):
             uow.execute_predicate(_shell_predicate_write())
         assert uow.read(lambda: "still usable") == "still usable"
@@ -1872,31 +1916,22 @@ def _opening_geometry(plan: WritePlan) -> set[tuple[object, object, object]]:
 
 
 def test_a_pending_opening_settles_as_one_write_of_the_new_lineages_its_edits_leave() -> None:
-    insert = _prepared_keyed(
-        KeyedWriteInstruction(
-            "insert",
-            "WherePosition",
-            ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
-            valid_from=_FEB,
-        ),
-        _PREDICATED,
+    insert = KeyedWriteInstruction(
+        "insert",
+        "WherePosition",
+        ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
+        valid_from=_FEB,
     )
-    edit = _prepared_keyed(
-        KeyedWriteInstruction(
-            "amendUntil", "WherePosition", ({"id": 1, "value": Decimal("2.00")},), _FEB, _APR
-        ),
-        _PREDICATED,
+    edit = KeyedWriteInstruction(
+        "amendUntil", "WherePosition", ({"id": 1, "value": Decimal("2.00")},), _FEB, _APR
     )
-    destroy = _prepared_keyed(
-        KeyedWriteInstruction("terminateUntil", "WherePosition", ({"id": 1},), _JUN, _AUG),
-        _PREDICATED,
-    )
+    destroy = KeyedWriteInstruction("terminateUntil", "WherePosition", ({"id": 1},), _JUN, _AUG)
     plan = build_write_planner(_PREDICATED).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
             concurrency="optimistic",
-            composed_writes=admitted_writes(_PREDICATED, [insert, edit, destroy]),
+            composed_writes=observed_buffer([insert, edit, destroy], _PREDICATED, None),
         )
     )
     # No predecessor is fabricated for the insert: every surviving part of its

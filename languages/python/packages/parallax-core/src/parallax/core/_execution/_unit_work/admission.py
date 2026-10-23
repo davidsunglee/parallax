@@ -25,7 +25,6 @@ from parallax.core._execution._unit_work.claims import (
 from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
     DESTRUCTIVE_MUTATIONS,
-    INSERT_MUTATIONS,
     REPLACE_MUTATIONS,
     PreparedKeyedInstruction,
     derive_keyed_instruction,
@@ -42,6 +41,7 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     ComposedWrite,
     InsertionAuthorizedWrite,
+    KeyedInsert,
     ObjectLockedWrite,
     PostRemovalInsert,
     ReadAuthorizedWrite,
@@ -323,7 +323,7 @@ class WriteAdmission:
 
     def _admit_keyed(
         self,
-        item: PreparedKeyedInstruction | ReadAuthorizedWrite | InsertionAuthorizedWrite,
+        item: KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite,
         insertion_advice: KeyedWriteRefusalAdvice | None,
     ) -> BufferOutcome:
         record: InsertionRecord | None = None
@@ -339,12 +339,12 @@ class WriteAdmission:
             )
         else:
             verdict = self._check_keyed_claim(item, key)
-        instruction = item if isinstance(item, PreparedKeyedInstruction) else item.instruction
         if key is None:
             self._writes.append(item)
             return BufferOutcome.BUFFERED
-        if instruction.mutation in INSERT_MUTATIONS:
-            return self._open_insertion(instruction, key, insertion_advice)
+        if isinstance(item, KeyedInsert):
+            return self._open_insertion(item, key, insertion_advice)
+        instruction = item.instruction
         if record is None:
             record = self._ownership.insertion_record(key)
         if record is not None and self._foldable(record):
@@ -363,8 +363,8 @@ class WriteAdmission:
             if item is None:
                 continue
             if index in after_removal:
-                # An insert is a bare instruction, or an opening composed over it.
-                assert isinstance(item, PreparedKeyedInstruction | ComposedBitemporalOpening)
+                # Only an insert, or an opening composed over one, follows a removal.
+                assert isinstance(item, KeyedInsert | ComposedBitemporalOpening)
                 written.append(PostRemovalInsert(item))
             else:
                 written.append(item)
@@ -547,7 +547,7 @@ class WriteAdmission:
 
     def _check_keyed_claim(
         self,
-        item: PreparedKeyedInstruction | ReadAuthorizedWrite | InsertionAuthorizedWrite,
+        item: KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite,
         key: ObjectKey | None,
     ) -> ClaimVerdict | None:
         """What a non-temporal write becomes against the claim held at its
@@ -556,9 +556,9 @@ class WriteAdmission:
         scope = buffered_claim_scope(item, key)
         if scope is None:
             return None
-        assert not isinstance(item, PreparedKeyedInstruction)  # a bare instruction claims nothing
+        assert not isinstance(item, KeyedInsert)  # an insert claims nothing
         intent = keyed_intent(item.instruction)
-        assert intent is not None  # no admitted write wraps an insert
+        assert intent is not None  # a claimed write is no insert
         claimed = claimed_object(scope)
         conditioned = None if self._conditioned is None else self._conditioned.get(claimed)
         verdict = admits(self._held_intent(scope), intent)
@@ -614,7 +614,7 @@ class WriteAdmission:
 
     def _open_insertion(
         self,
-        instruction: PreparedKeyedInstruction,
+        insert: KeyedInsert,
         key: ObjectKey,
         insertion_advice: KeyedWriteRefusalAdvice | None,
     ) -> BufferOutcome:
@@ -624,14 +624,14 @@ class WriteAdmission:
         )
         linked = record is not None and record.pending_state is not None
         writes = self._writes
-        writes.append(instruction)
+        writes.append(insert)
         position = len(writes) - 1
         if after_removal:
             if self._after_removal is None:
                 self._after_removal = set()
             self._after_removal.add(position)
         record = self._ownership.open_insert(
-            key, insertion_advice, instruction.valid_time_window, position
+            key, insertion_advice, insert.instruction.valid_time_window, position
         )
         if not linked:
             if self._linked is None:
@@ -683,15 +683,10 @@ class WriteAdmission:
         base = writes[position]
         target = instruction.target
         if isinstance(self._temporal_facet.shape(target.identity), temporal_read.Bitemporal):
-            opening = (
-                base
-                if isinstance(base, ComposedBitemporalOpening)
-                else ComposedBitemporalOpening(
-                    insert=cast("PreparedKeyedInstruction", base),
-                    transform=NO_TRANSFORM,
-                    intents=(),
-                )
-            ).followed_by(instruction, self._key_name(target))
+            if not isinstance(base, ComposedBitemporalOpening):
+                assert isinstance(base, KeyedInsert)  # a pending insertion holds its insert
+                base = ComposedBitemporalOpening(insert=base, transform=NO_TRANSFORM, intents=())
+            opening = base.followed_by(instruction, self._key_name(target))
             if opening.survives or opening.transform.assigns:
                 writes[position] = opening
                 return BufferOutcome.BUFFERED
@@ -701,12 +696,14 @@ class WriteAdmission:
                 record.identity = None
                 return BufferOutcome.BUFFERED
         elif instruction.mutation in ASSIGNMENT_MUTATIONS:
-            # No admitted write wraps an insert, so a pending-insert slot is always a
-            # bare instruction — and folding an update into it yields an insert,
-            # which is why the merged item stays bare.
-            assert isinstance(base, PreparedKeyedInstruction)
-            writes[position] = _merge_assignment_into_insert(
-                base, instruction, self._key_name(target)
+            # Only a Bitemporal opening composes, so this slot holds the
+            # insert itself, which the amendment leaves an insert.
+            assert isinstance(base, KeyedInsert)
+            writes[position] = replace(
+                base,
+                instruction=_merge_assignment_into_insert(
+                    base.instruction, instruction, self._key_name(target)
+                ),
             )
             return BufferOutcome.BUFFERED
         writes[position] = None
@@ -718,7 +715,7 @@ class WriteAdmission:
 
     def _add_existing(
         self,
-        item: AdmittedWrite,
+        item: _Claimed,
         instruction: PreparedKeyedInstruction,
         key: ObjectKey,
         record: InsertionRecord | None,
@@ -737,11 +734,9 @@ class WriteAdmission:
         if temporal:
             assert isinstance(item, StateObservedWrite | InsertionAuthorizedWrite | TargetWrite)
             self._add_temporal(item, key)
-        elif isinstance(item, _CLAIMED):
+        else:
             assert verdict is not None  # admission judged the claimed scope
             self._combine_claimed(item, key, verdict)
-        else:
-            self._writes.append(item)
 
     def _combine_claimed(self, item: _Claimed, key: ObjectKey, verdict: ClaimVerdict) -> None:
         """Combine ``item`` with the write pending at its own scope, or open

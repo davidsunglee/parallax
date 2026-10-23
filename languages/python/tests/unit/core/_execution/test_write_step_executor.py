@@ -36,7 +36,12 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
 from parallax.core.sql_gen import SqlGenError
-from parallax.core.unit_work import KeyedWriteInstruction, MissingTargetError, WritePlanningRequest
+from parallax.core.unit_work import (
+    KeyedWriteInstruction,
+    MissingTargetError,
+    WritePlanningRequest,
+    admitted_write,
+)
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import SettledWrite, WriteGroup
 from parallax.core.write_plan.steps import (
@@ -150,7 +155,7 @@ def test_allocating_steps_answer_the_keys_their_insert_returned() -> None:
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
             concurrency="optimistic",
-            composed_writes=[prepared],
+            composed_writes=[admitted_write(prepared, None)],
         )
     )
     (group,) = plan.entries

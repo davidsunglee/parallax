@@ -342,8 +342,8 @@ class UnitOfWork:
         (:func:`~parallax.core._execution._unit_work.write_items.admitted_write`): a
         retained observation claims the state it observed, and an
         object-locked write claims its instruction's object (`m-unit-work`
-        "Observed-State Coalescing"). An insert and a bare instruction claim
-        nothing. An arriving keyed intent the held claim cannot absorb raises
+        "Observed-State Coalescing"). An insert claims nothing. An arriving
+        keyed intent the held claim cannot absorb raises
         :class:`WriteEvidenceError` (``write-evidence-already-claimed``), and
         the pending writes, their claims, and the pending inserts are left as
         they were.

@@ -460,10 +460,7 @@ def test_a_lone_write_reaching_past_what_it_observed_reads_only_the_rest(
     assert acquisition.terms[0].valid_time_windows == (temporal_read.TimeInterval(_JUN, _SEP),)
 
 
-@pytest.mark.parametrize("observation", [None, VersionObservation(observed_version=1)])
-def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_instant(
-    observation: VersionObservation | None,
-) -> None:
+def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_instant() -> None:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             "amendUntil", "SequenceSpan", ({"id": 1, "amount": 300},), _MAR, _APR
@@ -471,15 +468,13 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
         _SPANS,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    item: AdmittedWrite = (
-        prepared
-        if observation is None
-        else StateObservedWrite(
-            prepared,
-            RetainedObservation(
-                VersionedObjectStateKey(ObjectKey(_SPAN, (("id", 1),)), 1), observation, None
-            ),
-        )
+    item = StateObservedWrite(
+        prepared,
+        RetainedObservation(
+            VersionedObjectStateKey(ObjectKey(_SPAN, (("id", 1),)), 1),
+            VersionObservation(observed_version=1),
+            None,
+        ),
     )
     clock = CountingClock([_PLANNED_AT])
     with pytest.raises(WritePlanningError, match="closes the current milestone"):

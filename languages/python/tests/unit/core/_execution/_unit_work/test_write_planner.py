@@ -69,6 +69,7 @@ from parallax.core.unit_work import (
     TransactionInstant,
     WriteAssignment,
     WritePlanningRequest,
+    admitted_write,
     object_key,
 )
 from parallax.core.write_plan import (
@@ -767,25 +768,28 @@ def test_nonempty_change_set_update_survives_elision() -> None:
     assert len(plan_steps(plan)) == 1
 
 
-def test_a_key_only_row_of_a_preformed_multi_row_update_is_eliminated() -> None:
-    # Stage 2 eliminates known no-op work per ROW, not only per instruction: a
-    # preformed update mixing a key-only row with an assigning one is not empty
-    # as a whole, so an instruction-level test would pass it to batching, which
-    # splits it into its rows and hands the key-only child an update with no
-    # member to write. Eliminating the row here also keeps the elimination
-    # ahead of batching, where the normative stage order puts it.
-    update = KeyedWriteInstruction(
-        "amend", "Wallet", ({"id": 1}, {"id": 2, "balance": Decimal("9.00")})
+def test_a_key_only_update_is_eliminated_ahead_of_batching_beside_an_assigning_one() -> None:
+    # Stage 2 eliminates known no-op work ahead of batching, where the
+    # normative stage order puts it, so the key-only update never joins its
+    # neighbour's batch as an update with no member to write.
+    plan = _plan(
+        [
+            KeyedWriteInstruction("amend", "Wallet", ({"id": 1},)),
+            KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "balance": Decimal("9.00")},)),
+        ],
+        _WALLET,
     )
-    plan = _plan([update], _WALLET)
     (step,) = plan_steps(plan)
     assert isinstance(step, PlannedUpdate)
     assert _key_values(step) == ((2,),)
 
 
-def test_a_preformed_update_whose_rows_are_all_key_only_is_eliminated_whole() -> None:
-    update = KeyedWriteInstruction("amend", "Wallet", ({"id": 1}, {"id": 2}))
-    assert len(plan_steps(_plan([update], _WALLET))) == 0
+def test_updates_that_are_all_key_only_are_all_eliminated() -> None:
+    buffer: list[_TestAdmittedWrite] = [
+        KeyedWriteInstruction("amend", "Wallet", ({"id": 1},)),
+        KeyedWriteInstruction("amend", "Wallet", ({"id": 2},)),
+    ]
+    assert len(plan_steps(_plan(buffer, _WALLET))) == 0
 
 
 def test_a_plural_temporal_update_is_refused_rather_than_narrowed_by_no_op_elimination() -> None:
@@ -812,12 +816,17 @@ def test_a_plural_temporal_update_of_key_only_rows_is_refused_rather_than_elimin
         _plan([update], _BALANCE)
 
 
-def test_a_single_row_temporal_update_naming_only_its_key_is_still_eliminated() -> None:
-    # Elimination is unchanged for the row count the singleton rule admits: one
-    # temporal row assigning nothing opens no successor worth chaining, so
+def test_a_temporal_update_naming_only_its_key_is_still_eliminated() -> None:
+    # A temporal update assigning nothing opens no successor worth chaining, so
     # stage 2 removes it exactly as it removes a non-temporal one.
     update = KeyedWriteInstruction("amend", "Balance", ({"id": 1},))
-    assert len(plan_steps(_plan([update], _BALANCE))) == 0
+    observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
+    plan = _plan(
+        [update],
+        _BALANCE,
+        observations={corpus_object_key("Balance", ("id", 1)): observation},
+    )
+    assert len(plan_steps(plan)) == 0
 
 
 def test_empty_plan_from_empty_buffer() -> None:
@@ -1023,8 +1032,11 @@ def test_a_versioned_delete_with_a_recorded_observation_is_ungated_under_locking
 
 
 def test_an_observation_free_multi_key_delete_carries_the_aggregate_missing_target_policy() -> None:
-    delete = KeyedWriteInstruction("delete", "Wallet", ({"id": 1}, {"id": 2}))
-    plan = _plan([delete], _WALLET)
+    buffer: list[_TestAdmittedWrite] = [
+        KeyedWriteInstruction("delete", "Wallet", ({"id": 1},)),
+        KeyedWriteInstruction("delete", "Wallet", ({"id": 2},)),
+    ]
+    plan = _plan(buffer, _WALLET)
     (step,) = plan_steps(plan)
     assert isinstance(step, PlannedDelete)
     assert isinstance(step.target, KeyTarget)
@@ -1032,6 +1044,36 @@ def test_an_observation_free_multi_key_delete_carries_the_aggregate_missing_targ
     # One multi-key Key Target owns ONE aggregate expectation (ADR 0044): the
     # target's own key count, classified by the observation-free keyed rule.
     assert step.affected_rows == ExactCount(2, MISSING_TARGET)
+
+
+def test_inserts_and_object_locked_writes_batch_apart_and_only_the_latter_keep_sources() -> None:
+    # Inserts batch with inserts and object-locked writes with object-locked
+    # writes, each run into one statement; an insert batch was admitted
+    # through no read, while an object-locked batch keeps every source its
+    # writes were admitted through, by identity.
+    buffer: list[_TestAdmittedWrite] = [
+        KeyedWriteInstruction(
+            "insert", "Wallet", ({"id": key, "owner": "Ada", "balance": Decimal("1.00")},)
+        )
+        for key in (1, 2)
+    ]
+    buffer += [
+        KeyedWriteInstruction("amend", "Wallet", ({"id": key, "balance": Decimal("5.00")},))
+        for key in (3, 4)
+    ]
+    plan = _plan(buffer, _WALLET)
+    inserted, updated = plan_steps(plan)
+    assert len(_insert_rows(inserted)) == 2
+    assert isinstance(updated, PlannedUpdate)
+    assert _key_values(updated) == ((3,), (4,))
+    insert_batch, update_batch = settled_writes(plan)
+    assert not isinstance(insert_batch, SettledWriteWithSource)
+    assert isinstance(update_batch, SettledWriteWithSource)
+    three, four = update_batch.source_evidence
+    assert (three.object_key, four.object_key) == (
+        corpus_object_key("Wallet", ("id", 3)),
+        corpus_object_key("Wallet", ("id", 4)),
+    )
 
 
 def test_an_unversioned_multi_key_update_settles_to_one_aggregate_planned_step() -> None:
@@ -1783,19 +1825,6 @@ def _derived(
     return derive_keyed_instruction(_prepared_keyed(write, model), rows)
 
 
-def test_a_preformed_plural_temporal_update_of_key_only_rows_reaches_settlement_whole() -> None:
-    # Elimination never takes a plural temporal instruction apart, even where
-    # every row names only its key: it reaches settlement as authored, which
-    # refuses it rather than planning nothing.
-    plural = _derived(
-        KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("9.00")},)),
-        _BALANCE,
-        rows=({"id": 1}, {"id": 2}),
-    )
-    with pytest.raises(WritePlanningError, match="every close requires the Temporal Observation"):
-        _plan([plural], _BALANCE)
-
-
 def test_a_row_naming_a_member_outside_the_family_is_refused_at_settlement() -> None:
     stray = _derived(
         KeyedWriteInstruction(
@@ -1805,7 +1834,7 @@ def test_a_row_naming_a_member_outside_the_family_is_refused_at_settlement() -> 
         rows=({"id": 1, "owner": "Ada", "balance": Decimal("1.00"), "nickname": "w"},),
     )
     with pytest.raises(WritePlanningError, match="names 'nickname', which is not a member"):
-        _plan([stray], _WALLET)
+        _plan([admitted_write(stray, None)], _WALLET)
 
 
 def test_a_many_keyed_mapping_cell_is_an_ordinary_literal_not_a_computed_marker() -> None:
@@ -1820,5 +1849,5 @@ def test_a_many_keyed_mapping_cell_is_an_ordinary_literal_not_a_computed_marker(
         _WALLET,
         rows=({"id": 1, "owner": document, "balance": Decimal("1.00")},),
     )
-    (step,) = plan_steps(_plan([carried], _WALLET))
+    (step,) = plan_steps(_plan([admitted_write(carried, None)], _WALLET))
     assert _insert_rows(step)[0]["owner"] == document

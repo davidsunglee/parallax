@@ -8,10 +8,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-from parallax.core import temporal_read
+from parallax.core import opt_lock, temporal_read
 from parallax.core._execution._unit_work.acquisition import AcquireRows, RowConsumer, RowRequest
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.instructions import (
+    INSERT_MUTATIONS,
     PreparedKeyedInstruction,
     prepare_typed_write,
 )
@@ -52,6 +53,7 @@ __all__ = [
     "plan_steps",
     "retained_observation",
     "settled_writes",
+    "unobserved_write",
 ]
 
 # An arbitrary Actor Identity: `m-unit-work` requires one on every Planning
@@ -105,8 +107,9 @@ def observed_buffer(
     model: Metamodel,
     observations: Mapping[ObjectKey, StateObservation] | None,
 ) -> list[OrderedWrite]:
-    """``buffer`` with every item ``observations`` names wrapped in its admitted write,
-    admitted in authored order as a unit of work admits it.
+    """``buffer`` with every authored instruction prepared and admitted as the
+    write a verb would build for it, admitted in authored order as a unit of
+    work admits it.
 
     A planner-level suite states which objects the transaction observed, which
     is the readable way to author the scenario; the verb that would do the
@@ -115,25 +118,43 @@ def observed_buffer(
     attempt holds for that object — through the same
     :func:`~parallax.core.unit_work.admitted_write` a verb uses, so a suite
     that names an object an insert also writes is refused here exactly as a verb
-    would refuse it.
+    would refuse it. An instruction of an object ``observations`` does not
+    name is licensed by the buffer's standing insertion of that object, as a
+    write through the inserted value is, and is otherwise admitted as
+    :func:`unobserved_write` admits it.
     """
-    prepared = [_prepared_item(item, model) for item in buffer]
+    admission = _admission(model)
     retained: dict[ObjectKey, RetainedObservation] = {}
-    resolved: list[AdmittedWrite] = []
-    for item in prepared:
-        if not observations or not isinstance(item, PreparedKeyedInstruction):
-            resolved.append(item)
-            continue
-        key = object_key(item, model)
-        observation = None if key is None else observations.get(key)
-        if key is None or observation is None:
-            resolved.append(item)
-            continue
-        held = retained.get(key)
-        if held is None:
-            held = retained[key] = retained_observation(item, model, observation)
-        resolved.append(admitted_write(item, held))
-    return [_settled(item) for item in admitted_writes(model, resolved)]
+    for item in buffer:
+        if isinstance(item, KeyedWriteInstruction):
+            prepared = prepare_typed_write(item, model)
+            key = object_key(prepared, model)
+            observation = None if key is None or not observations else observations.get(key)
+            if key is not None and observation is not None:
+                held = retained.get(key)
+                if held is None:
+                    held = retained[key] = retained_observation(prepared, model, observation)
+                item = admitted_write(prepared, held)
+            else:
+                item = _authorized(admission, prepared, key, model)
+        admission.admit(item, confirm_target=_optimistic)
+    return [_settled(item) for item in admission.composed_writes()]
+
+
+def _authorized(
+    admission: WriteAdmission,
+    instruction: PreparedKeyedInstruction,
+    key: ObjectKey | None,
+    model: Metamodel,
+) -> AdmittedWrite:
+    identity = (
+        None
+        if key is None or instruction.mutation in INSERT_MUTATIONS
+        else admission.insertion_identity(key)
+    )
+    if identity is None:
+        return unobserved_write(instruction, model)
+    return admitted_write(instruction, None, authority=identity)
 
 
 def observed_write(
@@ -143,21 +164,43 @@ def observed_write(
     buffer holds."""
     item: AdmittedWrite
     if observation is None:
-        item = instruction
+        item = unobserved_write(instruction, model)
     else:
         item = admitted_write(instruction, retained_observation(instruction, model, observation))
     (only,) = admitted_writes(model, [item])
     return _settled(only)
 
 
+def unobserved_write(instruction: PreparedKeyedInstruction, model: Metamodel) -> AdmittedWrite:
+    """``instruction`` as the admitted write a verb builds where its source
+    observed nothing: an insert, or an object-locked write of an unversioned
+    row admitted through :func:`object_source` evidence. Any other write needs
+    an observation, so a suite admitting one without it is refused."""
+    evidence = opt_lock.settled_evidence(
+        opt_lock.optimistic_key(model, instruction.target.identity),
+        instruction.mutation,
+        object_key=object_key(instruction, model),
+        observation=None,
+    )
+    if evidence is None:
+        return admitted_write(instruction, None)
+    write = f"`{instruction.mutation}` on {instruction.target.identity.canonical!r}"
+    assert isinstance(evidence, ObjectKey), f"{write} needs an observation"
+    return admitted_write(instruction, evidence, source=object_source(evidence))
+
+
 def admitted_writes(model: Metamodel, writes: Sequence[AdmittedWrite]) -> tuple[ComposedWrite, ...]:
     """``writes`` admitted in authored order into one buffer, and that
     buffer's composed writes, under the Optimistic strategy, whose confirmation
     of a caller's revision reads nothing."""
-    admission = WriteAdmission(model, inserted_version=_no_insertion_authorizes, observations={})
+    admission = _admission(model)
     for item in writes:
         admission.admit(item, confirm_target=_optimistic)
     return admission.composed_writes()
+
+
+def _admission(model: Metamodel) -> WriteAdmission:
+    return WriteAdmission(model, inserted_version=_no_insertion_authorizes, observations={})
 
 
 def _optimistic(item: TargetWrite) -> TargetWrite:
@@ -186,14 +229,6 @@ def _settled(item: ComposedWrite) -> OrderedWrite:
     """``item`` as settlement reads it: these suites buffer no insert that
     waits on an earlier removal."""
     assert not isinstance(item, PostRemovalInsert)
-    return item
-
-
-def _prepared_item(item: AdmittedWrite | KeyedWriteInstruction, model: Metamodel) -> AdmittedWrite:
-    """``item`` as a unit of work buffers it: an authored keyed write
-    prepared."""
-    if isinstance(item, KeyedWriteInstruction):
-        return prepare_typed_write(item, model)
     return item
 
 

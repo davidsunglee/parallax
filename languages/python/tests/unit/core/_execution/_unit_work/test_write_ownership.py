@@ -36,7 +36,7 @@ from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import KeyedWriteInstruction
+from parallax.core.unit_work import AdmittedWrite, KeyedWriteInstruction, admitted_write
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.keys import ObjectStateKey, object_state_key_from_observation
 from parallax.core.write_plan.plan import (
@@ -84,7 +84,7 @@ def _live(admission: WriteAdmission) -> WriteOwnership:
     return ownership
 
 
-def _insert(start: dt.datetime, until: dt.datetime | None = None) -> PreparedKeyedInstruction:
+def _insert(start: dt.datetime, until: dt.datetime | None = None) -> AdmittedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             "insert" if until is None else "insertUntil",
@@ -96,7 +96,7 @@ def _insert(start: dt.datetime, until: dt.datetime | None = None) -> PreparedKey
         _POSITION,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return prepared
+    return admitted_write(prepared, None)
 
 
 def _stored(

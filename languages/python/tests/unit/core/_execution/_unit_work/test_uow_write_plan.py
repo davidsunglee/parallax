@@ -285,7 +285,7 @@ _SPANS: Final = model_of(DomainModel(Span))
 _MAR: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 
 
-def _span_insert() -> PreparedKeyedInstruction:
+def _span_insert() -> AdmittedWrite:
     prepared = prepare_typed_write(
         KeyedWriteInstruction(
             "insert",
@@ -296,7 +296,7 @@ def _span_insert() -> PreparedKeyedInstruction:
         _SPANS,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return prepared
+    return admitted_write(prepared, None)
 
 
 def _span_amend(key: int) -> AdmittedWrite:

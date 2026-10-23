@@ -20,7 +20,7 @@ from parallax.core.execution_lifecycle import (
     DatabaseWriteCompleted,
     DatabaseWriteRowsCompleted,
 )
-from parallax.core.unit_work import KeyedWriteInstruction, WriteResultError
+from parallax.core.unit_work import KeyedWriteInstruction, WriteResultError, admitted_write
 from parallax.snapshot import TxnContext
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -58,7 +58,7 @@ def _insert_allocated(tx: TxnContext, entity: type[Entity], amount: int) -> None
     instruction = KeyedWriteInstruction(
         "insert", entity.identity.canonical, ({"id": {"computed": "maxPlusOne"}, "amount": amount},)
     )
-    tx._attempt.uow.buffer(prepare_typed_write(instruction, model_of(_MODEL)))
+    tx._attempt.uow.buffer(admitted_write(prepare_typed_write(instruction, model_of(_MODEL)), None))
 
 
 def _ledger_row(key: int, amount: int) -> dict[str, object]:

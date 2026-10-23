@@ -418,15 +418,6 @@ def test_audit_only_terminate_records_termination_and_chains_nothing() -> None:
     assert close.cause == TERMINATED
 
 
-def test_a_close_without_an_observation_is_a_finalization_error() -> None:
-    # Every close addresses, gates on, and carries state forward from the
-    # milestone it observed, so a missing observation is refused while the step
-    # is settled rather than lowered as an unaddressed statement.
-    terminate = KeyedWriteInstruction("terminate", "Balance", ({"id": 1},))
-    with pytest.raises(WritePlanningError, match="every close requires the Temporal Observation"):
-        _finalize(terminate, BALANCE, "2024-08-01T00:00:00+00:00")
-
-
 def test_a_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
     terminate = KeyedWriteInstruction("terminate", "Account", ({"id": 1},))
     with pytest.raises(ValueError, match="do not support 'terminate'"):

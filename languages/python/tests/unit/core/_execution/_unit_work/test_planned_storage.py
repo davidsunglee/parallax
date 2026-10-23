@@ -17,7 +17,6 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     TargetWriteInstruction,
-    prepare_typed_write,
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
@@ -52,6 +51,7 @@ from tests._support.clock_probes import CountingClock, inert_instant
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admitted_writes,
+    observed_buffer,
     plan_steps,
     settled_writes,
 )
@@ -181,24 +181,18 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
     monkeypatch.setattr(LayoutPayloadPreparer, "row", refuse)
     monkeypatch.setattr(LayoutPayloadPreparer, "assignments", refuse)
     writes = [
-        prepare_typed_write(
-            KeyedWriteInstruction(
-                "insert",
-                "Position",
-                ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
-                valid_from=_JAN,
-            ),
-            _POSITION,
+        KeyedWriteInstruction(
+            "insert",
+            "Position",
+            ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},),
+            valid_from=_JAN,
         ),
-        prepare_typed_write(
-            KeyedWriteInstruction(
-                "amendUntil",
-                "Position",
-                ({"id": 1, "value": Decimal("2.00")},),
-                valid_from=_JAN,
-                until=_MAR,
-            ),
-            _POSITION,
+        KeyedWriteInstruction(
+            "amendUntil",
+            "Position",
+            ({"id": 1, "value": Decimal("2.00")},),
+            valid_from=_JAN,
+            until=_MAR,
         ),
     ]
     plan = build_write_planner(_POSITION).finalize(
@@ -206,7 +200,7 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
             concurrency="optimistic",
-            composed_writes=admitted_writes(_POSITION, writes),
+            composed_writes=observed_buffer(writes, _POSITION, None),
         )
     )
     assert len(list(plan_steps(plan))) == 2

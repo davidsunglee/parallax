@@ -32,6 +32,7 @@ from parallax.conformance.simulated_temporal_store import (
     SimulatedStoreError,
     SimulatedTemporalStore,
 )
+from parallax.core import opt_lock
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -39,6 +40,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedWrite,
+    KeyedInsert,
     ObjectLockedWrite,
     StateObservedWrite,
 )
@@ -80,6 +82,7 @@ from parallax.core.write_plan import (
     PredecessorRow,
     TemporalObservation,
     VersionObservation,
+    WritePlanningError,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
 from tests._support.case_corpus import case as corpus_case
@@ -886,7 +889,13 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
         },
         {
             "uow": "a",
-            "write": [{"mutation": "amend", "entity": "Account", "rows": [{"id": 1}]}],
+            "write": [
+                {
+                    "mutation": "amend",
+                    "entity": "Account",
+                    "rows": [{"id": 1, "observedVersion": 1}],
+                }
+            ],
             "databaseCalls": 1,
             "statements": [
                 {
@@ -3901,12 +3910,12 @@ def _compiled(case: case_format.Case) -> list[str]:
         pytest.param("m-temporal-write-005", [StateObservedWrite], id="fixture-history"),
         pytest.param(
             "m-temporal-write-002",
-            [PreparedKeyedInstruction, StateObservedWrite],
+            [KeyedInsert, StateObservedWrite],
             id="earlier-entry",
         ),
         pytest.param(
             "m-temporal-write-017",
-            [PreparedKeyedInstruction, StateObservedWrite],
+            [KeyedInsert, StateObservedWrite],
             id="bounded-window",
         ),
     ],
@@ -3940,9 +3949,83 @@ def test_a_compiled_write_of_an_object_its_transaction_inserted_is_insertion_aut
     sql = _compiled(_load_case(case_id))
     assert [statement.split(" ", 1)[0] for statement in sql] == [*emitted, "select"]
     insert, authorized = admitted
-    assert isinstance(insert, PreparedKeyedInstruction)
+    assert isinstance(insert, KeyedInsert)
     assert isinstance(authorized, InsertionAuthorizedWrite)
     assert authorized.identity.object_key.primary_key == (("id", key),)
+
+
+def _account_amend(account_id: int, **members: object) -> dict[str, object]:
+    return {"mutation": "amend", "entity": "Account", "rows": [{"id": account_id, **members}]}
+
+
+def _submitted(monkeypatch: pytest.MonkeyPatch) -> list[PreparedKeyedInstruction]:
+    """Every keyed write the simulated unit of work is asked to admit through
+    the evidence it was given, recorded before admission judges it."""
+    submitted: list[PreparedKeyedInstruction] = []
+    admit = scenario._SimulatedUnit._admit_with_evidence  # pyright: ignore[reportPrivateUsage] - observes what the lane submits to its simulated unit of work
+
+    def recorded(unit: Any, instruction: PreparedKeyedInstruction, *args: Any) -> None:
+        submitted.append(instruction)
+        admit(unit, instruction, *args)
+
+    monkeypatch.setattr(
+        scenario._SimulatedUnit,  # pyright: ignore[reportPrivateUsage] - observes what the lane submits to its simulated unit of work
+        "_admit_with_evidence",
+        recorded,
+    )
+    return submitted
+
+
+@pytest.mark.parametrize(
+    "writes",
+    [
+        pytest.param([_account_amend(1, balance="2.00")], id="assignment"),
+        pytest.param([_account_amend(1)], id="no-op-amendment"),
+        pytest.param([_account_amend(1), _account_amend(2, balance="2.00")], id="first-of-two"),
+    ],
+)
+def test_a_compiled_versioned_write_no_evidence_licenses_is_refused_when_submitted(
+    writes: list[dict[str, object]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Neither an insertion of the simulated transaction nor an observed
+    # version licenses the write, so it is refused as settling it would be,
+    # before it is admitted, a later write is submitted, or anything flushes.
+    submitted = _submitted(monkeypatch)
+    admitted = _admitted(monkeypatch)
+    case = _synthetic_write("writeSequence", {"when": {"writeSequence": writes}})
+    with pytest.raises(EngineError, match="requires the version its source observed") as raised:
+        scenario.compile_write_sequence_case(case, "postgres")
+    assert isinstance(raised.value.__cause__, opt_lock.UnobservedVersionError)
+    assert [instruction.rows[0]["id"] for instruction in submitted] == [1]
+    assert admitted == []
+
+
+def test_a_compiled_temporal_write_no_evidence_licenses_is_refused_when_submitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The case state holds no milestone of the Balance the write closes, so no
+    # Temporal Observation licenses it.
+    admitted = _admitted(monkeypatch)
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "model": "models/balance.yaml",
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "amend",
+                        "entity": "Balance",
+                        "at": "2024-06-01T00:00:00Z",
+                        "rows": [{"id": 1, "value": "2.00"}],
+                    }
+                ]
+            },
+        },
+    )
+    with pytest.raises(EngineError, match="temporal close requires") as raised:
+        scenario.compile_write_sequence_case(case, "postgres")
+    assert isinstance(raised.value.__cause__, WritePlanningError)
+    assert admitted == []
 
 
 @pytest.mark.parametrize("case_id", ["m-unit-work-026", "m-unit-work-027"])

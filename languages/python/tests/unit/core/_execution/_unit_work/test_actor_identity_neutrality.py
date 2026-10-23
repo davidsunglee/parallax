@@ -132,7 +132,13 @@ def test_a_versioned_update_with_an_observation_is_actor_neutral() -> None:
 
 
 def test_a_keyed_delete_is_actor_neutral() -> None:
-    _assert_neutral([KeyedWriteInstruction("delete", "Wallet", ({"id": 1}, {"id": 2}))], _WALLET)
+    _assert_neutral(
+        [
+            KeyedWriteInstruction("delete", "Wallet", ({"id": 1},)),
+            KeyedWriteInstruction("delete", "Wallet", ({"id": 2},)),
+        ],
+        _WALLET,
+    )
 
 
 def test_a_readless_predicate_write_is_actor_neutral() -> None:

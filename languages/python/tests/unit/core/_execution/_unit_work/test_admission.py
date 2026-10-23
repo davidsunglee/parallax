@@ -32,6 +32,7 @@ from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     ComposedTemporalWrite,
     InsertionAuthorizedWrite,
+    KeyedInsert,
     ObjectLockedWrite,
     PostRemovalInsert,
     TargetWrite,
@@ -150,7 +151,7 @@ def _account_target(account_id: int, version: int) -> TargetWrite:
     return target_write(prepared, inheritance.view(_ACCOUNT))
 
 
-def _account_insert(account_id: int) -> PreparedKeyedInstruction:
+def _account_insert(account_id: int) -> AdmittedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             "insert", "Account", ({"id": account_id, "owner": "N", "balance": "5.00"},)
@@ -158,7 +159,7 @@ def _account_insert(account_id: int) -> PreparedKeyedInstruction:
         _ACCOUNT,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return prepared
+    return admitted_write(prepared, None)
 
 
 def _account_amend(account_id: int) -> PreparedKeyedInstruction:
@@ -239,12 +240,29 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     deletion = prepare_wire_write(
         KeyedWriteInstruction("delete", "Account", ({"id": 9},)), _ACCOUNT
     )
-    outcome = admission.admit(deletion, confirm_target=_confirmed)
+    assert isinstance(deletion, PreparedKeyedInstruction)
+    identity = admission.insertion_identity(_account(9))
+    assert identity is not None
+    outcome = admission.admit(
+        admitted_write(deletion, None, authority=identity), confirm_target=_confirmed
+    )
     assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
     assert admission
     assert admission.composed_writes() == ()
     admission.drain_planned()
     assert not admission
+
+
+def test_an_amendment_folded_into_a_pending_insert_leaves_it_an_insert() -> None:
+    admission = WriteAdmission(_ACCOUNT, inserted_version=_unversioned, observations={})
+    _admit(admission, _account_insert(9))
+    identity = admission.insertion_identity(_account(9))
+    assert identity is not None
+    _admit(admission, admitted_write(_account_amend(9), None, authority=identity))
+    (insert,) = admission.composed_writes()
+    assert isinstance(insert, KeyedInsert)
+    assert insert.instruction.mutation == "insert"
+    assert insert.instruction.rows[0]["owner"] == "Cy"
 
 
 def _person(person_id: int) -> ObjectKey:
@@ -291,7 +309,7 @@ def test_discard_forgets_every_source_registration_and_insertion() -> None:
         KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    _admit(admission, insertion)
+    _admit(admission, admitted_write(insertion, None))
     ownership = admission.ownership
     endpoint = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
     admission.complete(WriteEffects(opened=Openings(fresh=(endpoint,))), (), at=1)
@@ -364,7 +382,7 @@ def _stored_insertion_across_two_rows() -> WriteAdmission:
     return admission
 
 
-def _position_insert() -> PreparedKeyedInstruction:
+def _position_insert() -> AdmittedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), FEB
@@ -372,7 +390,7 @@ def _position_insert() -> PreparedKeyedInstruction:
         POSITION,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return prepared
+    return admitted_write(prepared, None)
 
 
 @pytest.mark.parametrize("earlier", [True, False], ids=["both-rows", "later-only"])
@@ -488,7 +506,7 @@ def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     assert isinstance(amendment, PreparedKeyedInstruction)
-    admission = _admitted(addressed_write(value="150.00"), insertion)
+    admission = _admitted(addressed_write(value="150.00"), admitted_write(insertion, None))
     identity = admission.insertion_identity(OBJECT)
     assert identity is not None
     _refused(admission, InsertionAuthorizedWrite(amendment, identity))

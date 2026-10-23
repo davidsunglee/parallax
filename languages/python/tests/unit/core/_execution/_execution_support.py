@@ -19,7 +19,7 @@ from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ServingModel, TxnOptions, prepare_model
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
-from parallax.core.unit_work import KeyedWriteInstruction
+from parallax.core.unit_work import AdmittedWrite, KeyedWriteInstruction, admitted_write
 from tests._support.root_ownership import own_root
 
 ACCOUNT: Final = MODELS["account"]
@@ -67,8 +67,8 @@ def scope(
     return root(adapter, model, options=options, provider=provider).using_database_login()
 
 
-def account_insert(account_id: int = 7) -> PreparedKeyedInstruction:
-    """One prepared Account insert, buffered by a case straight into a unit of work."""
+def account_insert(account_id: int = 7) -> AdmittedWrite:
+    """One admitted Account insert, buffered by a case straight into a unit of work."""
     prepared = prepare_typed_write(
         KeyedWriteInstruction(
             "insert",
@@ -78,4 +78,4 @@ def account_insert(account_id: int = 7) -> PreparedKeyedInstruction:
         model_of(ACCOUNT),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return prepared
+    return admitted_write(prepared, None)

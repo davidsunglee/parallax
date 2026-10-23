@@ -29,7 +29,9 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
     ComposedWrite,
+    InsertBatch,
     InsertionAuthorizedWrite,
+    KeyedInsert,
     MutationPhase,
     ObjectLockedBatch,
     ObjectLockedWrite,
@@ -37,7 +39,6 @@ from parallax.core._execution._unit_work.write_items import (
     PostRemovalInsert,
     StateObservedWrite,
     TargetWrite,
-    buffered_instruction,
 )
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
 from parallax.core.inheritance import InheritanceEntityView
@@ -172,7 +173,7 @@ class WritePlanner:
         write the same row therefore reach one group key and satisfy the Planned
         Insert's own same-members rule without a canonicalizing pass here.
 
-        The three stages here REWRITE the sequence — drop, split, reorder.
+        The three stages here REWRITE the sequence — drop, batch, reorder.
         The Write Plan
         :meth:`~parallax.core._execution._unit_work.write_settlement.WritePlanCompiler.compile`
         answers is returned unchanged, because its Write Groups, provenance, and
@@ -182,8 +183,7 @@ class WritePlanner:
         survivors = [
             item
             for item in (
-                _without_noop_rows(item, self._families, self._temporal_facet)
-                for item in request.composed_writes
+                _without_noop_rows(item, self._families) for item in request.composed_writes
             )
             if item is not None
         ]
@@ -248,7 +248,7 @@ class WritePlanner:
 
     def _form_batches(self, buffer: Sequence[ComposedWrite]) -> list[ComposedWrite]:
         result: list[ComposedWrite] = []
-        candidates: list[PreparedKeyedInstruction | ObjectLockedWrite] = []
+        candidates: list[KeyedInsert | ObjectLockedWrite] = []
         batch: object = None
 
         def batch_key(item: PreparedKeyedInstruction) -> object:
@@ -257,7 +257,7 @@ class WritePlanner:
         def close_batch() -> None:
             if not candidates:
                 return
-            instructions = [_batched_instruction(w) for w in candidates]
+            instructions = [w.instruction for w in candidates]
             first = instructions[0]
             rows = [row for w in instructions for row in w.rows]
             if len(candidates) == 1:
@@ -268,28 +268,27 @@ class WritePlanner:
                 result.extend(candidates)
             candidates.clear()
 
-        # A write carrying an observation is never merged into a multi-row batch:
-        # a merged statement shares ONE address, ONE assignment shape, and ONE
+        # Inserts and object-locked writes batch; an object-locked batch keeps
+        # every source evidence its writes held. A write carrying an
+        # observation is never merged into a multi-row batch: a merged
+        # statement shares ONE address, ONE assignment shape, and ONE
         # affected-row total, while every fact an observation licenses is
         # per-row — the milestone a close addresses, the version it advances
         # from, the gate it binds under optimistic mode, and the single row each
         # of those expects to affect. The exclusion therefore holds in locking
         # mode too, where the settled write is Ungated and only the address, the
-        # advance, and the attribution are at stake. It reaches the `else`
-        # branch below as its own singleton, because carrying an observation IS
-        # being wrapped — no map and no key recomputation decides it, for
-        # versioned and temporal alike. An admitted write is single-row by
-        # construction, so the batch this skips is the only way its row could
-        # have joined a multi-row statement.
-        # An object-locked write batches exactly as the bare instruction it
-        # carries would, keeping its source evidence in the batch.
-        for item in _decomposed_updates(buffer, self._temporal_facet):
-            instruction = item.instruction if isinstance(item, ObjectLockedWrite) else item
-            if isinstance(instruction, PreparedKeyedInstruction) and len(instruction.rows) == 1:
-                assert isinstance(item, PreparedKeyedInstruction | ObjectLockedWrite)
+        # advance, and the attribution are at stake. Neither does a write an
+        # insertion or a caller's condition licenses batch, and every write
+        # that does not batch reaches the `else` branch below as its own
+        # singleton. An admitted write is single-row by construction, so the
+        # batch this skips is the only way its row could have joined a
+        # multi-row statement.
+        for item in buffer:
+            if isinstance(item, KeyedInsert | ObjectLockedWrite):
+                instruction = item.instruction
                 item_batch = batch_key(instruction)
                 if candidates:
-                    last = _batched_instruction(candidates[-1])
+                    last = candidates[-1].instruction
                     if (
                         last.target == instruction.target
                         and last.mutation == instruction.mutation
@@ -392,60 +391,6 @@ def _close_region(
         deletes.clear()
 
 
-def _decomposed_updates(
-    buffer: Sequence[ComposedWrite], temporal_facet: temporal_read.TemporalFacet
-) -> list[ComposedWrite]:
-    """``buffer`` with every PREFORMED multi-row non-temporal keyed update split
-    back into one single-row instruction per row.
-
-    An addressed update's assignments are the shape one statement carries, and a
-    step shared across several keys therefore requires them to be uniform
-    (`m-batch-write`: incompatible writes remain separate logical steps). Only
-    the collapse decision knows whether a given run is uniform, and it is asked
-    of single-row runs alone — so an instruction that arrived already carrying
-    several rows would otherwise skip it entirely and have its FIRST row's values
-    applied to every key it addresses. Splitting it here submits those rows to
-    the same decision a caller that buffered them one at a time gets: uniform
-    rows re-merge through :func:`_merge_rows` into the identical instruction,
-    and incompatible ones stay separate steps that each write their own values.
-
-    Every child names at least one member to write, because stage 2's
-    :func:`_without_noop_rows` already removed the key-only rows: splitting is a
-    regrouping of surviving work, never the thing that mints an empty update.
-
-    Inserts and deletes are left whole. A multi-row insert's entries are checked
-    for a shared canonical member set downstream, and a delete's rows contribute
-    keys rather than assignments, so neither projects one row onto the others.
-    A TEMPORAL entry is left whole too, so settlement still refuses it as the
-    multi-row milestone chain it is rather than silently settling it as several
-    chains the caller never authored.
-    """
-    decomposed: list[ComposedWrite] = []
-    for item in buffer:
-        if not isinstance(item, PreparedKeyedInstruction) or not _splits_into_rows(
-            item, temporal_facet
-        ):
-            decomposed.append(item)
-            continue
-        decomposed.extend(derive_keyed_instruction(item, (row,)) for row in item.rows)
-    return decomposed
-
-
-def _splits_into_rows(
-    item: PreparedKeyedInstruction, temporal_facet: temporal_read.TemporalFacet
-) -> bool:
-    if len(item.rows) < 2 or item.mutation not in ASSIGNMENT_MUTATIONS:
-        return False
-    return not _is_temporal(temporal_facet, item.target)
-
-
-def _is_temporal(temporal_facet: temporal_read.TemporalFacet, entity: EntityMetadata) -> bool:
-    return isinstance(
-        temporal_facet.shape(entity.identity),
-        temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
-    )
-
-
 def _key_name(families: inheritance.InheritanceFacet, entity: EntityMetadata) -> str:
     position = families.entity(entity.identity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
@@ -453,25 +398,20 @@ def _key_name(families: inheritance.InheritanceFacet, entity: EntityMetadata) ->
     return position.primary_key.identity.name
 
 
-def _batched_instruction(
-    item: PreparedKeyedInstruction | ObjectLockedWrite,
-) -> PreparedKeyedInstruction:
-    return item.instruction if isinstance(item, ObjectLockedWrite) else item
-
-
 def _merged_batch(
-    run: Sequence[PreparedKeyedInstruction | ObjectLockedWrite], merged: PreparedKeyedInstruction
-) -> PreparedKeyedInstruction | ObjectLockedBatch:
-    """``merged``, the one instruction ``run`` collapsed into, with every
-    distinct source evidence the run's object-locked writes retained."""
+    run: Sequence[KeyedInsert | ObjectLockedWrite], merged: PreparedKeyedInstruction
+) -> InsertBatch | ObjectLockedBatch:
+    """``merged``, the one instruction ``run`` collapsed into: a run of inserts,
+    or one of object-locked writes with every distinct source evidence they
+    retained. A run shares one mutation, so it never mixes the two."""
+    if merged.mutation in INSERT_MUTATIONS:
+        return InsertBatch(instruction=merged)
     retained = {
         id(held): held
         for item in run
         if isinstance(item, ObjectLockedWrite)
         for held in item.source_evidence
     }
-    if not retained:
-        return merged
     return ObjectLockedBatch(instruction=merged, source_evidence=tuple(retained.values()))
 
 
@@ -488,61 +428,37 @@ def _merge_rows(run: Sequence[PreparedKeyedInstruction]) -> PreparedKeyedInstruc
 
 
 def _without_noop_rows(
-    item: ComposedWrite,
-    families: inheritance.InheritanceFacet,
-    temporal_facet: temporal_read.TemporalFacet,
+    item: ComposedWrite, families: inheritance.InheritanceFacet
 ) -> ComposedWrite | None:
-    """``item`` with its known no-op rows gone, or ``None`` when none survive.
+    """``item``, or ``None`` where it is known no-op work.
 
     An update row naming only key members changes nothing: a key ADDRESSES the
     row rather than assigns to it, so such a row is known no-op work and stage 2
-    removes it (`m-unit-work` "eliminate known cancellation and no-op work").
-
-    Elimination is per ROW, not per instruction, because a preformed multi-row
-    update mixing a key-only row with an assigning one is not empty as a whole
-    and would therefore survive an instruction-level test — only to be split
-    into its rows during batching and hand the key-only child to the update
-    settlement, which has no member to write.
-    Removing the row HERE keeps that child from ever existing and keeps the
-    elimination at stage 2, ahead of batching and of the Transaction Instant,
-    where the normative stage order puts it.
-
-    A PLURAL temporal instruction is passed through whole and unexamined, so
-    that settlement refuses it as the shape it is
-    (`m-unit-work` "A temporal keyed instruction carries exactly one row").
-    That singleton contract admits no exception, which rules out BOTH reductions
-    stage 2 could otherwise reach for: narrowing it to its assigning rows would
-    silently discard a milestone chain the author wrote, and eliminating it
-    whole — the shape every one of its rows is key-only — would silently
-    discard all of them and return a plan that says nothing was wrong. Only a
-    SINGLE-row temporal instruction is measured, and then only for the
-    all-or-nothing outcome a single row can have.
-    An observed write is single-row by construction, so it is either
-    eliminated whole or passed through untouched, and is never rebuilt around a
-    narrower instruction.
+    removes it (`m-unit-work` "eliminate known cancellation and no-op work"),
+    ahead of batching and of the Transaction Instant, where the normative stage
+    order puts it. An admitted write is single-row by construction, so it is
+    either eliminated whole or passed through untouched, and is never rebuilt
+    around a narrower instruction.
     """
     if isinstance(
         item,
-        ComposedTemporalWrite | ComposedBitemporalOpening | PostRemovalInsert | ObjectLockedBatch,
+        ComposedTemporalWrite
+        | ComposedBitemporalOpening
+        | PostRemovalInsert
+        | InsertBatch
+        | ObjectLockedBatch,
     ):
         return item
     if isinstance(item, TargetWrite) and isinstance(item.expectation, ExpectedVersion):
         # A caller-conditioned write of a versioned row still advances its
         # version, which is the revision its caller asked for.
         return item
-    instruction = buffered_instruction(item)
+    instruction = item.instruction
     if instruction.mutation not in AMEND_MUTATIONS:
         return item
-    entity = instruction.target
-    if len(instruction.rows) > 1 and _is_temporal(temporal_facet, entity):
-        return item
-    key_name = _key_name(families, entity)
-    kept = tuple(row for row in instruction.rows if not all(name == key_name for name in row))
-    if not kept:
-        return None
-    if len(kept) == len(instruction.rows):
-        return item
-    return derive_keyed_instruction(instruction, kept)
+    key_name = _key_name(families, instruction.target)
+    (row,) = instruction.rows
+    return None if all(name == key_name for name in row) else item
 
 
 def _settled_attributes(
@@ -576,7 +492,8 @@ def _settled_attributes(
 
 
 def _ordered_instruction(
-    item: PreparedKeyedInstruction
+    item: KeyedInsert
+    | InsertBatch
     | StateObservedWrite
     | ObjectLockedWrite
     | ObjectLockedBatch
@@ -587,7 +504,5 @@ def _ordered_instruction(
     """The instruction ordering ranks ``item`` by: a pending opening's own
     insert."""
     if isinstance(item, ComposedBitemporalOpening):
-        return item.insert
-    if isinstance(item, PreparedKeyedInstruction):
-        return item
+        return item.insert.instruction
     return item.instruction

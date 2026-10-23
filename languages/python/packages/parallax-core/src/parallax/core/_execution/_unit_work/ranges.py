@@ -692,7 +692,7 @@ def settle_opening(
     reaches there too. ``instant`` is the attempt's already-resolved
     Transaction Instant.
     """
-    insert = opening.insert
+    insert = opening.insert.instruction
     entity = insert.target
     window = insert.valid_time_window
     assert window is not None  # a Bitemporal opening states its window
