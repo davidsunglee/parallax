@@ -2020,7 +2020,7 @@ def _selection_filter(claim: Claim) -> case_format.SelectionFilter:
         modules=frozenset(claim.modules),
         case_shapes=frozenset(claim.case_shapes),
         include=frozenset(claim.include),
-        exclude=frozenset(claim.exclude),
+        exclude=frozenset(claim.excluded_tags),
     )
 
 

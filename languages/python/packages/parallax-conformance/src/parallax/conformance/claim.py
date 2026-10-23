@@ -5,7 +5,9 @@ from typing import Final
 
 from parallax.conformance.profile import profile_dialects
 
-__all__ = ["ADAPTER", "SNAPSHOT_CLAIM", "Adapter", "Claim"]
+__all__ = ["ADAPTER", "ORDERED_WRITE_TRANSPORT_TAG", "SNAPSHOT_CLAIM", "Adapter", "Claim"]
+
+ORDERED_WRITE_TRANSPORT_TAG: Final[str] = "ordered-write-transport"
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +28,9 @@ class Claim:
 
     Every filter is authored except the dialects, which are derived from the
     declared matrix profiles — a claimed dialect is one some profile actually
-    runs the suite against, so a claim no adapter backs is unwritable.
+    runs the suite against, so a claim no adapter backs is unwritable — and the
+    ordered-write-transport exclusion :attr:`excluded_tags` adds where run
+    connections hold no ordered write transport.
     """
 
     modules: tuple[str, ...]
@@ -41,13 +45,24 @@ class Claim:
         """The dialects the declared profiles run the suite against."""
         return profile_dialects()
 
+    @property
+    def excluded_tags(self) -> tuple[str, ...]:
+        """The authored exclusions, plus ``ordered-write-transport`` where the
+        libpq psycopg loaded cannot run a pipeline, so no run connection this
+        process opens holds ordered write transport."""
+        import psycopg
+
+        if psycopg.capabilities.has_pipeline():
+            return self.exclude
+        return (*self.exclude, ORDERED_WRITE_TRANSPORT_TAG)
+
     def capabilities(self) -> dict[str, object]:
         """The ``capabilities`` block of a ``describe`` envelope."""
         case_tags: dict[str, list[str]] = {}
         if self.include:
             case_tags["include"] = list(self.include)
-        if self.exclude:
-            case_tags["exclude"] = list(self.exclude)
+        if excluded := self.excluded_tags:
+            case_tags["exclude"] = list(excluded)
         capabilities: dict[str, object] = {
             "modules": list(self.modules),
             "dialects": list(self.dialects),

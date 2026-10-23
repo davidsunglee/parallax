@@ -69,6 +69,6 @@ def reachable_cases(
         modules=frozenset(claim.modules),
         case_shapes=frozenset(claim.case_shapes),
         include=frozenset(claim.include),
-        exclude=frozenset(claim.exclude),
+        exclude=frozenset(claim.excluded_tags),
     )
     return case_format.select(corpus, flt, implemented_modules=IMPLEMENTED_MODULES)
