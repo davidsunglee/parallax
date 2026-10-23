@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, cast
 
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -358,11 +358,16 @@ def _validate_planned_assignments(
             )
 
 
+_EMPTY_MAPPING: Final[Mapping[object, object]] = MappingProxyType({})
+
+
 def _adopt_mapping[K, V](values: Mapping[K, V]) -> Mapping[K, V]:
     if isinstance(values, MappingProxyType):
         return values
     if not isinstance(values, dict):
         raise TypeError("trusted planned storage must be a final dict or mapping proxy")
+    if not values:
+        return cast("Mapping[K, V]", _EMPTY_MAPPING)
     return MappingProxyType(values)
 
 

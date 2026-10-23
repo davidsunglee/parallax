@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any
 
@@ -23,6 +24,7 @@ from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageGap, Cov
 from parallax.core.temporal_write.expansion import (
     ExpansionRole,
     PredecessorExpander,
+    RowAudit,
     TemporalFacts,
     opening,
 )
@@ -44,19 +46,23 @@ from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
     NEW_LINEAGE,
     OPTIMISTIC_CONFLICT,
+    STALE_WRITE,
     SUPERSEDED,
     TERMINATED,
     UNGATED,
     CarriedFrom,
     ChangedFrom,
     Finite,
+    MaxPlusOne,
     PlannedClose,
     PlannedInsert,
+    PlannedRow,
     PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     TemporalGate,
+    WriteRow,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import inert_instant
@@ -125,6 +131,7 @@ def _expansion(
     gated: bool = True,
     guards: bool = False,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
+    audit: RowAudit | None = None,
 ) -> PredecessorExpander:
     return PredecessorExpander(
         facts,
@@ -134,7 +141,7 @@ def _expansion(
         gated=gated,
         guards=guards,
         ownership=ownership,
-        audit=AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant(), ()),
+        audit=audit or AuditDecoration(NO_AUDIT, TEST_ACTOR_IDENTITY, inert_instant(), ()),
         payloads=_PAYLOADS[facts.entity.identity],
     )
 
@@ -781,6 +788,162 @@ def test_an_assignment_mapping_is_compared_once_however_many_predecessors_it_rea
     for stored in (_span(_JAN, _MAR), _span(_MAR, _SEP), _span(_SEP, INFINITY, amount=200)):
         _expand(expansion, _SPAN_FACTS, stored)
     assert len(prepared) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Immutable backing one object's closes and unmerged successors share.         #
+# --------------------------------------------------------------------------- #
+
+
+def _settled(expansion: PredecessorExpander, *predecessors: PredecessorRow) -> BoundRange:
+    return expansion.settle(
+        (
+            predecessor,
+            "coverage",
+            _state(_SPAN_FACTS, predecessor),
+            temporal_read.valid_time_coverage(_SPAN_FACTS.shape, predecessor, None),
+        )
+        for predecessor in predecessors
+    )
+
+
+_TX_START = _SPAN_FACTS.shape.transaction_time.start_attribute
+
+
+def _closes(settled: BoundRange) -> list[PlannedClose]:
+    return [step for step in settled.steps if isinstance(step, PlannedClose)]
+
+
+def test_closes_of_one_object_share_invariant_parts_and_keep_their_own_address_gate_cause() -> None:
+    later = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    transform = _assigning(TimeInterval(_JAN, _MAR), {"amount": 300}).followed_by(
+        TimeInterval(_MAR, INFINITY), None, replaces=False
+    )
+    expansion = _expansion(_SPAN_FACTS, transform)
+    first, second = _closes(
+        _settled(expansion, _span(_JAN, _MAR), _span(_MAR, INFINITY, amount=200, tx_start=later))
+    )
+
+    assert first.assignments is second.assignments
+    assert first.target.end_attributes is second.target.end_attributes
+    assert first.affected_rows is second.affected_rows
+    assert {identity.name: value for identity, value in first.assignments.attributes.items()} == {
+        "txEnd": _NOW
+    }
+    assert first.affected_rows.on_shortfall == OPTIMISTIC_CONFLICT
+    assert [close.target.end_values for close in (first, second)] == [
+        (Finite(instant=_MAR), OPEN_END),
+        OPEN_BITEMPORAL_ENDS,
+    ]
+    assert [close.concurrency for close in (first, second)] == [
+        TemporalGate(start_attribute=_TX_START, observed_start=_T0),
+        TemporalGate(start_attribute=_TX_START, observed_start=later),
+    ]
+    assert [close.cause for close in (first, second)] == [SUPERSEDED, TERMINATED]
+
+
+@pytest.mark.parametrize(
+    ("gated", "shortfall", "starting"),
+    [(True, OPTIMISTIC_CONFLICT, FAILED_PRECONDITION), (False, STALE_WRITE, STALE_WRITE)],
+    ids=["gated", "ungated"],
+)
+def test_a_starting_close_differs_from_the_objects_other_closes_only_by_its_shortfall(
+    gated: bool, shortfall: object, starting: object
+) -> None:
+    expansion = _expansion(
+        _SPAN_FACTS, _assigning(TimeInterval(_MAR, _SEP), {"amount": 300}), gated=gated
+    )
+    coverage = TimeInterval(_JAN, INFINITY)
+    ordinary = expansion.closing(_STORED, coverage, SUPERSEDED)
+    start = expansion.closing(_STORED, coverage, SUPERSEDED, starting=True)
+
+    assert start.assignments is ordinary.assignments
+    assert start.target.end_attributes is ordinary.target.end_attributes
+    assert (ordinary.affected_rows.on_shortfall, start.affected_rows.on_shortfall) == (
+        shortfall,
+        starting,
+    )
+    assert (start.affected_rows is ordinary.affected_rows) is not gated
+
+
+def test_an_unmerged_successor_ending_where_its_predecessor_ended_reuses_that_address() -> None:
+    settled = _settled(
+        _expansion(_SPAN_FACTS, _assigning(TimeInterval(_MAR, _JUN), {"amount": 300})),
+        _span(_JAN, _SEP),
+    )
+    (close,) = _closes(settled)
+    *split, tail = settled.opened.fresh
+
+    assert tuple(settled.opened.fresh) == (_endpoint(_MAR), _endpoint(_JUN), _endpoint(_SEP))
+    assert tail.ends is close.target.end_values
+    # Pieces ending elsewhere name new ends at the object's one key.
+    assert all(piece.ends is not close.target.end_values for piece in split)
+    assert all(coordinates.key is close.target.key_values for coordinates in settled.opened.fresh)
+
+
+def test_a_merged_run_opens_at_the_address_its_own_finalized_cells_name() -> None:
+    settled = _settled(
+        _expansion(_SPAN_FACTS, _assigning(TimeInterval(_JAN, _JUN), {"amount": 300})),
+        _span(_JAN, _MAR),
+        _span(_MAR, _JUN),
+    )
+    closes = _closes(settled)
+    (merged,) = settled.opened.fresh
+
+    assert len(closes) == 2
+    assert _windows(settled.steps) == [(_JAN, _JUN, 300)]
+    # The run ends where its last predecessor ended, yet no predecessor's
+    # address stands in for the merged row's.
+    assert merged == _endpoint(_JUN)
+    assert all(merged.ends is not close.target.end_values for close in closes)
+
+
+class _Rekeying:
+    """An audit whose finalization states every produced row at ``key``."""
+
+    def __init__(self, key: object) -> None:
+        self._key = key
+
+    def finalize_row(self, write_row: WriteRow, /) -> WriteRow:
+        row = write_row.row
+        identity = _SPAN_FACTS.view.primary_key.identity
+        attributes = {**row.attributes, identity: self._key}
+        return replace(
+            write_row, row=PlannedRow(attributes=attributes, value_objects=row.value_objects)
+        )
+
+    def decorate_close(self, close: PlannedClose, /) -> PlannedClose:
+        return close
+
+
+@pytest.mark.parametrize(
+    ("key", "opened"),
+    [
+        (
+            2,
+            tuple(
+                TemporalRowCoordinates(_SPAN, (2,), ends)
+                for ends in ((Finite(instant=_MAR), OPEN_END), OPEN_BITEMPORAL_ENDS)
+            ),
+        ),
+        (MaxPlusOne(), ()),
+    ],
+    ids=["changed-key", "allocated-key"],
+)
+def test_a_successor_opens_at_the_key_finalization_left_it_rather_than_its_predecessors(
+    key: object, opened: tuple[TemporalRowCoordinates, ...]
+) -> None:
+    settled = _settled(
+        _expansion(
+            _SPAN_FACTS,
+            _assigning(TimeInterval(_MAR, INFINITY), {"amount": 300}),
+            audit=_Rekeying(key),
+        ),
+        _STORED,
+    )
+
+    assert len([step for step in settled.steps if isinstance(step, PlannedInsert)]) == 2
+    assert tuple(settled.opened.fresh) == opened
 
 
 # --------------------------------------------------------------------------- #

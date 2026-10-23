@@ -62,14 +62,13 @@ from parallax.core.write_plan.steps import (
     PlannedTemporalRevision,
     PlannedValue,
     RowOrigin,
-    Shortfall,
     TemporalConcurrency,
     TemporalGate,
     TemporalUpperBound,
     WriteRow,
     adopt_planned_assignments,
     adopt_planned_row,
-    shortfall_for,
+    shortfall_classification,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_UPPER_BOUND
 
@@ -163,6 +162,9 @@ class PredecessorExpander:
 
     __slots__ = (
         "_audit",
+        "_close_affected_rows",
+        "_close_assignments",
+        "_close_end_attributes",
         "_comparisons",
         "_facts",
         "_gated",
@@ -172,6 +174,7 @@ class PredecessorExpander:
         "_ownership",
         "_payloads",
         "_resolved",
+        "_starting_close_affected_rows",
         "_transform",
     )
 
@@ -193,6 +196,21 @@ class PredecessorExpander:
         self._key_attributes = (key_attribute,)
         self._key_values = (key_value,)
         self._gated = gated
+        # Every close of the object assigns the same Transaction-Time end,
+        # addresses the same axis ends, and expects the same affected row.
+        shape = facts.shape
+        self._close_assignments = PlannedAssignments(
+            attributes={shape.transaction_time.end_attribute: facts.instant}
+        )
+        self._close_end_attributes = _end_attributes(shape)
+        self._close_affected_rows = ExactCount(
+            expected=1, on_shortfall=shortfall_classification(observing=True, gated=gated)
+        )
+        self._starting_close_affected_rows = (
+            ExactCount(expected=1, on_shortfall=FAILED_PRECONDITION)
+            if gated
+            else self._close_affected_rows
+        )
         self._guards = guards
         self._ownership = ownership
         self._audit = audit
@@ -234,7 +252,11 @@ class PredecessorExpander:
             observed_valid_end=None if coverage is None else coverage.end,
             cause=cause,
             gate=gate,
-            on_shortfall=FAILED_PRECONDITION if starting and self._gated else None,
+            assignments=self._close_assignments,
+            end_attributes=self._close_end_attributes,
+            affected_rows=(
+                self._starting_close_affected_rows if starting else self._close_affected_rows
+            ),
         )
 
     def _keeps(self, predecessor: PredecessorRow, owned: bool) -> bool:
@@ -530,7 +552,7 @@ class PredecessorExpander:
         revised: list[_Filed] | None = None
         if len(candidates) < 2 or not isinstance(facts.shape, Bitemporal):
             for candidate in candidates:
-                filed = _realize_alone(candidate, opened)
+                filed = _realize_alone(facts, candidate, opened)
                 if filed is not None:
                     revised = _filing(revised, filed)
         else:
@@ -541,8 +563,10 @@ class PredecessorExpander:
         effects, outputs = self._effects(reached)
         opened.sort(key=_first)
         entity = facts.entity.identity
-        inserts = tuple(PlannedInsert(entity=entity, entries=(row,)) for _, row, _, _, _ in opened)
-        endpoints = tuple(entry_endpoint(facts, row) for _, row, _, _, _ in opened)
+        inserts = tuple(
+            PlannedInsert(entity=entity, entries=(row,)) for _, row, _, _, _, _ in opened
+        )
+        endpoints = tuple(endpoint for _, _, _, _, _, endpoint in opened)
         demanded = any(record.demanded for record in reached)
         derived: tuple[Derivation, ...] = ()
         if demanded:
@@ -633,7 +657,7 @@ class PredecessorExpander:
         revision whose insertion parts it reports is answered."""
         edge = run[-1]
         if len(run) == 1:
-            return _realize_alone(edge, opened)
+            return _realize_alone(self._facts, edge, opened)
         shares = _joined_shares(run)
         start = run[0].start
         merged = _interval(start, edge.end)
@@ -675,6 +699,7 @@ class PredecessorExpander:
                 merged,
                 shares,
                 demanded,
+                entry_endpoint(facts, row),
             )
         )
         return None
@@ -783,10 +808,18 @@ class _Settlement:
         candidates.append(_Candidate(start, end, row, reached, kept, shares, len(candidates)))
 
 
-type _Opened = tuple[int, WriteRow, TimeInterval | None, tuple[TimeInterval | None, ...], bool]
+type _Opened = tuple[
+    int,
+    WriteRow,
+    TimeInterval | None,
+    tuple[TimeInterval | None, ...],
+    bool,
+    TemporalRowCoordinates | None,
+]
 """One run opened as a row: its place among the write's openings, the row, its
-Valid Time, the parts of it an insertion contributed, and whether a source the
-attempt may still continue reaches it."""
+Valid Time, the parts of it an insertion contributed, whether a source the
+attempt may still continue reaches it, and the address it opens at where its
+key is known."""
 
 type _Filed = tuple[TemporalRowCoordinates, TimeInterval | None, tuple[TimeInterval | None, ...]]
 """One owned row a run registers, opened or revised into it: its address, its
@@ -848,14 +881,16 @@ def _openings(
     """The owned rows a write's ``opened`` runs, at their ``endpoints``, and
     its ``revised`` rows register, each by the parts of it an insertion
     contributed: none, all of it, or only those."""
-    if not revised and not any(parts for _, _, _, parts, _ in opened):
+    if not revised and not any(parts for _, _, _, parts, _, _ in opened):
         return Openings(
             fresh=tuple(coordinates for coordinates in endpoints if coordinates is not None)
         )
     fresh: list[TemporalRowCoordinates] = []
     continued: list[TemporalRowCoordinates] = []
     shared: list[tuple[TemporalRowCoordinates, tuple[TimeInterval, ...]]] = []
-    for (_order, _row, extent, parts, _demanded), endpoint in zip(opened, endpoints, strict=True):
+    for (_order, _row, extent, parts, _demanded, _endpoint), endpoint in zip(
+        opened, endpoints, strict=True
+    ):
         if endpoint is not None:
             _file(endpoint, extent, parts, fresh, continued, shared)
     for endpoint, extent, parts in revised:
@@ -879,7 +914,9 @@ def _file(
         shared.append((endpoint, cast("tuple[TimeInterval, ...]", parts)))
 
 
-def _realize_alone(candidate: _Candidate, opened: list[_Opened]) -> _Filed | None:
+def _realize_alone(
+    facts: TemporalFacts, candidate: _Candidate, opened: list[_Opened]
+) -> _Filed | None:
     """Store ``candidate``, merged with no neighbour: at the owned address it
     keeps, answering a revision whose insertion parts it reports, or else as
     one row added to ``opened``."""
@@ -902,9 +939,34 @@ def _realize_alone(candidate: _Candidate, opened: list[_Opened]) -> _Filed | Non
             extent,
             candidate.shares,
             record is not None and record.demanded,
+            _unmerged_endpoint(facts, row, record),
         )
     )
     return None
+
+
+def _unmerged_endpoint(
+    facts: TemporalFacts, row: WriteRow, record: _Reached | None
+) -> TemporalRowCoordinates | None:
+    """The address ``row``, a successor of ``record``'s predecessor merged with
+    no neighbour, opens at: the predecessor's own address where the finalized
+    row keeps its key and Valid-Time end, or else the address its finalized
+    cells name (:func:`entry_endpoint`)."""
+    if record is None:
+        return entry_endpoint(facts, row)
+    attributes = row.row.attributes
+    value = attributes.get(facts.view.primary_key.identity)
+    if value is None or isinstance(value, MaxPlusOne):
+        return None
+    own = record.own
+    if value != own.key[0]:
+        return entry_endpoint(facts, row)
+    shape = facts.shape
+    if isinstance(shape, Bitemporal) and attributes[shape.valid_time.end_attribute] != _valid_end(
+        record.coverage
+    ):
+        return TemporalRowCoordinates(facts.entity.identity, own.key, entry_ends(facts, attributes))
+    return own
 
 
 def _revised_output(record: _Reached, step: PlannedTemporalRevision) -> CurrentRowOutput:
@@ -928,7 +990,7 @@ def _opened_outputs(
     its ``endpoints``, as the output its insert entry persists."""
     return [
         CurrentRowOutput(coordinates=coordinates, valid_time_coverage=extent, row=row, emitter=row)
-        for (_order, row, extent, _parts, demanded), coordinates in zip(
+        for (_order, row, extent, _parts, demanded, _endpoint), coordinates in zip(
             opened, endpoints, strict=True
         )
         if demanded and coordinates is not None
@@ -1343,7 +1405,9 @@ def _planned_close(
     observed_valid_end: object | None,
     cause: CloseCause,
     gate: TemporalConcurrency,
-    on_shortfall: Shortfall | None = None,
+    assignments: PlannedAssignments,
+    end_attributes: tuple[AttributeIdentity, ...],
+    affected_rows: ExactCount,
 ) -> PlannedClose:
     """One settled close of the current milestone ``key_values`` addresses.
 
@@ -1351,8 +1415,8 @@ def _planned_close(
     milestone's currency and revises no represented value — and it expects
     exactly one row in every mode: a close reaching none would otherwise chain
     a duplicate or an orphaned current row, so the shortfall is an outcome
-    rather than a silent success, classified by ``gate`` unless
-    ``on_shortfall`` states it.
+    rather than a silent success. ``assignments``, ``end_attributes``, and
+    ``affected_rows`` are what every close of the object shares.
     """
     entity = facts.entity
     shape = facts.shape
@@ -1361,18 +1425,13 @@ def _planned_close(
         target=MilestoneTarget(
             key_attributes=key_attributes,
             key_values=key_values,
-            end_attributes=_end_attributes(shape),
+            end_attributes=end_attributes,
             end_values=_end_values(shape, observed_valid_end),
         ),
-        assignments=PlannedAssignments(
-            attributes={shape.transaction_time.end_attribute: facts.instant}
-        ),
+        assignments=assignments,
         cause=cause,
         concurrency=gate,
-        affected_rows=ExactCount(
-            expected=1,
-            on_shortfall=shortfall_for(gate) if on_shortfall is None else on_shortfall,
-        ),
+        affected_rows=affected_rows,
     )
 
 
