@@ -11,17 +11,22 @@ table-per-concrete-subtype `union all` restarts.
 
 from __future__ import annotations
 
+import datetime as dt
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Literal
 
 import pytest
 
-from parallax.core import inheritance, storage_layout
+from parallax.core import deep_fetch, inheritance, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import PresentDocument
+from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity
+from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.read_delivery._row_decoding import (
     member_classifier,
@@ -37,7 +42,8 @@ from parallax.core.sql_gen._inheritance import (
     document_projection,
 )
 from parallax.core.sql_gen._predicate import render_predicate
-from tests._support.sql import compile_read
+from tests._support.sql import compile_projected_read, compile_read
+from tests.unit import _family_predecessor_support as family
 from tests.unit._corpus_model_support import formed, model, target
 from tests.unit._prepared_read_support import result_row
 from tests.unit.core.sql_gen._plan_reuse_support import record_plan_reuse
@@ -1878,3 +1884,145 @@ def test_tpcs_union_projects_a_top_level_occurrence_for_the_instance_form_alone(
     row_form = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
     assert "annotation" not in row_form.statement.sql
     assert row_form.document_reads == ()
+
+
+# --------------------------------------------------------------------------- #
+# A row-form family-member read fetches exactly its explicit demand.           #
+# --------------------------------------------------------------------------- #
+_FAMILY_META = model_of(family.MODEL)
+_LATEST: dict[TemporalDimension, oq.TemporalSelection] = {
+    "valid-time": oq.AsOf("latest"),
+    "transaction-time": oq.AsOf("latest"),
+}
+_SCALARS = "t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z"
+_HOLDING_SCALARS = "t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z"
+_PAYLOAD = "not t0.payload is null, t0.payload"
+
+
+def _family_source(strategy: family.Strategy, layout: family.Layout, member: str) -> str:
+    if strategy == "tph":
+        return f" from fp_tph_{layout} t0 where t0.thru_z = ? and t0.out_z = ? and t0.kind = ?"
+    return f" from fp_tpcs_{layout}_{member.lower()} t0 where t0.thru_z = ? and t0.out_z = ?"
+
+
+def _widened(
+    strategy: family.Strategy,
+    layout: family.Layout,
+    member: family.Member,
+    include: Literal[True] | frozenset[str],
+) -> Any:
+    return compile_projected_read(
+        oa.TrueNode(),
+        _FAMILY_META,
+        POSTGRES,
+        family.member_metadata(strategy, layout, member),
+        include_value_objects=include,
+        temporal=_LATEST,
+    )
+
+
+def _fetched(compiled: Any) -> list[str]:
+    return [member.identity.path[-1] for member in compiled.projected_documents]
+
+
+def _fanned_out(compiled: Any) -> list[str] | None:
+    shared = compiled.result_contract.shared_document
+    if shared is None:
+        return None
+    ((_identity, fan_out),) = shared.per_entity
+    return [key for key, _path in fan_out.members]
+
+
+_WIDENED_SELECTS: dict[tuple[family.Layout, family.Member], str] = {
+    ("columns", "Holding"): (
+        f"{_HOLDING_SCALARS}, not t0.origin is null, t0.origin, not t0.home is null, t0.home, "
+        "not t0.extra is null, t0.extra"
+    ),
+    ("columns", "Vault"): (
+        f"{_SCALARS}, not t0.origin is null, t0.origin, not t0.deposit is null, t0.deposit"
+    ),
+    ("columns", "Bare"): _SCALARS,
+    ("document", "Holding"): f"{_SCALARS}, {_PAYLOAD}",
+    ("document", "Vault"): f"{_SCALARS}, {_PAYLOAD}",
+    ("document", "Bare"): f"{_SCALARS}, {_PAYLOAD}",
+}
+_WIDENED_FAN_OUTS: dict[family.Member, list[str]] = {
+    "Holding": ["name", "origin", "home", "extra"],
+    "Vault": ["origin", "deposit"],
+    "Bare": [],
+}
+_WIDENED_FETCHES: dict[family.Member, list[str]] = {
+    "Holding": ["origin", "home", "extra"],
+    "Vault": ["origin", "deposit"],
+    "Bare": [],
+}
+
+
+@family.FAMILY_AXES
+@pytest.mark.parametrize("member", family.MEMBERS)
+def test_a_widened_row_read_of_a_family_member_fetches_every_value_object_and_its_document(
+    strategy: family.Strategy, layout: family.Layout, member: family.Member
+) -> None:
+    compiled = _widened(strategy, layout, member, True)
+    assert compiled.statement.sql == (
+        f"select {_WIDENED_SELECTS[(layout, member)]}{_family_source(strategy, layout, member)}"
+    )
+    assert _fetched(compiled) == _WIDENED_FETCHES[member]
+    assert _fanned_out(compiled) == (_WIDENED_FAN_OUTS[member] if layout == "document" else None)
+
+
+@family.FAMILY_AXES
+def test_a_row_read_of_a_family_member_fetches_only_its_named_value_objects(
+    strategy: family.Strategy, layout: family.Layout
+) -> None:
+    compiled = _widened(strategy, layout, "Holding", frozenset({"home"}))
+    select = (
+        f"{_HOLDING_SCALARS}, not t0.home is null, t0.home"
+        if layout == "columns"
+        else f"{_SCALARS}, {_PAYLOAD}"
+    )
+    assert compiled.statement.sql == f"select {select}{_family_source(strategy, layout, 'Holding')}"
+    assert _fetched(compiled) == ["home"]
+    assert _fanned_out(compiled) == (["name", "home"] if layout == "document" else None)
+
+
+@family.FAMILY_AXES
+@pytest.mark.parametrize("member", family.MEMBERS)
+def test_an_ordinary_row_read_of_a_family_member_fetches_no_value_object(
+    strategy: family.Strategy, layout: family.Layout, member: family.Member
+) -> None:
+    compiled = compile_read(
+        oa.TrueNode(),
+        _FAMILY_META,
+        POSTGRES,
+        family.member_metadata(strategy, layout, member),
+        temporal=_LATEST,
+    )
+    resident = layout == "document" and member == "Holding"
+    scalars = _HOLDING_SCALARS if member == "Holding" and layout == "columns" else _SCALARS
+    select = f"{scalars}, {_PAYLOAD}" if resident else scalars
+    assert compiled.statement.sql == f"select {select}{_family_source(strategy, layout, member)}"
+    assert _fetched(compiled) == []
+    assert _fanned_out(compiled) == (["name"] if resident else None)
+
+
+@pytest.mark.parametrize("strategy", ["tph", "tpcs"])
+@pytest.mark.parametrize("member", ["Vault", "Bare"])
+def test_an_observing_row_read_projects_a_structured_column_no_fetched_member_occupies(
+    strategy: family.Strategy, member: family.Member
+) -> None:
+    entity = family.member_metadata(strategy, "document", member)
+    query = replace(
+        deep_fetch.plan_target_read(
+            entity,
+            model=_FAMILY_META,
+            key="id",
+            key_value=1,
+            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        ),
+        projection=ResolvedReadProjection((), True),
+    )
+    compiled = sql_compile.compile_read(query, _FAMILY_META, POSTGRES, result_form="row")
+    assert compiled.statement.sql.startswith(f"select {_SCALARS}, {_PAYLOAD} from ")
+    assert _fetched(compiled) == []
+    assert _fanned_out(compiled) == []

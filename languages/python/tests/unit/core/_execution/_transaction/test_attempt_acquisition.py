@@ -15,7 +15,7 @@ import pytest
 from parallax.conformance import models
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.class_models import MODELS
-from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, attr
+from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, attr, inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._transaction import _attempt as attempt_module
 from parallax.core._execution._transaction._attempt import TxnAttempt
@@ -82,6 +82,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests.unit import _family_predecessor_support as family
 from tests.unit.core._execution import _shared_coverage_support as shared
 from tests.unit.core._execution._execution_support import ACCOUNT, account_insert, itself, scope
 from tests.unit.core._execution._reach_support import frames, reaches
@@ -1170,3 +1171,193 @@ def test_a_shared_coverage_read_is_one_read_call_of_the_flush_reaching_its_span(
     assert calls == ["read", *(["write"] * (5 + len(predicate)))]
     (read,) = [call for call in port.calls if isinstance(call, ReadCall)]
     assert read.sql.count("t0.id = ") == 2
+
+
+# --------------------------------------------------------------------------- #
+# A family member's predecessor reads: every Value Object and, under           #
+# Relational Document Layout, the raw Structured Column, whatever the strategy. #
+# --------------------------------------------------------------------------- #
+_FAMILY_PREDECESSORS: Final[Mapping[family.Member, Mapping[str, DocumentValue]]] = {
+    "Holding": {
+        "origin": {"city": "Rome", "zone": None},
+        "name": "n",
+        "home": {"city": "Oslo", "zone": "a"},
+        "extra": {"city": "Bern", "zone": None},
+    },
+    "Vault": {"origin": {"city": "Rome", "zone": None}, "deposit": {"city": "Lima", "zone": "c"}},
+    "Bare": {},
+}
+_AXES_COMPLETED: Final = (1, _JAN, INFINITY, _T0, INFINITY)
+_COMPLETED_MEMBERS: Final[Mapping[family.Member, tuple[object, ...]]] = {
+    "Holding": (*_AXES_COMPLETED, "n", ("Rome", None), ("Oslo", "a"), ("Bern", None)),
+    "Vault": (*_AXES_COMPLETED, ("Rome", None), ("Lima", "c")),
+    "Bare": _AXES_COMPLETED,
+}
+"""Each member's complete row: its key and axes, its Attributes, then its
+occurrences, in member-selection order."""
+
+
+def _family_member(
+    strategy: family.Strategy, layout: family.Layout, member: family.Member
+) -> tuple[Any, ObjectKey, AttributeIdentity]:
+    metadata = family.member_metadata(strategy, layout, member)
+    view = inheritance.view(model_of(family.MODEL)).entity(metadata.identity)
+    assert view is not None
+    return metadata, ObjectKey(metadata.identity, (("id", 1),)), view.primary_key.identity
+
+
+def _family_row(
+    strategy: family.Strategy,
+    layout: family.Layout,
+    member: family.Member,
+    values: Mapping[str, DocumentValue] | None = None,
+) -> MappingRow:
+    return family.stored_row(
+        strategy,
+        layout,
+        member,
+        _FAMILY_PREDECESSORS[member] if values is None else values,
+        valid=(_JAN, INFINITY),
+        tx_start=_T0,
+    )
+
+
+def _raw_document(layout: family.Layout, member: family.Member) -> object | None:
+    """The Structured Column a predecessor read retains beside its row, or
+    absence under ``Columns``, where there is none."""
+    if layout == "columns":
+        return None
+    return {**_FAMILY_PREDECESSORS[member], family.UNKNOWN_KEY: "kept"}
+
+
+def _rows_and_documents(
+    request: object,
+    selection: EntityMemberSelection,
+    rows: Iterator[tuple[object, ...]],
+    absent: object,
+    documents: Sequence[object | None] | None,
+    root_count: int,
+) -> tuple[list[tuple[object, ...]], list[object | None] | None]:
+    del request, selection, absent, root_count
+    return list(rows), None if documents is None else list(documents)
+
+
+@family.FAMILY_AXES
+@pytest.mark.parametrize("member", family.MEMBERS)
+def test_a_retaining_target_read_of_a_family_member_retains_its_complete_predecessor(
+    strategy: family.Strategy, layout: family.Layout, member: family.Member
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_family_row(strategy, layout, member)])))
+    metadata, key, key_attribute = _family_member(strategy, layout, member)
+    seen: list[object] = []
+
+    def fn(tx: TxnAttempt) -> None:
+        count, retained, document = tx.uow.acquire_rows(
+            TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
+        )
+        assert count == 1 and retained is not None
+        seen.append(document)
+        completion = CompletionRequest(
+            metadata, key_attribute, (retained,), None if document is None else (document,)
+        )
+        (completed,) = tx.uow.acquire_rows(completion, _member_rows)
+        seen.append(completed)
+
+    scope(port, family.MODEL).transact(fn, itself, concurrency="locking")
+    assert seen == [_raw_document(layout, member), _COMPLETED_MEMBERS[member]]
+    assert [type(call) for call in port.calls] == [BeginCall, ReadCall, CommitCall]
+
+
+@family.FAMILY_AXES
+@pytest.mark.parametrize("member", family.MEMBERS)
+def test_a_coverage_read_of_a_family_member_reads_its_complete_predecessor(
+    strategy: family.Strategy, layout: family.Layout, member: family.Member
+) -> None:
+    port = ScriptedAdapter(Transact(Read(rows=[_family_row(strategy, layout, member)])))
+    metadata, _key, key_attribute = _family_member(strategy, layout, member)
+    seen: list[tuple[list[tuple[object, ...]], list[object | None] | None]] = []
+
+    def fn(tx: TxnAttempt) -> None:
+        coverage = CoverageReadRequest(
+            metadata,
+            key_attribute,
+            (CoverageTerm(1, (TimeInterval(_JAN, INFINITY),)),),
+            locking=True,
+        )
+        seen.append(tx.uow.acquire_rows(coverage, _rows_and_documents))
+
+    scope(port, family.MODEL).transact(fn, itself, concurrency="locking")
+    ((rows, documents),) = seen
+    assert rows == [_COMPLETED_MEMBERS[member]]
+    raw = _raw_document(layout, member)
+    assert documents == (None if raw is None else [raw])
+
+
+@family.FAMILY_AXES
+def test_a_family_members_retained_invalid_occurrence_stays_pending_until_its_completion(
+    strategy: family.Strategy, layout: family.Layout
+) -> None:
+    invalid: dict[str, DocumentValue] = {
+        **_FAMILY_PREDECESSORS["Holding"],
+        "home": {"city": 7, "zone": "a"},
+    }
+    port = ScriptedAdapter(Transact(Read(rows=[_family_row(strategy, layout, "Holding", invalid)])))
+    metadata, key, key_attribute = _family_member(strategy, layout, "Holding")
+    refused: list[StoredDataDecodingError] = []
+
+    def fn(tx: TxnAttempt) -> None:
+        count, retained, document = tx.uow.acquire_rows(
+            TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
+        )
+        assert count == 1 and retained is not None
+        completion = CompletionRequest(
+            metadata, key_attribute, (retained,), None if document is None else (document,)
+        )
+        with pytest.raises(StoredDataDecodingError) as caught:
+            tx.uow.acquire_rows(completion, _member_rows)
+        refused.append(caught.value)
+
+    scope(port, family.MODEL).transact(fn, itself, concurrency="locking")
+    (failure,) = refused
+    assert failure.member == ValueObjectAttributeIdentity(
+        ValueObjectIdentity(metadata.identity, ("home",)), "city"
+    )
+    assert [type(call) for call in port.calls] == [BeginCall, ReadCall, CommitCall]
+
+
+@family.FAMILY_AXES
+def test_a_family_members_retaining_read_refuses_an_invalid_attribute_at_the_read(
+    strategy: family.Strategy, layout: family.Layout
+) -> None:
+    # The Attribute is judged at the read, as the narrow read judged it; the
+    # invalid occurrence beside it is left to the completion.
+    invalid: dict[str, DocumentValue] = {
+        **_FAMILY_PREDECESSORS["Holding"],
+        "home": {"city": 7, "zone": "a"},
+    }
+    if layout == "document":
+        row = _family_row(strategy, layout, "Holding", {**invalid, "name": None})
+        member = "name"
+    else:
+        # A native Column is trusted as the provider returned it; a temporal
+        # end is host-checked.
+        row = {**_family_row(strategy, layout, "Holding", invalid), "thru_z": None}
+        member = "validEnd"
+    port = ScriptedAdapter(Transact(Read(rows=[row])))
+    metadata, key, _key_attribute = _family_member(strategy, layout, "Holding")
+    refused: list[StoredDataDecodingError] = []
+
+    def fn(tx: TxnAttempt) -> None:
+        with pytest.raises(StoredDataDecodingError) as caught:
+            tx.uow.acquire_rows(
+                TargetReadRequest(metadata, key, _MAR, retains=True), consume_target
+            )
+        refused.append(caught.value)
+
+    scope(port, family.MODEL).transact(fn, itself, concurrency="locking")
+    (failure,) = refused
+    view = inheritance.view(model_of(family.MODEL)).entity(metadata.identity)
+    assert view is not None
+    attribute = view.applicable_attribute(member)
+    assert attribute is not None
+    assert failure.member == attribute.identity

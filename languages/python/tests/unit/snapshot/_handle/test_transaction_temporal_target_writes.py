@@ -16,9 +16,9 @@ from __future__ import annotations
 import datetime as dt
 import gc
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -26,9 +26,15 @@ from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._execution._unit_work import ranges
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core._execution._unit_work.retain import RetainedTargetState
+from parallax.core.base import DocumentValue
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import MappingRow
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.db_port import JsonDocument, MappingRow
+from parallax.core.metamodel import (
+    EntityIdentity,
+    ValueObjectAttributeIdentity,
+    ValueObjectIdentity,
+)
+from parallax.core.read_delivery import StoredDataDecodingError
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
     OptimisticLockConflictError,
@@ -60,6 +66,7 @@ from tests._support.db_port import (
     inserted_rows,
 )
 from tests._support.root_ownership import close_owned_roots
+from tests.unit import _family_predecessor_support as family
 from tests.unit._transact_support import (
     BALANCE,
     FIXED,
@@ -144,6 +151,10 @@ def _replace(tx: TxnContext, *, typed: bool = False, value: str = "300.00") -> N
 
 def _db(port: ScriptedAdapter) -> ScopedDatabase:
     return db_for(WHERE_POSITION_META, port)
+
+
+def _db_of(model: DomainModel, port: ScriptedAdapter) -> ScopedDatabase:
+    return db_for(model, port)
 
 
 def _source(tx: TxnContext, at: dt.datetime = _MAR) -> WherePosition:
@@ -998,6 +1009,152 @@ def test_a_temporal_target_of_a_subtype_writes_its_own_table_and_refuses_a_sibli
     (coverage,) = _reads(port)
     assert " from deposit_rate t0 " in coverage.sql
     assert all("deposit_rate" in call.sql for call in _writes(port))
+
+
+# --------------------------------------------------------------------------- #
+# A family member's predecessor carries every Value Object, and its raw         #
+# Structured Column, into the successors a bounded amendment opens.            #
+# --------------------------------------------------------------------------- #
+_FAMILY_STATE: dict[family.Member, dict[str, DocumentValue]] = {
+    "Holding": {
+        "origin": {"city": "Rome", "zone": None},
+        "name": "n",
+        "home": {"city": "Oslo", "zone": "a"},
+        "extra": {"city": "Bern", "zone": None},
+    },
+    "Vault": {"origin": {"city": "Rome", "zone": None}, "deposit": {"city": "Lima", "zone": "c"}},
+}
+_FAMILY_AMENDMENTS: dict[family.Member, dict[str, DocumentValue]] = {
+    "Holding": {"name": "m"},
+    "Vault": {"deposit": {"city": "Quito", "zone": None}},
+}
+type _Acquisition = Literal["optimistic", "locking-covered", "locking-uncovered"]
+
+
+def _plain(value: object) -> object:
+    if isinstance(value, JsonDocument):
+        return _plain(value.value)
+    if isinstance(value, Mapping):
+        return {key: _plain(item) for key, item in cast("Mapping[str, object]", value).items()}
+    if isinstance(value, tuple | list):
+        return [_plain(item) for item in cast("Sequence[object]", value)]
+    return value
+
+
+def _inserted(call: WriteCall) -> list[dict[str, object]]:
+    """Each row ``call`` inserts, by Column name."""
+    columns = call.sql[call.sql.index("(") + 1 : call.sql.index(") values")].split(", ")
+    return [
+        {column: _plain(value) for column, value in zip(columns, row, strict=True)}
+        for row in inserted_rows(call)
+    ]
+
+
+def _family_stored(
+    strategy: family.Strategy,
+    layout: family.Layout,
+    member: family.Member,
+    valid: tuple[dt.datetime, object],
+) -> MappingRow:
+    return family.stored_row(
+        strategy, layout, member, _FAMILY_STATE[member], valid=valid, tx_start=_T0
+    )
+
+
+def _family_amend(tx: TxnContext, metadata: Any, changes: Mapping[str, DocumentValue]) -> None:
+    tx.wire.amend_if(
+        metadata.identity.canonical,
+        {"id": 1, **changes},
+        valid_from=_MAR,
+        until=_SEP,
+        tx_start=_T0,
+    )
+
+
+@family.FAMILY_AXES
+@pytest.mark.parametrize("member", ["Holding", "Vault"])
+@pytest.mark.parametrize("acquisition", ["optimistic", "locking-covered", "locking-uncovered"])
+def test_a_family_members_bounded_amendment_carries_its_complete_predecessor_forward(
+    strategy: family.Strategy,
+    layout: family.Layout,
+    member: family.Member,
+    acquisition: _Acquisition,
+) -> None:
+    metadata = family.member_metadata(strategy, layout, member)
+    if acquisition == "locking-uncovered":
+        # The retained start ends inside the window, so the flush reads the
+        # coverage it leaves, and that alone.
+        script = Transact(
+            Read(rows=[_family_stored(strategy, layout, member, (_JAN, _JUN))]),
+            Read(rows=[_family_stored(strategy, layout, member, (_JUN, INFINITY_INSTANT))]),
+            Write(times=3),
+        )
+        reads = 2
+    else:
+        script = Transact(
+            Read(rows=[_family_stored(strategy, layout, member, (_JAN, INFINITY_INSTANT))]),
+            Write(times=2),
+        )
+        reads = 1
+    port = ScriptedAdapter(script)
+    amendment = _FAMILY_AMENDMENTS[member]
+
+    def fn(tx: TxnContext) -> None:
+        _family_amend(tx, metadata, amendment)
+        assert len(_reads(port)) == (0 if acquisition == "optimistic" else 1)
+
+    _db_of(family.MODEL, port).transact(
+        fn, concurrency="optimistic" if acquisition == "optimistic" else "locking"
+    )
+    assert len(_reads(port)) == reads
+    insert = _writes(port)[-1]
+    rows = _inserted(insert)
+    assert [(row["from_z"], row["thru_z"]) for row in rows] == [
+        (_JAN, _MAR),
+        (_MAR, _SEP),
+        (_SEP, INFINITY_INSTANT),
+    ]
+    head, middle, tail = (
+        {**_FAMILY_STATE[member], **(amendment if row["from_z"] == _MAR else {})} for row in rows
+    )
+    if layout == "document":
+        assert [row["payload"] for row in rows] == [
+            {**state, family.UNKNOWN_KEY: "kept"} for state in (head, middle, tail)
+        ]
+    else:
+        assert "payload" not in insert.sql
+        assert not any("payload" in read.sql for read in _reads(port))
+        assert [{name: row[name] for name in head} for row in rows] == [head, middle, tail]
+
+
+@family.FAMILY_AXES
+def test_a_family_members_invalid_retained_occurrence_fails_its_flush_without_another_read(
+    strategy: family.Strategy, layout: family.Layout
+) -> None:
+    stored = family.stored_row(
+        strategy,
+        layout,
+        "Holding",
+        {**_FAMILY_STATE["Holding"], "home": {"city": 7, "zone": "a"}},
+        valid=(_JAN, INFINITY_INSTANT),
+        tx_start=_T0,
+    )
+    port = ScriptedAdapter(Transact(Read(rows=[stored])))
+    metadata = family.member_metadata(strategy, layout, "Holding")
+    called: list[str] = []
+
+    def fn(tx: TxnContext) -> None:
+        _family_amend(tx, metadata, {"name": "m"})
+        called.append("returned")
+
+    with raises_contextualized(StoredDataDecodingError) as refused:
+        _db_of(family.MODEL, port).transact(fn, concurrency="locking")
+    assert called == ["returned"]
+    assert refused.value.member == ValueObjectAttributeIdentity(
+        ValueObjectIdentity(metadata.identity, ("home",)), "city"
+    )
+    assert len(_reads(port)) == 1
+    assert _writes(port) == []
 
 
 @_STRATEGIES

@@ -1509,17 +1509,24 @@ def test_a_coverage_read_of_several_objects_names_each_objects_windows_beside_it
     assert statement.binds[-8:] == (1, jan, mar, may, jul, 2, mar, INFINITY)
 
 
-@pytest.mark.parametrize("whole", [False, True], ids=["revision", "whole"])
-def test_a_target_read_projects_its_row_whole_only_where_it_retains_it(whole: bool) -> None:
+@pytest.mark.parametrize("retain_predecessor", [False, True], ids=["revision", "retained"])
+def test_a_target_read_projects_its_row_whole_only_where_it_retains_it(
+    retain_predecessor: bool,
+) -> None:
     rate = entity_of(RATE, "Rate")
     jan = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     target = deep_fetch.plan_target_read(
-        rate, model=RATE, key="id", key_value=1, valid_from=jan, whole=whole
+        rate,
+        model=RATE,
+        key="id",
+        key_value=1,
+        valid_from=jan,
+        retain_predecessor=retain_predecessor,
     )
     coverage = deep_fetch.plan_coverage_read(
         rate, model=RATE, key="id", terms=((1, (TimeInterval(jan, INFINITY),)),)
     )
-    assert (target.projection == coverage.projection) is whole
+    assert (target.projection == coverage.projection) is retain_predecessor
 
 
 def test_concrete_target_root_query_injects_a_pinned_axis() -> None:

@@ -75,6 +75,7 @@ def compile_projected_read(
     target: EntityMetadata,
     *,
     include_value_objects: Literal[True] | frozenset[str],
+    temporal: Mapping[TemporalDimension, TemporalSelection] | None = None,
 ) -> CompiledRead:
     """Compile a row-form read of ``target`` widened to ``include_value_objects``,
     a projection no read plan requests: every declared member, as a materializing
@@ -84,7 +85,9 @@ def compile_projected_read(
         include_value_objects is True,
     )
     return compile_entity_query(
-        deep_fetch.plan(_validated(predicate, model, target), model, projection=projection).root,
+        deep_fetch.plan(
+            _validated(predicate, model, target, temporal=temporal), model, projection=projection
+        ).root,
         model,
         dialect,
         result_form="row",

@@ -326,13 +326,14 @@ def plan_target_read(
     key: str,
     key_value: ManagedValue,
     valid_from: ManagedValue | None = None,
-    whole: bool = False,
+    retain_predecessor: bool = False,
 ) -> PlannedEntityQuery:
     """The one flat point read of the stored row a target write starts
     from: the object ``key`` names — on a temporal object its current row, at
     Valid-Time ``valid_from`` on a Bitemporal one — projected with no document,
-    since what is read is the row's presence and revision, or projected
-    ``whole`` as a coverage read projects it, where the row is retained."""
+    since what is read is the row's presence and revision, or, where the row is
+    retained as the write's predecessor, projected whole as a coverage read
+    projects it."""
     families = inheritance.view(model)
     root = inheritance.root_metadata(families, model, entity.identity)
     view = _entity_view(families, entity.identity)
@@ -353,7 +354,9 @@ def plan_target_read(
         projection=_projection_for(
             entity,
             families,
-            ReadProjectionRequest("all", True) if whole else ReadProjectionRequest("none", False),
+            ReadProjectionRequest("all", True)
+            if retain_predecessor
+            else ReadProjectionRequest("none", False),
         ),
     )
 

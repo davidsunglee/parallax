@@ -12,6 +12,7 @@ import pytest
 from parallax.conformance.models import accepted_model
 from parallax.core import inheritance, storage_layout
 from parallax.core import predicate as oa
+from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.navigate import _closed  # pyright: ignore[reportPrivateUsage]
@@ -192,6 +193,7 @@ def _planned(
             storage,
             False,
             None,
+            ResolvedReadProjection((), False),
         )
     )
     return plan_statement(
