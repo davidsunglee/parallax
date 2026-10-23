@@ -24,6 +24,7 @@ from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
     _assert_write_input_columns,
     _assert_write_step_count,
+    _observed_milestone_start,
     _write_column_order,
 )
 from reference_harness.ddl_builder import ddl_for, declared_contributors
@@ -177,6 +178,124 @@ def test_temporal_write_input_at_corruption_is_rejected() -> None:
     step["at"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
+
+
+def _setup_document_case(prefix: str = "m-temporal-write-011") -> Case:
+    return copy.deepcopy(
+        next(case for case in _temporal_write_input_cases() if case.path.stem.startswith(prefix))
+    )
+
+
+@pytest.mark.parametrize("prefix", ["m-temporal-write-011", "m-temporal-write-012"])
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_setup_insert_independently_establishes_a_temporal_predecessor(
+    prefix: str, dialect: str
+) -> None:
+    _assert_write_input_columns(_setup_document_case(prefix), dialect)
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_setup_predecessor_columns_need_not_follow_layout_order(dialect: str) -> None:
+    case = _setup_document_case()
+    setup = case.apply[0]
+    setup["sql"] = "insert into voyage(payload, out_z, id, in_z) values (?, ?, ?, ?)"
+    setup["binds"] = [setup["binds"][index] for index in (3, 2, 0, 1)]
+    _assert_write_input_columns(case, dialect)
+
+
+@pytest.mark.parametrize(
+    ("index", "value"),
+    [
+        (0, 99),
+        (1, "2025-12-01T00:00:00.000000Z"),
+        (2, "2026-05-01T00:00:00.000000Z"),
+    ],
+)
+def test_setup_predecessor_must_match_the_key_start_and_open_end(index: int, value: Any) -> None:
+    case = _setup_document_case()
+    case.apply[0]["binds"][index] = value
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_setup_predecessor_does_not_trust_the_golden_gate_bind() -> None:
+    case = _setup_document_case()
+    case.then["statements"][0]["binds"][-1] = "2025-12-01T00:00:00.000000Z"
+    with pytest.raises(CaseFailure):
+        _assert_write_input_columns(case, "postgres")
+
+
+@pytest.mark.parametrize("setup_kind", ["missing", "wrong-table", "duplicate", "fixture"])
+def test_setup_must_leave_exactly_one_predecessor_of_the_entity(setup_kind: str) -> None:
+    case = _setup_document_case()
+    if setup_kind == "missing":
+        case.given["apply"] = []
+    elif setup_kind == "wrong-table":
+        case.apply[0]["sql"] = case.apply[0]["sql"].replace("voyage", "other_table")
+    elif setup_kind == "duplicate":
+        case.apply.append(copy.deepcopy(case.apply[0]))
+    else:
+        case.given["fixtures"] = True
+        case.model.fixtures["Voyage"] = [
+            {"id": 7, "txStart": "2026-01-01T00:00:00.000000Z", "txEnd": "infinity"}
+        ]
+    with pytest.raises(CaseFailure, match="leave exactly one milestone"):
+        _assert_write_input_columns(case, "postgres")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "update voyage set in_z = ? where id = ?",
+        "delete from voyage where id = ?",
+    ],
+)
+def test_later_setup_mutations_cannot_leave_stale_insert_evidence(sql: str) -> None:
+    case = _setup_document_case()
+    case.apply.append({"sql": sql, "binds": []})
+    with pytest.raises(CaseFailure, match="setup predecessor"):
+        _assert_write_input_columns(case, "postgres")
+
+
+@pytest.mark.parametrize(
+    ("sql", "binds"),
+    [
+        ("insert into voyage(id, in_z, out_z) values (?, ?, ?)", [7, "infinity"]),
+        ("insert into voyage(id, in_z, out_z) values (?, ?, ?)", [7, "infinity", "infinity", 4]),
+        ("insert into voyage(id, in_z, out_z) values (?, now(), ?)", [7, "infinity"]),
+        ("insert into voyage(id, id, out_z) values (?, ?, ?)", [7, 7, "infinity"]),
+        ("insert into voyage select * from other_table", []),
+        ("insert into voyage(id, in_z, out_z) values (", []),
+    ],
+)
+def test_setup_predecessor_refuses_unaccounted_insert_values(sql: str, binds: list[Any]) -> None:
+    case = _setup_document_case()
+    case.given["apply"] = [{"sql": sql, "binds": binds}]
+    with pytest.raises(CaseFailure, match="setup predecessor"):
+        _assert_write_input_columns(case, "postgres")
+
+
+def test_setup_predecessor_refuses_a_second_statement_in_one_entry() -> None:
+    case = _setup_document_case()
+    case.apply[0]["sql"] += "; delete from voyage"
+    with pytest.raises(CaseFailure, match="setup predecessor"):
+        _assert_write_input_columns(case, "postgres")
+
+
+@pytest.mark.parametrize("mutation", ["amend", "terminate"])
+def test_prior_temporal_steps_take_precedence_over_setup(mutation: str) -> None:
+    case = _setup_document_case()
+    prior = case.when["writeSequence"][0]
+    current = copy.deepcopy(prior)
+    current["at"] = "2026-09-01T00:00:00.000000Z"
+    prior["mutation"] = mutation
+    case.when["writeSequence"].append(current)
+    entity = case.model.entity(current["entity"])
+    if mutation == "terminate":
+        with pytest.raises(CaseFailure, match="leave exactly one milestone"):
+            _observed_milestone_start(case, entity, current, 7, "postgres")
+    else:
+        assert _observed_milestone_start(case, entity, current, 7, "postgres") == prior["at"]
 
 
 def _until_write_cases():

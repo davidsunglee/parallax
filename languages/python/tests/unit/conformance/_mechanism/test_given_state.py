@@ -358,17 +358,8 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
         document={"model": "models/account.yaml", "given": {"fixtures": True}},
     )
     port = FakeWritePort()
-    store = SimulatedTemporalStore()
-    meta = load_case_metamodel(_load_case("m-temporal-write-002"))
-    model = meta
-    apply_given_apply(case, port, store)
+    apply_given_apply(case, port)
     assert port.writes == []
-    # A case that applies nothing leaves the tracker's account of the stored rows
-    # whole — including for a key it tracks no milestone of — which is what a keyed
-    # temporal write over a document-mapped target depends on.
-    assert store.has_complete_stored_row(
-        model, case_entity(model, "parallax.compatibility.Balance"), {"id": 1}
-    )
 
 
 def test_apply_given_apply_binds_a_mapping_as_the_document_it_stores() -> None:
@@ -392,7 +383,7 @@ def test_apply_given_apply_binds_a_mapping_as_the_document_it_stores() -> None:
         },
     )
     port = FakeWritePort()
-    apply_given_apply(case, port, None)
+    apply_given_apply(case, port)
     assert port.writes == [
         ("insert into traveler(id, payload) values (%s, %s)", [4, JsonDocument(document)])
     ]

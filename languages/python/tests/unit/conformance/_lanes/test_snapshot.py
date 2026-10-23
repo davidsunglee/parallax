@@ -1136,10 +1136,7 @@ def test_run_scenario_case_refuses_a_non_keyed_write_step_on_the_snapshot_lane()
     assert port.writes == []
 
 
-def test_run_scenario_case_names_the_case_when_a_snapshot_lane_write_will_not_lower() -> None:
-    # A write step this lane cannot lower fails as a case-named EngineError rather
-    # than as a raw planner exception crossing the conformance seam — the same
-    # posture the unit-of-work lane takes for its own ungrouped write step.
+def test_run_scenario_case_propagates_public_write_validation() -> None:
     mis_authored = [
         {
             "mutation": "amend",
@@ -1147,8 +1144,10 @@ def test_run_scenario_case_names_the_case_when_a_snapshot_lane_write_will_not_lo
             "rows": [{"id": 1, "nope": 3}],
         }
     ]
-    port = _QueueWritePort([[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS]])
-    with pytest.raises(EngineError, match="undeclared member"):
+    port = _QueueWritePort(
+        [[dict(_ORDER_ROW)], [dict(row) for row in _ORDER_1_ITEM_ROWS], [dict(_ORDER_ROW)]]
+    )
+    with pytest.raises(ValueError, match="undeclared member"):
         _run(_write_between_find_and_access(mis_authored), port)
     assert port.writes == []
 

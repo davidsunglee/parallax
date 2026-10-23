@@ -31,6 +31,7 @@ from parallax.core.base import INFINITY
 from parallax.core.db_port import MappingRow, Row
 from parallax.core.dialect import Dialect
 from parallax.core.execution import TxnOptions
+from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import Database, ScopedDatabase
 from tests._support.case_corpus import case as corpus_case
 from tests._support.root_ownership import own_root
@@ -951,9 +952,7 @@ def test_a_grouped_temporal_write_settles_against_the_find_it_names_else_the_lat
     assert binds[-1] == gate
 
 
-def test_a_temporal_write_of_a_key_its_group_inserted_is_refused() -> None:
-    # The group's own insert is the value the write would be handed, and it
-    # carries no reading: what the write settles against is a buffered write.
+def test_a_temporal_write_composes_onto_its_groups_pending_insert() -> None:
     case = _race_case(
         [
             _balance_write("insert", {"id": 7, "acctNum": "G", "value": "1.00"}),
@@ -965,11 +964,11 @@ def test_a_temporal_write_of_a_key_its_group_inserted_is_refused() -> None:
         ScriptedPort(), ScriptedPort(read_rows=[[_balance(1, in_z=_FEB)]])
     )
 
-    with pytest.raises(EngineError, match="composes onto the row its own `uow` group inserted"):
-        run_interleaved_scenario_case(case, ScriptedPort(), executions)
+    run = run_interleaved_scenario_case(case, ScriptedPort(), executions)
+    assert all(not emission.sql.startswith(("insert", "update")) for emission in run.emissions)
 
 
-def test_a_second_temporal_write_of_a_key_its_group_settled_is_refused() -> None:
+def test_production_refuses_amendment_after_the_same_sources_termination() -> None:
     case = _race_case(
         [
             _find_balance(2),
@@ -983,7 +982,7 @@ def test_a_second_temporal_write_of_a_key_its_group_settled_is_refused() -> None
         ScriptedPort(read_rows=[[_balance(1, in_z=_FEB)]]),
     )
 
-    with pytest.raises(EngineError, match="a second temporal write"):
+    with pytest.raises(WriteEvidenceError, match="write-evidence-already-claimed"):
         run_interleaved_scenario_case(case, ScriptedPort(), executions)
 
 

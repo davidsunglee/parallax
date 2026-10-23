@@ -30,7 +30,7 @@ from tests._support.corpus import (
 from tests._support.repo import REPO_ROOT
 
 DOCUMENT_CASES = frozenset({"m-temporal-write-011", "m-temporal-write-012", "m-storage-layout-024"})
-_SUPPORT = (
+_BASELINE_SUPPORT = (
     "languages/python/tests/_support/lane_evidence.py",
     "languages/python/tests/unit/test_lane_evidence.py",
     "languages/python/tests/compatibility/test_lane_evidence.py",
@@ -44,6 +44,23 @@ _EXCEPTION_SKIP = "diagnostic-only: captured m-storage-layout-024 uncaught Asser
 _SCENARIO_PATH = "packages/parallax-conformance/src/parallax/conformance/_lanes/scenario.py"
 _MODE_SKIP_NODE = "tests/api/test_to_one_traversal_performance.py::test_diagnostic_capture"
 _MODE_SKIP_REASON = "diagnostic: set PARALLAX_TO_ONE_PERFORMANCE_MODE=compare to run"
+_DOCUMENT_HASHES = {
+    "core/compatibility/cases/m-storage-layout-024-document-layout-occurrence-parent-states.yaml": (
+        "b2ce228b2e19aefb6bb503e71353e7ff52d784b523a2eb53e847b2ad2b8bbae1",
+        "f8bc1908468082c9a544fb381d6d65f0368b94ec2aab276eb2a1a7bc555b7074",
+    ),
+    "core/compatibility/cases/m-temporal-write-011-document-layout-unknown-key-preserved.yaml": (
+        "c3dc2e4a156fce873f87b815d5fd3bba9709603dacacf52d49c00e8d4df2d290",
+        "9c85c310198651a3f7ed9b7c952268af18977d1f87be4a6b9b242c8ad9573f00",
+    ),
+    (
+        "core/compatibility/cases/"
+        "m-temporal-write-012-document-layout-assigned-occurrence-replacement.yaml"
+    ): (
+        "150444875f23dc41c5fdb1a5b3130a354bd74f3415de8022e021ba92889469b2",
+        "fca6869541245e6d03920ae676affa0ee58bebe13fd3bdcce923975291906ee1",
+    ),
+}
 _directory: Path | None = None
 _metadata: dict[str, Any] = {}
 _occurrences: Counter[tuple[str, str, str]] = Counter()
@@ -77,13 +94,13 @@ def baseline_identity(root: Path, sha: str) -> dict[str, Any]:
     lines = subprocess.check_output(
         ["git", "status", "--porcelain", "--untracked-files=all"], cwd=root, text=True
     ).splitlines()
-    if any(line[3:] not in _SUPPORT or "R" in line[:2] for line in lines):
+    if any(line[3:] not in _BASELINE_SUPPORT or "R" in line[:2] for line in lines):
         raise ValueError(f"baseline contains changes outside test-only evidence support: {status}")
     return {
         "sha": sha,
         "status": status,
-        "supportHashes": {name: _digest(root / name) for name in _SUPPORT},
-        "supportPatch": _git(root, "diff", "HEAD", "--", *_SUPPORT),
+        "supportHashes": {name: _digest(root / name) for name in _BASELINE_SUPPORT},
+        "supportPatch": _git(root, "diff", "HEAD", "--", *_BASELINE_SUPPORT),
     }
 
 
@@ -232,8 +249,7 @@ def capture_adapter_calls(request: Any) -> Iterator[None]:
     item = cast("pytest.Item", request.node)
     if (
         _directory is None
-        or item.path.name
-        not in {"test_compile_sweep.py", "test_run_sweep.py", "test_lane_evidence.py"}
+        or item.path.name not in {"test_compile_sweep.py", "test_run_sweep.py"}
         or "compatibility" not in item.path.parts
     ):
         yield
@@ -583,10 +599,7 @@ def _document_transitions(
     report: dict[str, Any],
 ) -> None:
     old_nodes = {_diagnostic_node(case) for case in DOCUMENT_CASES}
-    new_nodes = {
-        f"tests/compatibility/test_run_sweep.py::test_run_only_write_sequence_run_sweep[{case}]"
-        for case in DOCUMENT_CASES
-    }
+    new_nodes = {_full_grade_node(case) for case in DOCUMENT_CASES}
     assert set(old["selected"]) - set(new["selected"]) == old_nodes
     assert set(new["selected"]) - set(old["selected"]) == new_nodes
     for case in sorted(DOCUMENT_CASES):
@@ -596,7 +609,7 @@ def _document_transitions(
         old_key, before = prior[0]
         new_key, after = current[0]
         assert before["node"] == _diagnostic_node(case)
-        assert after["node"] in new_nodes and after["shape"] == "adapter"
+        assert after["node"] == _full_grade_node(case) and after["shape"] == "adapter"
         assert after["actual"]["status"] == "ok" and before["path"] == after["path"]
         assert verdicts[1][_junit_node(after["node"])] == {"verdict": "passed", "reason": None}, (
             "full golden grade required"
@@ -614,6 +627,57 @@ def _document_transitions(
         )
         del left[old_key], right[new_key]
         del verdicts[0][_junit_node(before["node"])], verdicts[1][_junit_node(after["node"])]
+
+
+def _full_grade_node(case: str) -> str:
+    sweep = (
+        "test_write_run_sweep"
+        if case == "m-storage-layout-024"
+        else "test_run_only_write_sequence_run_sweep"
+    )
+    return f"tests/compatibility/test_run_sweep.py::{sweep}[{case}]"
+
+
+def _document_corpus_transition(
+    old: Mapping[str, str], new: Mapping[str, str], report: dict[str, Any]
+) -> None:
+    assert old.keys() == new.keys(), "changed corpus input selection"
+    changed = {name for name in old if old[name] != new[name]}
+    assert changed == _DOCUMENT_HASHES.keys(), "unauthorized corpus changes"
+    for path, (before, after) in _DOCUMENT_HASHES.items():
+        assert (old[path], new[path]) == (before, after), "unauthorized document hash pair"
+        report["explainedTransitions"].append(
+            {"path": path, "old": before, "new": after, "kind": "intentional-corpus-correction"}
+        )
+
+
+def _document_compile_transition(
+    left: dict[tuple[Any, ...], dict[str, Any]],
+    right: dict[tuple[Any, ...], dict[str, Any]],
+    report: dict[str, Any],
+) -> None:
+    for case in sorted(DOCUMENT_CASES):
+        prior = {key: r for key, r in left.items() if r["case"] == case and r["lane"] == "compile"}
+        current = {
+            key: r for key, r in right.items() if r["case"] == case and r["lane"] == "compile"
+        }
+        assert len(prior) == 2 and prior.keys() == current.keys(), (
+            "missing document compile evidence"
+        )
+        for key, before in prior.items():
+            after = current[key]
+            assert before["actual"]["status"] == after["actual"]["status"] == "run-only"
+            if case == "m-storage-layout-024":
+                assert before["actual"]["caseShape"] == "writeSequence"
+                assert after["actual"]["caseShape"] == "scenario"
+                normalized = {**after, "actual": {**after["actual"], "caseShape": "writeSequence"}}
+                assert before == normalized, "document compile envelope changed beyond case shape"
+                report["explainedTransitions"].append(
+                    {"case": case, "old": before, "new": after, "kind": "authored-case-shape"}
+                )
+            else:
+                assert before == after, "document compile envelope changed"
+            del left[key], right[key]
 
 
 def compare_reports(
@@ -634,7 +698,11 @@ def compare_reports(
         old, new = _sealed_capture(baseline), _sealed_capture(candidate)
         assert old["format"] == new["format"] == 1, "capture format changed"
         assert "supportHashes" in old["identity"], "baseline has no exact-SHA guard evidence"
-        assert old["corpus"] == new["corpus"] == corpus_manifest(root), "changed corpus inputs"
+        assert new["corpus"] == corpus_manifest(root), "candidate differs from current corpus"
+        if newly_graded_document_cases:
+            _document_corpus_transition(old["corpus"], new["corpus"], report)
+        else:
+            assert old["corpus"] == new["corpus"], "changed corpus inputs"
         verdicts = (junit_verdicts(baseline / "junit.xml"), junit_verdicts(candidate / "junit.xml"))
         _provider_passed(new, verdicts[1])
         left, right = _observations(baseline), _observations(candidate)
@@ -644,6 +712,7 @@ def compare_reports(
             _supplement_baseline(baseline, supplement, old, left, verdicts[0], report)
         if newly_graded_document_cases:
             _document_transitions(old, new, left, right, verdicts, report)
+            _document_compile_transition(left, right, report)
         else:
             assert old["selected"] == new["selected"], "unexpected test selection change"
         assert verdicts[0] == verdicts[1], "JUnit verdict or skip partition changed"
@@ -661,7 +730,7 @@ def compare_reports(
         report["differences"].append({"reason": str(exc)})
     if not report["differences"]:
         report["classification"] = (
-            "explained-coverage-transition"
+            "explained-corpus-operation-coverage-outcome-transition"
             if newly_graded_document_cases
             else "equivalent-with-diagnostic-baseline-failure"
             if supplement

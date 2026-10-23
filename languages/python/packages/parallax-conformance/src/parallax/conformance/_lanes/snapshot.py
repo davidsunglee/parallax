@@ -153,10 +153,6 @@ def compile_scenario(
     dialect = dialect_for(dialect_name)
     concurrency = case_document.concurrency(case)
     store = SimulatedTemporalStore()
-    # The same seeding the RUN lane applies: this lane's cases load their model's
-    # fixtures, so a temporal close observes the milestone that persisted history
-    # holds rather than none at all. Both lanes must start from the same tracked
-    # state or they are not the same computation.
     seed_store_from_fixtures(case, model, store)
     emissions: list[Emission] = []
     try:
@@ -269,21 +265,14 @@ def run_scenario(
     group."""
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
-    store = SimulatedTemporalStore()
     context = CaseContext(
         serving,
         model,
         case_document.concurrency(case),
-        store,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )
-    # Seeded from the case's own fixtures and then advanced by each write step's
-    # execution, so a temporal close observes the milestone the persisted history (or
-    # an earlier step) actually holds — the SAME order every other lane applies:
-    # fixtures, then `given.apply`, then the first step.
-    seed_store_from_fixtures(case, model, store)
-    apply_given_apply(case, port, store)
+    apply_given_apply(case, port)
     observation = lifecycle.observation()
     with Database.connect(
         port, serving, options=context.options, lifecycle_provider=observation.provider
@@ -394,7 +383,7 @@ def _run_snapshot_write_step(
     try:
         entries = _snapshot_write_entries(case, step)
         return execute_keyed_unit(
-            port, context, entries, [], lifecycle, rollback=step.get("rollback") is True
+            port, context, entries, lifecycle, rollback=step.get("rollback") is True
         )
     except LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc

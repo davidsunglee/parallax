@@ -32,15 +32,13 @@ when:
         - id: 7
           title: Coastal Return
           crew: 6
-          manifest:
-            cargo: grain
       at: "2026-06-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
-        postgres: update voyage set out_z = ? where id = ? and out_z = ?
-        mariadb: update voyage set out_z = ? where id = ? and out_z = ?
-      binds: ["2026-06-01T00:00:00.000000Z", 7, infinity]
+        postgres: update voyage set out_z = ? where id = ? and out_z = ? and in_z = ?
+        mariadb: update voyage set out_z = ? where id = ? and out_z = ? and in_z = ?
+      binds: ["2026-06-01T00:00:00.000000Z", 7, infinity, "2026-01-01T00:00:00.000000Z"]
     - sql:
         postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
         mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)

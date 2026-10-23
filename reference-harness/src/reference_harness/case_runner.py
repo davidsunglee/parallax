@@ -55,6 +55,9 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, NamedTuple
 
+import sqlglot
+from sqlglot import exp
+
 from . import errors, serde
 from ._case_execution import CaseExecution
 from .case import (
@@ -108,6 +111,7 @@ from .providers import Catalog, DatabaseProvider
 from .provisioning import apply_given, provision, provision_empty
 from .relationship import MODEL_REJECTED_RULES as RELATIONSHIP_MODEL_REJECTED_RULES
 from .relationship import validate_relationship_types
+from .sql_canonical import sqlglot_dialect
 from .sql_normalize import normalize
 from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
@@ -1727,7 +1731,9 @@ def _assert_temporal_input(
         expected = [at, *close_address_binds(case, entity, pk, None)]
         gated = has_temporal_gate(statement, transaction_time["start_column"], dialect)
         if gated or step.get("target"):
-            start = _gate_start(case, step, _observed_milestone_start(case, entity, step, pk))
+            start = _gate_start(
+                case, step, _observed_milestone_start(case, entity, step, pk, dialect)
+            )
             if gated:
                 expected.append(start)
         assert_write_values(case, expected, binds, statement)
@@ -1779,7 +1785,7 @@ def _assert_milestone_guard(
         )
     expected = [
         *close_address_binds(case, entity, pk, None),
-        _observed_milestone_start(case, entity, step, pk),
+        _observed_milestone_start(case, entity, step, pk, dialect),
     ]
     assert_write_values(case, expected, binds, statement)
     current = _current_milestone_row(case, entity, step, pk)
@@ -2087,15 +2093,78 @@ def _prior_steps_for_key(
             yield prior
 
 
-def _observed_milestone_start(case: Case, entity: Entity, step: dict[str, Any], pk: Any) -> Any:
+def _setup_predecessor_insert(
+    case: Case, table: str, statement: str, dialect: str
+) -> exp.Insert | None:
+    failure = f"{case.path.name}: setup predecessor requires one plain INSERT with bound VALUES."
+    try:
+        parsed = sqlglot.parse(statement, read=sqlglot_dialect(dialect))
+    except sqlglot.ParseError as exc:
+        raise CaseFailure(failure) from exc
+    if len(parsed) != 1 or parsed[0] is None:
+        raise CaseFailure(failure)
+    tree = parsed[0]
+    target = tree.this.this if isinstance(tree.this, exp.Schema) else tree.this
+    if not isinstance(target, exp.Table) or not isinstance(target.this, exp.Identifier):
+        raise CaseFailure(failure)
+    name = target.name if target.this.quoted else target.name.lower()
+    if name != table:
+        return None
+    if not (
+        isinstance(tree, exp.Insert)
+        and isinstance(tree.this, exp.Schema)
+        and isinstance(tree.expression, exp.Values)
+        and not target.db
+        and not target.catalog
+    ):
+        raise CaseFailure(failure)
+    if any(value for key, value in tree.args.items() if key not in ("this", "expression")):
+        raise CaseFailure(failure)
+    return tree
+
+
+def _setup_insert_rows(case: Case, entity: Entity, dialect: str) -> Iterator[dict[str, Any]]:
+    failure = f"{case.path.name}: setup predecessor INSERT needs distinct columns and bound VALUES."
+    for entry in case.apply:
+        insert = _setup_predecessor_insert(case, entity.table, entry["sql"], dialect)
+        if insert is None:
+            continue
+        columns = insert.this.expressions
+        if not all(isinstance(column, exp.Identifier) for column in columns):
+            raise CaseFailure(failure)
+        names = [column.name if column.quoted else column.name.lower() for column in columns]
+        if not names or len(set(names)) != len(names):
+            raise CaseFailure(failure)
+        binds = list(entry.get("binds", []))
+        offset = 0
+        for row in insert.expression.expressions:
+            if not (
+                isinstance(row, exp.Tuple)
+                and len(row.expressions) == len(names)
+                and all(
+                    isinstance(cell, exp.Placeholder) and cell.this is None
+                    for cell in row.expressions
+                )
+            ):
+                raise CaseFailure(failure)
+            values = binds[offset : offset + len(names)]
+            if len(values) != len(names):
+                raise CaseFailure(failure)
+            offset += len(names)
+            yield dict(zip(names, values, strict=True))
+        if offset != len(binds):
+            raise CaseFailure(failure)
+
+
+def _observed_milestone_start(
+    case: Case, entity: Entity, step: dict[str, Any], pk: Any, dialect: str
+) -> Any:
     """The Transaction-Time start of the ONE milestone *step*'s close addresses.
 
     A Transaction-Time-Only close's gate binds the observed ``in_z``, which the
     closing step's own ① row never carries — that row carries the NEW value. It
-    comes from the milestone the case's own history left current: an earlier
-    writeSequence step that opened or chained one for the same key, or, when the
-    case loads its model's fixtures, the single fixture row of that key still
-    open on Transaction Time.
+    comes from the milestone the case's earlier write steps left current, starting
+    from its loaded fixtures and explicit setup INSERTs, never from the golden.
     """
     tx_axis = next(
         axis for axis in temporal_axes(entity.runtime_facts) if axis.dimension == "transaction-time"
@@ -2103,7 +2172,7 @@ def _observed_milestone_start(case: Case, entity: Entity, step: dict[str, Any], 
     key_member = next(
         attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")
     )
-    current: Any = None
+    starts: list[Any] = []
     if case.load_fixtures:
         # Fixture rows are keyed by MEMBER name, so the axis's declared
         # attributes name them; the open upper bound is the `infinity` literal.
@@ -2113,8 +2182,19 @@ def _observed_milestone_start(case: Case, entity: Entity, step: dict[str, Any], 
             if write_value_equal(row.get(key_member), pk)
             and write_value_equal(row.get(tx_axis.end.name), "infinity")
         ]
-        if len(open_rows) == 1:
-            current = open_rows[0].get(tx_axis.start.name)
+        starts.extend(row.get(tx_axis.start.name) for row in open_rows)
+    key_column = entity.attribute_by_name(key_member)["column"]
+    discriminator = tag(entity)
+    starts.extend(
+        row.get(tx_axis.start.column)
+        for row in _setup_insert_rows(case, entity, dialect)
+        if write_value_equal(row.get(key_column), pk)
+        and write_value_equal(row.get(tx_axis.end.column), "infinity")
+        and (
+            discriminator is None or write_value_equal(row.get(discriminator[0]), discriminator[1])
+        )
+    )
+    current = starts[0] if len(starts) == 1 else None
     for prior in _prior_steps_for_key(case, entity, step, pk):
         # An `insert` opens a milestone and an `update` chains a successor; both
         # leave one current at the step's own instant, and a `terminate` leaves
@@ -2125,7 +2205,7 @@ def _observed_milestone_start(case: Case, entity: Entity, step: dict[str, Any], 
     if current is None:
         raise CaseFailure(
             f"{case.path.name}: a gated close of {entity.name} pk {pk!r} binds the observed "
-            f"{tx_axis.start.name}, but neither the case's own earlier steps nor its fixtures "
+            f"{tx_axis.start.name}, but its setup, fixtures and earlier steps do not "
             f"leave exactly one milestone of that key current on Transaction Time."
         )
     return current
