@@ -12,7 +12,13 @@ from parallax.conformance._lifecycle_observation import (
     StatementIndexError,
     execution_lifecycle_observation,
 )
-from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
+from parallax.conformance.claim import (
+    ADAPTER,
+    ORDERED_WRITE_TRANSPORT_TAG,
+    SNAPSHOT_CLAIM,
+    Adapter,
+    Claim,
+)
 from parallax.conformance.profile import PROFILES, ProfileRun
 
 __all__ = [
@@ -29,8 +35,6 @@ __all__ = [
 ]
 
 SCHEMA_VERSION: Final[str] = "1"
-
-_ORDERED_WRITE_TRANSPORT_TAG: Final[str] = "ordered-write-transport"
 
 Envelope = dict[str, Any]
 
@@ -92,7 +96,7 @@ def classify(
     include = set(claim.include)
     if include and set(case.tags).isdisjoint(include):
         return Diagnostic("unsupported-case-tag", f"case carries none of {sorted(include)}")
-    exclude = set(claim.exclude)
+    exclude = set(claim.excluded_tags)
     if exclude and not set(case.tags).isdisjoint(exclude):
         offending = sorted(set(case.tags) & exclude)
         return Diagnostic("unsupported-case-tag", f"case carries excluded tags: {offending}")
@@ -102,10 +106,10 @@ def classify(
 def _transport_diagnostic(case: case_format.Case, port: CaseDatabase) -> Diagnostic | None:
     """The claim filter a ``run`` alone applies: a case tagged
     ``ordered-write-transport`` needs a run connection holding that transport."""
-    if _ORDERED_WRITE_TRANSPORT_TAG in case.tags and port.ordered_write_transport is None:
+    if ORDERED_WRITE_TRANSPORT_TAG in case.tags and port.ordered_write_transport is None:
         return Diagnostic(
             "unsupported-case-tag",
-            f"case carries {_ORDERED_WRITE_TRANSPORT_TAG!r} and the run connection holds none",
+            f"case carries {ORDERED_WRITE_TRANSPORT_TAG!r} and the run connection holds none",
         )
     return None
 
