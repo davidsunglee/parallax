@@ -2237,13 +2237,12 @@ class GroupState:
     by the step that published them — what a write step naming a find with ``on``
     addresses (`m-case-format` *Settling against a grouped find*) — and
     ``opened`` holds what this group's own inserts answered, which is how
-    read-your-own-writes reaches a row no find could have returned. ``settled``
-    holds the keys whose temporal write already settled against this group's
-    reads (:class:`GroupEvidenceResolver`). ``buffered`` holds each write step's index,
+    read-your-own-writes reaches a row no find could have returned.
+    ``buffered`` holds each write step's index,
     in step order, beside how many writes the group had delivered once that step
     finished buffering, or, for a predicate write, before it executed
     (:func:`group_writes`). ``affected`` holds the count each predicate-write
-    step's verb returned, by step index. All six are built fresh per group,
+    step's verb returned, by step index. All are built fresh per group,
     never a scenario-wide store, so no value crosses a transaction boundary.
     """
 

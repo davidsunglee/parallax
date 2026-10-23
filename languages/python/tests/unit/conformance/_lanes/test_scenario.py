@@ -739,20 +739,7 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     assert port.commits == 1 and port.rollbacks == 1
 
 
-def test_run_scenario_case_discards_an_aborted_ungrouped_temporal_writes_case_state() -> None:
-    # `m-case-format` "a later find MUST re-resolve and observe the ORIGINAL
-    # rows, never the aborted write" applies to the milestone case state holds
-    # as much as to the rows: the aborted step's close retires the fixture
-    # milestone and its successor is tracked as the new current one, and the
-    # abort then erases the successor the database never kept. A later keyed
-    # temporal write must therefore consume the ORIGINAL milestone again —
-    # gating its own close on the fixture's Transaction-Time start (2024-02-01),
-    # not on the aborted successor's (2026-01-01), which would match zero rows.
-    #
-    # The canned row is the fixture milestone each step's own resolving read
-    # publishes — the value a keyed write is addressed by — so what this asserts
-    # is the observation the PURE re-lowering oracle plans with, which is where
-    # the tracked case state lives.
+def test_run_scenario_case_rereads_the_original_milestone_after_an_ungrouped_abort() -> None:
     port = FakeWritePort(find_rows=[_ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")])
     case = _synthetic_ledger_scenario(
         [
@@ -789,20 +776,11 @@ def test_scenario_compile_lane_closes_the_fixture_milestone_the_run_lane_closes(
         (e.case_pointer, e.sql, e.binds) for e in run.emissions
     ]
     close, successor = compiled
-    # The fixture milestone's OWN edge is what the close gates on, and the
-    # successor carries the fixture's acct_num forward: facts only a seeded
-    # tracker holds.
     assert close.binds[3] == _instant("2024-02-01T00:00:00+00:00")
     assert successor.binds[:3] == (2, "B", decimal.Decimal("300.00"))
 
 
 def _ledger_insert(at: str) -> dict[str, object]:
-    """One scenario write step inserting Ledger id 9 — a key NO fixture holds, so
-    every milestone a later step of these cases closes is one this case's own
-    steps opened. That is what isolates the tracker's in-scenario advance and its
-    staged restore from the fixture history both lanes seed themselves with: an
-    assertion about which milestone a later step gates on can only be answering
-    for a milestone an earlier step put there."""
     return {
         "write": [
             {
@@ -1107,7 +1085,7 @@ def test_a_settled_write_refuses_a_find_that_observed_several_rows_of_its_key() 
         _settled((_policy_node(_JAN, _JUN, "head"), _policy_node(_JUN, INFINITY, "tail")))
 
 
-def test_a_write_step_naming_no_find_settles_against_tracked_state() -> None:
+def test_a_write_step_naming_no_find_has_no_explicit_source_nodes() -> None:
     assert (
         scenario._source_find_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {"write": []}, 2, {}
@@ -1254,8 +1232,7 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     # a store keyed by identity alone could not have chosen between. The write
     # runs from its source's pin through infinity, so the flush reads the
     # coverage beyond R2 and closes R3 too; R2's changed part and R3's are one
-    # row, which one insert opens beside R2's head. The tracked copy of the write
-    # binds that same coverage from the case state the fixtures seeded.
+    # row, which one insert opens beside R2's head.
     counts = _counting_case_state_reads(monkeypatch)
     r2 = {
         "pos_id": 1,
@@ -1463,11 +1440,6 @@ def test_a_restated_occurrence_is_assigned_literally_beside_the_stored_keys_it_l
     }
 
 
-# --------------------------------------------------------------------------- #
-# Each lane transaction is one ordinary unit of work over simulated step       #
-# execution: the compile lane records what its flushes lower to, and the run  #
-# lane tracks case state through the same unit of work, lowering nothing.     #
-# --------------------------------------------------------------------------- #
 def test_a_flushes_statements_are_reported_under_the_last_write_buffered_before_it() -> None:
     # The group buffers every write before one pre-commit flush, so everything
     # that flush emits belongs to the group's last write step — the rule the run
@@ -4100,8 +4072,6 @@ def test_a_locking_target_step_acquires_its_row_before_it_writes(
     )
     assert database_calls == 2
     assert [sql for sql, _ in port.writes] == [POSTGRES.to_driver_sql(written)]
-    # The case state tracking the step confirmed it against its own initial
-    # row, not against the row the execution read.
     assert counts == {"target": 0, "coverage": 0}
 
 
