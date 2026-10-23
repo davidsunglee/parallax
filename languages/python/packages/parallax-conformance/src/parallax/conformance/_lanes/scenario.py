@@ -6,7 +6,7 @@ import functools
 import itertools
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Final, Literal, Protocol, cast
+from typing import Any, Final, Literal, Never, Protocol, cast
 
 from parallax.conformance import (
     _case_ingress,
@@ -90,6 +90,7 @@ from parallax.core.metamodel import (
     AbstractSubtype,
     AttributeMetadata,
     EntityMetadata,
+    Leaf,
     MemberIdentity,
     PrimaryKey,
     TemporalDimension,
@@ -759,27 +760,19 @@ def _durable_row(
     :class:`SimulatedTemporalStore`, or, where the step named the find it settles against,
     by that same group's observations).
 
-    THE seam a case row becomes a durable row through — the only one. Every
-    producer of a case-authored row goes through it, whatever the row's shape or
-    lane: :func:`_build_instructions` for a non-temporal writeSequence/scenario
-    entry, :func:`_build_temporal_instruction` for a temporal one, and
-    :func:`_resolve_conflict_writes` for a conflict attempt's ``write``. EVERY row
-    of each reaches it, not merely the first: the two non-temporal producers
-    resolve the whole authored sequence (:func:`_durable_rows`), and the temporal
-    one admits a single row and refuses a plural entry outright
-    (:func:`_temporal_entry_row`) rather than settling one row and discarding the
-    rest.
-
-    Refusal (:func:`_observation_refusal`) and stripping are one
-    indivisible step here precisely because they were separable before: a
-    producer that copied the row itself got a perfectly usable durable row while
-    silently skipping the refusal, and each new write shape rediscovered the
-    hole. There is now no way to obtain a durable row without being refused.
-
-    The durable row never carries a control key: the write-instruction schema
-    forbids every one of them (ADR 0013), which `instructions.deserialize`
-    enforces as well.
+    Observation legality and stripping share :func:`_without_observation_controls`
+    with unprepared routing, which needs the durable row but no observation.
     """
+    durable = _without_observation_controls(model, entity_name, mutation, row)
+    version = row.get(_VERSION_OBSERVATION_KEY)
+    if version is None:
+        return durable, None
+    return durable, VersionObservation(observed_version=cast("int", version))
+
+
+def _without_observation_controls(
+    model: AcceptedMetamodel, entity_name: str, mutation: str, row: Mapping[str, object]
+) -> dict[str, object]:
     for key in _ROW_OBSERVATION_KEYS:
         if key not in row:
             continue
@@ -787,10 +780,8 @@ def _durable_row(
         if refusal is not None:
             raise EngineError(f"{entity_name!r} {mutation!r}: {refusal}")
     durable = dict(row)
-    version = durable.pop(_VERSION_OBSERVATION_KEY, None)
-    if version is None:
-        return durable, None
-    return durable, VersionObservation(observed_version=cast("int", version))
+    durable.pop(_VERSION_OBSERVATION_KEY, None)
+    return durable
 
 
 def _durable_rows(
@@ -991,20 +982,7 @@ def _build_instructions(
     (:func:`_check_statement_count_consistency`) — nothing here predicts what
     the flush will emit.
     """
-    if "entity" not in entry:
-        target = entry.get("target")
-        target = (
-            cast("Mapping[str, object]", target).get("entity")
-            if isinstance(target, Mapping)
-            else None
-        )
-        raise EngineError(
-            f"a writeSequence entry must be a keyed mutation (`entity` + `rows`) — a "
-            f"structured predicate-selected instruction ({entry.get('mutation')!r} on "
-            f"{target!r}) is scenario-write-only (m-case-format: the writeSequence "
-            "entry vocabulary is keyed-only)"
-        )
-    entity_name = cast("str", entry["entity"])
+    entity_name = _keyed_entry_entity(entry)
     if "row" in entry:
         return [_build_target_instruction(entry, model)]
     if _is_temporal_entity(model, entity_name):
@@ -1036,6 +1014,23 @@ def _build_instructions(
             observation = None
         out.append(_ResolvedWrite(prepared, observation))
     return out
+
+
+def _keyed_entry_entity(entry: Mapping[str, object]) -> str:
+    if "entity" not in entry:
+        target = entry.get("target")
+        target = (
+            cast("Mapping[str, object]", target).get("entity")
+            if isinstance(target, Mapping)
+            else None
+        )
+        raise EngineError(
+            f"a writeSequence entry must be a keyed mutation (`entity` + `rows`) — a "
+            f"structured predicate-selected instruction ({entry.get('mutation')!r} on "
+            f"{target!r}) is scenario-write-only (m-case-format: the writeSequence "
+            "entry vocabulary is keyed-only)"
+        )
+    return cast("str", entry["entity"])
 
 
 def _build_target_instruction(
@@ -1244,7 +1239,7 @@ def _simulated_unit(
     dialect: Dialect,
     concurrency: Concurrency,
     tx_instant: str,
-    store: SimulatedTemporalStore,
+    store: SimulatedTemporalStore | None,
     *,
     rollback: bool,
     record_statements: bool,
@@ -1262,7 +1257,7 @@ def _simulated_unit(
     execute and stand or fall with the caller's
     :meth:`~SimulatedTemporalStore.transaction`. The lifetime closes however
     the transaction ends, and a failure or ``rollback`` discards what the unit
-    of work holds.
+    of work holds. With no store, SQL generation rejects every row acquisition.
     """
     planner = build_write_planner(model)
     steps = SimulatedWriteSteps(
@@ -1278,7 +1273,7 @@ def _simulated_unit(
         meta=model,
         execute_write_steps=steps,
         execute_counted_step=steps.counted,
-        acquire_rows=store.acquisition(model),
+        acquire_rows=_refuse_marker_rows if store is None else store.acquisition(model),
         planner=planner,
         actor_identity=_PLANNING_ACTOR,
         evidence_policy_for=opt_lock.view(model).required_key,
@@ -1293,6 +1288,61 @@ def _simulated_unit(
         lifetime.close()
     if rollback:
         uow.discard()
+
+
+def _refuse_marker_rows(request: object, consumer: object, /) -> Never:
+    raise EngineError("store-free framework marker lowering cannot acquire rows")
+
+
+def _case_write_instructions(
+    entries: Sequence[Mapping[str, object]], model: AcceptedMetamodel
+) -> tuple[WriteInstruction, ...]:
+    translated: list[WriteInstruction] = []
+    for entry in entries:
+        entity = _keyed_entry_entity(entry)
+        mutation = cast("str", entry["mutation"])
+        document = {
+            name: entry[name]
+            for name in (
+                "mutation",
+                "entity",
+                "row",
+                "ifVersion",
+                "ifTxStart",
+                "validFrom",
+                "until",
+            )
+            if name in entry
+        }
+        if "row" in entry:
+            translated.append(
+                _case_ingress.normalize_case_write(instructions.deserialize(document), model)
+            )
+            continue
+        rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
+        if _is_temporal_entity(model, entity):
+            _temporal_entry_row(entity, mutation, rows)
+        for row in rows:
+            document["rows"] = [_without_observation_controls(model, entity, mutation, row)]
+            translated.append(
+                _case_ingress.normalize_case_write(instructions.deserialize(document), model)
+            )
+    return tuple(translated)
+
+
+def _lower_marker_unit(
+    instruction: WriteInstruction,
+    model: AcceptedMetamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
+    tx_instant: str,
+) -> tuple[LoweredStatement, ...]:
+    prepared = instructions.prepare_wire_write(instruction, model)
+    with _simulated_unit(
+        model, dialect, concurrency, tx_instant, None, rollback=False, record_statements=True
+    ) as unit:
+        unit.buffer(_ResolvedWrite(prepared, None))
+    return unit.statements
 
 
 def lower_writes(
@@ -1312,6 +1362,11 @@ def lower_writes(
     are graded against (:func:`_check_statement_count_consistency`). A
     ``rollback`` transaction still flushes, and then restores the rows it
     advanced."""
+    translated = _case_write_instructions(entries, model)
+    if _framework_unit(translated, model):
+        statements = _lower_marker_unit(translated[0], model, dialect, concurrency, tx_instant)
+        _check_statement_count_consistency(entries, len(statements))
+        return statements
     with store.transaction(rollback=rollback):
         resolved = _resolve_entries(entries, model, store, group_observations)
         with _simulated_unit(
@@ -1731,7 +1786,9 @@ def _lower_group(
                     _prepared_case_predicate_write(cast("Mapping[str, object]", raw_write), model)
                 )
             else:
-                for write in _resolve_entries(write_entries(raw_write), model, store, []):
+                entries = write_entries(raw_write)
+                _refuse_group_markers(entries, model)
+                for write in _resolve_entries(entries, model, store, []):
                     unit.buffer(write)
                 state.buffered.append((index, len(unit.statements)))
             lowered.append(
@@ -1957,9 +2014,12 @@ def _is_framework_write(
         if isinstance(instruction, PreparedKeyedWrite)
         else instruction.entity
     )
-    scalars = _scalar_attribute_names(model, entity)
+    position = inheritance.view(model).entity(case_entity(model, entity).identity)
+    if position is None:  # pragma: no cover - accepted entities have an inheritance position
+        return False
+    shape = position.member_selection.shape
     return any(
-        name in scalars
+        isinstance(shape.member(name), Leaf)
         and isinstance(value, Mapping)
         and frozenset(cast("Mapping[str, object]", value)) in _MARKER_KEYS
         for row in instruction.rows
@@ -1967,32 +2027,19 @@ def _is_framework_write(
     )
 
 
-def _scalar_attribute_names(model: AcceptedMetamodel, entity_name: str) -> frozenset[str]:
-    """Every Attribute name applicable to ``entity_name``, its inherited ones
-    included — the positions a DB-computed write marker may occupy, and the
-    complement of the Value Object slots that never may."""
-    view = inheritance.view(model).entity(case_entity(model, entity_name).identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return frozenset()
-    return frozenset(attribute.identity.name for attribute in view.applicable_attributes)
-
-
 _MARKER_KEYS: Final[frozenset[frozenset[str]]] = frozenset(
     {frozenset({"computed"}), frozenset({"increment"})}
 )
 
 
-def _framework_writes(
-    resolved: Sequence[_ResolvedWrite], model: AcceptedMetamodel
-) -> list[_ResolvedWrite]:
-    """The entries of one buffer stating the FRAMEWORK's own bookkeeping.
-
-    Every write lane asks this, because each one has to decide the same thing:
-    such an entry has no public verb to be stated through, so it is a
-    choreography unit of its own and every other composition of it is a form no
-    case may author (`m-case-format` "Buffered keyed write instructions").
-    """
-    return [write for write in resolved if _is_framework_write(write.instruction, model)]
+def _refuse_group_markers(
+    entries: Sequence[Mapping[str, object]], model: AcceptedMetamodel
+) -> None:
+    if any(_is_framework_write(write, model) for write in _case_write_instructions(entries, model)):
+        raise EngineError(
+            "a DB-computed write marker is a choreography unit of its own; "
+            "a `uow` group's held transaction has no verb to buffer one through"
+        )
 
 
 def _execute_framework_write_unit(
@@ -2227,7 +2274,7 @@ def _execute_write_unit(
         return observed.writes, observed.database_calls
 
 
-def _framework_unit(resolved: Sequence[_ResolvedWrite], model: AcceptedMetamodel) -> bool:
+def _framework_unit(translated: Sequence[WriteInstruction], model: AcceptedMetamodel) -> bool:
     """Whether one choreography unit states the framework's own bookkeeping,
     which :func:`_execute_framework_write_unit` executes because no public verb
     states it.
@@ -2240,21 +2287,21 @@ def _framework_unit(resolved: Sequence[_ResolvedWrite], model: AcceptedMetamodel
     of the framework's own units into one flush, hiding whichever boundary the
     corpus meant to grade.
     """
-    framework = _framework_writes(resolved, model)
+    framework = [write for write in translated if _is_framework_write(write, model)]
     if not framework:
         return False
-    if len(framework) != len(resolved):
+    if len(framework) != len(translated):
         raise EngineError(
             "a choreography unit states either the framework's own bookkeeping or the writes "
             f"a caller authors, never both: this one holds {len(framework)} entry(s) carrying "
-            f"a DB-computed write marker beside {len(resolved) - len(framework)} that a "
+            f"a DB-computed write marker beside {len(translated) - len(framework)} that a "
             "public verb states"
         )
-    if len(resolved) != 1:
+    if len(translated) != 1:
         raise EngineError(
             "an entry carrying a DB-computed write marker states the framework's own "
             "bookkeeping and is a choreography unit of its own, so it is the buffer's only "
-            f"entry: this one holds {len(resolved)}"
+            f"entry: this one holds {len(translated)}"
         )
     return True
 
@@ -2289,28 +2336,19 @@ def execute_keyed_unit(
     count is the one the entries' authored ``statements`` assert. A unit whose
     writes are the framework's own bookkeeping opens no production unit of work
     at all — those statements have no verb to be stated through — so the
-    statements its simulated transaction recorded are what it executes and
+    statements its store-free lowering recorded are what it executes and
     reports (:func:`_execute_framework_write_unit`).
     """
     tx_instant = entry_instant(entries[0])
+    translated = _case_write_instructions(entries, context.model)
+    if _framework_unit(translated, context.model):
+        statements = _lower_marker_unit(
+            translated[0], context.model, port.dialect, context.concurrency, tx_instant
+        )
+        _check_statement_count_consistency(entries, len(statements))
+        return statements, _execute_framework_write_unit(port, statements, rollback=rollback)
     store = context.case_state()
     resolved = _resolve_entries(entries, context.model, store, group_observations)
-    if _framework_unit(resolved, context.model):
-        with store.transaction(rollback=rollback):
-            with _simulated_unit(
-                context.model,
-                port.dialect,
-                context.concurrency,
-                tx_instant,
-                store,
-                rollback=rollback,
-                record_statements=True,
-            ) as unit:
-                for write in resolved:
-                    unit.buffer(write)
-            statements = unit.statements
-            _check_statement_count_consistency(entries, len(statements))
-            return statements, _execute_framework_write_unit(port, statements, rollback=rollback)
     ran, unit_calls = _execute_write_unit(
         port, context, resolved, tx_instant, lifecycle, rollback=rollback
     )
@@ -3147,6 +3185,7 @@ def run_group_step(
         )
     if "write" in step:
         entries = write_entries(step["write"])
+        _refuse_group_markers(entries, model)
         published = _published_claims(state.published)
         resolved: list[_ResolvedWrite] = []
         sources: list[Sequence[WireEntity] | None] = []
@@ -3162,13 +3201,6 @@ def run_group_step(
             written = _build_instructions(entry, model, evidence, unit_inserted, published, source)
             resolved.extend(written)
             sources.extend(named for _ in written)
-        framework = _framework_writes(resolved, model)
-        if framework:
-            raise EngineError(
-                f"/scenario/{index}/write: {len(framework)} entry(s) carry a DB-computed write "
-                "marker, which states the framework's own bookkeeping and is a choreography unit "
-                "of its own — a `uow` group's held transaction has no verb to buffer one through"
-            )
         for write, named in zip(resolved, sources, strict=True):
             if tracked is None:
                 _buffer_wire_write(tx, model, state, write, named)
@@ -3338,6 +3370,7 @@ def _submission_writes(
     A state-graded group drives public verbs only, so nothing here resolves an
     observation: the value a verb is handed carries its own.
     """
+    _refuse_group_markers([entry], model)
     entity_name = cast("str", entry["entity"])
     mutation = cast("str", entry["mutation"])
     bounds = {name: entry[name] for name in ("validFrom", "until") if name in entry}

@@ -3712,6 +3712,124 @@ def _registry_advance(sequence: str) -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("rollback", [False, True])
+def test_marker_generation_and_execution_do_not_access_case_state(
+    monkeypatch: pytest.MonkeyPatch, rollback: bool
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("marker lowering accessed simulated state")
+
+    monkeypatch.setattr(scenario, "_resolve_entries", refuse)
+    for name in ("transaction", "acquisition", "predecessor_for", "apply"):
+        monkeypatch.setattr(SimulatedTemporalStore, name, refuse)
+    case = _synthetic_scenario(
+        "models/pk-sequence.yaml", "m-pk-gen-998", [_pk_sequence_advance(rollback=rollback)]
+    )
+    compiled, compile_calls = scenario.compile_scenario_case(case, "postgres")
+    monkeypatch.setattr(scenario.CaseContext, "case_state", refuse)
+    port = FakeWritePort()
+    run = scenario.run_scenario_case(case, port)
+
+    assert compiled == run.emissions
+    assert port.writes == [(item.sql.replace("?", "%s"), list(item.binds)) for item in compiled]
+    assert compile_calls == run.database_calls == 1
+    assert port.reads == []
+    assert (port.commits, port.rollbacks) == ((0, 1) if rollback else (1, 0))
+
+
+def test_max_marker_compile_and_run_share_store_free_lowering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("max marker accessed simulated state")
+
+    monkeypatch.setattr(scenario.CaseContext, "case_state", refuse)
+    monkeypatch.setattr(scenario, "_resolve_entries", refuse)
+    for name in ("transaction", "acquisition", "predecessor_for", "apply"):
+        monkeypatch.setattr(SimulatedTemporalStore, name, refuse)
+    case = _case("m-pk-gen-001")
+    compiled, compile_calls = scenario.compile_write_sequence_case(case, "postgres")
+    port = FakeWritePort()
+    ran, _table_state, run_calls = scenario.run_write_sequence_case(case, port)
+
+    assert compiled == ran
+    assert port.writes == [(item.sql.replace("?", "%s"), list(item.binds)) for item in compiled]
+    assert compile_calls == run_calls == 1
+
+
+def test_store_free_composition_refuses_actual_row_acquisition() -> None:
+    model = models.load_models()["account"]
+    target = instructions.deserialize(
+        {
+            "mutation": "amend",
+            "entity": "parallax.compatibility.Account",
+            "row": {"id": 7, "balance": "5.00"},
+            "ifVersion": 1,
+        }
+    )
+
+    with pytest.raises(
+        EngineError, match="store-free framework marker lowering cannot acquire rows"
+    ):
+        scenario._lower_marker_unit(  # pyright: ignore[reportPrivateUsage] - exercise the no-store composition
+            target, model, POSTGRES, "locking", scenario.INERT_CLOCK_INSTANT
+        )
+
+
+@pytest.mark.parametrize("document", [{"increment": 1}, {"computed": "maxPlusOne"}])
+def test_marker_shaped_value_object_is_not_a_framework_instruction(
+    document: dict[str, object],
+) -> None:
+    model = models.load_models()["customer"]
+    translated = scenario._case_write_instructions(  # pyright: ignore[reportPrivateUsage] - inspect unprepared routing
+        [
+            {
+                "mutation": "insert",
+                "entity": "Customer",
+                "rows": [{"id": 1, "name": "Ada", "address": document}],
+            }
+        ],
+        model,
+    )
+
+    assert not scenario._framework_unit(translated, model)  # pyright: ignore[reportPrivateUsage] - inspect marker routing
+
+
+@pytest.mark.parametrize("kind", ["mixed", "multiple", "grouped", "multiple-rows"])
+def test_marker_composition_is_refused_before_resolution_or_execution(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("invalid marker composition reached predecessor resolution")
+
+    monkeypatch.setattr(scenario, "_resolve_entries", refuse)
+    marker = _registry_advance("badge_seq")
+    writes = [marker]
+    if kind == "mixed":
+        writes.append(
+            {"mutation": "insert", "entity": "Badge", "rows": [{"id": 1, "holder": "Bo"}]}
+        )
+    elif kind == "multiple":
+        writes.append(_registry_advance("ticket_seq"))
+    elif kind == "multiple-rows":
+        marker["rows"] = [
+            {"name": "badge_seq", "nextVal": {"increment": 1}},
+            {"name": "ticket_seq", "nextVal": {"increment": 1}},
+        ]
+    step: dict[str, object] = {"write": writes, "databaseCalls": 2}
+    if kind == "grouped":
+        step["uow"] = "g"
+    case = _synthetic_scenario("models/pk-sequence.yaml", "m-pk-gen-999", [step])
+    refusal = "never both|buffer's only entry|choreography unit of its own"
+    with pytest.raises(EngineError, match=refusal):
+        scenario.compile_scenario_case(case, "postgres")
+    port = FakeWritePort()
+    with pytest.raises(EngineError, match=refusal):
+        scenario.run_scenario_case(case, port)
+    assert port.writes == []
+    assert port.reads == []
+
+
 def test_a_unit_mixing_a_framework_marker_with_a_public_verb_write_is_refused() -> None:
     # A pk-gen registry advance has no verb to be stated through and an ordinary
     # insert has nothing else, so a unit holding both would put half its DML

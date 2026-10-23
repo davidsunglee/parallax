@@ -38,6 +38,7 @@ from tests._support.sweep_goldens import (
 from tests.compatibility._float_zero_support import spell_float_zero_negative
 
 pytestmark = pytest.mark.compile_sweep
+pytest_plugins = ("tests._support.lane_evidence",)
 
 _REACHABLE = reachable_cases()
 # The declared profile the lane-dispatch check below makes its `run` request under,
