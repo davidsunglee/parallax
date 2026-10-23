@@ -37,7 +37,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateWrite,
     PreparedTargetWrite,
 )
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
+from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
@@ -80,10 +80,10 @@ from parallax.core.write_plan.keys import (
 )
 from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.plan import (
-    BoundRange,
     CurrentRowOutput,
-    DeferredRange,
-    WriteCompletion,
+    TemporalWriteOwnership,
+    WriteEffects,
+    WriteGroup,
     WritePlan,
 )
 from parallax.core.write_plan.steps import KeyTarget
@@ -781,7 +781,9 @@ class UnitOfWork:
         states it changed, continues or ends the authority of the sources whose
         state it advanced, transformed, or removed, retires the owned rows it
         removed, and registers the rows it opened. A deferred settled write
-        binds at its turn against what every earlier one published. What a
+        binds at its turn against what every earlier group published, and
+        executes in one group with the ready deferred writes bound beside it.
+        What a
         flush's writes leave for its sources outlives the flush, and the
         current rows a later submission may continue from are captured as they
         execute. The pre-commit flush, which no submission follows and none of
@@ -814,67 +816,120 @@ class UnitOfWork:
         # buffer drains, what a plan's deferred settled write took over is
         # released as it executes rather than held until the flush ends.
         concluding = trigger == "pre_commit"
+        ownership = admission.concluding_ownership() if concluding else admission.ownership
         plan = self._planner.finalize(
             WritePlanningRequest(
                 actor_identity=self._actor_identity,
                 transaction_instant=self._transaction_instant,
                 concurrency=self.settings.concurrency,
                 buffered_writes=admission.composed_writes(),
-                ownership=admission.concluding_ownership() if concluding else admission.ownership,
+                ownership=ownership,
                 counts_unchanged_rows=self.settings.counts_unchanged_rows,
             )
         )
         admission.drain_planned()
         try:
-            self._run_write_plan(plan, captures=not concluding)
+            self._run_write_plan(plan, ownership=ownership, captures=not concluding)
         except BaseException as failure:
             self._lifetime.doom(failure)
             raise
 
-    def _run_write_plan(self, plan: WritePlan, *, captures: bool) -> None:
-        """Execute ``plan``'s Write Groups in order, completing each settled
-        write of a group, in order, as soon as the group's steps succeeded and
-        before any step of a later group executes.
+    def _run_write_plan(
+        self, plan: WritePlan, *, ownership: TemporalWriteOwnership, captures: bool
+    ) -> None:
+        """Execute ``plan``'s entries in order, completing each write of a
+        Write Group, in order, as soon as the group's steps succeeded and before
+        any step of a later group executes.
 
-        A deferred settled write binds at its turn, against the ownership every
-        earlier one published, and executes and completes before the walk
-        advances. The deferred writes of an acquisition span share the reads
-        of their coverage, which can run before an earlier write of the span
-        completes, while each still binds, executes, and completes at its own
-        turn. A settled write with no step still completes. A group that fails
-        completes none of its writes, and nothing after it is prepared, bound,
-        or executed.
+        A deferred settled write binds at its turn under ``ownership``, as
+        every earlier group's completion left it, and executes in the group of
+        the ready writes bound with it: the leading writes of its acquisition
+        span whose coverage is read, or itself alone outside any span. The
+        coverage reads of a span can run before an earlier group of it
+        completes. A write with no step still completes. A group that fails
+        completes none of its writes, and nothing after it is read, bound, or
+        executed.
 
         Where it ``captures``, the current rows a write describes are captured
         as their payloads are demanded and published with its completion.
         """
-        execute = self.execute_write_steps
         audit: AuditDecoration | None = None
-        groups = plan.groups
+        entries = plan.entries
         spans = iter(plan.acquisition_spans)
         span = next(spans, None)
         position = 0
-        while position < len(groups):
-            if span is not None and span.start == position:
-                if audit is None:
-                    audit = self._audit_decoration()
-                self._bind_deferred(
-                    tuple(group.writes[0].deferred for group in groups[span.start : span.stop]),
-                    audit,
-                    captures=captures,
-                )
-                position = span.stop
-                span = next(spans, None)
+        while position < len(entries):
+            entry = entries[position]
+            if isinstance(entry, WriteGroup):
+                position += 1
+                self._execute_write_group(entry, captures=captures)
                 continue
-            group = groups[position]
-            position += 1
-            writes = group.writes
-            expected = sum(len(write.opened.allocated) for write in writes)
-            capture = _CurrentRowCapture.of(writes) if captures else None
+            stop = position + 1
+            if span is not None and span.start == position:
+                stop = span.stop
+                span = next(spans, None)
+            if audit is None:
+                audit = self._audit_decoration()
+            self._execute_deferred(
+                plan, position, stop, ownership=ownership, audit=audit, captures=captures
+            )
+            position = stop
+
+    def _audit_decoration(self) -> AuditDecoration:
+        return self._planner.audit_decoration(
+            actor_identity=self._actor_identity, transaction_instant=self._transaction_instant
+        )
+
+    def _execute_deferred(
+        self,
+        plan: WritePlan,
+        start: int,
+        stop: int,
+        *,
+        ownership: TemporalWriteOwnership,
+        audit: AuditDecoration,
+        captures: bool,
+    ) -> None:
+        """Bind ``plan``'s deferred settled writes ``[start, stop)`` group by
+        ready group, executing and completing each group before the next binds
+        or reads."""
+        with RangeBindings(
+            plan,
+            start=start,
+            stop=stop,
+            acquire_rows=self.acquire_rows,
+            current=self._current,
+            ownership=ownership,
+            audit=audit,
+            payloads=self._planner.payloads,
+        ) as bindings:
+            while (group := next(bindings, None)) is not None:
+                try:
+                    self._execute_write_group(group, captures=captures)
+                finally:
+                    group = None
+
+    def _execute_write_group(self, group: WriteGroup, *, captures: bool) -> None:
+        """Execute ``group``'s steps once and complete each of its writes, in
+        order, once they all succeeded and the keys the database allocated
+        are as many as its writes open, with the current rows its execution
+        captured where it ``captures``.
+
+        However it ends, what the group's capture staged is released, and
+        nothing here keeps the group or a write's captured rows."""
+        writes = group.writes
+        steps = group.steps
+        expected = sum(len(write.opened.allocated) for write in writes)
+        capture = _CurrentRowCapture.for_writes(writes) if captures else None
+        write: WriteEffects | None = None
+        captured: tuple[tuple[CurrentRowOutput, object | None], ...] = ()
+        try:
             if capture is None:
-                allocated = execute(group.steps, allocates=bool(expected))
+                allocated = self.execute_write_steps(steps, allocates=bool(expected))
             else:
-                allocated = capture.execute(execute, group.steps, allocates=bool(expected))
+                allocated = capture.execute(
+                    self.execute_write_steps, steps, allocates=bool(expected)
+                )
             if len(allocated) != expected:
                 raise UnitOfWorkError(
                     f"a Write Group opening {expected} row(s) whose keys the database allocates "
@@ -883,64 +938,24 @@ class UnitOfWork:
             first = 0
             for write in writes:
                 stop = first + len(write.opened.allocated)
-                deferred = write.deferred
-                if deferred is None:
-                    captured = () if capture is None else capture.take_rows(write.current_outputs)
-                    self._complete_write(write, allocated[first:stop], captured)
-                else:
-                    if audit is None:
-                        audit = self._audit_decoration()
-                    self._bind_deferred((deferred,), audit, captures=captures)
+                if capture is not None:
+                    captured = capture.take_rows(write.current_outputs)
+                self._complete_write(write, allocated[first:stop], captured)
+                captured = ()
                 first = stop
-
-    def _audit_decoration(self) -> AuditDecoration:
-        return self._planner.audit_decoration(
-            actor_identity=self._actor_identity, transaction_instant=self._transaction_instant
-        )
-
-    def _bind_deferred(
-        self,
-        deferred: tuple[DeferredRange | None, ...],
-        audit: AuditDecoration,
-        *,
-        captures: bool,
-    ) -> None:
-        """Bind, execute, and complete each of ``deferred``, one deferred
-        settled write's range or an acquisition span's, in order.
-
-        A description this unit of work's planner did not finalize as a range
-        is refused before anything is read."""
-        ranges = tuple(_finalized_range(description) for description in deferred)
-        with RangeBindings(
-            ranges,
-            acquire_rows=self.acquire_rows,
-            current=self._current,
-            ownership=self._admission.ownership,
-            audit=audit,
-            payloads=self._planner.payloads,
-        ) as bindings:
-            for bound in bindings:
-                self._execute_bound_range(bound, captures=captures)
-
-    def _execute_bound_range(self, bound: BoundRange, *, captures: bool) -> None:
-        """Execute ``bound``'s steps and publish its completion, with the
-        current rows its execution captured where it ``captures``."""
-        capture = _CurrentRowCapture.of((bound,)) if captures else None
-        if capture is None:
-            self.execute_write_steps(bound.steps, allocates=False)
-            self._complete_write(bound, ())
-            return
-        capture.execute(self.execute_write_steps, bound.steps, allocates=False)
-        self._complete_write(bound, (), capture.take_rows(bound.current_outputs))
+        finally:
+            if capture is not None:
+                capture.release()
+            del group, writes, steps, write, captured
 
     def _complete_write(
         self,
-        completion: WriteCompletion,
+        effects: WriteEffects,
         allocated: tuple[object, ...],
         captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
     ) -> None:
-        """Publish one successful settled write's ``completion``: its own, or
-        that of the range its deferred coverage bound.
+        """Publish one successful write's ``effects``: a settled write's own,
+        or those of the range its deferred coverage bound.
 
         Live evidence of every observed state it changed is invalidated and
         every change recorded, so a read that ran before it cannot later
@@ -954,12 +969,12 @@ class UnitOfWork:
         """
         stamp = self._freshness + 1
         changed_any = False
-        for key in completion.changed:
+        for key in effects.changed:
             changed_any = True
             self._invalidate(key, stamp)
         if changed_any:
             self._freshness = stamp
-        self._admission.complete(completion, allocated, at=self._freshness, captured=captured)
+        self._admission.complete(effects, allocated, at=self._freshness, captured=captured)
 
     def _invalidate(self, key: ObjectKey | ObjectStateKey, stamp: int) -> None:
         if not isinstance(key, ObjectKey):
@@ -983,14 +998,6 @@ class UnitOfWork:
         self._admission.discard()
         self._observations.clear()
         self._changed.clear()
-
-
-def _finalized_range(deferred: DeferredRange | None) -> DeferredTemporalRange:
-    if not isinstance(deferred, DeferredTemporalRange):
-        raise TypeError(
-            f"a deferred range this planner did not finalize cannot be bound: {deferred!r}"
-        )
-    return deferred
 
 
 def _stale_source(identity: str, object_key: ObjectKey) -> WriteEvidenceError:

@@ -85,6 +85,7 @@ from parallax.core.sql_gen._write import StepPayload, compile_write_step
 from parallax.core.unit_work import NO_AUDIT, WritePlanner, WritePlanningRequest
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.payload import WritePayloadPreparer
+from parallax.core.write_plan.plan import WriteGroup
 from parallax.core.write_plan.steps import (
     PlannedDelete,
     PlannedInsert,
@@ -243,7 +244,9 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
             _Planning(
                 planner=self,
                 shapes=[type(item).__name__ for item in request.buffered_writes],
-                sequences=tuple(group.steps for group in finalized.groups),
+                sequences=tuple(
+                    entry.steps for entry in finalized.entries if isinstance(entry, WriteGroup)
+                ),
             )
         )
         return finalized

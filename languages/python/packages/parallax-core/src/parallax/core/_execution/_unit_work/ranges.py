@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from bisect import bisect_left
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Sequence, Set
 from dataclasses import dataclass
@@ -57,13 +58,17 @@ from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObj
 from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
+    AcquisitionSpan,
     BoundRange,
     DeferredRange,
+    SettledWrite,
     TemporalWriteOwnership,
+    WriteGroup,
+    WritePlan,
 )
 from parallax.core.write_plan.planned_rows import resolve_row
 from parallax.core.write_plan.predecessor_rows import PredecessorRows
-from parallax.core.write_plan.steps import KeyTarget, PlannedValue
+from parallax.core.write_plan.steps import KeyTarget, PlannedStep, PlannedValue
 
 __all__ = [
     "DeferredTemporalRange",
@@ -940,30 +945,33 @@ class _Invocation:
 
 
 class RangeBindings:
-    """The deferred ranges a flush binds from one turn, each bound only when
-    the flush asks for it: a scoped, single-pass iterator of their
-    :class:`BoundRange` values, in order.
+    """The deferred settled writes of a plan a flush binds from one turn, bound
+    only as the flush asks for them: a scoped, single-pass iterator of the
+    Write Groups they execute in, in order.
 
-    The ranges are one deferred range, or an acquisition span's
-    (`m-unit-work` *Shared coverage acquisition*): Bitemporal ranges of one
-    Entity, each of a distinct object, read alike. The first advance
-    completes, through ``acquire_rows``, every retained starting row each range
-    holds that ``current`` still judges current, and derives once the coverage
-    nothing each range holds covers. Their windows are packed, in range and
-    Valid-Time order, into reads naming at most :data:`_COVERAGE_WINDOWS`
-    each, and a range is ready once every read naming its windows succeeded,
-    whatever the reads returned. Each advance reads only while the next range
-    is not ready, each read's rows sealed as Predecessor Rows of the object
-    whose key each stored row holds while its resources are live, and then
-    binds that range under ``ownership`` as it stands then, every row the
-    binding produces finalized and every close it emits decorated once by
-    ``audit``. Nothing is bound ahead of the advance asking for it, and nothing
-    is executed or published: the flush executes and completes each bound
-    range before advancing.
+    ``plan``'s entries ``[start, stop)`` are one deferred settled write, or an
+    acquisition span's (`m-unit-work` *Shared coverage acquisition*):
+    Bitemporal ranges of one Entity, each of a distinct object, read alike.
+    Anything else is refused before any row is read. The first advance takes
+    the ranges from ``plan``, keeping no reference to it, completes, through
+    ``acquire_rows``, every retained starting row each range holds that
+    ``current`` still judges current, and derives once the coverage nothing
+    each range holds covers. Their windows are packed, in range and Valid-Time
+    order, into reads naming at most :data:`_COVERAGE_WINDOWS` each, and a
+    range is ready once every read naming its windows succeeded, whatever the
+    reads returned. Each advance reads only while the next range is not ready,
+    each read's rows sealed as Predecessor Rows of the object whose key each
+    stored row holds while its resources are live. It then binds that range
+    and every ready range following it, up to the first that is not, under
+    ``ownership`` as it stands then, every row the binding produces finalized
+    and every close it emits decorated once by ``audit``, and answers them as
+    one Write Group. Binding reads nothing, nothing is bound ahead of the
+    advance asking for it, and nothing is executed or published: the flush
+    executes and completes each group before advancing.
 
     Exhausting the iterator, leaving its scope, or a failure of its own drops
     every row reference and dependency it still holds, without suppressing or
-    replacing the failure; what a bound range carries keeps its own lifetime.
+    replacing the failure; what a group carries keeps its own lifetime.
     """
 
     __slots__ = (
@@ -971,23 +979,28 @@ class RangeBindings:
         "_invocation",
         "_lookup",
         "_pending",
-        "_ranges",
+        "_plan",
+        "_positions",
         "_reads",
         "_requests",
     )
 
     def __init__(
         self,
-        ranges: tuple[DeferredTemporalRange, ...],
+        plan: WritePlan,
         /,
         *,
+        start: int,
+        stop: int,
         acquire_rows: AcquireRows,
         current: Callable[[ObjectStateKey, int], bool],
         ownership: TemporalWriteOwnership,
         audit: AuditDecoration,
         payloads: WritePayloadPreparer,
     ) -> None:
-        self._ranges = ranges
+        _require_deferred(plan, start, stop)
+        self._plan: WritePlan | None = plan
+        self._positions = range(start, stop)
         self._invocation: _Invocation | None = _Invocation(
             acquire_rows, current, ownership, audit, payloads
         )
@@ -1011,25 +1024,38 @@ class RangeBindings:
     def __iter__(self) -> Self:
         return self
 
-    def __next__(self) -> BoundRange:
+    def __next__(self) -> WriteGroup:
         invocation = self._invocation
         if invocation is None:
             raise StopIteration
         try:
-            return self._bind_next(invocation)
+            return self._bind_next_group(invocation)
         except BaseException:
             self._release()
             raise
 
-    def _bind_next(self, invocation: _Invocation) -> BoundRange:
-        if self._ranges:
+    def _bind_next_group(self, invocation: _Invocation) -> WriteGroup:
+        if self._plan is not None:
             self._prepare(invocation)
         pending = self._pending
         if not pending:
             raise StopIteration
-        head = pending[0]
-        while head.ready_after_reads > self._completed_reads:
+        while pending[0].ready_after_reads > self._completed_reads:
             self._read(invocation)
+        return WriteGroup.from_members(self._bind_ready_writes(invocation))
+
+    def _bind_ready_writes(
+        self, invocation: _Invocation
+    ) -> Iterator[tuple[BoundRange, tuple[PlannedStep, ...]]]:
+        """Each leading range whose reads have all finished, bound in order
+        beside its steps, up to the first range still waiting for a read; it
+        reads nothing."""
+        pending = self._pending
+        while pending and pending[0].ready_after_reads <= self._completed_reads:
+            yield self._bind_head(invocation)
+
+    def _bind_head(self, invocation: _Invocation) -> tuple[BoundRange, tuple[PlannedStep, ...]]:
+        head = self._pending[0]
         bound = _bind_range(
             head.deferred,
             head.reused,
@@ -1038,19 +1064,24 @@ class RangeBindings:
             audit=invocation.audit,
             payloads=invocation.payloads,
         )
-        pending.popleft()
+        self._pending.popleft()
         lookup = self._lookup
         if lookup is not None:
             del lookup[cast("ManagedValue", head.deferred.meaning.key_value)]
         head.reused = head.acquired = None
-        return bound
+        return bound, bound.steps
 
     def _prepare(self, invocation: _Invocation) -> None:
-        ranges = self._ranges
-        self._ranges = ()
+        plan = self._plan
+        assert plan is not None  # prepared once, on the first advance
+        self._plan = None
+        entries = plan.entries
         pending = self._pending
         windows = 0
-        for deferred in ranges:
+        for position in self._positions:
+            deferred = cast(
+                "DeferredTemporalRange", cast("SettledWrite", entries[position]).deferred
+            )
             # Each range's completed rows are held only by its record, which a
             # failure releases, never by a local a later completion's failure
             # frame would keep.
@@ -1096,8 +1127,29 @@ class RangeBindings:
         self._pending.clear()
         self._lookup = None
         self._requests = None
-        self._ranges = ()
+        self._plan = None
         self._invocation = None
+
+
+def _require_deferred(plan: WritePlan, start: int, stop: int) -> None:
+    """Refuse ``plan``'s entries ``[start, stop)`` unless they are one deferred
+    settled write or one of its acquisition spans, each write's range one this
+    module finalized."""
+    entries = plan.entries
+    if not 0 <= start < stop <= len(entries):
+        raise ValueError(f"entries [{start}, {stop}) are not within a plan of {len(entries)}")
+    if stop - start > 1:
+        spans = plan.acquisition_spans
+        index = bisect_left(spans, start, key=_START)
+        if index == len(spans) or spans[index] != AcquisitionSpan(start, stop):
+            raise ValueError(f"entries [{start}, {stop}) are not an acquisition span of the plan")
+    for position in range(start, stop):
+        entry = entries[position]
+        deferred = entry.deferred if isinstance(entry, SettledWrite) else entry
+        if not isinstance(deferred, DeferredTemporalRange):
+            raise TypeError(
+                f"a deferred range this planner did not finalize cannot be bound: {deferred!r}"
+            )
 
 
 def _coverage_reads(pending: deque[_PendingRange]) -> Iterator[CoverageReadRequest]:

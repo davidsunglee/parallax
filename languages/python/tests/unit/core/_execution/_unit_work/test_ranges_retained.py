@@ -40,6 +40,7 @@ from tests.unit._positional_row_support import positional_row
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
     HeldRows,
+    alone,
     bind_deferred,
     range_bindings,
 )
@@ -113,10 +114,10 @@ def _bind(
     *,
     current: Callable[[ObjectStateKey, int], bool] = _always,
 ) -> tuple[BoundRange, HeldRows]:
-    deferred = settled.deferred
-    assert isinstance(deferred, DeferredTemporalRange)
     held = HeldRows(POSITION, stored, overlapping=True)
-    bound = bind_deferred(POSITION, deferred, held, transaction_instant=_INSTANT, current=current)
+    bound = bind_deferred(
+        POSITION, alone(settled), held, transaction_instant=_INSTANT, current=current
+    )
     return bound, held
 
 
@@ -172,10 +173,8 @@ def test_a_row_two_reads_both_return_is_bound_once() -> None:
     # the same physical state is one original, not cardinality corruption.
     settled = _settled(_holding(addressed_write(value="150.00"), _held(_START)))
     held_rows = HeldRows(POSITION, [_START, _LATER])
-    deferred = settled.deferred
-    assert isinstance(deferred, DeferredTemporalRange)
     bound = bind_deferred(
-        POSITION, deferred, held_rows, transaction_instant=_INSTANT, current=_always
+        POSITION, alone(settled), held_rows, transaction_instant=_INSTANT, current=_always
     )
     closes = [step for step in bound.steps if isinstance(step, PlannedClose)]
     assert len(closes) == 2
@@ -299,8 +298,6 @@ class _Failed(Exception):
 
 def test_a_failed_coverage_read_leaves_its_bindings_holding_no_reused_row() -> None:
     settled = _settled(_holding(addressed_write(value="150.00"), _held(_START)))
-    deferred = settled.deferred
-    assert isinstance(deferred, DeferredTemporalRange)
     held = HeldRows(POSITION, [_START, _LATER], overlapping=True)
     reused: list[object] = []
     failure = _Failed()
@@ -315,7 +312,13 @@ def test_a_failed_coverage_read_leaves_its_bindings_holding_no_reused_row() -> N
         return answer
 
     bindings = range_bindings(
-        POSITION, deferred, acquire, transaction_instant=_INSTANT, current=_always
+        POSITION,
+        alone(settled),
+        acquire,
+        start=0,
+        stop=1,
+        transaction_instant=_INSTANT,
+        current=_always,
     )
     with pytest.raises(_Failed) as raised, bindings:
         next(bindings)

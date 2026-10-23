@@ -34,7 +34,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import MappingRow
+from parallax.core.db_port import MappingRow, OrderedWriteResultComplete
 from parallax.core.document_codec import _document as document_module
 from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import (
@@ -65,11 +65,14 @@ from parallax.core.unit_work import (
     WriteAssignment,
 )
 from parallax.core.write_plan import ObjectKey
+from parallax.core.write_plan.steps import MilestoneTarget
 from parallax.descriptor import domain_model_from_document
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     BeginCall,
     CommitCall,
+    Ordered,
+    OrderedCall,
     Read,
     ReadCall,
     RollbackCall,
@@ -1047,6 +1050,81 @@ def test_a_later_reads_failure_leaves_the_writes_completed_before_it() -> None:
     assert _written_keys(port) == {1}
 
 
+def _both_ready() -> list[MappingRow]:
+    """The rows the one shared read of ``frag(1, 1)`` and ``frag(2, 1)``
+    returns, after which both writes are ready and run as one group."""
+    return [*_odd_rows(shared.ShareCols, 1, 1), *_odd_rows(shared.ShareCols, 2, 1)]
+
+
+def test_a_ready_groups_closes_share_one_invocation_ahead_of_one_insert_of_every_opening() -> None:
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=_both_ready()),
+            Ordered(OrderedWriteResultComplete((1, 1, 1, 1))),
+            Write(affected=4),
+        ),
+        ordered=True,
+    )
+    scope(port, shared.DOMAIN).transact(
+        _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 1)),
+        itself,
+        concurrency="optimistic",
+    )
+    assert _flush_calls(port) == [ReadCall, OrderedCall, WriteCall, CommitCall]
+    _read, ordered_call, insert, _commit = [
+        call for call in port.calls if not isinstance(call, BeginCall)
+    ]
+    assert isinstance(ordered_call, OrderedCall)
+    assert isinstance(insert, WriteCall)
+    # Each object's two closes, in member order, then each object's merged
+    # amendment and tail, in member order.
+    assert [close.binds[1] for close in ordered_call.writes] == [1, 1, 2, 2]
+    assert [row[0] for row in inserted_rows(insert)] == [1, 1, 2, 2]
+
+
+def test_a_later_writes_shortfall_in_a_ready_group_precedes_an_earlier_writes_insert() -> None:
+    port = ScriptedAdapter(
+        Transact(Read(rows=_both_ready()), Write(times=3), Write(affected=0)),
+    )
+    with raises_contextualized(OptimisticLockConflictError) as raised:
+        scope(port, shared.DOMAIN).transact(
+            _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 1)),
+            itself,
+            concurrency="optimistic",
+            max_retries=0,
+        )
+    target = raised.value.target
+    assert isinstance(target, MilestoneTarget)
+    assert target.key_values == (2,)
+    # Run alone, object 1's insert would have run before object 2's closes.
+    assert _flush_calls(port) == [ReadCall, *[WriteCall] * 4]
+    assert not any(
+        isinstance(call, WriteCall) and call.sql.startswith("insert") for call in port.calls
+    )
+    assert _written_keys(port) == {1, 2}
+
+
+def test_a_ready_groups_failing_insert_reports_its_statement_error_alone() -> None:
+    failure = DatabaseError(category="uniqueViolation", native_code="23505", message="duplicate")
+    port = ScriptedAdapter(
+        Transact(Read(rows=_both_ready()), Write(times=4), Write(raises=failure)),
+    )
+    with raises_contextualized(DatabaseError) as raised:
+        scope(port, shared.DOMAIN).transact(
+            _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 1)),
+            itself,
+            concurrency="optimistic",
+            max_retries=0,
+        )
+    assert raised.value is failure
+    # The grouped insert of both objects' openings is the last call: nothing
+    # is replayed, read, or attributed to one object after it.
+    assert _flush_calls(port) == [ReadCall, *[WriteCall] * 5]
+    insert = port.calls[-2]
+    assert isinstance(insert, WriteCall)
+    assert [row[0] for row in inserted_rows(insert)] == [1, 1, 2, 2]
+
+
 def _tag_predicate() -> PreparedPredicateWrite:
     tag = shared.ShareTag.identity.canonical
     prepared = prepare_wire_write(
@@ -1071,7 +1149,10 @@ def test_a_shared_coverage_read_is_one_read_call_of_the_flush_reaching_its_span(
     recorder = RecordingLifecycleProvider()
     stored = [*_odd_rows(shared.ShareCols, 1, 1), *_odd_rows(shared.ShareCols, 2, 1)]
     predicate = (Write(),) if trigger == "predicate_write" else ()
-    port = ScriptedAdapter(Transact(Read(rows=stored), Write(times=6), *predicate))
+    # Both objects are ready after the one read and execute as one group: each
+    # closes its two rectangles alone, and their four successors share one
+    # insert.
+    port = ScriptedAdapter(Transact(Read(rows=stored), Write(times=5), *predicate))
 
     def fn(tx: TxnAttempt) -> None:
         _correct((shared.ShareCols, 1, 1), (shared.ShareCols, 2, 1))(tx)
@@ -1085,7 +1166,7 @@ def test_a_shared_coverage_read_is_one_read_call_of_the_flush_reaching_its_span(
     (flush,) = [event for event in events if isinstance(event, FlushStarted)]
     assert flush.trigger == trigger
     calls = [event.kind for event in events if isinstance(event, DatabaseCallStarted)]
-    # One read names both objects' parts, ahead of each object's own writes.
-    assert calls == ["read", *(["write"] * (6 + len(predicate)))]
+    # One read names both objects' parts, ahead of their group's writes.
+    assert calls == ["read", *(["write"] * (5 + len(predicate)))]
     (read,) = [call for call in port.calls if isinstance(call, ReadCall)]
     assert read.sql.count("t0.id = ") == 2

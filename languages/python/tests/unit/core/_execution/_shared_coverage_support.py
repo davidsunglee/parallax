@@ -44,6 +44,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import ObjectKey, PredecessorRow, TemporalObservation, WritePlan
 from parallax.core.write_plan.keys import TemporalObjectStateKey
+from parallax.core.write_plan.plan import SettledWrite
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
 from tests.unit._positional_row_support import positional_row
@@ -229,10 +230,10 @@ def plan(
 
 
 def ranges_of(written: WritePlan) -> tuple[DeferredTemporalRange, ...]:
-    """The deferred range of each of ``written``'s groups, in order."""
+    """The deferred range of each of ``written``'s entries, in order."""
     ranges: list[DeferredTemporalRange] = []
-    for group in written.groups:
-        (write,) = group.writes
-        assert isinstance(write.deferred, DeferredTemporalRange)
-        ranges.append(write.deferred)
+    for entry in written.entries:
+        assert isinstance(entry, SettledWrite)
+        assert isinstance(entry.deferred, DeferredTemporalRange)
+        ranges.append(entry.deferred)
     return tuple(ranges)

@@ -15,7 +15,7 @@ from parallax.core.sql_gen._write import (
     InsertStatementBuilder,
     StepPayload,
     compile_write_step,
-    effect_parameter_ceiling,
+    non_insert_parameter_ceiling,
 )
 from parallax.core.storage_layout import RelationalDocument
 from parallax.core.write_plan.payload import (
@@ -248,7 +248,7 @@ def ordered_parameter_ceiling(step: PlannedStep, dialect: Dialect) -> int | None
     carries where ordered write transport can present it, computed before its
     payload is demanded; ``None`` where the step must run alone.
 
-    Only a count-only effect on one row qualifies — a temporal close, guard,
+    Only a count-only non-insert step on one row qualifies — a temporal close, guard,
     revision, or removal, or a Non-Temporal update or delete of one key that
     expects an exact count — and only one whose ceiling fits the dialect's
     configured parameter limit. Every other step, and one whose ceiling exceeds
@@ -263,7 +263,7 @@ def ordered_parameter_ceiling(step: PlannedStep, dialect: Dialect) -> int | None
             | PlannedUpdate(target=KeyTarget(key_values=(_,)), affected_rows=ExactCount())
             | PlannedDelete(target=KeyTarget(key_values=(_,)), affected_rows=ExactCount())
         ):
-            ceiling = effect_parameter_ceiling(step)
+            ceiling = non_insert_parameter_ceiling(step)
             return ceiling if ceiling <= dialect.max_bind_parameters else None
         case _:
             return None

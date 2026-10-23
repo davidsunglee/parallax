@@ -29,12 +29,14 @@ from parallax.core.write_plan.plan import (
     BoundRange,
     SettledWrite,
     TemporalWriteOwnership,
+    WritePlan,
 )
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._positional_row_support import positional_row
 
 __all__ = [
     "HeldRows",
+    "alone",
     "bind_deferred",
     "bind_held",
     "coverage_read",
@@ -98,19 +100,23 @@ def never_current(state: ObjectStateKey, read_at: int) -> bool:
 
 def range_bindings(
     model: Metamodel,
-    deferred: DeferredTemporalRange,
+    plan: WritePlan,
     acquire_rows: AcquireRows,
     *,
+    start: int,
+    stop: int,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
     current: Callable[[ObjectStateKey, int], bool] = never_current,
 ) -> RangeBindings:
-    """The scoped binding a flush binds ``deferred`` through, reading through
-    ``acquire_rows`` under ``ownership``, its retained rows judged by
-    ``current``."""
+    """The scoped binding a flush binds ``plan``'s deferred entries ``[start,
+    stop)`` through, reading through ``acquire_rows`` under ``ownership``,
+    their retained rows judged by ``current``."""
     planner = build_write_planner(model)
     return RangeBindings(
-        (deferred,),
+        plan,
+        start=start,
+        stop=stop,
         acquire_rows=acquire_rows,
         current=current,
         ownership=ownership,
@@ -121,59 +127,80 @@ def range_bindings(
     )
 
 
+def alone(settled: SettledWrite) -> WritePlan:
+    """The plan of the deferred ``settled`` write alone, as settlement plans a
+    lone deferred write: one entry, in no acquisition span."""
+    assert isinstance(settled.deferred, DeferredTemporalRange)
+    return WritePlan((settled,))
+
+
 def bind_deferred(
     model: Metamodel,
-    deferred: DeferredTemporalRange,
+    plan: WritePlan,
     acquire_rows: AcquireRows,
     *,
+    position: int = 0,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
     current: Callable[[ObjectStateKey, int], bool] = never_current,
 ) -> BoundRange:
-    """``deferred`` bound through its :func:`range_bindings`."""
+    """The deferred write at ``plan``'s entry ``position`` bound alone, through
+    its :func:`range_bindings`: the one write of the one Write Group they
+    answer, whose steps are its own."""
     with range_bindings(
         model,
-        deferred,
+        plan,
         acquire_rows,
+        start=position,
+        stop=position + 1,
         transaction_instant=transaction_instant,
         ownership=ownership,
         current=current,
     ) as bindings:
-        (bound,) = bindings
+        (group,) = bindings
+    (bound,) = group.writes
+    assert isinstance(bound, BoundRange)
+    assert group.steps is bound.steps
     return bound
 
 
 def bind_held(
     model: Metamodel,
-    settled: SettledWrite,
+    plan: WritePlan,
     rows: Sequence[PredecessorRow],
     *,
+    position: int = 0,
     transaction_instant: TransactionInstant,
     ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
 ) -> BoundRange:
-    """``settled write``'s deferred range bound, as the unit of work binds it at
-    execution, to a coverage read finding ``rows`` under ``ownership``."""
-    deferred = settled.deferred
-    assert isinstance(deferred, DeferredTemporalRange)
+    """The deferred write at ``plan``'s entry ``position`` bound, as the unit
+    of work binds it at execution, to a coverage read finding ``rows`` under
+    ``ownership``."""
     return bind_deferred(
         model,
-        deferred,
+        plan,
         HeldRows(model, rows),
+        position=position,
         transaction_instant=transaction_instant,
         ownership=ownership,
     )
 
 
 def coverage_read(
-    model: Metamodel, settled: SettledWrite, *, transaction_instant: TransactionInstant
+    model: Metamodel,
+    plan: WritePlan,
+    *,
+    position: int = 0,
+    transaction_instant: TransactionInstant,
 ) -> CoverageReadRequest:
-    """The coverage read ``settled write``'s deferred range asks for when the unit of
-    work binds it, observed as the read is asked for and before any binding."""
-    deferred = settled.deferred
-    assert isinstance(deferred, DeferredTemporalRange)
+    """The coverage read the deferred write at ``plan``'s entry ``position``
+    asks for when the unit of work binds it, observed as the read is asked for
+    and before any binding."""
     observed = _ObservedRead()
     with contextlib.suppress(_ObservedRead):
-        bind_deferred(model, deferred, observed, transaction_instant=transaction_instant)
+        bind_deferred(
+            model, plan, observed, position=position, transaction_instant=transaction_instant
+        )
     assert isinstance(observed.request, CoverageReadRequest)
     return observed.request
 

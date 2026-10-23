@@ -2,7 +2,8 @@
 binding (`m-unit-work` *Shared coverage acquisition*), over the in-memory
 acquisition: their coverage read in shared reads packed in range and
 Valid-Time order, each range ready once every read naming its parts
-succeeded, and each bound only when the flush advances to it."""
+succeeded, and the leading ready ranges bound together as one Write Group only
+when the flush advances to it, with no read taken to enlarge it."""
 
 from __future__ import annotations
 
@@ -35,11 +36,15 @@ from parallax.core.unit_work import (
     buffered_write,
 )
 from parallax.core.write_plan import PredecessorRow, PredecessorRows
+from parallax.core.write_plan import plan as plan_module
 from parallax.core.write_plan.keys import ObjectStateKey, TemporalObjectStateKey
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     AcquisitionSpan,
     BoundRange,
+    SettledWrite,
+    WriteEffects,
+    WriteGroup,
     WritePlan,
 )
 from parallax.core.write_plan.steps import PlannedClose, PlannedInsert, PlannedStep
@@ -126,14 +131,18 @@ class _Traced:
 
 
 def _bindings(
-    ranges: tuple[DeferredTemporalRange, ...],
+    written: WritePlan,
     acquire: AcquireRows,
     *,
     current: Callable[[ObjectStateKey, int], bool] = _always,
 ) -> RangeBindings:
+    """The scoped binding of every entry of ``written``: its one acquisition
+    span, or its one deferred write."""
     planner = build_write_planner(MODEL)
     return RangeBindings(
-        ranges,
+        written,
+        start=0,
+        stop=len(written.entries),
         acquire_rows=acquire,
         current=current,
         ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -144,30 +153,47 @@ def _bindings(
     )
 
 
-def _key(bound: BoundRange) -> object:
+def _key(bound: WriteEffects) -> object:
     state = next(iter(bound.changed))
     assert isinstance(state, TemporalObjectStateKey)
     ((_name, value),) = state.object.primary_key
     return value
 
 
-def _drained(bindings: RangeBindings, trace: list[tuple[str, tuple[Any, ...]]]) -> list[BoundRange]:
-    bound: list[BoundRange] = []
+def _keys(group: WriteGroup) -> tuple[object, ...]:
+    return tuple(_key(write) for write in group.writes)
+
+
+def _members(groups: Sequence[WriteGroup]) -> list[BoundRange]:
+    """Every bound range of ``groups``, in order."""
+    members: list[BoundRange] = []
+    for group in groups:
+        for write in group.writes:
+            assert isinstance(write, BoundRange)
+            members.append(write)
+    return members
+
+
+def _drained(bindings: RangeBindings, trace: list[tuple[str, tuple[Any, ...]]]) -> list[WriteGroup]:
+    """Each group ``bindings`` answer, its keys recorded in ``trace`` as it is
+    answered."""
+    groups: list[WriteGroup] = []
     with bindings:
         for each in bindings:
-            trace.append(("bind", (_key(each),)))
-            bound.append(each)
-    return bound
+            trace.append(("bind", _keys(each)))
+            groups.append(each)
+    return groups
 
 
-def _span(written: WritePlan) -> tuple[DeferredTemporalRange, ...]:
-    assert written.acquisition_spans == (AcquisitionSpan(0, len(written.groups)),)
-    return ranges_of(written)
+def _span(written: WritePlan) -> WritePlan:
+    assert written.acquisition_spans == (AcquisitionSpan(0, len(written.entries)),)
+    assert len(ranges_of(written)) == len(written.entries)
+    return written
 
 
 def _fragmented(
     entity: type[Bitemporal], parts: Sequence[int], *, concurrency: Concurrency = "optimistic"
-) -> tuple[tuple[DeferredTemporalRange, ...], list[PredecessorRow]]:
+) -> tuple[WritePlan, list[PredecessorRow]]:
     """One span of ``frag(k, parts[k - 1])`` for each object ``k``, beside every
     row the objects store."""
     writes = [write for key, count in enumerate(parts, 1) for write in frag(entity, key, count)]
@@ -210,33 +236,30 @@ def test_a_range_needing_nothing_binds_at_once_and_none_passes_an_earlier_unread
     writes = [first, *frag(ShareCols, 2, 65), third, *frag(ShareCols, 4, 1)]
     stored = [first_row, *frag_rows(ShareCols, 2, 65), third_row, *frag_rows(ShareCols, 4, 1)]
     traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
-    ranges = _span(plan(writes, concurrency="locking"))
-    bound = _drained(_bindings(ranges, traced.acquire), traced.trace)
-    # Readiness [0, 2, 0, 2]: the first binds before any read, and the third
-    # waits behind the second's two reads.
+    written = _span(plan(writes, concurrency="locking"))
+    bound = _drained(_bindings(written, traced.acquire), traced.trace)
+    # Readiness [0, 2, 0, 2]: the first executes alone before any read, and
+    # the third waits behind the second's two reads, then joins its group.
     assert traced.trace == [
         ("complete", (1,)),
         ("complete", (3,)),
         ("bind", (1,)),
         ("read", ((2, 64),)),
         ("read", ((2, 1), (4, 1))),
-        ("bind", (2,)),
-        ("bind", (3,)),
-        ("bind", (4,)),
+        ("bind", (2, 3, 4)),
     ]
-    assert [_key(each) for each in bound] == [1, 2, 3, 4]
+    assert [_keys(each) for each in bound] == [(1,), (2, 3, 4)]
 
 
 def test_a_read_can_finish_one_range_while_it_reads_part_of_the_next(recorded: _Bound) -> None:
-    ranges, stored = _fragmented(ShareCols, (33, 33, 1))
+    written, stored = _fragmented(ShareCols, (33, 33, 1))
     traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
-    _drained(_bindings(ranges, traced.acquire), traced.trace)
+    _drained(_bindings(written, traced.acquire), traced.trace)
     assert traced.trace == [
         ("read", ((1, 33), (2, 31))),
         ("bind", (1,)),
         ("read", ((2, 2), (3, 1))),
-        ("bind", (2,)),
-        ("bind", (3,)),
+        ("bind", (2, 3)),
     ]
     # The second range binds every read's rows, each read's apart.
     assert [(key, reused, len(acquired)) for key, reused, acquired in recorded.calls] == [
@@ -257,11 +280,11 @@ def test_each_read_names_at_most_64_parts_of_the_span(parts: tuple[int, ...], re
         (count,) = parts
         written = plan(frag(ShareCols, 1, count))
         assert written.acquisition_spans == ()
-        ranges, stored = ranges_of(written), frag_rows(ShareCols, 1, count)
+        stored = frag_rows(ShareCols, 1, count)
     else:
-        ranges, stored = _fragmented(ShareCols, parts)
+        written, stored = _fragmented(ShareCols, parts)
     traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
-    bound = _drained(_bindings(ranges, traced.acquire), traced.trace)
+    bound = _members(_drained(_bindings(written, traced.acquire), traced.trace))
     named = [entry for entry in traced.trace if entry[0] == "read"]
     assert len(named) == reads
     assert all(sum(windows for _key, windows in terms) <= 64 for _kind, terms in named)
@@ -278,12 +301,12 @@ def test_a_range_whose_read_returned_nothing_binds_as_it_binds_alone(replaces: b
     later = _reaching_past(observed, replaces=replaces)
     writes = [*frag(ShareCols, 1, 1), later]
     stored = [*frag_rows(ShareCols, 1, 1), observed]
-    ranges = _span(plan(writes))
+    written = _span(plan(writes))
     traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
-    shared = _drained(_bindings(ranges, traced.acquire), traced.trace)
-    assert traced.trace == [("read", ((1, 1), (2, 1))), ("bind", (1,)), ("bind", (2,))]
-    alone = _drained(
-        _bindings(ranges_of(plan([later])), HeldRows(MODEL, stored, overlapping=True)), []
+    shared = _members(_drained(_bindings(written, traced.acquire), traced.trace))
+    assert traced.trace == [("read", ((1, 1), (2, 1))), ("bind", (1, 2))]
+    alone = _members(
+        _drained(_bindings(plan([later]), HeldRows(MODEL, stored, overlapping=True)), [])
     )
     assert shared[1].steps == alone[0].steps
     openings = [_window(step) for step in shared[1].steps if isinstance(step, PlannedInsert)]
@@ -316,31 +339,29 @@ def _window(step: PlannedStep) -> tuple[object, object]:
 def test_a_span_its_retained_rows_cover_reads_nothing() -> None:
     targets = [covered_target(ShareCols, key) for key in (1, 2, 3)]
     traced = _Traced(HeldRows(MODEL, [row for _write, row in targets], overlapping=True))
-    ranges = _span(plan([write for write, _row in targets], concurrency="locking"))
-    _drained(_bindings(ranges, traced.acquire), traced.trace)
+    written = _span(plan([write for write, _row in targets], concurrency="locking"))
+    _drained(_bindings(written, traced.acquire), traced.trace)
     assert traced.trace == [
         ("complete", (1,)),
         ("complete", (2,)),
         ("complete", (3,)),
-        ("bind", (1,)),
-        ("bind", (2,)),
-        ("bind", (3,)),
+        ("bind", (1, 2, 3)),
     ]
 
 
 def test_a_stale_retained_row_is_read_with_the_spans_other_parts() -> None:
     target, stored = covered_target(ShareCols, 1)
     traced = _Traced(HeldRows(MODEL, [stored, *frag_rows(ShareCols, 2, 1)], overlapping=True))
-    ranges = _span(plan([target, *frag(ShareCols, 2, 1)], concurrency="locking"))
-    _drained(_bindings(ranges, traced.acquire, current=_never), traced.trace)
-    assert traced.trace == [("read", ((1, 1), (2, 1))), ("bind", (1,)), ("bind", (2,))]
+    written = _span(plan([target, *frag(ShareCols, 2, 1)], concurrency="locking"))
+    _drained(_bindings(written, traced.acquire, current=_never), traced.trace)
+    assert traced.trace == [("read", ((1, 1), (2, 1))), ("bind", (1, 2))]
 
 
 def test_each_ranges_missing_coverage_is_derived_once_before_anything_is_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     derive = ranges_module._missing_coverage  # pyright: ignore[reportPrivateUsage] - the derivation each range takes once
-    ranges, stored = _fragmented(ShareCols, (33, 33, 1))
+    written, stored = _fragmented(ShareCols, (33, 33, 1))
     traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
     derived: list[int] = []
 
@@ -349,21 +370,56 @@ def test_each_ranges_missing_coverage_is_derived_once_before_anything_is_read(
         return derive(*arguments)
 
     monkeypatch.setattr(ranges_module, "_missing_coverage", deriving)
-    _drained(_bindings(ranges, traced.acquire), traced.trace)
+    _drained(_bindings(written, traced.acquire), traced.trace)
     assert derived == [0, 0, 0]
 
 
-def test_a_range_is_bound_only_when_the_flush_advances_to_it(recorded: _Bound) -> None:
-    ranges, stored = _fragmented(ShareCols, (1, 1, 1))
+def test_a_group_is_bound_only_when_the_flush_advances_to_it(recorded: _Bound) -> None:
+    written, stored = _fragmented(ShareCols, (1, 1, 1))
     held = HeldRows(MODEL, stored, overlapping=True)
-    with _bindings(ranges, held) as bindings:
+    with _bindings(written, held) as bindings:
         assert (held.requests, recorded.calls) == ([], [])
-        next(bindings)
-        # One read serves all three; only the first is bound.
+        group = next(bindings)
+        # One read serves all three, which bind together.
+        assert len(held.requests) == 1
+        assert [key for key, _reused, _acquired in recorded.calls] == [1, 2, 3]
+        assert _keys(group) == (1, 2, 3)
+        assert next(bindings, None) is None
+        assert len(held.requests) == 1
+
+
+def test_no_read_is_taken_to_enlarge_a_ready_group(recorded: _Bound) -> None:
+    # The first read finishes the first range and reads part of the second.
+    written, stored = _fragmented(ShareCols, (1, 64))
+    held = HeldRows(MODEL, stored, overlapping=True)
+    with _bindings(written, held) as bindings:
+        assert _keys(next(bindings)) == (1,)
         assert len(held.requests) == 1
         assert [key for key, _reused, _acquired in recorded.calls] == [1]
-        next(bindings)
-        assert [key for key, _reused, _acquired in recorded.calls] == [1, 2]
+        assert _keys(next(bindings)) == (2,)
+        assert len(held.requests) == 2
+
+
+def test_a_group_lays_every_members_non_insert_steps_before_any_insert() -> None:
+    written, stored = _fragmented(ShareCols, (2, 1))
+    with _bindings(written, HeldRows(MODEL, stored, overlapping=True)) as bindings:
+        (group,) = bindings
+    first, second = _members([group])
+    kinds = ["insert" if isinstance(step, PlannedInsert) else "non-insert" for step in group.steps]
+    # frag(k, m) closes its 2m rectangles and opens m merged pairs and its tail.
+    assert kinds == ["non-insert"] * (4 + 2) + ["insert"] * (3 + 2)
+    own = [
+        [step for step in member.steps if isinstance(step, PlannedInsert) is inserts]
+        for inserts in (False, True)
+        for member in (first, second)
+    ]
+    assert list(group.steps) == [step for steps in own for step in steps]
+    assert all(
+        laid is original
+        for laid, original in zip(
+            group.steps, [step for steps in own for step in steps], strict=True
+        )
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -375,8 +431,8 @@ def test_interleaved_rows_and_their_documents_reach_the_object_whose_key_each_ho
     first = frag_rows(ShareDoc, 1, 1)
     second = frag_rows(ShareDoc, 2, 2)
     stored = [second[1], first[1], second[3], first[0], second[0], second[2]]
-    ranges = _span(plan([*frag(ShareDoc, 1, 1), *frag(ShareDoc, 2, 2)]))
-    _drained(_bindings(ranges, HeldRows(MODEL, stored, overlapping=True)), [])
+    written = _span(plan([*frag(ShareDoc, 1, 1), *frag(ShareDoc, 2, 2)]))
+    _drained(_bindings(written, HeldRows(MODEL, stored, overlapping=True)), [])
     by_key = {key: acquired for key, _reused, acquired in recorded.calls}
     assert set(by_key) == {1, 2}
     for key, (rows,) in by_key.items():
@@ -387,30 +443,39 @@ def test_interleaved_rows_and_their_documents_reach_the_object_whose_key_each_ho
         ]
 
 
-def test_a_row_one_read_returns_twice_reaches_its_binding_twice() -> None:
+def test_a_row_one_read_returns_twice_reaches_its_binding_twice(recorded: _Bound) -> None:
     # An Optimistic target write's caller states the row at its window's start.
-    ranges = _span(plan([*frag(ShareCols, 1, 1), covered_target(ShareCols, 2)[0]]))
+    written = _span(plan([*frag(ShareCols, 1, 1), covered_target(ShareCols, 2)[0]]))
     start = rectangle(ShareCols, 2, 0, None, 0)
     held = HeldRows(MODEL, [*frag_rows(ShareCols, 1, 1), start, start], overlapping=True)
-    with _bindings(ranges, held) as bindings:
-        assert _key(next(bindings)) == 1
+    with _bindings(written, held) as bindings:
+        # Both are ready after the one read, so the later range's binding
+        # fails the group the earlier one bound into.
         with pytest.raises(CardinalityCorruptionError) as corrupt:
             next(bindings)
+        assert next(bindings, None) is None
     assert (corrupt.value.expected, corrupt.value.actual) == (1, 2)
+    assert [key for key, _reused, _acquired in recorded.calls] == [1, 2]
 
 
 def test_a_row_two_reads_both_return_is_bound_once(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ranges_module, "_COVERAGE_WINDOWS", 1)
-    ranges, stored = _fragmented(ShareCols, (1, 2))
+    written, stored = _fragmented(ShareCols, (1, 2))
     traced = _Traced(_KeyedRows(stored))
-    shared = _drained(_bindings(ranges, traced.acquire), traced.trace)
+    shared = _members(_drained(_bindings(written, traced.acquire), traced.trace))
     assert [entry for entry in traced.trace if entry[0] == "read"] == [
         ("read", ((1, 1),)),
         ("read", ((2, 1),)),
         ("read", ((2, 1),)),
     ]
-    alone = _drained(
-        _bindings(ranges[1:], HeldRows(MODEL, frag_rows(ShareCols, 2, 2), overlapping=True)), []
+    alone = _members(
+        _drained(
+            _bindings(
+                plan(frag(ShareCols, 2, 2)),
+                HeldRows(MODEL, frag_rows(ShareCols, 2, 2), overlapping=True),
+            ),
+            [],
+        )
     )
     assert shared[1].steps == alone[0].steps
 
@@ -453,8 +518,8 @@ def test_a_later_ranges_retained_completion_fails_before_any_read_or_binding(
             raise refused
         return held(request, consumer)
 
-    ranges = _span(plan([first, *frag(ShareCols, 3, 1), second], concurrency="locking"))
-    with pytest.raises(_Refused) as raised, _bindings(ranges, acquire) as bindings:
+    written = _span(plan([first, *frag(ShareCols, 3, 1), second], concurrency="locking"))
+    with pytest.raises(_Refused) as raised, _bindings(written, acquire) as bindings:
         next(bindings)
     assert raised.value is refused
     assert recorded.calls == []
@@ -462,13 +527,13 @@ def test_a_later_ranges_retained_completion_fails_before_any_read_or_binding(
 
 
 def test_a_ready_ranges_binding_precedes_the_read_its_successor_waits_for() -> None:
-    ranges, stored = _fragmented(ShareCols, (1, 64))
+    written, stored = _fragmented(ShareCols, (1, 64))
     traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
     traced.fail[2] = DatabaseError(category="deadlock", native_code="40P01", message="deadlock")
     bound: list[object] = []
-    with pytest.raises(DatabaseError), _bindings(ranges, traced.acquire) as bindings:
+    with pytest.raises(DatabaseError), _bindings(written, traced.acquire) as bindings:
         for each in bindings:
-            bound.append(_key(each))
+            bound.extend(_keys(each))
     assert bound == [1]
     assert [entry[0] for entry in traced.trace] == ["read", "read"]
 
@@ -484,7 +549,7 @@ def _binding_frames(failure: BaseException) -> list[FrameType]:
     ]
 
 
-def _three() -> tuple[tuple[DeferredTemporalRange, ...], list[PredecessorRow]]:
+def _three() -> tuple[WritePlan, list[PredecessorRow]]:
     """A span whose first read finishes the first range and reads part of the
     second, and whose second read finishes the second and the third."""
     return _fragmented(ShareCols, (1, 64, 1))
@@ -492,10 +557,10 @@ def _three() -> tuple[tuple[DeferredTemporalRange, ...], list[PredecessorRow]]:
 
 @pytest.mark.parametrize("leaves", ["exhaustion", "break", "raise"])
 def test_a_scope_left_any_way_holds_none_of_the_rows_it_read(leaves: str) -> None:
-    ranges, stored = _three()
+    written, stored = _three()
     traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
-    bindings = _bindings(ranges, traced.acquire)
-    bound: list[BoundRange] = []
+    bindings = _bindings(written, traced.acquire)
+    bound: list[WriteGroup] = []
     with contextlib.suppress(_Refused), bindings:
         for each in bindings:
             bound.append(each)
@@ -506,17 +571,17 @@ def test_a_scope_left_any_way_holds_none_of_the_rows_it_read(leaves: str) -> Non
     assert traced.answers
     assert not any(reaches([bindings], rows) for rows in traced.answers)
     assert next(bindings, None) is None
-    # What the bound ranges carry is the flush's, and stays usable.
+    # What the bound groups carry is the flush's, and stays usable.
     assert all(sum(isinstance(step, PlannedClose) for step in each.steps) for each in bound)
 
 
 def test_a_failed_read_leaves_neither_the_scope_nor_its_frames_holding_an_earlier_reads_rows() -> (
     None
 ):
-    ranges, stored = _three()
+    written, stored = _three()
     traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
     traced.fail[2] = DatabaseError(category="deadlock", native_code="40P01", message="deadlock")
-    bindings = _bindings(ranges, traced.acquire)
+    bindings = _bindings(written, traced.acquire)
     with pytest.raises(DatabaseError) as raised, bindings:
         for _each in bindings:
             pass
@@ -565,9 +630,9 @@ def test_a_failed_handoff_leaves_neither_the_scope_nor_its_frames_holding_the_re
         collect(pending, rows)
 
     monkeypatch.setattr(ranges_module, "_collect", collecting)
-    ranges, stored = _three()
+    written, stored = _three()
     traced = _Traced(HeldRows(MODEL, stored, overlapping=True))
-    bindings = _bindings(ranges, traced.acquire)
+    bindings = _bindings(written, traced.acquire)
     with pytest.raises(_Refused) as raised, bindings:
         next(bindings)
     owned = _binding_frames(raised.value)
@@ -576,10 +641,10 @@ def test_a_failed_handoff_leaves_neither_the_scope_nor_its_frames_holding_the_re
 
 
 def test_a_failed_binding_leaves_neither_the_scope_nor_its_frames_holding_the_reads_rows() -> None:
-    ranges = _span(plan([*frag(ShareCols, 1, 1), covered_target(ShareCols, 2)[0]]))
+    written = _span(plan([*frag(ShareCols, 1, 1), covered_target(ShareCols, 2)[0]]))
     start = rectangle(ShareCols, 2, 0, None, 0)
     traced = _Traced(HeldRows(MODEL, [*frag_rows(ShareCols, 1, 1), start, start], overlapping=True))
-    bindings = _bindings(ranges, traced.acquire)
+    bindings = _bindings(written, traced.acquire)
     with pytest.raises(CardinalityCorruptionError) as raised, bindings:
         for _each in bindings:
             pass
@@ -587,3 +652,97 @@ def test_a_failed_binding_leaves_neither_the_scope_nor_its_frames_holding_the_re
     owned = _binding_frames(raised.value)
     assert waiting and owned
     assert not any(reaches([bindings, *owned], rows) for rows in waiting)
+
+
+def test_a_later_writes_failed_binding_leaves_no_frame_holding_the_earlier_bound_write(
+    recorded: _Bound,
+) -> None:
+    bound: list[BoundRange] = []
+
+    def binding(*arguments: Any, **keywords: Any) -> BoundRange:
+        bound.append(recorded(*arguments, **keywords))
+        return bound[-1]
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ranges_module, "_bind_range", binding)
+        written = _span(plan([*frag(ShareCols, 1, 1), covered_target(ShareCols, 2)[0]]))
+        start = rectangle(ShareCols, 2, 0, None, 0)
+        held = HeldRows(MODEL, [*frag_rows(ShareCols, 1, 1), start, start], overlapping=True)
+        bindings = _bindings(written, held)
+        with pytest.raises(CardinalityCorruptionError) as raised, bindings:
+            next(bindings)
+    (earlier,) = bound
+    # The earlier write was bound and handed to the group being assembled;
+    # neither the assembly, the producer, nor the scope keeps it.
+    owned = [
+        *_binding_frames(raised.value),
+        *frames(raised.value.__traceback__, module=plan_module.__file__),
+    ]
+    assert any(frame.f_code.co_name == "from_members" for frame in owned)
+    assert not reaches([bindings, *owned], earlier)
+
+
+def _scoped(written: WritePlan, start: int, stop: int, held: HeldRows) -> RangeBindings:
+    planner = build_write_planner(MODEL)
+    return RangeBindings(
+        written,
+        start=start,
+        stop=stop,
+        acquire_rows=held,
+        current=_always,
+        ownership=NO_TEMPORAL_WRITE_OWNERSHIP,
+        audit=planner.audit_decoration(
+            actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=instant_at(AT.isoformat())
+        ),
+        payloads=planner.payloads,
+    )
+
+
+@pytest.mark.parametrize(
+    ("start", "stop", "refusal"),
+    [
+        (0, 0, "not within"),
+        (2, 4, "not within"),
+        (-1, 1, "not within"),
+        (0, 2, "not an acquisition span"),
+        (1, 3, "not an acquisition span"),
+    ],
+)
+def test_an_interval_settlement_did_not_record_is_refused_before_anything_is_read(
+    start: int, stop: int, refusal: str
+) -> None:
+    written, stored = _fragmented(ShareCols, (1, 1, 1))
+    held = HeldRows(MODEL, stored, overlapping=True)
+    with pytest.raises(ValueError, match=refusal):
+        _scoped(written, start, stop, held)
+    assert held.requests == []
+
+
+def test_an_entry_holding_no_deferred_range_is_refused_before_anything_is_read() -> None:
+    planned = plan([*frag(ShareCols, 1, 1), _inside_write(), *frag(ShareCols, 2, 1)])
+    assert [type(entry) for entry in planned.entries] == [SettledWrite, WriteGroup, SettledWrite]
+    held = HeldRows(MODEL, frag_rows(ShareCols, 1, 1), overlapping=True)
+    with pytest.raises(TypeError, match="did not finalize"):
+        _scoped(planned, 1, 2, held)
+    (group,) = [entry for entry in planned.entries if isinstance(entry, WriteGroup)]
+    (bound_at_planning,) = group.writes
+    assert isinstance(bound_at_planning, SettledWrite)
+    with pytest.raises(TypeError, match="did not finalize"):
+        _scoped(WritePlan((bound_at_planning,)), 0, 1, held)
+    assert held.requests == []
+    # A lone deferred write is its own interval, in no span.
+    with _scoped(planned, 2, 3, HeldRows(MODEL, frag_rows(ShareCols, 2, 1))) as bindings:
+        (group,) = bindings
+    assert _keys(group) == (2,)
+
+
+def _inside_write() -> AdmittedWrite:
+    """A write of object 9 its observation covers, so it binds at planning."""
+    observed = rectangle(ShareCols, 9, 0, None, 0)
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction(
+            "amendUntil", ShareCols.identity.canonical, ({"id": 9, "amount": 9},), day(0), day(1)
+        ),
+        MODEL,
+    )
+    return buffered_write(prepared, observation(ShareCols, observed))

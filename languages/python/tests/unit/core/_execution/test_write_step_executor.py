@@ -150,7 +150,8 @@ def test_allocating_steps_answer_the_keys_their_insert_returned() -> None:
             buffered_writes=[prepared],
         )
     )
-    (group,) = plan.groups
+    (group,) = plan.entries
+    assert isinstance(group, WriteGroup)
     (write,) = group.writes
     assert write.opened.allocated
     port = ScriptedAdapter(Read(rows=[{"id": 42}]))

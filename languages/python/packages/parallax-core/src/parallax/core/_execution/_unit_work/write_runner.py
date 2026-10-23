@@ -5,7 +5,7 @@ from typing import Protocol
 
 from parallax.core.document_codec import apply_prepared_patches
 from parallax.core.write_plan.payload import PatchedDocument
-from parallax.core.write_plan.plan import BoundRange, CurrentRowOutput, SettledWrite
+from parallax.core.write_plan.plan import CurrentRowOutput, WriteEffects
 from parallax.core.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
@@ -18,8 +18,8 @@ __all__ = ["ExecuteCountedStep", "ExecuteWriteSteps"]
 
 
 class ExecuteWriteSteps(Protocol):
-    """How a flush has one sequence of Planned Steps executed: a Write Group's
-    steps, or the steps a deferred range bound.
+    """How a flush has one sequence of Planned Steps executed: a Write
+    Group's steps.
 
     A normal return means every step executed and its effect was enforced, in
     order; it completes no settled write and commits nothing. With
@@ -56,14 +56,14 @@ class ExecuteCountedStep(Protocol):
 
 
 class _CurrentRowCapture:
-    """The current rows the writes of one running group or bound range describe
-    (:attr:`~parallax.core.write_plan.plan.WriteCompletion.current_outputs`),
+    """The current rows the writes of one running Write Group describe
+    (:attr:`~parallax.core.write_plan.plan.WriteEffects.current_outputs`),
     each staged with the document its emitter's payload stores as normal
     lowering demands that payload, until its write completes.
 
     The outputs are indexed by emitter once, so a captured entry or revision
     finds its own description whatever the steps' order. What failed steps
-    staged is never taken.
+    staged is never taken, and :meth:`release` drops it.
     """
 
     __slots__ = ("_outputs", "_staged")
@@ -73,7 +73,7 @@ class _CurrentRowCapture:
         self._staged: dict[int, object | None] = {}
 
     @classmethod
-    def of(cls, writes: Iterable[BoundRange | SettledWrite]) -> _CurrentRowCapture | None:
+    def for_writes(cls, writes: Iterable[WriteEffects]) -> _CurrentRowCapture | None:
         """The capture of every output ``writes`` describe, or ``None`` where
         they describe none."""
         outputs = [output for write in writes for output in write.current_outputs]
@@ -99,9 +99,23 @@ class _CurrentRowCapture:
         self, outputs: Iterable[CurrentRowOutput]
     ) -> tuple[tuple[CurrentRowOutput, object | None], ...]:
         """Each of ``outputs`` its execution captured, with the document it
-        stored, released from this capture."""
+        stored, released from this capture together with its description."""
+        described = self._outputs
         staged = self._staged
-        return tuple((output, staged.pop(id(output))) for output in outputs if id(output) in staged)
+        taken: list[tuple[CurrentRowOutput, object | None]] = []
+        for output in outputs:
+            emitter = id(output.emitter)
+            if described.get(emitter) is output:
+                del described[emitter]
+            if id(output) in staged:
+                taken.append((output, staged.pop(id(output))))
+        return tuple(taken)
+
+    def release(self) -> None:
+        """Drop every description and staged document this capture still
+        holds, whether or not its writes completed."""
+        self._outputs.clear()
+        self._staged.clear()
 
     def execute(
         self, execute: ExecuteWriteSteps, steps: tuple[PlannedStep, ...], *, allocates: bool

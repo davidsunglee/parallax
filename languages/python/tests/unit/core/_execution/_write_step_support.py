@@ -32,7 +32,7 @@ from parallax.core.unit_work import TransactionSettings, UnitOfWork
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import SUPERSEDED, WritePlan
 from parallax.core.write_plan.payload import AssignmentPayload, RowPayload, WritePayloadPreparer
-from parallax.core.write_plan.plan import CurrentRowOutput, WriteCompletion
+from parallax.core.write_plan.plan import CurrentRowOutput, WriteEffects
 from parallax.core.write_plan.steps import (
     INFINITY,
     NEW_LINEAGE,
@@ -284,7 +284,8 @@ def run_plan(
     )
     if units is not None:
         units.append(uow)
-    uow._run_write_plan(plan, captures=True)  # pyright: ignore[reportPrivateUsage] - the flush's own plan walk over a plan built here
+    ownership = uow._admission.ownership  # pyright: ignore[reportPrivateUsage] - the live ownership a requesting flush walks under
+    uow._run_write_plan(plan, ownership=ownership, captures=True)  # pyright: ignore[reportPrivateUsage] - the flush's walk over a plan built here
 
 
 def _recording(port: ScriptedAdapter, completed: list[int]) -> type[UnitOfWork]:
@@ -293,12 +294,12 @@ def _recording(port: ScriptedAdapter, completed: list[int]) -> type[UnitOfWork]:
 
         def _complete_write(
             self,
-            completion: WriteCompletion,
+            effects: WriteEffects,
             allocated: tuple[object, ...],
             captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
         ) -> None:
             completed.append(len(port.calls))
-            super()._complete_write(completion, allocated, captured)
+            super()._complete_write(effects, allocated, captured)
 
     return _Recording
 

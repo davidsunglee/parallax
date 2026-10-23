@@ -613,7 +613,7 @@ def test_a_statement_exceeding_its_promised_parameter_ceiling_is_a_lowering_fail
         return promised[id(step)]
 
     monkeypatch.setattr(
-        "parallax.core._execution._write_lowering.effect_parameter_ceiling", promise
+        "parallax.core._execution._write_lowering.non_insert_parameter_ceiling", promise
     )
     port = ScriptedAdapter(Ordered(OrderedWriteResultComplete((1,))), ordered=True)
     executed = _execute(port, *steps)

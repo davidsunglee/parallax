@@ -28,7 +28,7 @@ contract owners; this index does not add requirements.
 | Observed / Insertion-Authoring Write | A write authorized by genuine read provenance versus one authorized by an admitted insertion's own source | [Unit of work](core/spec/m-unit-work.md) |
 | Target Write | A write addressing one existing logical object by primary key under the starting revision its caller states, independently of a source value | [Unit of work](core/spec/m-unit-work.md) |
 | Settled Write | One caller write after settlement: the completion facts it publishes and the Planned Steps it executes | [Unit of work](core/spec/m-unit-work.md) |
-| Write Group | Settled writes of a Write Plan that execute as one sequence of Planned Steps and complete together, before any later group executes | [Unit of work](core/spec/m-unit-work.md) |
+| Write Group | Settled writes that execute as one sequence of Planned Steps and complete together, before any later group executes: a Write Plan's planned group, or the ready deferred writes one turn binds | [Unit of work](core/spec/m-unit-work.md) |
 | Mutation Phase | A region's inserts, its updates, or its deletes in flush order; no Write Group spans two | [Unit of work](core/spec/m-unit-work.md) |
 | Planned Step | One finalized semantic execution step, distinct from the SQL that lowers it | [Write plan](core/spec/m-write-plan.md) |
 | Object Key / Object State Key | A logical object across its states versus one version or temporal milestone of that object | [Write plan](core/spec/m-write-plan.md) |
