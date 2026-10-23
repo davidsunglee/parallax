@@ -4303,6 +4303,68 @@ def _with_grading(case: case_format.Case, state_graded: bool) -> case_format.Cas
     )
 
 
+@pytest.mark.parametrize("account_id", [90, 91])
+def test_an_insertion_pointer_retains_every_row_of_its_submission(account_id: int) -> None:
+    case = _synthetic_write(
+        "scenario",
+        {
+            "when": {
+                "scenario": [
+                    {
+                        "uow": "g",
+                        "write": [
+                            {
+                                "mutation": "insert",
+                                "entity": "Account",
+                                "rows": [
+                                    {"id": key, "owner": "Noether", "balance": "5.00"}
+                                    for key in (90, 91)
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "uow": "g",
+                        "write": [
+                            {
+                                "mutation": "amend",
+                                "entity": "Account",
+                                "rows": [{"id": account_id, "owner": "Ada"}],
+                                "on": "/scenario/0/write/0",
+                            }
+                        ],
+                    },
+                ]
+            }
+        },
+    )
+    port = FakeWritePort(affected_script=[2])
+
+    run = scenario.run_scenario_case(case, port)
+
+    assert run.errors == [] and run.units == {"g": {"outcome": "committed"}}
+    assert run.database_calls == 1 and port.reads == []
+    assert port.commits == 1 and port.rollbacks == 0
+    assert port.writes == [
+        (
+            "insert into account(id, owner, balance, version) values (%s, %s, %s, %s), "
+            "(%s, %s, %s, %s)",
+            [
+                90,
+                "Ada" if account_id == 90 else "Noether",
+                decimal.Decimal("5.00"),
+                1,
+                91,
+                "Ada" if account_id == 91 else "Noether",
+                decimal.Decimal("5.00"),
+                1,
+            ],
+        )
+    ]
+    assert len(run.emissions) == 1
+    assert run.emissions[0].sql.replace("?", "%s") == port.writes[0][0]
+
+
 @pytest.mark.parametrize("state_graded", [False, True])
 @pytest.mark.parametrize("delivery", [None, "eager", "stream"])
 def test_an_insertion_pointer_survives_composition_and_production_flushes(
