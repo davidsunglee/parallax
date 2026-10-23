@@ -56,6 +56,7 @@ from tests._support.planner_probes import (
     admitted_writes,
     observed_buffer,
     plan_steps,
+    unobserved_write,
 )
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
@@ -273,9 +274,11 @@ def test_a_batch_brings_every_key_it_writes_to_the_distinct_object_check(
     later: int, sizes: list[int]
 ) -> None:
     # The first two rows collapse into one step over keys 1 and 2; the later
-    # write assigns another member, so it is a step of its own.
+    # write assigns another member, so it is a step of its own. The writes
+    # reach the planner as admitted, without admission coalescing the later
+    # write of key 2 into the earlier one.
     buffer = [
-        prepare_typed_write(instruction, _WALLET)
+        unobserved_write(prepare_typed_write(instruction, _WALLET), _WALLET)
         for instruction in (
             _amend_wallet(1, "5.00"),
             _amend_wallet(2, "5.00"),
@@ -285,6 +288,28 @@ def test_a_batch_brings_every_key_it_writes_to_the_distinct_object_check(
     plan = _finalize(buffer, _WALLET)
     assert _sizes(plan) == sizes
     batch, *_ = plan_steps(plan)
+    assert _keys(batch) == (1, 2)
+
+
+@pytest.mark.parametrize(
+    ("later", "sizes"), [(2, [1, 1]), (3, [2])], ids=["a-key-the-batch-holds", "another-key"]
+)
+def test_an_insert_batch_brings_every_key_it_opens_to_the_distinct_object_check(
+    later: int, sizes: list[int]
+) -> None:
+    # The two Dog inserts collapse into one step opening keys 1 and 2; a Cat of
+    # the same family opening one of those keys writes that family's object
+    # again, so the two cannot share a group, whichever ranks first.
+    plan = _plan(
+        [
+            KeyedWriteInstruction("insert", "Dog", ({"id": 1, "name": "Rex"},)),
+            KeyedWriteInstruction("insert", "Dog", ({"id": 2, "name": "Fido"},)),
+            KeyedWriteInstruction("insert", "Cat", ({"id": later, "name": "Tom"},)),
+        ],
+        _ANIMAL,
+    )
+    assert _sizes(plan) == sizes
+    (batch,) = (step for step in plan_steps(plan) if step.entity.name == "Dog")
     assert _keys(batch) == (1, 2)
 
 
@@ -361,7 +386,8 @@ def test_an_insert_whose_key_the_database_decides_stands_alone(
         ),
         _ALLOCATED,
     )
-    plan = _finalize([computed, computed], _ALLOCATED, instant=instant_at("2024-01-10T00:00:00Z"))
+    insert = admitted_write(computed, None)
+    plan = _finalize([insert, insert], _ALLOCATED, instant=instant_at("2024-01-10T00:00:00Z"))
     assert _sizes(plan) == [1, 1]
     assert all(bool(group.writes[0].opened.allocated) is allocates for group in _groups(plan))
 

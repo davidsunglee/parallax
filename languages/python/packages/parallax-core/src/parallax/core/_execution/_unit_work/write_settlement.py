@@ -35,7 +35,9 @@ from parallax.core._execution._unit_work.strategy import (
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
+    InsertBatch,
     InsertionAuthorizedWrite,
+    KeyedInsert,
     MutationPhase,
     ObjectLockedBatch,
     ObjectLockedWrite,
@@ -308,7 +310,7 @@ class WritePlanCompiler:
             )
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
             assert not isinstance(
-                item, PreparedKeyedInstruction | ObjectLockedWrite | ObjectLockedBatch
+                item, KeyedInsert | InsertBatch | ObjectLockedWrite | ObjectLockedBatch
             )
             return self._range(
                 item, shape, concurrency, transaction_instant, ownership, audit, guards=guards
@@ -337,11 +339,12 @@ class WritePlanCompiler:
 
     def _carrier_shape(self, item: OrderedWrite) -> TemporalShape | None:
         """The Temporal Shape of an ordered write's target, read once at
-        dispatch; ``None`` for a bare instruction, whose settlement reads it."""
+        dispatch; ``None`` for an insert or an object-locked write, whose
+        settlement reads it."""
         if isinstance(item, ComposedTemporalWrite):
             return self._temporal_facet.shape(item.target.identity)
         if isinstance(item, ComposedBitemporalOpening):
-            return self._temporal_facet.shape(item.insert.target.identity)
+            return self._temporal_facet.shape(item.insert.instruction.target.identity)
         if isinstance(item, StateObservedWrite | InsertionAuthorizedWrite | TargetWrite):
             return self._temporal_facet.shape(item.instruction.target.identity)
         return None
@@ -349,7 +352,8 @@ class WritePlanCompiler:
     def _settle_keyed(
         self,
         item: (
-            PreparedKeyedInstruction
+            KeyedInsert
+            | InsertBatch
             | StateObservedWrite
             | ObjectLockedWrite
             | ObjectLockedBatch
@@ -364,15 +368,12 @@ class WritePlanCompiler:
         """One ordered keyed write's settled steps and completion."""
         observation: StateObservation | None = None
         scope: ObjectStateKey | ObjectKey | None = None
-        if isinstance(item, PreparedKeyedInstruction):
-            instruction = item
-        else:
-            instruction = item.instruction
-            if isinstance(item, StateObservedWrite):
-                observation = item.observation
-                scope = item.scope
-            elif not isinstance(item, ObjectLockedWrite | ObjectLockedBatch):
-                scope = item.scope
+        instruction = item.instruction
+        if isinstance(item, StateObservedWrite):
+            observation = item.observation
+            scope = item.scope
+        elif isinstance(item, InsertionAuthorizedWrite | TargetWrite):
+            scope = item.scope
         own_version = scope.version if isinstance(scope, VersionedObjectStateKey) else None
         return self._settle(
             instruction,
@@ -661,7 +662,7 @@ class WritePlanCompiler:
         together with any stored coverage a replacement it authorized reaches
         past that window (:func:`~parallax.core._execution._unit_work.ranges.settle_opening`):
         bound now, or deferred until execution reads that coverage."""
-        entity = opening.insert.target
+        entity = opening.insert.instruction.target
         ranged = settle_opening(
             opening,
             view=entity_view(self._families, entity),
@@ -737,10 +738,9 @@ def _object_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_Group
     if isinstance(item, ComposedTemporalWrite):
         target, rows = item.target, (item.key,)
     elif isinstance(item, ComposedBitemporalOpening):
-        target, rows = item.insert.target, item.insert.rows
+        target, rows = item.insert.instruction.target, item.insert.instruction.rows
     else:
-        instruction = item if isinstance(item, PreparedKeyedInstruction) else item.instruction
-        target, rows = instruction.target, instruction.rows
+        target, rows = item.instruction.target, item.instruction.rows
     key = entity_view(families, target).primary_key.identity
     keys: list[_GroupKey] = []
     for row in rows:
@@ -886,10 +886,8 @@ def _addressed_assignments(
     among the assignments. A multi-row update reaching here is one the batching
     strategy collapsed, and it collapses only a run assigning identical values to
     every key (`m-batch-write` keeps incompatible writes in separate steps), so
-    the first row settles the whole step's assignments. That holds for a
-    PREFORMED multi-row instruction too: the planner's batch decomposition splits
-    one into its rows before the collapse decision, so no update arrives here
-    having skipped it.
+    the first row settles the whole step's assignments. Every admitted write
+    is single-row, so no multi-row update arrives here any other way.
     """
     key_names = frozenset(attribute.name for attribute in addressed.key_attributes)
     return planned_assignments(

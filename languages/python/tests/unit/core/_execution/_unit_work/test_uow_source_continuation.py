@@ -233,7 +233,7 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
         KeyedWriteInstruction("insert", "Person", ({"id": 5, "name": "New"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    uow.buffer(insertion)
+    uow.buffer(admitted_write(insertion, None))
     _flush(uow)
     identity = uow.insertion_identity(_person(5))
     assert identity is not None
@@ -281,7 +281,7 @@ def test_a_page_read_before_a_deletion_stays_stale_after_its_demand_and_a_reinse
         KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "New"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    uow.buffer(insertion)
+    uow.buffer(admitted_write(insertion, None))
     _flush(uow)
     delayed = _published(uow, _person(1), read_at=read_at)
     assert _refusal(lambda: _write(uow, _PERSON, delayed, "amend", name="Bo")) == (
@@ -355,7 +355,7 @@ def _reinserted(uow: UnitOfWork, key: int) -> None:
         KeyedWriteInstruction("insert", "Person", ({"id": key, "name": "Again"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    uow.buffer(insertion)
+    uow.buffer(admitted_write(insertion, None))
     _flush(uow)
 
 

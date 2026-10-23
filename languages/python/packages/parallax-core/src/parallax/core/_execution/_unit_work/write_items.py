@@ -43,7 +43,9 @@ __all__ = [
     "ComposedBitemporalOpening",
     "ComposedTemporalWrite",
     "ComposedWrite",
+    "InsertBatch",
     "InsertionAuthorizedWrite",
+    "KeyedInsert",
     "MutationPhase",
     "ObjectLockedBatch",
     "ObjectLockedWrite",
@@ -56,7 +58,6 @@ __all__ = [
     "TemporalKeyedWrite",
     "admitted_write",
     "buffered_claim_scope",
-    "buffered_instruction",
     "buffered_object_key",
     "compose_temporal_write",
     "singleton_transform",
@@ -72,6 +73,36 @@ _REQUIRES_RETAINED_OBSERVATION: Final = (
 _REQUIRES_SOURCE: Final = (
     "An object-locked write requires the source evidence it was admitted through."
 )
+
+
+@dataclass(frozen=True, slots=True)
+class KeyedInsert:
+    """An insert admitted through its own verb: the one row it opens needs no
+    licence beyond the insert itself."""
+
+    instruction: PreparedKeyedInstruction
+
+    def __post_init__(self) -> None:
+        if self.instruction.mutation not in INSERT_MUTATIONS:
+            raise ValueError(
+                f"only an insert is admitted unlicensed: `{self.instruction.mutation}` on "
+                f"{self.instruction.target.identity.canonical!r} writes existing state, which "
+                "a read's evidence or an insertion's authority must license"
+            )
+        if len(self.instruction.rows) != 1:
+            raise ValueError(
+                "an admitted insert opens one row: "
+                f"`{self.instruction.mutation}` on "
+                f"{self.instruction.target.identity.canonical!r} opens "
+                f"{len(self.instruction.rows)} rows"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class InsertBatch:
+    """Inserts batching joined into one multi-row instruction."""
+
+    instruction: PreparedKeyedInstruction
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +138,7 @@ class StateObservedWrite:
         if self.instruction.mutation in INSERT_MUTATIONS:
             raise ValueError(
                 f"an insert carries no State Observation: `{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} buffers bare "
+                f"{self.instruction.target.identity.canonical!r} is admitted as its own insert "
                 "(m-unit-work: absence is structural)"
             )
         if len(self.instruction.rows) != 1:
@@ -148,7 +179,7 @@ class ObjectLockedWrite:
         if self.instruction.mutation in INSERT_MUTATIONS:
             raise ValueError(
                 f"an insert claims no object: `{self.instruction.mutation}` on "
-                f"{self.instruction.target.identity.canonical!r} buffers bare "
+                f"{self.instruction.target.identity.canonical!r} is admitted as its own insert "
                 "(m-unit-work: an opening row has no "
                 "prior row to claim)"
             )
@@ -164,8 +195,7 @@ class ObjectLockedWrite:
 
 @dataclass(frozen=True, slots=True)
 class ObjectLockedBatch:
-    """Object-locked writes batching joined into one multi-row instruction,
-    with any bare writes batched beside them.
+    """Object-locked writes batching joined into one multi-row instruction.
 
     ``source_evidence`` holds, by identity, the Read Evidence every joined
     object-locked write retained, which nothing reads.
@@ -270,20 +300,21 @@ def admitted_write(
     *,
     source: ReadEvidence | None = None,
     authority: InsertionIdentity | None = None,
-) -> PreparedKeyedInstruction | ReadAuthorizedWrite | InsertionAuthorizedWrite:
+) -> KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite:
     """``instruction`` as the admitted write that settles against ``evidence``,
     retaining ``source``, the Read Evidence it was admitted through, where it
     has one.
 
     A retained observation travels with the write; so does a versioned state,
     with its ``source``'s observation. An object key requires ``source`` in
-    place of an observation. With no evidence, the instruction travels bare, or
-    carries the insertion ``authority`` that licenses it.
+    place of an observation. With no evidence, the instruction carries the
+    insertion ``authority`` that licenses it, or is an insert, which needs no
+    licence.
     """
     if evidence is None:
         if authority is not None:
             return InsertionAuthorizedWrite(instruction=instruction, identity=authority)
-        return instruction
+        return KeyedInsert(instruction)
     retained = () if source is None else (source,)
     if isinstance(evidence, ObjectKey):
         return ObjectLockedWrite(instruction=instruction, source_evidence=retained)
@@ -456,7 +487,7 @@ class ComposedBitemporalOpening:
     window so admission can judge the next one.
     """
 
-    insert: PreparedKeyedInstruction
+    insert: KeyedInsert
     transform: CoverageTransform
     intents: tuple[WriteIntent, ...]
 
@@ -492,7 +523,7 @@ class ComposedBitemporalOpening:
         reached — every write composed after it reaching there too, so the
         stored coverage there takes the whole transform — or ``None`` where no
         replacement reached past it."""
-        window = self.insert.valid_time_window
+        window = self.insert.instruction.valid_time_window
         assert window is not None  # a Bitemporal opening states its window
         end = window.end
         if end is INFINITY or not self.transform.segments:
@@ -511,12 +542,12 @@ class ComposedBitemporalOpening:
         beyond = self.beyond
         if beyond is not None:
             return beyond.end
-        window = self.insert.valid_time_window
+        window = self.insert.instruction.valid_time_window
         assert window is not None  # a Bitemporal opening states its window
         return window.end
 
     def _surviving(self) -> tuple[Successor, ...]:
-        window = self.insert.valid_time_window
+        window = self.insert.instruction.valid_time_window
         assert window is not None  # a Bitemporal opening states its window
         return self.transform.successors_of(window)
 
@@ -528,16 +559,15 @@ class PostRemovalInsert:
     it: an insert ordinarily runs ahead of every removal, and this one must
     follow the one that clears its way."""
 
-    insert: PreparedKeyedInstruction | ComposedBitemporalOpening
+    insert: KeyedInsert | ComposedBitemporalOpening
 
 
-AdmittedWrite = (
-    PreparedKeyedInstruction | ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
-)
+AdmittedWrite = KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
 
 
 type OrderedWrite = (
-    PreparedKeyedInstruction
+    KeyedInsert
+    | InsertBatch
     | StateObservedWrite
     | ObjectLockedWrite
     | ObjectLockedBatch
@@ -549,10 +579,9 @@ type OrderedWrite = (
 """One element of the sequence settlement reads: an admitted write once the
 planner's rewriting stages have finished with it.
 
-An object-locked write keeps its source evidence through batching, which joins
-it with other writes of its shape exactly as it joins bare instructions
-(:class:`ObjectLockedBatch`); every stage after coalescing measures it by its
-instruction.
+Batching joins inserts into an :class:`InsertBatch` and object-locked writes
+into an :class:`ObjectLockedBatch`, which keeps their source evidence; every
+stage after coalescing measures a write by its instruction.
 """
 
 type MutationPhase = tuple[OrderedWrite, ...]
@@ -565,18 +594,8 @@ type ComposedWrite = OrderedWrite | PostRemovalInsert
 reads, or inserts that must follow an earlier removal."""
 
 
-def buffered_instruction(item: AdmittedWrite) -> PreparedKeyedInstruction:
-    """The write instruction ``item`` carries, unwrapped from any envelope."""
-    if isinstance(
-        item,
-        StateObservedWrite | ObjectLockedWrite | InsertionAuthorizedWrite | TargetWrite,
-    ):
-        return item.instruction
-    return item
-
-
 def buffered_object_key(
-    item: PreparedKeyedInstruction | ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite,
+    item: AdmittedWrite,
     families: inheritance.InheritanceFacet,
 ) -> ObjectKey | None:
     """The one object ``item`` writes, or ``None`` where it names none.
@@ -591,18 +610,18 @@ def buffered_object_key(
         return item.identity.object_key
     if isinstance(item, TargetWrite):
         return claimed_object(item.scope)
-    return resolve_object_key(buffered_instruction(item), families)
+    return resolve_object_key(item.instruction, families)
 
 
 def buffered_claim_scope(
-    item: PreparedKeyedInstruction | ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite,
+    item: AdmittedWrite,
     object_key: ObjectKey | None,
 ) -> ClaimScope | None:
     """The scope ``item`` claims where it composes by claimed scope rather than
     by temporal object, given ``object_key``, the object it writes
     (:func:`buffered_object_key`).
 
-    ``None`` for a write that claims nothing there: a bare instruction, and a
+    ``None`` for a write that claims nothing there: an insert, and a
     write an insertion authorized while it folds into its object's pending
     opening.
     """

@@ -74,11 +74,9 @@ An insert claims nothing at all and reaches no scope.
 Both keyed arms address ONE object, so an instruction naming SEVERAL rows reaches
 no scope either: it has no single object and no single observed state. Only a
 caller holding a pre-formed multi-row instruction can author one — a keyed
-developer verb writes the one row the value it was handed names — and where that
-caller supplies no evidence of its own, the write claims nothing and buffers
-bare. Evidence such a caller does supply is refused by the single-row admitted
-write that would have had to hold it, before the write takes any claim, rather than
-dropped in favour of the bare shape.
+developer verb writes the one row the value it was handed names — and every
+admitted write is single-row, so such an instruction is refused before it takes
+any claim, whatever evidence its caller supplies.
 
 Which arm a write takes is derived from declared facts — the target Entity's
 Optimistic Key and the write's own mutation — never from an absent observation:
@@ -107,8 +105,8 @@ A write against existing state that addresses no single object is derived
 neither and settles against nothing: an instruction naming several rows, or a
 row naming no complete primary key, has neither a state nor an object for
 evidence to be about. A caller can still hold one of the two and supply it with
-such a write, and the admitted write it would travel in refuses that pairing rather than
-settling the write bare.
+such a write, and the admitted write it would travel in refuses that pairing;
+without either, no admitted write licenses it at all.
 """
 
 

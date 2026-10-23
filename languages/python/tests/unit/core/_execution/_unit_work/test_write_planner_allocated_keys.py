@@ -12,7 +12,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.unit_work import KeyedWriteInstruction, WritePlanningRequest
+from parallax.core.unit_work import KeyedWriteInstruction, WritePlanningRequest, admitted_write
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import WritePlan
 from parallax.core.write_plan.plan import (
@@ -72,7 +72,7 @@ def _plan(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
             concurrency="optimistic",
-            composed_writes=[prepared],
+            composed_writes=[admitted_write(prepared, None)],
         )
     )
 

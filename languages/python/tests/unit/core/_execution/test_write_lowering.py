@@ -119,6 +119,7 @@ from parallax.core.write_plan.payload import (
     WritePayloadPreparer,
 )
 from parallax.core.write_plan.plan import SettledWrite, WriteGroup, WritePlan
+from parallax.core.write_plan.planned_rows import key_target
 from parallax.core.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -447,14 +448,6 @@ def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None
 # --------------------------------------------------------------------------- #
 # m-opt-lock: the version gate / advance / conflict policy.                    #
 # --------------------------------------------------------------------------- #
-def test_versioned_update_without_a_row_carried_version_requires_observation() -> None:
-    update = KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("50.00")},))
-    with pytest.raises(
-        opt_lock.UnobservedVersionError, match="requires the version its source value observed"
-    ):
-        _lower(update, ACCOUNT)
-
-
 def test_versioned_update_derives_the_advance_from_the_observation_locking_mode() -> None:
     # locking mode: version = observed + 1 in the SET, no gate.
     update = KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": Decimal("50.00")},))
@@ -541,27 +534,6 @@ def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None
     assert isinstance(optimistic, PlannedDelete)
     assert locking.affected_rows == ExactCount(1, STALE_WRITE)
     assert optimistic.affected_rows == ExactCount(1, OPTIMISTIC_CONFLICT)
-
-
-def test_versioned_delete_without_an_observation_requires_observation() -> None:
-    # A keyed DELETE settled with no observed version raises in EITHER mode,
-    # exactly as a keyed UPDATE does (`m-opt-lock`): the framework
-    # never issues an implicit resolving read on behalf of a keyed write, so a
-    # write that reached settlement without the version its source observed has
-    # nothing to advance from.
-    delete = KeyedWriteInstruction("delete", "Account", ({"id": 3},))
-    with pytest.raises(
-        opt_lock.UnobservedVersionError, match="requires the version its source value observed"
-    ):
-        _lower(delete, ACCOUNT, concurrency="optimistic")
-
-
-def test_versioned_delete_without_an_observation_raises_in_locking_mode_too() -> None:
-    delete = KeyedWriteInstruction("delete", "Account", ({"id": 3},))
-    with pytest.raises(
-        opt_lock.UnobservedVersionError, match="requires the version its source value observed"
-    ):
-        _lower(delete, ACCOUNT, concurrency="locking")
 
 
 def test_versioned_insert_derives_the_initial_version_ignoring_any_row_carried_value() -> None:
@@ -891,7 +863,7 @@ def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row(
         "insert",
         "Account",
         (
-            {"id": 20, "owner": "Curie", "balance": Decimal("10.00")},
+            {"id": 20, "owner": "Curie", "balance": Decimal("10.00"), "version": 98},
             {"id": 21, "owner": "Bohr", "balance": Decimal("20.00"), "version": 99},
         ),
     )
@@ -1382,8 +1354,10 @@ def test_finalization_gives_a_readless_predicate_write_an_unbounded_expectation(
 def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:
     # Refused where the target is settled, rather than lowered into an identity
     # predicate whose bind was never supplied.
+    wallet = entity_by_name(WALLET, "Wallet")
+    assert wallet is not None
     with pytest.raises(WritePlanningError, match="omits the primary-key member"):
-        _finalize(KeyedWriteInstruction("delete", "Wallet", ({"owner": "Mira"},)), WALLET)
+        key_target(wallet, (_attribute(WALLET, "Wallet", "id"),), ({"owner": "Mira"},))
 
 
 def test_finalization_classifies_a_registry_advance_into_a_generated_value() -> None:

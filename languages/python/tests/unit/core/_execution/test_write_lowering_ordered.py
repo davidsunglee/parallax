@@ -76,7 +76,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, plan_steps
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, plan_steps, unobserved_write
 from tests._support.sweep_goldens import WRITE_EXERCISED
 from tests.unit._corpus_model_support import model
 from tests.unit._corpus_model_support import target as entity_of
@@ -259,7 +259,7 @@ def _planned(
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=inert_instant(),
                 concurrency="locking",
-                composed_writes=[prepared],
+                composed_writes=[unobserved_write(prepared, meta)],
             )
         )
     )

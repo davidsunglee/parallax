@@ -313,19 +313,19 @@ def test_two_rows_naming_different_document_members_do_not_share_one_statement()
     # binds on every insert — so under this layout the column list alone no longer
     # separates them. The Document Path is what does, and it must: every entry of
     # one Planned Insert has the same canonical member set (m-unit-work), so a run
-    # answered same-shaped here is one the planner then refuses.
+    # answered same-shaped here would be one the Planned Insert refuses.
     person = entity(DOCUMENT, "Person")
     display_name = collapse_group_key(DOCUMENT, person, "insert", {"id": 1, "displayName": "Ada"})
     score = collapse_group_key(DOCUMENT, person, "insert", {"id": 2, "score": 7})
     same = collapse_group_key(DOCUMENT, person, "insert", {"id": 3, "displayName": "Bo"})
     assert display_name != score
     assert display_name == same
-    with pytest.raises(ValueError, match="same members"):
-        _lower(
-            KeyedWriteInstruction(
-                "insert", "Person", ({"id": 1, "displayName": "Ada"}, {"id": 2, "score": 7})
-            )
+    first, second = _lower(
+        KeyedWriteInstruction(
+            "insert", "Person", ({"id": 1, "displayName": "Ada"}, {"id": 2, "score": 7})
         )
+    )
+    assert first.sql == second.sql == "insert into person(id, payload) values (?, ?)"
 
 
 def test_an_unnamed_many_occurrence_shares_a_statement_with_one_that_names_it() -> None:

@@ -643,9 +643,12 @@ class _SimulatedUnit:
     object this unit's own insertion opened, is authorized by the identity this
     unit issued; and an
     observation-free write of an unversioned row carries Read Evidence of its
-    own, stamped with a participation no unit of work issued. A write
-    that unit of work refuses to admit is refused as the case's composition
-    rather than leaked as the production refusal. A target write is
+    own, stamped with a participation no unit of work issued. A write against
+    existing state that none of these licenses is refused when it is
+    submitted, a versioned write with no observed version as settling it would
+    refuse it, and any other as a planning refusal. A
+    write that unit of work refuses to admit is refused as the case's
+    composition rather than leaked as the production refusal. A target write is
     buffered as the attempt's own is, through
     :meth:`~parallax.core.unit_work.UnitOfWork.buffer_target`: under Locking it
     is confirmed against the case state's stored row.
@@ -681,7 +684,7 @@ class _SimulatedUnit:
         key = object_key(instruction, self._model)
         observation = write.supplied_observation
         if instruction.mutation in INSERT_MUTATIONS:
-            self._admit(instruction)
+            self._admit(admitted_write(instruction, None))
         elif observation is None:
             self._authorized(instruction, key)
         else:
@@ -723,12 +726,12 @@ class _SimulatedUnit:
         key: ObjectKey | None,
         observation: RetainedObservation | None,
     ) -> None:
+        optimistic = opt_lock.optimistic_key(self._model, instruction.target.identity)
         evidence = opt_lock.settled_evidence(
-            opt_lock.optimistic_key(self._model, instruction.target.identity),
-            instruction.mutation,
-            object_key=key,
-            observation=observation,
+            optimistic, instruction.mutation, object_key=key, observation=observation
         )
+        if evidence is None:
+            raise _unlicensed(instruction, optimistic)
         if not isinstance(evidence, ObjectKey):
             self._admit(admitted_write(instruction, evidence))
             return
@@ -746,6 +749,24 @@ class _SimulatedUnit:
                 f"a simulated transaction cannot admit this write beside the ones it already "
                 f"buffered — {refusal}"
             ) from refusal
+
+
+def _unlicensed(instruction: PreparedKeyedInstruction, key: opt_lock.OptimisticKey) -> Exception:
+    """The refusal of a simulated write against existing state that carries
+    neither an insertion's authority nor the evidence ``key`` requires of it."""
+    entity = instruction.target.identity
+    mutation = instruction.mutation
+    if isinstance(key, opt_lock.ExplicitVersion):
+        return opt_lock.UnobservedVersionError(
+            f"{entity.name}: a keyed {mutation!r} of a versioned row requires the version its "
+            "source observed, which the case states none of (m-opt-lock)"
+        )
+    return WritePlanningError(
+        f"{entity.name!r}: a keyed {mutation!r} writes existing state the case state holds "
+        "neither an insertion's authority nor the evidence of — a temporal close requires the "
+        "Temporal Observation it addresses, gates on, and carries state forward from "
+        "(m-unit-work; m-opt-lock)"
+    )
 
 
 @contextlib.contextmanager

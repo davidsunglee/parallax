@@ -6,13 +6,14 @@ Each settled step lowers alone through the shipped seam
 Planned Step, whatever statements execution then groups them into. A unit test
 usually pins the statements of one instruction, so this plans it — through the
 SAME production wiring :func:`~parallax.core._execution._planning.build_write_planner`
-builds — as the one-instruction buffer it means, or as the one statement a
-predicate-selected write executes as, and hands back the lowered statements in
-order.
+builds — as the buffer it means, one admitted write per row of a keyed
+instruction, or as the one statement a predicate-selected write executes as, and
+hands back the lowered statements in order.
 """
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterable, Iterator
 
 from parallax.core._execution._planning import build_write_planner
@@ -27,14 +28,24 @@ from parallax.core._execution._write_lowering import lowered
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.unit_work import Concurrency, TransactionInstant, WritePlanningRequest
+from parallax.core.unit_work import (
+    Concurrency,
+    KeyedWriteInstruction,
+    TransactionInstant,
+    WritePlanningRequest,
+)
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import StateObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import NO_TEMPORAL_WRITE_OWNERSHIP, TemporalWriteOwnership
 from parallax.core.write_plan.steps import PlannedStep
 from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_write, plan_steps
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    observed_buffer,
+    observed_write,
+    plan_steps,
+)
 
 __all__ = ["lower_instruction", "lower_instruction_steps", "lowered_steps"]
 
@@ -104,13 +115,20 @@ def _stream(
             ),
         )
     else:
+        if len(prepared.rows) == 1:
+            writes = [observed_write(prepared, model, observation)]
+        else:
+            assert isinstance(instruction, KeyedWriteInstruction)
+            assert observation is None  # an observation is evidence about one row
+            rows = [dataclasses.replace(instruction, rows=(row,)) for row in instruction.rows]
+            writes = observed_buffer(rows, model, None)
         steps = plan_steps(
             planner.finalize(
                 WritePlanningRequest(
                     actor_identity=TEST_ACTOR_IDENTITY,
                     transaction_instant=instant,
                     concurrency=concurrency,
-                    composed_writes=[observed_write(prepared, model, observation)],
+                    composed_writes=writes,
                     ownership=ownership,
                     counts_unchanged_rows=dialect.counts_unchanged_rows,
                 )

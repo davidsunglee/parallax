@@ -146,7 +146,7 @@ class _Run:
             KeyedWriteInstruction("insert", entity, (members,)), self.meta
         )
         assert isinstance(instruction, PreparedKeyedInstruction)
-        self.uow.buffer(instruction)
+        self.uow.buffer(admitted_write(instruction, None))
 
     def flush(self) -> None:
         self.uow.read(lambda: None)

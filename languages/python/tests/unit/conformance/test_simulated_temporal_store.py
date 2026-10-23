@@ -54,10 +54,12 @@ from parallax.core.metamodel import (
 )
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
+    AdmittedWrite,
     RetainedObservation,
     SubjectActor,
     TransactionInstant,
     WritePlanningRequest,
+    admitted_write,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -224,7 +226,7 @@ def _planned(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
                 concurrency="locking",
-                composed_writes=[prepared],
+                composed_writes=[admitted_write(prepared, None)],
             )
         )
     )
@@ -338,7 +340,7 @@ def test_an_applied_non_temporal_insert_stores_nothing() -> None:
                 FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
             ),
             concurrency="locking",
-            composed_writes=[prepared],
+            composed_writes=[admitted_write(prepared, None)],
         )
     )
     _apply_all(store, account, plan_steps(plan))
@@ -361,7 +363,7 @@ def _rectangles(
     *spans: tuple[int, str, str | None, str],
 ) -> tuple[PlannedStep, ...]:
     """The plan opening one rectangle per ``(id, validFrom, until, value)``."""
-    entries: list[PreparedKeyedInstruction] = []
+    entries: list[AdmittedWrite] = []
     for key, valid_from, until, value in spans:
         document: dict[str, object] = {
             "mutation": "insert" if until is None else "insertUntil",
@@ -373,7 +375,7 @@ def _rectangles(
             document["until"] = until
         instruction = instructions.deserialize(document)
         assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
-        entries.append(instructions.prepare_wire_write(instruction, POSITION))
+        entries.append(admitted_write(instructions.prepare_wire_write(instruction, POSITION), None))
     return plan_steps(
         build_write_planner(POSITION).finalize(
             WritePlanningRequest(

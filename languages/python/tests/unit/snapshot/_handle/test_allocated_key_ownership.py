@@ -16,7 +16,7 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import MAX, Attr, Bitemporal, Document, DomainModel, TxTemporal, attr
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core.entity._model import model_of
-from parallax.core.unit_work import KeyedWriteInstruction
+from parallax.core.unit_work import KeyedWriteInstruction, admitted_write
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.write_bounds import stated_start
@@ -84,7 +84,7 @@ def _insert_allocated(
         ({"id": {"computed": "maxPlusOne"}, **row},),
         valid_from=valid_from,
     )
-    tx._attempt.uow.buffer(prepare_typed_write(instruction, model_of(_MODEL)))
+    tx._attempt.uow.buffer(admitted_write(prepare_typed_write(instruction, model_of(_MODEL)), None))
 
 
 def _seed(profile_run: Any, entity: type[Any], key: int) -> None:

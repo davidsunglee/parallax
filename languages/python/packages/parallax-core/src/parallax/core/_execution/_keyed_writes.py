@@ -31,7 +31,7 @@ from parallax.core._execution._unit_work.retain import (
     ReadEvidence,
 )
 from parallax.core._execution._unit_work.uow import UnitOfWork
-from parallax.core._execution._unit_work.write_items import admitted_write
+from parallax.core._execution._unit_work.write_items import KeyedInsert, admitted_write
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
@@ -701,7 +701,7 @@ def keyed_insert(
         mutation,
         opener_advice=uow.insertion_advice(opened),
     )
-    uow.buffer(prepared, insertion_advice=resolved.advice)
+    uow.buffer(KeyedInsert(prepared), insertion_advice=resolved.advice)
     authority = uow.insertion_identity(opened)
     assert authority is not None  # the admission just issued it
     return OpenedKeyedWrite(
