@@ -1,19 +1,4 @@
 {
-  "adjustment": {
-    "date": "2026-10-21",
-    "redigested": {
-      "members": [
-        "write-lowering"
-      ],
-      "producingCommit": "90ff69ccbe4e4334b9c1f07adb35d67f42886947",
-      "unchanged": "every reading, sample, comparison, and measurement condition; the measured workload inputs and code identity at the producing commit equal HEAD's",
-      "workloadDigest": {
-        "atCapture": "1fd8c5cc57a74544412a37ac9e3f5799c7fa62ef559151113ed97d1051708d72",
-        "redigestedUnder": "6651570e92e0323c1fec000d3f9a20ee71bd410a7f131f79e859af499eb5fdb4"
-      }
-    },
-    "schemaVersion": 1
-  },
   "members": {
     "feature-boundary": {
       "runtimes": {
@@ -21,10 +6,10 @@
           "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-feature-boundary-3.13/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.16"
+          "version": "3.13.17"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-226-batch-write-statements-across-objects-h9msa2/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-227-batch-execute-deferred-bitemporal-ranges-4omsdv/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -32,7 +17,7 @@
       },
       "sources": {
         "tests/unit/_feature_boundary_support.py": "64f02a60d9403ea6621963a7652dc847b5e321551e0a0697d8d060b120320f1b",
-        "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
+        "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
         "tools/feature_boundary_overhead.py": "d7268ae2198a6778d654e3814e67cd8cea14ee544dc683af8f9bb01a841af45e",
         "tools/feature_boundary_reading.py": "8d879c4af9590a661f50dca39a8e8667f62a3dc7ffbc631550db862e7e68688f"
       }
@@ -43,10 +28,10 @@
           "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-instance-state-3.13/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.16"
+          "version": "3.13.17"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-226-batch-write-statements-across-objects-h9msa2/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-227-batch-execute-deferred-bitemporal-ranges-4omsdv/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -54,7 +39,7 @@
       },
       "sources": {
         "tests/unit/_instance_state_support.py": "31bfcde149191834ff7d2f80d0f7003e403362f122b7c38093a8cf21f9804c79",
-        "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
+        "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
         "tools/instance_state_overhead.py": "4c1058dda6ab31e8c263bf742c9edb3270ee86aeea8c070323b22aed097d2294",
         "tools/instance_state_reading.py": "3f25f428052e40de7726b2448a34927394bd7adcf1a9fa1b0a7d964b70e6ce14"
       }
@@ -66,7 +51,7 @@
           "status": "unavailable"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-226-batch-write-statements-across-objects-h9msa2/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-227-batch-execute-deferred-bitemporal-ranges-4omsdv/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -82,10 +67,10 @@
           "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-snapshot-delivery-3.13/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.16"
+          "version": "3.13.17"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-226-batch-write-statements-across-objects-h9msa2/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-227-batch-execute-deferred-bitemporal-ranges-4omsdv/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -97,9 +82,9 @@
         "tests/unit/_snapshot_materialization_support.py": "419afb567aba7c12a64d0ab924349724bac2ff5b805b7f410906d46eff6a4495",
         "tests/unit/_structural_geometry_support.py": "41673306e078cb7e920bbf5c11d348bfe68da531a4abef21d9f653cb3ae99dd3",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
-        "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
+        "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
         "tools/snapshot_delivery_overhead.py": "f20a3d3740f0c5ebd0fa1b403e0a898fdd131178e635f80377d9db56ba946d7c",
-        "tools/snapshot_delivery_reading.py": "9867ebdad58b156ac307272ef84a889ddfc07dabcc08de6a77c110dffc2c40b3"
+        "tools/snapshot_delivery_reading.py": "50d8dae50d3135527c6f773851b54fc05bdcc47fcb5f90bdea96beedf56f5934"
       }
     },
     "write-lowering": {
@@ -108,10 +93,10 @@
           "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-write-lowering-3.13/bin/python",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.16"
+          "version": "3.13.17"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-226-batch-write-statements-across-objects-h9msa2/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-227-batch-execute-deferred-bitemporal-ranges-4omsdv/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -121,10 +106,10 @@
         "tests/unit/_leaf_type_support.py": "ba71d340b0a45e885b18ef6a7db6dcdf249e2e76949730de2525fc9c2dcef112",
         "tests/unit/_structural_geometry_support.py": "41673306e078cb7e920bbf5c11d348bfe68da531a4abef21d9f653cb3ae99dd3",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
-        "tests/unit/_write_lowering_support.py": "5f3688963aa4ed69c63648ead136fd7abbf814fa9ce28e6d4b65da68c3dd6b58",
-        "tests/unit/memory_instruments.py": "cc1c8140dd4a66aa886b9d014ec10adebb9a8dbfac23a3cd73d2bf837723894a",
-        "tools/write_lowering_overhead.py": "1f8e89d4b0ba7f78a1e5bd9a7b52835b32fb03bc11406cb81ed1eb3fc7db2bd0",
-        "tools/write_lowering_reading.py": "df37c67cb48253f0fa6c0388b350d578ee218b42d7ad620e5c207ff5c4184d39"
+        "tests/unit/_write_lowering_support.py": "56d7bdb00cd9ae548307ab756e69a960e0c0c494cbbeac22b91a942501c8ea21",
+        "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
+        "tools/write_lowering_overhead.py": "41448a7f8ad39237a8b9801091af1ba75e6b9107efd078dda8e80c97b43901bd",
+        "tools/write_lowering_reading.py": "486009cc65122e9f77f9462bef4e0180e4fffd2221847d27b57e1cfa810127a6"
       }
     }
   },
