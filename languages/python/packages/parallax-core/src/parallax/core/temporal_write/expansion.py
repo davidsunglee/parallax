@@ -197,7 +197,7 @@ class PredecessorExpander:
         self._key_values = (key_value,)
         self._gated = gated
         # Every close of the object assigns the same Transaction-Time end,
-        # addresses the same axis ends, and expects the same affected row.
+        # addresses the same axis ends, and expects exactly one affected row.
         shape = facts.shape
         self._close_assignments = PlannedAssignments(
             attributes={shape.transaction_time.end_attribute: facts.instant}
@@ -1415,8 +1415,7 @@ def _planned_close(
     milestone's currency and revises no represented value — and it expects
     exactly one row in every mode: a close reaching none would otherwise chain
     a duplicate or an orphaned current row, so the shortfall is an outcome
-    rather than a silent success. ``assignments``, ``end_attributes``, and
-    ``affected_rows`` are what every close of the object shares.
+    rather than a silent success.
     """
     entity = facts.entity
     shape = facts.shape
