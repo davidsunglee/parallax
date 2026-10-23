@@ -10,6 +10,11 @@ from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
 from tests._support.repo import canonical_snapshot_claim
 
 
+@pytest.fixture
+def pipelines_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(psycopg.capabilities, "has_pipeline", lambda: True)
+
+
 def test_adapter_identity_is_python() -> None:
     assert ADAPTER.to_json() == {
         "language": "python",
@@ -18,6 +23,7 @@ def test_adapter_identity_is_python() -> None:
     }
 
 
+@pytest.mark.usefixtures("pipelines_available")
 def test_snapshot_claim_capabilities_match_slices_md() -> None:
     canonical = canonical_snapshot_claim()
     assert SNAPSHOT_CLAIM.capabilities() == canonical["capabilities"]
@@ -41,6 +47,7 @@ def test_a_libpq_without_pipelines_excludes_ordered_write_transport_cases(
         assert diagnostic.code == "unsupported-case-tag"
 
 
+@pytest.mark.usefixtures("pipelines_available")
 def test_claim_capabilities_include_and_exclude_shape() -> None:
     claim = Claim(
         modules=("m-core",),
@@ -53,6 +60,7 @@ def test_claim_capabilities_include_and_exclude_shape() -> None:
     assert claim.capabilities()["caseTags"] == {"include": ["slice-x"], "exclude": ["skip-me"]}
 
 
+@pytest.mark.usefixtures("pipelines_available")
 def test_claim_capabilities_omit_empty_case_tags() -> None:
     claim = Claim(
         modules=("m-core",),

@@ -7,9 +7,10 @@ import shutil
 import subprocess
 from typing import Any
 
+import psycopg
 import pytest
 
-from parallax.conformance import case_format, cli
+from parallax.conformance import adapter, case_format, cli
 from tests._support.repo import canonical_snapshot_claim, validate_adapter_envelope
 
 _READ_CASE = str(case_format.default_cases_dir() / "m-predicate-002-eq.yaml")
@@ -21,7 +22,10 @@ def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, dict
     return code, json.loads(out)
 
 
-def test_describe_in_process(capsys: pytest.CaptureFixture[str]) -> None:
+def test_describe_in_process(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(psycopg.capabilities, "has_pipeline", lambda: True)
     code, envelope = _run(capsys, ["describe"])
     assert code == 0
     validate_adapter_envelope(envelope)
@@ -114,6 +118,4 @@ def test_describe_subprocess_smoke() -> None:
     assert result.returncode == 0, result.stderr
     envelope = json.loads(result.stdout)
     validate_adapter_envelope(envelope)
-    canonical = canonical_snapshot_claim()
-    canonical["adapter"] = envelope["adapter"]
-    assert envelope == canonical
+    assert envelope == adapter.describe()
