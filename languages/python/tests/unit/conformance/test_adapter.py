@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 from unittest import mock
 
+import psycopg
 import pytest
 
 from parallax.conformance import _case_ingress, adapter, case_format, engine, models
@@ -547,7 +548,10 @@ def _case(
     )
 
 
-def test_describe_matches_canonical_claim_except_adapter() -> None:
+def test_describe_matches_canonical_claim_except_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(psycopg.capabilities, "has_pipeline", lambda: True)
     envelope = adapter.describe()
     validate_adapter_envelope(envelope)
     canonical = canonical_snapshot_claim()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import psycopg
 import pytest
 
 from parallax.conformance import api_suite, case_format, usage_guide
@@ -69,6 +70,17 @@ def test_partition_report_is_a_clean_full_partition() -> None:
     # Every registered example counts as exercised.
     assert {e.case_id for e in api_suite.EXAMPLES} <= report.exercised
     assert report.exercised | report.skipped == report.active
+
+
+def test_a_libpq_without_pipelines_partitions_the_narrowed_slice_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(psycopg.capabilities, "has_pipeline", lambda: False)
+    report = api_suite.partition_report()
+    assert report.ok, report.errors
+    narrowed = {case.case_id for case in api_suite.authored_slice()} - report.active
+    assert narrowed
+    assert narrowed <= api_suite.CASE_SKIP_REASONS.keys()
 
 
 def test_relationship_primary_cases_have_only_case_scoped_refusals() -> None:
@@ -158,7 +170,7 @@ def test_registry_classifies_every_active_module_without_stale_entries() -> None
     # The committed registries are reconciled against the live corpus: every
     # active module is covered by the module registry except the bucket-free
     # modules above, and no entry names nothing.
-    active = api_suite.active_slice()
+    active = api_suite.authored_slice()
     modules = {case.primary_module for case in active}
     assert modules - set(api_suite.SKIP_REASONS) == _BUCKET_FREE_MODULES
     exercised = {example.case_id for example in api_suite.EXAMPLES}

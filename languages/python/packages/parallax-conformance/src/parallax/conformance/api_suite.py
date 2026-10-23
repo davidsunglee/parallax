@@ -34,6 +34,7 @@ __all__ = [
     "Recipe",
     "Skip",
     "active_slice",
+    "authored_slice",
     "build_skips",
     "compute_partition",
     "partition_report",
@@ -2015,13 +2016,17 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
 }
 
 
-def _selection_filter(claim: Claim) -> case_format.SelectionFilter:
-    return case_format.SelectionFilter(
+def _select(
+    claim: Claim, cases: list[case_format.Case] | None, exclude: tuple[str, ...]
+) -> list[case_format.Case]:
+    corpus = cases if cases is not None else case_format.load_cases()
+    selection = case_format.SelectionFilter(
         modules=frozenset(claim.modules),
         case_shapes=frozenset(claim.case_shapes),
         include=frozenset(claim.include),
-        exclude=frozenset(claim.excluded_tags),
+        exclude=frozenset(exclude),
     )
+    return case_format.select(corpus, selection)
 
 
 def active_slice(
@@ -2029,8 +2034,18 @@ def active_slice(
     cases: list[case_format.Case] | None = None,
 ) -> list[case_format.Case]:
     """The corpus cases the claim's selection expression admits."""
-    corpus = cases if cases is not None else case_format.load_cases()
-    return case_format.select(corpus, _selection_filter(claim))
+    return _select(claim, cases, claim.excluded_tags)
+
+
+def authored_slice(
+    claim: Claim = SNAPSHOT_CLAIM,
+    cases: list[case_format.Case] | None = None,
+) -> list[case_format.Case]:
+    """The corpus cases the claim's authored selection admits: the active slice
+    before the exclusions :attr:`Claim.excluded_tags` derives from the process.
+    The skip registries are written against this slice, so they stay valid in a
+    process whose derived exclusions narrow the active one."""
+    return _select(claim, cases, claim.exclude)
 
 
 def build_skips(
@@ -2060,29 +2075,29 @@ def build_skips(
 
 
 def stale_skip_reasons(
-    active: list[case_format.Case],
+    selected: list[case_format.Case],
     examples: list[Example],
     reasons: Mapping[str, str] = SKIP_REASONS,
     case_reasons: Mapping[str, str] = CASE_SKIP_REASONS,
 ) -> list[str]:
-    """Error strings for registry entries that name no un-exercised active case.
+    """Error strings for registry entries that name no un-exercised selected case.
 
-    A module entry is stale when its module is absent from the active slice or
+    A module entry is stale when its module is absent from ``selected`` or
     every case it would cover is already exercised (or case-scoped); a
-    case-scoped entry is stale when its case is inactive or exercised. Either
+    case-scoped entry is stale when its case is unselected or exercised. Either
     way the entry produces no skip and is dead weight that must be pruned.
     """
     exercised = {example.case_id for example in examples}
-    unexercised = [case for case in active if case.case_id not in exercised]
+    unexercised = [case for case in selected if case.case_id not in exercised]
     covered = {case.primary_module for case in unexercised if case.case_id not in case_reasons}
     stale = [
-        f"stale skip-registry entry {module!r}: names no un-exercised active case"
+        f"stale skip-registry entry {module!r}: names no un-exercised selected case"
         for module in sorted(reasons)
         if module not in covered
     ]
     unexercised_ids = {case.case_id for case in unexercised}
     stale.extend(
-        f"stale case-skip entry {case_id!r}: not an un-exercised active case"
+        f"stale case-skip entry {case_id!r}: not an un-exercised selected case"
         for case_id in sorted(case_reasons)
         if case_id not in unexercised_ids
     )
@@ -2122,13 +2137,14 @@ def partition_report(
     cases: list[case_format.Case] | None = None,
     examples: list[Example] | None = None,
 ) -> Partition:
-    """Load the active slice and compute its partition against the skip registry."""
+    """Load the active slice and compute its partition against the skip
+    registry, flagging registry entries stale against the authored slice."""
     active = active_slice(claim, cases)
     registered = examples if examples is not None else EXAMPLES
     skips = build_skips(active, registered, SKIP_REASONS)
     active_ids = frozenset(case.case_id for case in active)
     partition = compute_partition(active_ids, registered, skips)
-    stale = stale_skip_reasons(active, registered, SKIP_REASONS)
+    stale = stale_skip_reasons(authored_slice(claim, cases), registered, SKIP_REASONS)
     if not stale:
         return partition
     return Partition(
