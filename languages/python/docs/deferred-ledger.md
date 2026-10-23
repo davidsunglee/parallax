@@ -52,6 +52,16 @@ branch — which is a new statement-count contract — or refusing the fallback 
 `m-read-lock` layer instead, where the caller can see it. Both are design choices
 with cross-language reach, so neither belongs in an incidental fix.
 
+**The PostgreSQL NULL-tail path bypasses the refusal.** A continuing page that needs
+a NULL-tail arm under `locking` on PostgreSQL plans both arms without the lock and
+locks once through `_compile._union_null_tail`'s outer join back to the target's
+Table. For an unnarrowed union the arms never reach `_plan_tpcs_union_read`'s
+check, and the abstract target has no Table to join, so the caller sees the
+internal "no Table Layout" `SqlGenError` instead of this refusal. Whichever repair
+closes this entry must cover that path too. The same join's narrowed
+single-concrete case, which should succeed, is
+[COR-242](https://linear.app/flimflam/issue/COR-242/locking-null-tail-continuation-of-a-narrowed-table-per-concrete).
+
 *(The wider half of this entry — every mode refused, including `optimistic`, and
 `orderBy` / `limit` refused with them — is closed. The guard now tests
 `lock == "locking"`, matching the append site's own check, and an ordered or
