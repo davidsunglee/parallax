@@ -280,6 +280,22 @@ def test_binding_reads_the_ownership_the_attempt_holds_when_it_binds() -> None:
     assert tuple(owned.changed) == tuple(stored.changed) == (_retained(_TAIL).key,)
 
 
+def test_every_milestone_a_binding_reads_is_its_own_state_of_one_shared_object_key() -> None:
+    head = _retained(_HEAD)
+    settled, _acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
+    middle, tail = _span(_JUN, _JUL, 200), _span(_JUL, INFINITY, 250)
+
+    bound = _bind(settled, [middle, tail])
+
+    known, first, second = bound.changed
+    assert known == head.key
+    assert isinstance(first, TemporalObjectStateKey)
+    assert isinstance(second, TemporalObjectStateKey)
+    assert [state.milestone.valid_time for state in (first, second)] == [_JUN, _JUL]
+    assert first.object is second.object
+    assert first.object == ObjectKey(_SPAN, (("id", 1),))
+
+
 def test_binding_stamps_the_instant_planning_resolved_and_reads_no_clock() -> None:
     head = _retained(_HEAD)
     planning = CountingClock([_PLANNED_AT])

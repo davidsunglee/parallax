@@ -143,8 +143,7 @@ def _finite_valid_time(evidence: ReadEvidence) -> dt.datetime | None:
 def _known_predecessors(
     composed: CoalescedTemporalWrite,
     facts: TemporalFacts,
-    key_attribute: AttributeIdentity,
-    key_value: object,
+    target: ObjectKey,
     ownership: TemporalWriteOwnership,
 ) -> tuple[tuple[_RangePredecessor, ...], tuple[_RangePredecessor, ...]]:
     """The predecessors a composed range already knows, as the ones the
@@ -172,16 +171,13 @@ def _known_predecessors(
             continue
         observation = retained.evidence
         assert isinstance(observation, TemporalObservation)  # a temporal write observes a milestone
-        predecessor = _predecessor(
-            facts, key_attribute, key_value, observation.predecessor, retained.key
-        )
+        predecessor = _predecessor(facts, target, observation.predecessor, retained.key)
         if all(predecessor.state != held.state for held in distinct):
             distinct.append(predecessor)
     bound = (
         _held(
             facts,
-            key_attribute,
-            key_value,
+            target,
             ownership,
             composed.transform.valid_time_window,
             excluding={observed.state for observed in distinct},
@@ -202,20 +198,18 @@ def _known_predecessors(
 
 def _held(
     facts: TemporalFacts,
-    key_attribute: AttributeIdentity,
-    key_value: object,
+    target: ObjectKey,
     ownership: TemporalWriteOwnership,
     window: TimeInterval | None,
     *,
     excluding: Set[ObjectStateKey] = frozenset(),
 ) -> list[_RangePredecessor]:
-    """Every current row of the object over ``window`` the attempt's
-    completed writes produced and hold, whichever source's continuation holds
-    it, in Valid-Time order, except a state ``excluding`` names."""
-    target = _object_key(facts, key_attribute, key_value)
+    """Every current row of the object ``target`` over ``window`` the
+    attempt's completed writes produced and hold, whichever source's
+    continuation holds it, in Valid-Time order, except a state ``excluding``
+    names."""
     held = (
-        _predecessor(facts, key_attribute, key_value, row, None)
-        for row in ownership.current_rows(target, window)
+        _predecessor(facts, target, row, None) for row in ownership.current_rows(target, window)
     )
     return [predecessor for predecessor in held if predecessor.state not in excluding]
 
@@ -282,16 +276,13 @@ def _object_key(
 
 def _predecessor(
     facts: TemporalFacts,
-    key_attribute: AttributeIdentity,
-    key_value: object,
+    target: ObjectKey,
     row: PredecessorRow,
     state: ObjectStateKey | None,
 ) -> _RangePredecessor:
     shape = facts.shape
     if state is None:
-        state = TemporalObjectStateKey(
-            _object_key(facts, key_attribute, key_value), milestone_edge(shape, row, None)
-        )
+        state = TemporalObjectStateKey(target, milestone_edge(shape, row, None))
     return _RangePredecessor(
         predecessor=row,
         state=state,
@@ -426,12 +417,14 @@ class _RangeMeaning:
 class _TemporalRangeBinder:
     """One binding of a range's ``meaning`` to its coverage, reading the
     attempt's live ``ownership`` through the range's one predecessor
-    ``expansion``, which finalizes every row it produces once. Exists only while
-    it binds."""
+    ``expansion``, which finalizes every row it produces once. Every current
+    row it reads is a milestone of its one ``object_key``. Exists only while it
+    binds."""
 
     meaning: _RangeMeaning
     ownership: TemporalWriteOwnership
     expansion: PredecessorExpander
+    object_key: ObjectKey
 
     def bind(
         self,
@@ -563,8 +556,7 @@ class _TemporalRangeBinder:
 
     def predecessor(self, row: PredecessorRow) -> _RangePredecessor:
         """One current row of the range's object as a predecessor."""
-        meaning = self.meaning
-        return _predecessor(meaning.facts, meaning.key_attribute, meaning.key_value, row, None)
+        return _predecessor(self.meaning.facts, self.object_key, row, None)
 
     def _require_one_start(self, current: Sequence[_RangePredecessor]) -> None:
         for condition in self.meaning.conditions:
@@ -642,7 +634,7 @@ def settle_range(
     entity, key_value, transform = _range_of(item, key_attribute)
     facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=instant)
     predecessors, validations, anchor, conditions, retained = _known(
-        item, facts, key_attribute, key_value, ownership
+        item, facts, _object_key(facts, key_attribute, key_value), ownership
     )
     window = transform.valid_time_window
     meaning = _RangeMeaning(
@@ -761,8 +753,7 @@ def _retained(composed: CoalescedTemporalWrite) -> tuple[RetainedTargetState, ..
 def _known(
     item: CoalescedTemporalWrite | TemporalKeyedWrite,
     facts: TemporalFacts,
-    key_attribute: AttributeIdentity,
-    key_value: object,
+    target: ObjectKey,
     ownership: TemporalWriteOwnership,
 ) -> tuple[
     tuple[_RangePredecessor, ...],
@@ -775,9 +766,7 @@ def _known(
     validates, its insertion anchor, its callers' target conditions, and the
     starting rows their admissions retained."""
     if isinstance(item, CoalescedTemporalWrite):
-        predecessors, validations = _known_predecessors(
-            item, facts, key_attribute, key_value, ownership
-        )
+        predecessors, validations = _known_predecessors(item, facts, target, ownership)
         return predecessors, validations, _anchor(item), _conditions(item), _retained(item)
     window = item.instruction.valid_time_window
     if isinstance(item, InsertionKeyedWrite):
@@ -793,13 +782,11 @@ def _known(
         return (), (), _UNANCHORED, conditions, retained
     observed = item.retained_observation
     if _continues(ownership, _observed_source(observed, item.source_evidence)):
-        current = _held(facts, key_attribute, key_value, ownership, window)
+        current = _held(facts, target, ownership, window)
         return tuple(current), (), _UNANCHORED, (), ()
     observation = observed.evidence
     assert isinstance(observation, TemporalObservation)  # settlement refuses any other
-    predecessor = _predecessor(
-        facts, key_attribute, key_value, observation.predecessor, observed.key
-    )
+    predecessor = _predecessor(facts, target, observation.predecessor, observed.key)
     return (predecessor,), (), _UNANCHORED, (), ()
 
 
@@ -1191,6 +1178,7 @@ def _binding(
             audit=audit,
             payloads=payloads,
         ),
+        meaning.object_key,
     )
 
 

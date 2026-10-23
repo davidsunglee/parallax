@@ -70,6 +70,7 @@ from parallax.core.write_plan.steps import (
     VersionGate,
     WriteRow,
     WriteTarget,
+    adopt_planned_assignments,
     adopt_planned_row,
     shortfall_for,
 )
@@ -580,6 +581,27 @@ def test_an_incomplete_milestone_address_is_refused(kwargs: dict[str, object], m
 def test_trusted_carrier_adoption_rejects_invalid_storage() -> None:
     with pytest.raises(TypeError, match="final dict or mapping proxy"):
         adopt_planned_row(cast("Any", FrozenMap({})), {})
+
+
+def test_trusted_carriers_adopting_empty_storage_share_one_immutable_empty_map() -> None:
+    first = adopt_planned_row({_ID: 1}, {})
+    second = adopt_planned_row({_ID: 2}, {})
+    assigned = adopt_planned_assignments({_OWNER: "Ada"}, {})
+
+    assert first.value_objects is second.value_objects is assigned.value_objects
+    assert dict(first.value_objects) == {}
+    with pytest.raises(TypeError):
+        cast("dict[object, object]", first.value_objects)[_ADDRESS] = {"city": "Oslo"}
+    assert dict(second.value_objects) == {}
+
+
+def test_directly_constructed_assignments_freeze_the_mappings_they_were_built_from() -> None:
+    attributes: dict[AttributeIdentity, object] = {_OWNER: "Ada"}
+    value_objects: dict[ValueObjectIdentity, object] = {}
+    assignments = PlannedAssignments(attributes=attributes, value_objects=value_objects)
+    attributes[_OWNER] = "Grace"
+    value_objects[_ADDRESS] = {"city": "Oslo"}
+    assert (dict(assignments.attributes), dict(assignments.value_objects)) == ({_OWNER: "Ada"}, {})
 
 
 # --------------------------------------------------------------------------- #
