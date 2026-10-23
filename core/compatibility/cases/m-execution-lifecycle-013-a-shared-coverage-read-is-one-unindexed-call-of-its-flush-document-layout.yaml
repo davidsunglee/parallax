@@ -1,5 +1,5 @@
 model: models/shared-coverage-layout-twin-document.yaml
-tags: [m-execution-lifecycle, m-unit-work, m-sql, m-temporal-write, m-read-lock, bitemporal, temporal, scenario, document, slice-snapshot-1]
+tags: [m-execution-lifecycle, m-unit-work, m-sql, m-temporal-write, m-read-lock, bitemporal, temporal, scenario, document, ordered-write-transport, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

@@ -76,6 +76,12 @@ catalog in [`modules.md`](modules.md); every other tag is a free-form feature ta
 case ID (`m-pk-gen-001`) also matches that grammar — a harmless overlap, since module
 identity is only ever resolved against the catalog, never inferred from a filename.
 
+One feature tag carries a contract. `ordered-write-transport` marks a case whose
+oracle holds only on a run connection holding ordered write transport
+(`m-db-port`) — an execution-lifecycle oracle in which one invocation presents
+several Database Calls (`m-execution-lifecycle`) — and gates the case's claim
+(`m-conformance-adapter`).
+
 ### Cross-layout twin proofs
 
 A bounded set of cases proves that Storage Layout does not change logical

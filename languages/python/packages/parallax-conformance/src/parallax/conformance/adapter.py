@@ -30,6 +30,8 @@ __all__ = [
 
 SCHEMA_VERSION: Final[str] = "1"
 
+_ORDERED_WRITE_TRANSPORT_TAG: Final[str] = "ordered-write-transport"
+
 Envelope = dict[str, Any]
 
 
@@ -94,6 +96,17 @@ def classify(
     if exclude and not set(case.tags).isdisjoint(exclude):
         offending = sorted(set(case.tags) & exclude)
         return Diagnostic("unsupported-case-tag", f"case carries excluded tags: {offending}")
+    return None
+
+
+def _transport_diagnostic(case: case_format.Case, port: CaseDatabase) -> Diagnostic | None:
+    """The claim filter a ``run`` alone applies: a case tagged
+    ``ordered-write-transport`` needs a run connection holding that transport."""
+    if _ORDERED_WRITE_TRANSPORT_TAG in case.tags and port.ordered_write_transport is None:
+        return Diagnostic(
+            "unsupported-case-tag",
+            f"case carries {_ORDERED_WRITE_TRANSPORT_TAG!r} and the run connection holds none",
+        )
     return None
 
 
@@ -476,7 +489,7 @@ def run_case(
         return _non_ok("run", "unsupported", diagnostic, adapter)
     case = case_format.load_case(Path(case_path))
     dialect = run.port.dialect.name
-    diagnostic = classify("run", dialect, case, claim)
+    diagnostic = classify("run", dialect, case, claim) or _transport_diagnostic(case, run.port)
     if diagnostic is not None:
         return _non_ok("run", "unsupported", diagnostic, adapter)
     lifecycle = LifecycleRun()
