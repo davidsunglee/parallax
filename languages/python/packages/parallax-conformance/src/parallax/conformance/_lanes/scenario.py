@@ -645,8 +645,9 @@ class _SimulatedUnit:
     observation-free write of an unversioned row carries Read Evidence of its
     own, stamped with a participation no unit of work issued. A write against
     existing state that none of these licenses is refused when it is
-    submitted, a versioned write with no observed version as settling it would
-    refuse it, and any other as a planning refusal. A
+    submitted, as settling it would refuse it: a versioned write for its
+    missing observed version, an unversioned one for the primary key its row
+    omits, and a temporal one for its missing Temporal Observation. A
     write that unit of work refuses to admit is refused as the case's
     composition rather than leaked as the production refusal. A target write is
     buffered as the attempt's own is, through
@@ -731,7 +732,7 @@ class _SimulatedUnit:
             optimistic, instruction.mutation, object_key=key, observation=observation
         )
         if evidence is None:
-            raise _unlicensed(instruction, optimistic)
+            raise _unlicensed(instruction, optimistic, self._model)
         if not isinstance(evidence, ObjectKey):
             self._admit(admitted_write(instruction, evidence))
             return
@@ -751,15 +752,27 @@ class _SimulatedUnit:
             ) from refusal
 
 
-def _unlicensed(instruction: PreparedKeyedInstruction, key: opt_lock.OptimisticKey) -> Exception:
+def _unlicensed(
+    instruction: PreparedKeyedInstruction, key: opt_lock.OptimisticKey, model: AcceptedMetamodel
+) -> Exception:
     """The refusal of a simulated write against existing state that carries
-    neither an insertion's authority nor the evidence ``key`` requires of it."""
+    neither an insertion's authority nor the evidence ``key`` requires of it.
+
+    An unversioned row's evidence is its object, so only a row naming none
+    reaches here, and it is refused for the key it omits."""
     entity = instruction.target.identity
     mutation = instruction.mutation
     if isinstance(key, opt_lock.ExplicitVersion):
         return opt_lock.UnobservedVersionError(
             f"{entity.name}: a keyed {mutation!r} of a versioned row requires the version its "
             "source observed, which the case states none of (m-opt-lock)"
+        )
+    if not isinstance(key, opt_lock.TransactionTimeDerived):
+        position = inheritance.view(model).entity(entity)
+        assert position is not None  # the facet covers every accepted Entity
+        return WritePlanningError(
+            f"{entity.name!r}: an addressed write row omits the primary-key member "
+            f"{position.primary_key.identity.name!r}, so it selects no row"
         )
     return WritePlanningError(
         f"{entity.name!r}: a keyed {mutation!r} writes existing state the case state holds "

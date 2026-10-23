@@ -4028,6 +4028,31 @@ def test_a_compiled_temporal_write_no_evidence_licenses_is_refused_when_submitte
     assert admitted == []
 
 
+@pytest.mark.parametrize(
+    ("mutation", "row"),
+    [
+        ("amend", {"balance": "2.00"}),
+        ("delete", {}),
+        ("replace", {"owner": "Mira", "balance": "2.00"}),
+    ],
+)
+def test_a_compiled_unversioned_write_naming_no_key_is_refused_for_its_missing_key(
+    mutation: str, row: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    admitted = _admitted(monkeypatch)
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "model": "models/wallet.yaml",
+            "when": {"writeSequence": [{"mutation": mutation, "entity": "Wallet", "rows": [row]}]},
+        },
+    )
+    with pytest.raises(EngineError, match="omits the primary-key member 'id'") as raised:
+        scenario.compile_write_sequence_case(case, "postgres")
+    assert isinstance(raised.value.__cause__, WritePlanningError)
+    assert admitted == []
+
+
 @pytest.mark.parametrize("case_id", ["m-unit-work-026", "m-unit-work-027"])
 def test_a_compiled_observation_free_write_carries_simulated_evidence_of_its_object(
     case_id: str, monkeypatch: pytest.MonkeyPatch
