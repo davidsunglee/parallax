@@ -187,6 +187,10 @@ A case command is claimed only when **all** of these are true:
   listed in `modules`
 - if `caseTags.include` is present, the case has at least one listed tag
 - if `caseTags.exclude` is present, the case has none of the listed tags
+- for `run`, if the case carries the `ordered-write-transport` tag
+  (`m-case-format`), the connection the profile runs it on holds ordered write
+  transport (`m-db-port`); an adapter whose run connections hold none lists the
+  tag in `caseTags.exclude`
 
 `caseTags.include` and `caseTags.exclude` use exact tag strings from case files,
 including tags that contain spaces such as `identity cache`. The filters are
