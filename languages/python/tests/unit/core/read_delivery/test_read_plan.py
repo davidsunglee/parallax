@@ -33,7 +33,8 @@ from parallax.core.read_delivery._delivery import find
 from parallax.core.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
 from parallax.core.read_delivery._read_plan import EMPTY_READ, EmptyRead, ReadPlanCache
 from parallax.core.read_delivery._row_converter import ReadRowConverter
-from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
+from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.unit_work import Concurrency
 from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
@@ -1125,6 +1126,57 @@ def test_retained_child_work_is_resolved_and_compiled_once_per_plan_family(
     assert after.fetch_step(0) is first.fetch_step(0)
     assert after.include_tree() is first.include_tree()
     assert _child_work(after) is _child_work(first)
+
+
+def test_a_delivered_child_level_renders_its_retained_template_into_its_one_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = ReadPlanCache()
+    query = _with_items()
+    prepared = _plan(cache, query).prepared_fetch(0)
+    assert isinstance(prepared, tuple)
+    template, _converter = prepared
+
+    def forbidden(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("delivery must reuse the prepared child read")
+
+    for name in ("compile_read", "compile_template", "bind"):
+        monkeypatch.setattr(_read_plan, name, forbidden)
+    monkeypatch.setattr(ReadResultContract, "__init__", forbidden)
+    rendered: list[tuple[CompiledTemplate, CompiledRead]] = []
+    render = CompiledTemplate.render
+
+    def recording_render(self: CompiledTemplate, keys: list[Any]) -> CompiledRead:
+        rendered.append((self, render(self, keys)))
+        return rendered[-1][1]
+
+    monkeypatch.setattr(CompiledTemplate, "render", recording_render)
+    order = {
+        "id": 1,
+        "name": "order-1",
+        "sku": "A-100",
+        "qty": 5,
+        "price": 10,
+        "active": True,
+        "ordered_on": None,
+    }
+
+    result = find(
+        query,
+        _MODEL,
+        ScriptedAdapter(Read(rows=[order]), Read(rows=[])),
+        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
+        edition="edition-a",
+        planner=cache,
+    )
+
+    assert result.page.root_count == 1
+    ((used, child),) = rendered
+    assert used is template
+    assert child.statement is not template.compiled.statement
+    assert child.result_contract is template.compiled.result_contract
+    assert child.projection is template.compiled.projection
+    assert child.document_reads is template.compiled.document_reads
 
 
 def test_database_transactions_share_read_plans_across_connections(

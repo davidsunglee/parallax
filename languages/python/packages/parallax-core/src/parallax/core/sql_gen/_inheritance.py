@@ -1026,9 +1026,9 @@ def plan_read_shape(
 
     ``instance_form`` is the object lane (`result_form == "instance"`), which
     decides only sibling padding and which branch-owned fields a row publishes.
-    ``lock`` is here rather than at the assembly site because the union lane must
-    REFUSE a genuinely requested shared row lock before any branch is assembled;
-    ordering and the cap are the assembler's, since a union applies them to its
+    ``lock`` is here rather than at the rendering site because the union lane must
+    REFUSE a genuinely requested shared row lock before any branch is rendered;
+    ordering and the cap are the renderer's, since a union applies them to its
     own outer select rather than to any branch.
     """
     entity = query.entity

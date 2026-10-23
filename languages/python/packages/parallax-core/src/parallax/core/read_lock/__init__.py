@@ -24,7 +24,7 @@ def mode_for(strategy: Concurrency | None) -> LockMode | None:
     legally names BOTH vocabularies and states that coincidence as POLICY,
     rather than three call sites each silently assuming it holds.
     ``locking`` carries through to `m-sql`'s append site
-    (`~parallax.core.sql_gen._compile._append_result_shape`), which appends
+    (`~parallax.core.sql_gen._compile._append_read_tail`), which appends
     the dialect's shared-row-lock suffix; ``optimistic`` carries through
     unchanged too, but the SAME append site never triggers for it (only
     ``"locking"`` does) — the "an Optimistic object find omits the shared lock"

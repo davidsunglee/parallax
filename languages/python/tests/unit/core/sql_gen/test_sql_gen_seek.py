@@ -29,7 +29,7 @@ from parallax.core.object_query._resolved import (
     ResolvedObjectQuery,
     ResolvedSeek,
 )
-from parallax.core.predicate import Comparison, FieldSubject, TrueNode
+from parallax.core.predicate import Comparison, FieldSubject, Or, TrueNode
 from parallax.core.read_delivery._row_decoding import publication_keys, raw_member, row_coordinates
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
@@ -570,7 +570,8 @@ def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock(
     # statement, so each joins the shared order itself, binds the predicate where
     # its own text puts it, and leaves the shared lock to the reattached base row.
     # They render the read's one physical and statement plans, each through its
-    # own builder, and the compiled read retains no statement plan or builder.
+    # own builder, into one result contract and one compiled read, which
+    # retains no statement plan or builder.
     entity = entity_of(ORDERS, "OrderItem")
     query = object_query(
         entity.identity,
@@ -610,13 +611,50 @@ def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock(
     assert not reaches_compilation_state(compiled)
 
 
+def test_both_continuing_arms_of_a_family_page_keep_the_tag_guard_after_the_grouped_seek(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A concrete table-per-hierarchy page renders each arm through the one
+    # single-table renderer: the caller's disjunction stays grouped, the seek
+    # (or the NULL tail) follows it, and the framework tag guard binds last
+    # before each arm's own cap; the outer union caps once more.
+    entity = entity_of(PAYMENT, "CardPayment")
+    query = object_query(
+        entity.identity,
+        Or(
+            operands=(
+                Comparison(op="eq", subject=FieldSubject("CardPayment.id"), value=3),
+                Comparison(op="eq", subject=FieldSubject("CardPayment.id"), value=5),
+            )
+        ),
+    )
+    node = continuation.plan(validate_object_query(entity, query, PAYMENT), PAYMENT).after(
+        ContinuationCoordinate((1,)), limit=2
+    )
+    reuse = record_plan_reuse(monkeypatch)
+    statement = _lowered(PAYMENT, node)
+    arm = "select t0.id, t0.amount, t0.card_network, t0.id parallax_seek_0 from payment t0 where "
+    assert statement.sql == (
+        "select u.id, u.amount, u.card_network, u.parallax_seek_0 from (("
+        f"{arm}(t0.id = ? or t0.id = ?) and t0.id >= ? and (t0.id > ? or t0.id is null) "
+        "and t0.kind = ? order by t0.id asc limit ?) union all ("
+        f"{arm}(t0.id = ? or t0.id = ?) and t0.id is null and t0.kind = ? "
+        "order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?"
+    )
+    assert statement.binds == (3, 5, 1, 1, "card", 2, 3, 5, "card", 2, 2)
+    shape = assert_planned_once(reuse)
+    assert isinstance(shape, SingleTableReadPlan) and shape.tag_guard is not None
+    ordinary, null_tail = reuse.roots
+    assert ordinary.row.ctx is not null_tail.row.ctx
+
+
 def test_both_continuing_arms_of_a_union_render_its_branch_roots_through_fresh_builders(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A table-per-concrete-subtype page over a nullable direct leading term
-    # assembles each arm as its own union, and every branch of either arm
+    # renders each arm as its own union, and every branch of either arm
     # restarts its aliases at `t0`, joins the shared dealer itself, and binds
-    # only its own branch root's sources.
+    # only its own branch root's sources; the two arms finish one read.
     entity = entity_of(TRAVERSAL, "Vehicle")
     query = object_query(
         entity.identity,

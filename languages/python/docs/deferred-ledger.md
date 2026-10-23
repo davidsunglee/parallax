@@ -34,10 +34,10 @@ Entry numbering is continuous and never reused. The next new number is **D-99**.
 ### D-56 — A table-per-concrete-subtype union-all read cannot run inside a transaction whose target resolves to the Locking strategy
 
 *Low — one concurrency mode of a legal read shape is unreachable from
-`TxnContext.find`.* Relates to `parallax.core.sql_gen._inheritance._plan_tpcs_read`,
+`TxnContext.find`.* Relates to `parallax.core.sql_gen._inheritance._plan_tpcs_union_read`,
 `m-sql` *Ordered or limited abstract read*.
 
-**What.** `_plan_tpcs_read` refuses a union-all read that requests a shared row
+**What.** `_plan_tpcs_union_read` refuses a union-all read that requests a shared row
 lock. PostgreSQL grants a locking clause over neither a `UNION` result nor any
 input of one, and the suffix cannot be silently dropped because that lock is what
 licenses a later ungated write. So a TPCS family — the corpus's `Rate` — is

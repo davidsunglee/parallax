@@ -20,7 +20,7 @@ def test_the_locking_strategy_selects_the_shared_lock() -> None:
 def test_the_optimistic_strategy_selects_the_optimistic_lock_mode() -> None:
     # `mode_for` is the strategy -> LockMode identity mapping; the "never a
     # lock" half of the Optimistic strategy's own contract is enforced at the
-    # `m-sql` APPEND SITE (`sql_gen._compile._append_result_shape`'s own
+    # `m-sql` APPEND SITE (`sql_gen._compile._append_read_tail`'s own
     # `lock == "locking"` check — this module renders no SQL and owns no append
     # site), proven end to end by the compile sweep
     # (`m-read-lock-005`).
