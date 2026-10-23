@@ -30,7 +30,11 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen import _context, _planning
-from parallax.core.sql_gen._inheritance import plan_inheritance_read
+from parallax.core.sql_gen._inheritance import (
+    SingleTableReadPlan,
+    TpcsUnionReadPlan,
+    plan_read_shape,
+)
 from parallax.core.sql_gen._planning import (
     NO_CANDIDATE,
     REACHED_ROW,
@@ -64,7 +68,11 @@ from tests._support.sql import (
 from tests.unit._corpus_model_support import model, target
 from tests.unit.core.sql_gen._badge_model_support import badge_model, temporal_badge_model
 from tests.unit.core.sql_gen._dormant_model_support import dormant_target_model
-from tests.unit.core.sql_gen._plan_reuse_support import record_plan_reuse
+from tests.unit.core.sql_gen._plan_reuse_support import (
+    ReadShape,
+    assert_planned_once,
+    record_plan_reuse,
+)
 
 ORDERS = model("orders")
 DOCUMENT = model("document")
@@ -183,40 +191,53 @@ def _planned(
     narrow_to: tuple[str, ...] | None = None,
     order_by: tuple[str, ...] = (),
 ) -> StatementPlan:
+    plan, _shape = _planned_shape(
+        family, root, node, context=context, narrow_to=narrow_to, order_by=order_by
+    )
+    return plan
+
+
+def _planned_shape(
+    family: Metamodel,
+    root: str,
+    node: oa.PredicateNode,
+    *,
+    context: EvaluationContext = EvaluationContext.SHARING_ALLOWED,
+    narrow_to: tuple[str, ...] | None = None,
+    order_by: tuple[str, ...] = (),
+) -> tuple[StatementPlan, ReadShape]:
+    """``root``'s statement plan and the physical read plan it was planned over."""
     entity = target(family, root)
     facet, storage = inheritance.view(family), storage_layout.view(family)
     narrowed = (
         None if narrow_to is None else tuple(target(family, name).identity for name in narrow_to)
     )
     predicate = resolved_as_stated(oa.validate_predicate(entity, node, family), family, entity)
-    read = (
-        None
-        if entity.inheritance is None
-        else plan_inheritance_read(
-            PlannedEntityQuery(
-                target=entity.identity,
-                entity=entity,
-                position=read_position(family, entity, narrowed),
-                predicate=predicate,
-                projection=ResolvedReadProjection((), False),
-                narrow_to=narrowed,
-            ),
-            facet,
-            storage,
-            False,
-            None,
-        )
+    read = plan_read_shape(
+        PlannedEntityQuery(
+            target=entity.identity,
+            entity=entity,
+            position=read_position(family, entity, narrowed),
+            predicate=predicate,
+            projection=ResolvedReadProjection((), False),
+            narrow_to=narrowed,
+        ),
+        facet,
+        storage,
+        False,
+        None,
     )
-    return plan_statement(
+    plan = plan_statement(
         predicate,
         evaluation_context=context,
         entity=entity,
         meta=family,
         facet=facet,
         storage=storage,
-        inheritance_read=read,
+        read_shape=read,
         order_terms=tuple(_order_term(family, name) for name in order_by),
     )
+    return plan, read
 
 
 def _order_term(family: Metamodel, reference: str) -> ResolvedOrderTerm:
@@ -480,7 +501,11 @@ _CARD_OR_CASH = oa.Or(
 
 
 def test_a_partitioning_tph_read_plans_one_root_per_concrete_before_rendering() -> None:
-    plan = _planned(DOCUMENT_LAYOUT, "Payment", _CARD_OR_CASH)
+    # The untouched abstract root carries no outer tag guard, and still
+    # partitions: the guard's absence does not decide the strategy.
+    plan, shape = _planned_shape(DOCUMENT_LAYOUT, "Payment", _CARD_OR_CASH)
+    assert isinstance(shape, SingleTableReadPlan)
+    assert shape.tag_guard is None
     assert plan.requires_tph_partition
     card, cash = _concretes(DOCUMENT_LAYOUT, "CardPayment", "CashPayment")
     assert list(plan.root_scopes) == [card, cash]
@@ -596,6 +621,68 @@ def test_a_variant_document_read_at_the_root_row_partitions_the_family(
     plan = _planned(family, "Animal", oa.Narrow(to=("Dog",), operand=operand))
     assert plan.requires_tph_partition is partitions
     assert list(plan.root_scopes) == (_concretes(family, "Cat", "Dog") if partitions else [None])
+
+
+@pytest.mark.parametrize(
+    ("root", "node"),
+    [
+        pytest.param(
+            "Book",
+            oa.Comparison(op="greaterThan", subject=oa.FieldSubject("Book.pages"), value=100),
+            id="table-per-concrete-subtype-concrete",
+        ),
+        pytest.param("Traveler", _eq("Traveler.displayName"), id="standalone"),
+    ],
+)
+def test_a_single_table_read_outside_table_per_hierarchy_never_partitions(
+    root: str, node: oa.PredicateNode
+) -> None:
+    # `Book.pages` is a document member its sibling `Film` lacks, which would
+    # partition a table-per-hierarchy read; sharing its physical record does not
+    # make this read one.
+    plan, shape = _planned_shape(DOCUMENT_LAYOUT, root, node)
+    assert isinstance(shape, SingleTableReadPlan)
+    assert shape.tag_guard is None
+    assert not plan.requires_tph_partition
+    assert list(plan.root_scopes) == [None]
+
+
+@pytest.mark.parametrize(
+    ("root", "narrow_to", "single_table"),
+    [
+        pytest.param("Traveler", None, True, id="standalone"),
+        pytest.param("Payment", None, True, id="tph-root"),
+        pytest.param("Payment", ("CashPayment",), True, id="tph-narrowed"),
+        pytest.param("CardPayment", None, True, id="tph-concrete"),
+        pytest.param("Book", None, True, id="tpcs-concrete"),
+        pytest.param("Publication", ("Film",), True, id="tpcs-narrowed-to-one"),
+        pytest.param("Publication", None, False, id="tpcs-union"),
+    ],
+)
+def test_each_compilation_plans_its_physical_read_and_documents_once(
+    root: str,
+    narrow_to: tuple[str, ...] | None,
+    single_table: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reuse = record_plan_reuse(monkeypatch)
+    compiled = compile_read(
+        oa.TrueNode(),
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, root),
+        narrow_to=None if narrow_to is None else tuple(_concretes(DOCUMENT_LAYOUT, *narrow_to)),
+        result_form="instance",
+    )
+    shape = assert_planned_once(reuse)
+    assert isinstance(shape, SingleTableReadPlan if single_table else TpcsUnionReadPlan)
+    (plan,) = reuse.plans
+    assert plan.requires_tph_partition is False
+    contract = compiled.result_contract
+    assert contract.row_identity is shape.row_identity
+    assert shape.shared_document is not None
+    assert contract.shared_document is shape.shared_document
+    assert compiled.resolved_position == tuple(shape.concrete_types)
 
 
 def test_a_statement_plan_and_its_records_are_read_only() -> None:

@@ -47,10 +47,9 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
+from parallax.core.sql_gen._inheritance import SingleTableReadPlan as _SingleTableReadPlan
 from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
-from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
-from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
-from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
+from parallax.core.sql_gen._inheritance import TpcsUnionReadPlan as _TpcsUnionReadPlan
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import (
     plan_resolved_branch_narrow as _plan_resolved_branch_narrow,
@@ -438,7 +437,7 @@ class StatementPlan:
     write_filter_form: WriteFilterForm | None
 
 
-type _InheritanceRead = _TphPlan | _TpcsSinglePlan | _TpcsUnionPlan
+type _ReadShape = _SingleTableReadPlan | _TpcsUnionReadPlan
 
 
 def plan_statement(
@@ -449,15 +448,18 @@ def plan_statement(
     meta: Metamodel,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
-    inheritance_read: _InheritanceRead | None = None,
+    read_shape: _ReadShape | None = None,
     order_terms: Sequence[ResolvedOrderTerm] = (),
 ) -> StatementPlan:
     """Plan ``predicate`` over ``entity``'s rows before anything renders.
 
-    ``inheritance_read`` is the family read's existing plan, which decides the
-    physical roots, and ``order_terms`` the read's ordering, which order,
-    cursor capture, and seek read at the root row. Planning allocates no alias
-    and binds nothing.
+    ``read_shape`` is the read's physical plan, which decides the physical
+    roots; without one the predicate is evaluated at ``entity``'s own Table.
+    ``order_terms`` is the read's ordering, which order, cursor capture, and
+    seek read at the root row. Only a table-per-hierarchy single-table read can
+    partition by concrete: sharing one physical record with standalone and
+    one-concrete table-per-concrete-subtype reads does not make those
+    table-per-hierarchy. Planning allocates no alias and binds nothing.
     """
     planner = _StatementPlanner(meta, facet, storage)
     root = predicate.predicate
@@ -466,12 +468,15 @@ def plan_statement(
         scope_id, form = planner.write_filter(root, row)
         return planner.sealed(predicate, {None: scope_id}, False, form)
     sharing = evaluation_context is EvaluationContext.SHARING_ALLOWED
-    partition = isinstance(inheritance_read, _TphPlan) and planner.partitions(
-        predicate, entity, order_terms
+    tph = isinstance(_entity_view(facet, entity.identity).strategy, TablePerHierarchy)
+    partition = (
+        tph
+        and isinstance(read_shape, _SingleTableReadPlan)
+        and planner.partitions(predicate, entity, order_terms)
     )
     roots = {
         concrete: planner.scope(root, row, shares=sharing, sharing=sharing)
-        for concrete, row in _root_rows(entity, inheritance_read, partition, facet, storage)
+        for concrete, row in _root_rows(entity, read_shape, tph, partition, facet, storage)
     }
     return planner.sealed(predicate, roots, partition, None)
 
@@ -488,24 +493,25 @@ class _Row:
 
 def _root_rows(
     entity: EntityMetadata,
-    inheritance_read: _InheritanceRead | None,
+    read_shape: _ReadShape | None,
+    tph: bool,
     partition: bool,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
 ) -> Iterator[tuple[EntityIdentity | None, _Row]]:
-    match inheritance_read:
+    match read_shape:
         case None:
             yield None, _Row(entity, _table_layout(storage, facet, entity.identity), None)
-        case _TphPlan(position=position):
-            layout = _table_layout(storage, facet, entity.identity)
+        case _SingleTableReadPlan(concrete_types=concretes):
+            # A table-per-hierarchy position reads the root's shared Table; any
+            # other single-table position reads its one concrete's own.
+            layout = _table_layout(storage, facet, entity.identity if tph else concretes[0])
             if not partition:
                 yield None, _Row(entity, layout, None)
                 return
-            for concrete in position:
+            for concrete in concretes:
                 yield concrete, _Row(entity, layout, concrete)
-        case _TpcsSinglePlan(position=position):
-            yield None, _Row(entity, _table_layout(storage, facet, position[0]), None)
-        case _TpcsUnionPlan(branches=branches):
+        case _TpcsUnionReadPlan(branches=branches):
             for branch in branches:
                 layout = _table_layout(storage, facet, branch.identity)
                 yield branch.identity, _Row(entity, layout, branch.identity)

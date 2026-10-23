@@ -361,7 +361,7 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         f"resolved_position=({order},), "
         "projection=ResolvedReadProjection(value_objects=(), "
         "observe_structured_document=False), document_reads=(), "
-        f"result_contract=ResultContract(resolve=FixedIdentity(entity={order}), "
+        f"result_contract=ReadResultContract(row_identity=FixedRowIdentity(entity={order}), "
         "shared_document=None, direct_documents=None, "
         "result_keys=('id', 'name', 'sku', 'qty', 'price', 'active', 'ordered_on'), "
         "coordinate_reads=()))"

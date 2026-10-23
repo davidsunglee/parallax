@@ -16,9 +16,9 @@ from typing import Any, Literal
 
 import pytest
 
+from parallax.core import inheritance, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
-from parallax.core import storage_layout
 from parallax.core.base import PresentDocument
 from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
@@ -35,9 +35,9 @@ from parallax.core.read_delivery._row_decoding import (
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._inheritance import (
-    BranchColumn,
-    TpcsBranchPlan,
-    document_projection,
+    TpcsUnionBranchColumn,
+    TpcsUnionBranchPlan,
+    plan_document_reads,
 )
 from parallax.core.sql_gen._predicate import render_predicate
 from tests._support.sql import compile_projected_read, compile_read
@@ -64,17 +64,26 @@ def _narrow(model_: Any, *names: str) -> tuple[Any, ...]:
 
 def test_document_fan_out_references_complete_residency_while_selecting_only_attributes() -> None:
     entity = target(DOCUMENT_LAYOUT, "Voyage")
-    physical = storage_layout.view(DOCUMENT_LAYOUT).entity(entity.identity)
-    assert physical is not None
+    storage = storage_layout.view(DOCUMENT_LAYOUT)
+    physical = storage.entity(entity.identity)
+    position = storage.position((entity.identity,))
+    assert physical is not None and position is not None
     residents = physical.document_residents
     assert residents is not None
     bindings = [residents.member_selection.bindings[position] for position in residents.positions]
     assert any(not isinstance(binding, AttributeMetadata) for binding in bindings)
 
-    projected, fan_out = document_projection(physical, ResolvedReadProjection((), False))
+    shared, _direct = plan_document_reads(
+        position,
+        inheritance.view(DOCUMENT_LAYOUT),
+        storage,
+        ResolvedReadProjection((), False),
+        pad_siblings=False,
+    )
 
-    assert projected is not None
-    assert fan_out is not None
+    assert shared is not None
+    ((identity, fan_out),) = shared.per_entity
+    assert identity == entity.identity
     assert fan_out.shape is residents.shape
     assert fan_out.members == tuple(
         (binding.storage.name, placement.path)
@@ -194,16 +203,18 @@ def test_tpcs_document_single_branch_projects_its_document() -> None:
 
 
 def test_tpcs_document_branches_alias_owned_cells_and_type_absent_cells() -> None:
-    plan = TpcsBranchPlan(
+    plan = TpcsUnionBranchPlan(
         identity=EntityIdentity(None, "First"),
         variant="First",
         table="first_tbl",
         columns=(
-            BranchColumn("first_payload", None, None, True, "payload", document=True),
-            BranchColumn("second_payload", None, None, False, "other_payload", document=True),
+            TpcsUnionBranchColumn("first_payload", None, None, True, "payload", document=True),
+            TpcsUnionBranchColumn(
+                "second_payload", None, None, False, "other_payload", document=True
+            ),
         ),
     )
-    projection, binds, document_reads = plan.projection(POSTGRES, "t0")
+    projection, binds, document_reads = plan.render_select_list(POSTGRES, "t0")
     assert projection == (
         "not t0.first_payload is null, t0.first_payload payload, false, "
         "cast(null as jsonb) other_payload, 'First' family_variant"
@@ -1848,16 +1859,20 @@ def test_tpcs_document_branches_omit_the_presence_cell_under_a_wrapped_union() -
     # A presence cell carries no result alias, so it cannot be addressed from
     # outside a derived table; a wrapped union leaves the document slot a single
     # aliased cell per branch and the outer select expands the pair.
-    plan = TpcsBranchPlan(
+    plan = TpcsUnionBranchPlan(
         identity=EntityIdentity(None, "First"),
         variant="First",
         table="first_tbl",
         columns=(
-            BranchColumn("first_payload", None, None, True, "payload", document=True),
-            BranchColumn("second_payload", None, None, False, "other_payload", document=True),
+            TpcsUnionBranchColumn("first_payload", None, None, True, "payload", document=True),
+            TpcsUnionBranchColumn(
+                "second_payload", None, None, False, "other_payload", document=True
+            ),
         ),
     )
-    projection, binds, document_reads = plan.projection(POSTGRES, "t0", document_pairs=False)
+    projection, binds, document_reads = plan.render_select_list(
+        POSTGRES, "t0", document_pairs=False
+    )
     assert projection == (
         "t0.first_payload payload, cast(null as jsonb) other_payload, 'First' family_variant"
     )

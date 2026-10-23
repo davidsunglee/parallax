@@ -21,6 +21,7 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
+    TablePerHierarchy,
 )
 from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import (
@@ -40,21 +41,12 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 # module-private spelling it had while this file owned it, so a use site below
 # never confuses the two.
 from parallax.core.sql_gen._inheritance import AttributeReadContract as _AttributeReadContract
-from parallax.core.sql_gen._inheritance import DirectDocuments as _DirectDocuments
-from parallax.core.sql_gen._inheritance import FixedIdentity as _FixedIdentity
-from parallax.core.sql_gen._inheritance import ResultContract as _ResultContract
-from parallax.core.sql_gen._inheritance import SharedDocument as _SharedDocument
+from parallax.core.sql_gen._inheritance import ReadResultContract as _ReadResultContract
+from parallax.core.sql_gen._inheritance import SingleTableReadPlan as _SingleTableReadPlan
 from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
-from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
-from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
-from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
-from parallax.core.sql_gen._inheritance import direct_documents as _direct_documents
-from parallax.core.sql_gen._inheritance import document_projection as _document_projection
+from parallax.core.sql_gen._inheritance import TpcsUnionReadPlan as _TpcsUnionReadPlan
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
-from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
-from parallax.core.sql_gen._inheritance import render_projection as _render_projection
-from parallax.core.sql_gen._inheritance import select_projection as _select_projection
-from parallax.core.sql_gen._inheritance import storage_entity_view as _storage_entity_view
+from parallax.core.sql_gen._inheritance import plan_read_shape as _plan_read_shape
 from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
@@ -87,7 +79,6 @@ from parallax.core.sql_gen._seek import lowered_terms as _lowered_terms
 from parallax.core.sql_gen._seek import order_clause as _order_clause
 from parallax.core.storage_layout import DirectColumn as _DirectColumn
 from parallax.core.storage_layout import DocumentPath as _DocumentPath
-from parallax.core.storage_layout import EntityLayoutView as _EntityLayoutView
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
 from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
@@ -165,7 +156,7 @@ class CompiledRead:
     resolved_position: tuple[EntityIdentity, ...]
     projection: ResolvedReadProjection
     document_reads: tuple[DocumentReadOrdinals, ...]
-    result_contract: _ResultContract
+    result_contract: _ReadResultContract
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,56 +204,6 @@ def _template(compiled: CompiledRead, *, postgres_array: bool) -> CompiledTempla
         statement.deferred_key_markers(),
         () if postgres_array else tuple(statement.sql.split("__parallax_deferred_keys__")),
     )
-
-
-def _projection(
-    entity: EntityMetadata,
-    view: _EntityLayoutView,
-    dialect: Dialect,
-    alias: str,
-    projection: ResolvedReadProjection,
-) -> tuple[
-    str,
-    list[object],
-    tuple[DocumentReadOrdinals, ...],
-    tuple[str, ...],
-    _SharedDocument | None,
-    _DirectDocuments | None,
-]:
-    """Render deep fetch's resolved ``projection`` in canonical layout order.
-
-    Its observation requests the Structured Column needed for predecessor
-    evidence even when no selected member occupies it. Neither choice is
-    inferred from result form in this compiler.
-    """
-
-    layout = view.layout
-
-    columns = _select_projection(
-        layout.columns,
-        entity.declared_attributes,
-        projection.value_objects,
-        project_discriminator=False,
-    )
-    document, fan_out = _document_projection(view, projection)
-    if document is not None:
-        columns = (*columns, document)
-    shared_document = (
-        None
-        if document is None or fan_out is None
-        else _SharedDocument(document.column, ((entity.identity, fan_out),))
-    )
-    direct_documents = _direct_documents(
-        ((entity.identity, layout, entity.declared_attributes, projection.value_objects),)
-    )
-    sql, binds, document_reads = _render_projection(dialect, alias, columns)
-    result_keys = tuple(
-        projected.column
-        if projected.type is None
-        else projection_result_key(projected.column, projected.type)
-        for projected in columns
-    )
-    return sql, list(binds), document_reads, result_keys, shared_document, direct_documents
 
 
 def _scalar_read_contracts(
@@ -332,26 +273,21 @@ def compile_read(
     )
     outer_lock = two_arms and lock == "locking" and dialect.name == "postgres"
     arm_lock = None if outer_lock else lock
-    target = query.entity
-    inheritance_read = (
-        None
-        if target.inheritance is None
-        else _plan_inheritance_read(query, facet, storage, result_form == "instance", arm_lock)
-    )
+    read_shape = _plan_read_shape(query, facet, storage, result_form == "instance", arm_lock)
     statement_plan = _plan_statement(
         query.predicate,
         evaluation_context=_EvaluationContext.SHARING_ALLOWED,
-        entity=target,
+        entity=query.entity,
         meta=model,
         facet=facet,
         storage=storage,
-        inheritance_read=inheritance_read,
+        read_shape=read_shape,
         order_terms=query.order_by,
     )
     compiled = _compile_read_arm(
         query,
         statement_plan,
-        inheritance_read,
+        read_shape,
         model,
         dialect,
         terms,
@@ -363,7 +299,7 @@ def compile_read(
     null_tail = _compile_read_arm(
         query,
         statement_plan,
-        inheritance_read,
+        read_shape,
         model,
         dialect,
         terms,
@@ -475,7 +411,7 @@ def _locking_base_join(
 def _compile_read_arm(
     query: PlannedEntityQuery,
     statement_plan: _StatementPlan,
-    inheritance_read: _TphPlan | _TpcsSinglePlan | _TpcsUnionPlan | None,
+    read_shape: _SingleTableReadPlan | _TpcsUnionReadPlan,
     model: Metamodel,
     dialect: Dialect,
     terms: tuple[_LoweredTerm, ...],
@@ -484,93 +420,40 @@ def _compile_read_arm(
     null_tail: bool,
 ) -> CompiledRead:
     """Compile one ordinary or NULL-tail arm of a read ordered by ``terms`` from
-    the read's one statement plan, through builders of this arm's own."""
+    the read's one physical plan and one statement plan, through builders of
+    this arm's own."""
 
     target = query.entity
     facet = _inheritance_view(model)
     storage = _storage_view(model)
     paging = query.paging
-    limit = query.limit
-    narrow_to = query.narrow_to
     captured = _coordinate_reads(terms) if paging is not None else ()
-    if inheritance_read is not None:
-        statement, document_reads, result_keys = _compile_inheritance_read(
-            inheritance_read,
-            statement_plan,
-            target,
-            terms,
-            paging,
-            limit,
-            model,
-            facet,
-            storage,
-            dialect,
-            lock,
-            null_tail,
-        )
-        plan_position = tuple(inheritance_read.position)
-        return CompiledRead(
-            statement,
-            narrow_to,
-            target.identity,
-            plan_position,
-            query.projection,
-            document_reads,
-            _ResultContract(
-                inheritance_read.resolve,
-                inheritance_read.shared_document,
-                inheritance_read.direct_documents,
-                _scalar_read_contracts(model, facet, storage, dialect, plan_position),
-                (*result_keys, *captured),
-                captured,
-            ),
-        )
-    # One context per statement (the mutable accumulator), one row scope over it
-    # (the immutable "what does a leaf resolve against" half).
-    ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
-    layout = _table_layout(storage, facet, target.identity)
-    scope = _EntityRowScope(ctx, target, layout)
-
-    proj_sql, proj_binds, document_reads, result_keys, shared_document, direct_documents = (
-        _projection(
-            target,
-            _storage_entity_view(storage, target.identity),
-            dialect,
-            scope.alias,
-            query.projection,
-        )
+    statement, document_reads, result_keys = _compile_read_shape(
+        read_shape,
+        statement_plan,
+        target,
+        terms,
+        paging,
+        query.limit,
+        model,
+        facet,
+        storage,
+        dialect,
+        lock,
+        null_tail,
     )
-    ctx.bind_structural_all(proj_binds)
-    parts = [
-        f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",
-        f"from {layout.table.name} {scope.alias}",
-    ]
-
-    where_sql = _selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
-    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    _append_where(
-        parts,
-        _where_as_conjunct(statement_plan.predicate, where_sql, conjoined=bool(seek_sql)),
-        seek_sql,
-    )
-    _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
-
-    statement = _normalize(ctx.finish(" ".join(parts)))
-    # A non-family read projects no tag and no variant literal, so its rows'
-    # identity is fixed and the only document entries it can fill are the fan-out
-    # its own projection decided and the occurrences that hold their own Column.
-    position = tuple(query.position.concrete_subtypes)
+    position = tuple(read_shape.concrete_types)
     return CompiledRead(
         statement,
-        narrow_to,
+        query.narrow_to,
         target.identity,
         position,
         query.projection,
         document_reads,
-        _ResultContract(
-            _FixedIdentity(target.identity),
-            shared_document,
-            direct_documents,
+        _ReadResultContract(
+            read_shape.row_identity,
+            read_shape.shared_document,
+            read_shape.direct_documents,
             _scalar_read_contracts(model, facet, storage, dialect, position),
             (*result_keys, *captured),
             captured,
@@ -761,8 +644,8 @@ def _append_result_shape(
 # constructs one PER BRANCH, which is what restarts each branch at `t0`), splices #
 
 
-def _compile_inheritance_read(
-    plan: _TphPlan | _TpcsSinglePlan | _TpcsUnionPlan,
+def _compile_read_shape(
+    plan: _SingleTableReadPlan | _TpcsUnionReadPlan,
     statement_plan: _StatementPlan,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
@@ -779,17 +662,17 @@ def _compile_inheritance_read(
     tuple[DocumentReadOrdinals, ...],
     tuple[str, ...],
 ]:
-    """Assemble an inheritance-family read from its inheritance plan and its
-    statement plan.
+    """Assemble one read arm from its physical plan and its statement plan.
 
     Whether a read carries `familyVariant` is decided by the very same resolved
     position that decides what it projects, so the plan carries both: the
     statement rendered here, and the row identity and document entries its
-    result contract reads.
+    result contract reads. A single-table plan is shared by every strategy, so
+    the target's own strategy chooses its assembly.
     """
     result_keys = (
         (*(column.result_alias for column in plan.columns), "family_variant")
-        if isinstance(plan, _TpcsUnionPlan)
+        if isinstance(plan, _TpcsUnionReadPlan)
         else tuple(
             column.column
             if column.type is None
@@ -798,7 +681,38 @@ def _compile_inheritance_read(
         )
     )
     match plan:
-        case _TphPlan():
+        case _TpcsUnionReadPlan():
+            statement, document_reads = _compile_tpcs_read(
+                plan,
+                statement_plan,
+                entity,
+                terms,
+                paging,
+                limit,
+                model,
+                facet,
+                storage,
+                dialect,
+                null_tail,
+            )
+        case _SingleTableReadPlan() if entity.inheritance is None:
+            statement, document_reads = _compile_standalone_read(
+                plan,
+                statement_plan,
+                entity,
+                terms,
+                paging,
+                limit,
+                model,
+                facet,
+                storage,
+                dialect,
+                lock,
+                null_tail,
+            )
+        case _SingleTableReadPlan() if isinstance(
+            _entity_view(facet, entity.identity).strategy, TablePerHierarchy
+        ):
             statement, document_reads = _compile_tph_read(
                 plan,
                 statement_plan,
@@ -813,8 +727,7 @@ def _compile_inheritance_read(
                 lock,
                 null_tail,
             )
-            return statement, document_reads, result_keys
-        case _TpcsSinglePlan():
+        case _SingleTableReadPlan():
             statement, document_reads = _compile_tpcs_single(
                 plan,
                 statement_plan,
@@ -829,28 +742,50 @@ def _compile_inheritance_read(
                 lock,
                 null_tail,
             )
-            return statement, document_reads, result_keys
-        case _TpcsUnionPlan():
-            statement, document_reads = _compile_tpcs_read(
-                plan,
-                statement_plan,
-                entity,
-                terms,
-                paging,
-                limit,
-                model,
-                facet,
-                storage,
-                dialect,
-                null_tail,
-            )
-            return statement, document_reads, result_keys
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
+    return statement, document_reads, result_keys
+
+
+def _compile_standalone_read(
+    plan: _SingleTableReadPlan,
+    statement_plan: _StatementPlan,
+    entity: EntityMetadata,
+    terms: tuple[_LoweredTerm, ...],
+    paging: Paging | None,
+    limit: int | None,
+    model: Metamodel,
+    facet: InheritanceFacet,
+    storage: _StorageLayoutFacet,
+    dialect: Dialect,
+    lock: LockMode | None,
+    null_tail: bool,
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...]]:
+    """Assemble a standalone Entity's read of its own Table: projection, then
+    user predicate, then seek, then the clause tail; no framework guard."""
+    # One context per statement (the mutable accumulator), one row scope over it
+    # (the immutable "what does a leaf resolve against" half).
+    ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
+    scope = _EntityRowScope(ctx, entity, _table_layout(storage, facet, entity.identity))
+    proj_sql, proj_binds, document_reads = plan.render_select_list(dialect, scope.alias)
+    ctx.bind_structural_all(proj_binds)
+    parts = [
+        f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",
+        f"from {plan.table} {scope.alias}",
+    ]
+    where_sql = _selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
+    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
+    _append_where(
+        parts,
+        _where_as_conjunct(statement_plan.predicate, where_sql, conjoined=bool(seek_sql)),
+        seek_sql,
+    )
+    _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
+    return _normalize(ctx.finish(" ".join(parts))), document_reads
 
 
 def _compile_tph_read(
-    plan: _TphPlan,
+    plan: _SingleTableReadPlan,
     statement_plan: _StatementPlan,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
@@ -867,7 +802,7 @@ def _compile_tph_read(
     single-table SELECT (m-sql "Inheritance — table-per-hierarchy lowering").
 
     Everything family-shaped — the resolved position, the tag-predicate kind, what
-    is projected — is decided by :func:`_plan_inheritance_read`, and whether the
+    is projected — is decided by :func:`_plan_read_shape`, and whether the
     read partitions by variant by the statement plan; this builds the
     statement's context and sequences the four bind phases.
     """
@@ -889,7 +824,7 @@ def _compile_tph_read(
     predicate = statement_plan.predicate
     ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
     scope = _EntityRowScope(ctx, entity, _table_layout(storage, facet, entity.identity))
-    proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
+    proj_sql, proj_binds, document_reads = plan.render_select_list(dialect, scope.alias)
     ctx.bind_structural_all(proj_binds)
 
     parts = [
@@ -899,13 +834,13 @@ def _compile_tph_read(
 
     inner_sql = _selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
     seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
-    conjoined = bool(seek_sql) or plan.tag is not None
+    conjoined = bool(seek_sql) or plan.tag_guard is not None
     where_terms = [_where_as_conjunct(predicate, inner_sql, conjoined=conjoined), seek_sql]
-    if plan.tag is not None:
+    if plan.tag_guard is not None:
         # Planned, then bound HERE — after the user predicate and the seek above
         # have pushed their own binds (m-sql "Grouped branch predicates":
         # branch-predicate-first, then tag).
-        tag_sql, tag_binds = _tph_tag_guard(scope, facet, plan.tag)
+        tag_sql, tag_binds = _tph_tag_guard(scope, facet, plan.tag_guard)
         where_terms.append(tag_sql)
         ctx.bind_framework_all(tag_binds)
     _append_where(parts, *where_terms)
@@ -916,7 +851,7 @@ def _compile_tph_read(
 
 
 def _compile_tph_partitioned(
-    plan: _TphPlan,
+    plan: _SingleTableReadPlan,
     statement_plan: _StatementPlan,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
@@ -934,7 +869,7 @@ def _compile_tph_partitioned(
     branches: list[LoweredStatement] = []
     layout = _table_layout(storage, facet, entity.identity)
     key_columns = tuple(slot.column.name for slot in layout.physical_primary_key)
-    for branch_index, concrete in enumerate(plan.position):
+    for branch_index, concrete in enumerate(plan.concrete_types):
         branch_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
             model, facet, storage, dialect
         )
@@ -958,7 +893,7 @@ def _compile_tph_partitioned(
                 dialect.qualified(branch_scope.alias, column) for column in key_columns
             )
         else:
-            projection, projection_binds, _branch_document_reads = plan.projection(
+            projection, projection_binds, _branch_document_reads = plan.render_select_list(
                 dialect,
                 branch_scope.alias,
                 document_pairs=not terms and limit is None,
@@ -982,7 +917,9 @@ def _compile_tph_partitioned(
             model, facet, storage, dialect
         )
         outer_scope = _EntityRowScope(statement_ctx, entity, layout)
-        projection, projection_binds, document_reads = plan.projection(dialect, outer_scope.alias)
+        projection, projection_binds, document_reads = plan.render_select_list(
+            dialect, outer_scope.alias
+        )
         statement_ctx.bind_structural_all(projection_binds)
         join_terms = " and ".join(
             f"{dialect.qualified('u', column)} = {dialect.qualified(outer_scope.alias, column)}"
@@ -1010,7 +947,7 @@ def _compile_tph_partitioned(
         return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
 
     if not terms and limit is None:
-        _projection, _projection_binds, document_reads = plan.projection(dialect, "t0")
+        _projection, _projection_binds, document_reads = plan.render_select_list(dialect, "t0")
         statement_ctx = StatementBuilder(model, facet, storage, dialect)
         for branch in branches:
             statement_ctx.append_fragment(branch)
@@ -1018,7 +955,7 @@ def _compile_tph_partitioned(
 
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
     outer_scope = _EntityRowScope(statement_ctx, entity, layout, alias="u", wrapped=True)
-    projection, projection_binds, document_reads = plan.projection(
+    projection, projection_binds, document_reads = plan.render_select_list(
         dialect, outer_scope.alias, wrapped=True
     )
     statement_ctx.bind_structural_all(projection_binds)
@@ -1044,7 +981,7 @@ def _compile_tph_partitioned(
 
 
 def _compile_tpcs_read(
-    plan: _TpcsUnionPlan,
+    plan: _TpcsUnionReadPlan,
     statement_plan: _StatementPlan,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
@@ -1083,7 +1020,7 @@ def _compile_tpcs_read(
         branch_scope = _EntityRowScope(
             branch_ctx, entity, _table_layout(storage, facet, branch.identity)
         )
-        proj_sql, proj_binds, branch_document_reads = branch.projection(
+        proj_sql, proj_binds, branch_document_reads = branch.render_select_list(
             dialect, branch_scope.alias, document_pairs=not wrapped
         )
         if document_reads is None:
@@ -1121,7 +1058,7 @@ def _compile_tpcs_read(
     capture_scope = _EntityRowScope(capture_ctx, entity, outer_layout, alias="u")
     tail_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
     outer_scope = _EntityRowScope(tail_ctx, entity, outer_layout, alias="u")
-    projection, _projection_binds, outer_document_reads = plan.projection(
+    projection, _projection_binds, outer_document_reads = plan.render_select_list(
         dialect, outer_scope.alias
     )
     tail_subject = _tpcs_subject(plan, outer_scope)
@@ -1150,7 +1087,7 @@ def _compile_tpcs_read(
     return statement, outer_document_reads
 
 
-def _tpcs_subject(plan: _TpcsUnionPlan, scope: _EntityRowScope) -> _TermSubject:
+def _tpcs_subject(plan: _TpcsUnionReadPlan, scope: _EntityRowScope) -> _TermSubject:
     """How a wrapped union resolves one Continuation Order term.
 
     One thing differs from the generic scope resolver: a member is named by the
@@ -1169,7 +1106,7 @@ def _tpcs_subject(plan: _TpcsUnionPlan, scope: _EntityRowScope) -> _TermSubject:
 
 
 def _tpcs_order_subject(
-    plan: _TpcsUnionPlan, scope: _EntityRowScope, attribute: AttributeMetadata
+    plan: _TpcsUnionReadPlan, scope: _EntityRowScope, attribute: AttributeMetadata
 ) -> _MemberSubject:
     """The expression a wrapped union's ordering key compares, against the union alias.
 
@@ -1204,7 +1141,7 @@ def _tpcs_order_subject(
 
 
 def _compile_tpcs_single(
-    plan: _TpcsSinglePlan,
+    plan: _SingleTableReadPlan,
     statement_plan: _StatementPlan,
     entity: EntityMetadata,
     terms: tuple[_LoweredTerm, ...],
@@ -1232,8 +1169,8 @@ def _compile_tpcs_single(
     """
     predicate = statement_plan.predicate
     ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
-    scope = _EntityRowScope(ctx, entity, _table_layout(storage, facet, plan.position[0]))
-    proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
+    scope = _EntityRowScope(ctx, entity, _table_layout(storage, facet, plan.concrete_types[0]))
+    proj_sql, proj_binds, document_reads = plan.render_select_list(dialect, scope.alias)
     ctx.bind_structural_all(proj_binds)
     parts = [
         f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",

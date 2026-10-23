@@ -26,7 +26,7 @@ from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.read_delivery._page import PageBuilder, SourceLevel
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.sql_gen._inheritance import ResultContract
+from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.temporal_read import view as temporal_view
 from tests._support.sql import compile_read
@@ -112,7 +112,7 @@ def bound_read(
     return held[1]
 
 
-def result_row(contract: ResultContract, cells: Mapping[str, object]) -> Row:
+def result_row(contract: ReadResultContract, cells: Mapping[str, object]) -> Row:
     """``cells`` laid out in ``contract``'s result order, as a port returns a
     provider row; a cell ``cells`` leaves unnamed is NULL."""
     unknown = set(cells) - set(contract.result_keys)
@@ -120,7 +120,9 @@ def result_row(contract: ResultContract, cells: Mapping[str, object]) -> Row:
     return tuple(cells.get(key) for key in contract.result_keys)
 
 
-def carrying(contract: ResultContract, cells: Mapping[str, object]) -> tuple[ResultContract, Row]:
+def carrying(
+    contract: ReadResultContract, cells: Mapping[str, object]
+) -> tuple[ReadResultContract, Row]:
     """``contract`` narrowed to the result cells ``cells`` carries, beside
     ``cells`` as its positional row.
 

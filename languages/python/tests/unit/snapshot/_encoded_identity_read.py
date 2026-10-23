@@ -17,7 +17,7 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.read_delivery._page import ROOT_LEVEL, Page, PageBuilder, ViewSchema
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
-from parallax.core.sql_gen._inheritance import ResultContract
+from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.temporal_read import Pin
 from tests.unit._prepared_read_support import compiled_read
 
@@ -35,7 +35,7 @@ OTHER_KEY_TEXT = "123e4567-e89b-12d3-a456-426614174001"
 KEY = UUID(KEY_TEXT)
 
 
-def _encoded_identity(contract: ResultContract) -> ResultContract:
+def _encoded_identity(contract: ReadResultContract) -> ReadResultContract:
     """``contract`` with its ``id`` cell carried encoded under the wire key ``id_wire``."""
     return replace(
         contract,
