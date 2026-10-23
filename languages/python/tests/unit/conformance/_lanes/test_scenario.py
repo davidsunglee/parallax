@@ -28,6 +28,7 @@ from parallax.conformance._lifecycle_observation import (
 )
 from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import EngineError
+from parallax.conformance._mechanism.transaction_control import transact, write_adapter
 from parallax.conformance.simulated_temporal_store import (
     SimulatedStoreError,
     SimulatedTemporalStore,
@@ -53,7 +54,11 @@ from parallax.core.db_port import (
     MappingRow,
 )
 from parallax.core.dialect import POSTGRES
-from parallax.core.execution import TxnOptions
+from parallax.core.execution import (
+    KeyedWriteValueError,
+    TransactionTimePinReadOnlyError,
+    TxnOptions,
+)
 from parallax.core.execution_lifecycle import DatabaseCallStarted
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -80,6 +85,7 @@ from parallax.core.write_plan import (
     VersionObservation,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
+from parallax.snapshot import TxnContext
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.sweep_goldens import write_golden_statements
@@ -1266,7 +1272,10 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     assert counts == {"target": 0, "coverage": 0}
 
 
-def test_a_grouped_write_starting_away_from_its_finds_pin_is_an_engine_error() -> None:
+@pytest.mark.parametrize("state_graded", [False, True])
+def test_a_grouped_write_starting_away_from_its_finds_pin_is_an_engine_error(
+    state_graded: bool,
+) -> None:
     case = _own_copy(_load_case("m-unit-work-015"))
     document = cast("dict[str, Any]", case.document)
     steps = cast("list[dict[str, Any]]", document["when"]["scenario"])
@@ -1281,7 +1290,9 @@ def test_a_grouped_write_starting_away_from_its_finds_pin_is_an_engine_error() -
         "out_z": INFINITY,
     }
     with pytest.raises(EngineError, match="starts at"):
-        scenario.run_scenario_case(case, FakeWritePort(read_script=[[row], [row]]))
+        scenario.run_scenario_case(
+            _with_grading(case, state_graded), FakeWritePort(read_script=[[row], [row]])
+        )
 
 
 def test_a_document_milestone_after_setup_uses_the_production_read() -> None:
@@ -4172,10 +4183,12 @@ def test_a_replayed_contiguous_group_replaces_sources_and_reports(
     second = _ledger_row(2, "250.00", in_z="2024-03-01T00:00:00+00:00")
     insert = {**_ledger_insert(instant), "uow": "g"}
     final_find = _ledger_find()
+    inserted_update = _ledger_chain_update("150.00", instant, uow="g")
+    cast("list[dict[str, object]]", inserted_update["write"])[0]["on"] = "/scenario/1/write/0"
     steps = [
         _ledger_find(),
         insert,
-        _ledger_chain_update("150.00", instant, uow="g"),
+        inserted_update,
         _ledger_update("300.00", instant, uow="g"),
         final_find,
     ]
@@ -4280,3 +4293,313 @@ def test_a_state_graded_replay_replaces_refusals_and_failure_location() -> None:
         }
     }
     assert port.rollbacks == 2 and port.commits == 0
+
+
+def _with_grading(case: case_format.Case, state_graded: bool) -> case_format.Case:
+    return (
+        dataclasses.replace(case, document={**case.document, "grading": "state"})
+        if state_graded
+        else case
+    )
+
+
+@pytest.mark.parametrize("state_graded", [False, True])
+@pytest.mark.parametrize("delivery", [None, "eager", "stream"])
+def test_an_insertion_pointer_survives_composition_and_production_flushes(
+    state_graded: bool, delivery: str | None
+) -> None:
+    update = {
+        "uow": "g",
+        "write": [
+            {
+                "mutation": "amend",
+                "entity": "Account",
+                "rows": [{"id": 90, "balance": "9.00"}],
+                "on": "/scenario/0/write/0",
+            }
+        ],
+    }
+    steps = [_account_insert_step(90), update]
+    if delivery is not None:
+        find = _account_find_step(90)
+        if delivery == "stream":
+            find["stream"] = {"batchSize": 2}
+        steps.append(find)
+    steps.append(
+        {
+            "uow": "g",
+            "write": [
+                {
+                    **cast("list[dict[str, object]]", update["write"])[0],
+                    "rows": [{"id": 90, "owner": "Ada"}],
+                }
+            ],
+        }
+    )
+    case = _with_grading(_synthetic_write("scenario", {"when": {"scenario": steps}}), state_graded)
+    port = FakeWritePort(find_rows=[_account(90, "Noether", "9.00", 1)])
+
+    run = scenario.run_scenario_case(case, port)
+
+    assert run.errors == [] and run.units == {"g": {"outcome": "committed"}}
+    assert port.commits == 1 and port.rollbacks == 0
+    if delivery is None:
+        assert run.database_calls == 1 and run.step_rows == []
+        assert port.writes[0][1] == [90, "Ada", decimal.Decimal("9.00"), 1]
+        assert len(port.writes) == 1
+    else:
+        assert run.database_calls == 3
+        assert [item["at"] for item in run.step_rows] == ["/scenario/2"]
+        assert port.writes[0][1] == [90, "Noether", decimal.Decimal("9.00"), 1]
+        assert port.writes[1][1] == ["Ada", 2, 90, 1]
+        assert len(port.writes) == 2
+    if not state_graded:
+        assert [
+            e.sql.replace("?", "%s")
+            for e in run.emissions
+            if e.sql.startswith(("insert", "update"))
+        ] == [sql for sql, _ in port.writes]
+
+
+@pytest.mark.parametrize("state_graded", [False, True])
+@pytest.mark.parametrize(
+    "source", ["/scenario/99/write/0", "/scenario/1/write/0", "/scenario/2/write/0"]
+)
+def test_a_missing_self_or_forward_insertion_pointer_never_uses_a_same_key_read(
+    state_graded: bool, source: str
+) -> None:
+    steps = [
+        _account_find_step(90),
+        {
+            "uow": "g",
+            "write": [
+                {
+                    "mutation": "amend",
+                    "entity": "Account",
+                    "rows": [{"id": 90, "owner": "Ada"}],
+                    "on": source,
+                }
+            ],
+        },
+        _account_insert_step(90),
+    ]
+    case = _with_grading(_synthetic_write("scenario", {"when": {"scenario": steps}}), state_graded)
+    port = FakeWritePort(find_rows=[_account(90, "Noether", "5.00", 1)])
+
+    with pytest.raises(EngineError, match="opened no value"):
+        scenario.run_scenario_case(case, port)
+
+    assert port.writes == [] and port.rollbacks == 1 and port.commits == 0
+
+
+@pytest.mark.parametrize("state_graded", [False, True])
+def test_an_insertion_pointer_cannot_cross_a_group_boundary(state_graded: bool) -> None:
+    steps = [
+        _account_insert_step(90),
+        _account_find_step(90, uow="h"),
+        {
+            "uow": "h",
+            "write": [
+                {
+                    "mutation": "amend",
+                    "entity": "Account",
+                    "rows": [{"id": 90, "owner": "Ada"}],
+                    "on": "/scenario/0/write/0",
+                }
+            ],
+        },
+    ]
+    case = _with_grading(_synthetic_write("scenario", {"when": {"scenario": steps}}), state_graded)
+    port = FakeWritePort(find_rows=[_account(90, "Noether", "5.00", 1)])
+
+    with pytest.raises(EngineError, match="opened no value"):
+        scenario.run_scenario_case(case, port)
+
+    assert len(port.writes) == 1 and port.writes[0][0].startswith("insert")
+    assert port.commits == 1 and port.rollbacks == 1
+
+
+@pytest.mark.parametrize("state_graded", [False, True])
+def test_an_insertion_pointer_must_name_the_writes_own_object(state_graded: bool) -> None:
+    steps = [
+        _account_insert_step(90),
+        _account_find_step(91),
+        {
+            "uow": "g",
+            "write": [
+                {
+                    "mutation": "amend",
+                    "entity": "Account",
+                    "rows": [{"id": 91, "owner": "Ada"}],
+                    "on": "/scenario/0/write/0",
+                }
+            ],
+        },
+    ]
+    case = _with_grading(_synthetic_write("scenario", {"when": {"scenario": steps}}), state_graded)
+    port = FakeWritePort(find_rows=[_account(91, "Noether", "5.00", 1)])
+
+    with pytest.raises(EngineError, match="published 0 rows"):
+        scenario.run_scenario_case(case, port)
+
+    assert len(port.writes) == 1 and port.writes[0][0].startswith("insert")
+    assert port.rollbacks == 1 and port.commits == 0
+
+
+@pytest.mark.parametrize("state_graded", [False, True])
+@pytest.mark.parametrize("on", [0, 1, None])
+def test_named_finds_preserve_distinct_read_generations(state_graded: bool, on: int | None) -> None:
+    entry: dict[str, object] = {
+        "mutation": "amend",
+        "entity": "Account",
+        "rows": [{"id": 1, "owner": "Bo"}],
+    }
+    if on is not None:
+        entry["on"] = on
+    steps = [_account_find_step(1), _account_find_step(1), {"uow": "g", "write": [entry]}]
+    case = _with_grading(_synthetic_write("scenario", {"when": {"scenario": steps}}), state_graded)
+    port = FakeWritePort(
+        read_script=[[_account(1, "Ada", "5.00", 1)], [_account(1, "Ada", "5.00", 4)]]
+    )
+
+    run = scenario.run_scenario_case(case, port)
+
+    assert port.writes[0][1] == ["Bo", 2 if on == 0 else 5, 1, 1 if on == 0 else 4]
+    assert run.database_calls == 3 and len(run.step_rows) == 2
+    assert port.commits == 1 and port.rollbacks == 0
+
+
+@pytest.mark.parametrize("state_graded", [False, True])
+@pytest.mark.parametrize("on", [0, 1, None])
+def test_a_historical_read_never_replaces_a_current_source(
+    state_graded: bool, on: int | None
+) -> None:
+    current = _ledger_find()
+    historical = _ledger_find()
+    cast("dict[str, Any]", historical["objectQuery"])["temporal"] = {
+        "transaction-time": {"asOf": "2024-01-15T00:00:00.000000Z"}
+    }
+    update = _ledger_update("300.00", "2024-05-01T00:00:00+00:00", uow="g")
+    if on is not None:
+        cast("list[dict[str, object]]", update["write"])[0]["on"] = on
+    case = _with_grading(_synthetic_ledger_scenario([current, historical, update]), state_graded)
+    row = _ledger_row(2, "200.00", in_z="2024-02-01T00:00:00+00:00")
+    old = {
+        **_ledger_row(2, "150.00", in_z="2024-01-01T00:00:00+00:00"),
+        "out_z": row["in_z"],
+    }
+    port = FakeWritePort(read_script=[[row], [old]])
+
+    if on == 1:
+        with pytest.raises(TransactionTimePinReadOnlyError):
+            scenario.run_scenario_case(case, port)
+        assert port.writes == [] and port.rollbacks == 1 and port.commits == 0
+    else:
+        run = scenario.run_scenario_case(case, port)
+        assert port.writes[0][1][-1] == row["in_z"]
+        assert len(port.writes) == 2 and run.database_calls == 4
+        assert [item["at"] for item in run.step_rows] == ["/scenario/0", "/scenario/1"]
+        assert port.commits == 1 and port.rollbacks == 0
+
+
+@pytest.mark.parametrize("state_graded", [False, True])
+def test_a_named_bitemporal_insertion_composes_without_a_read_pin(state_graded: bool) -> None:
+    instant = "2024-05-01T00:00:00+00:00"
+    start = "2024-01-01T00:00:00.000000Z"
+    case = _with_grading(
+        _synthetic_write(
+            "scenario",
+            {
+                "model": "models/position.yaml",
+                "when": {
+                    "scenario": [
+                        {
+                            "uow": "g",
+                            "write": [
+                                {
+                                    "mutation": "insert",
+                                    "entity": "Position",
+                                    "rows": [{"id": 9, "acctNum": "D", "value": "100.00"}],
+                                    "validFrom": start,
+                                    "at": instant,
+                                },
+                                {
+                                    "mutation": "amend",
+                                    "entity": "Position",
+                                    "rows": [{"id": 9, "value": "150.00"}],
+                                    "validFrom": start,
+                                    "at": instant,
+                                    "on": "/scenario/0/write/0",
+                                },
+                            ],
+                        }
+                    ]
+                },
+            },
+        ),
+        state_graded,
+    )
+    port = FakeWritePort()
+
+    run = scenario.run_scenario_case(case, port)
+
+    assert run.database_calls == 1 and run.errors == []
+    assert len(port.writes) == 1
+    assert len(port.reads) == (1 if state_graded else 0)
+    assert all(sql.endswith("from position") for sql, _ in port.reads)
+    assert port.writes[0][1][:4] == [9, "D", decimal.Decimal("150.00"), _instant(start)]
+    assert port.commits == 1 and port.rollbacks == 0
+
+
+@pytest.mark.parametrize("state_graded", [False, True])
+def test_a_refused_insert_never_opens_a_pointer_to_an_earlier_insertion(state_graded: bool) -> None:
+    case = _synthetic_write("scenario", {})
+    serving = model_facts.case_serving_model(case)
+    model = models.accepted_model_of(serving.current().model)
+    context = scenario.CaseContext(serving, model, "optimistic", {}, TxnOptions())
+    lifecycle = LifecycleRun()
+    observation = lifecycle.observation()
+    port = FakeWritePort()
+    session = scenario.GroupSession(
+        write_adapter(port, rollback=False),
+        context,
+        _instant(scenario.INERT_CLOCK_INSTANT),
+        observation,
+    )
+    assert session.dialect is port.dialect
+
+    def body(tx: TxnContext) -> None:
+        state = scenario.GroupState()
+        submitted = scenario._Submitted()  # pyright: ignore[reportPrivateUsage]
+
+        def submit(entry: dict[str, object], index: int) -> None:
+            if state_graded:
+                scenario._submit(  # pyright: ignore[reportPrivateUsage]
+                    tx, model, state, submitted, entry, f"/scenario/{index}/write/0", index
+                )
+            else:
+                scenario.run_group_step(
+                    tx, context, state, {"uow": "g", "write": [entry]}, index, observation
+                )
+
+        submit(_account_insert(90), 0)
+        with pytest.raises(KeyedWriteValueError, match="write-value-already-stored"):
+            submit(_account_insert(90), 1)
+        submit(
+            {
+                "mutation": "amend",
+                "entity": "Account",
+                "rows": [{"id": 90, "owner": "Ada"}],
+                "on": "/scenario/1/write/0",
+            },
+            2,
+        )
+
+    try:
+        with pytest.raises(EngineError, match="opened no value"):
+            transact(session.database, body)
+    finally:
+        session.close()
+
+    assert port.writes == [] and port.reads == []
+    assert port.rollbacks == 1 and port.commits == 0
