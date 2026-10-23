@@ -36,9 +36,9 @@ from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
+from tests._support.flush_calls import Call, FlushCalls, PageRead, call_runs
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import CountingConnection, PortTally
-from tests.api._flush_calls import Call, FlushCalls, PageRead, call_runs
 
 _NAMESPACE: Final = "temporal.coverage.streams"
 
