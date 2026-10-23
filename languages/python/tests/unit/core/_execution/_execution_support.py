@@ -10,7 +10,10 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core._execution._root import DatabaseRoot
 from parallax.core._execution._scope import ExecutionScope
-from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite, prepare_typed_write
+from parallax.core._execution._unit_work.instructions import (
+    PreparedKeyedInstruction,
+    prepare_typed_write,
+)
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
@@ -64,7 +67,7 @@ def scope(
     return root(adapter, model, options=options, provider=provider).using_database_login()
 
 
-def account_insert(account_id: int = 7) -> PreparedKeyedWrite:
+def account_insert(account_id: int = 7) -> PreparedKeyedInstruction:
     """One prepared Account insert, buffered by a case straight into a unit of work."""
     prepared = prepare_typed_write(
         KeyedWriteInstruction(
@@ -74,5 +77,5 @@ def account_insert(account_id: int = 7) -> PreparedKeyedWrite:
         ),
         model_of(ACCOUNT),
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared

@@ -101,7 +101,7 @@ def _flush_and_lower(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant,
             concurrency="locking",
-            buffered_writes=observed_buffer(buffer, model, None),
+            composed_writes=observed_buffer(buffer, model, None),
         )
     )
     return [

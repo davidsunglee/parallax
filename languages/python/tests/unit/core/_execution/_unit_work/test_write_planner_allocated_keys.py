@@ -7,7 +7,7 @@ import pytest
 from parallax.core import MAX, Attr, Bitemporal, DomainModel, Entity, TxTemporal, attr
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
-    PreparedTargetWrite,
+    PreparedTargetInstruction,
     prepare_typed_write,
 )
 from parallax.core.dialect import POSTGRES
@@ -66,13 +66,13 @@ def _plan(
         ),
         _META,
     )
-    assert not isinstance(prepared, PreparedTargetWrite)
+    assert not isinstance(prepared, PreparedTargetInstruction)
     return build_write_planner(_META).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
             concurrency="optimistic",
-            buffered_writes=[prepared],
+            composed_writes=[prepared],
         )
     )
 

@@ -84,7 +84,7 @@ def _locking_policy(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
             concurrency="locking",
-            buffered_writes=observed_buffer([write], model, observations),
+            composed_writes=observed_buffer([write], model, observations),
         )
     )
     (step,) = plan_steps(plan)

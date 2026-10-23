@@ -41,8 +41,8 @@ from typing import get_type_hints
 from parallax.core import sql_gen
 from parallax.core._execution._preflight import preflight
 from parallax.core._execution._unit_work.instructions import (
-    PreparedTargetWrite,
-    PreparedWrite,
+    PreparedInstruction,
+    PreparedTargetInstruction,
     prepare_typed_write,
     prepare_wire_write,
 )
@@ -170,8 +170,14 @@ def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() ->
     assert get_type_hints(plan_deep_fetch)["query"] is ResolvedObjectQuery
     assert get_type_hints(compile_read)["query"] is PlannedEntityQuery
     assert get_type_hints(compile_write_predicate)["op"] is TemporallyResolvedPredicate
-    assert get_type_hints(prepare_typed_write)["return"] == PreparedWrite | PreparedTargetWrite
-    assert get_type_hints(prepare_wire_write)["return"] == PreparedWrite | PreparedTargetWrite
+    assert (
+        get_type_hints(prepare_typed_write)["return"]
+        == PreparedInstruction | PreparedTargetInstruction
+    )
+    assert (
+        get_type_hints(prepare_wire_write)["return"]
+        == PreparedInstruction | PreparedTargetInstruction
+    )
     assert get_type_hints(compile_write_step)["step"] == PlannedStep
     assert not {
         "compile_read",
@@ -583,16 +589,16 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.conformance._case_ingress",
         "parallax.core._execution._unit_work.instructions",
-    ): frozenset({"PreparedTargetWrite", "PreparedWrite", "WriteInstruction"}),
+    ): frozenset({"PreparedTargetInstruction", "PreparedInstruction", "WriteInstruction"}),
     (
         "parallax.conformance._lanes.scenario",
         "parallax.core._execution._unit_work.instructions",
     ): frozenset(
         {
-            "PreparedKeyedWrite",
-            "PreparedPredicateWrite",
-            "PreparedTargetWrite",
-            "PreparedWrite",
+            "PreparedKeyedInstruction",
+            "PreparedPredicateInstruction",
+            "PreparedTargetInstruction",
+            "PreparedInstruction",
             "WriteInstruction",
         }
     ),

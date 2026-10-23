@@ -40,9 +40,9 @@ from parallax.core._execution._unit_work.acquisition import (
 )
 from parallax.core._execution._unit_work.instructions import (
     KeyedWriteInstruction,
-    PreparedKeyedWrite,
+    PreparedKeyedInstruction,
 )
-from parallax.core._execution._unit_work.write_items import ObservedKeyedWrite
+from parallax.core._execution._unit_work.write_items import StateObservedWrite
 from parallax.core.base import INFINITY
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
@@ -224,7 +224,7 @@ def _planned(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
                 concurrency="locking",
-                buffered_writes=[prepared],
+                composed_writes=[prepared],
             )
         )
     )
@@ -238,15 +238,15 @@ def _apply_all(
 
 
 def _observed_write(
-    prepared: PreparedKeyedWrite, observation: TemporalObservation
-) -> ObservedKeyedWrite:
+    prepared: PreparedKeyedInstruction, observation: TemporalObservation
+) -> StateObservedWrite:
     shape = temporal_read.view(POSITION).shape(POSITION_ENTITY.identity)
     assert shape is not None
     key = ObjectKey(POSITION_ENTITY.identity, (("id", 1),))
     retained = RetainedObservation(
         object_state_key_from_observation(key, observation, shape), observation, None
     )
-    return ObservedKeyedWrite(prepared, retained)
+    return StateObservedWrite(prepared, retained)
 
 
 @pytest.mark.parametrize(
@@ -277,7 +277,7 @@ def test_a_milestone_no_planned_step_closes_stays_stored_as_it_was(value: str, k
                     FixedClock(dt.datetime(2024, 9, 1, tzinfo=dt.UTC))
                 ),
                 concurrency="locking",
-                buffered_writes=[_observed_write(prepared, observed)],
+                composed_writes=[_observed_write(prepared, observed)],
             )
         )
     )
@@ -338,7 +338,7 @@ def test_an_applied_non_temporal_insert_stores_nothing() -> None:
                 FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
             ),
             concurrency="locking",
-            buffered_writes=[prepared],
+            composed_writes=[prepared],
         )
     )
     _apply_all(store, account, plan_steps(plan))
@@ -361,7 +361,7 @@ def _rectangles(
     *spans: tuple[int, str, str | None, str],
 ) -> tuple[PlannedStep, ...]:
     """The plan opening one rectangle per ``(id, validFrom, until, value)``."""
-    entries: list[PreparedKeyedWrite] = []
+    entries: list[PreparedKeyedInstruction] = []
     for key, valid_from, until, value in spans:
         document: dict[str, object] = {
             "mutation": "insert" if until is None else "insertUntil",
@@ -382,7 +382,7 @@ def _rectangles(
                     FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
                 ),
                 concurrency="locking",
-                buffered_writes=entries,
+                composed_writes=entries,
             )
         )
     )

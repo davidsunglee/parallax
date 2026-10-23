@@ -39,8 +39,8 @@ from parallax.core._execution._unit_work.acquisition import (
     consume_coverage,
 )
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedTargetWrite,
+    PreparedKeyedInstruction,
+    PreparedTargetInstruction,
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.write_runner import (
@@ -60,7 +60,7 @@ from parallax.core.unit_work import (
     UnitOfWork,
     UnitOfWorkError,
     WriteEvidenceError,
-    buffered_write,
+    admitted_write,
     object_key,
 )
 from parallax.core.write_plan import ObjectKey, PredecessorRow, TemporalObservation
@@ -89,7 +89,7 @@ type _Stored = tuple[object, object, object, object, object]
 
 def _write(
     valid_from: dt.datetime, until: dt.datetime | None = None, **members: object
-) -> PreparedKeyedWrite:
+) -> PreparedKeyedInstruction:
     verb = "amend" if until is None else "amendUntil"
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
@@ -97,7 +97,7 @@ def _write(
         ),
         _META,
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
@@ -159,9 +159,9 @@ class _Session:
         observation = TemporalObservation(predecessor=PredecessorRow(members=self.seeded[0]))
         return self.uow.retain(retained_observation(_write(_JAN), _META, observation))
 
-    def flush(self, *writes: tuple[PreparedKeyedWrite, RetainedObservation]) -> None:
+    def flush(self, *writes: tuple[PreparedKeyedInstruction, RetainedObservation]) -> None:
         for prepared, observation in writes:
-            self.uow.buffer(buffered_write(prepared, observation))
+            self.uow.buffer(admitted_write(prepared, observation))
         with self.store.transaction(rollback=False):
             self.uow.flush(trigger="read_dependency")
 
@@ -280,8 +280,8 @@ def test_a_composed_range_binds_the_rows_held_for_its_source_without_comparing_t
         return overlapping(*predecessors)
 
     monkeypatch.setattr(ranges, "_overlapping", counted)
-    session.uow.buffer(buffered_write(_write(_FEB, acctNum="Z"), source))
-    session.uow.buffer(buffered_write(_write(_FEB, _MAR, value="150.00"), source))
+    session.uow.buffer(admitted_write(_write(_FEB, acctNum="Z"), source))
+    session.uow.buffer(admitted_write(_write(_FEB, _MAR, value="150.00"), source))
     _flush_buffered(session)
     assert session.requests == []
     assert compared <= held
@@ -297,7 +297,7 @@ def test_a_pre_commit_flush_which_no_submission_follows_records_nothing_for_cont
     session.flush((_write(_FEB, _APR, acctNum="O"), source))
     contributions = session.ownership._contributions  # pyright: ignore[reportPrivateUsage] - what lineage records
     recorded = set(contributions)
-    session.uow.buffer(buffered_write(_write(_FEB, _MAR, value="150.00"), source))
+    session.uow.buffer(admitted_write(_write(_FEB, _MAR, value="150.00"), source))
     with session.store.transaction(rollback=False):
         session.uow.flush(trigger="pre_commit")
     # The pre-commit write bound to the rows the earlier flush left, reading
@@ -315,7 +315,7 @@ def test_a_deferred_range_records_for_continuation_only_where_a_submission_follo
     # stored row past it, so its range binds at execution.
     session = _Session(ends=(_SEP, INFINITY))
     source = session.observed()
-    session.uow.buffer(buffered_write(_write(_FEB, acctNum="O"), source))
+    session.uow.buffer(admitted_write(_write(_FEB, acctNum="O"), source))
     with session.store.transaction(rollback=False):
         session.uow.flush(trigger=trigger)
     assert [type(request) for request in session.requests] == [CoverageReadRequest]
@@ -421,7 +421,7 @@ def test_rows_held_for_a_source_nothing_reaches_any_longer_are_released() -> Non
 
 def _target(
     valid_from: dt.datetime, until: dt.datetime, tx_start: dt.datetime, **members: object
-) -> PreparedTargetWrite:
+) -> PreparedTargetInstruction:
     prepared = prepare_wire_write(
         TargetWriteInstruction(
             "amendUntil",
@@ -433,7 +433,7 @@ def _target(
         ),
         _META,
     )
-    assert isinstance(prepared, PreparedTargetWrite)
+    assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
 
 
@@ -449,7 +449,7 @@ def test_a_caller_beside_a_continuing_source_states_the_start_of_the_row_held_th
     session = _Session()
     source = session.observed()
     session.flush((_write(_FEB, _APR, acctNum="O"), source))
-    session.uow.buffer(buffered_write(_write(_FEB, _MAR, value="150.00"), source))
+    session.uow.buffer(admitted_write(_write(_FEB, _MAR, value="150.00"), source))
     with pytest.raises(WriteEvidenceError) as refused:
         session.uow.buffer_target(_target(_JUN, _AUG, _T0, value="175.00"))
     assert refused.value.code == "write-evidence-already-claimed"
@@ -469,7 +469,7 @@ def test_a_caller_of_a_continuing_sources_window_is_one_operation_from_the_row_h
     session = _Session()
     source = session.observed()
     session.flush((_write(_FEB, _APR, acctNum="O"), source))
-    session.uow.buffer(buffered_write(_write(_JUN, _AUG, value="175.00"), source))
+    session.uow.buffer(admitted_write(_write(_JUN, _AUG, value="175.00"), source))
     session.uow.buffer_target(_target(_JUN, _AUG, _NOW, acctNum="T"))
     _flush_buffered(session)
     assert (_JUN, _AUG, _NOW, "T", Decimal("175.00")) in session.stored()
@@ -481,7 +481,7 @@ def test_a_caller_beside_a_continuing_source_past_the_rows_held_states_the_store
     session = _Session(ends=(_SEP, INFINITY))
     source = session.observed()
     session.flush((_write(_FEB, _APR, acctNum="O"), source))
-    session.uow.buffer(buffered_write(_write(_FEB, _MAR, value="150.00"), source))
+    session.uow.buffer(admitted_write(_write(_FEB, _MAR, value="150.00"), source))
     session.uow.buffer_target(_target(_OCT, _NOV, _T0, value="175.00"))
     _flush_buffered(session)
     assert session.stored()[-3:] == [

@@ -21,7 +21,7 @@ from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     KeyedMutation,
     KeyedWriteInstruction,
-    PreparedKeyedWrite,
+    PreparedKeyedInstruction,
     WriteInstructionError,
 )
 from parallax.core._execution._unit_work.keys import object_key
@@ -31,7 +31,7 @@ from parallax.core._execution._unit_work.retain import (
     ReadEvidence,
 )
 from parallax.core._execution._unit_work.uow import UnitOfWork
-from parallax.core._execution._unit_work.write_items import buffered_write
+from parallax.core._execution._unit_work.write_items import admitted_write
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
@@ -380,7 +380,7 @@ class KeyedWriteSource(Protocol):
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedKeyedWrite: ...
+    ) -> PreparedKeyedInstruction: ...
 
 
 class KeyedInsertSource(Protocol):
@@ -405,7 +405,7 @@ class KeyedInsertSource(Protocol):
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedKeyedWrite: ...
+    ) -> PreparedKeyedInstruction: ...
 
 
 def keyed_instruction(
@@ -577,7 +577,7 @@ def keyed_write(
     valid_from = source_start(meta, resolved, mutation, anchor)
     prepared = source.prepare(meta, mutation, resolved, valid_from=valid_from, until=until)
     if authorized:
-        item = buffered_write(prepared, None, authority=authoring)
+        item = admitted_write(prepared, None, authority=authoring)
     else:
         read = resolved.read_evidence
         addressed = object_key(prepared, meta) if read is None else read.object_key
@@ -589,7 +589,7 @@ def keyed_write(
             mutation=mutation,
             object_key=addressed,
         )
-        item = buffered_write(prepared, evidence, source=read)
+        item = admitted_write(prepared, evidence, source=read)
     if mutation in AMEND_MUTATIONS and not prepared.assigns:
         return
     uow.buffer(item)

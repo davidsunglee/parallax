@@ -34,13 +34,13 @@ from parallax.conformance.simulated_temporal_store import (
 )
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedTargetWrite,
+    PreparedKeyedInstruction,
+    PreparedTargetInstruction,
 )
 from parallax.core._execution._unit_work.write_items import (
-    InsertionKeyedWrite,
-    ObjectClaimedWrite,
-    ObservedKeyedWrite,
+    InsertionAuthorizedWrite,
+    ObjectLockedWrite,
+    StateObservedWrite,
 )
 from parallax.core.base import (
     INFINITY,
@@ -1969,7 +1969,7 @@ def test_an_insert_row_authoring_an_observed_version_is_refused() -> None:
     # across every mutation, so an insert row can author the reserved key anyway;
     # this engine refuses it rather than handing planning evidence about a
     # milestone that does not yet exist. The refusal is an authoring diagnosis,
-    # not the structural guarantee — the carrier itself refuses an insert too.
+    # not the structural guarantee — the observed write itself refuses an insert too.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -2027,9 +2027,9 @@ def test_an_unversioned_row_authoring_an_observation_control_key_is_refused() ->
     # `m-unit-work`: unversioned Non-Temporal writes have no observation, and the
     # case schema's `writeRow` says the same ("absent on ... a non-versioned
     # write") without being able to express it. Accepted, the key would wrap an
-    # unversioned Wallet update in an observation carrier: the planner ignores it
+    # unversioned Wallet update in an observed write: the planner ignores it
     # (there is no version attribute to advance) but batching still excludes the
-    # carrier, so these UNIFORM rows would emit two statements where the same
+    # observed write, so these UNIFORM rows would emit two statements where the same
     # rows without the key collapse to one `IN`-list statement.
     case = _synthetic_write(
         "writeSequence",
@@ -3865,11 +3865,11 @@ def test_a_staged_writer_runs_at_a_requested_read_committed_over_a_snapshot_root
     assert len(port.writes) == 2
 
 
-def _admitted(monkeypatch: pytest.MonkeyPatch) -> list[AdmittedWrite | PreparedTargetWrite]:
-    admitted: list[AdmittedWrite | PreparedTargetWrite] = []
+def _admitted(monkeypatch: pytest.MonkeyPatch) -> list[AdmittedWrite | PreparedTargetInstruction]:
+    admitted: list[AdmittedWrite | PreparedTargetInstruction] = []
     admit = scenario._SimulatedUnit._admit  # pyright: ignore[reportPrivateUsage] - observes what the lane hands its simulated unit of work
 
-    def recorded(unit: Any, item: AdmittedWrite | PreparedTargetWrite) -> None:
+    def recorded(unit: Any, item: AdmittedWrite | PreparedTargetInstruction) -> None:
         admitted.append(item)
         admit(unit, item)
 
@@ -3892,23 +3892,27 @@ def _compiled(case: case_format.Case) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    ("case_id", "carriers"),
+    ("case_id", "write_types"),
     [
         pytest.param(
-            "m-batch-write-004", [ObservedKeyedWrite, ObservedKeyedWrite], id="versioned-deletes"
+            "m-batch-write-004", [StateObservedWrite, StateObservedWrite], id="versioned-deletes"
         ),
-        pytest.param("m-opt-lock-026", [ObservedKeyedWrite], id="restated-amendment"),
-        pytest.param("m-temporal-write-005", [ObservedKeyedWrite], id="fixture-history"),
+        pytest.param("m-opt-lock-026", [StateObservedWrite], id="restated-amendment"),
+        pytest.param("m-temporal-write-005", [StateObservedWrite], id="fixture-history"),
         pytest.param(
-            "m-temporal-write-002", [PreparedKeyedWrite, ObservedKeyedWrite], id="earlier-entry"
+            "m-temporal-write-002",
+            [PreparedKeyedInstruction, StateObservedWrite],
+            id="earlier-entry",
         ),
         pytest.param(
-            "m-temporal-write-017", [PreparedKeyedWrite, ObservedKeyedWrite], id="bounded-window"
+            "m-temporal-write-017",
+            [PreparedKeyedInstruction, StateObservedWrite],
+            id="bounded-window",
         ),
     ],
 )
 def test_a_compiled_observed_write_settles_against_a_detached_retained_observation(
-    case_id: str, carriers: list[type], monkeypatch: pytest.MonkeyPatch
+    case_id: str, write_types: list[type], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The authored or case-state observation is retained by the simulated
     # transaction itself, with no read's participation, and composes and
@@ -3916,10 +3920,10 @@ def test_a_compiled_observed_write_settles_against_a_detached_retained_observati
     admitted = _admitted(monkeypatch)
     case = _load_case(case_id)
     assert _compiled(case) == [sql for sql, _binds in write_golden_statements(case)]
-    assert [type(item) for item in admitted] == carriers
-    for carrier in admitted:
-        if isinstance(carrier, ObservedKeyedWrite):
-            assert carrier.retained_observation.participation is None
+    assert [type(item) for item in admitted] == write_types
+    for write in admitted:
+        if isinstance(write, StateObservedWrite):
+            assert write.retained_observation.participation is None
 
 
 @pytest.mark.parametrize(
@@ -3936,8 +3940,8 @@ def test_a_compiled_write_of_an_object_its_transaction_inserted_is_insertion_aut
     sql = _compiled(_load_case(case_id))
     assert [statement.split(" ", 1)[0] for statement in sql] == [*emitted, "select"]
     insert, authorized = admitted
-    assert isinstance(insert, PreparedKeyedWrite)
-    assert isinstance(authorized, InsertionKeyedWrite)
+    assert isinstance(insert, PreparedKeyedInstruction)
+    assert isinstance(authorized, InsertionAuthorizedWrite)
     assert authorized.identity.object_key.primary_key == (("id", key),)
 
 
@@ -3948,8 +3952,8 @@ def test_a_compiled_observation_free_write_carries_simulated_evidence_of_its_obj
     admitted = _admitted(monkeypatch)
     _compiled(_load_case(case_id))
     first, second = admitted
-    assert isinstance(first, ObjectClaimedWrite)
-    assert isinstance(second, ObjectClaimedWrite)
+    assert isinstance(first, ObjectLockedWrite)
+    assert isinstance(second, ObjectLockedWrite)
     ((one,), (two,)) = (first.source_evidence, second.source_evidence)
     assert one is not two and one.participation is two.participation
     assert (one.observation, two.observation) == (None, None)
@@ -3997,8 +4001,8 @@ def test_each_compiled_write_of_a_group_carries_evidence_of_its_own(
     )
     scenario.compile_scenario_case(case, "postgres")
     first, second = admitted
-    assert isinstance(first, ObjectClaimedWrite)
-    assert isinstance(second, ObjectClaimedWrite)
+    assert isinstance(first, ObjectLockedWrite)
+    assert isinstance(second, ObjectLockedWrite)
     ((one,), (two,)) = (first.source_evidence, second.source_evidence)
     assert one is not two
 

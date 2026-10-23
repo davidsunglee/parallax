@@ -18,7 +18,7 @@ from parallax.core.unit_work import (
     KeyedWriteInstruction,
     RetainedObservation,
     WritePlanningRequest,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -110,7 +110,7 @@ def observed_write(
         ),
         meta,
     )
-    return buffered_write(prepared, evidence)
+    return admitted_write(prepared, evidence)
 
 
 def planned(
@@ -125,7 +125,7 @@ def planned(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at(NOW.isoformat()),
             concurrency=concurrency,  # type: ignore[arg-type]
-            buffered_writes=admitted_writes(meta, list(writes)),
+            composed_writes=admitted_writes(meta, list(writes)),
             ownership=ownership,
             counts_unchanged_rows=counts_unchanged_rows,
         )

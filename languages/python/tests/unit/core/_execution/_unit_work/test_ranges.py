@@ -27,15 +27,15 @@ from parallax.core._execution._unit_work.acquisition import (
     RowRequest,
 )
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedTargetWrite,
+    PreparedKeyedInstruction,
+    PreparedTargetInstruction,
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    CoalescedTemporalWrite,
-    ObservedKeyedWrite,
+    ComposedTemporalWrite,
+    StateObservedWrite,
     TemporalContribution,
     target_write,
 )
@@ -49,7 +49,7 @@ from parallax.core.unit_work import (
     TransactionInstant,
     WritePlanningRequest,
     WritePreconditionError,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -148,7 +148,7 @@ def _update(
         ),
         _SPANS,
     )
-    return buffered_write(prepared, evidence)
+    return admitted_write(prepared, evidence)
 
 
 def _target(valid_from: dt.datetime, until: dt.datetime) -> AdmittedWrite:
@@ -163,7 +163,7 @@ def _target(valid_from: dt.datetime, until: dt.datetime) -> AdmittedWrite:
         ),
         _SPANS,
     )
-    assert isinstance(prepared, PreparedTargetWrite)
+    assert isinstance(prepared, PreparedTargetInstruction)
     return target_write(prepared, inheritance.view(_SPANS))
 
 
@@ -177,7 +177,7 @@ def _plan(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant or instant_at(_PLANNED_AT.isoformat()),
             concurrency="optimistic",
-            buffered_writes=admitted_writes(_SPANS, list(writes)),
+            composed_writes=admitted_writes(_SPANS, list(writes)),
             ownership=ownership,
         )
     )
@@ -405,15 +405,15 @@ def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
 
 
 # --------------------------------------------------------------------------- #
-# A lone keyed write enters range settlement as the carrier it was buffered   #
-# in: no composition of one write is built for it.                             #
+# A lone keyed write enters range settlement as the admitted write it was     #
+# buffered as: no composition of one write is built for it.                   #
 # --------------------------------------------------------------------------- #
 class _Compositions:
     """Counts the compositions and contributions built from now on."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.built = 0
-        for composing in (CoalescedTemporalWrite, TemporalContribution):
+        for composing in (ComposedTemporalWrite, TemporalContribution):
             original = composing.__init__
 
             def counting(
@@ -425,13 +425,13 @@ class _Compositions:
             monkeypatch.setattr(composing, "__init__", counting)
 
 
-def test_a_lone_observed_write_inside_its_predecessor_binds_at_once_from_its_own_carrier(
+def test_a_lone_observed_write_inside_its_predecessor_binds_at_once_from_its_own_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     head = _retained(_HEAD)
     built = _Compositions(monkeypatch)
     (buffered,) = admitted_writes(_SPANS, [_update(head, _MAR, _APR)])
-    assert isinstance(buffered, ObservedKeyedWrite)
+    assert isinstance(buffered, StateObservedWrite)
     plan = _plan(buffered)
     assert built.built == 0
     (write,) = settled_writes(plan)
@@ -470,11 +470,11 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
         ),
         _SPANS,
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     item: AdmittedWrite = (
         prepared
         if observation is None
-        else ObservedKeyedWrite(
+        else StateObservedWrite(
             prepared,
             RetainedObservation(
                 VersionedObjectStateKey(ObjectKey(_SPAN, (("id", 1),)), 1), observation, None

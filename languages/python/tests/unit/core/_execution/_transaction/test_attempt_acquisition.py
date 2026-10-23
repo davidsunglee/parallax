@@ -28,8 +28,8 @@ from parallax.core._execution._unit_work.acquisition import (
     consume_target,
 )
 from parallax.core._execution._unit_work.instructions import (
-    PreparedPredicateWrite,
-    PreparedTargetWrite,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
     prepare_wire_write,
 )
 from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
@@ -96,7 +96,7 @@ def _account(account_id: int = 1) -> MappingRow:
     return {"id": account_id, "owner": "Ada", "balance": Decimal("1.00"), "version": 3}
 
 
-def _patch(*, version: int = 3) -> PreparedTargetWrite:
+def _patch(*, version: int = 3) -> PreparedTargetInstruction:
     return prepare_wire_write(
         TargetWriteInstruction(
             "amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version
@@ -137,7 +137,7 @@ def _ledger(*, balance: DocumentValue = "1.00") -> MappingRow:
     }
 
 
-def _ledger_patch() -> PreparedTargetWrite:
+def _ledger_patch() -> PreparedTargetInstruction:
     return prepare_wire_write(
         TargetWriteInstruction("amend", "Ledger", {"id": 1, "label": "Z"}, if_version=3),
         model_of(_LEDGER),
@@ -681,7 +681,7 @@ def test_a_write_reusing_a_pending_participation_reads_and_judges_nothing_again(
     port = ScriptedAdapter(Transact(Read(rows=[_hull_row(entity, _VALID)])))
     metadata, _key = _hull_keys(entity)
 
-    def amend(tags: list[str]) -> PreparedTargetWrite:
+    def amend(tags: list[str]) -> PreparedTargetInstruction:
         return prepare_wire_write(
             TargetWriteInstruction(
                 "amend",
@@ -923,7 +923,7 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
 # An acquisition span's shared reads: the failure encountered first           #
 # propagates (`m-unit-work` *Shared coverage acquisition*).                    #
 # --------------------------------------------------------------------------- #
-def _hull_target(metadata: Any, key: int) -> PreparedTargetWrite:
+def _hull_target(metadata: Any, key: int) -> PreparedTargetInstruction:
     return prepare_wire_write(
         TargetWriteInstruction(
             "amend",
@@ -1126,7 +1126,7 @@ def test_a_ready_groups_failing_insert_reports_its_statement_error_alone() -> No
     assert [row[0] for row in inserted_rows(insert)] == [1, 1, 2, 2]
 
 
-def _tag_predicate() -> PreparedPredicateWrite:
+def _tag_predicate() -> PreparedPredicateInstruction:
     tag = shared.ShareTag.identity.canonical
     prepared = prepare_wire_write(
         PredicateWriteInstruction(
@@ -1139,7 +1139,7 @@ def _tag_predicate() -> PreparedPredicateWrite:
         ),
         model_of(shared.DOMAIN),
     )
-    assert isinstance(prepared, PreparedPredicateWrite)
+    assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared
 
 

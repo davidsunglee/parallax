@@ -10,8 +10,8 @@ from parallax.conformance._case_literal import normalize_case_bound, normalize_c
 from parallax.core import inheritance, predicate, temporal_read
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
-    PreparedTargetWrite,
-    PreparedWrite,
+    PreparedInstruction,
+    PreparedTargetInstruction,
     WriteInstruction,
 )
 from parallax.core.base import (
@@ -58,18 +58,18 @@ type _ScalarMember = AttributeMetadata | ValueObjectAttributeMetadata
 @overload
 def prepare_case_write(
     instruction: TargetWriteInstruction, model: AcceptedMetamodel
-) -> PreparedTargetWrite: ...
+) -> PreparedTargetInstruction: ...
 @overload
 def prepare_case_write(
     instruction: KeyedWriteInstruction | PredicateWriteInstruction, model: AcceptedMetamodel
-) -> PreparedWrite: ...
+) -> PreparedInstruction: ...
 @overload
 def prepare_case_write(
     instruction: WriteInstruction, model: AcceptedMetamodel
-) -> PreparedWrite | PreparedTargetWrite: ...
+) -> PreparedInstruction | PreparedTargetInstruction: ...
 def prepare_case_write(
     instruction: WriteInstruction, model: AcceptedMetamodel
-) -> PreparedWrite | PreparedTargetWrite:
+) -> PreparedInstruction | PreparedTargetInstruction:
     """Normalize one case-format instruction and invoke strict Wire preparation.
 
     Synthetic conformance cases may carry values already in their managed Python

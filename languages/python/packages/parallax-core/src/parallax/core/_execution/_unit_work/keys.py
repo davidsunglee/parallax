@@ -5,8 +5,8 @@ from collections.abc import Mapping
 from parallax.core import inheritance
 from parallax.core._execution._unit_work.instructions import (
     KeyedWriteInstruction,
-    PreparedKeyedWrite,
-    PreparedWrite,
+    PreparedInstruction,
+    PreparedKeyedInstruction,
     WriteInstruction,
 )
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
@@ -18,7 +18,9 @@ __all__ = [
 ]
 
 
-def object_key(instruction: WriteInstruction | PreparedWrite, model: Metamodel) -> ObjectKey | None:
+def object_key(
+    instruction: WriteInstruction | PreparedInstruction, model: Metamodel
+) -> ObjectKey | None:
     """The identity of the single object a keyed write targets, or ``None``.
 
     Prepared input consumes its retained target Metadata; the raw authored-input utility
@@ -30,7 +32,7 @@ def object_key(instruction: WriteInstruction | PreparedWrite, model: Metamodel) 
     marker-shaped pk value has no coalescing identity, exactly like an absent
     one) — an unidentifiable write is never coalesced nor observation-bound.
     """
-    if isinstance(instruction, PreparedKeyedWrite):
+    if isinstance(instruction, PreparedKeyedInstruction):
         return resolve_object_key(instruction, inheritance.view(model))
     if not isinstance(instruction, KeyedWriteInstruction) or len(instruction.rows) != 1:
         return None
@@ -41,7 +43,7 @@ def object_key(instruction: WriteInstruction | PreparedWrite, model: Metamodel) 
 
 
 def resolve_object_key(
-    instruction: PreparedWrite, families: inheritance.InheritanceFacet
+    instruction: PreparedInstruction, families: inheritance.InheritanceFacet
 ) -> ObjectKey | None:
     """:func:`object_key` for a caller that already holds the Inheritance Facet.
 
@@ -50,7 +52,7 @@ def resolve_object_key(
     declarations are wrongly empty for a concrete subtype, and the compiled view
     names the root's key Attribute at every position.
     """
-    if not isinstance(instruction, PreparedKeyedWrite) or len(instruction.rows) != 1:
+    if not isinstance(instruction, PreparedKeyedInstruction) or len(instruction.rows) != 1:
         return None
     return _row_identity(instruction.target, families, instruction.rows[0])
 

@@ -34,8 +34,8 @@ from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
     ExpectedTxStart,
     KeyedMutation,
-    PreparedPredicateWrite,
-    PreparedTargetWrite,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
 )
 from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.retain import (
@@ -54,7 +54,7 @@ from parallax.core._execution._unit_work.strategy import (
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    TargetKeyedWrite,
+    TargetWrite,
     target_write,
 )
 from parallax.core._execution._unit_work.write_planner import WritePlanner, WritePlanningRequest
@@ -338,22 +338,22 @@ class UnitOfWork:
         at the unit-of-work boundary — all of it, or nothing
         (:meth:`~parallax.core._execution._unit_work.admission.WriteAdmission.admit`).
 
-        The claim is read off the carrier itself
-        (:func:`~parallax.core._execution._unit_work.write_items.buffered_write`): a
+        The claim is read off the admitted write itself
+        (:func:`~parallax.core._execution._unit_work.write_items.admitted_write`): a
         retained observation claims the state it observed, and an
-        object-claimed write claims its instruction's object (`m-unit-work`
+        object-locked write claims its instruction's object (`m-unit-work`
         "Observed-State Coalescing"). An insert and a bare instruction claim
         nothing. An arriving keyed intent the held claim cannot absorb raises
         :class:`WriteEvidenceError` (``write-evidence-already-claimed``), and
         the pending writes, their claims, and the pending inserts are left as
         they were.
 
-        A carrier built from a read's evidence brings it along, so the buffer
+        An admitted write built from a read's evidence brings it along, so the buffer
         is what keeps a write's evidence alive once the caller releases the
         source value it came from.
 
-        A target carrier
-        (:class:`~parallax.core._execution._unit_work.write_items.TargetKeyedWrite`)
+        A target write
+        (:class:`~parallax.core._execution._unit_work.write_items.TargetWrite`)
         is admitted as :meth:`buffer_target` describes, its caller's revision
         confirmed under this attempt's concurrency strategy.
 
@@ -363,7 +363,7 @@ class UnitOfWork:
         Where an earlier insertion of the object is stored and a pending write
         removes all of it, the insert executes after that removal. A write an
         insertion authorized
-        (:class:`~parallax.core._execution._unit_work.write_items.InsertionKeyedWrite`) is
+        (:class:`~parallax.core._execution._unit_work.write_items.InsertionAuthorizedWrite`) is
         admitted only while that authority stands, and a write leaving nothing
         of what a still-unflushed insertion opened ends it.
 
@@ -377,7 +377,7 @@ class UnitOfWork:
             item, confirm_target=self._confirm_target, insertion_advice=insertion_advice
         )
 
-    def execute_predicate(self, prepared: PreparedPredicateWrite) -> int:
+    def execute_predicate(self, prepared: PreparedPredicateInstruction) -> int:
         """Execute a prepared predicate-selected write now, as one readless
         statement (`m-batch-write` "Predicate-selected readless forms"), and
         answer the affected-row count its driver reported: preparation has
@@ -407,7 +407,7 @@ class UnitOfWork:
         with opening("predicate_write"):
             return self._execute_predicate(prepared)
 
-    def _execute_predicate(self, prepared: PreparedPredicateWrite) -> int:
+    def _execute_predicate(self, prepared: PreparedPredicateInstruction) -> int:
         if self._admission:
             self._flush_buffer("predicate_write")
         step = self._planner.predicate_step(
@@ -421,7 +421,7 @@ class UnitOfWork:
             self._lifetime.doom(failure)
             raise
 
-    def buffer_target(self, prepared: PreparedTargetWrite) -> None:
+    def buffer_target(self, prepared: PreparedTargetInstruction) -> None:
         """Admit a target write and buffer it — all of it, or nothing.
 
         An amendment that assigns no member is the empty write: it is dropped
@@ -463,7 +463,7 @@ class UnitOfWork:
         item = target_write(prepared, inheritance.view(self.meta))
         self._admission.admit(item, confirm_target=self._confirm_target)
 
-    def _confirm_target(self, item: TargetKeyedWrite) -> TargetKeyedWrite:
+    def _confirm_target(self, item: TargetWrite) -> TargetWrite:
         """``item`` once its caller's revision is confirmed under its target's
         Effective Concurrency Strategy, answered with the row it read where it
         read one, or refused.
@@ -491,8 +491,8 @@ class UnitOfWork:
         return item
 
     def _confirm_temporal_target(
-        self, item: TargetKeyedWrite, key: ObjectKey, expectation: ExpectedTxStart
-    ) -> TargetKeyedWrite:
+        self, item: TargetWrite, key: ObjectKey, expectation: ExpectedTxStart
+    ) -> TargetWrite:
         """Prove a Locking target write of a temporal object starts
         from the state its caller stated, or refuse it, answering the write
         with the row it read where it read one.
@@ -822,7 +822,7 @@ class UnitOfWork:
                 actor_identity=self._actor_identity,
                 transaction_instant=self._transaction_instant,
                 concurrency=self.settings.concurrency,
-                buffered_writes=admission.composed_writes(),
+                composed_writes=admission.composed_writes(),
                 ownership=ownership,
                 counts_unchanged_rows=self.settings.counts_unchanged_rows,
             )

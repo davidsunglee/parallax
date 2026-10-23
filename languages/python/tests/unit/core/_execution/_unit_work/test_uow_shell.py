@@ -6,7 +6,7 @@ dry traversal and running nothing, and row acquisition is an injected
 reader): the pre-commit and read-dependency flushes, discarding buffered
 effects, read-your-own-writes force-flush, Clock injection, the attempt
 lifetime it consults and dooms, and what buffering admits: the claim each
-carrier names, all or nothing, and the pending-insert transition it reports.
+admitted write names, all or nothing, and the pending-insert transition it reports.
 The attempt's own lifecycle — commit admission, joins, and rollback — is the
 managed runner's, and is tested there.
 """
@@ -42,9 +42,9 @@ from parallax.core._execution._unit_work.acquisition import (
 )
 from parallax.core._execution._unit_work.admission import NO_INSERTION_AUTHORITY
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
-    PreparedTargetWrite,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
     TargetWriteInstruction,
     prepare_typed_write,
     prepare_wire_write,
@@ -53,8 +53,8 @@ from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEv
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import EscapedTransactionError, OpenFlush
 from parallax.core._execution._unit_work.write_items import (
-    InsertionKeyedWrite,
-    ObservedKeyedWrite,
+    InsertionAuthorizedWrite,
+    StateObservedWrite,
     target_write,
 )
 from parallax.core._execution._unit_work.write_runner import (
@@ -86,7 +86,7 @@ from parallax.core.unit_work import (
     WritePlanner,
     WritePlanningRequest,
     WritePreconditionError,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import (
     ObjectStateKey,
@@ -189,13 +189,13 @@ def _run[T](
         attempt.close()
 
 
-def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedWrite:
+def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedInstruction:
     prepared = prepare_typed_write(write, model)
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
-def _account_insert(account_id: int) -> PreparedKeyedWrite:
+def _account_insert(account_id: int) -> PreparedKeyedInstruction:
     return _prepared_keyed(
         KeyedWriteInstruction(
             "insert", "Account", ({"id": account_id, "owner": "N", "balance": Decimal("5.00")},)
@@ -343,7 +343,7 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
         resolved = tx.retain(reread)
         assert resolved is retained
         tx.buffer(
-            ObservedKeyedWrite(
+            StateObservedWrite(
                 instruction=_prepared_keyed(
                     KeyedWriteInstruction(
                         "amend", "Account", ({"id": 1, "balance": Decimal("0.00")},)
@@ -362,14 +362,14 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
 
 def test_an_insert_refuses_to_carry_a_write_observation() -> None:
     # `m-unit-work` makes absence structural in both directions: an opening row
-    # observes nothing, so the carrier around one is what cannot exist rather
+    # observes nothing, so the observed write around one is what cannot exist rather
     # than a null field flowing downstream. Three planner stages read that as a
     # guarantee — coalescing folds an update into a pending insert without
-    # unwrapping it, opening-row canonicalization treats every carrier as a
-    # revising write, and insert batching excludes carriers — so an insert that
+    # unwrapping it, opening-row canonicalization treats every observed write as
+    # a revising write, and insert batching excludes observed writes — so an insert that
     # reached planning wearing evidence would corrupt each in turn.
     with pytest.raises(ValueError, match="an insert carries no State Observation"):
-        ObservedKeyedWrite(
+        StateObservedWrite(
             instruction=_prepared_keyed(
                 KeyedWriteInstruction(
                     "insert",
@@ -392,7 +392,7 @@ def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> Non
     # advances every key from `observed + 1`, so a version observed for `id 1`
     # would carry `id 2` to the same new version and expect two affected rows.
     with pytest.raises(ValueError, match="evidence about one row"):
-        buffered_write(
+        admitted_write(
             _prepared_keyed(
                 KeyedWriteInstruction(
                     "amend",
@@ -411,9 +411,9 @@ def test_an_insertion_authority_licenses_no_insert_and_no_multi_row_write() -> N
     # rows names no single object at all.
     authority = InsertionIdentity(corpus_object_key("Account", ("id", 1)))
     with pytest.raises(ValueError, match="admitted by its own verb"):
-        InsertionKeyedWrite(instruction=_account_insert(1), identity=authority)
+        InsertionAuthorizedWrite(instruction=_account_insert(1), identity=authority)
     with pytest.raises(ValueError, match="the one object it opened"):
-        buffered_write(
+        admitted_write(
             _prepared_keyed(
                 KeyedWriteInstruction(
                     "amend",
@@ -440,7 +440,7 @@ def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused(
     def body(tx: UnitOfWork) -> None:
         stranger = InsertionIdentity(corpus_object_key("Account", ("id", 1)))
         with pytest.raises(UnitOfWorkError, match="no longer stands"):
-            tx.buffer(buffered_write(update, None, authority=stranger))
+            tx.buffer(admitted_write(update, None, authority=stranger))
         tx.buffer(_account_insert(1))
         standing = tx.insertion_identity(corpus_object_key("Account", ("id", 1)))
         assert standing is not None
@@ -475,8 +475,8 @@ def test_two_writes_of_one_claim_merge_and_advance_it_once() -> None:
     # settled write advances the state both observed, once.
     state = VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 7)
     retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
-    carriers = [
-        buffered_write(
+    observed = [
+        admitted_write(
             _prepared_keyed(
                 KeyedWriteInstruction("amend", "Account", ({"id": 1, "balance": balance},)),
                 _ACCOUNT,
@@ -490,7 +490,7 @@ def test_two_writes_of_one_claim_merge_and_advance_it_once() -> None:
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
             concurrency="locking",
-            buffered_writes=admitted_writes(_ACCOUNT, carriers),
+            composed_writes=admitted_writes(_ACCOUNT, observed),
         )
     )
     (step,) = plan_steps(finalized)
@@ -670,7 +670,7 @@ def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> Ad
     if mutation == "amend":
         row["balance"] = Decimal("1.00")
     evidence = VersionObservation(observed_version=version)
-    return buffered_write(
+    return admitted_write(
         _prepared_keyed(KeyedWriteInstruction(mutation, "Account", (row,)), _ACCOUNT),
         RetainedObservation(_account_state(account_id, version), evidence, None),
     )
@@ -678,7 +678,7 @@ def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> Ad
 
 def _balance_update(key: int) -> AdmittedWrite:
     observation = TemporalObservation(predecessor=PredecessorRow(_balance_members(key)))
-    return buffered_write(
+    return admitted_write(
         _prepared_keyed(
             KeyedWriteInstruction("amend", "Balance", ({"id": key, "value": Decimal("2.00")},)),
             _BALANCE,
@@ -695,8 +695,8 @@ def _refused_as_claimed(uow: UnitOfWork, item: AdmittedWrite) -> WriteEvidenceEr
 
 
 # --------------------------------------------------------------------------- #
-# Buffering a keyed write admits the claim its carrier names, or refuses it    #
-# and changes nothing.                                                         #
+# Buffering a keyed write admits the claim its admitted write names, or       #
+# refuses it and changes nothing.                                             #
 # --------------------------------------------------------------------------- #
 _PERSON_META = model_of(PERSON)
 
@@ -710,7 +710,7 @@ def _person_write(
         row["name"] = "Grace"
     prepared = _prepared_keyed(KeyedWriteInstruction(mutation, "Person", (row,)), _PERSON_META)
     key = corpus_object_key("Person", ("id", person_id))
-    return buffered_write(prepared, key, source=object_source(key) if source is None else source)
+    return admitted_write(prepared, key, source=object_source(key) if source is None else source)
 
 
 def test_a_retained_observation_claims_its_state_and_compatible_intents_combine() -> None:
@@ -742,7 +742,7 @@ def test_a_retained_claim_is_taken_at_the_exact_observed_state() -> None:
         _run(body)
 
 
-def test_an_object_claimed_write_claims_its_instructions_object() -> None:
+def test_an_object_locked_write_claims_its_instructions_object() -> None:
     simulated = _simulated(_PERSON_META)
 
     def body(uow: UnitOfWork) -> None:
@@ -805,13 +805,13 @@ def test_every_composed_object_source_stays_reachable_until_its_settled_write_is
     assert all(source() is None for source in held)
 
 
-def test_a_refused_carrier_or_claim_leaves_claims_and_pending_inserts_as_they_were() -> None:
+def test_a_refused_admitted_write_or_claim_leaves_claims_and_pending_inserts_as_they_were() -> None:
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_account_insert(9))
         uow.buffer(_account_write("delete", 1, 7))
         with pytest.raises(ValueError, match="evidence about one row"):
             uow.buffer(
-                buffered_write(
+                admitted_write(
                     _prepared_keyed(
                         KeyedWriteInstruction("delete", "Account", ({"id": 9}, {"id": 1})), _ACCOUNT
                     ),
@@ -834,7 +834,7 @@ class _Abandoned(Exception):
 # --------------------------------------------------------------------------- #
 # Buffering reports the pending-insert transition it made.                    #
 # --------------------------------------------------------------------------- #
-def _account_delete(account_id: int) -> PreparedKeyedWrite:
+def _account_delete(account_id: int) -> PreparedKeyedInstruction:
     return _prepared_keyed(
         KeyedWriteInstruction("delete", "Account", ({"id": account_id},)), _ACCOUNT
     )
@@ -890,7 +890,7 @@ def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
 # --------------------------------------------------------------------------- #
 # Settled writes: completion, ownership, freshness and failure containment.   #
 # --------------------------------------------------------------------------- #
-def _balance_insert(key: int) -> PreparedKeyedWrite:
+def _balance_insert(key: int) -> PreparedKeyedInstruction:
     return _prepared_keyed(
         KeyedWriteInstruction(
             "insert", "Balance", ({"id": key, "acctNum": "A", "value": Decimal("1.00")},)
@@ -907,7 +907,7 @@ def _balance_update_from(key: int, tx_start: object) -> AdmittedWrite:
         observation,
         _balance_shape(),
     )
-    return buffered_write(
+    return admitted_write(
         _prepared_keyed(
             KeyedWriteInstruction("amend", "Balance", ({"id": key, "value": Decimal("2.00")},)),
             _BALANCE,
@@ -940,7 +940,7 @@ def _balance_terminate_from(key: int, tx_start: object) -> AdmittedWrite:
     state = object_state_key_from_observation(
         corpus_object_key("Balance", ("id", key)), observation, _balance_shape()
     )
-    return buffered_write(
+    return admitted_write(
         _prepared_keyed(KeyedWriteInstruction("terminate", "Balance", ({"id": key},)), _BALANCE),
         RetainedObservation(state, observation, None),
     )
@@ -982,7 +982,7 @@ def test_each_settled_write_publishes_its_change_before_the_next_group_executes(
         _account_write("delete", 3, 1),
     )
     retained = tuple(
-        write.retained_observation for write in writes if isinstance(write, ObservedKeyedWrite)
+        write.retained_observation for write in writes if isinstance(write, StateObservedWrite)
     )
     seen: list[tuple[bool, ...]] = []
 
@@ -1045,7 +1045,7 @@ def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
 def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
     failure = RuntimeError("the statement failed")
     claimed = _account_write("amend", 1, 7)
-    assert isinstance(claimed, ObservedKeyedWrite)
+    assert isinstance(claimed, StateObservedWrite)
     steps = ObservedSteps(_simulated(), failing=0, failure=failure)
 
     def body(uow: UnitOfWork) -> str:
@@ -1152,7 +1152,7 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
         read_at = uow.freshness
         claim = uow.retain(RetainedObservation(state, observation, None))
         uow.buffer(
-            buffered_write(
+            admitted_write(
                 _prepared_keyed(
                     KeyedWriteInstruction("terminate", "Position", ({"id": 1},), valid_from=_DEC),
                     _POSITION,
@@ -1193,7 +1193,7 @@ def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool)
         read_at = uow.freshness
         claim = uow.retain(RetainedObservation(state, observation, None))
         uow.buffer(
-            buffered_write(
+            admitted_write(
                 _prepared_keyed(
                     KeyedWriteInstruction(
                         "amend", "Balance", ({"id": 1, "value": Decimal(value)},)
@@ -1221,7 +1221,7 @@ def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool)
 
 def _account_amend(account_id: int, claim: RetainedObservation) -> AdmittedWrite:
     row = {"id": account_id, "balance": Decimal("1.00")}
-    return buffered_write(
+    return admitted_write(
         _prepared_keyed(KeyedWriteInstruction("amend", "Account", (row,)), _ACCOUNT), claim
     )
 
@@ -1239,7 +1239,7 @@ def test_each_settled_write_names_its_sources_state_itself() -> None:
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
             concurrency="optimistic",
-            buffered_writes=admitted_writes(
+            composed_writes=admitted_writes(
                 _ACCOUNT, [_account_amend(1, first), _account_amend(2, second)]
             ),
         )
@@ -1270,7 +1270,7 @@ def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_publis
         deleted = uow.retain(_account_claim(3, 1))
         claims.append(deleted)
         uow.buffer(
-            buffered_write(
+            admitted_write(
                 _prepared_keyed(KeyedWriteInstruction("delete", "Account", ({"id": 3},)), _ACCOUNT),
                 deleted,
             )
@@ -1299,7 +1299,7 @@ def test_a_settled_write_with_no_step_changes_nothing() -> None:
     def body(uow: UnitOfWork) -> None:
         claim = uow.retain(RetainedObservation(state, observation, uow.participation))
         uow.buffer(
-            buffered_write(
+            admitted_write(
                 _prepared_keyed(
                     KeyedWriteInstruction(
                         "amend", "Balance", ({"id": 1, "value": Decimal("100.00")},)
@@ -1365,7 +1365,7 @@ class _Watched:
         return self.held(request, consumer)
 
 
-def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWrite:
+def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetInstruction:
     prepared = prepare_wire_write(
         TargetWriteInstruction(
             "amendUntil",
@@ -1377,7 +1377,7 @@ def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetWr
         ),
         _PREDICATED,
     )
-    assert isinstance(prepared, PreparedTargetWrite)
+    assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
 
 
@@ -1392,8 +1392,8 @@ def _observed_amendment(claim: RetainedObservation) -> AdmittedWrite:
         ),
         _PREDICATED,
     )
-    assert isinstance(observed, PreparedKeyedWrite)
-    return buffered_write(observed, claim)
+    assert isinstance(observed, PreparedKeyedInstruction)
+    return admitted_write(observed, claim)
 
 
 def test_a_target_after_a_predicate_write_judges_its_condition_on_what_the_earlier_write_left() -> (
@@ -1466,18 +1466,18 @@ def _observed_value(
         ),
         _PREDICATED,
     )
-    assert isinstance(observed, PreparedKeyedWrite)
-    return buffered_write(observed, claim)
+    assert isinstance(observed, PreparedKeyedInstruction)
+    return admitted_write(observed, claim)
 
 
-def _account_target(version: int) -> PreparedTargetWrite:
+def _account_target(version: int) -> PreparedTargetInstruction:
     prepared = prepare_wire_write(
         TargetWriteInstruction(
             "amend", "Account", {"id": 1, "balance": "6.00"}, if_version=version
         ),
         _ACCOUNT,
     )
-    assert isinstance(prepared, PreparedTargetWrite)
+    assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
 
 
@@ -1493,16 +1493,16 @@ def _account_target(version: int) -> PreparedTargetWrite:
         ),
     ],
 )
-def test_a_target_carrier_is_admitted_as_its_verb_admits_it(
+def test_a_target_write_is_admitted_as_its_verb_admits_it(
     meta: Metamodel,
-    target: Callable[[], PreparedTargetWrite],
+    target: Callable[[], PreparedTargetInstruction],
     rows: tuple[PredecessorRow, ...],
 ) -> None:
     # Buffered directly or through its verb, one acceptance judges it: the
     # Optimistic strategy reads nothing at the call, and the flush makes the
     # same statements of it.
     def flushed(
-        buffering: Callable[[UnitOfWork, PreparedTargetWrite], object],
+        buffering: Callable[[UnitOfWork, PreparedTargetInstruction], object],
     ) -> tuple[list[object], tuple[object, ...], list[RowRequest]]:
         simulated = _simulated(meta)
         held = HeldRows(meta, rows)
@@ -1525,7 +1525,7 @@ def test_a_target_carrier_is_admitted_as_its_verb_admits_it(
     assert not any(isinstance(request, TargetReadRequest) for request in carried_reads)
 
 
-@pytest.mark.parametrize("route", ["carrier", "verb"])
+@pytest.mark.parametrize("route", ["admitted-write", "verb"])
 def test_a_locking_target_write_is_confirmed_once_on_every_route(route: str) -> None:
     stored = PredecessorRow(
         members={"id": 1, "owner": "Ada", "balance": Decimal("5.00"), "version": 2}
@@ -1534,7 +1534,7 @@ def test_a_locking_target_write_is_confirmed_once_on_every_route(route: str) -> 
 
     def buffering(uow: UnitOfWork, version: int) -> None:
         prepared = _account_target(version)
-        if route == "carrier":
+        if route == "admitted-write":
             uow.buffer(target_write(prepared, inheritance.view(_ACCOUNT)))
         else:
             uow.buffer_target(prepared)
@@ -1552,7 +1552,7 @@ def test_a_locking_target_write_is_confirmed_once_on_every_route(route: str) -> 
 
 def _shell_predicate_write(
     assignments: tuple[WriteAssignment, ...] = (WriteAssignment("ShellTag.label", "q"),),
-) -> PreparedPredicateWrite:
+) -> PreparedPredicateInstruction:
     prepared = prepare_wire_write(
         PredicateWriteInstruction(
             "amend",
@@ -1566,11 +1566,11 @@ def _shell_predicate_write(
         ),
         _PREDICATED,
     )
-    assert isinstance(prepared, PreparedPredicateWrite)
+    assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared
 
 
-def _tag_insert(tag_id: int) -> PreparedKeyedWrite:
+def _tag_insert(tag_id: int) -> PreparedKeyedInstruction:
     return _prepared_keyed(
         KeyedWriteInstruction("insert", "ShellTag", ({"id": tag_id, "label": "t"},)), _PREDICATED
     )
@@ -1684,7 +1684,7 @@ def test_an_empty_predicate_write_answers_zero_and_leaves_the_buffer_pending(
             _PREDICATED,
         )
     )
-    assert isinstance(empty, PreparedPredicateWrite)
+    assert isinstance(empty, PreparedPredicateInstruction)
     assert not empty.assigns
 
     def body(uow: UnitOfWork) -> None:
@@ -1896,7 +1896,7 @@ def test_a_pending_opening_settles_as_one_write_of_the_new_lineages_its_edits_le
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(FixedClock(_FIXED)),
             concurrency="optimistic",
-            buffered_writes=admitted_writes(_PREDICATED, [insert, edit, destroy]),
+            composed_writes=admitted_writes(_PREDICATED, [insert, edit, destroy]),
         )
     )
     # No predecessor is fabricated for the insert: every surviving part of its

@@ -15,7 +15,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import inheritance
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
-    PreparedTargetWrite,
+    PreparedTargetInstruction,
     TargetWriteInstruction,
     prepare_typed_write,
     prepare_wire_write,
@@ -143,13 +143,13 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
         ),
         _POSITION,
     )
-    assert isinstance(prepared, PreparedTargetWrite)
+    assert isinstance(prepared, PreparedTargetInstruction)
     plan = build_write_planner(_POSITION).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=TransactionInstant(clock),
             concurrency="optimistic",
-            buffered_writes=admitted_writes(
+            composed_writes=admitted_writes(
                 _POSITION, [target_write(prepared, inheritance.view(_POSITION))]
             ),
             ownership=ownership,
@@ -206,7 +206,7 @@ def test_a_pending_opening_settles_through_no_retained_producer_and_prepares_no_
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
             concurrency="optimistic",
-            buffered_writes=admitted_writes(_POSITION, writes),
+            composed_writes=admitted_writes(_POSITION, writes),
         )
     )
     assert len(list(plan_steps(plan))) == 2

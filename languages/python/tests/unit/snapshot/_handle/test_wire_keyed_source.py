@@ -24,7 +24,7 @@ import pytest
 
 from parallax.core import DomainModel
 from parallax.core._execution._unit_work import instructions
-from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite
+from parallax.core._execution._unit_work.instructions import PreparedKeyedInstruction
 from parallax.core.base import INFINITY, SQL_NULL
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel
@@ -239,7 +239,7 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
         until=None,
     )
 
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     assert prepared.rows[0] == {"id": 7, "owner": "Newton", "balance": Decimal("5.00")}
 
 

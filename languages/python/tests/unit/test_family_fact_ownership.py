@@ -227,7 +227,7 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=inert_instant(),
             concurrency=concurrency,
-            buffered_writes=prepared,
+            composed_writes=prepared,
         )
     )
     lowered: list[tuple[PlannedStep, LoweredStatement]] = list(
@@ -293,7 +293,7 @@ def test_admitting_planning_and_lowering_temporal_writes_take_axes_from_the_fami
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant,
             concurrency=concurrency,
-            buffered_writes=_temporal_writes(),
+            composed_writes=_temporal_writes(),
         )
     )
     steps = list(plan_steps(plan))

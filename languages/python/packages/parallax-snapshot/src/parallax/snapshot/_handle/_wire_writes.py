@@ -27,8 +27,8 @@ from parallax.core._execution._unit_work.instructions import (
     PredicateMutation,
     PredicateSelection,
     PredicateWriteInstruction,
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
     TargetMutation,
     WriteAssignment,
 )
@@ -204,7 +204,7 @@ class WirePredicateWriteAdapter:
 
     def prepare(
         self, write_model: SelectedWriteModel, mutation: PredicateMutation
-    ) -> PreparedPredicateWrite:
+    ) -> PreparedPredicateInstruction:
         meta = write_model.model.meta
         selection = (
             typed_selection(self._target, write_model)
@@ -392,7 +392,7 @@ def _prepared_wire_write(
     valid_from: dt.datetime | None,
     until: dt.datetime | None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedKeyedWrite:
+) -> PreparedKeyedInstruction:
     """One authored single-row keyed instruction, decoded and judged by Unit
     Work's sole Wire judgment.
 
@@ -485,7 +485,7 @@ class WireKeyedWriteSource:
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedKeyedWrite:
+    ) -> PreparedKeyedInstruction:
         """The instruction this document authors: the source's identity plus
         every member the document states, its key members set aside once they
         are judged to name the source's own object.
@@ -577,7 +577,7 @@ class WireKeyedInsertSource:
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedKeyedWrite:
+    ) -> PreparedKeyedInstruction:
         """The row this payload opens, with every payload key judged as the
         caller's authoring: a framework-owned member is refused, because the
         interval bounds are stamped at flush from the Clock Strategy and the

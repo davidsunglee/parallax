@@ -298,11 +298,11 @@ empty collection. A deletion or termination names the key alone, and any other
 member it states is refused. A missing revision is therefore heard before an
 undeclared member, and an inadmissible window before both.
 
-`PreparedKeyedWrite` carries the exact target, deeply owned managed rows, and
-prepared temporal bounds. `PreparedPredicateWrite` carries its
+`PreparedKeyedInstruction` carries the exact target, deeply owned managed rows, and
+prepared temporal bounds. `PreparedPredicateInstruction` carries its
 `ResolvedMutationSelection` and the one owned managed row it assigns every
 selected object, which never states the key and is empty for a deletion.
-`PreparedTargetWrite` carries its exact mutation, the exact target, its one
+`PreparedTargetInstruction` carries its exact mutation, the exact target, its one
 owned managed row, prepared temporal bounds, and its validated starting
 expectation — an expected version or an expected Transaction-Time start.
 Whether it assigns, replaces, or destroys follows from that mutation, so no
@@ -432,7 +432,7 @@ their object by key (*Target writes*).
 
 ### Insertion authority
 
-An **insertion-authoring write** is a write of an object this unit of work
+An **insertion-authorized write** is a write of an object this unit of work
 inserted, authorized by that insertion rather than by a read. Successful
 admission of an insertion grants an **authority** that belongs to the source the
 insertion was stated through — the value a typed insert took and every value
@@ -533,8 +533,8 @@ rows, so a key its row states addresses nothing and is never written. A replacem
 milestone holds keeps that milestone exactly as an equal amendment does
 (`m-temporal-write` *Unchanged milestones*).
 
-The replacement intent belongs to the verb, so it survives every carrier and
-composition a write travels through — an observed, insertion-authorized, or
+The replacement intent belongs to the verb, so it survives every admitted write
+and composition a write travels through — an observed, insertion-authorized, or
 target write, and the composition of a pending insertion — whatever
 authorized it. On a Bitemporal object a replacement establishes its state over
 its whole window: rows it reaches take the completed state, and every part of
@@ -715,7 +715,7 @@ finalize(
         actor_identity:       ActorIdentity,
         transaction_instant:  TransactionInstant,
         concurrency_preference: ConcurrencyPreference,
-        buffered_writes:      CoalescedWrites,
+        composed_writes:      ComposedWrites,
         ownership:            AttemptOwnership,
     )
 ) -> WritePlan
@@ -746,7 +746,7 @@ decorated once by the configured audit — and no settled write, completion, or
 Write Group:
 
 ```text
-predicateStep(prepared: PreparedPredicateWrite, actor_identity: ActorIdentity,
+predicateStep(prepared: PreparedPredicateInstruction, actor_identity: ActorIdentity,
               transaction_instant: TransactionInstant) -> PlannedStep
 ```
 
@@ -836,7 +836,7 @@ is owned by the planner and constructed for the same accepted Metamodel: it
 reuses that model's compiled facets, never observes model publication, and is
 never rebound after one. It is reached through exactly **one** private
 operation over the **complete** dependency-ordered sequence, because packing is
-a property of adjacency and a claim survives by its carrier having reached
+a property of adjacency and a claim survives by its write having reached
 settlement at all. That operation answers the Write Planning Result, which the
 planner returns unchanged: the planner neither wraps nor reconstructs it, so no
 fact about a settled write is decided twice.
@@ -1414,12 +1414,12 @@ settled. Evidence such a caller **does** supply travels with the write it was
 supplied for, and one observation is evidence about **one** row, so an
 implementation **MUST** refuse the pairing rather than drop the evidence.
 
-That refusal is a judgment about the write's own carrier, and both it and the
-refusal of an arriving intent the buffer's existing claim cannot absorb are made
+That refusal is a judgment about the write's own admitted form, and both it and
+the refusal of an arriving intent the buffer's existing claim cannot absorb are made
 **before** the write is buffered, each leaving the claim ledger and the buffer as
 it found them. An implementation **MUST NOT** record a write's claim before the
-write has passed the carrier judgments that precede buffering: a caller that
-catches such a refusal and continues in the same unit of work would otherwise
+write has passed the admitted-form judgments that precede buffering: a caller
+that catches such a refusal and continues in the same unit of work would otherwise
 hold a claim for a write nothing buffered, and a later legal write of that scope
 would be refused, deduplicated, coalesced, or superseded against it. A refusal a
 buffered write earns later — when the buffer is planned or the write is settled —

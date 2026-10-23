@@ -8,7 +8,7 @@ from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
     INSERT_MUTATIONS,
-    PreparedKeyedWrite,
+    PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.non_temporal_settlement import (
     DELETION,
@@ -33,15 +33,15 @@ from parallax.core._execution._unit_work.strategy import (
     ConcurrencyStrategy,
 )
 from parallax.core._execution._unit_work.write_items import (
-    CoalescedTemporalWrite,
-    InsertionKeyedWrite,
+    ComposedBitemporalOpening,
+    ComposedTemporalWrite,
+    InsertionAuthorizedWrite,
     MutationPhase,
-    ObjectClaimedBatch,
-    ObjectClaimedWrite,
-    ObservedKeyedWrite,
+    ObjectLockedBatch,
+    ObjectLockedWrite,
     OrderedWrite,
-    PendingOpening,
-    TargetKeyedWrite,
+    StateObservedWrite,
+    TargetWrite,
 )
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
@@ -301,19 +301,19 @@ class WritePlanCompiler:
         guards: bool,
     ) -> tuple[SettledWrite, tuple[PlannedStep, ...]]:
         shape = self._carrier_shape(item)
-        if isinstance(item, PendingOpening):
+        if isinstance(item, ComposedBitemporalOpening):
             assert isinstance(shape, Bitemporal)  # only a Bitemporal opening is composed
             return self._opening(
                 item, shape, concurrency, transaction_instant, ownership, audit, guards=guards
             )
         if isinstance(shape, TransactionTimeOnly | Bitemporal):
             assert not isinstance(
-                item, PreparedKeyedWrite | ObjectClaimedWrite | ObjectClaimedBatch
+                item, PreparedKeyedInstruction | ObjectLockedWrite | ObjectLockedBatch
             )
             return self._range(
                 item, shape, concurrency, transaction_instant, ownership, audit, guards=guards
             )
-        assert not isinstance(item, CoalescedTemporalWrite)
+        assert not isinstance(item, ComposedTemporalWrite)
         settled = self._settle_keyed(item, concurrency, transaction_instant, shape, audit)
         evidence = _source_evidence(item)
         if not evidence:
@@ -336,25 +336,25 @@ class WritePlanCompiler:
         return write, settled.steps
 
     def _carrier_shape(self, item: OrderedWrite) -> TemporalShape | None:
-        """The Temporal Shape of a buffered carrier's target, read once at
+        """The Temporal Shape of an ordered write's target, read once at
         dispatch; ``None`` for a bare instruction, whose settlement reads it."""
-        if isinstance(item, CoalescedTemporalWrite):
+        if isinstance(item, ComposedTemporalWrite):
             return self._temporal_facet.shape(item.target.identity)
-        if isinstance(item, PendingOpening):
+        if isinstance(item, ComposedBitemporalOpening):
             return self._temporal_facet.shape(item.insert.target.identity)
-        if isinstance(item, ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite):
+        if isinstance(item, StateObservedWrite | InsertionAuthorizedWrite | TargetWrite):
             return self._temporal_facet.shape(item.instruction.target.identity)
         return None
 
     def _settle_keyed(
         self,
         item: (
-            PreparedKeyedWrite
-            | ObservedKeyedWrite
-            | ObjectClaimedWrite
-            | ObjectClaimedBatch
-            | InsertionKeyedWrite
-            | TargetKeyedWrite
+            PreparedKeyedInstruction
+            | StateObservedWrite
+            | ObjectLockedWrite
+            | ObjectLockedBatch
+            | InsertionAuthorizedWrite
+            | TargetWrite
         ),
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
@@ -364,14 +364,14 @@ class WritePlanCompiler:
         """One ordered keyed write's settled steps and completion."""
         observation: StateObservation | None = None
         scope: ObjectStateKey | ObjectKey | None = None
-        if isinstance(item, PreparedKeyedWrite):
+        if isinstance(item, PreparedKeyedInstruction):
             instruction = item
         else:
             instruction = item.instruction
-            if isinstance(item, ObservedKeyedWrite):
+            if isinstance(item, StateObservedWrite):
                 observation = item.observation
                 scope = item.scope
-            elif not isinstance(item, ObjectClaimedWrite | ObjectClaimedBatch):
+            elif not isinstance(item, ObjectLockedWrite | ObjectLockedBatch):
                 scope = item.scope
         own_version = scope.version if isinstance(scope, VersionedObjectStateKey) else None
         return self._settle(
@@ -382,14 +382,14 @@ class WritePlanCompiler:
             shape,
             audit,
             own_version=own_version,
-            conditioned=isinstance(item, TargetKeyedWrite),
+            conditioned=isinstance(item, TargetWrite),
         )
 
     # Stages 5, 6, 7: validate the observation the item arrived carrying, #
 
     def _settle(
         self,
-        instruction: PreparedKeyedWrite,
+        instruction: PreparedKeyedInstruction,
         observation: StateObservation | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
@@ -410,8 +410,8 @@ class WritePlanCompiler:
         destroys every object it addresses; an unversioned write changes each
         object it addresses without advancing anything.
 
-        A temporal write reaching here travels with no carrier the range path
-        takes: an insert opens a new lineage, and any other closes a milestone
+        A temporal write reaching here travels with none of the authority the
+        range path takes: an insert opens a new lineage, and any other closes a milestone
         it holds no observation of, which is refused."""
         entity = instruction.target
         if shape is None:
@@ -469,7 +469,7 @@ class WritePlanCompiler:
 
     def _range(
         self,
-        item: CoalescedTemporalWrite | ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite,
+        item: ComposedTemporalWrite | StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
         shape: TransactionTimeOnly | Bitemporal,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
@@ -482,17 +482,15 @@ class WritePlanCompiler:
         settled write with the steps it binds now, or the settled write
         carrying the deferred range execution binds, with no step.
 
-        A lone observed write enters as the carrier it was buffered in, so one
+        A lone observed write enters as the write it was buffered as, so one
         that lies inside the predecessor it observed binds that predecessor at
         once and one reaching beyond it reads the rest at execution. Its
         observation must be the Temporal Observation every close addresses,
         gates on, and carries state forward from, which is refused before the
         attempt captures its instant.
         """
-        entity = (
-            item.target if isinstance(item, CoalescedTemporalWrite) else item.instruction.target
-        )
-        if isinstance(item, ObservedKeyedWrite) and not isinstance(
+        entity = item.target if isinstance(item, ComposedTemporalWrite) else item.instruction.target
+        if isinstance(item, StateObservedWrite) and not isinstance(
             item.observation, TemporalObservation
         ):
             raise _unobserved_close(entity, item.instruction.mutation)
@@ -534,7 +532,7 @@ class WritePlanCompiler:
         return write, ranged.steps
 
     def _settle_insert(
-        self, facts: NonTemporalFacts, instruction: PreparedKeyedWrite, audit: AuditDecoration
+        self, facts: NonTemporalFacts, instruction: PreparedKeyedInstruction, audit: AuditDecoration
     ) -> PlannedInsert:
         """One keyed insert as its rows, each opening a new lineage.
 
@@ -616,7 +614,7 @@ class WritePlanCompiler:
         self,
         entity: EntityMetadata,
         shape: TransactionTimeOnly | Bitemporal,
-        instruction: PreparedKeyedWrite,
+        instruction: PreparedKeyedInstruction,
         tx_instant: TransactionInstant,
         audit: AuditDecoration,
     ) -> BoundRange:
@@ -649,7 +647,7 @@ class WritePlanCompiler:
 
     def _opening(
         self,
-        opening: PendingOpening,
+        opening: ComposedBitemporalOpening,
         shape: Bitemporal,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
@@ -694,7 +692,7 @@ class WritePlanCompiler:
     def _observed_version(
         self,
         entity: EntityMetadata,
-        instruction: PreparedKeyedWrite,
+        instruction: PreparedKeyedInstruction,
         version_attr: AttributeIdentity | None,
         observation: StateObservation | None,
     ) -> int | None:
@@ -707,7 +705,7 @@ class WritePlanCompiler:
         required in both concurrency modes, because the framework never
         issues a resolving read on behalf of a keyed write.
 
-        A returned version therefore came off an observation carrier, which
+        A returned version therefore came off an observed write, which
         wraps exactly one row — so the Key Target the caller builds from
         ``instruction.rows`` is a singleton whenever this returns a version to
         advance from or gate on (`m-unit-work`: a Version Gate requires a
@@ -718,7 +716,7 @@ class WritePlanCompiler:
         An unversioned target has no version to advance from AND is entitled to
         no observation at all, so an observation arriving for one is refused
         rather than dropped: this is the model-aware half of the rule
-        :class:`~parallax.core._execution._unit_work.write_items.ObservedKeyedWrite`
+        :class:`~parallax.core._execution._unit_work.write_items.StateObservedWrite`
         delegates here, and discarding the evidence instead would be the
         silently-unobserved mode `m-unit-work` forbids.
         """
@@ -736,12 +734,12 @@ class WritePlanCompiler:
 def _object_keys(item: OrderedWrite, families: InheritanceFacet) -> tuple[_GroupKey, ...] | None:
     """``None`` where a row names no complete key: an insert whose key is
     absent or the database computes."""
-    if isinstance(item, CoalescedTemporalWrite):
+    if isinstance(item, ComposedTemporalWrite):
         target, rows = item.target, (item.key,)
-    elif isinstance(item, PendingOpening):
+    elif isinstance(item, ComposedBitemporalOpening):
         target, rows = item.insert.target, item.insert.rows
     else:
-        instruction = item if isinstance(item, PreparedKeyedWrite) else item.instruction
+        instruction = item if isinstance(item, PreparedKeyedInstruction) else item.instruction
         target, rows = instruction.target, instruction.rows
     key = entity_view(families, target).primary_key.identity
     keys: list[_GroupKey] = []
@@ -835,16 +833,16 @@ def _unobserved_close(entity: EntityMetadata, mutation: str) -> WritePlanningErr
 
 
 def _source_evidence(item: OrderedWrite) -> tuple[ReadEvidence, ...]:
-    """The exact Read Evidence a Non-Temporal carrier retains, if any."""
-    if isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite | ObjectClaimedBatch):
+    """The exact Read Evidence a Non-Temporal ordered write retains, if any."""
+    if isinstance(item, StateObservedWrite | ObjectLockedWrite | ObjectLockedBatch):
         return item.source_evidence
-    if isinstance(item, TargetKeyedWrite):
+    if isinstance(item, TargetWrite):
         return item.source_evidence
     return ()
 
 
 def _addressed_objects(
-    facts: NonTemporalFacts, instruction: PreparedKeyedWrite
+    facts: NonTemporalFacts, instruction: PreparedKeyedInstruction
 ) -> tuple[ObjectKey, ...]:
     """Every object an addressed Non-Temporal write names, one per row, keyed
     as admission and reads key them: its concrete Entity and its family's
@@ -916,16 +914,16 @@ def _require_unobserved(
     temporal nor versioned, which is the one shape `m-unit-work` declares
     observationless ("unversioned Non-Temporal writes have no observation",
     absence structural). Whether a write may hold evidence at all needs the
-    model, so the buffered carrier, a keyed
-    :class:`~parallax.core._execution._unit_work.write_items.ObservedKeyedWrite`,
+    model, so the admitted write, a keyed
+    :class:`~parallax.core._execution._unit_work.write_items.StateObservedWrite`,
     can only refuse the instruction-local half and
     delegate this half to the model-aware settlement. This is that delegation:
-    every carrier that IS settled crosses it, whatever produced it, so a
+    every write that IS settled crosses it, whatever produced it, so a
     producer that resolves evidence a target cannot carry is told rather than
     quietly stripped.
 
     Settled is the whole reach of that guarantee. Coalescing and no-op
-    elimination run first, in the stage order `m-unit-work` fixes, and a carrier
+    elimination run first, in the stage order `m-unit-work` fixes, and a write
     they retire — folded into a pending insert, cancelled against one, or
     eliminated as a key-only no-op — is never settled at all. Nothing is
     stripped there either: the write itself is gone, so its observation gates,

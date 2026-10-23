@@ -25,7 +25,7 @@ from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, Ra
 from parallax.core._execution._unit_work.retain import RetainedTargetState
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    TargetKeyedWrite,
+    TargetWrite,
 )
 from parallax.core.base import INFINITY
 from parallax.core.entity._construction_input import ABSENT
@@ -79,7 +79,7 @@ def _state(predecessor: PredecessorRow) -> TemporalObjectStateKey:
     return state
 
 
-def _holding(item: TargetKeyedWrite, state: RetainedTargetState) -> TargetKeyedWrite:
+def _holding(item: TargetWrite, state: RetainedTargetState) -> TargetWrite:
     return dataclasses.replace(item, retained=state)
 
 
@@ -90,7 +90,7 @@ def _planned(*writes: AdmittedWrite, concurrency: str = "locking") -> SettledWri
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
             concurrency=concurrency,  # type: ignore[arg-type]
-            buffered_writes=tuple(buffered),
+            composed_writes=tuple(buffered),
         )
     )
     (write,) = settled_writes(plan)
@@ -210,7 +210,7 @@ _CENTRE = rectangle(MAY, JUL, "300.00")
 _LATE = rectangle(JUL, INFINITY, "400.00")
 
 
-def _two_starts() -> tuple[TargetKeyedWrite, TargetKeyedWrite]:
+def _two_starts() -> tuple[TargetWrite, TargetWrite]:
     return (
         _holding(addressed_write(valid_from=FEB, until=MAR, value="150.00"), _held(_EARLY)),
         _holding(addressed_write(valid_from=JUN, until=AUG, value="175.00"), _held(_CENTRE)),

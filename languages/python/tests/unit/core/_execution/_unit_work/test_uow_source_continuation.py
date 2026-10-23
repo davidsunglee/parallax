@@ -35,12 +35,12 @@ from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateSelection,
     PredicateWriteInstruction,
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
     WriteAssignment,
     prepare_typed_write,
 )
-from parallax.core._execution._unit_work.write_items import ObservedKeyedWrite
+from parallax.core._execution._unit_work.write_items import StateObservedWrite
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
@@ -52,7 +52,7 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     WriteEvidenceError,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
 from parallax.core.write_plan.keys import VersionedObjectStateKey
@@ -132,9 +132,9 @@ def _write(
         ),
         meta,
     )
-    assert isinstance(instruction, PreparedKeyedWrite)
+    assert isinstance(instruction, PreparedKeyedInstruction)
     settled = uow.resolve_read_evidence(entity, source, mutation=mutation, object_key=key)
-    uow.buffer(buffered_write(instruction, settled, source=source))
+    uow.buffer(admitted_write(instruction, settled, source=source))
 
 
 def _refusal(write: Callable[[], None]) -> str:
@@ -189,7 +189,7 @@ def test_an_old_and_a_fresh_source_of_one_produced_version_share_one_claim() -> 
     _write(uow, _ACCOUNT, fresh, "amend", balance=Decimal("9.00"))
     composed = uow._admission.composed_writes()  # pyright: ignore[reportPrivateUsage] - the buffer the two writes coalesced into
     (merged,) = composed
-    assert isinstance(merged, ObservedKeyedWrite)
+    assert isinstance(merged, StateObservedWrite)
     assert merged.scope == VersionedObjectStateKey(_account(1), 2)
     assert merged.retained_observation is not fresh.observation
     assert merged.source_evidence == (old, fresh)
@@ -232,7 +232,7 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
     insertion = prepare_typed_write(
         KeyedWriteInstruction("insert", "Person", ({"id": 5, "name": "New"},)), _PERSON
     )
-    assert isinstance(insertion, PreparedKeyedWrite)
+    assert isinstance(insertion, PreparedKeyedInstruction)
     uow.buffer(insertion)
     _flush(uow)
     identity = uow.insertion_identity(_person(5))
@@ -241,8 +241,8 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
         amendment = prepare_typed_write(
             KeyedWriteInstruction("amend", "Person", ({"id": 5, "name": name},)), _PERSON
         )
-        assert isinstance(amendment, PreparedKeyedWrite)
-        uow.buffer(buffered_write(amendment, None, authority=identity))
+        assert isinstance(amendment, PreparedKeyedInstruction)
+        uow.buffer(admitted_write(amendment, None, authority=identity))
     uow.flush(trigger="pre_commit")
     assert [statement.binds for statement in simulated.statements][1:] == [("Second", 5)]
 
@@ -280,7 +280,7 @@ def test_a_page_read_before_a_deletion_stays_stale_after_its_demand_and_a_reinse
     insertion = prepare_typed_write(
         KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "New"},)), _PERSON
     )
-    assert isinstance(insertion, PreparedKeyedWrite)
+    assert isinstance(insertion, PreparedKeyedInstruction)
     uow.buffer(insertion)
     _flush(uow)
     delayed = _published(uow, _person(1), read_at=read_at)
@@ -336,7 +336,7 @@ def test_a_readless_write_neither_ends_nor_stales_a_source() -> None:
         ),
         _PERSON,
     )
-    assert isinstance(predicate, PreparedPredicateWrite)
+    assert isinstance(predicate, PreparedPredicateInstruction)
     uow.execute_predicate(predicate)
     later = _published(uow, _person(1), read_at=read_at)
     _write(uow, _PERSON, source, "amend", name="Source")
@@ -354,7 +354,7 @@ def _reinserted(uow: UnitOfWork, key: int) -> None:
     insertion = prepare_typed_write(
         KeyedWriteInstruction("insert", "Person", ({"id": key, "name": "Again"},)), _PERSON
     )
-    assert isinstance(insertion, PreparedKeyedWrite)
+    assert isinstance(insertion, PreparedKeyedInstruction)
     uow.buffer(insertion)
     _flush(uow)
 
@@ -374,7 +374,7 @@ def test_only_a_stale_publication_or_one_of_a_deleted_object_registers() -> None
     assert _registrations(uow) == 2
 
 
-def test_equal_evidence_keeps_two_registrations_and_each_releases_with_its_last_carrier() -> None:
+def test_equal_evidence_keeps_two_registrations_and_each_releases_with_its_last_holder() -> None:
     uow, _simulated = _uow(_PERSON)
     _reinserted(uow, 1)
     first = _published(uow, _person(1))

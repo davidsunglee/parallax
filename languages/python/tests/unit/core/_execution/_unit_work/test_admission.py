@@ -20,7 +20,7 @@ from parallax.core._execution._unit_work._write_ownership import SourceRefusal
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
-    PreparedKeyedWrite,
+    PreparedKeyedInstruction,
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.retain import (
@@ -30,11 +30,11 @@ from parallax.core._execution._unit_work.retain import (
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    AfterRemoval,
-    CoalescedTemporalWrite,
-    InsertionKeyedWrite,
-    ObjectClaimedWrite,
-    TargetKeyedWrite,
+    ComposedTemporalWrite,
+    InsertionAuthorizedWrite,
+    ObjectLockedWrite,
+    PostRemovalInsert,
+    TargetWrite,
     target_write,
 )
 from parallax.core.base import INFINITY
@@ -45,7 +45,7 @@ from parallax.core.unit_work import (
     RetainedObservation,
     TargetWriteInstruction,
     WriteEvidenceError,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -100,7 +100,7 @@ _WALLET = formed(corpus_records()["wallet"])
 _INSERTED_AT = dt.datetime(2024, 1, 10, tzinfo=dt.UTC)
 
 
-def _confirmed(item: TargetKeyedWrite) -> TargetKeyedWrite:
+def _confirmed(item: TargetWrite) -> TargetWrite:
     return item
 
 
@@ -135,12 +135,12 @@ def _account_observed(account_id: int, version: int) -> AdmittedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Bo"},)), _ACCOUNT
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     state = VersionedObjectStateKey(_account(account_id), version)
-    return buffered_write(prepared, RetainedObservation(state, VersionObservation(version), None))
+    return admitted_write(prepared, RetainedObservation(state, VersionObservation(version), None))
 
 
-def _account_target(account_id: int, version: int) -> TargetKeyedWrite:
+def _account_target(account_id: int, version: int) -> TargetWrite:
     prepared = prepare_wire_write(
         TargetWriteInstruction(
             "amend", "Account", {"id": account_id, "balance": "1.00"}, if_version=version
@@ -150,22 +150,22 @@ def _account_target(account_id: int, version: int) -> TargetKeyedWrite:
     return target_write(prepared, inheritance.view(_ACCOUNT))
 
 
-def _account_insert(account_id: int) -> PreparedKeyedWrite:
+def _account_insert(account_id: int) -> PreparedKeyedInstruction:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             "insert", "Account", ({"id": account_id, "owner": "N", "balance": "5.00"},)
         ),
         _ACCOUNT,
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
-def _account_amend(account_id: int) -> PreparedKeyedWrite:
+def _account_amend(account_id: int) -> PreparedKeyedInstruction:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Cy"},)), _ACCOUNT
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
@@ -174,9 +174,9 @@ def _account_amend(account_id: int) -> PreparedKeyedWrite:
 # --------------------------------------------------------------------------- #
 class _Confirmations:
     def __init__(self) -> None:
-        self.asked: list[TargetKeyedWrite] = []
+        self.asked: list[TargetWrite] = []
 
-    def __call__(self, item: TargetKeyedWrite) -> TargetKeyedWrite:
+    def __call__(self, item: TargetWrite) -> TargetWrite:
         self.asked.append(item)
         return item
 
@@ -219,13 +219,13 @@ def test_the_write_confirmation_answers_is_the_one_composed() -> None:
     assert isinstance(state, TemporalObjectStateKey)
     held = RetainedTargetState(state, 0, (), None)
 
-    def retaining(item: TargetKeyedWrite) -> TargetKeyedWrite:
+    def retaining(item: TargetWrite) -> TargetWrite:
         return dataclasses.replace(item, retained=held)
 
     admission = WriteAdmission(POSITION, inserted_version=_unversioned, observations={})
     admission.admit(addressed_write(value="150.00"), confirm_target=retaining)
     (composed,) = admission.composed_writes()
-    assert isinstance(composed, TargetKeyedWrite)
+    assert isinstance(composed, TargetWrite)
     assert composed.retained is held
 
 
@@ -255,11 +255,11 @@ def _person_write(person_id: int, source: ReadEvidence) -> AdmittedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Person", ({"id": person_id, "name": "Grace"},)), _PERSON
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
-    return buffered_write(prepared, _person(person_id), source=source)
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    return admitted_write(prepared, _person(person_id), source=source)
 
 
-def test_coalesced_object_claimed_writes_keep_every_distinct_source_evidence() -> None:
+def test_coalesced_object_locked_writes_keep_every_distinct_source_evidence() -> None:
     participation = ParticipationToken()
     first, other, coalesced = (
         object_source(_person(person_id), participation) for person_id in (1, 2, 1)
@@ -273,7 +273,7 @@ def test_coalesced_object_claimed_writes_keep_every_distinct_source_evidence() -
         meta=_PERSON,
     )
     one, two = admission.composed_writes()
-    assert isinstance(one, ObjectClaimedWrite) and isinstance(two, ObjectClaimedWrite)
+    assert isinstance(one, ObjectLockedWrite) and isinstance(two, ObjectLockedWrite)
     assert [tuple(map(id, write.source_evidence)) for write in (one, two)] == [
         (id(first), id(coalesced)),
         (id(other),),
@@ -290,7 +290,7 @@ def test_discard_forgets_every_source_registration_and_insertion() -> None:
     insertion = prepare_wire_write(
         KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)), _PERSON
     )
-    assert isinstance(insertion, PreparedKeyedWrite)
+    assert isinstance(insertion, PreparedKeyedInstruction)
     _admit(admission, insertion)
     ownership = admission.ownership
     endpoint = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
@@ -336,13 +336,15 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
     admission.drain_planned()
     identity = admission.insertion_identity(_account(9))
     assert identity is not None
-    _admit(admission, InsertionKeyedWrite(_account_amend(9), identity))
+    _admit(admission, InsertionAuthorizedWrite(_account_amend(9), identity))
     (before,) = admission.composed_writes()
     admission.drain_planned()
     admission.complete(WriteEffects(advanced=(VersionedObjectStateKey(_account(9), 1),)), (), at=1)
-    _admit(admission, InsertionKeyedWrite(_account_amend(9), identity))
+    _admit(admission, InsertionAuthorizedWrite(_account_amend(9), identity))
     (after,) = admission.composed_writes()
-    assert isinstance(before, InsertionKeyedWrite) and isinstance(after, InsertionKeyedWrite)
+    assert isinstance(before, InsertionAuthorizedWrite) and isinstance(
+        after, InsertionAuthorizedWrite
+    )
     assert (before.scope, after.scope) == (
         VersionedObjectStateKey(_account(9), 1),
         VersionedObjectStateKey(_account(9), 2),
@@ -362,14 +364,14 @@ def _stored_insertion_across_two_rows() -> WriteAdmission:
     return admission
 
 
-def _position_insert() -> PreparedKeyedWrite:
+def _position_insert() -> PreparedKeyedInstruction:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), FEB
         ),
         POSITION,
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
@@ -391,7 +393,7 @@ def test_a_composed_removal_reaches_the_whole_insertion_only_with_every_row(
         )
     _admit(admission, _position_insert())
     reinsertion = admission.composed_writes()[-1]
-    assert isinstance(reinsertion, AfterRemoval) is earlier
+    assert isinstance(reinsertion, PostRemovalInsert) is earlier
 
 
 # --------------------------------------------------------------------------- #
@@ -406,7 +408,7 @@ def test_a_restated_caller_condition_is_kept_once_however_often_it_is_overwritte
             addressed_write(replaces=True, acctNum="Z", value=value),
         )
     (composed,) = admission.composed_writes()
-    assert isinstance(composed, CoalescedTemporalWrite)
+    assert isinstance(composed, ComposedTemporalWrite)
     assert [contribution.condition for contribution in composed.contributions] == [
         ExpectedTxStart(T0)
     ]
@@ -484,12 +486,12 @@ def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None
         KeyedWriteInstruction("amendUntil", "Position", ({"id": 1, "value": "2.00"},), MAR, SEP),
         POSITION,
     )
-    assert isinstance(insertion, PreparedKeyedWrite)
-    assert isinstance(amendment, PreparedKeyedWrite)
+    assert isinstance(insertion, PreparedKeyedInstruction)
+    assert isinstance(amendment, PreparedKeyedInstruction)
     admission = _admitted(addressed_write(value="150.00"), insertion)
     identity = admission.insertion_identity(OBJECT)
     assert identity is not None
-    _refused(admission, InsertionKeyedWrite(amendment, identity))
+    _refused(admission, InsertionAuthorizedWrite(amendment, identity))
 
 
 def test_a_target_beside_writes_of_other_states_of_its_object_is_refused() -> None:

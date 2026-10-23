@@ -18,15 +18,15 @@ from typing import Final, cast
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr, temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedTargetWrite,
+    PreparedKeyedInstruction,
+    PreparedTargetInstruction,
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
 from parallax.core._execution._unit_work.retain import RetainedTargetState
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    TargetKeyedWrite,
+    TargetWrite,
     target_write,
 )
 from parallax.core.base import INFINITY, DocumentValue, PresentDocument
@@ -40,7 +40,7 @@ from parallax.core.unit_work import (
     TargetWriteInstruction,
     TransactionInstant,
     WritePlanningRequest,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import ObjectKey, PredecessorRow, TemporalObservation, WritePlan
 from parallax.core.write_plan.keys import TemporalObjectStateKey
@@ -179,12 +179,12 @@ def frag(entity: type[Bitemporal], key: int, parts: int) -> list[AdmittedWrite]:
             ),
             MODEL,
         )
-        assert isinstance(prepared, PreparedKeyedWrite)
-        writes.append(buffered_write(prepared, observation(entity, rows[2 * pair])))
+        assert isinstance(prepared, PreparedKeyedInstruction)
+        writes.append(admitted_write(prepared, observation(entity, rows[2 * pair])))
     return writes
 
 
-def covered_target(entity: type[Bitemporal], key: int) -> tuple[TargetKeyedWrite, PredecessorRow]:
+def covered_target(entity: type[Bitemporal], key: int) -> tuple[TargetWrite, PredecessorRow]:
     """A Locking target write of object ``key`` over ``[d_0, d_1)`` beside the
     one stored rectangle ``[d_0, ∞)`` its acquisition retained, which covers
     its whole window."""
@@ -200,7 +200,7 @@ def covered_target(entity: type[Bitemporal], key: int) -> tuple[TargetKeyedWrite
         ),
         MODEL,
     )
-    assert isinstance(prepared, PreparedTargetWrite)
+    assert isinstance(prepared, PreparedTargetInstruction)
     view = inheritance_view(MODEL).entity(entity.identity)
     assert view is not None
     retained = RetainedTargetState(
@@ -224,7 +224,7 @@ def plan(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant or instant_at(AT.isoformat()),
             concurrency=concurrency,
-            buffered_writes=admitted_writes(MODEL, list(writes)),
+            composed_writes=admitted_writes(MODEL, list(writes)),
         )
     )
 

@@ -2,7 +2,7 @@
 
 Admission judges each arriving write by one claim algebra and composes it by
 the verdict it reached, so this module measures the algebra itself as a pure
-function, beside the carriers a write is admitted in; the choreography a caller
+function, beside the admitted writes a write travels as; the choreography a caller
 performs through the real handles over a fake port is
 ``test_transaction_write_claims.py``'s subject.
 
@@ -27,13 +27,13 @@ from parallax.core._execution._unit_work.claims import (
 )
 from parallax.core._execution._unit_work.instructions import (
     ExpectedVersion,
-    PreparedKeyedWrite,
+    PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.write_items import (
-    ObjectClaimedWrite,
-    ObservedKeyedWrite,
-    TargetKeyedWrite,
-    buffered_write,
+    ObjectLockedWrite,
+    StateObservedWrite,
+    TargetWrite,
+    admitted_write,
 )
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
@@ -90,13 +90,13 @@ def _person_delete(*ids: int) -> KeyedWriteInstruction:
     return instruction
 
 
-def _prepared_person_delete(*ids: int) -> PreparedKeyedWrite:
+def _prepared_person_delete(*ids: int) -> PreparedKeyedInstruction:
     prepared = instructions.prepare_wire_write(_person_delete(*ids), _PERSON_META)
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
-def _prepared_intent(mutation: str) -> PreparedKeyedWrite:
+def _prepared_intent(mutation: str) -> PreparedKeyedInstruction:
     """``mutation`` prepared over a target that admits it: a Bitemporal one for
     every verb but ``delete``, which only a non-temporal target takes."""
     if mutation == "delete":
@@ -111,7 +111,7 @@ def _prepared_intent(mutation: str) -> PreparedKeyedWrite:
         document["until"] = "2024-06-01T00:00:00.000000Z"
     instruction = instructions.deserialize(document)
     prepared = instructions.prepare_wire_write(instruction, _WHERE_POSITION_META)
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
@@ -276,7 +276,7 @@ def test_a_temporal_objects_observed_writes_compose_unless_they_resurrect_or_hal
 
 
 # --------------------------------------------------------------------------- #
-# The claim-scope derivation and the object-claimed arm.                     #
+# The claim-scope derivation and the object-locked arm.                       #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     ("key", "mutation", "expected"),
@@ -354,32 +354,32 @@ def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:
 
 
 def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> None:
-    # The carrier's own structural half, which needs no model: an opening row has
+    # The object-locked write's own structural half, which needs no model: an opening row has
     # no prior row to claim, and a claim is about the object ONE row addresses.
     with pytest.raises(ValueError, match="an insert claims no object"):
         insertion = instructions.deserialize(
             {"mutation": "insert", "entity": "Person", "rows": [{"id": 1, "name": "Ada"}]}
         )
         prepared = instructions.prepare_wire_write(insertion, _PERSON_META)
-        assert isinstance(prepared, PreparedKeyedWrite)
-        ObjectClaimedWrite(prepared, (object_source(_PERSON_ONE),))
+        assert isinstance(prepared, PreparedKeyedInstruction)
+        ObjectLockedWrite(prepared, (object_source(_PERSON_ONE),))
     with pytest.raises(ValueError, match="an object claim addresses one object"):
-        ObjectClaimedWrite(_prepared_person_delete(1, 2), (object_source(_PERSON_ONE),))
+        ObjectLockedWrite(_prepared_person_delete(1, 2), (object_source(_PERSON_ONE),))
 
 
-def test_an_object_claimed_write_requires_the_source_it_was_admitted_through() -> None:
+def test_an_object_locked_write_requires_the_source_it_was_admitted_through() -> None:
     # The object key is the claim; the source evidence beside it is what keeps
-    # that source's demand alive, so neither the factory nor the carrier admits
+    # that source's demand alive, so neither the factory nor the write admits
     # a write without one.
     prepared = _prepared_person_delete(1)
-    message = "An object-claimed write requires the source evidence it was admitted through"
+    message = "An object-locked write requires the source evidence it was admitted through"
     with pytest.raises(ValueError, match=message):
-        buffered_write(prepared, _PERSON_ONE)
+        admitted_write(prepared, _PERSON_ONE)
     with pytest.raises(ValueError, match=message):
-        ObjectClaimedWrite(prepared, ())
+        ObjectLockedWrite(prepared, ())
     source = object_source(_PERSON_ONE)
-    claimed = buffered_write(prepared, _PERSON_ONE, source=source)
-    assert isinstance(claimed, ObjectClaimedWrite)
+    claimed = admitted_write(prepared, _PERSON_ONE, source=source)
+    assert isinstance(claimed, ObjectLockedWrite)
     assert claimed.source_evidence == (source,) and claimed.source_evidence[0] is source
 
 
@@ -389,25 +389,25 @@ def test_an_object_claimed_write_requires_the_source_it_was_admitted_through() -
 def test_an_observed_write_requires_a_retained_observation(evidence: object) -> None:
     # Application ingress hands a write the retained observation its read
     # produced; a plain State Observation names no claim and spends nothing, so
-    # it is refused where the carrier is built, before anything is buffered.
+    # it is refused where the observed write is built, before anything is buffered.
     prepared = _prepared_person_delete(1)
     with pytest.raises(ValueError, match="requires the retained observation"):
-        ObservedKeyedWrite(prepared, evidence)  # pyright: ignore[reportArgumentType]
+        StateObservedWrite(prepared, evidence)  # pyright: ignore[reportArgumentType]
     if evidence is not None:
         with pytest.raises(ValueError, match="requires the retained observation"):
-            buffered_write(prepared, evidence)  # pyright: ignore[reportArgumentType]
-    observed = buffered_write(prepared, _RETAINED)
-    assert isinstance(observed, ObservedKeyedWrite)
+            admitted_write(prepared, evidence)  # pyright: ignore[reportArgumentType]
+    observed = admitted_write(prepared, _RETAINED)
+    assert isinstance(observed, StateObservedWrite)
     assert observed.observation is _RETAINED.evidence
 
 
-def test_a_target_carrier_refuses_an_insert_and_a_write_of_several_objects() -> None:
+def test_a_target_write_refuses_an_insert_and_a_write_of_several_objects() -> None:
     insert = instructions.prepare_wire_write(
         KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "Ada"},)), _PERSON_META
     )
     several = _prepared_person_delete(1, 2)
     person = ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("id", 1),))
     for instruction in (insert, several):
-        assert isinstance(instruction, PreparedKeyedWrite)
+        assert isinstance(instruction, PreparedKeyedInstruction)
         with pytest.raises(ValueError, match="addresses one existing object"):
-            TargetKeyedWrite(instruction, ExpectedVersion(3), VersionedObjectStateKey(person, 3))
+            TargetWrite(instruction, ExpectedVersion(3), VersionedObjectStateKey(person, 3))
