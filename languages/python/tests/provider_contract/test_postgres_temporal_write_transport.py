@@ -29,6 +29,7 @@ from parallax.core import Attr, Bitemporal, Document, DomainModel, ValueObject, 
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.flush_calls import FlushCalls, call_runs
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import (
     AMENDED_AT,
@@ -49,7 +50,6 @@ from tests._support.temporal_write_transport import (
     seeded_history,
     window,
 )
-from tests.api._flush_calls import FlushCalls, call_runs
 
 _NAMESPACE = "transport.realization"
 

@@ -28,9 +28,9 @@ from parallax.core.db_port import IsolationLevel
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
+from tests._support.flush_calls import FlushCalls, call_runs
 from tests._support.root_ownership import own_root
 from tests.api._coverage_interleaving import AfterCoverageRead
-from tests.api._flush_calls import FlushCalls, call_runs
 from tests.api._peer_commit import commit_as_a_peer
 
 _NAMESPACE: Final = "shared.coverage"
