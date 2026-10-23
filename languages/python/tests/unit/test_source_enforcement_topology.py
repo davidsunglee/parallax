@@ -586,7 +586,6 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core._execution._unit_work.instructions",
     ): frozenset(
         {
-            "ExpectedVersion",
             "PreparedKeyedWrite",
             "PreparedPredicateWrite",
             "PreparedTargetWrite",

@@ -7,14 +7,16 @@
 # both engines create only the FINAL path segment, and a top-level occurrence's parent
 # is the document root, which every governed row already carries.
 model: models/document-layout.yaml
-tags: [m-storage-layout, m-dialect, m-document-codec, m-value-object, m-sql, write-sequence, update, json, document-layout, slice-snapshot-1, slice-managed-1]
-shape: writeSequence
+tags: [m-storage-layout, m-dialect, m-document-codec, m-value-object, m-sql, scenario, update, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: scenario
 compileEligibility:
   mode: run-only
   reason: single-connection
   note: "out-of-band stored parent states"
 given:
   apply:
+    - sql: delete from traveler where id in (?, ?, ?)
+      binds: [1, 2, 3]
     - sql: insert into traveler(id, payload) values (?, ?), (?, ?), (?, ?)
       binds:
         - 40
@@ -24,38 +26,62 @@ given:
         - 42
         - { displayName: scalar, address: 7 }
 when:
-  writeSequence:
-    - mutation: amend
-      entity: parallax.compatibility.Traveler
-      statements: 3
-      note: different assigned cities keep the batch in per-key form
-      rows:
-        - { id: 40, address: { city: Alta } }
-        - { id: 41, address: { city: Bodo } }
-        - { id: 42, address: { city: Tromso } }
+  scenario:
+    - write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.Traveler
+          predicate:
+            eq: { path: parallax.compatibility.Traveler.id, value: 40 }
+        assignments:
+          - { attr: parallax.compatibility.Traveler.address, value: { city: Alta } }
+      databaseCalls: 1
+      expectAffectedRows: 1
+      statements:
+        - sql:
+            postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+            mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+          binds:
+            postgres: ['{address}', { city: Alta }, 40]
+            mariadb: ['$.address', { city: Alta }, 40]
+    - write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.Traveler
+          predicate:
+            eq: { path: parallax.compatibility.Traveler.id, value: 41 }
+        assignments:
+          - { attr: parallax.compatibility.Traveler.address, value: { city: Bodo } }
+      databaseCalls: 1
+      expectAffectedRows: 1
+      statements:
+        - sql:
+            postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+            mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+          binds:
+            postgres: ['{address}', { city: Bodo }, 41]
+            mariadb: ['$.address', { city: Bodo }, 41]
+    - write:
+        mutation: amend
+        target:
+          entity: parallax.compatibility.Traveler
+          predicate:
+            eq: { path: parallax.compatibility.Traveler.id, value: 42 }
+        assignments:
+          - { attr: parallax.compatibility.Traveler.address, value: { city: Tromso } }
+      databaseCalls: 1
+      expectAffectedRows: 1
+      statements:
+        - sql:
+            postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+            mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+          binds:
+            postgres: ['{address}', { city: Tromso }, 42]
+            mariadb: ['$.address', { city: Tromso }, 42]
 then:
-  statements:
-    - sql:
-        postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
-        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
-      binds:
-        postgres: ['{address}', { city: Alta }, 40]
-        mariadb: ['$.address', { city: Alta }, 40]
-    - sql:
-        postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
-        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
-      binds:
-        postgres: ['{address}', { city: Bodo }, 41]
-        mariadb: ['$.address', { city: Bodo }, 41]
-    - sql:
-        postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
-        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
-      binds:
-        postgres: ['{address}', { city: Tromso }, 42]
-        mariadb: ['$.address', { city: Tromso }, 42]
   tableState:
     traveler:
       - { id: 40, payload: { displayName: absent, address: { city: Alta } } }
       - { id: 41, payload: { displayName: null, address: { city: Bodo } } }
       - { id: 42, payload: { displayName: scalar, address: { city: Tromso } } }
-  databaseCalls: 4
+  databaseCalls: 3

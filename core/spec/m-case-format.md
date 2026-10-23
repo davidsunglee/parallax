@@ -1420,9 +1420,15 @@ which the write revises through the insertion's authority (`m-unit-work`
 answered no value. With no `on`, a write takes the value its group's own insert of
 the object answered, else the group's latest reading of it.
 
-Everywhere else, a keyed write's observed row comes from **case state**: a
-writeSequence entry consumes the state the case's own fixtures and earlier entries
-left current, because that shape carries no read to have observed one. This
+Everywhere else, a keyed write's observed row comes from **case state**: an
+ungrouped existing-state write observes the persisted state the case's own fixtures
+and earlier entries left current through the counted resolving reads of its writing
+attempt (*Resolving reads a write owes*). All of that unit's reads precede its
+writes, grouped by Entity and Valid-Time pin; an insert, a write through the same
+unit's insertion, and caller-stated target and predicate writes retain their
+exemptions. These reads are adapter choreography, not reads public write verbs
+perform implicitly. Compile observes the corresponding fixture and earlier-write
+state without executing reads. This
 reference is the one place that rule is displaced. Where it appears, an implementation **MUST**
 resolve the write's observation from the **observation store this unit of work's
 own reads filled** — the evidence the named find recorded when it ran, addressed

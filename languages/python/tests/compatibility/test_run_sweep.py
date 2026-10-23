@@ -447,7 +447,9 @@ _SNAPSHOT_INCLUDE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
 # is, and kept out of that set because it couples compile grading in.
 # `m-batch-write-054` stores a document key no member declares, which only
 # out-of-band SQL can, to show a replacement leaves it in place.
-_GIVEN_APPLY_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset({"m-batch-write-054"})
+_GIVEN_APPLY_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
+    {"m-batch-write-054", "m-storage-layout-024"}
+)
 
 
 def _reachable_write_cases() -> list[case_format.Case]:
@@ -1177,7 +1179,12 @@ def test_conflict_run_sweep(case: case_format.Case, profile: Profile, profile_ru
 # `_OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES`).                                     #
 # --------------------------------------------------------------------------- #
 _RUN_ONLY_WRITE_SEQUENCES_EXERCISED: Final[frozenset[str]] = frozenset(
-    {*(f"m-pk-gen-{n:03d}" for n in range(4, 13)), "m-pk-gen-014"}
+    {
+        *(f"m-pk-gen-{n:03d}" for n in range(4, 13)),
+        "m-pk-gen-014",
+        "m-temporal-write-011",
+        "m-temporal-write-012",
+    }
 )
 
 

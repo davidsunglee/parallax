@@ -22,6 +22,34 @@ _MODE_NODE = "tests/api/test_to_one_traversal_performance.py::test_diagnostic_ca
 _MODE_REASON = "diagnostic: set PARALLAX_TO_ONE_PERFORMANCE_MODE=compare to run"
 
 
+_CORPUS_HASHES = {
+    "core/compatibility/cases/m-storage-layout-024-document-layout-occurrence-parent-states.yaml": (
+        "b2ce228b2e19aefb6bb503e71353e7ff52d784b523a2eb53e847b2ad2b8bbae1",
+        "f8bc1908468082c9a544fb381d6d65f0368b94ec2aab276eb2a1a7bc555b7074",
+    ),
+    "core/compatibility/cases/m-temporal-write-011-document-layout-unknown-key-preserved.yaml": (
+        "c3dc2e4a156fce873f87b815d5fd3bba9709603dacacf52d49c00e8d4df2d290",
+        "9c85c310198651a3f7ed9b7c952268af18977d1f87be4a6b9b242c8ad9573f00",
+    ),
+    (
+        "core/compatibility/cases/"
+        "m-temporal-write-012-document-layout-assigned-occurrence-replacement.yaml"
+    ): (
+        "150444875f23dc41c5fdb1a5b3130a354bd74f3415de8022e021ba92889469b2",
+        "fca6869541245e6d03920ae676affa0ee58bebe13fd3bdcce923975291906ee1",
+    ),
+}
+
+
+def _grade_node(case: str) -> str:
+    sweep = (
+        "test_write_run_sweep"
+        if case == "m-storage-layout-024"
+        else "test_run_only_write_sequence_run_sweep"
+    )
+    return f"tests/compatibility/test_run_sweep.py::{sweep}[{case}]"
+
+
 def _probe_node(case: str) -> str:
     return f"tests/compatibility/test_lane_evidence.py::test_document_run_diagnostic[{case}]"
 
@@ -622,36 +650,95 @@ def test_exception_capture_is_site_and_message_specific(
         assert not (tmp_path / "observations.jsonl").exists()
 
 
-@pytest.mark.parametrize("grade", ["passed", "skipped", "failure"])
-def test_document_transition_requires_all_three_full_golden_grades(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grade: str
+def _add_compile_transition_evidence(
+    directory: Path,
+    candidate: Path,
+    metadata: dict[str, Any],
+    records: list[dict[str, Any]],
+    suite: ET.Element,
 ) -> None:
+    for case in sorted(evidence.DOCUMENT_CASES):
+        original = _document_record(case)
+        for name in (
+            f"test_compile_sweep[{case}]",
+            "test_run_only_cases_are_never_compiled",
+        ):
+            record = {
+                **original,
+                "lane": "compile",
+                "shape": "adapter",
+                "profile": None,
+                "provenance": None,
+            }
+            record["node"] = f"tests/compatibility/test_compile_sweep.py::{name}"
+            record["actual"] = {
+                "status": "run-only",
+                "caseShape": "scenario"
+                if case == "m-storage-layout-024" and directory == candidate
+                else "writeSequence",
+            }
+            records.append(record)
+            module, test_name = _verdict_node(record["node"]).split("::")
+            if not any(t.attrib.get("name") == test_name for t in suite):
+                test = ET.SubElement(suite, "testcase", classname=module, name=test_name)
+                ET.SubElement(test, "skipped", message="run-only")
+            metadata["selected"].append(record["node"])
+    metadata["selected"] = sorted(set(metadata["selected"]))
+
+
+def _transition_reports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, Path]:
     baseline, candidate, supplement = _failed_reports(tmp_path, monkeypatch)
-    metadata = json.loads((candidate / "metadata.json").read_text())
-    records = [_document_record(case) for case in sorted(evidence.DOCUMENT_CASES)]
-    suite = ET.Element("testsuite")
-    for index, record in enumerate(records):
-        record.update(
-            node=f"tests/compatibility/test_run_sweep.py::test_run_only_write_sequence_run_sweep[{record['case']}]",
-            shape="adapter",
-            actual={"status": "ok", "emissions": [], "observations": {}},
+    hashes = _CORPUS_HASHES
+    old_corpus = {path: pair[0] for path, pair in hashes.items()}
+    new_corpus = {path: pair[1] for path, pair in hashes.items()}
+    old_corpus["core/schemas/case.schema.json"] = "unchanged"
+    new_corpus["core/schemas/case.schema.json"] = "unchanged"
+    monkeypatch.setattr(evidence, "corpus_manifest", Mock(return_value=new_corpus))
+    for directory in (baseline, candidate, supplement):
+        metadata = json.loads((directory / "metadata.json").read_text())
+        metadata["corpus"] = new_corpus if directory == candidate else old_corpus
+        records = [
+            json.loads(line) for line in (directory / "observations.jsonl").read_text().splitlines()
+        ]
+        tree = ET.parse(directory / "junit.xml")
+        suite = next(tree.iter("testsuite"))
+        if directory == candidate:
+            for record in records:
+                record.update(
+                    node=_grade_node(record["case"]),
+                    shape="adapter",
+                    actual={"status": "ok", "emissions": [], "observations": {}},
+                )
+            for test in list(suite):
+                if test.attrib["classname"].endswith("test_lane_evidence"):
+                    suite.remove(test)
+            for record in records:
+                module, name = _verdict_node(record["node"]).split("::")
+                ET.SubElement(suite, "testcase", classname=module, name=name)
+            metadata["selected"] = sorted([*(r["node"] for r in records), _MODE_NODE])
+            metadata["provider"] = {"passed": 3, "skipped": 1}
+        if directory != supplement:
+            _add_compile_transition_evidence(directory, candidate, metadata, records, suite)
+        _write_json(directory / "metadata.json", metadata)
+        (directory / "observations.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in records)
         )
-        module, name = _verdict_node(record["node"]).split("::")
-        test = ET.SubElement(suite, "testcase", classname=module, name=name)
-        if index == 2 and grade != "passed":
-            ET.SubElement(test, grade, message="did not receive full grade")
-    legacy = ET.SubElement(
-        suite,
-        "testcase",
-        classname="tests.api.test_to_one_traversal_performance",
-        name="test_diagnostic_capture",
-    )
-    ET.SubElement(legacy, "skipped", message=_MODE_REASON)
-    ET.ElementTree(suite).write(candidate / "junit.xml")
-    metadata["selected"] = sorted([*(r["node"] for r in records), _MODE_NODE])
-    _write_json(candidate / "metadata.json", metadata)
-    (candidate / "observations.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
-    _seal(candidate)
+        tree.write(directory / "junit.xml")
+        _seal(directory)
+    seal = hashlib.sha256((baseline / "seal.json").read_bytes()).hexdigest()
+    monkeypatch.setattr(evidence, "_ORIGINAL_SEAL", seal)
+    path = supplement / "metadata.json"
+    metadata = json.loads(path.read_text())
+    metadata["originalSeal"] = seal
+    _write_json(path, metadata)
+    _seal(supplement)
+    return baseline, candidate, supplement
+
+
+def test_document_transition_requires_exact_hashes_selection_and_full_grades(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    baseline, candidate, supplement = _transition_reports(tmp_path, monkeypatch)
     assert (
         evidence.compare_reports(baseline, candidate, supplement=supplement)["classification"]
         == "unexplained"
@@ -659,8 +746,140 @@ def test_document_transition_requires_all_three_full_golden_grades(
     result = evidence.compare_reports(
         baseline, candidate, supplement=supplement, newly_graded_document_cases=True
     )
-    assert result["classification"] == (
-        "explained-coverage-transition" if grade == "passed" else "unexplained"
+    assert result["classification"] == "explained-corpus-operation-coverage-outcome-transition", (
+        result
     )
-    if grade == "passed":
-        assert len(result["explainedTransitions"]) == 4
+    assert len(result["explainedTransitions"]) == 9
+    assert result["baselineFailure"]["verdict"]["verdict"] == "failure"
+    assert {
+        item["path"]
+        for item in result["explainedTransitions"]
+        if item["kind"] == "intentional-corpus-correction"
+    } == _CORPUS_HASHES.keys()
+
+
+def _change_compile(records: list[dict[str, Any]], change: str) -> None:
+    index = next(i for i, r in enumerate(records) if r["lane"] == "compile")
+    if change == "missing-compile":
+        records.pop(index)
+    elif change == "compile-status":
+        records[index]["actual"]["status"] = "ok"
+    elif change == "compile-shape":
+        records[index]["actual"]["caseShape"] = "writeSequence"
+    else:
+        records[index]["actual"]["diagnostics"] = []
+
+
+def _change_corpus(
+    change: str,
+    baseline: Path,
+    candidate: Path,
+    metadata: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, dict[str, Any]]:
+    path = candidate / "metadata.json"
+    corpus_path = next(iter(_CORPUS_HASHES))
+    if change == "old-hash":
+        path = baseline / "metadata.json"
+        metadata = json.loads(path.read_text())
+        metadata["corpus"][corpus_path] = "unapproved-old"
+    elif change in {"new-hash", "unchanged-case", "schema", "extra-corpus", "missing-corpus"}:
+        if change == "new-hash":
+            metadata["corpus"][corpus_path] = "unapproved-new"
+        elif change == "unchanged-case":
+            metadata["corpus"][corpus_path] = _CORPUS_HASHES[corpus_path][0]
+        elif change == "schema":
+            metadata["corpus"]["core/schemas/case.schema.json"] = "changed"
+        elif change == "missing-corpus":
+            del metadata["corpus"][corpus_path]
+        else:
+            metadata["corpus"]["core/compatibility/cases/unrelated.yaml"] = "added"
+        monkeypatch.setattr(evidence, "corpus_manifest", Mock(return_value=metadata["corpus"]))
+    elif change == "current-corpus":
+        monkeypatch.setattr(evidence, "corpus_manifest", Mock(return_value={}))
+    return path, metadata
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "old-hash",
+        "new-hash",
+        "extra-corpus",
+        "schema",
+        "missing-corpus",
+        "unchanged-case",
+        "current-corpus",
+        "wrong-sweep",
+        "extra-selection",
+        "missing-selection",
+        "skipped-grade",
+        "failed-grade",
+        "error-envelope",
+        "refusal",
+        "missing-compile",
+        "compile-status",
+        "compile-envelope",
+        "compile-shape",
+        "missing-run",
+    ],
+)
+def test_document_authorization_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    baseline, candidate, supplement = _transition_reports(tmp_path, monkeypatch)
+    path = candidate / "metadata.json"
+    metadata = json.loads(path.read_text())
+    records = [
+        json.loads(line) for line in (candidate / "observations.jsonl").read_text().splitlines()
+    ]
+    tree = ET.parse(candidate / "junit.xml")
+    if change in {
+        "old-hash",
+        "new-hash",
+        "unchanged-case",
+        "schema",
+        "extra-corpus",
+        "missing-corpus",
+        "current-corpus",
+    }:
+        path, metadata = _change_corpus(change, baseline, candidate, metadata, monkeypatch)
+    elif change == "extra-selection":
+        metadata["selected"].append("tests/unrelated.py::test_extra")
+    elif change == "missing-selection":
+        metadata["selected"].remove(records[0]["node"])
+    elif change == "wrong-sweep":
+        old_node = records[0]["node"]
+        records[0]["node"] = old_node.replace(
+            "test_write_run_sweep", "test_run_only_write_sequence_run_sweep"
+        )
+        metadata["selected"].remove(old_node)
+        metadata["selected"].append(records[0]["node"])
+    elif change in {"skipped-grade", "failed-grade"}:
+        target = next(
+            t for t in tree.iter("testcase") if t.attrib["name"].startswith("test_write_run_sweep")
+        )
+        ET.SubElement(
+            target, "skipped" if change == "skipped-grade" else "failure", message="not graded"
+        )
+    elif change == "error-envelope":
+        records[0]["actual"]["status"] = "error"
+    elif change == "refusal":
+        source = supplement / "observations.jsonl"
+        items = [json.loads(line) for line in source.read_text().splitlines()]
+        items[-1]["actual"]["diagnostics"][0]["message"] = "connection lost"
+        source.write_text("".join(json.dumps(r) + "\n" for r in items))
+        _seal(supplement)
+    elif change == "missing-run":
+        records.pop(0)
+    else:
+        _change_compile(records, change)
+    _write_json(path, metadata)
+    (candidate / "observations.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+    tree.write(candidate / "junit.xml")
+    _seal(path.parent)
+    _seal(candidate)
+    result = evidence.compare_reports(
+        baseline, candidate, supplement=supplement, newly_graded_document_cases=True
+    )
+    assert result["classification"] == "unexplained", result

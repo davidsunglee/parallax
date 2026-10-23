@@ -162,7 +162,6 @@ def _run_interleaved_group(
                 steps[index],
                 index,
                 observation,
-                tracked=None,
             )
             if read is not None:
                 result.rows[index] = step_rows(
@@ -324,7 +323,7 @@ def run_interleaved_scenario_case(
     grouped = {index for indices in groups.values() for index in indices}
     ungrouped = [index for index in range(len(steps)) if index not in grouped]
     (label_a, indices_a), (label_b, indices_b) = groups.items()
-    apply_given_apply(case, port, None)
+    apply_given_apply(case, port)
     # This lane reports no lifecycle oracle, and could not: two connections
     # driven at once have no single root order to state. The run is here so the
     # trailing ungrouped verify find has one to open its own Handle through.
@@ -335,7 +334,6 @@ def run_interleaved_scenario_case(
         serving,
         model,
         concurrency,
-        None,
         case_format.transaction_keywords(case),
         case_format.database_options(case),
     )

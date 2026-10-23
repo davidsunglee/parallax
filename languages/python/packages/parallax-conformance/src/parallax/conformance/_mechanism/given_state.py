@@ -266,33 +266,16 @@ def seed_store_from_fixtures(
     store.seed_initial_rows(model, initial)
 
 
-def apply_given_apply(
-    case: case_format.Case, port: DatabaseConnection, store: SimulatedTemporalStore | None
-) -> None:
-    """Apply a case's out-of-band ``given.apply`` naive statements VERBATIM,
-    immediately (never inside our own transaction), and tell ``store`` they ran
-    — where the lane models case state at all; one that models none passes
-    ``None`` and has nothing to tell.
-
-    They stand for a writer this unit of work is not: a CONCURRENT transaction
-    that already committed, so its effect must survive our own eventual rollback
-    (a stale-version conflict), or a newer application version that stored state
-    no authored member of this model could produce (a Structured Column key the
-    model declares nowhere).
-
-    Marking the tracker here rather than at each lane is what makes the mark
-    unforgettable: every executor of a shape ``given.apply`` is admitted on —
-    conflict, writeSequence, and each of the three scenario executors — runs the
-    statements through this one function, so no lane can leave a tracker claiming
-    a whole account of a row one of them may since have overtaken."""
+def apply_given_apply(case: case_format.Case, port: DatabaseConnection) -> None:
+    """Apply setup statements outside the writing attempt's transaction, so their
+    effects survive that attempt's rollback.
+    """
     given = case.document.get("given")
     if not isinstance(given, Mapping):
         return
     entries = cast("Mapping[str, object]", given).get("apply")
     if not isinstance(entries, list):
         return
-    if store is not None:
-        store.note_out_of_band_write()
     for entry in cast("list[Mapping[str, object]]", entries):
         sql = cast("str", entry["sql"])
         # A mapping bind is a whole document a Structured Column stores.

@@ -1628,15 +1628,14 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_as_one_grouped_insert() -> None
         mock.patch.object(
             scenario,
             "_resolve_entries",
-            wraps=scenario._resolve_entries,  # pyright: ignore[reportPrivateUsage] - observe ordinary routing
-        ) as ordinary,
+            side_effect=AssertionError("ordinary writes must not use compile resolution"),
+        ) as compile_resolution,
     ):
         envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_WritePort()))
     assert envelope["status"] == "ok", envelope
     assert len(envelope["emissions"]) == 2, envelope["emissions"]
     marker.assert_called_once()
-    ordinary.assert_called_once()
-    assert ordinary.call_args.args[0][0]["mutation"] == "insert"
+    compile_resolution.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
