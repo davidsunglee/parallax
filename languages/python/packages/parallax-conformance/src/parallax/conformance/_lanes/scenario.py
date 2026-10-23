@@ -2218,6 +2218,10 @@ def _empty_opened() -> dict[ObjectKey, WireEntity]:
     return {}
 
 
+def _empty_answered() -> dict[str, WireEntity]:
+    return {}
+
+
 def _empty_buffered() -> list[tuple[int, int]]:
     return []
 
@@ -2236,19 +2240,20 @@ class GroupState:
     run a write with no reference resolves against, ``finds`` keys the same nodes
     by the step that published them — what a write step naming a find with ``on``
     addresses (`m-case-format` *Settling against a grouped find*) — and
-    ``opened`` holds what this group's own inserts answered, which is how
-    read-your-own-writes reaches a row no find could have returned.
+    ``opened`` and ``insertions`` hold the same accepted insert results by object
+    key and submission pointer. Explicit references never fall back to another value.
     ``buffered`` holds each write step's index,
     in step order, beside how many writes the group had delivered once that step
     finished buffering, or, for a predicate write, before it executed
     (:func:`group_writes`). ``affected`` holds the count each predicate-write
-    step's verb returned, by step index. All are built fresh per group,
+    step's verb returned, by step index. All are built fresh per attempt,
     never a scenario-wide store, so no value crosses a transaction boundary.
     """
 
     published: list[WireEntity] = field(default_factory=_empty_published)
     finds: dict[int, tuple[WireEntity, ...]] = field(default_factory=_empty_group_finds)
     opened: dict[ObjectKey, WireEntity] = field(default_factory=_empty_opened)
+    insertions: dict[str, WireEntity] = field(default_factory=_empty_answered)
     buffered: list[tuple[int, int]] = field(default_factory=_empty_buffered)
     affected: dict[int, int] = field(default_factory=_empty_affected)
 
@@ -2403,7 +2408,7 @@ def _group_source_node(
                 "against a grouped find')"
             )
         (node,) = matched
-        if not _pinned_at(node, valid_from):
+        if read_evidence_of(node) is not None and not _pinned_at(node, valid_from):
             raise EngineError(
                 f"{entity_name!r}: the write starts at {valid_from!r}, but the find it settles "
                 "against was read at another Valid-Time instant — an observed write starts at "
@@ -2476,25 +2481,50 @@ def _source_find_nodes(
     return published
 
 
+def _source_nodes(
+    entry: Mapping[str, object], index: int, state: GroupState
+) -> tuple[WireEntity, ...] | None:
+    source = entry.get("on")
+    if isinstance(source, str):
+        opened = state.insertions.get(source)
+        if opened is None:
+            raise EngineError(
+                f"scenario[{index}]: writes through {source!r}, which opened no value "
+                "in this attempt of its own `uow` group"
+            )
+        return (opened,)
+    return _source_find_nodes(entry, index, state.finds)
+
+
 def _buffer_wire_write(
     tx: TxnContext,
     model: AcceptedMetamodel,
     state: GroupState,
     instruction: WriteInstruction,
     named: Sequence[WireEntity] | None,
-    source: WireEntity | None = None,
-) -> WireEntity | None:
+    *,
+    pointer: str | None = None,
+) -> None:
     """Submit an unprepared instruction through its public Wire verb."""
     if isinstance(instruction, TargetWriteInstruction):
         _buffer_wire_target(tx, model, instruction)
-        return None
+        return
     assert isinstance(instruction, KeyedWriteInstruction)
     if instruction.mutation in INSERT_MUTATIONS:
-        return _buffer_wire_insert(tx, model, state, instruction)
+        _buffer_wire_insert(tx, model, state, instruction, pointer)
+        return
     _buffer_wire_keyed(
-        tx, model, instruction, _keyed_source(model, state, instruction, named, source)
+        tx,
+        model,
+        instruction,
+        _group_source_node(
+            case_entity(model, instruction.entity).identity.canonical,
+            _instruction_key(instruction, model),
+            state,
+            named,
+            instruction.valid_from,
+        ),
     )
-    return None
 
 
 def _instruction_key(
@@ -2518,7 +2548,11 @@ def _instruction_key(
 
 
 def _buffer_wire_insert(
-    tx: TxnContext, model: AcceptedMetamodel, state: GroupState, instruction: KeyedWriteInstruction
+    tx: TxnContext,
+    model: AcceptedMetamodel,
+    state: GroupState,
+    instruction: KeyedWriteInstruction,
+    pointer: str | None,
 ) -> WireEntity:
     """Buffer ONE insert through ``tx.wire.insert`` and record the value it
     answered: a row no find can have returned, which a later write of the
@@ -2542,25 +2576,9 @@ def _buffer_wire_insert(
         else tx.wire.insert(entity.identity.canonical, payload, **_stated_start(valid_from))
     )
     state.opened[_node_object_key(opened)] = opened
+    if pointer is not None:
+        state.insertions[pointer] = opened
     return opened
-
-
-def _keyed_source(
-    model: AcceptedMetamodel,
-    state: GroupState,
-    instruction: KeyedWriteInstruction,
-    named: Sequence[WireEntity] | None,
-    source: WireEntity | None,
-) -> WireEntity:
-    if source is not None:
-        return source
-    return _group_source_node(
-        case_entity(model, instruction.entity).identity.canonical,
-        _instruction_key(instruction, model),
-        state,
-        named,
-        instruction.valid_from,
-    )
 
 
 def _buffer_wire_keyed(
@@ -2728,10 +2746,12 @@ def run_group_step(
     if "write" in step:
         entries = write_entries(step["write"])
         _refuse_group_markers(entries, model)
-        for entry in entries:
-            named = _source_find_nodes(entry, index, state.finds)
+        for position, entry in enumerate(entries):
+            named = _source_nodes(entry, index, state)
             for write in _case_write_instructions([entry], model):
-                _buffer_wire_write(tx, model, state, write, named)
+                _buffer_wire_write(
+                    tx, model, state, write, named, pointer=f"/scenario/{index}/write/{position}"
+                )
         state.buffered.append((index, len(observation.writes)))
         return LoweredStep(f"/scenario/{index}/write", (), True, False), None
     return _group_read(tx, context, state, step, index, observation)
@@ -2834,21 +2854,12 @@ def _run_uow_group(
 # --------------------------------------------------------------------------- #
 
 
-def _empty_answered() -> dict[str, WireEntity]:
-    return {}
-
-
 def _empty_refusals() -> list[dict[str, object]]:
     return []
 
 
 @dataclass(frozen=True, slots=True)
 class _Submitted:
-    """What a state-graded group's submissions left for the rest of the run:
-    the value each accepted insert answered, by its pointer, and the refusal
-    each refused submission raised."""
-
-    opened: dict[str, WireEntity] = field(default_factory=_empty_answered)
     refusals: list[dict[str, object]] = field(default_factory=_empty_refusals)
 
 
@@ -2884,15 +2895,9 @@ def _submit(
             assert isinstance(target, TargetWriteInstruction)
             _buffer_wire_target(tx, model, target)
         else:
-            on = entry.get("on")
-            source = submitted.opened.get(on) if isinstance(on, str) else None
-            if isinstance(on, str) and source is None:
-                raise EngineError(f"{pointer}: writes through {on!r}, which opened no value")
-            named = _source_find_nodes(entry, index, state.finds)
+            named = _source_nodes(entry, index, state)
             for write in _submission_writes(entry, model):
-                opened = _buffer_wire_write(tx, model, state, write, named, source)
-                if opened is not None:
-                    submitted.opened[pointer] = opened
+                _buffer_wire_write(tx, model, state, write, named, pointer=pointer)
     except WriteEvidenceError as exc:
         if exc.code != refusal:
             raise

@@ -952,11 +952,14 @@ def test_a_grouped_temporal_write_settles_against_the_find_it_names_else_the_lat
     assert binds[-1] == gate
 
 
-def test_a_temporal_write_composes_onto_its_groups_pending_insert() -> None:
+@pytest.mark.parametrize("reference", [{}, {"on": "/scenario/0/write/0"}])
+def test_a_temporal_write_composes_onto_its_groups_pending_insert(
+    reference: dict[str, object],
+) -> None:
     case = _race_case(
         [
             _balance_write("insert", {"id": 7, "acctNum": "G", "value": "1.00"}),
-            _balance_write("terminate", {"id": 7}),
+            _balance_write("terminate", {"id": 7}, **reference),
         ],
         [_find_balance(1)],
     )
@@ -966,6 +969,9 @@ def test_a_temporal_write_composes_onto_its_groups_pending_insert() -> None:
 
     run = run_interleaved_scenario_case(case, ScriptedPort(), executions)
     assert all(not emission.sql.startswith(("insert", "update")) for emission in run.emissions)
+    assert run.database_calls == 1
+    assert run.units == {"ours": {"outcome": "committed"}, "concurrent": {"outcome": "committed"}}
+    assert all(len(execution.port.levels) == 1 for execution in executions.opened)
 
 
 def test_production_refuses_amendment_after_the_same_sources_termination() -> None:
