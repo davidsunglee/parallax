@@ -12,6 +12,7 @@ from parallax.core import predicate as oa
 from parallax.core.base import DATE, FLOAT32, INFINITY, INT64, STRING, TIMESTAMP, ManagedValue
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import JsonDocument
+from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.predicate._resolved import DeferredKeySet, ResolvedConstant
@@ -95,6 +96,7 @@ def test_entity_row_scope_reference_front_doors_resolve_direct_members() -> None
 
 COLLECTIONS = corpus_model("predicate-collections")
 TRAVERSAL = corpus_model("predicate-traversal")
+_NO_DEMAND = ResolvedReadProjection((), False)
 
 
 def _row_builder(family: Metamodel) -> StatementBuilder[EntityRowScope]:
@@ -107,7 +109,7 @@ def _statement_plan(family: Metamodel, root: str, node: oa.PredicateNode) -> Sta
     read = (
         None
         if entity.inheritance is None
-        else plan_inheritance_read(entity, None, family, facet, storage, False, None)
+        else plan_inheritance_read(entity, None, family, facet, storage, False, None, _NO_DEMAND)
     )
     return plan_statement(
         resolved_as_stated(oa.validate_predicate(entity, node, family), family, entity),
@@ -219,7 +221,7 @@ def test_each_union_branch_builder_finishes_its_own_root_alone() -> None:
     plan = _statement_plan(TRAVERSAL, "Vehicle", op)
     vehicle = next(entity for entity in TRAVERSAL.entities if entity.identity.name == "Vehicle")
     facet, storage = inheritance.view(TRAVERSAL), storage_layout.view(TRAVERSAL)
-    read = plan_inheritance_read(vehicle, None, TRAVERSAL, facet, storage, False, None)
+    read = plan_inheritance_read(vehicle, None, TRAVERSAL, facet, storage, False, None, _NO_DEMAND)
     assert isinstance(read, TpcsUnionPlan)
     assert list(plan.root_scopes) == [branch.identity for branch in read.branches]
     union = _row_builder(TRAVERSAL)

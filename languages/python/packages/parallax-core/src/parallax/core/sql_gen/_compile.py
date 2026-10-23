@@ -360,6 +360,7 @@ def compile_read(
             storage,
             result_form == "instance",
             arm_lock,
+            query.projection,
         )
     )
     statement_plan = _plan_statement(
@@ -543,7 +544,7 @@ def _compile_read_arm(
             target.identity,
             plan_position,
             position_documents,
-            position_documents if result_form == "instance" else (),
+            position_documents if result_form == "instance" else query.projection.value_objects,
             document_reads,
             _ResultContract(
                 inheritance_read.resolve,

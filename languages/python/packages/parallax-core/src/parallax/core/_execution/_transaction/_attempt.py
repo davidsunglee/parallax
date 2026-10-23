@@ -768,7 +768,7 @@ class TxnAttempt(_TxnAttemptBase):
             key=name,
             key_value=cast("ManagedValue", value),
             valid_from=request.valid_from,
-            whole=request.retains,
+            retain_predecessor=request.retains,
         )
         return self._row_read(query, entity_read_lock(meta, entity.identity, self._preference))
 
