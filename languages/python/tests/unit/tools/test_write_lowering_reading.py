@@ -113,6 +113,9 @@ def test_child_case_names_match_the_shared_workloads() -> None:
 
 def test_a_cross_object_child_answers_exactly_the_reports_flush_cells() -> None:
     assert write_lowering_reading.FLUSH_METRICS == write_lowering_overhead.FLUSH_METRICS
+    assert set(write_lowering_reading.DEFERRED_FLUSH_METRICS) == set(
+        write_lowering_overhead.DEFERRED_FLUSH_METRICS
+    )
     assert write_lowering_reading.FLUSH_WINDOW == write_lowering_overhead.FLUSH_WINDOW
     assert {
         name
@@ -208,8 +211,9 @@ def _assert_flush_reading(name: str) -> None:
     assert reading["units"] == case.objects
     assert reading["calls"] == {}
     samples = cast("dict[str, list[float]]", reading["samples"])
-    assert set(samples) == set(write_lowering_reading.FLUSH_METRICS)
-    for region in ("plan", "execution"):
+    deferred = write_lowering_reading.DEFERRED_FLUSH_METRICS if case.deferred else ()
+    assert set(samples) == {*write_lowering_reading.FLUSH_METRICS, *deferred}
+    for region in ("plan", "execution", *(("binding",) if case.deferred else ())):
         assert len(samples[f"{region}.elapsedUs"]) == 2
         assert all(value > 0 for value in samples[f"{region}.elapsedUs"])
     retained, transient = samples["plan.retainedBytes"], samples["execution.transientBytes"]
@@ -223,11 +227,21 @@ def _assert_flush_reading(name: str) -> None:
         "work.largestOrderedInvocation": [case.work.largest_ordered_invocation],
         "work.largestGroupedInsert": [case.work.largest_grouped_insert],
     }
+    if case.deferred:
+        binding = samples["binding.transientBytes"]
+        assert len(binding) == 2 and all(value > 0 for value in binding)
+        assert samples["binding.transientBytesPerObject"] == [v / case.objects for v in binding]
+        assert samples["work.coverageReads"] == [case.coverage_reads]
 
 
 @in_a_child_interpreter
 def test_a_cross_object_flush_reads_its_planning_and_group_execution_regions() -> None:
     _assert_flush_reading(lowering_support.CROSS_OBJECT_CASES[0].name)
+
+
+@in_a_child_interpreter
+def test_a_deferred_span_flush_reads_its_range_binding_advances_and_coverage_reads() -> None:
+    _assert_flush_reading(lowering_support.DEFERRED_CASES[0].name)
 
 
 @in_a_child_interpreter

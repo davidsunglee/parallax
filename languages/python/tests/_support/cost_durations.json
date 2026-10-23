@@ -102,6 +102,7 @@
  "tests/unit/tools/test_write_lowering_reading.py::test_a_bitemporal_interior_update_reads_its_keyed_window": 3.6,
  "tests/unit/tools/test_write_lowering_reading.py::test_a_changed_ancestor_successor_reads_its_keyed_window": 4.3,
  "tests/unit/tools/test_write_lowering_reading.py::test_a_cross_object_flush_reads_its_planning_and_group_execution_regions": 36.2,
+ "tests/unit/tools/test_write_lowering_reading.py::test_a_deferred_span_flush_reads_its_range_binding_advances_and_coverage_reads": 17.7,
  "tests/unit/tools/test_write_lowering_reading.py::test_a_geometry_insert_reads_its_keyed_window": 2.4,
  "tests/unit/tools/test_write_lowering_reading.py::test_a_leaf_type_insert_reads_its_keyed_window": 4.0,
  "tests/unit/tools/test_write_lowering_reading.py::test_a_regional_peak_keeps_the_highest_rise": 1.8,
