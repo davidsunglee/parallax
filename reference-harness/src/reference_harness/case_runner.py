@@ -2109,6 +2109,11 @@ def _setup_predecessor_insert(
         raise CaseFailure(failure)
     name = target.name if target.this.quoted else target.name.lower()
     if name != table:
+        # Multi-table mutations can address aliases instead of physical table names.
+        if not isinstance(tree, (exp.Insert, exp.Update, exp.Delete)) or list(
+            tree.find_all(exp.Table)
+        ) != [target]:
+            raise CaseFailure(failure)
         return None
     if not (
         isinstance(tree, exp.Insert)

@@ -258,6 +258,43 @@ def test_later_setup_mutations_cannot_leave_stale_insert_evidence(sql: str) -> N
 
 
 @pytest.mark.parametrize(
+    "sql",
+    [
+        "delete from v using voyage as v where v.id = ?",
+        "delete v from voyage as v where v.id = ?",
+        "delete o, v from other_table as o join voyage as v on o.id = v.id where v.id = ?",
+        "update other_table as o join voyage as v on o.id = v.id set v.in_z = ?",
+    ],
+)
+def test_aliased_setup_mutations_cannot_leave_stale_insert_evidence(sql: str) -> None:
+    case = _setup_document_case()
+    case.apply.append({"sql": sql, "binds": [7]})
+    current = case.write_sequence[0]
+    entity = case.model.entity(current["entity"])
+    with pytest.raises(CaseFailure, match="setup predecessor"):
+        _observed_milestone_start(case, entity, current, 7, "mariadb")
+    with pytest.raises(CaseFailure, match="setup predecessor"):
+        _assert_write_input_columns(case, "mariadb")
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "insert into other_table(id) values (?)",
+        "update other_table set id = ?",
+        "delete from other_table where id = ?",
+    ],
+)
+def test_unrelated_single_table_setup_preserves_predecessor_evidence(
+    dialect: str, sql: str
+) -> None:
+    case = _setup_document_case()
+    case.apply.append({"sql": sql, "binds": [7]})
+    _assert_write_input_columns(case, dialect)
+
+
+@pytest.mark.parametrize(
     ("sql", "binds"),
     [
         ("insert into voyage(id, in_z, out_z) values (?, ?, ?)", [7, "infinity"]),

@@ -119,17 +119,9 @@ def _run_interleaved_group(
     on the dedicated session opened for it, whose Clock answers the group's own
     Transaction Instant.
 
-    ``context`` carries no case-state tracker, and that is the invariant two
-    concurrent sessions rest on: a temporal write settles against what its own
-    group's reads retained — the value production's verb is handed, through
-    :class:`~parallax.conformance._lanes.scenario.GroupEvidenceResolver` — so the lane
-    models nothing the other session could have changed, the two threads share
-    no mutable state, and a group's abort leaves nothing behind to discard.
-    Coverage a flush needs beyond those reads is production's own to read, on
-    the group's own connection, so it sees whatever the other session committed
-    exactly as the database does. A second temporal write of a key its group
-    already settled would compose onto state no read of the group retained, and
-    is refused as unwitnessed rather than modeled.
+    Each group's source values belong to its own attempt. Production composes
+    temporal writes and reads any additional coverage on that group's connection,
+    so the database controls visibility of the other group's commits.
 
     Every OWN find step's `stepRows` observation lands in ``result.rows`` (keyed
     by scenario step index) — without this, a grouped find's own DML is graded
