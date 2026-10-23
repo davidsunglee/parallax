@@ -560,7 +560,7 @@ class PredecessorExpander:
                 filed = self._realize(run, opened)
                 if filed is not None:
                     revised = _filing(revised, filed)
-        effects, outputs = self._effects(reached)
+        non_inserts, outputs = self._non_inserts(reached)
         opened.sort(key=_first)
         entity = facts.entity.identity
         inserts = tuple(
@@ -573,7 +573,7 @@ class PredecessorExpander:
             outputs.extend(_opened_outputs(opened, endpoints))
             derived = self._derived(reached, candidates, _by_ends(endpoints, reached))
         return BoundRange(
-            steps=(*effects, *inserts),
+            steps=(*non_inserts, *inserts),
             changed=tuple(record.state for record in reached if _changes(record.code)),
             removed=tuple(record.own for record in reached if record.code & _DISPOSAL == _REMOVE),
             opened=_openings(opened, endpoints, revised or ()),
@@ -581,19 +581,19 @@ class PredecessorExpander:
             current_outputs=tuple(outputs),
         )
 
-    def _effects(
+    def _non_inserts(
         self, reached: Sequence[_Reached]
     ) -> tuple[list[PlannedStep], list[CurrentRowOutput]]:
         """Each reached predecessor's own step, in order, and the output each
         revision into a row a continuable source reaches persists."""
         owned = [(record, self._own(record)) for record in reached]
-        effects = [step for _record, step in owned if step is not None]
+        non_inserts = [step for _record, step in owned if step is not None]
         outputs = [
             _revised_output(record, step)
             for record, step in owned
             if record.publishes and isinstance(step, PlannedTemporalRevision)
         ]
-        return effects, outputs
+        return non_inserts, outputs
 
     def _own(self, record: _Reached) -> PlannedStep | None:
         """The step ``record``'s predecessor finally takes of its own: its

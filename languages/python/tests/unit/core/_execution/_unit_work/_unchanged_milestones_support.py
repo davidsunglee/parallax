@@ -142,7 +142,7 @@ def bound_range(
     (write,) = settled_writes(plan)
     return write, bind_held(
         meta,
-        write,
+        plan,
         rows,
         ownership=ownership,
         transaction_instant=instant_at(NOW.isoformat()),

@@ -6,10 +6,10 @@ at 200, both known from T0. Each root a stream delivers as of March is amended
 to 150 until September, which reaches the tail its read did not observe, so
 each write owes one missing coverage window. The page after a root's page
 flushes its write, and pre-commit flushes the last page's: each Flush reads its
-writes' coverage in shared reads of at most 32 consecutive writes, while every
-write still runs its own statements. An eager read of the same roots buffers
-every write into one Flush, and a source written again after its write
-completed reads nothing.
+writes' coverage in shared reads of at most 32 consecutive writes, and the
+writes each read makes ready execute together as one Write Group. An eager read
+of the same roots buffers every write into one Flush, and a source written again
+after its write completed reads nothing.
 
 Each case reads the whole stored history back and compares it with the one
 these inputs determine. Every write runs under a clock answering 2024-11-01.
@@ -57,12 +57,31 @@ _T0: Final = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
 _AT: Final = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
 _JAN, _MAR, _JUN, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 3, 6, 9))
 
+# Each write closes its head and its tail and opens three rows: the head's
+# unamended part, the merged amended parts, and the tail's rest.
+_CLOSES: Final = 2
+_OPENINGS: Final = 3
+_INSERT_ENTRIES: Final = 64
+
+
+def _group_writes(writes: int) -> int:
+    """The statements one Write Group of ``writes`` such writes presents:
+    every close, then its openings in inserts of at most 64 entries."""
+    return writes * _CLOSES + -(-writes * _OPENINGS // _INSERT_ENTRIES)
+
+
 # 70 roots at 33 per page: pages of 33, 33, and 4 roots. A 33-write Flush is
-# one shared read of 32 writes' coverage and one read of the 33rd write's.
+# one shared read of 32 writes' coverage, which makes all 32 ready as one
+# group, and one read of the 33rd write's, which runs alone.
 _OBJECTS: Final = 70
 _PAGE: Final = 33
-_PAGE_FLUSH: Final[list[Call]] = [("read", 32), ("write", 96), ("read", 1), ("write", 3)]
-_LAST_PAGE_FLUSH: Final[list[Call]] = [("read", 4), ("write", 12)]
+_PAGE_FLUSH: Final[list[Call]] = [
+    ("read", 32),
+    ("write", _group_writes(32)),
+    ("read", 1),
+    ("write", _group_writes(1)),
+]
+_LAST_PAGE_FLUSH: Final[list[Call]] = [("read", 4), ("write", _group_writes(4))]
 
 type _Layout = Literal["columns", "document"]
 type _Representation = Literal["typed", "wire"]
@@ -244,8 +263,10 @@ def test_an_eager_read_of_the_same_roots_shares_their_coverage_reads_in_one_flus
 
     _db(profile_run, calls).transact(fn, concurrency=concurrency)
     assert calls.pages == []
-    span: list[Call] = [("read", 32), ("write", 96)]
-    assert _flushes(calls) == [("pre_commit", [*span, *span, ("read", 6), ("write", 18)])]
+    span: list[Call] = [("read", 32), ("write", _group_writes(32))]
+    assert _flushes(calls) == [
+        ("pre_commit", [*span, *span, ("read", 6), ("write", _group_writes(6))])
+    ]
     assert _history(profile_run, layout) == _corrected(range(1, _OBJECTS + 1))
 
 
@@ -298,7 +319,7 @@ def test_a_default_page_flushes_1024_writes_in_32_shared_coverage_reads(
     assert calls.pages == [PageRead(1025, 1025), PageRead(1025, 1)]
     page_flush, last_flush = calls.flushes
     assert page_flush.trigger == "read_dependency"
-    assert call_runs(page_flush.calls) == [("read", 32), ("write", 96)] * 32
+    assert call_runs(page_flush.calls) == [("read", 32), ("write", _group_writes(32))] * 32
     assert last_flush.trigger == "pre_commit"
-    assert call_runs(last_flush.calls) == [("read", 1), ("write", 3)]
+    assert call_runs(last_flush.calls) == [("read", 1), ("write", _group_writes(1))]
     assert _history(profile_run, "columns") == _corrected(range(1, objects + 1))

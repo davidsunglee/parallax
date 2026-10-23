@@ -566,12 +566,13 @@ Planned Insert, opened at the attempt's Transaction Instant over
 `[txInstant, infinity)` on Transaction Time and over its own Valid-Time
 coverage, which stamps the open bound as the managed `infinity`.
 
-A settled write's steps keep each predecessor's effect ahead of what it opens. A lone
+A settled write's steps keep each predecessor's own non-insert step ahead of the
+inserts that open its successors. A lone
 write's close is followed by its successors in Valid-Time order — `head`,
 `middle`, `tail` where each exists and is nonempty — with none of the write's
 other steps between them and no surviving identifier; within a Write Group,
 other objects' steps may come between (`m-unit-work` *Write Group formation*). A range
-over several predecessors runs every predecessor's effect before any opening:
+over several predecessors runs every predecessor's non-insert step before any opening:
 predecessors holding a caller's start first, in the order the callers stated
 them, then validated observations, then every other predecessor; its successors
 follow, and a replacement's Coverage Gaps come last. A row merged from several

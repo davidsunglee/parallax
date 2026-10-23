@@ -59,7 +59,11 @@ from tests._support.planner_probes import (
     plan_steps,
     settled_writes,
 )
-from tests.unit.core._execution._unit_work._acquired_rows_support import bind_held, coverage_read
+from tests.unit.core._execution._unit_work._acquired_rows_support import (
+    alone,
+    bind_held,
+    coverage_read,
+)
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     APR,
@@ -138,12 +142,14 @@ def _bound(
 ) -> BoundRange:
     """``settled write``'s deferred range bound, as the unit of work binds it at
     execution, to a coverage read finding ``rows`` under ``ownership``."""
-    return bind_held(POSITION, settled, rows, transaction_instant=_instant(), ownership=ownership)
+    return bind_held(
+        POSITION, alone(settled), rows, transaction_instant=_instant(), ownership=ownership
+    )
 
 
 def _coverage(settled: SettledWrite) -> CoverageReadRequest:
     """The coverage read ``settled write``'s deferred range asks for."""
-    return coverage_read(POSITION, settled, transaction_instant=_instant())
+    return coverage_read(POSITION, alone(settled), transaction_instant=_instant())
 
 
 def _instant() -> TransactionInstant:

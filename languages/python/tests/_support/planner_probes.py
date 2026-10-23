@@ -38,7 +38,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import ObjectKey, StateObservation, WritePlan
 from parallax.core.write_plan.keys import object_state_key_from_observation
-from parallax.core.write_plan.plan import SettledWrite
+from parallax.core.write_plan.plan import SettledWrite, WriteGroup
 from parallax.core.write_plan.steps import PlannedDelete, PlannedStep, PlannedUpdate
 
 __all__ = [
@@ -200,10 +200,22 @@ def _prepared_item(item: AdmittedWrite | KeyedWriteInstruction, model: Metamodel
 
 
 def plan_steps(plan: WritePlan) -> tuple[PlannedStep, ...]:
-    """Every Planned Step of ``plan``'s Write Groups, in execution order."""
-    return tuple(step for group in plan.groups for step in group.steps)
+    """Every Planned Step of ``plan``'s Write Groups, in execution order; a
+    deferred write plans none."""
+    return tuple(
+        step for entry in plan.entries if isinstance(entry, WriteGroup) for step in entry.steps
+    )
 
 
 def settled_writes(plan: WritePlan) -> tuple[SettledWrite, ...]:
-    """Every settled write of ``plan``'s Write Groups, in completion order."""
-    return tuple(write for group in plan.groups for write in group.writes)
+    """Every settled write of ``plan``, grouped or deferred, in completion
+    order."""
+    writes: list[SettledWrite] = []
+    for entry in plan.entries:
+        if isinstance(entry, SettledWrite):
+            writes.append(entry)
+            continue
+        for write in entry.writes:
+            assert isinstance(write, SettledWrite)  # planning groups settled writes
+            writes.append(write)
+    return tuple(writes)

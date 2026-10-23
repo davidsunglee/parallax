@@ -29,6 +29,7 @@ from parallax.core import opt_lock
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import ranges
+from parallax.core._execution._unit_work import uow as uow_module
 from parallax.core._execution._unit_work._write_ownership import WriteOwnership
 from parallax.core._execution._unit_work.acquisition import (
     CoverageReadRequest,
@@ -41,6 +42,9 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedTargetWrite,
     prepare_wire_write,
+)
+from parallax.core._execution._unit_work.write_runner import (
+    _CurrentRowCapture,  # pyright: ignore[reportPrivateUsage] - the capture a running group builds
 )
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
@@ -60,12 +64,14 @@ from parallax.core.unit_work import (
     object_key,
 )
 from parallax.core.write_plan import ObjectKey, PredecessorRow, TemporalObservation
+from parallax.core.write_plan.plan import BoundRange
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
     TEST_ACTOR_IDENTITY,
     retained_observation,
 )
 from tests.unit._where_position_model import WHERE_POSITION_META
+from tests.unit.core._execution._reach_support import frames, reaches
 
 _META: Final = model_of(WHERE_POSITION_META)
 _FOUND = entity_by_name(_META, "WherePosition")
@@ -299,6 +305,73 @@ def test_a_pre_commit_flush_which_no_submission_follows_records_nothing_for_cont
     assert session.requests == []
     assert set(contributions) == recorded
     assert (_FEB, _MAR, _NOW, "O", Decimal("150.00")) in session.stored()
+
+
+@pytest.mark.parametrize("trigger", ["read_dependency", "pre_commit"])
+def test_a_deferred_range_records_for_continuation_only_where_a_submission_follows(
+    trigger: Any,
+) -> None:
+    # The source observed the row ending in September; the write reaches the
+    # stored row past it, so its range binds at execution.
+    session = _Session(ends=(_SEP, INFINITY))
+    source = session.observed()
+    session.uow.buffer(buffered_write(_write(_FEB, acctNum="O"), source))
+    with session.store.transaction(rollback=False):
+        session.uow.flush(trigger=trigger)
+    assert [type(request) for request in session.requests] == [CoverageReadRequest]
+    ownership = session.ownership
+    if trigger == "pre_commit":
+        # Bound under the concluding view, it describes nothing a source
+        # could continue from: no origin, no contribution, no held row.
+        assert ownership._origins == {}  # pyright: ignore[reportPrivateUsage] - nothing recorded
+        assert ownership._contributions == {}  # pyright: ignore[reportPrivateUsage] - nothing recorded
+        assert session.held() == []
+        assert ownership.continues(source, _MAR) is None
+    else:
+        assert session.held() == session.stored()
+        assert ownership.continues(source, _MAR)
+
+
+def test_a_failed_deferred_groups_capture_is_released_and_its_frames_keep_no_bound_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    released: list[_CurrentRowCapture] = []
+    release = _CurrentRowCapture.release
+    bound: list[BoundRange] = []
+    bind = ranges._bind_range  # pyright: ignore[reportPrivateUsage] - the binding every deferred range takes
+
+    def releasing(capture: _CurrentRowCapture) -> None:
+        released.append(capture)
+        release(capture)
+
+    def binding(*arguments: Any, **keywords: Any) -> BoundRange:
+        bound.append(bind(*arguments, **keywords))
+        return bound[-1]
+
+    def failing(simulated: SimulatedWriteSteps) -> Callable[..., tuple[object, ...]]:
+        def execute(*arguments: Any, **keywords: Any) -> tuple[object, ...]:
+            simulated(*arguments, **keywords)
+            raise RuntimeError("the group failed")
+
+        return execute
+
+    monkeypatch.setattr(_CurrentRowCapture, "release", releasing)
+    monkeypatch.setattr(ranges, "_bind_range", binding)
+    session = _Session(execute=failing, ends=(_SEP, INFINITY))
+    source = session.observed()
+    with pytest.raises(RuntimeError, match="the group failed") as raised:
+        session.flush((_write(_FEB, acctNum="O"), source))
+    ((range_,),) = [bound]
+    (capture,) = released
+    # The capture staged the rows the group's payloads stored, and dropped
+    # them with every description once the group failed.
+    assert capture._outputs == {}  # pyright: ignore[reportPrivateUsage] - what the capture still holds
+    assert capture._staged == {}  # pyright: ignore[reportPrivateUsage] - what the capture still holds
+    owned = frames(raised.value.__traceback__, module=uow_module.__file__)
+    assert owned
+    assert not reaches(owned, range_)
+    assert session.held() == []
+    assert session.ownership.continues(source, _MAR) is None
 
 
 def test_a_group_whose_steps_fail_after_their_payloads_were_demanded_holds_nothing() -> None:

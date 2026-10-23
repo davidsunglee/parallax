@@ -123,7 +123,7 @@ def test_a_transaction_hands_its_body_a_connection_counting_into_the_same_tally(
 
     assert _counting(inner, tally).transaction(body, isolation=cast("Any", "serializable")) == 7
     assert inner.calls[0] == ("transaction", "serializable")
-    assert (tally.effects, tally.ordered) == (1, 1)
+    assert (tally.standalone_non_insert_statements, tally.ordered) == (1, 1)
 
 
 @pytest.mark.parametrize(

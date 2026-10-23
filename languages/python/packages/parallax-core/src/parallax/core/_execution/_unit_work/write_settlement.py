@@ -116,10 +116,10 @@ class SettledWriteWithSource(SettledWrite):
 
 _GROUP_WRITES: Final = 64
 """The most settled writes one Write Group holds. In a group of updates or
-deletes every insert waits behind every effect of the group, so this bounds how
-many settled writes' effects a failing insert wastes, whatever the flush's size;
-a batch counts once however many rows it covers. It is not the executor's
-per-call statement or row cap."""
+deletes every insert waits behind every non-insert step of the group, so this
+bounds how many settled writes' non-insert steps a failing insert wastes,
+whatever the flush's size; a batch counts once however many rows it covers. It
+is not the executor's per-call statement or row cap."""
 
 type _GroupKey = tuple[AttributeIdentity, object]
 """One object a settled write writes: its family's primary-key Attribute and the
@@ -130,7 +130,8 @@ _ACQUISITION_RANGES: Final = 32
 """The most deferred settled writes one acquisition span holds (`m-unit-work`
 *Shared coverage acquisition*): how many objects' coverage can be read ahead of
 their writes' turns. It bounds objects, not the parts or rows their reads
-return."""
+return. The ready writes of a span execute as one Write Group, so it is never
+more than :data:`_GROUP_WRITES`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,8 +148,8 @@ class _AcquisitionCandidate:
 
 @dataclass(slots=True)
 class _AcquisitionRun:
-    """The acquisition span settlement is extending: its groups ``[start,
-    stop)``, the read its first write shares, and every object its writes
+    """The acquisition span settlement is extending: its plan entries
+    ``[start, stop)``, the read its first write shares, and every object its writes
     write."""
 
     start: int
@@ -232,15 +233,17 @@ class WritePlanCompiler:
         the rows it removes and opens, and what it leaves for the temporal
         sources it reaches. Consecutive settled writes
         of one mutation phase over distinct objects share a Write Group of at
-        most :data:`_GROUP_WRITES`, laid out as every write's effects and then
-        every write's inserts, each write's own order kept. A deferred write, a
-        write whose insert the database allocates a key for, and a write naming
-        no complete object key form a group of their own, and a write naming an
-        object the open group already writes starts the next group.
-        Consecutive groups of deferred writes of one mutation phase sharing a
-        coverage read and writing distinct objects, at most
-        :data:`_ACQUISITION_RANGES` of them, are recorded as one acquisition
-        span, which regroups nothing. ``ownership`` answers which current rows
+        most :data:`_GROUP_WRITES`, laid out as every write's non-insert steps
+        and then every write's inserts, each write's own order kept. A write
+        whose insert the database allocates a key for and a write naming no
+        complete object key form a group of their own, and a write naming an
+        object the open group already writes starts the next group. A deferred
+        write is a plan entry of its own, grouped only once execution binds it.
+        Consecutive deferred writes of one mutation phase sharing a coverage
+        read and writing distinct objects, at most :data:`_ACQUISITION_RANGES`
+        of them, are recorded as one acquisition span: their coverage is read
+        together, and the leading ones whose coverage is ready execute as one
+        group. ``ownership`` answers which current rows
         this attempt already opened, so a write against one of them revises or
         removes that row instead of closing it into history.
 
@@ -256,7 +259,7 @@ class WritePlanCompiler:
         insertion settles with the writes its insertion authorized as the one
         settled write of new lineages they leave of its window.
         """
-        groups: list[WriteGroup] = []
+        entries: list[WriteGroup | SettledWrite] = []
         spans: list[AcquisitionSpan] = []
         audit = AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled)
         families = self._families
@@ -268,26 +271,25 @@ class WritePlanCompiler:
                 write, steps = self._settled_write(
                     item, concurrency, transaction_instant, ownership, audit, counts_unchanged_rows
                 )
-                keys = (
-                    None
-                    if write.deferred is not None or write.opened.allocated
-                    else _object_keys(item, families)
-                )
+                if write.deferred is not None:
+                    _close_group(entries, members, held)
+                    run = _extend_run(
+                        spans, run, len(entries), _acquisition_candidate(write, item, families)
+                    )
+                    entries.append(write)
+                    continue
+                keys = None if write.opened.allocated else _object_keys(item, families)
                 if keys is None:
-                    _close_group(groups, members, held)
-                    if write.deferred is not None:
-                        run = _extend_run(
-                            spans, run, len(groups), _acquisition_candidate(write, item, families)
-                        )
-                    groups.append(WriteGroup((write,), steps))
+                    _close_group(entries, members, held)
+                    entries.append(WriteGroup((write,), steps))
                     continue
                 if len(members) == _GROUP_WRITES or not held.isdisjoint(keys):
-                    _close_group(groups, members, held)
+                    _close_group(entries, members, held)
                 members.append((write, steps))
                 held.update(keys)
-            _close_group(groups, members, held)
+            _close_group(entries, members, held)
             _close_run(spans, run)
-        return WritePlan(tuple(groups), tuple(spans))
+        return WritePlan(tuple(entries), tuple(spans))
 
     def _settled_write(
         self,
@@ -786,9 +788,9 @@ def _extend_run(
     position: int,
     candidate: _AcquisitionCandidate | None,
 ) -> _AcquisitionRun | None:
-    """The acquisition span open once the deferred write at group ``position``
-    joins it, or starts another where it cannot join ``run``: a group lies
-    between them, the run is full, the write reads differently, or it writes an
+    """The acquisition span open once the deferred write at plan entry
+    ``position`` joins it, or starts another where it cannot join ``run``: an
+    entry lies between them, the run is full, the write reads differently, or it writes an
     object the run already does. A write that reads alone ends the run."""
     if run is not None and (
         candidate is None
@@ -814,23 +816,14 @@ def _close_run(spans: list[AcquisitionSpan], run: _AcquisitionRun | None) -> Non
 
 
 def _close_group(
-    groups: list[WriteGroup],
+    entries: list[WriteGroup | SettledWrite],
     members: list[tuple[SettledWrite, tuple[PlannedStep, ...]]],
     held: set[_GroupKey],
 ) -> None:
-    if len(members) == 1:
-        ((write, steps),) = members
-        groups.append(WriteGroup((write,), steps))
-    elif members:
-        effects = [step for _, steps in members for step in steps if not _inserts(step)]
-        inserts = [step for _, steps in members for step in steps if _inserts(step)]
-        groups.append(WriteGroup(tuple(write for write, _ in members), (*effects, *inserts)))
+    if members:
+        entries.append(WriteGroup.from_members(members))
     members.clear()
     held.clear()
-
-
-def _inserts(step: PlannedStep) -> bool:
-    return isinstance(step, PlannedInsert)
 
 
 def _unobserved_close(entity: EntityMetadata, mutation: str) -> WritePlanningError:

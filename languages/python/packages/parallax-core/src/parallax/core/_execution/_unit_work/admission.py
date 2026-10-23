@@ -65,7 +65,7 @@ from parallax.core.write_plan.plan import (
     Openings,
     TemporalRowCoordinates,
     TemporalWriteOwnership,
-    WriteCompletion,
+    WriteEffects,
 )
 
 __all__ = [
@@ -278,15 +278,15 @@ class WriteAdmission:
 
     @property
     def ownership(self) -> TemporalWriteOwnership:
-        """The attempt's live ownership, which planning and deferred binding
-        read as the flush's earlier settled writes left it."""
+        """The attempt's live ownership, which a requesting flush's planning
+        and deferred binding read as its earlier Write Groups left it."""
         return self._ownership
 
     def concluding_ownership(self) -> TemporalWriteOwnership:
-        """The live ownership as the pre-commit flush plans under it: no
-        later submission follows that flush, and no write of it continues from
-        what another of its writes leaves, so nothing its writes leave is
-        demanded."""
+        """The live ownership as the pre-commit flush plans and binds its
+        deferred writes under it: no later submission follows that flush, and
+        no write of it continues from what another of its writes leaves, so
+        nothing its writes leave is demanded."""
         return _ConcludingOwnership(self._ownership)
 
     def admit(
@@ -413,29 +413,29 @@ class WriteAdmission:
 
     def complete(
         self,
-        completion: WriteCompletion,
+        effects: WriteEffects,
         allocated_keys: tuple[object, ...],
         *,
         at: int,
         captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
     ) -> None:
-        """Publish one successful settled write's ``completion`` at change count
+        """Publish one successful write's ``effects`` at change count
         ``at``: each versioned row it advanced, which a write a standing
         insertion of it authorizes claims from then on, and the source authority
         it continues or ends; the owned rows it removed, retired before the rows
         it opened — those whose keys the database allocated named by
         ``allocated_keys`` — are registered, with what it derived from its
         predecessors and the rows its execution ``captured``."""
-        for state in completion.advanced:
+        for state in effects.advanced:
             record = self._ownership.insertion_record(state.object)
             if record is not None:
                 record.advanced_from = state.version
-        self._ownership.continue_sources(completion.advanced, completion.destroyed, at=at)
-        opened = completion.opened
+        self._ownership.continue_sources(effects.advanced, effects.destroyed, at=at)
+        opened = effects.opened
         self._ownership.complete(
-            completion.removed,
+            effects.removed,
             _resolve_allocated_openings(opened, allocated_keys) if allocated_keys else opened,
-            completion.derived,
+            effects.derived,
             captured,
         )
 

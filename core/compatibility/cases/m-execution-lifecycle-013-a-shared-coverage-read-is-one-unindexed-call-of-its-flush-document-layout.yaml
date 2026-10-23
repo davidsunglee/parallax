@@ -32,23 +32,20 @@ when:
       write:
         - { mutation: amend, "on": 0, entity: parallax.compatibility.CoverageSpan, rows: [{ id: 1, amount: 150 }], validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
         - { mutation: amend, "on": 0, entity: parallax.compatibility.CoverageSpan, rows: [{ id: 2, amount: 150 }], validFrom: "2024-03-01T00:00:00.000000Z", at: "2024-10-01T00:00:00.000000Z" }
-      databaseCalls: 5
-      note: one shared coverage read names both spans' uncovered June onward and share-locks both tails; each tail already holds 150 and is kept, so each span closes only its head and opens head and amended middle
+      databaseCalls: 4
+      note: one shared coverage read names both spans' uncovered June onward and share-locks both tails, after which both spans are ready and execute as one Write Group; each tail already holds 150 and is kept, so each span closes only its head, and both heads' closes precede one insert opening each span's head and amended middle; the conformance connection's ordered write transport presents the two closes in one invocation, so both calls start before either finishes
       statements:
         - sql:
             postgres: update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
-          binds: [1, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 100, label: a }, 1, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 150, label: a }]
-        - sql:
             postgres: update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 2, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
-          binds: [2, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 100, label: b }, 2, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 150, label: b }]
+            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
+          binds: [1, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 100, label: a }, 1, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 150, label: a }, 2, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 100, label: b }, 2, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 150, label: b }]
 then:
-  databaseCalls: 6
+  databaseCalls: 5
   tableState:
     coverage_span:
       - { id: 1, payload: { amount: 100, label: a }, from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2023-12-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
@@ -114,17 +111,17 @@ then:
             parent: 6
             databaseCallStarted: { target: parallax.compatibility.CoverageSpan, kind: write, statement: 1 }
           - sequence: 13
-            activity: 8
-            parent: 6
-            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
-          - sequence: 14
             activity: 9
             parent: 6
             databaseCallStarted: { target: parallax.compatibility.CoverageSpan, kind: write, statement: 2 }
+          - sequence: 14
+            activity: 8
+            parent: 6
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
           - sequence: 15
             activity: 9
             parent: 6
-            databaseCallFinished: { outcome: writeCompleted, affectedRows: 2 }
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
           - sequence: 16
             activity: 10
             parent: 6
@@ -132,32 +129,24 @@ then:
           - sequence: 17
             activity: 10
             parent: 6
-            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 4 }
           - sequence: 18
-            activity: 11
-            parent: 6
-            databaseCallStarted: { target: parallax.compatibility.CoverageSpan, kind: write, statement: 4 }
-          - sequence: 19
-            activity: 11
-            parent: 6
-            databaseCallFinished: { outcome: writeCompleted, affectedRows: 2 }
-          - sequence: 20
             activity: 6
             parent: 2
             flushFinished: { outcome: completed }
-          - sequence: 21
-            activity: 12
+          - sequence: 19
+            activity: 11
             parent: 2
             releaseStarted: {}
-          - sequence: 22
-            activity: 12
+          - sequence: 20
+            activity: 11
             parent: 2
             releaseFinished: { cleanup: returned }
-          - sequence: 23
+          - sequence: 21
             activity: 2
             parent: 1
             transactionAttemptFinished: { outcome: committed }
-          - sequence: 24
+          - sequence: 22
             activity: 1
             parent: null
             transactionInvocationFinished: { outcome: committed }

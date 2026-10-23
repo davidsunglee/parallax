@@ -97,15 +97,16 @@ large, empty, duplicate-preserving, and nested collections."""
 class PortTally:
     """What one transaction asked of the port, as fixed scalars.
 
-    ``effects`` counts writes other than inserts executed alone, ``inserts``
-    insert statements and ``inserted_rows`` the rows they carried, and
-    ``ordered`` ordered write transport invocations and ``ordered_statements``
-    the statements they presented; each ``widest_*`` is the most one statement
-    or invocation carried.
+    ``standalone_non_insert_statements`` counts writes other than inserts
+    executed alone, outside ordered write transport, ``inserts`` insert
+    statements and ``inserted_rows`` the rows they carried, and ``ordered``
+    ordered write transport invocations and ``ordered_statements`` the
+    statements they presented; each ``widest_*`` is the most one statement or
+    invocation carried.
     """
 
     reads: int = 0
-    effects: int = 0
+    standalone_non_insert_statements: int = 0
     inserts: int = 0
     inserted_rows: int = 0
     widest_insert: int = 0
@@ -115,7 +116,7 @@ class PortTally:
 
     def realization(self) -> Realization:
         return Realization(
-            self.effects,
+            self.standalone_non_insert_statements,
             self.ordered,
             self.ordered_statements,
             self.widest_ordered,
@@ -127,7 +128,7 @@ class PortTally:
     @property
     def logical_writes(self) -> int:
         """The Planned Steps the statements carried, however they were grouped."""
-        return self.effects + self.ordered_statements + self.inserted_rows
+        return self.standalone_non_insert_statements + self.ordered_statements + self.inserted_rows
 
 
 def _rows_inserted(sql: str) -> int:
@@ -174,7 +175,7 @@ class CountingConnection:
             tally.inserted_rows += rows
             tally.widest_insert = max(tally.widest_insert, rows)
         else:
-            tally.effects += 1
+            tally.standalone_non_insert_statements += 1
         return self._inner.execute_write(sql, binds)
 
     @property
@@ -210,11 +211,12 @@ class CountingConnection:
 
 
 class Realization(NamedTuple):
-    """How a transaction's writes crossed the port: effects run alone, ordered
-    invocations with the statements they presented and the widest of them,
-    and insert statements with the rows they carried and the widest of them."""
+    """How a transaction's writes crossed the port: non-insert statements run
+    alone, ordered invocations with the statements they presented and the
+    widest of them, and insert statements with the rows they carried and the
+    widest of them."""
 
-    effects: int
+    standalone_non_insert_statements: int
     ordered: int
     ordered_statements: int
     widest_ordered: int

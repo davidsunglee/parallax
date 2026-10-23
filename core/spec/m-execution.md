@@ -225,12 +225,13 @@ row alone, with the judgement and refusal the read would have applied to them.
 ### Flush execution
 
 The unit of work runs the Write Plan a flush finalizes Write Group by Write
-Group, binding each deferred settled write at its turn and completing every
-settled write of a group before a later group executes (`m-unit-work` *Write
-Groups complete before later work runs*). Execution implements the
-step-execution port: it runs each sequence of Planned Steps the unit of work
-hands it — a Write Group's steps, or the steps a deferred range bound — inside
-the Flush the unit of work opened for the flush. It lowers those Planned Steps
+Group, binding every deferred settled write of a group before the group
+executes and completing every write of a group before a later group executes
+(`m-unit-work` *Write Groups complete before later work runs*). Execution
+implements the step-execution port: it runs each sequence of Planned Steps the
+unit of work hands it — one Write Group's steps, whether settlement planned the
+group or its deferred writes' ranges bound it — inside the Flush the unit of
+work opened for the flush. It lowers those Planned Steps
 through one shared path — the planner's payload preparer prepares what the
 statement about to run stores, and `m-sql` renders it — executes them through
 the port, and has the unit of work enforce each step's affected rows; for steps
@@ -245,7 +246,7 @@ before an earlier group completes (`m-unit-work` *Shared coverage acquisition*).
 no settled write, and the failure dooms the attempt.
 
 Where the connection holds ordered write transport (`m-db-port`), a run of two
-or more contiguous count-only effects on one row each — temporal closes,
+or more contiguous count-only non-insert steps on one row each — temporal closes,
 guards, revisions, and removals, and Non-Temporal updates and deletes of one
 key that expect an exact count — is presented in one invocation instead of one
 call each; every other step, a multi-key or predicate-selected one included,
@@ -254,9 +255,9 @@ may join a run is decided from the step itself before its payload is demanded,
 including the bound on binds its statement promises to fit the dialect's limit;
 a statement exceeding that promise is a lowering failure. A run never crosses an
 insert or a Write Group, and an internal statement cap ends it before another
-step is even looked at. Before a run's first effect is lowered, execution looks
+step is even looked at. Before a run's first step is lowered, execution looks
 at the step after it, unprepared: where that step cannot join, or no step
-remains, the effect would be its run's only one and runs alone, and the step
+remains, the first would be its run's only one and runs alone, and the step
 looked at waits its turn. Looking at a step reads the sequence it was handed
 and cannot fail; only preparing or lowering a step can. The whole result is validated before any of it
 is interpreted, so a malformed one fails the invocation with the integrity error
@@ -266,18 +267,18 @@ shortfall outranks a later statement failure or interruption, a statement
 failure propagates as itself, and an interruption no earlier outcome overtook
 propagates last. Nothing after the run is lowered before the run is enforced.
 
-Preparing or lowering a later effect of a run may fail ordinarily after earlier
-effects were lowered. The run's lowered prefix is then presented and enforced as
+Preparing or lowering a later step of a run may fail ordinarily after earlier
+steps were lowered. The run's lowered prefix is then presented and enforced as
 it was selected — never lowered again, replayed, or split into calls of its own
 — and that failure propagates only where the prefix succeeds. A failure lowering
-the run's first effect presents nothing, and a control-flow or fatal exception
+the run's first step presents nothing, and a control-flow or fatal exception
 presents none of the prefix.
 
 Ordered transport departs from running each step alone in exactly two ways.
-Later effects of the current run can execute, and take locks, before an earlier
-effect's shortfall is enforced, because a zero-row count is a successful
+Later steps of the current run can execute, and take locks, before an earlier
+step's shortfall is enforced, because a zero-row count is a successful
 statement to the database; the failed Write Group still publishes nothing and
-its attempt rolls back. And a later effect can be lowered before the prefix it
+its attempt rolls back. And a later step can be lowered before the prefix it
 follows is submitted. Rollback, rollback-only state, retry classification of
 the failure that propagates, and the precedence of cancellation and fatal
 exceptions are unchanged.
@@ -293,7 +294,7 @@ room for one more entry within the dialect's bind limit (`m-dialect`) and an
 internal entry cap; at that capacity the statement runs before another step is
 looked at, and otherwise the one step looked at that cannot join waits,
 unprepared, until the statement has run. A run never crosses a Write Group or
-an effect, so no insert moves ahead of an effect before it. A logical
+a non-insert step, so no insert moves ahead of a non-insert step before it. A logical
 multi-entry insert, which batching formed by membership (`m-batch-write`), runs
 alone and is never split or joined; any other insert runs alone as before.
 
@@ -313,13 +314,16 @@ reading anything. A Write Group whose statement fails completes none of its
 settled writes, and its attempt rolls back and becomes rollback-only exactly as
 for any other failure.
 
-A Write Group presents every effect before any insert (`m-unit-work` *Write
-Group formation*), so where two of its settled writes would each fail, the
-failure presented first is the one that propagates: a later write's effect
+A Write Group presents every non-insert step before any insert (`m-unit-work`
+*Write Group formation*), so where two of its writes would each fail, the
+failure presented first is the one that propagates: a later write's affected-row
 shortfall can precede an earlier write's insert violation, and the two can
-differ in retry eligibility. Either way the group completes none of its settled
-writes and its attempt is doomed; which of two independent failures is reported
-is not promised to match executing each settled write alone.
+differ in retry eligibility. Every deferred write of a group binds before the
+group's steps reach execution, so a later write's binding failure likewise
+precedes an earlier write's statement failure (`m-unit-work` *Shared coverage
+acquisition*). Either way the group completes none of its writes and its
+attempt is doomed; which of two independent failures is reported is not
+promised to match executing each write alone.
 
 ## What the suite pins down
 

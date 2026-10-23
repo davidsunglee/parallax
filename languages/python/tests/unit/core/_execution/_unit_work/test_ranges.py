@@ -31,7 +31,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetWrite,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
+from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     CoalescedTemporalWrite,
@@ -66,6 +66,7 @@ from parallax.core.write_plan.plan import (
     SettledWrite,
     TemporalRowCoordinates,
     TemporalWriteOwnership,
+    WriteGroup,
     WritePlan,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
@@ -90,6 +91,7 @@ from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
     HeldRows,
+    alone,
     bind_held,
     coverage_read,
     range_bindings,
@@ -187,7 +189,7 @@ def _deferred(plan: WritePlan) -> tuple[SettledWrite, CoverageReadRequest]:
     (write,) = settled_writes(plan)
     assert write.deferred is not None
     return write, coverage_read(
-        _SPANS, write, transaction_instant=instant_at(_PLANNED_AT.isoformat())
+        _SPANS, plan, transaction_instant=instant_at(_PLANNED_AT.isoformat())
     )
 
 
@@ -200,7 +202,7 @@ def _bind(
 ) -> BoundRange:
     return bind_held(
         _SPANS,
-        settled,
+        alone(settled),
         rows,
         ownership=ownership,
         transaction_instant=transaction_instant or instant_at(_PLANNED_AT.isoformat()),
@@ -507,10 +509,13 @@ def _answering(held: AcquireRows, answers: list[object]) -> AcquireRows:
 
 
 def _scoped(settled: SettledWrite, acquire: AcquireRows) -> RangeBindings:
-    deferred = settled.deferred
-    assert isinstance(deferred, DeferredTemporalRange)
     return range_bindings(
-        _SPANS, deferred, acquire, transaction_instant=instant_at(_PLANNED_AT.isoformat())
+        _SPANS,
+        alone(settled),
+        acquire,
+        start=0,
+        stop=1,
+        transaction_instant=instant_at(_PLANNED_AT.isoformat()),
     )
 
 
@@ -540,7 +545,7 @@ def test_a_flush_leaving_its_bindings_leaves_them_holding_no_row_the_range_read(
 ) -> None:
     settled, _acquisition = _deferred(_plan(_update(_retained(_HEAD), _MAR, _SEP)))
     answers: list[object] = []
-    bound: list[BoundRange] = []
+    bound: list[WriteGroup] = []
     bindings = _scoped(settled, _answering(HeldRows(_SPANS, [_TAIL]), answers))
     with contextlib.suppress(_Failed), bindings:
         for each in bindings:
@@ -552,7 +557,7 @@ def test_a_flush_leaving_its_bindings_leaves_them_holding_no_row_the_range_read(
     assert rows is not None
     assert not reaches([bindings], rows)
     assert next(bindings, None) is None
-    # What the bound range carries is the flush's, and stays usable.
+    # What the bound group carries is the flush's, and stays usable.
     (each,) = bound
     assert _windows(each.steps) == _MERGED
 

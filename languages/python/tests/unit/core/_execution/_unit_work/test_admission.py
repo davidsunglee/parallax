@@ -61,7 +61,7 @@ from parallax.core.write_plan.plan import (
     AllocatedOpening,
     Openings,
     TemporalRowCoordinates,
-    WriteCompletion,
+    WriteEffects,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite
@@ -294,7 +294,7 @@ def test_discard_forgets_every_source_registration_and_insertion() -> None:
     _admit(admission, insertion)
     ownership = admission.ownership
     endpoint = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
-    admission.complete(WriteCompletion(opened=Openings(fresh=(endpoint,))), (), at=1)
+    admission.complete(WriteEffects(opened=Openings(fresh=(endpoint,))), (), at=1)
     admission.discard()
     assert admission.resolve_source(source) == _person(1)
     assert not admission
@@ -315,7 +315,7 @@ def test_completion_publishes_into_the_ownership_planning_borrowed() -> None:
     admission.drain_planned()
     opening = AllocatedOpening(ENTITY, OPEN_BITEMPORAL_ENDS)
     admission.complete(
-        WriteCompletion(changed=_Untraversable(), opened=Openings(allocated=(opening,))),
+        WriteEffects(changed=_Untraversable(), opened=Openings(allocated=(opening,))),
         (42,),
         at=1,
     )
@@ -339,9 +339,7 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
     _admit(admission, InsertionKeyedWrite(_account_amend(9), identity))
     (before,) = admission.composed_writes()
     admission.drain_planned()
-    admission.complete(
-        WriteCompletion(advanced=(VersionedObjectStateKey(_account(9), 1),)), (), at=1
-    )
+    admission.complete(WriteEffects(advanced=(VersionedObjectStateKey(_account(9), 1),)), (), at=1)
     _admit(admission, InsertionKeyedWrite(_account_amend(9), identity))
     (after,) = admission.composed_writes()
     assert isinstance(before, InsertionKeyedWrite) and isinstance(after, InsertionKeyedWrite)
@@ -360,7 +358,7 @@ def _stored_insertion_across_two_rows() -> WriteAdmission:
     admission.drain_planned()
     split = TemporalRowCoordinates(ENTITY, (1,), (Finite(instant=JUN), PLANNED_INFINITY))
     tail = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
-    admission.complete(WriteCompletion(opened=Openings(continued=(split, tail))), (), at=1)
+    admission.complete(WriteEffects(opened=Openings(continued=(split, tail))), (), at=1)
     return admission
 
 

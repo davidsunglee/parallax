@@ -36,7 +36,11 @@ from parallax.core.base import INFINITY as OPEN
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._write import StepPayload, compile_write_step, effect_parameter_ceiling
+from parallax.core.sql_gen._write import (
+    StepPayload,
+    compile_write_step,
+    non_insert_parameter_ceiling,
+)
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
     PredicateSelection,
@@ -329,7 +333,7 @@ def test_a_multi_key_or_predicate_selected_effect_runs_alone() -> None:
     assert isinstance(predicate, PlannedDelete)
     assert ordered_parameter_ceiling(predicate, POSTGRES) is None
     with pytest.raises(SqlGenError, match="not bounded by its shape"):
-        effect_parameter_ceiling(predicate)
+        non_insert_parameter_ceiling(predicate)
 
 
 def test_a_non_temporal_effect_whose_ceiling_exceeds_the_dialect_limit_runs_alone() -> None:

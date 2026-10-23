@@ -71,7 +71,7 @@ __all__ = [
     "InsertStatementBuilder",
     "StepPayload",
     "compile_write_step",
-    "effect_parameter_ceiling",
+    "non_insert_parameter_ceiling",
 ]
 
 type StepPayload = tuple[RowPayload, ...] | AssignmentPayload | None
@@ -158,7 +158,7 @@ def compile_write_step(
             return _lower_milestone_guard(step, meta, dialect)
 
 
-def effect_parameter_ceiling(
+def non_insert_parameter_ceiling(
     step: PlannedClose
     | PlannedTemporalRevision
     | PlannedTemporalRemoval

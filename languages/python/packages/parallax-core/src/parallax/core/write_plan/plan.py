@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Hashable, Iterable, Sequence
+from collections.abc import Generator, Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol
 
@@ -11,6 +11,7 @@ from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedOb
 from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.steps import (
     INFINITY,
+    PlannedInsert,
     PlannedStep,
     PlannedTemporalRevision,
     TemporalUpperBound,
@@ -33,7 +34,7 @@ __all__ = [
     "SettledWrite",
     "TemporalRowCoordinates",
     "TemporalWriteOwnership",
-    "WriteCompletion",
+    "WriteEffects",
     "WriteGroup",
     "WritePlan",
 ]
@@ -233,8 +234,11 @@ NO_OPENINGS: Final[Openings] = Openings()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class WriteCompletion:
-    """What one settled write's success publishes, complete.
+class WriteEffects:
+    """What one write's success publishes, complete: the changes to the
+    attempt's state completion applies once every step of the write's Write
+    Group has succeeded. It is prepared before any step executes and records
+    no execution result.
 
     ``changed`` names every state the write changes, its own source's
     included — an Observed State Key for a versioned or temporal object and an
@@ -260,9 +264,9 @@ class WriteCompletion:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class BoundRange(WriteCompletion):
+class BoundRange(WriteEffects):
     """What a range became once bound to its coverage: the Planned Steps it
-    executes, in order, beside the completion their success publishes."""
+    executes, in order, beside the effects their success publishes."""
 
     steps: tuple[PlannedStep, ...]
 
@@ -277,49 +281,104 @@ class DeferredRange:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SettledWrite(WriteCompletion):
-    """One caller write after settlement in a Write Plan, and the completion
-    its success publishes.
+class SettledWrite(WriteEffects):
+    """One caller write after settlement in a Write Plan, and the effects its
+    success publishes.
 
-    Its completion is published only once every step of its Write Group has
+    Its effects are published only once every step of its Write Group has
     succeeded, and before any later group executes. Removals are retired before
     openings are registered, so a row removed and reopened at the same
     coordinates remains owned, and an insertion whose last row the write
     removed still stands when a row the write opened continues it.
 
-    A settled write with a ``deferred`` range has no planned step of its own:
-    its steps and completion come from binding that range at its turn.
+    A settled write with a ``deferred`` range is a plan entry of its own and
+    has no planned step: its steps and effects come from binding that range,
+    and the group it executes in is formed only once it is bound.
     """
 
     deferred: DeferredRange | None = None
 
 
+type _Member = tuple[WriteEffects, tuple[PlannedStep, ...]]
+
+
 @dataclass(frozen=True, slots=True)
 class WriteGroup:
-    """Settled writes that execute and complete together.
+    """Writes that execute and complete together.
 
-    ``steps`` holds their planned steps in execution order. Each of ``writes``
+    ``steps`` holds their steps in execution order. Each of ``writes``
     completes, in order, only once every one of ``steps`` has succeeded, and
     before any step of a later group executes, so no write of a group may
-    depend on another's completion. A deferred write's range binds and executes
-    at its turn, after the group's steps.
+    depend on another's completion.
     """
 
-    writes: tuple[SettledWrite, ...]
+    writes: tuple[WriteEffects, ...]
     steps: tuple[PlannedStep, ...]
 
     def __post_init__(self) -> None:
         if not self.writes:
-            raise ValueError("a Write Group holds at least one settled write")
+            raise ValueError("a Write Group holds at least one write")
+
+    @classmethod
+    def from_members(cls, members: Iterable[_Member]) -> WriteGroup:
+        """The group of each write ``members`` pairs with its own steps, in
+        order: every write's non-insert steps, then every write's inserts, each
+        write's own order kept within both. One member keeps its own steps.
+
+        ``members`` is consumed as it yields, and a second is asked for only
+        once the first is in hand. Where it or the layout fails, the members
+        taken are released here and a suspended producer of them is closed.
+        """
+        source = iter(members)
+        member: _Member | None = None
+        following: _Member | None = None
+        assembly: tuple[list[WriteEffects], list[PlannedStep], list[PlannedStep]] | None = None
+        try:
+            member = next(source, None)
+            if member is None:
+                raise ValueError("a Write Group holds at least one write")
+            following = next(source, None)
+            if following is None:
+                return cls((member[0],), member[1])
+            writes: list[WriteEffects] = []
+            non_inserts: list[PlannedStep] = []
+            inserts: list[PlannedStep] = []
+            assembly = (writes, non_inserts, inserts)
+            while member is not None:
+                writes.append(member[0])
+                _partition(member[1], non_inserts, inserts)
+                member, following = following, None
+                if member is None:
+                    member = next(source, None)
+            non_inserts.extend(inserts)
+            return cls(tuple(writes), tuple(non_inserts))
+        except BaseException:
+            member = following = None
+            if assembly is not None:
+                for held in assembly:
+                    held.clear()
+            if isinstance(source, Generator):
+                source.close()
+            raise
+
+
+def _partition(
+    steps: Iterable[PlannedStep], non_inserts: list[PlannedStep], inserts: list[PlannedStep]
+) -> None:
+    for step in steps:
+        if isinstance(step, PlannedInsert):
+            inserts.append(step)
+        else:
+            non_inserts.append(step)
 
 
 @dataclass(frozen=True, slots=True)
 class AcquisitionSpan:
-    """The Write Groups ``[start, stop)`` of a plan, at least two, each the
-    group of one deferred settled write, whose coverage is acquired together
-    (`m-unit-work` *Shared coverage acquisition*). It permits shared
-    acquisition only: every write still binds, executes, and completes at its
-    own group's turn."""
+    """The entries ``[start, stop)`` of a plan, at least two, each one deferred
+    settled write, whose coverage is acquired together (`m-unit-work` *Shared
+    coverage acquisition*). Each write binds once the coverage it needs is read,
+    and the leading ready writes of what remains execute and complete as one
+    Write Group."""
 
     start: int
     stop: int
@@ -327,13 +386,14 @@ class AcquisitionSpan:
 
 @dataclass(frozen=True, slots=True)
 class WritePlan:
-    """One flush's finalized Write Groups, in execution order, and the
-    acquisition spans among them, in order and never overlapping.
+    """One flush's finalized writes in execution order, and the acquisition
+    spans among them, in order and never overlapping.
 
-    A plan of no group is the one canonical result for complete cancellation or
-    known no-op elimination; there is no empty-plan sentinel and no second
-    result variant.
+    Each of ``entries`` is a Write Group, or one deferred settled write, which
+    is grouped only once it is bound. A plan of no entry is the one canonical
+    result for complete cancellation or known no-op elimination; there is no
+    empty-plan sentinel and no second result variant.
     """
 
-    groups: tuple[WriteGroup, ...] = ()
+    entries: tuple[WriteGroup | SettledWrite, ...] = ()
     acquisition_spans: tuple[AcquisitionSpan, ...] = ()

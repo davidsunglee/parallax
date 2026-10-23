@@ -844,26 +844,29 @@ fact about a settled write is decided twice.
 ### Write Plan and Planned Steps
 
 ```text
-WritePlan(groups: WriteGroups, acquisition_spans: AcquisitionSpans)
+WritePlan(entries: PlanEntries, acquisition_spans: AcquisitionSpans)
 
-WriteGroups: an immutable, ordered, possibly empty sequence of Write Groups
-WriteGroup(writes: SettledWrites, steps: PlannedSteps)
-SettledWrites: the group's settled writes in order, at least one, each with the
-    completion its success publishes: the states it changes, advances, and
-    destroys, the temporal rows it derives from its predecessors, the
-    attempt-owned rows it removes and opens, and the current rows it leaves
+PlanEntries: an immutable, ordered, possibly empty sequence, each entry one
+    Write Group or one deferred settled write
+WriteGroup(writes: Writes, steps: PlannedSteps)
+Writes: the group's writes in order, at least one, each with the effects its
+    success publishes: the states it changes, advances, and destroys, the
+    temporal rows it derives from its predecessors, the attempt-owned rows it
+    removes and opens, and the current rows it leaves
 PlannedSteps: the immutable, ordered, possibly empty sequence of Planned Steps
-    the group's settled writes execute, indexable and repeatable
+    the group's writes execute, indexable and repeatable
 AcquisitionSpans: the immutable, ordered, possibly empty sequence of
-    non-overlapping half-open ranges of Write Group positions whose deferred
-    settled writes share coverage acquisition (*Shared coverage acquisition*)
+    non-overlapping half-open ranges of entry positions whose deferred settled
+    writes share coverage acquisition (*Shared coverage acquisition*)
 ```
 
 A **Write Plan** is the immutable, **execution-ordered** result of one planning
-call: a sequence of **Write Groups**, each owning its Planned Steps and the
-settled writes they belong to. Its Planned Steps contain every Planned Step that
-survives coalescing, cancellation, and known no-op elimination, with temporal
-topology and correctness semantics already decided.
+call: a sequence of entries, each a **Write Group** owning its Planned Steps and
+the settled writes they belong to, or one deferred settled write, which no
+planned group holds: execution forms the Write Group it runs in once its range
+binds (*Shared coverage acquisition*). Its Planned Steps contain every Planned
+Step that survives coalescing, cancellation, and known no-op elimination, with
+temporal topology and correctness semantics already decided.
 
 - A Write Plan **MUST NOT** retain a Transaction Instant, a raw Write
   Observation, the transaction's Concurrency Preference, an Actor Identity, a strategy
@@ -883,9 +886,9 @@ topology and correctness semantics already decided.
   else. Carrying an operation is therefore not what makes something a producer —
   advancing an observed version by an already-fixed step is the strategy's
   settled answer restated, not a fresh decision.
-- A plan of **no** Write Group is the one canonical result for complete
-  cancellation or known no-op elimination. There is no empty-plan sentinel and no
-  second result variant.
+- A plan of **no** entry is the one canonical result for complete cancellation
+  or known no-op elimination. There is no empty-plan sentinel and no second
+  result variant.
 - A **deferred settled write** is the one exception to fully expanded topology. A
   temporal object's observed writes whose requested Valid-Time range reaches
   current coverage no planning input observed (`m-temporal-write` *Observed writes
@@ -898,14 +901,17 @@ topology and correctness semantics already decided.
   already covered (*Row acquisition*) — at that turn, or earlier through its
   acquisition span's shared reads (*Shared coverage acquisition*), inside the
   flush either way and under `m-read-lock`'s shared lock when the effective
-  strategy is Locking — and at that turn it binds those rows, or the absence of
-  any, with the observed ones into the write's physical steps before they run.
-  Temporal meaning, concurrency, and gates are fixed when planning returns, and
-  binding never recaptures the instant or consults the model: only the physical
-  enumeration waits, for the rows read and for the Attempt Ownership and
-  source continuation every earlier settled write published. Binding audits each row
-  it produces and each close it emits once, as stage 8 does for a write settled
-  at planning, changing no topology or gate. A range whose observed rows already cover it
+  strategy is Locking — and at its group's turn it binds those rows, or the
+  absence of any, with the observed ones into the write's physical steps, before
+  any step of the Write Group it runs in executes. Temporal meaning,
+  concurrency, and gates are fixed when planning returns, and binding never
+  recaptures the instant or consults the model: only the physical enumeration
+  waits, for the rows read and for the Attempt Ownership and source continuation
+  every earlier Write Group published. Binding reads the one Attempt Ownership
+  view its flush planned under (*Write Groups complete before later work runs*).
+  Binding audits each row it produces and each close it emits once, as stage 8
+  does for a write settled at planning, changing no topology or gate. A range
+  whose observed rows already cover it
   settles at planning like any other write. A target temporal write is
   such a range whatever it composes with, unless observed rows of its
   composition cover its window; its meaning also carries the caller's starting
@@ -927,9 +933,9 @@ topology and correctness semantics already decided.
   rather than allocating one container per step; every exposed view is
   immutable and stable, and equal views need not have object identity.
 - Each settled write — one keyed write with its expanded temporal topology, or
-  one batch — retains its own completion facts,
-  produced values like its steps, and belongs to exactly one Write Group. A
-  deferred settled write's group plans no step of its own.
+  one batch — retains its own completion facts, produced values like its steps,
+  and executes in exactly one Write Group: the plan's group holding it, or, for a
+  deferred settled write, the group its binding forms.
 
 ### Write Group formation
 
@@ -947,39 +953,54 @@ objects they write are distinct:
   keyed, composed, or step-less write names. A write naming an object the open
   group already holds starts the next group.
 - A group holds at most 64 settled writes, so a group's inserts wait behind the
-  effects of at most that many settled writes, however many the flush holds.
-- A deferred settled write, a write whose insert the database allocates a key
-  for, and a write naming no complete key — an insert whose key is absent or
-  database-computed — each form a group of their own.
+  non-insert steps of at most that many settled writes, however many the flush
+  holds.
+- A write whose insert the database allocates a key for, and a write naming no
+  complete key — an insert whose key is absent or database-computed — each form
+  a group of their own.
+- A deferred settled write is a plan entry of its own, in no planned group: the
+  group it executes in forms when it binds, from the ready writes of its
+  acquisition span, or from it alone outside any span (*Shared coverage
+  acquisition*).
 - A settled write with no step joins like any other and completes with its group.
 
-A group's Planned Steps are every settled write's effects — each step that is
-not an insert — followed by every settled write's inserts, each write's own
-order kept within both. An update- or delete-phase write's inserts open the
-successors of its own effects, and an insert-phase write produces only inserts,
-so the layout moves only successors, and only past other objects' steps: no
-insert moves behind an effect of another mutation phase. Nothing else is
-reordered: the phases, the referential order, and the authored order of updates
-are stage 4's, and no key sort applies. As it forms the groups, settlement also
-records which consecutive groups of deferred settled writes share coverage
-acquisition (*Shared coverage acquisition*); that record reorders and regroups
-nothing.
+A group's Planned Steps are every write's non-insert steps — each step that is
+not an insert — followed by every write's inserts, each write's own order kept
+within both. An update- or delete-phase write's inserts open the successors of
+its own non-insert steps, and an insert-phase write produces only inserts, so
+the layout moves only successors, and only past other objects' steps: no insert
+moves behind a non-insert step of another mutation phase. A group of bound
+deferred writes is laid out the same way. Nothing else is reordered: the phases,
+the referential order, and the authored order of updates are stage 4's, and no
+key sort applies. As it forms the groups, settlement also records which
+consecutive deferred settled writes share coverage acquisition (*Shared coverage
+acquisition*); that record reorders nothing.
 
 ### Write Groups complete before later work runs
 
-The unit of work runs a finalized Write Plan Write Group by Write Group, in
-order. It hands each sequence of Planned Steps — a Write Group's planned steps,
-or the steps a deferred settled write's range bound — to the step-execution
-port, which executes every step of the sequence and has its effect enforced. As
-soon as every step of a group has succeeded — at once for a group with no step
-— and before any step of a later group executes, the unit of work completes
-every settled write of the group synchronously, in order; a deferred settled
-write binds and executes its range at its turn first. A coverage read is no
-step: within an acquisition span a later write's coverage can be read before an
+The unit of work runs a finalized Write Plan entry by entry, in order, Write
+Group by Write Group: a planned group as settlement formed it, and a deferred
+settled write in the group its binding forms (*Shared coverage acquisition*),
+every write of which binds before any step of the group executes. It hands each
+group's Planned Steps to the step-execution port as one sequence, which executes
+every step of the sequence and has its effect enforced. As soon as every step
+of a group has succeeded — at once for a group with no step — and the keys the
+database allocated are as many as the group's writes open, and before any step
+of a later group executes or any later write binds, the unit of work completes
+every write of the group synchronously, in order. A coverage read is no step:
+within an acquisition span a later write's coverage can be read before an
 earlier group completes, while its binding, steps, and completion still wait
-for its own turn (*Shared coverage acquisition*). No settled write of a
-group depends on another's completion, because their objects are distinct
-(*Write Group formation*). Completing a settled write:
+for its own group's turn (*Shared coverage acquisition*). No write of a group
+depends on another's completion, because their objects are distinct (*Write
+Group formation*).
+
+A flush plans and binds its deferred settled writes under one Attempt Ownership
+view, chosen once for the flush: the attempt's live ownership for a
+read-dependency or predicate-write flush, and for the pre-commit flush the
+same live ownership demanding nothing a write leaves for a source, so neither
+its planning nor its binding describes a continuation it would discard. Either
+view reads every completion earlier groups published. Completing a settled
+write:
 
 ```text
 record every state the settled write changed, invalidating its observations
@@ -1007,11 +1028,13 @@ Removals are retired before openings
 are registered, so a row removed and reopened at one physical address remains
 owned, and an insertion whose last tagged row the settled write removed still
 stands when a row the settled write opened is tagged with it. Nothing is
-published for a group whose steps did not all succeed, nor for a settled write
-whose range did not bind and execute; such a failure dooms the attempt
-(*Abort*). Completion therefore happens per Write Group, not at the end of the
-flush: a later group, and any read the flush serves, observes the earlier
-groups' published effects.
+published for a group whose steps did not all succeed, nor for any write of a
+group one of whose writes did not bind; such a failure dooms the attempt
+(*Abort*). A failure completing one write of a group leaves the writes completed
+before it published, completes none after it, and dooms the attempt.
+Completion therefore happens per Write Group, not at the end of the flush: a
+later group, and any read the flush serves, observes the earlier groups'
+published effects.
 
 A completed temporal settled write also records, for each predecessor it
 transformed that a temporal source still reaches — an observed state some live
@@ -1041,24 +1064,32 @@ whose writes continues from another, records none.
 
 ### Shared coverage acquisition
 
-An **acquisition span** is a run of at least two and at most 32 consecutive Write
-Groups, each the group of one deferred settled write of a Bitemporal Entity that
-names its one complete Object Key, a key the database does not allocate. Its
-writes belong to one mutation phase, target one concrete Entity — so one key
-attribute and one member selection — and either all take the shared lock their
-coverage read takes under Locking or none do. Each names an object no earlier
-write of the span names under its Inheritance Family's primary key. A span never
-skips a group: any other group, a group of another Entity or lock requirement, a
-repeated object, a phase boundary, or the bound ends it, and the next eligible
+An **acquisition span** is a run of at least two and at most 32 consecutive plan
+entries, each one deferred settled write of a Bitemporal Entity that names its
+one complete Object Key, a key the database does not allocate. Its writes belong
+to one mutation phase, target one concrete Entity — so one key attribute and one
+member selection — and either all take the shared lock their coverage read
+takes under Locking or none do. Each names an object no earlier write of the
+span names under its Inheritance Family's primary key. A span never skips an
+entry: any Write Group, a deferred write of another Entity or lock requirement,
+a repeated object, a phase boundary, or the bound ends it, and the next eligible
 write may start another. A deferred write outside any span, a
-Transaction-Time-Only one included, acquires its coverage alone at its turn.
+Transaction-Time-Only one included, acquires its coverage alone at its turn and
+executes as a Write Group of its own.
 
-A span grants acquisition permission, not execution grouping. Each write still
-owns its Write Group, binds against the rows read and the Attempt Ownership
-every earlier write published, executes, and completes at its own turn, in
-order (*Write Groups complete before later work runs*). A deferred dependency
-is not coverage: no write's coverage is read before an earlier write of its own
-object completes, because that write ends the span first.
+A span grants acquisition permission; its execution groups follow readiness.
+Whenever the span's first remaining write is ready, the unit of work binds it
+and each consecutive ready write after it, up to the first that is not, as one
+Write Group laid out as *Write Group formation* lays out any group; it executes
+and completes that group before binding any later write or reading any further
+statement (*Write Groups complete before later work runs*). The span's bound of
+32 writes keeps every such group within the 64-write bound, and no statement is
+read, and no ready group delayed, to enlarge a group. Each write binds against
+the rows read and the Attempt Ownership every earlier group published; the
+writes of one group name distinct objects, so none binds against another's
+completion. A deferred dependency is not coverage: no write's coverage is read
+before an earlier write of its own object completes, because that write ends
+the span first.
 
 When the flush reaches a span's first write, the unit of work, before binding
 any write of the span or reading any of its coverage, completes every
@@ -1069,8 +1100,8 @@ parts once. It reads those parts in shared coverage statements (`m-sql`
 Valid-Time order. A write is **ready** once every statement naming its parts has
 succeeded, whatever those statements returned; a write with no uncovered part
 needs no statement, takes no lock, and is ready at once. Before reading each
-statement, the flush binds, executes, and completes, one after another, every
-leading write of the span that is ready; a ready write never passes a write
+statement, the flush binds every leading write of the span that is ready as one
+group, then executes and completes it; a ready write never passes a write
 before it that is not. A statement is read only while the span's next write is
 not ready, and no statement is read once every write of the span is.
 
@@ -1090,17 +1121,23 @@ That timing deliberately qualifies acquisition at each write's own turn:
   once. A statement's failure, or an invalid stored row it returns, precedes the
   binding and execution of every write still waiting for that statement, an
   earlier write's included; which of several invalid rows one statement returns
-  is reported is not promised. A ready write's binding or execution failure
-  precedes every statement the span would read after it. Writes that completed
-  before a later statement failed stay published until the doomed attempt ends
-  (*Abort*), and no waiting write binds or executes after any failure.
-  Classification, retry eligibility, and rollback are the encountered failure's
-  own (`m-db-error`, `m-auto-retry`); because which of two independent failures
-  is encountered can differ from acquisition at each write's turn, so can they.
+  is reported is not promised. Every write of a ready group binds and audits
+  before any of the group's steps executes, so a later write's binding failure
+  precedes an earlier write's statement failure, and the group's non-insert
+  steps precede its inserts, so a later write's affected-row shortfall can
+  precede an earlier write's insert violation (`m-execution` *Flush
+  execution*). A ready group's binding or execution failure completes none of
+  its writes and precedes every statement the span would read after it. Writes
+  that completed before a later statement or group failed stay published until
+  the doomed attempt ends (*Abort*), and no waiting write binds or executes
+  after any failure. Classification, retry eligibility, and rollback are the
+  encountered failure's own (`m-db-error`, `m-auto-retry`); because which of two
+  independent failures is encountered can differ from acquisition, binding, and
+  execution at each write's own turn, so can they.
 
 Each shared statement is one read Database Call of the enclosing flush; the
-flush adds no activity, call, or record per span or per write for it
-(`m-execution-lifecycle`).
+flush adds no activity, call, or record per span, per group, or per write for
+it (`m-execution-lifecycle`).
 
 ## Planned Steps and State Observations
 
