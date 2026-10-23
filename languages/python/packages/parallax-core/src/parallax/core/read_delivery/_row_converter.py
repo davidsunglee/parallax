@@ -12,13 +12,13 @@ from parallax.core.base import (
     NeutralType,
 )
 from parallax.core.db_port import Row
+from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.document_codec import locate_raw_entity_member
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Occurrence,
-    ValueObjectMetadata,
 )
 from parallax.core.read_delivery._convert import EntityReadMapping, register_reduced_row
 from parallax.core.read_delivery._page import ABSENT, LogicalKey, PageBuilder, SourceLevel
@@ -257,16 +257,18 @@ def _row_operation(
 def bind(
     model: CatalogedModel,
     contract: ResultContract,
-    projected_documents: tuple[ValueObjectMetadata, ...],
+    projection: ResolvedReadProjection,
     *,
     correlation_members: tuple[AttributeIdentity, ...] = (),
 ) -> ReadRowConverter:
-    """Bind one compiled read's ``contract`` and ``projected_documents`` to
+    """Bind one compiled read's ``contract`` and resolved ``projection`` to
     ``model``: one mapping per Entity its rows can resolve to.
 
     Paid once per compiled read, which is where the state belongs — the member
-    layouts are the model's and the projected documents and Attribute contracts
-    are this statement's, and no row of the read can change either.
+    layouts are the model's and the projected occurrences and Attribute
+    contracts are this statement's, and no row of the read can change either.
+    An occurrence is projected exactly where ``projection`` selects its
+    identity, including for an Entity outside the read's position.
     ``correlation_members`` are the members this read's rows route by; a read
     routed by a different selection is bound separately.
     """
@@ -275,7 +277,7 @@ def bind(
         MappingProxyType(
             {
                 identity: _entity_read_mapping(
-                    model, identity, contract, projected_documents, correlation_members
+                    model, identity, contract, projection, correlation_members
                 )
                 for identity in contract.resolvable
             }
@@ -287,7 +289,7 @@ def _entity_read_mapping(
     model: CatalogedModel,
     identity: EntityIdentity,
     contract: ResultContract,
-    projected_documents: tuple[ValueObjectMetadata, ...],
+    projection: ResolvedReadProjection,
     correlation_members: tuple[AttributeIdentity, ...],
 ) -> EntityReadMapping:
     layout = model.layouts.entity(identity)
@@ -299,7 +301,7 @@ def _entity_read_mapping(
     classified, ordinals, classifiers, locations = member_sources(contract, identity, keys)
     return EntityReadMapping(
         layout,
-        projected_documents,
+        projection,
         reads,
         classified,
         keys,

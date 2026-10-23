@@ -35,14 +35,24 @@ import datetime as dt
 import decimal
 import gc
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from types import MappingProxyType
 from typing import Any, Final, cast
 
 import pytest
 
-from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Rel, ValueObject, attr, rel
+from parallax.core import (
+    ONE_TO_MANY,
+    Attr,
+    DomainModel,
+    Entity,
+    Rel,
+    ValueObject,
+    attr,
+    deep_fetch,
+    rel,
+)
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import Row
@@ -72,6 +82,7 @@ from parallax.core.read_delivery._page import (
 from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.read_delivery._row_decoding import row_identity
 from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.temporal_read import (
     Bitemporal,
     Pin,
@@ -96,6 +107,7 @@ from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publication_issue, publish_roots
 from tests._support.sql import compile_read
 from tests.unit import _milestone_rows_support as milestone_rows
+from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import columns_model
@@ -651,6 +663,96 @@ def test_a_row_publisher_views_a_projected_occurrence_in_place() -> None:
         "founder",
         {"port": "Oslo"},
     )
+
+
+# --------------------------------------------------------------------------- #
+# A read binds the occurrences it fetched by identity, never by spelling.      #
+# --------------------------------------------------------------------------- #
+_HOME: Final = PresentDocument({"home": {"city": "Oslo"}, "origin": {"city": "Rome"}})
+
+
+def _matrix_row(strategy: projection_support.Strategy, concrete: str) -> dict[str, object]:
+    """One stored ``concrete`` row of the ``Document``-layout matrix family."""
+    identity = {"kind": concrete.lower()} if strategy == "tph" else {"family_variant": concrete}
+    return {"id": 1, **identity, "holder_id": None, "payload": _HOME}
+
+
+@pytest.mark.parametrize("strategy", projection_support.STRATEGIES)
+def test_a_sibling_occurrence_of_the_same_spelling_is_not_bound_by_that_spelling(
+    strategy: projection_support.Strategy,
+) -> None:
+    # `Left.home` and `Right.home` are distinct occurrences that both store under
+    # `home`. A read fetching only `Left`'s judges `Left`'s, and leaves the
+    # sibling's unread although its rows carry a document holding that key.
+    root = projection_support.MATRIX_FAMILIES[(strategy, "document")]["Root"]
+    (left_home,) = projection_support.matrix_entity(
+        strategy, "document", "Left"
+    ).declared_value_objects
+    planned = deep_fetch.plan_root(
+        projection_support.resolved(root.where(root.all)),
+        projection_support.MATRIX_META,
+        projection=deep_fetch.ReadProjectionRequest("all", True),
+    )
+    query = replace(planned, projection=deep_fetch.ResolvedReadProjection((left_home,), True))
+    compiled = compile_entity_query(
+        query, projection_support.MATRIX_META, POSTGRES, result_form="instance"
+    )
+    prepared = partial(bound_cells, CatalogedModel(projection_support.MATRIX_META), compiled)
+
+    left = _converted(prepared, _matrix_row(strategy, "Left"))
+    right = _converted(prepared, _matrix_row(strategy, "Right"))
+
+    assert (left.concrete.name, right.concrete.name) == ("Left", "Right")
+    assert "home" in left.members
+    assert "home" not in right.members
+    assert "origin" not in left.members
+    assert left.issues == right.issues == ()
+
+
+def _narrowed_matrix_row(layout: projection_support.Layout, concrete: str) -> dict[str, object]:
+    if layout == "document":
+        return _matrix_row("tph", concrete)
+    # The narrowed statement projects `Left`'s Column alone, which a sibling's
+    # row leaves null.
+    spot = PresentDocument({"city": "Rome"})
+    home = spot if concrete == "Left" else SQL_NULL
+    return {"id": 1, "kind": concrete.lower(), "holder_id": None, "origin": spot, "home": home}
+
+
+@pytest.mark.parametrize("layout", projection_support.LAYOUTS)
+def test_a_row_outside_a_narrowed_position_binds_no_occurrence_the_narrow_left_out(
+    layout: projection_support.Layout,
+) -> None:
+    # A narrowed table-per-hierarchy read can still be handed a sibling's row,
+    # and its demand names `Left.home` but never `Right.home`. Under `Columns`
+    # the whole family's tag map resolves the row to its sibling, which binds its
+    # inherited occurrence alone. A per-concrete shared document keys the tag map
+    # by the position instead, so under `Document` the same row is an unknown tag,
+    # resolved to the family root and reported.
+    meta = projection_support.MATRIX_META
+    narrowed = compile_read(
+        oa.TrueNode(),
+        meta,
+        POSTGRES,
+        projection_support.matrix_entity("tph", layout, "Root"),
+        narrow_to=(projection_support.matrix_entity("tph", layout, "Left").identity,),
+        result_form="instance",
+    )
+    prepared = partial(bound_cells, CatalogedModel(meta), narrowed)
+
+    left = _converted(prepared, _narrowed_matrix_row(layout, "Left"))
+    sibling = _converted(prepared, _narrowed_matrix_row(layout, "Right"))
+
+    assert left.concrete.name == "Left"
+    assert {"home", "origin"} <= set(left.members)
+    assert "home" not in sibling.members
+    if layout == "columns":
+        assert sibling.concrete.name == "Right"
+        assert "origin" in sibling.members
+        assert sibling.issues == ()
+    else:
+        assert sibling.concrete.name == "Root"
+        assert [issue.code for issue in sibling.issues] == ["stored-data-family-tag-unknown"]
 
 
 # --------------------------------------------------------------------------- #

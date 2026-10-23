@@ -290,7 +290,7 @@ def convert_rows(
     """Convert ``rows`` into ``builder``, reporting each one while it is still live.
 
     ``converter`` is the read those provider rows convert and are observed
-    under: the layout, projected documents, and attribute contracts a row needs
+    under: the layout, projected occurrences, and attribute contracts a row needs
     were derived when that read was bound, so nothing here re-derives what the
     statement projected.
 
@@ -395,7 +395,7 @@ class PageReader:
         self.observer.statement_rendered(ROOT_LEVEL)
         rows = read()
         self.observer.statement_executed(ROOT_LEVEL, len(rows))
-        converter = converter or bind(model, compiled.result_contract, compiled.projected_documents)
+        converter = converter or bind(model, compiled.result_contract, compiled.projection)
         builder = PageBuilder(ViewSchema.of(), _page_observer(self.observer))
         converted = tuple(converter.convert_row(row, builder, source=ROOT_LEVEL) for row in rows)
         return FlatPageResult(

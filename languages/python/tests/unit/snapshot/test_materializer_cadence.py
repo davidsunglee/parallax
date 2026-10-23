@@ -107,7 +107,7 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
                 stage,
                 meta,
                 CONCURRENCY,
-                bind(model, compiled.result_contract, compiled.projected_documents).row_publisher(),
+                bind(model, compiled.result_contract, compiled.projection).row_publisher(),
             )
         )
         == 2
@@ -152,7 +152,7 @@ def test_eager_row_publication_withholds_events_when_a_later_root_fails(
             stage,
             meta,
             CONCURRENCY,
-            bind(model, compiled.result_contract, compiled.projected_documents).row_publisher(),
+            bind(model, compiled.result_contract, compiled.projection).row_publisher(),
         )
 
     assert [event for event in observer.events if event[0] == "root_published"] == []

@@ -508,7 +508,7 @@ def _plan_uncached(
             bind(
                 model,
                 work.compiled.result_contract,
-                work.compiled.projected_documents,
+                work.compiled.projection,
                 correlation_members=correlations[index + 1],
             )
             if isinstance(work, CompiledTemplate)
@@ -538,7 +538,7 @@ def _plan_uncached(
         else bind(
             model,
             root.result_contract,
-            root.projected_documents,
+            root.projection,
             correlation_members=correlations[0],
         ),
         schema,

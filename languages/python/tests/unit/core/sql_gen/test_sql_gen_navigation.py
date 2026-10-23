@@ -34,7 +34,12 @@ from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._context import StatementBuilder
 from parallax.core.sql_gen._planning import EvaluationContext, StatementPlan, plan_statement
 from parallax.core.sql_gen._predicate import EntityRowScope, render_predicate, render_shared_sources
-from tests._support.sql import compile_read, compile_write_predicate, resolved_as_stated
+from tests._support.sql import (
+    compile_read,
+    compile_write_predicate,
+    read_position,
+    resolved_as_stated,
+)
 from tests.unit._corpus_model_support import formed, model, target
 from tests.unit.core.sql_gen._badge_model_support import badge_model
 from tests.unit.core.sql_gen._dormant_model_support import dormant_target_model
@@ -1700,6 +1705,7 @@ def test_one_quantifier_object_in_two_predicate_slots_reads_each_slot_s_own_cell
         deep_fetch.PlannedEntityQuery(
             target=basket.identity,
             entity=basket,
+            position=read_position(family, basket),
             predicate=_closed(ResolvedAnd((quantifier, quantifier))),
             projection=deep_fetch.ResolvedReadProjection((), False),
         ),

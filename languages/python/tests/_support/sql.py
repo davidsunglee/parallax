@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal
 
-from parallax.core import deep_fetch
+from parallax.core import deep_fetch, inheritance
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.inheritance import InheritancePositionView
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.navigate import (
     NoRootSelections,
@@ -74,23 +75,26 @@ def compile_projected_read(
     dialect: Dialect,
     target: EntityMetadata,
     *,
-    include_value_objects: Literal[True] | frozenset[str],
+    value_objects: Literal["none", "all"] | frozenset[str],
+    observe_structured_document: bool,
+    narrow_to: tuple[EntityIdentity, ...] | None = None,
+    result_form: Literal["row", "instance"] = "row",
     temporal: Mapping[TemporalDimension, TemporalSelection] | None = None,
 ) -> CompiledRead:
-    """Compile a row-form read of ``target`` widened to ``include_value_objects``,
-    a projection no read plan requests: every declared member, as a materializing
-    predicate write's resolving read takes it, or a named subset."""
-    projection = deep_fetch.ReadProjectionRequest(
-        "all" if include_value_objects is True else include_value_objects,
-        include_value_objects is True,
-    )
+    """Compile ``target``'s read under an explicit internal projection request,
+    planned as deep fetch plans the root and published in ``result_form``,
+    neither of which widens the other: every declared member, as a predecessor
+    read takes it, a named subset, or none."""
+    projection = deep_fetch.ReadProjectionRequest(value_objects, observe_structured_document)
     return compile_entity_query(
-        deep_fetch.plan(
-            _validated(predicate, model, target, temporal=temporal), model, projection=projection
-        ).root,
+        deep_fetch.plan_root(
+            _validated(predicate, model, target, narrow_to=narrow_to, temporal=temporal),
+            model,
+            projection=projection,
+        ),
         model,
         dialect,
-        result_form="row",
+        result_form=result_form,
     )
 
 
@@ -115,6 +119,19 @@ def _validated(
         limit=limit,
     )
     return validate_object_query(target, query, model)
+
+
+def read_position(
+    model: Metamodel,
+    target: EntityMetadata,
+    narrow_to: tuple[EntityIdentity, ...] | None = None,
+) -> InheritancePositionView:
+    """The inheritance owner's position for a hand-built read of ``target``:
+    its own view, or the one ``narrow_to`` resolves to."""
+    facet = inheritance.view(model)
+    position = facet.entity(target.identity) if narrow_to is None else facet.position(narrow_to)
+    assert position is not None
+    return position
 
 
 def compile_write_predicate(

@@ -13,6 +13,7 @@ from parallax.core.base import (
     UnknownFamilyTag,
     check_stored_scalar,
 )
+from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.document_codec import (
     UNAVAILABLE,
     DocumentFinding,
@@ -35,7 +36,6 @@ from parallax.core.metamodel import (
     PrimaryKey,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
-    ValueObjectMetadata,
 )
 from parallax.core.read_delivery._evidence import freeze_evidence
 from parallax.core.read_delivery._page import (
@@ -86,7 +86,7 @@ class EntityReadMapping:
     """
 
     layout: EntityLayout
-    documents: InitVar[tuple[ValueObjectMetadata, ...]]
+    projection: InitVar[ResolvedReadProjection]
     attribute_reads: tuple[AttributeReadContract, ...]
     classified_members: frozenset[str]
     result_keys: tuple[str, ...]
@@ -106,7 +106,7 @@ class EntityReadMapping:
 
     def __post_init__(
         self,
-        documents: tuple[ValueObjectMetadata, ...],
+        projection: ResolvedReadProjection,
         correlation_members: tuple[MemberIdentity, ...],
     ) -> None:
         layout = self.layout
@@ -120,9 +120,9 @@ class EntityReadMapping:
         ):
             raise ValueError("an entity read mapping's member sources must align with its members")
         object.__setattr__(self, "concrete_entity", layout.concrete)
-        projected = frozenset(member.storage.name for member in documents)
         projected_by_position = tuple(
-            occurrence.storage.name in projected for occurrence in layout.occurrences
+            projection.includes_value_object(occurrence.identity)
+            for occurrence in layout.occurrences
         )
         object.__setattr__(self, "projected_by_position", projected_by_position)
         direct_ordinals = tuple(ordinal for ordinal in self.result_ordinals if ordinal is not None)

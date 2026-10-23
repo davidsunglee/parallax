@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -81,6 +81,7 @@ from parallax.core.predicate._resolved import (
 from parallax.core.sql_gen._compile import compile_read, compile_template
 from parallax.core.temporal_read import Bitemporal, TimeInterval, perspective_terms
 from parallax.core.temporal_read import view as temporal_view
+from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -1565,3 +1566,156 @@ def test_a_back_reference_to_an_empty_position_names_its_declared_targets_family
     assert back_reference.family == EntityIdentity("parallax.compatibility", expected_family)
     assert _position(plan, back_reference).target == ()
     assert _position(plan, plan.fetch_steps[0]).source == ()
+
+
+# --------------------------------------------------------------------------- #
+# Every planned read carries its effective position and the demand resolved   #
+# against it.                                                                  #
+# --------------------------------------------------------------------------- #
+_MATRIX = projection_support.MATRIX_META
+_ALL = deep_fetch.ReadProjectionRequest("all", True)
+_NONE = deep_fetch.ReadProjectionRequest("none", False)
+_STRATEGIES = pytest.mark.parametrize("strategy", projection_support.STRATEGIES)
+
+
+def _matrix(strategy: projection_support.Strategy, name: str) -> Any:
+    return projection_support.MATRIX_FAMILIES[(strategy, "document")][name]
+
+
+def _identity(strategy: projection_support.Strategy, name: str) -> EntityIdentity:
+    return projection_support.matrix_entity(strategy, "document", name).identity
+
+
+def _selected(query: deep_fetch.PlannedEntityQuery) -> list[tuple[str, str]]:
+    return [
+        (member.identity.entity.name, member.identity.path[-1])
+        for member in query.projection.value_objects
+    ]
+
+
+@_STRATEGIES
+def test_an_unnarrowed_read_carries_its_targets_own_inheritance_view(
+    strategy: projection_support.Strategy,
+) -> None:
+    facet = inheritance.view(_MATRIX)
+    for name in ("Root", "Left", "Holder"):
+        cls = _matrix(strategy, name)
+        query = deep_fetch.plan_root(
+            projection_support.resolved(cls.where(cls.all)), _MATRIX, projection=_ALL
+        )
+        assert query.position is facet.entity(_identity(strategy, name))
+    left = projection_support.matrix_entity(strategy, "document", "Left")
+    target = deep_fetch.plan_target_read(left, model=_MATRIX, key="id", key_value=1)
+    coverage = deep_fetch.plan_coverage_read(left, model=_MATRIX, key="id", terms=((1, ()),))
+    assert target.position is facet.entity(left.identity)
+    assert coverage.position is facet.entity(left.identity)
+    holder = _matrix(strategy, "Holder")
+    child = _query_step(
+        deep_fetch.plan(
+            projection_support.resolved(holder.where(holder.all).include(holder.members)),
+            _MATRIX,
+            projection=_ALL,
+        )
+    ).query
+    assert child.position is facet.entity(_identity(strategy, "Root"))
+
+
+@_STRATEGIES
+def test_a_narrowed_read_resolves_its_effective_position_once(
+    strategy: projection_support.Strategy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, left, right = (_matrix(strategy, name) for name in ("Root", "Left", "Right"))
+    holder = _matrix(strategy, "Holder")
+    narrowed = projection_support.resolved(root.where(root.all).narrow(left, right))
+    included = projection_support.resolved(
+        holder.where(holder.all).include(holder.members.narrow(left, right))
+    )
+    facet = inheritance.view(_MATRIX)
+    resolve = type(facet).position
+    requests: list[tuple[EntityIdentity, ...]] = []
+
+    def counted(self: object, members: tuple[EntityIdentity, ...]) -> object:
+        requests.append(tuple(members))
+        return resolve(cast("Any", self), members)
+
+    monkeypatch.setattr(type(facet), "position", counted)
+    pair = (_identity(strategy, "Left"), _identity(strategy, "Right"))
+
+    query = deep_fetch.plan_root(narrowed, _MATRIX, projection=_ALL)
+    compiled = compile_read(query, _MATRIX, POSTGRES, result_form="instance")
+    assert requests == [pair]
+    assert tuple(query.position.concrete_subtypes) == pair == compiled.resolved_position
+    assert _selected(query) == [("Root", "origin"), ("Left", "home"), ("Right", "home")]
+
+    requests.clear()
+    child = _query_step(deep_fetch.plan(included, _MATRIX, projection=_ALL)).query
+    compile_template(child, _MATRIX, POSTGRES, result_form="instance")
+    assert requests == [pair]
+    assert tuple(child.position.concrete_subtypes) == pair
+
+
+@_STRATEGIES
+def test_an_abstract_target_demands_the_value_objects_its_descendants_own(
+    strategy: projection_support.Strategy,
+) -> None:
+    root = _matrix(strategy, "Root")
+    query = deep_fetch.plan_root(
+        projection_support.resolved(root.where(root.all)), _MATRIX, projection=_ALL
+    )
+    assert _selected(query) == [("Root", "origin"), ("Left", "home"), ("Right", "home")]
+    assert query.projection.value_objects is query.position.superset_value_objects
+    assert query.projection.observe_structured_document
+
+
+@_STRATEGIES
+def test_every_included_level_demands_its_whole_position_whatever_the_root_requests(
+    strategy: projection_support.Strategy,
+) -> None:
+    holder, left, right = (_matrix(strategy, name) for name in ("Holder", "Left", "Right"))
+    query = holder.where(holder.all).include(
+        holder.members, holder.members.narrow(left), holder.members.narrow(left, right)
+    )
+    plan = deep_fetch.plan(projection_support.resolved(query), _MATRIX, projection=_NONE)
+
+    assert plan.root.projection == deep_fetch.ResolvedReadProjection((), False)
+    broad, single, pair = (_query_step(plan, index).query for index in range(3))
+    every = [("Root", "origin"), ("Left", "home"), ("Right", "home")]
+    assert (_selected(broad), broad.narrow_to) == (every, None)
+    assert (single.target, single.narrow_to) == (_identity(strategy, "Left"), None)
+    assert _selected(single) == [("Root", "origin"), ("Left", "home")]
+    assert _selected(pair) == every
+    assert pair.narrow_to == (_identity(strategy, "Left"), _identity(strategy, "Right"))
+    assert all(level.projection.observe_structured_document for level in (broad, single, pair))
+    with pytest.raises(ValueError, match="row-form read materializes no relationships"):
+        projection_support.resolved(query, form="rows")
+
+
+def test_equivalent_requests_resolve_to_one_equal_selection_matched_by_exact_identity() -> None:
+    root, left = _matrix("tpcs", "Root"), _matrix("tpcs", "Left")
+    every = projection_support.resolved(root.where(root.all))
+    named = deep_fetch.ReadProjectionRequest(frozenset({"origin", "home"}), True)
+    whole = deep_fetch.plan_root(every, _MATRIX, projection=_ALL).projection
+    spelled = deep_fetch.plan_root(every, _MATRIX, projection=named).projection
+    assert whole == spelled
+    assert hash(whole) == hash(spelled)
+    assert whole != dataclasses.replace(whole, observe_structured_document=False)
+    assert dataclasses.replace(whole, value_objects=()) == deep_fetch.ResolvedReadProjection(
+        (), True
+    )
+
+    narrowed = deep_fetch.plan_root(
+        projection_support.resolved(root.where(root.all).narrow(left)), _MATRIX, projection=_ALL
+    ).projection
+    left_home, right_home = (
+        projection_support.matrix_entity("tpcs", "document", name).declared_value_objects[0]
+        for name in ("Left", "Right")
+    )
+    other_family_home = projection_support.matrix_entity(
+        "tph", "document", "Left"
+    ).declared_value_objects[0]
+    assert left_home.storage == right_home.storage == other_family_home.storage
+    assert narrowed.includes_value_object(left_home.identity)
+    assert not narrowed.includes_value_object(right_home.identity)
+    assert not narrowed.includes_value_object(other_family_home.identity)
+    assert whole.includes_value_object(right_home.identity)
+    assert not deep_fetch.ResolvedReadProjection((), True).includes_value_object(left_home.identity)

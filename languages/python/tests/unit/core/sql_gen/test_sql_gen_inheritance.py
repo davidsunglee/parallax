@@ -11,16 +11,14 @@ table-per-concrete-subtype `union all` restarts.
 
 from __future__ import annotations
 
-import datetime as dt
-from dataclasses import replace
 from decimal import Decimal
 from typing import Any, Literal
 
 import pytest
 
-from parallax.core import deep_fetch, inheritance, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
+from parallax.core import storage_layout
 from parallax.core.base import PresentDocument
 from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
@@ -64,25 +62,26 @@ def _narrow(model_: Any, *names: str) -> tuple[Any, ...]:
     return tuple(target(model_, name).identity for name in names)
 
 
-def test_document_fan_out_references_complete_residency_while_selecting_one_member() -> None:
+def test_document_fan_out_references_complete_residency_while_selecting_only_attributes() -> None:
     entity = target(DOCUMENT_LAYOUT, "Voyage")
-    inherited = inheritance.view(DOCUMENT_LAYOUT).entity(entity.identity)
     physical = storage_layout.view(DOCUMENT_LAYOUT).entity(entity.identity)
-    assert inherited is not None
     assert physical is not None
     residents = physical.document_residents
     assert residents is not None
-    selected = residents.member_selection.bindings[residents.positions[0]]
-    assert isinstance(selected, AttributeMetadata)
+    bindings = [residents.member_selection.bindings[position] for position in residents.positions]
+    assert any(not isinstance(binding, AttributeMetadata) for binding in bindings)
 
-    projected, fan_out = document_projection(physical, (selected,), ())
+    projected, fan_out = document_projection(physical, ResolvedReadProjection((), False))
 
     assert projected is not None
     assert fan_out is not None
     assert fan_out.shape is residents.shape
-    assert fan_out.shape is not None
-    assert fan_out.members == ((selected.storage.name, residents.placements[0].path),)
-    assert len(fan_out.shape.members) > len(fan_out.members)
+    assert fan_out.members == tuple(
+        (binding.storage.name, placement.path)
+        for binding, placement in zip(bindings, residents.placements, strict=True)
+        if isinstance(binding, AttributeMetadata)
+    )
+    assert len(residents.shape.members) > len(fan_out.members)
 
 
 def test_narrow_nested_under_a_table_per_concrete_subtype_family_partitions_branches() -> None:
@@ -1909,20 +1908,20 @@ def _widened(
     strategy: family.Strategy,
     layout: family.Layout,
     member: family.Member,
-    include: Literal[True] | frozenset[str],
 ) -> Any:
     return compile_projected_read(
         oa.TrueNode(),
         _FAMILY_META,
         POSTGRES,
         family.member_metadata(strategy, layout, member),
-        include_value_objects=include,
+        value_objects="all",
+        observe_structured_document=True,
         temporal=_LATEST,
     )
 
 
 def _fetched(compiled: Any) -> list[str]:
-    return [member.identity.path[-1] for member in compiled.projected_documents]
+    return [member.identity.path[-1] for member in compiled.projection.value_objects]
 
 
 def _fanned_out(compiled: Any) -> list[str] | None:
@@ -1963,27 +1962,12 @@ _WIDENED_FETCHES: dict[family.Member, list[str]] = {
 def test_a_widened_row_read_of_a_family_member_fetches_every_value_object_and_its_document(
     strategy: family.Strategy, layout: family.Layout, member: family.Member
 ) -> None:
-    compiled = _widened(strategy, layout, member, True)
+    compiled = _widened(strategy, layout, member)
     assert compiled.statement.sql == (
         f"select {_WIDENED_SELECTS[(layout, member)]}{_family_source(strategy, layout, member)}"
     )
     assert _fetched(compiled) == _WIDENED_FETCHES[member]
     assert _fanned_out(compiled) == (_WIDENED_FAN_OUTS[member] if layout == "document" else None)
-
-
-@family.FAMILY_AXES
-def test_a_row_read_of_a_family_member_fetches_only_its_named_value_objects(
-    strategy: family.Strategy, layout: family.Layout
-) -> None:
-    compiled = _widened(strategy, layout, "Holding", frozenset({"home"}))
-    select = (
-        f"{_HOLDING_SCALARS}, not t0.home is null, t0.home"
-        if layout == "columns"
-        else f"{_SCALARS}, {_PAYLOAD}"
-    )
-    assert compiled.statement.sql == f"select {select}{_family_source(strategy, layout, 'Holding')}"
-    assert _fetched(compiled) == ["home"]
-    assert _fanned_out(compiled) == (["name", "home"] if layout == "document" else None)
 
 
 @family.FAMILY_AXES
@@ -2004,25 +1988,3 @@ def test_an_ordinary_row_read_of_a_family_member_fetches_no_value_object(
     assert compiled.statement.sql == f"select {select}{_family_source(strategy, layout, member)}"
     assert _fetched(compiled) == []
     assert _fanned_out(compiled) == (["name"] if resident else None)
-
-
-@pytest.mark.parametrize("strategy", ["tph", "tpcs"])
-@pytest.mark.parametrize("member", ["Vault", "Bare"])
-def test_an_observing_row_read_projects_a_structured_column_no_fetched_member_occupies(
-    strategy: family.Strategy, member: family.Member
-) -> None:
-    entity = family.member_metadata(strategy, "document", member)
-    query = replace(
-        deep_fetch.plan_target_read(
-            entity,
-            model=_FAMILY_META,
-            key="id",
-            key_value=1,
-            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        ),
-        projection=ResolvedReadProjection((), True),
-    )
-    compiled = sql_compile.compile_read(query, _FAMILY_META, POSTGRES, result_form="row")
-    assert compiled.statement.sql.startswith(f"select {_SCALARS}, {_PAYLOAD} from ")
-    assert _fetched(compiled) == []
-    assert _fanned_out(compiled) == []

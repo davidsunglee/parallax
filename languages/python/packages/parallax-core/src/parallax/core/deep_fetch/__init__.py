@@ -6,7 +6,11 @@ from typing import Final, Literal, NamedTuple
 
 from parallax.core import inheritance, relationship
 from parallax.core.base import INFINITY, ManagedValue
-from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
+from parallax.core.inheritance import (
+    InheritanceEntityView,
+    InheritanceFacet,
+    InheritancePositionView,
+)
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -17,6 +21,7 @@ from parallax.core.metamodel import (
     NullPlacement,
     SortDirection,
     TemporalDimension,
+    ValueObjectIdentity,
     ValueObjectMetadata,
 )
 from parallax.core.navigate import (
@@ -84,10 +89,13 @@ class DeepFetchError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ReadProjectionRequest:
-    """Snapshot-owned demand that deep fetch resolves against an exact target."""
+    """Snapshot-owned demand that deep fetch resolves against a read's effective position."""
 
     value_objects: Literal["none", "all"] | frozenset[str]
     observe_structured_document: bool
+
+
+_NO_VALUE_OBJECTS: Final[frozenset[ValueObjectIdentity]] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +104,21 @@ class ResolvedReadProjection:
 
     value_objects: tuple[ValueObjectMetadata, ...]
     observe_structured_document: bool
+    _selected: frozenset[ValueObjectIdentity] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_selected",
+            frozenset(member.identity for member in self.value_objects)
+            if self.value_objects
+            else _NO_VALUE_OBJECTS,
+        )
+
+    def includes_value_object(self, identity: ValueObjectIdentity) -> bool:
+        """Whether ``identity`` is exactly one of :attr:`value_objects`, matched
+        by structural identity rather than storage spelling."""
+        return identity in self._selected
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,10 +160,16 @@ class QueryCorrelationMember:
 
 @dataclass(frozen=True, slots=True)
 class PlannedEntityQuery:
-    """One planned flat read accepted by the private SQL compiler."""
+    """One planned flat read accepted by the private SQL compiler.
+
+    ``position`` is the inheritance owner's view of the concrete types the read
+    can return: the target's own view, or the view its narrowing resolves to.
+    ``projection`` was resolved against that same view.
+    """
 
     target: EntityIdentity
     entity: EntityMetadata
+    position: InheritancePositionView = field(compare=False, hash=False)
     predicate: TemporallyResolvedPredicate
     projection: ResolvedReadProjection
     narrow_to: tuple[EntityIdentity, ...] | None = None
@@ -219,17 +248,20 @@ def plan_root(
     """The root read :func:`plan` plans for ``query``, without planning its
     Includes."""
     entity = query.root
+    narrow_to = (
+        None if query.narrow_to is None else tuple(item.identity for item in query.narrow_to)
+    )
+    position = _effective_position(inheritance.view(model), entity, narrow_to)
     return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
+        position=position,
         predicate=resolve_temporal_visibility(
             query.predicate, target=entity, model=model, resolution=RootSelections(query.temporal)
         ),
-        narrow_to=None
-        if query.narrow_to is None
-        else tuple(item.identity for item in query.narrow_to),
+        narrow_to=narrow_to,
         order_by=query.order_by,
-        projection=_projection_for(entity, inheritance.view(model), projection),
+        projection=_resolve_projection(position, projection),
         limit=query.limit,
         paging=query.paging,
     )
@@ -300,10 +332,11 @@ def plan_coverage_read(
     return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
+        position=view,
         predicate=resolve_temporal_visibility(
             named, target=entity, model=model, resolution=RootSelections(tuple(selections))
         ),
-        projection=_projection_for(entity, families, ReadProjectionRequest("all", True)),
+        projection=_resolve_projection(view, ReadProjectionRequest("all", True)),
     )
 
 
@@ -348,12 +381,12 @@ def plan_target_read(
     return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
+        position=view,
         predicate=resolve_temporal_visibility(
             keyed, target=entity, model=model, resolution=RootSelections(tuple(selections))
         ),
-        projection=_projection_for(
-            entity,
-            families,
+        projection=_resolve_projection(
+            view,
             ReadProjectionRequest("all", True)
             if retain_predecessor
             else ReadProjectionRequest("none", False),
@@ -520,6 +553,8 @@ class _PlanBuilder:
                 column=_attribute_column(self.families, direction.join.target),
                 member=_attribute_metadata(self.families, direction.join.target),
             )
+            child_narrow = position if len(position) > 1 and narrowed else None
+            child_position = _effective_position(self.families, child, child_narrow)
             step = QueryFetchStep(
                 position=position_id,
                 parent=parent_ref,
@@ -528,15 +563,18 @@ class _PlanBuilder:
                 query=PlannedEntityQuery(
                     target=child.identity,
                     entity=child,
+                    position=child_position,
                     predicate=resolve_temporal_visibility(
                         _deferred_membership(member=related.member),
                         target=child,
                         model=self.model,
                         resolution=PropagatedRootSelections(self.root_selections),
                     ),
-                    narrow_to=position if len(position) > 1 and narrowed else None,
+                    narrow_to=child_narrow,
                     order_by=_resolved_order_terms(direction, child, self.families),
-                    projection=_projection_for(child, None, ReadProjectionRequest("all", True)),
+                    projection=_resolve_projection(
+                        child_position, ReadProjectionRequest("all", True)
+                    ),
                 ),
             )
 
@@ -557,16 +595,27 @@ class _PlanBuilder:
         return index
 
 
-def _projection_for(
+def _effective_position(
+    families: InheritanceFacet,
     entity: EntityMetadata,
-    families: InheritanceFacet | None,
-    request: ReadProjectionRequest,
+    narrow_to: tuple[EntityIdentity, ...] | None,
+) -> InheritancePositionView:
+    """The concrete types a read of ``entity`` narrowed to ``narrow_to`` can return."""
+    if narrow_to is None:
+        return _entity_view(families, entity.identity)
+    position = families.position(narrow_to)
+    if position is None:  # pragma: no cover - validation keeps a narrowing inside one family
+        raise DeepFetchError(
+            f"narrow to {[identity.canonical for identity in narrow_to]} spans more than one "
+            "inheritance family"
+        )
+    return position
+
+
+def _resolve_projection(
+    position: InheritancePositionView, request: ReadProjectionRequest
 ) -> ResolvedReadProjection:
-    available = (
-        tuple(entity.declared_value_objects)
-        if families is None
-        else tuple(_entity_view(families, entity.identity).applicable_value_objects)
-    )
+    available = tuple(position.superset_value_objects)
     if request.value_objects == "all":
         selected = available
     elif request.value_objects == "none":

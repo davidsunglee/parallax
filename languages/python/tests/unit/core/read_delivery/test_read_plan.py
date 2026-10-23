@@ -39,6 +39,7 @@ from parallax.descriptor._records import Entity as DescriptorEntity
 from parallax.descriptor._records import Inheritance
 from parallax.snapshot import Database
 from tests._support.db_port import Read, ScriptedAdapter, Transact
+from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._transact_support import db_for
@@ -1026,6 +1027,51 @@ def test_a_warm_hit_repeats_no_planning_compilation_or_binding(
     assert warm is cold
     assert warm.include_tree() is cold.include_tree()
     assert calls == {"plan": 1, "compile": 1, "bind": 1}
+
+
+@pytest.mark.parametrize("result_form", ["row", "instance"])
+def test_each_compiled_read_is_bound_under_the_projection_its_query_resolved(
+    result_form: Literal["row", "instance"], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    holder = projection_support.MATRIX_FAMILIES[("tph", "document")]["Holder"]
+    included = holder.where(holder.all).include(holder.members)
+    query = projection_support.resolved(
+        included if result_form == "instance" else holder.where(holder.all),
+        form="graph" if result_form == "instance" else "rows",
+    )
+    bind = cast("Callable[..., Any]", vars(_read_plan)["bind"])
+    bound: list[object] = []
+
+    def recording_bind(model: object, contract: object, projection: object, **kwargs: Any) -> Any:
+        bound.append(projection)
+        return bind(model, contract, projection, **kwargs)
+
+    monkeypatch.setattr(_read_plan, "bind", recording_bind)
+    plan = _plan(
+        ReadPlanCache(0),
+        query,
+        model=CatalogedModel(projection_support.MATRIX_META),
+        result_form=result_form,
+    )
+
+    root, _converter = _root(plan)
+    compiled = (
+        root,
+        *(
+            cast("Any", prepared)[0].compiled
+            for index in range(plan.fetch_count)
+            if isinstance(prepared := plan.prepared_fetch(index), tuple)
+        ),
+    )
+    assert sorted(map(id, bound)) == sorted(id(read.projection) for read in compiled)
+    assert root.projection == deep_fetch.ResolvedReadProjection((), result_form == "instance")
+    if result_form == "instance":
+        (child,) = compiled[1:]
+        assert [
+            (member.identity.entity.name, member.identity.path[-1])
+            for member in child.projection.value_objects
+        ] == [("Root", "origin"), ("Left", "home"), ("Right", "home")]
+        assert child.projection.observe_structured_document
 
 
 def _with_items() -> ResolvedObjectQuery:

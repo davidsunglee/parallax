@@ -105,7 +105,7 @@ def bound_read(
             bind(
                 CatalogedModel(model),
                 compiled.result_contract,
-                compiled.projected_documents,
+                compiled.projection,
                 correlation_members=correlation_members,
             ),
         )
@@ -149,7 +149,7 @@ def bound_cells(
         bind(
             model,
             contract,
-            compiled.projected_documents,
+            compiled.projection,
             correlation_members=correlation_members,
         ),
         row,
