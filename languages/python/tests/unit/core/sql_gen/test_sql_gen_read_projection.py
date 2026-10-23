@@ -21,6 +21,7 @@ from typing import Literal
 import pytest
 
 from parallax.core import predicate as oa
+from parallax.core import storage_layout
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.inheritance import family_variant_name
@@ -28,8 +29,10 @@ from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.read_delivery._row_decoding import publication_keys
 from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.sql_gen._inheritance import SingleTableReadPlan, TpcsUnionReadPlan
 from tests._support.sql import compile_projected_read, compile_read
 from tests.unit import _read_projection_support as support
+from tests.unit.core.sql_gen._plan_reuse_support import assert_planned_once, record_plan_reuse
 
 type _Request = Literal["none", "all", "named"]
 type _Form = Literal["row", "instance"]
@@ -377,6 +380,47 @@ def test_a_read_fetches_its_resolved_demand_whatever_its_result_form(
             assert publication_keys(
                 compiled.result_contract, identity, _variant(shape, identity)
             ) == _published(shape, demand, identity.name, form)
+
+
+@pytest.mark.parametrize(
+    "demand", _DEMANDS, ids=[f"{demand.request}-observe={demand.observe}" for demand in _DEMANDS]
+)
+@pytest.mark.parametrize(
+    "shape",
+    _SHAPES,
+    ids=[f"{shape.strategy or 'standalone'}-{shape.layout}-{shape.kind}" for shape in _SHAPES],
+)
+def test_every_read_shape_is_planned_once_over_its_one_position_layout(
+    shape: _Shape, demand: _Demand, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reuse = record_plan_reuse(monkeypatch)
+    shape.compile(demand, "row")
+
+    planned = assert_planned_once(reuse)
+    assert tuple(identity.name for identity in planned.concrete_types) == shape.position
+    assert tuple(planned.layout.concrete_entities) == tuple(planned.concrete_types)
+    if shape.union:
+        assert isinstance(planned, TpcsUnionReadPlan)
+        assert [branch.identity for branch in planned.branches] == list(planned.concrete_types)
+        assert all(len(branch.columns) == len(planned.columns) for branch in planned.branches)
+    else:
+        assert isinstance(planned, SingleTableReadPlan)
+        guarded = shape.strategy == "tph" and shape.kind != "abstract"
+        assert (planned.tag_guard is not None) is guarded
+    shared = planned.shared_document
+    if shared is not None:
+        # Every concrete is keyed by the storage owner's complete resident
+        # shape, whatever subset of it the read fetches.
+        storage = storage_layout.view(shape.meta())
+        assert [identity for identity, _fan_out in shared.per_entity] == list(
+            planned.concrete_types
+        )
+        for identity, fan_out in shared.per_entity:
+            physical = storage.entity(identity)
+            assert physical is not None
+            residents = physical.document_residents
+            assert residents is not None
+            assert fan_out.shape is residents.shape
 
 
 @pytest.mark.parametrize("layout", support.LAYOUTS)

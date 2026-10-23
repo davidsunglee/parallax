@@ -107,7 +107,7 @@ from parallax.core.read_delivery._page_reader import (
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanCache, ReadPlanner
 from parallax.core.read_delivery._row_decoding import publication_keys
 from parallax.core.read_delivery._row_lane import find_rows
-from parallax.core.sql_gen._inheritance import ResultContract
+from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.temporal_read import Pin, valid_time_coverage
 from parallax.core.unit_work import ReadEvidence
 from parallax.core.write_plan import ObjectKey
@@ -1262,7 +1262,7 @@ def _counting_publication_keys(patched: pytest.MonkeyPatch) -> list[tuple[str, s
     derived: list[tuple[str, str | None]] = []
 
     def counting(
-        contract: ResultContract, resolved: EntityIdentity, variant: str | None
+        contract: ReadResultContract, resolved: EntityIdentity, variant: str | None
     ) -> tuple[str, ...]:
         derived.append((resolved.name, variant))
         return publication_keys(contract, resolved, variant)

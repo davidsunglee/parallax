@@ -27,7 +27,12 @@ from parallax.core.metamodel import AttributeMetadata, EntityIdentity
 from parallax.core.object_query._resolved import ContinuationCoordinate
 from parallax.core.read_delivery._convert import build_positional_many, build_positional_object
 from parallax.core.sql_gen import SqlGenError
-from parallax.core.sql_gen._inheritance import ByLiteral, ByTag, FixedIdentity, ResultContract
+from parallax.core.sql_gen._inheritance import (
+    FixedRowIdentity,
+    LiteralRowIdentity,
+    ReadResultContract,
+    TaggedRowIdentity,
+)
 
 __all__ = [
     "member_classifier",
@@ -46,7 +51,7 @@ _NOTHING_CLASSIFIED: Final[frozenset[str]] = frozenset()
 
 
 def row_identity(
-    contract: ResultContract, row: Row
+    contract: ReadResultContract, row: Row
 ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
     """The Entity ``row`` names, its `familyVariant` spelling, the stored tag no
     composed concrete claimed, and the row's shared document.
@@ -55,11 +60,11 @@ def row_identity(
     """
     if len(row) != len(contract.result_keys):
         raise _arity_error(len(contract.result_keys), len(row))
-    source = contract.resolve
+    source = contract.row_identity
     shared = contract.shared_document
     # An isinstance chain rather than a class-pattern match: this runs per row,
     # and the match costs several times as much.
-    if isinstance(source, FixedIdentity):
+    if isinstance(source, FixedRowIdentity):
         if shared is None:
             return source.entity, None, None, None
         return (
@@ -69,7 +74,7 @@ def row_identity(
             unwrap_document_read(_document_read(row[contract.index_by_key[shared.column]])),
         )
     index_by_key = contract.index_by_key
-    if isinstance(source, ByTag):
+    if isinstance(source, TaggedRowIdentity):
         raw = row[index_by_key[source.column]]
         answer = source.by_tag.get(raw)
         entity, variant, unknown = (
@@ -95,7 +100,9 @@ def row_identity(
     )
 
 
-def raw_member(contract: ResultContract, row: Row, resolved: EntityIdentity, key: str) -> object:
+def raw_member(
+    contract: ReadResultContract, row: Row, resolved: EntityIdentity, key: str
+) -> object:
     """``key``'s raw stored value on a row resolving to ``resolved``: located in
     the row's shared document when that document carries the member, and read
     from the row's own result cell otherwise.
@@ -128,7 +135,7 @@ def _shared_member(
 
 
 def member_classifier(
-    contract: ResultContract, resolved: EntityIdentity, key: str
+    contract: ReadResultContract, resolved: EntityIdentity, key: str
 ) -> MemberClassifier:
     """The prepared, row-independent decoding walk of one classified member of a
     row resolving to ``resolved``, building positional output.
@@ -214,7 +221,7 @@ def _collection_classifier(attribute: AttributeMetadata) -> MemberClassifier:
 
 
 def member_sources(
-    contract: ResultContract, resolved: EntityIdentity, keys: tuple[str, ...]
+    contract: ReadResultContract, resolved: EntityIdentity, keys: tuple[str, ...]
 ) -> tuple[
     frozenset[str],
     tuple[int | None, ...],
@@ -249,7 +256,7 @@ def member_sources(
 
 
 def row_coordinates(
-    contract: ResultContract, rows: Sequence[Row]
+    contract: ReadResultContract, rows: Sequence[Row]
 ) -> tuple[ContinuationCoordinate | None, ...]:
     """Each row's Continuation Order coordinate; absence for every row of a read
     that pages through nothing."""
@@ -260,7 +267,7 @@ def row_coordinates(
 
 
 def _coordinate(
-    contract: ResultContract, row: Row, aliases: tuple[str, ...]
+    contract: ReadResultContract, row: Row, aliases: tuple[str, ...]
 ) -> ContinuationCoordinate:
     _require_arity(contract, row)
     return ContinuationCoordinate(
@@ -269,7 +276,7 @@ def _coordinate(
 
 
 def publication_keys(
-    contract: ResultContract, resolved: EntityIdentity, variant: str | None
+    contract: ReadResultContract, resolved: EntityIdentity, variant: str | None
 ) -> tuple[str, ...]:
     """The logical flat-row keys a row resolving to ``resolved`` publishes once
     its identity and documents are decoded, in result order.
@@ -280,12 +287,12 @@ def publication_keys(
     dropped.
     """
     values: dict[str, object] = {key: None for key in contract.result_keys}
-    match contract.resolve:
-        case FixedIdentity():
+    match contract.row_identity:
+        case FixedRowIdentity():
             pass
-        case ByTag(column=column):
+        case TaggedRowIdentity(column=column):
             values.pop(column)
-        case ByLiteral() as source:
+        case LiteralRowIdentity() as source:
             _publish_literal(source, values, variant)
     shared = contract.shared_document
     if shared is not None:
@@ -298,7 +305,9 @@ def publication_keys(
     return tuple(values)
 
 
-def _publish_literal(source: ByLiteral, values: dict[str, object], variant: str | None) -> None:
+def _publish_literal(
+    source: LiteralRowIdentity, values: dict[str, object], variant: str | None
+) -> None:
     # The moved values are lifted before the drop, so an alias may be both a
     # source and discarded.
     if variant is None:  # pragma: no cover - a literal resolution always names its branch
@@ -316,16 +325,16 @@ def _publish_literal(source: ByLiteral, values: dict[str, object], variant: str 
         values[rendered_key] = value
 
 
-def _result_key(contract: ResultContract, entity: EntityIdentity, rendered_key: str) -> str:
+def _result_key(contract: ReadResultContract, entity: EntityIdentity, rendered_key: str) -> str:
     """The provider key carrying one resolved Entity's ``rendered_key``: a union
     result alias for a branch-local key, and the key itself otherwise."""
-    source = contract.resolve
-    if isinstance(source, ByLiteral):
+    source = contract.row_identity
+    if isinstance(source, LiteralRowIdentity):
         return source.result_keys.get(entity, _NO_KEYS).get(rendered_key, rendered_key)
     return rendered_key
 
 
-def _require_arity(contract: ResultContract, row: Row) -> None:
+def _require_arity(contract: ReadResultContract, row: Row) -> None:
     if len(row) != len(contract.result_keys):
         raise _arity_error(len(contract.result_keys), len(row))
 
@@ -334,7 +343,7 @@ def _arity_error(arity: int, width: int) -> ValueError:
     return ValueError(f"result key count {arity} does not match row arity {width}")
 
 
-def _value(contract: ResultContract, row: Row, key: str) -> object:
+def _value(contract: ReadResultContract, row: Row, key: str) -> object:
     try:
         return row[contract.index_by_key[key]]
     except KeyError as error:

@@ -27,7 +27,7 @@ from parallax.core.sql_gen._context import (
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
     _WireBindOverride,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.sql_gen._inheritance import TpcsUnionPlan, plan_inheritance_read
+from parallax.core.sql_gen._inheritance import TpcsUnionReadPlan, plan_read_shape
 from parallax.core.sql_gen._planning import (
     EvaluationContext,
     OwnerResultsRef,
@@ -99,7 +99,7 @@ COLLECTIONS = corpus_model("predicate-collections")
 TRAVERSAL = corpus_model("predicate-traversal")
 
 
-def _family_read(family: Metamodel, entity: EntityMetadata) -> PlannedEntityQuery:
+def _planned_read(family: Metamodel, entity: EntityMetadata) -> PlannedEntityQuery:
     return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
@@ -116,11 +116,7 @@ def _row_builder(family: Metamodel) -> StatementBuilder[EntityRowScope]:
 def _statement_plan(family: Metamodel, root: str, node: oa.PredicateNode) -> StatementPlan:
     entity = next(entity for entity in family.entities if entity.identity.name == root)
     facet, storage = inheritance.view(family), storage_layout.view(family)
-    read = (
-        None
-        if entity.inheritance is None
-        else plan_inheritance_read(_family_read(family, entity), facet, storage, False, None)
-    )
+    read = plan_read_shape(_planned_read(family, entity), facet, storage, False, None)
     return plan_statement(
         resolved_as_stated(oa.validate_predicate(entity, node, family), family, entity),
         evaluation_context=EvaluationContext.SHARING_ALLOWED,
@@ -128,7 +124,7 @@ def _statement_plan(family: Metamodel, root: str, node: oa.PredicateNode) -> Sta
         meta=family,
         facet=facet,
         storage=storage,
-        inheritance_read=read,
+        read_shape=read,
     )
 
 
@@ -231,8 +227,8 @@ def test_each_union_branch_builder_finishes_its_own_root_alone() -> None:
     plan = _statement_plan(TRAVERSAL, "Vehicle", op)
     vehicle = next(entity for entity in TRAVERSAL.entities if entity.identity.name == "Vehicle")
     facet, storage = inheritance.view(TRAVERSAL), storage_layout.view(TRAVERSAL)
-    read = plan_inheritance_read(_family_read(TRAVERSAL, vehicle), facet, storage, False, None)
-    assert isinstance(read, TpcsUnionPlan)
+    read = plan_read_shape(_planned_read(TRAVERSAL, vehicle), facet, storage, False, None)
+    assert isinstance(read, TpcsUnionReadPlan)
     assert list(plan.root_scopes) == [branch.identity for branch in read.branches]
     union = _row_builder(TRAVERSAL)
     for branch in read.branches:

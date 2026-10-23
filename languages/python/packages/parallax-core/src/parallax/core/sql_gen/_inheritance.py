@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Literal
 
 from parallax.core.base import (
@@ -27,6 +27,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Multiplicity,
+    TablePerConcreteSubtype,
     TablePerHierarchy,
     ValueObjectIdentity,
     ValueObjectMetadata,
@@ -39,7 +40,7 @@ from parallax.core.storage_layout import (
     ColumnSlot,
     ColumnTier,
     DirectColumn,
-    DocumentPath,
+    DocumentResidentSelection,
     EntityLayoutView,
     InheritanceDiscriminator,
     PositionBranch,
@@ -91,10 +92,10 @@ concrete subtype claimed."""
 
 
 @dataclass(frozen=True, slots=True)
-class FixedIdentity:
+class FixedRowIdentity:
     """Every row of this read names one Entity; no carrier is read.
 
-    A non-family read, a table-per-hierarchy read whose queried target is itself
+    A standalone read, a table-per-hierarchy read whose queried target is itself
     concrete, and a table-per-concrete-subtype read resolving to one concrete
     all project nothing that could name a different Entity, so the answer is
     fixed when the read is compiled and no row is consulted for it.
@@ -104,7 +105,7 @@ class FixedIdentity:
 
 
 @dataclass(frozen=True, slots=True)
-class ByTag:
+class TaggedRowIdentity:
     """Table-per-hierarchy: the framework-owned raw tag ``column`` names the row's
     concrete, and never reaches the caller.
 
@@ -141,7 +142,7 @@ class ByTag:
 
 
 @dataclass(frozen=True, slots=True)
-class ByLiteral:
+class LiteralRowIdentity:
     """Table-per-concrete-subtype `union all`: the per-branch projected
     subtype-name literal ``column`` names the row's concrete — there is no tag
     column to derive it from.
@@ -198,7 +199,7 @@ class ByLiteral:
         )
 
 
-type RowIdentity = FixedIdentity | ByTag | ByLiteral
+type RowIdentity = FixedRowIdentity | TaggedRowIdentity | LiteralRowIdentity
 """How one read's rows name their Entity: fixed when the read is compiled, by a
 table-per-hierarchy tag, or by a `union all` branch's variant literal."""
 
@@ -226,7 +227,7 @@ class DocumentFanOut:
 
 
 @dataclass(frozen=True, slots=True)
-class SharedDocument:
+class SharedDocumentMapping:
     """Relational Document Layout: the one projected Structured Column the
     members the read asked for are fanned out of.
 
@@ -252,7 +253,7 @@ class SharedDocument:
 
 
 @dataclass(frozen=True, slots=True)
-class DirectDocuments:
+class DirectDocumentMappings:
     """Each concrete's projected documents stored in a Column of their own.
 
     A provider folds every selected document pair before materialization,
@@ -299,12 +300,12 @@ class AttributeReadContract:
 
 
 @dataclass(frozen=True, slots=True)
-class ResultContract:
+class ReadResultContract:
     """What one compiled read's driver rows carry, and where.
 
-    ``resolve`` is how this read's rows name their Entity, and every read has
-    one: a tag map, a union's variant literal, or an identity fixed when the read
-    was compiled. A fixed identity — a non-family read, a concrete-target
+    ``row_identity`` is how this read's rows name their Entity, and every read
+    has one: a tag map, a union's variant literal, or an identity fixed when the
+    read was compiled. A fixed identity — a standalone read, a concrete-target
     table-per-hierarchy read, or a table-per-concrete-subtype read whose position
     resolved to a single concrete — has no `familyVariant` to materialize. The
     document entries are the projection's decision alone: a read fills them when
@@ -340,9 +341,9 @@ class ResultContract:
     by that column.
     """
 
-    resolve: RowIdentity
-    shared_document: SharedDocument | None
-    direct_documents: DirectDocuments | None
+    row_identity: RowIdentity
+    shared_document: SharedDocumentMapping | None
+    direct_documents: DirectDocumentMappings | None
     attribute_reads: tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...] = field(
         repr=False
     )
@@ -371,7 +372,7 @@ class ResultContract:
                 dict.fromkeys(
                     (
                         *(identity for identity, _reads in self.attribute_reads),
-                        *_named_entities(self.resolve),
+                        *_named_entities(self.row_identity),
                     )
                 )
             ),
@@ -383,18 +384,18 @@ class ResultContract:
         )
 
 
-def _named_entities(resolve: RowIdentity) -> tuple[EntityIdentity, ...]:
-    match resolve:
-        case FixedIdentity(entity=entity):
+def _named_entities(row_identity: RowIdentity) -> tuple[EntityIdentity, ...]:
+    match row_identity:
+        case FixedRowIdentity(entity=entity):
             return (entity,)
-        case ByTag(root=root, tag_pairs=pairs):
+        case TaggedRowIdentity(root=root, tag_pairs=pairs):
             return (root, *(identity for _, identity, _ in pairs))
-        case ByLiteral(variants=variants):
+        case LiteralRowIdentity(variants=variants):
             return tuple(identity for _, identity in variants)
 
 
 def _classified_by_entity(
-    shared: SharedDocument | None, direct: DirectDocuments | None
+    shared: SharedDocumentMapping | None, direct: DirectDocumentMappings | None
 ) -> dict[EntityIdentity, frozenset[str]]:
     classified: dict[EntityIdentity, frozenset[str]] = {}
     if shared is not None:
@@ -412,46 +413,6 @@ def _classified_by_entity(
             if keys:
                 classified[identity] = classified.get(identity, frozenset()) | keys
     return classified
-
-
-def direct_documents(
-    candidates: Sequence[
-        tuple[
-            EntityIdentity,
-            TableLayout,
-            Sequence[AttributeMetadata],
-            Sequence[ValueObjectMetadata],
-        ]
-    ],
-) -> DirectDocuments | None:
-    """The direct-Column document entry, or absence when a read projects none.
-
-    Each candidate names the Attributes and occurrences one concrete's rows
-    carry; only the scalar collections and occurrences stored in a Column of
-    their own are kept.
-    """
-    per_entity = tuple(
-        (
-            identity,
-            (
-                *(
-                    attribute
-                    for attribute in attributes
-                    if attribute.multiplicity is Multiplicity.MANY
-                    and isinstance(layout.placement(attribute.identity), DirectColumn)
-                ),
-                *(
-                    occurrence
-                    for occurrence in occurrences
-                    if isinstance(layout.placement(occurrence.identity), DirectColumn)
-                ),
-            ),
-        )
-        for identity, layout, attributes, occurrences in candidates
-    )
-    if not any(members for _identity, members in per_entity):
-        return None
-    return DirectDocuments(per_entity)
 
 
 def tag_pairs(
@@ -589,102 +550,122 @@ def _structured_column_slot(layout: TableLayout) -> ColumnSlot | None:
     )
 
 
-def document_projection(
-    view: EntityLayoutView, projection: ResolvedReadProjection
-) -> tuple[ProjectedColumn | None, DocumentFanOut | None]:
-    """The Structured Column a read of ``view``'s Entity projects, and the
-    fan-out that reads it back out (`m-sql` *Read projection*, rule 5).
+type _Members = tuple[tuple[str, tuple[str, ...]], ...]
+"""Fetched resident members, as (result key, Document Path) pairs."""
+
+
+def plan_document_reads(
+    layout: PositionLayoutView,
+    facet: InheritanceFacet,
+    storage: StorageLayoutFacet,
+    projection: ResolvedReadProjection,
+    *,
+    pad_siblings: bool,
+) -> tuple[SharedDocumentMapping | None, DirectDocumentMappings | None]:
+    """The documents a read of ``layout``'s position fetches, and the mappings
+    that read them back out (`m-sql` *Read projection*, rules 3 and 5).
 
     The read produces every Attribute and ``projection``'s Value Objects. Each
-    one's Member Placement decides whether it already has a Column of its own;
-    the ones placed at a Document Path are what make the Structured Column
-    needed, and it is then projected **once**, raw, whatever their number.
+    one's Member Placement in its concrete's branch decides where it is read
+    from: the ones placed at a Document Path make that branch's Structured
+    Column needed, projected **once**, raw, whatever their number, and the
+    scalar collections and occurrences holding a Column of their own are the
+    direct mappings. A read observing the stored document itself — a
+    Predecessor Row retains the raw document (`m-write-plan`) — needs every
+    Structured Column there is, whatever resides in it.
 
-    A read observing the stored document itself and not only the members decoded
-    out of it — a Predecessor Row retains the raw document (`m-write-plan`) —
-    projects the Table's Structured Column wherever there is one, fanning out
-    however many members it asked for, zero included. Otherwise a read whose
-    members are all direct — every read under `Columns` layout, and a
-    `Document`-layout read of direct members alone — projects no document
-    column and fans nothing out, so this is inert rather than conditional at the
-    call site.
+    The shared mapping is present exactly when some concrete needs its
+    Structured Column, which every branch then spells as the root declared it.
+    It keys every concrete of the position by the storage owner's complete
+    resident shape, so a heterogeneous document is decoded by the shape of the
+    concrete the ROW named, and a concrete fetching none of its residents fans
+    nothing out of it. ``pad_siblings`` is a flat-row publication's alone: each
+    entry then pads every fetched member key its siblings carry, which changes
+    neither what is fetched nor what is observed.
     """
-    residents = view.document_residents
+    entries: list[tuple[EntityIdentity, DocumentResidentSelection | None, _Members]] = []
+    direct: list[tuple[EntityIdentity, tuple[AttributeMetadata | ValueObjectMetadata, ...]]] = []
+    document_column: str | None = None
+    for branch in layout.branches:
+        for concrete in branch.concrete_entities:
+            residents = storage_entity_view(storage, concrete).document_residents
+            column, members = _fetched_residents(residents, branch.layout, projection)
+            if document_column is None:
+                document_column = column
+            entries.append((concrete, residents, members))
+            inherited = entity_view(facet, concrete)
+            direct.append(
+                (
+                    concrete,
+                    _direct_members(
+                        branch.layout,
+                        inherited.applicable_attributes,
+                        _requested(projection, inherited.applicable_value_objects),
+                    ),
+                )
+            )
+    direct_documents = (
+        DirectDocumentMappings(tuple(direct))
+        if any(members for _identity, members in direct)
+        else None
+    )
+    if document_column is None:
+        return None, direct_documents
+    padding = (
+        tuple(dict.fromkeys(key for *_entry, members in entries for key, _path in members))
+        if pad_siblings
+        else ()
+    )
+    per_entity = tuple(
+        (identity, DocumentFanOut(None if residents is None else residents.shape, members, padding))
+        for identity, residents, members in entries
+    )
+    return SharedDocumentMapping(document_column, per_entity), direct_documents
+
+
+def _fetched_residents(
+    residents: DocumentResidentSelection | None,
+    layout: TableLayout,
+    projection: ResolvedReadProjection,
+) -> tuple[str | None, _Members]:
+    """The Structured Column one concrete's read needs, if any, and the fetched
+    residents it fans out of it."""
     if residents is None:
-        return None, None
+        return None, ()
     members: list[tuple[str, tuple[str, ...]]] = []
-    document_slot: ColumnSlot | None = None
+    column: str | None = None
     for position, placement in zip(residents.positions, residents.placements, strict=True):
         binding = residents.member_selection.bindings[position]
         if isinstance(binding, AttributeMetadata) or projection.includes_value_object(
             binding.identity
         ):
-            document_slot = placement.slot
+            column = placement.slot.column.name
             members.append((binding.storage.name, placement.path))
-    if document_slot is None and projection.observe_structured_document:
-        document_slot = _structured_column_slot(view.layout)
-    if document_slot is None:
-        return None, None
-    return (
-        ProjectedColumn(document_slot.column.name, None, document=True),
-        DocumentFanOut(residents.shape, tuple(members)),
-    )
+    if column is None and projection.observe_structured_document:
+        slot = _structured_column_slot(layout)
+        column = None if slot is None else slot.column.name
+    return column, tuple(members)
 
 
-def _tph_document_projection(
+def _direct_members(
     layout: TableLayout,
-    storage: StorageLayoutFacet,
-    concretes: Sequence[EntityIdentity],
-    projection: ResolvedReadProjection,
-    *,
-    instance_form: bool,
-    abstract_target: bool,
-) -> tuple[ProjectedColumn | None, SharedDocument | None]:
-    """The Structured Column a family read projects, and the per-concrete fan-out
-    that reads it back out.
-
-    Each concrete resolves its own shape and members against the shared Table, so
-    a heterogeneous document is decoded by the shape of the concrete the ROW
-    named rather than by any one branch's. A concrete with no document-resident
-    member still takes an entry: its rows carry the shared column and fan nothing
-    out of it. Padding is the abstract-target row-form lane's alone — a read that
-    publishes flat rows renders every branch's document members, so a row carries
-    its siblings' keys as null.
-    """
-    slot = _structured_column_slot(layout)
-    if slot is None:
-        return None, None
-
-    fan_outs: list[tuple[EntityIdentity, DocumentFanOut | None]] = []
-    for concrete in concretes:
-        _projected, fan_out = document_projection(
-            storage_entity_view(storage, concrete), projection
-        )
-        fan_outs.append((concrete, fan_out))
-    if all(fan_out is None for _identity, fan_out in fan_outs):
-        return None, None
-    padding = (
-        ()
-        if instance_form or not abstract_target
-        else tuple(
-            dict.fromkeys(
-                key
-                for _identity, fan_out in fan_outs
-                if fan_out is not None
-                for key, _path in fan_out.members
-            )
-        )
-    )
-
-    def padded(identity: EntityIdentity, fan_out: DocumentFanOut | None) -> DocumentFanOut:
-        if fan_out is not None:
-            return replace(fan_out, padding=padding)
-        residents = storage_entity_view(storage, identity).document_residents
-        return DocumentFanOut(None if residents is None else residents.shape, (), padding)
-
-    return ProjectedColumn(slot.column.name, None, document=True), SharedDocument(
-        slot.column.name,
-        tuple((identity, padded(identity, fan_out)) for identity, fan_out in fan_outs),
+    attributes: Sequence[AttributeMetadata],
+    occurrences: Sequence[ValueObjectMetadata],
+) -> tuple[AttributeMetadata | ValueObjectMetadata, ...]:
+    """The scalar collections and occurrences ``layout`` stores in a Column of
+    their own, of the ones one concrete's rows carry."""
+    return (
+        *(
+            attribute
+            for attribute in attributes
+            if attribute.multiplicity is Multiplicity.MANY
+            and isinstance(layout.placement(attribute.identity), DirectColumn)
+        ),
+        *(
+            occurrence
+            for occurrence in occurrences
+            if isinstance(layout.placement(occurrence.identity), DirectColumn)
+        ),
     )
 
 
@@ -771,38 +752,45 @@ def render_projection(
 
 
 @dataclass(frozen=True, slots=True)
-class TphPlan:
-    """Table-per-hierarchy: one shared single-table SELECT (m-sql "Inheritance —
-    table-per-hierarchy lowering").
+class SingleTableReadPlan:
+    """A read of one Table: a standalone Entity, a table-per-hierarchy position,
+    or a table-per-concrete-subtype position resolving to exactly one concrete
+    (m-sql "Inheritance — table-per-hierarchy lowering" and "… —
+    table-per-concrete-subtype lowering").
 
-    The tag PREDICATE (:attr:`tag`) is keyed purely to the resolved position's
-    SIZE — one concrete lowers to `=` whether reached by a directly concrete
-    `target` or by result narrowing, several lower to `in`, and only an untouched
-    abstract-**root** `target` (no `narrowTo` at all) carries no tag predicate at
-    all, which is ``None``. Whether the discriminator slot appears in
-    :attr:`columns` is instead keyed to whether the queried `target` itself is
+    A standalone Entity is the one-concrete position of itself. Only a
+    table-per-hierarchy read carries a :attr:`tag_guard`, keyed purely to the
+    resolved position's SIZE — one concrete lowers to `=` whether reached by a
+    directly concrete `target` or by result narrowing, several lower to `in`,
+    and only an untouched abstract-**root** `target` (no `narrowTo` at all)
+    carries none. Whether the discriminator slot appears in :attr:`columns` is
+    instead keyed to whether the queried table-per-hierarchy `target` itself is
     abstract — independent of the narrow's resolved cardinality
     (`m-inheritance-012`: `Animal` narrowed to the single concrete `Dog` still
     projects `t0.kind` and still carries `familyVariant`, because the caller
     queried the polymorphic `Animal` position). These are deliberately two
     different conditions: a bare abstract root projects the tag it does not
     guard on, and a concrete target guards on the tag it does not project.
+
+    A one-concrete table-per-concrete-subtype read keeps the queried `target` as
+    its resolution scope's Entity, so an abstract position narrowed to it still
+    resolves Attributes across the family's superset.
     """
 
     table: str
-    resolved: InheritancePositionView
+    position: InheritancePositionView
     layout: PositionLayoutView
     columns: tuple[ProjectedColumn, ...]
-    tag: TagPredicate | None
-    resolve: RowIdentity
-    shared_document: SharedDocument | None
-    direct_documents: DirectDocuments | None
+    tag_guard: TagPredicate | None
+    row_identity: RowIdentity
+    shared_document: SharedDocumentMapping | None
+    direct_documents: DirectDocumentMappings | None
 
     @property
-    def position(self) -> Sequence[EntityIdentity]:
-        return self.resolved.concrete_subtypes
+    def concrete_types(self) -> Sequence[EntityIdentity]:
+        return self.position.concrete_subtypes
 
-    def projection(
+    def render_select_list(
         self,
         dialect: Dialect,
         alias: str,
@@ -821,41 +809,7 @@ class TphPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class TpcsSinglePlan:
-    """A table-per-concrete-subtype read resolving to exactly one concrete: an
-    ordinary single-table read of that subtype's own table, no tag, no union, no
-    `familyVariant` — attribute resolution still widens across the family (the
-    RESOLUTION SCOPE's entity stays the read's own queried `target`, e.g. an
-    abstract position narrowed down to this one concrete, so its attribute search
-    spans the family's superset rather than only that entity's own declared
-    attributes), matching the table-per-hierarchy concrete-target form.
-    """
-
-    table: str
-    resolved: InheritancePositionView
-    layout: PositionLayoutView
-    columns: tuple[ProjectedColumn, ...]
-    resolve: RowIdentity
-    shared_document: SharedDocument | None
-    direct_documents: DirectDocuments | None
-
-    @property
-    def position(self) -> Sequence[EntityIdentity]:
-        return self.resolved.concrete_subtypes
-
-    def projection(
-        self, dialect: Dialect, alias: str, *, document_pairs: bool = True
-    ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
-        """The select list and its ordered projection binds, against ``alias``.
-
-        The discriminator is always absent: this reads the resolved concrete's
-        OWN table, whose layout carries no discriminator slot.
-        """
-        return render_projection(dialect, alias, self.columns, document_pairs=document_pairs)
-
-
-@dataclass(frozen=True, slots=True)
-class BranchColumn:
+class TpcsUnionBranchColumn:
     """One Position Layout contributor as one `union all` branch renders it.
 
     ``owned`` is that branch's slot presence taken from the Position Layout's own
@@ -872,16 +826,16 @@ class BranchColumn:
 
 
 @dataclass(frozen=True, slots=True)
-class TpcsBranchPlan:
+class TpcsUnionBranchPlan:
     """One `union all` branch: its own table, and the Position Layout's one
     logical contributor sequence paired with this branch's slot presence."""
 
     identity: EntityIdentity
     variant: str
     table: str
-    columns: tuple[BranchColumn, ...]
+    columns: tuple[TpcsUnionBranchColumn, ...]
 
-    def projection(
+    def render_select_list(
         self, dialect: Dialect, alias: str, *, document_pairs: bool = True
     ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
         """The branch's select list, its binds, and its document-read ordinals.
@@ -889,7 +843,7 @@ class TpcsBranchPlan:
         ``document_pairs`` is ``False`` when the union is wrapped by an ordered or
         limited outer select: a presence cell has no result alias to be addressed
         by from outside the derived table, so the document slot stays a single
-        aliased cell here and :meth:`TpcsUnionPlan.projection` expands the pair
+        aliased cell here and :meth:`TpcsUnionReadPlan.render_select_list` expands the pair
         against the union alias instead.
         """
         exprs: list[str] = []
@@ -967,7 +921,7 @@ class TpcsUnionColumn:
 
 
 @dataclass(frozen=True, slots=True)
-class TpcsUnionPlan:
+class TpcsUnionReadPlan:
     """A position resolving to two or more concretes: canonical `union all`, one
     branch per concrete in canonical order, every branch restarting its own
     alias at `t0` and projecting the same stable superset with `cast(null as
@@ -979,25 +933,25 @@ class TpcsUnionPlan:
     the per-branch binds separable for concatenation in branch order.
 
     ``columns`` is the union's own result sequence, aligned with every branch's
-    :attr:`TpcsBranchPlan.columns`. A `union all` has no clause tail of its own,
+    :attr:`TpcsUnionBranchPlan.columns`. A `union all` has no clause tail of its own,
     so an ordered or limited read wraps it as a derived table and applies the
-    tail against :meth:`projection` — the only place a Position Layout
+    tail against :meth:`render_select_list` — the only place a Position Layout
     contributor is reachable by the one name all branches agree on.
     """
 
-    branches: tuple[TpcsBranchPlan, ...]
-    resolved: InheritancePositionView
+    branches: tuple[TpcsUnionBranchPlan, ...]
+    position: InheritancePositionView
     layout: PositionLayoutView
     columns: tuple[TpcsUnionColumn, ...]
-    resolve: RowIdentity
-    shared_document: SharedDocument | None
-    direct_documents: DirectDocuments | None
+    row_identity: RowIdentity
+    shared_document: SharedDocumentMapping | None
+    direct_documents: DirectDocumentMappings | None
 
     @property
-    def position(self) -> Sequence[EntityIdentity]:
-        return self.resolved.concrete_subtypes
+    def concrete_types(self) -> Sequence[EntityIdentity]:
+        return self.position.concrete_subtypes
 
-    def projection(
+    def render_select_list(
         self, dialect: Dialect, alias: str
     ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
         """The select list of an outer read over the union's ``alias``.
@@ -1052,21 +1006,24 @@ class BranchNarrowPlan:
     tag: TagPredicate | None
 
 
-def plan_inheritance_read(
+def plan_read_shape(
     query: PlannedEntityQuery,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     instance_form: bool,
     lock: LockMode | None,
-) -> TphPlan | TpcsSinglePlan | TpcsUnionPlan:
-    """Plan an inheritance-family read for its family's declared strategy.
-
-    Only an inheritance participant reaches here, and m-inheritance admits
-    exactly two strategies, so the table-per-hierarchy test decides between them
-    outright.
+) -> SingleTableReadPlan | TpcsUnionReadPlan:
+    """Plan the physical read of ``query``'s position, whatever its Entity's
+    inheritance shape.
 
     The read covers ``query.position``, fetches exactly ``query.projection``'s
-    Value Objects, and observes the Structured Column exactly where it asks.
+    Value Objects, and observes the Structured Column exactly where it asks. A
+    standalone Entity, a table-per-hierarchy position, and a
+    table-per-concrete-subtype position resolving to one concrete read one
+    Table; only a table-per-concrete-subtype position resolving to several reads
+    their `union all`. The storage owner's Position Layout is asked for once, and
+    both document planning and column selection read that one answer.
+
     ``instance_form`` is the object lane (`result_form == "instance"`), which
     decides only sibling padding and which branch-owned fields a row publishes.
     ``lock`` is here rather than at the assembly site because the union lane must
@@ -1076,19 +1033,22 @@ def plan_inheritance_read(
     """
     entity = query.entity
     view = entity_view(facet, entity.identity)
-    if isinstance(view.strategy, TablePerHierarchy):
-        return _plan_tph_read(
-            entity,
-            view,
-            query.position,
-            facet,
-            storage,
-            query.projection,
-            narrowed=query.narrow_to is not None,
-            instance_form=instance_form,
+    position = query.position
+    layout = position_layout(storage, position.concrete_subtypes)
+    if isinstance(view.strategy, TablePerConcreteSubtype) and len(position.concrete_subtypes) != 1:
+        return _plan_tpcs_union_read(
+            position, layout, facet, storage, query.projection, lock, instance_form=instance_form
         )
-    return _plan_tpcs_read(
-        query.position, facet, storage, query.projection, lock, instance_form=instance_form
+    return _plan_single_table_read(
+        entity,
+        view,
+        position,
+        layout,
+        facet,
+        storage,
+        query.projection,
+        narrowed=query.narrow_to is not None,
+        instance_form=instance_form,
     )
 
 
@@ -1100,72 +1060,70 @@ def _requested(
     )
 
 
-def _plan_tph_read(
+def _plan_single_table_read(
     entity: EntityMetadata,
     view: InheritanceEntityView,
     position: InheritancePositionView,
+    layout: PositionLayoutView,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     projection: ResolvedReadProjection,
     *,
     narrowed: bool,
     instance_form: bool,
-) -> TphPlan:
-    layout = _table_layout(storage, facet, view.entity)
-    tag_col = tag_column(layout, view.root)
-    abstract_target = isinstance(entity.inheritance, (AbstractRoot, AbstractSubtype))
-    # Only an UNTOUCHED abstract root queries the whole family, so only it carries
-    # no tag predicate at all.
-    guarded = narrowed or not isinstance(entity.inheritance, AbstractRoot)
-
+) -> SingleTableReadPlan:
+    concretes = tuple(position.concrete_subtypes)
+    tph = isinstance(view.strategy, TablePerHierarchy)
+    # A table-per-hierarchy position reads the root's shared Table; any other
+    # single-table position reads its one concrete's own.
+    table = _table_layout(storage, facet, entity.identity if tph else concretes[0])
+    abstract_target = tph and isinstance(entity.inheritance, (AbstractRoot, AbstractSubtype))
+    # Padding is the abstract-target row-form lane's alone: a read that publishes
+    # flat rows renders every branch's document members, so a row carries its
+    # siblings' keys as null.
+    shared, direct = plan_document_reads(
+        layout, facet, storage, projection, pad_siblings=abstract_target and not instance_form
+    )
     columns = select_projection(
-        position_slots(layout, position.concrete_subtypes),
+        position_slots(table, concretes),
         position.superset_attributes,
         projection.value_objects,
         project_discriminator=abstract_target,
     )
-    document, shared = _tph_document_projection(
-        layout,
-        storage,
-        position.concrete_subtypes,
-        projection,
-        instance_form=instance_form,
-        abstract_target=abstract_target,
-    )
-    if document is not None:
-        columns = (*columns, document)
-    # `familyVariant` rides the SAME condition as the discriminator projection:
-    # a tag identity reads the column this read projects, or there is no column to
-    # read and every row names the one concrete the target is. A heterogeneous
-    # shared document is keyed by the concretes whose shapes it holds, so the two
-    # agree on one pairing.
-    return TphPlan(
-        table=layout.table.name,
-        resolved=position,
-        layout=position_layout(storage, position.concrete_subtypes),
-        columns=columns,
-        tag=TagPredicate(tag_col, tuple(position.concrete_subtypes)) if guarded else None,
-        resolve=ByTag(
-            tag_col,
-            view.root,
-            tag_pairs(facet, position.concrete_subtypes)
-            if shared is not None
-            else family_tag_pairs(facet, view.root),
-        )
-        if abstract_target
-        else FixedIdentity(position.concrete_subtypes[0]),
-        shared_document=shared,
-        direct_documents=direct_documents(
-            tuple(
-                (
-                    concrete,
-                    layout,
-                    entity_view(facet, concrete).applicable_attributes,
-                    _requested(projection, entity_view(facet, concrete).applicable_value_objects),
-                )
-                for concrete in position.concrete_subtypes
+    if shared is not None:
+        columns = (*columns, ProjectedColumn(shared.column, None, document=True))
+    tag_guard: TagPredicate | None = None
+    # A single-table read with no tag to read names the one concrete its
+    # position resolved to: a standalone Entity, a concrete target, or a
+    # table-per-concrete-subtype position however it was narrowed.
+    row_identity: RowIdentity = FixedRowIdentity(concretes[0])
+    if tph:
+        tag_col = tag_column(table, view.root)
+        # Only an UNTOUCHED abstract root queries the whole family, so only it
+        # carries no tag predicate at all.
+        if narrowed or not isinstance(entity.inheritance, AbstractRoot):
+            tag_guard = TagPredicate(tag_col, concretes)
+        # `familyVariant` rides the SAME condition as the discriminator
+        # projection: a tag identity reads the column this read projects. A
+        # heterogeneous shared document is keyed by the concretes whose shapes
+        # it holds, so the two agree on one pairing.
+        if abstract_target:
+            row_identity = TaggedRowIdentity(
+                tag_col,
+                view.root,
+                tag_pairs(facet, concretes)
+                if shared is not None
+                else family_tag_pairs(facet, view.root),
             )
-        ),
+    return SingleTableReadPlan(
+        table=table.table.name,
+        position=position,
+        layout=layout,
+        columns=columns,
+        tag_guard=tag_guard,
+        row_identity=row_identity,
+        shared_document=shared,
+        direct_documents=direct,
     )
 
 
@@ -1173,7 +1131,7 @@ def _projects_document_slot(
     contributor: ColumnContributor,
     projection: ResolvedReadProjection,
     *,
-    document_resident: bool,
+    shared_document: bool,
 ) -> bool:
     """Whether a `union all` branch projects ``contributor``'s `Document` slot.
 
@@ -1181,82 +1139,40 @@ def _projects_document_slot(
     read projects. A top-level Value Object occurrence owns a Structured Column
     of its own under `Columns` layout, projected exactly where the read fetches
     that occurrence (`m-sql` *Read projection* rule 3). A Relational Document
-    Layout's shared Structured Column answers rule 5: an observing read projects
-    it, and any other read projects it to produce a fetched member the layout
-    placed at a Document Path, which ``document_resident`` is.
+    Layout's shared Structured Column answers rule 5 exactly where document
+    planning mapped one, which ``shared_document`` is.
     """
     if isinstance(contributor, AttributeIdentity):
         return True
     if isinstance(contributor, ValueObjectIdentity):
         return projection.includes_value_object(contributor)
-    return isinstance(contributor, RelationalDocument) and (
-        projection.observe_structured_document or document_resident
-    )
+    return isinstance(contributor, RelationalDocument) and shared_document
 
 
-def _plan_tpcs_read(
+def _plan_tpcs_union_read(
     position: InheritancePositionView,
+    layout: PositionLayoutView,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     projection: ResolvedReadProjection,
     lock: LockMode | None,
     *,
     instance_form: bool,
-) -> TpcsSinglePlan | TpcsUnionPlan:
-    """Table-per-concrete-subtype (m-sql "Inheritance — table-per-concrete-subtype
-    lowering"). Unlike table-per-hierarchy, the single-vs-several split is the ONLY
-    thing that decides `familyVariant` here — there is no table-per-concrete-subtype
-    analogue of the abstract-`target` slot-2 rule, because a resolved single
-    concrete has no shared table to discriminate and no sibling branch to
-    distinguish it from (m-sql, explicit).
+) -> TpcsUnionReadPlan:
+    """Table-per-concrete-subtype over several concretes (m-sql "Inheritance —
+    table-per-concrete-subtype lowering"). Unlike table-per-hierarchy, the
+    single-vs-several split is the ONLY thing that decides `familyVariant` here —
+    there is no table-per-concrete-subtype analogue of the abstract-`target`
+    slot-2 rule, because a resolved single concrete has no shared table to
+    discriminate and no sibling branch to distinguish it from (m-sql, explicit).
 
-    Every branch table is that branch's OWN concrete's container, resolved one
-    concrete at a time. The position's own container is a different fact — the
-    single container a read or write of the position itself targets (absent for
-    an abstract table-per-concrete-subtype position) — and is deliberately never
-    reached for here: only an abstract position resolves to several concretes,
-    and it has no container of its own to reach for.
+    Every branch table is that branch's OWN concrete's container. The position's
+    own container is a different fact — the single container a read or write of
+    the position itself targets (absent for an abstract table-per-concrete-subtype
+    position) — and is deliberately never reached for here: only an abstract
+    position resolves to several concretes, and it has no container of its own to
+    reach for.
     """
-    concretes = tuple(position.concrete_subtypes)
-
-    if len(concretes) == 1:
-        layout = _table_layout(storage, facet, concretes[0])
-        columns = select_projection(
-            position_slots(layout, concretes),
-            position.superset_attributes,
-            projection.value_objects,
-            project_discriminator=False,
-        )
-        document, fan_out = document_projection(
-            storage_entity_view(storage, concretes[0]), projection
-        )
-        if document is not None:
-            columns = (*columns, document)
-        return TpcsSinglePlan(
-            table=layout.table.name,
-            resolved=position,
-            layout=position_layout(storage, concretes),
-            columns=columns,
-            # A single resolved concrete projects neither a tag column nor a
-            # variant literal — the settled asymmetry with table-per-hierarchy,
-            # whose abstract target keeps its tag however narrow the position
-            # resolves — so every row of it names that concrete.
-            resolve=FixedIdentity(concretes[0]),
-            shared_document=None
-            if document is None or fan_out is None
-            else SharedDocument(document.column, ((concretes[0], fan_out),)),
-            direct_documents=direct_documents(
-                (
-                    (
-                        concretes[0],
-                        layout,
-                        position.superset_attributes,
-                        _requested(projection, position.superset_value_objects),
-                    ),
-                )
-            ),
-        )
-
     if lock == "locking":
         # A shared row lock is the one clause a derived-table wrap cannot rescue:
         # PostgreSQL forbids a locking clause over a `UNION` result and over every
@@ -1269,23 +1185,17 @@ def _plan_tpcs_read(
             "a read-lock suffix over a table-per-concrete-subtype union-all read "
             "(2+ effective concretes) has no goldened lowering yet"
         )
-    layout_position = position_layout(storage, concretes)
-    # An observing read projects the shared Structured Column whatever resides in it.
-    document_resident = not projection.observe_structured_document and any(
-        isinstance(_table_layout(storage, facet, concrete).placement(member.identity), DocumentPath)
-        for concrete in concretes
-        for members in (
-            entity_view(facet, concrete).applicable_attributes,
-            _requested(projection, entity_view(facet, concrete).applicable_value_objects),
-        )
-        for member in members
+    # A branch storing no document of its own still pads its siblings' document
+    # members, and reads the shared column the union aliased for all of them.
+    shared, direct = plan_document_reads(
+        layout, facet, storage, projection, pad_siblings=not instance_form
     )
     scalars = tuple(
         index
-        for index, column in enumerate(layout_position.columns)
+        for index, column in enumerate(layout.columns)
         if column.tier is not ColumnTier.DOCUMENT
         or _projects_document_slot(
-            column.contributor, projection, document_resident=document_resident
+            column.contributor, projection, shared_document=shared is not None
         )
     )
     # A scalar collection's Column holds a document, never its element type's
@@ -1300,42 +1210,42 @@ def _plan_tpcs_read(
         if isinstance(contributor, (AttributeIdentity, ValueObjectIdentity))
         else None
         for index in scalars
-        for contributor in (layout_position.columns[index].contributor,)
+        for contributor in (layout.columns[index].contributor,)
     )
-    spellings = tuple(_contributor_column(layout_position.branches, index) for index in scalars)
+    spellings = tuple(_contributor_column(layout.branches, index) for index in scalars)
     result_aliases = _result_aliases(spellings)
     union_columns = tuple(
         TpcsUnionColumn(
-            contributor=layout_position.columns[index].contributor,
+            contributor=layout.columns[index].contributor,
             result_alias=result_alias,
-            document=layout_position.columns[index].tier is ColumnTier.DOCUMENT,
+            document=layout.columns[index].tier is ColumnTier.DOCUMENT,
         )
         for index, result_alias in zip(scalars, result_aliases, strict=True)
     )
     branches = tuple(
-        TpcsBranchPlan(
+        TpcsUnionBranchPlan(
             identity=branch.concrete_entities[0],
             variant=family_variant_name(facet, branch.concrete_entities[0]),
             table=branch.layout.table.name,
             columns=tuple(
-                BranchColumn(
+                TpcsUnionBranchColumn(
                     column=spelling,
                     type=None if attribute is None else attribute.type,
                     max_length=None if attribute is None else attribute.max_length,
                     owned=branch.slots[index] is not None,
                     result_alias=result_alias,
-                    document=layout_position.columns[index].tier is ColumnTier.DOCUMENT,
+                    document=layout.columns[index].tier is ColumnTier.DOCUMENT,
                 )
                 for index, attribute, spelling, result_alias in zip(
                     scalars, attributes, spellings, result_aliases, strict=True
                 )
             ),
         )
-        for branch in layout_position.branches
+        for branch in layout.branches
     )
     # Every branch projects its own `family_variant` literal, so resolution is
     # a plain rename — no tag map, no metamodel lookup.
-    literal = ByLiteral(
+    literal = LiteralRowIdentity(
         "family_variant",
         tuple((branch.variant, branch.identity) for branch in branches),
         tuple(
@@ -1356,57 +1266,14 @@ def _plan_tpcs_read(
         ),
         instance_form,
     )
-    fan_outs: list[tuple[EntityIdentity, DocumentFanOut | None]] = []
-    document_column: str | None = None
-    for concrete in concretes:
-        projected, fan_out = document_projection(storage_entity_view(storage, concrete), projection)
-        if projected is not None and fan_out is not None and document_column is None:
-            document_column = projected.column
-        fan_outs.append((concrete, fan_out))
-    padding = (
-        ()
-        if instance_form
-        else tuple(
-            dict.fromkeys(
-                key
-                for _identity, fan_out in fan_outs
-                if fan_out is not None
-                for key, _path in fan_out.members
-            )
-        )
-    )
-
-    # A branch storing no document of its own still pads its siblings' document
-    # members, and reads the shared column the union aliased for all of them.
-    def padded(identity: EntityIdentity, fan_out: DocumentFanOut | None) -> DocumentFanOut:
-        if fan_out is not None:
-            return replace(fan_out, padding=padding)
-        residents = storage_entity_view(storage, identity).document_residents
-        return DocumentFanOut(None if residents is None else residents.shape, (), padding)
-
-    return TpcsUnionPlan(
+    return TpcsUnionReadPlan(
         branches=branches,
-        resolved=position,
-        layout=layout_position,
+        position=position,
+        layout=layout,
         columns=union_columns,
-        resolve=literal,
-        shared_document=None
-        if document_column is None
-        else SharedDocument(
-            document_column,
-            tuple((identity, padded(identity, fan_out)) for identity, fan_out in fan_outs),
-        ),
-        direct_documents=direct_documents(
-            tuple(
-                (
-                    concrete,
-                    _table_layout(storage, facet, concrete),
-                    entity_view(facet, concrete).applicable_attributes,
-                    _requested(projection, entity_view(facet, concrete).applicable_value_objects),
-                )
-                for concrete in concretes
-            )
-        ),
+        row_identity=literal,
+        shared_document=shared,
+        direct_documents=direct,
     )
 
 

@@ -28,7 +28,7 @@ from parallax.core.read_delivery._row_decoding import (
     raw_member,
     row_identity,
 )
-from parallax.core.sql_gen._inheritance import ResultContract
+from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.wire import encode_wire
 from parallax.core.write_plan.observe import occurrence_value
 
@@ -51,7 +51,7 @@ class ReadRowConverter:
     replace one, or hold the contract apart from the mappings bound with it.
     """
 
-    _contract: ResultContract
+    _contract: ReadResultContract
     _mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping]
 
     def convert_row(
@@ -177,7 +177,7 @@ class RowPublisher:
 
     def __init__(
         self,
-        contract: ResultContract,
+        contract: ReadResultContract,
         mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping],
     ) -> None:
         self._contract = contract
@@ -256,7 +256,7 @@ def _row_operation(
 
 def bind(
     model: CatalogedModel,
-    contract: ResultContract,
+    contract: ReadResultContract,
     projection: ResolvedReadProjection,
     *,
     correlation_members: tuple[AttributeIdentity, ...] = (),
@@ -288,7 +288,7 @@ def bind(
 def _entity_read_mapping(
     model: CatalogedModel,
     identity: EntityIdentity,
-    contract: ResultContract,
+    contract: ReadResultContract,
     projection: ResolvedReadProjection,
     correlation_members: tuple[AttributeIdentity, ...],
 ) -> EntityReadMapping:

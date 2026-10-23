@@ -24,19 +24,21 @@ from parallax.core.read_delivery._row_decoding import (
 )
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._inheritance import (
-    ByLiteral,
-    ByTag,
     DocumentFanOut,
-    FixedIdentity,
-    ResultContract,
+    FixedRowIdentity,
+    LiteralRowIdentity,
+    ReadResultContract,
     RowIdentity,
-    SharedDocument,
+    SharedDocumentMapping,
+    TaggedRowIdentity,
 )
 
 _ROOT = EntityIdentity("decoding", "Root")
 _LEAF = EntityIdentity("decoding", "Leaf")
-_TAGS = ByTag("kind", _ROOT, (("leaf", _LEAF, "Leaf"),))
-_LITERAL = ByLiteral("family_variant", (("Leaf", _LEAF),), (("Leaf", ()),), narrow_to_owned=False)
+_TAGS = TaggedRowIdentity("kind", _ROOT, (("leaf", _LEAF, "Leaf"),))
+_LITERAL = LiteralRowIdentity(
+    "family_variant", (("Leaf", _LEAF),), (("Leaf", ()),), narrow_to_owned=False
+)
 
 
 _NO_MEMBERS = DocumentFanOut(None, ())
@@ -49,10 +51,10 @@ def _contract(
     *,
     shared: bool = False,
     leaf_document: DocumentFanOut = _NO_MEMBERS,
-) -> ResultContract:
-    return ResultContract(
+) -> ReadResultContract:
+    return ReadResultContract(
         resolve,
-        SharedDocument("payload", ((_LEAF, leaf_document),)) if shared else None,
+        SharedDocumentMapping("payload", ((_LEAF, leaf_document),)) if shared else None,
         None,
         (),
         result_keys,
@@ -61,21 +63,21 @@ def _contract(
 
 
 _FIXED_DOCUMENT = _contract(
-    FixedIdentity(_LEAF), ("id", "payload"), shared=True, leaf_document=_DISPLAY_NAME
+    FixedRowIdentity(_LEAF), ("id", "payload"), shared=True, leaf_document=_DISPLAY_NAME
 )
 
 
 @pytest.mark.parametrize(
     "contract",
     [
-        _contract(FixedIdentity(_LEAF), ("id",)),
-        _contract(FixedIdentity(_LEAF), ("id", "payload"), shared=True),
+        _contract(FixedRowIdentity(_LEAF), ("id",)),
+        _contract(FixedRowIdentity(_LEAF), ("id", "payload"), shared=True),
         _contract(_TAGS, ("id", "kind")),
         _contract(_LITERAL, ("id", "family_variant")),
     ],
     ids=["fixed", "fixed-document", "tag", "literal"],
 )
-def test_a_positional_row_of_the_wrong_width_is_refused(contract: ResultContract) -> None:
+def test_a_positional_row_of_the_wrong_width_is_refused(contract: ReadResultContract) -> None:
     with pytest.raises(
         ValueError, match=f"result key count {len(contract.result_keys)} does not match row arity 3"
     ):
@@ -83,8 +85,8 @@ def test_a_positional_row_of_the_wrong_width_is_refused(contract: ResultContract
 
 
 def test_a_coordinate_is_read_only_off_a_row_of_the_contracts_width() -> None:
-    contract = ResultContract(
-        FixedIdentity(_LEAF), None, None, (), ("id", "parallax_seek_0"), ("parallax_seek_0",)
+    contract = ReadResultContract(
+        FixedRowIdentity(_LEAF), None, None, (), ("id", "parallax_seek_0"), ("parallax_seek_0",)
     )
     assert row_coordinates(contract, ((1, 2),)) == (ContinuationCoordinate((2,)),)
     for row in ((1,), (1, 2, 3)):
@@ -95,7 +97,7 @@ def test_a_coordinate_is_read_only_off_a_row_of_the_contracts_width() -> None:
 @pytest.mark.parametrize(
     ("contract", "row", "missing"),
     [
-        (_contract(FixedIdentity(_LEAF), ("id",), shared=True), (1,), "payload"),
+        (_contract(FixedRowIdentity(_LEAF), ("id",), shared=True), (1,), "payload"),
         (_contract(_TAGS, ("id",)), (1,), "kind"),
         (_contract(_TAGS, ("id", "kind"), shared=True), (1, "leaf"), "payload"),
         (_contract(_LITERAL, ("id",)), (1,), "family_variant"),
@@ -104,7 +106,7 @@ def test_a_coordinate_is_read_only_off_a_row_of_the_contracts_width() -> None:
     ids=["fixed-document", "tag", "tag-document", "literal", "literal-document"],
 )
 def test_a_carrier_without_a_result_cell_is_refused_at_the_row(
-    contract: ResultContract, row: tuple[object, ...], missing: str
+    contract: ReadResultContract, row: tuple[object, ...], missing: str
 ) -> None:
     with pytest.raises(KeyError, match=missing):
         row_identity(contract, row)
@@ -127,7 +129,7 @@ def test_a_carrier_without_a_result_cell_is_refused_at_the_row(
     ids=["tag", "literal"],
 )
 def test_a_row_reads_its_carriers_at_their_result_cells(
-    contract: ResultContract, row: Row, identity: tuple[object, ...]
+    contract: ReadResultContract, row: Row, identity: tuple[object, ...]
 ) -> None:
     assert row_identity(contract, row) == identity
 

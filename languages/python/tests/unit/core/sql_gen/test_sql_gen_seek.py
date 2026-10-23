@@ -34,6 +34,7 @@ from parallax.core.read_delivery._row_decoding import publication_keys, raw_memb
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import LoweredStatement
+from parallax.core.sql_gen._inheritance import SingleTableReadPlan, TpcsUnionReadPlan
 from parallax.core.sql_gen._planning import SharedSourceRef
 from parallax.core.sql_gen._seek import lowered_terms
 from parallax.core.wire import WireEncodingError
@@ -43,6 +44,7 @@ from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 from tests.unit._prepared_read_support import result_row
 from tests.unit.core.sql_gen._plan_reuse_support import (
+    assert_planned_once,
     reaches_compilation_state,
     record_plan_reuse,
 )
@@ -567,8 +569,8 @@ def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock(
     # Both arms of a nullable leading term's continuing page select from their own
     # statement, so each joins the shared order itself, binds the predicate where
     # its own text puts it, and leaves the shared lock to the reattached base row.
-    # They render the read's one statement plan, each through its own builder,
-    # and the compiled read retains neither.
+    # They render the read's one physical and statement plans, each through its
+    # own builder, and the compiled read retains no statement plan or builder.
     entity = entity_of(ORDERS, "OrderItem")
     query = object_query(
         entity.identity,
@@ -594,6 +596,7 @@ def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock(
     assert statement.binds == ("Ada", february, february, february, 11, 2, "Ada", 2, 2)
 
     (plan,) = reuse.plans
+    assert isinstance(assert_planned_once(reuse), SingleTableReadPlan)
     ordinary, null_tail = reuse.roots
     assert ordinary.statement_plan is plan and null_tail.statement_plan is plan
     assert ordinary.scope_id == null_tail.scope_id == plan.root_scopes[None]
@@ -635,6 +638,7 @@ def test_both_continuing_arms_of_a_union_render_its_branch_roots_through_fresh_b
     assert statement.binds == ("Ada", "Ada", 3, 3, 3, 1, 2, "Ada", "Ada", 2, 2)
 
     (plan,) = reuse.plans
+    assert isinstance(assert_planned_once(reuse), TpcsUnionReadPlan)
     branch_roots = tuple(plan.root_scopes.values())
     assert len(branch_roots) == 2
     assert all(root.statement_plan is plan for root in reuse.roots)

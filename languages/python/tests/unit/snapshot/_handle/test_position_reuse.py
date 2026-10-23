@@ -2,8 +2,8 @@
 
 Model formation reads every root's family declaration sequence and precomputes
 every Entity's own position; read planning then reuses those answers, resolving
-only a query-wide narrowing and the one Storage Layout position a family read
-arm projects. Counting wrappers over the two facets' resolving methods
+only a query-wide narrowing and the one Storage Layout position each read's
+physical plan projects. Counting wrappers over the two facets' resolving methods
 observe that through the production entrypoints against a live database: they
 are installed before the model forms, so formation's own reads are visible, and
 cleared before each operation, so the counts are that operation's alone.
@@ -233,7 +233,7 @@ _READS: dict[str, _Read] = {
     "standalone": _Read(
         lambda: Ledger.where(Ledger.id >= 1),
         _wire_query("Ledger"),
-        _Counts(0, 0, 0),
+        _Counts(0, 1, 0),
         (("Ledger", 1, "opening"),),
     ),
 }
