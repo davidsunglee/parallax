@@ -13,6 +13,7 @@ from tests._support.temporal_write_transport import (
     AMENDED_AT,
     AMOUNT,
     CELLS,
+    NARROW_BIND_LIMIT,
     REPLACED_LABEL,
     SEEDED_AT,
     Cell,
@@ -20,6 +21,7 @@ from tests._support.temporal_write_transport import (
     HistoryRow,
     PortTally,
     Realization,
+    expected_flush_calls,
     expected_history,
     expected_realization,
     milestone_start,
@@ -109,6 +111,23 @@ def test_no_ordered_transport_is_manufactured_over_a_connection_without_one() ->
     assert _counting(_Inner(ordered=False), PortTally()).ordered_write_transport is None
 
 
+def test_an_unordered_or_narrow_connection_withholds_transport_or_narrows_its_bind_limit() -> None:
+    inner = _Inner(ordered=True)
+    tally = PortTally()
+    unordered = CountingConnection(cast("Any", inner), tally, "unordered")
+    narrow = CountingConnection(cast("Any", inner), tally, "narrow")
+    assert unordered.ordered_write_transport is None
+    assert unordered.dialect is POSTGRES
+    assert narrow.ordered_write_transport is not None
+    assert narrow.dialect.max_bind_parameters == NARROW_BIND_LIMIT
+    assert narrow.dialect.name == POSTGRES.name
+
+    def body(handed: Any) -> None:
+        assert handed.ordered_write_transport is None
+
+    unordered.transaction(body)
+
+
 def test_a_transaction_hands_its_body_a_connection_counting_into_the_same_tally() -> None:
     inner = _Inner(ordered=True)
     tally = PortTally()
@@ -138,6 +157,17 @@ def test_a_transaction_hands_its_body_a_connection_counting_into_the_same_tally(
         (Cell("target-replace", 1), True, Realization(1, 0, 0, 0, 1, 3, 3)),
         (Cell("target-replace", 64), True, Realization(0, 1, 64, 64, 1, 3, 3)),
         (Cell("collection-amend", 64), True, Realization(0, 1, 64, 64, 2, 66, 64)),
+        # A full span's 96 closes, then its 160 openings; the 33rd object alone.
+        (Cell("keyed-amend", 3, 33), True, Realization(0, 2 + 1, 96 + 3, 64, 3 + 1, 165, 64)),
+        (Cell("keyed-amend", 3, 33), False, Realization(99, 0, 0, 0, 4, 165, 64)),
+        (Cell("keyed-amend", 3, 33, "unordered"), True, Realization(99, 0, 0, 0, 4, 165, 64)),
+        # Seven binds an opening: three openings to an insert.
+        (Cell("keyed-amend", 3, 33, "narrow"), True, Realization(0, 3, 99, 64, 54 + 2, 165, 3)),
+        (Cell("keyed-amend", 70, 3), True, Realization(0, 4, 210, 64, 4, 216, 64)),
+        (Cell("target-replace", 4, 32), True, Realization(0, 2, 128, 64, 2, 96, 64)),
+        (Cell("collection-amend", 4, 8), True, Realization(0, 1, 32, 32, 1, 48, 48)),
+        # Each object alone: three closes in one invocation, five openings.
+        (Cell("interleaved-amend", 3, 4), True, Realization(0, 4, 12, 3, 4, 20, 5)),
     ],
     ids=lambda value: value.id if isinstance(value, Cell) else str(value),
 )
@@ -149,14 +179,41 @@ def test_a_cells_realization_follows_from_its_closes_and_openings(
     assert expected_realization(cell, ordered=ordered) == realized
 
 
+@pytest.mark.parametrize(
+    ("cell", "calls"),
+    [
+        (Cell("keyed-amend", 1), [("write", 2)]),
+        (Cell("keyed-amend", 64), [("read", 63), ("write", 66)]),
+        (
+            Cell("keyed-amend", 3, 33),
+            [("read", 64), ("write", 96 + 3), ("read", 2), ("write", 3 + 1)],
+        ),
+        (
+            Cell("keyed-amend", 3, 33, "narrow"),
+            [("read", 64), ("write", 96 + 54), ("read", 2), ("write", 3 + 2)],
+        ),
+        (Cell("target-replace", 4, 32), [("read", 96), ("write", 128 + 2)]),
+        (Cell("interleaved-amend", 3, 4), [("read", 2), ("write", 3 + 1)] * 4),
+    ],
+    ids=lambda value: value.id if isinstance(value, Cell) else "",
+)
+def test_a_cells_flush_reads_each_groups_coverage_before_its_statements(
+    cell: Cell, calls: list[tuple[str, int]]
+) -> None:
+    assert expected_flush_calls(cell) == calls
+
+
 def test_every_cell_is_a_workload_the_live_module_drives() -> None:
     assert len(set(CELLS)) == len(CELLS)
+    assert len({cell.id for cell in CELLS}) == len(CELLS)
     assert {cell.workload for cell in CELLS} == {
         "keyed-amend",
         "target-replace",
         "collection-amend",
+        "interleaved-amend",
     }
     assert transport.STATEMENT_CAP == transport.ENTRY_CAP == 64
+    assert transport.SPAN_WRITES == 32
 
 
 def _day(days: int) -> dt.datetime:

@@ -64,6 +64,19 @@ every statement it is presented on either path as the driver would, and counts
 the statements, invocations, largest ordered invocation, and largest grouped
 insert of one flush in constant space.
 
+The deferred-span flushes amend Bitemporal objects past the milestone their
+transaction read, so each amendment reaches milestones only the flush's shared
+coverage reads acquire, and the writes each read makes ready execute as one
+Write Group. Their port answers a read as of an instant with the milestones
+current then, and a coverage read with the milestones its terms reach, and
+counts the coverage reads too. A third region is marked inside these flushes:
+each advance of the flush's scoped range binding, which prepares the span,
+acquires coverage until the next write is ready, and binds the ready writes
+into the group the next execution region runs. A requesting flush is the
+read-dependency flush a later read causes, with every source still held, so it
+captures the rows its writes leave for their sources; the others are the
+concluding pre-commit flush, which captures nothing.
+
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
 carried by this MODULE's underscore. Never imported by production code.
@@ -97,6 +110,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core._execution._unit_work.instructions import coerce_typed_row
+from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.write_planner import WritePlanner, WritePlanningRequest
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import INFINITY as OPEN_BOUND
@@ -119,8 +133,9 @@ from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle._activity import FlushActivity
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import KeyedMutation, TargetMutation
-from parallax.core.write_plan.plan import WritePlan
-from parallax.core.write_plan.steps import PlannedStep
+from parallax.core.write_plan.payload import PatchedDocument
+from parallax.core.write_plan.plan import WriteGroup, WritePlan
+from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
 from parallax.postgres._connection import adapt_binds
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
@@ -133,6 +148,7 @@ __all__ = [
     "CATALOG",
     "CROSS_OBJECT_CASES",
     "CROSS_OBJECT_PREFIX",
+    "DEFERRED_CASES",
     "ENTITY_CLASSES",
     "FAMILY_ENTITY_CLASSES",
     "FAMILY_MODEL",
@@ -148,11 +164,13 @@ __all__ = [
     "Layout",
     "OrderedAcceptingPort",
     "ResponseCase",
+    "SpanAcceptingPort",
     "case_named",
     "cross_object_case_named",
     "database",
     "flush_database",
     "flush_objects",
+    "flush_port",
     "insert_response",
     "lowered",
     "marked_flushes",
@@ -957,12 +975,20 @@ class FlushWork:
 class CrossObjectCase:
     """One flush of keyed amendments over distinct objects of one Entity.
 
-    ``stored`` holds each object's current milestone, keyed by physical column
-    as the driver answers it, and ``changes`` what the caller authors for each,
-    by key: a Typed case's ``edit`` keywords or a Wire case's changes document,
-    composed outside every window as a caller's arrives. ``groups`` is how many
-    settled writes each Write Group of the flush's plan holds, and ``work`` what
-    executing them presents to the port.
+    ``stored`` holds the milestones the transaction's reads answer, keyed by
+    physical column as the driver answers them, and ``changes`` what the
+    caller authors for each object, by key: a Typed case's ``edit`` keywords
+    or a Wire case's changes document, composed outside every window as a
+    caller's arrives. ``groups`` is how many settled writes each Write Group
+    the flush executes holds, and ``work`` what executing them presents to the
+    port.
+
+    A deferred-span case also holds the ``acquired`` milestones only a
+    coverage read answers. Its transaction reads its objects as of each of
+    ``reads`` and amends every source it read from that instant until
+    ``reach`` past it, and its flush reads coverage ``coverage_reads`` times;
+    where ``requesting``, a later read causes that flush with every source
+    still held.
     """
 
     name: str
@@ -974,10 +1000,19 @@ class CrossObjectCase:
     changes: Mapping[int, Mapping[str, object]]
     groups: tuple[int, ...]
     work: FlushWork
+    acquired: tuple[Mapping[str, object], ...] = ()
+    reads: tuple[dt.datetime, ...] = ()
+    reach: dt.timedelta = dt.timedelta(0)
+    coverage_reads: int = 0
+    requesting: bool = False
 
     @property
     def objects(self) -> int:
-        return len(self.stored)
+        return len({row["id"] for row in self.stored})
+
+    @property
+    def deferred(self) -> bool:
+        return self.coverage_reads > 0
 
 
 def _cross_object_case(
@@ -1008,6 +1043,161 @@ def _cross_object_case(
         groups,
         work,
     )
+
+
+_MILESTONE: Final = dt.timedelta(days=30)
+_DAY: Final = dt.timedelta(days=1)
+_AMENDED_TITLE: Final = "title-amended"
+
+
+def _milestone(
+    cls: type[Entity], layout: Layout, key: int, start: dt.datetime, end: object
+) -> Mapping[str, object]:
+    """Object ``key``'s milestone over ``[start, end)``, labelled by its start
+    so no two milestones of one object state the same values."""
+    row = _stored_row(_value(cls, key, f"{start:%Y%m%d}"), layout)
+    row.update(from_z=start, thru_z=end)
+    return row
+
+
+def _deferred_changes(keys: range) -> dict[int, Mapping[str, object]]:
+    """A new title for each object, its only change, so each amended piece
+    keeps the values that set it apart from its neighbours and none merge."""
+    return {key: {"title": _AMENDED_TITLE} for key in keys}
+
+
+def _deferred_span_case(
+    operation: str,
+    layout: Layout,
+    ingress: Ingress,
+    *,
+    first_key: int,
+    objects: int,
+    milestones: int,
+    work: FlushWork,
+    requesting: bool = False,
+) -> CrossObjectCase:
+    """``objects`` Bitemporal objects of ``milestones`` adjacent milestones
+    each, the last open, read as of a day inside the first and amended until
+    a day inside the last: each amendment closes every milestone, opens its
+    head, an amended piece of each milestone, and its tail, and owes one
+    window of the milestones after the first, which one shared coverage read
+    acquires for all of them."""
+    cls = _CATEGORICAL[("bitemporal", layout)]
+    keys = range(first_key, first_key + objects)
+    starts = [VALID_START + _MILESTONE * index for index in range(milestones)]
+    ends: list[object] = [*starts[1:], OPEN_BOUND]
+    history = {
+        key: [
+            _milestone(cls, layout, key, start, end)
+            for start, end in zip(starts, ends, strict=True)
+        ]
+        for key in keys
+    }
+    read = VALID_START + 10 * _DAY
+    return CrossObjectCase(
+        f"{CROSS_OBJECT_PREFIX}bitemporal.{operation}-{objects}x{milestones}.{layout}.{ingress}",
+        cls,
+        ingress,
+        layout,
+        True,
+        tuple(rows[0] for rows in history.values()),
+        _deferred_changes(keys),
+        (objects,),
+        work,
+        acquired=tuple(row for rows in history.values() for row in rows[1:]),
+        reads=(read,),
+        reach=starts[-1] + 20 * _DAY - read,
+        coverage_reads=1,
+        requesting=requesting,
+    )
+
+
+def _partial_successor_case(*, first_key: int) -> CrossObjectCase:
+    """Two objects of 66 daily milestones, the last open, and one of two,
+    each read as of the start of every other milestone and amended from each
+    milestone read through the next, so every object owes a window per
+    milestone pair: 33, 33, and 1. A coverage read carries at most 64
+    windows, so the first reads all of the first object's and 31 of the
+    second's, which leaves the second a partial successor; the first object
+    runs alone before the second read, after which the other two run
+    together."""
+    cls = _CATEGORICAL[("bitemporal", "columns")]
+    keys = range(first_key, first_key + 3)
+    observed: list[Mapping[str, object]] = []
+    acquired: list[Mapping[str, object]] = []
+    for key, length in zip(keys, (66, 66, 2), strict=True):
+        for index in range(length):
+            start = VALID_START + _DAY * index
+            end = OPEN_BOUND if index == length - 1 and length > 2 else start + _DAY
+            (acquired if index % 2 else observed).append(
+                _milestone(cls, "columns", key, start, end)
+            )
+    return CrossObjectCase(
+        f"{CROSS_OBJECT_PREFIX}bitemporal.partial-3x66.columns.typed",
+        cls,
+        "typed",
+        "columns",
+        True,
+        tuple(observed),
+        _deferred_changes(keys),
+        (1, 2),
+        # Alone: 66 closes in two invocations, 67 openings in two inserts;
+        # together: 68 closes in two, 69 openings in two.
+        FlushWork(66 + 2 + 68 + 2, 2 + 2 + 2 + 2, 64, 64),
+        acquired=tuple(acquired),
+        reads=tuple(VALID_START + _DAY * index for index in range(0, 66, 2)),
+        reach=2 * _DAY,
+        coverage_reads=2,
+    )
+
+
+DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
+    # 128 closes in two invocations, 192 openings in three inserts.
+    _deferred_span_case(
+        "deferred",
+        "columns",
+        "typed",
+        first_key=4001,
+        objects=32,
+        milestones=4,
+        work=FlushWork(128 + 3, 2 + 3, 64, 64),
+    ),
+    # 384 closes in six invocations, 448 openings in seven inserts.
+    _deferred_span_case(
+        "deferred",
+        "document",
+        "wire",
+        first_key=5001,
+        objects=32,
+        milestones=12,
+        work=FlushWork(384 + 7, 6 + 7, 64, 64),
+    ),
+    _deferred_span_case(
+        "requesting",
+        "document",
+        "wire",
+        first_key=6001,
+        objects=32,
+        milestones=12,
+        work=FlushWork(384 + 7, 6 + 7, 64, 64),
+        requesting=True,
+    ),
+    # 1024 closes in 16 invocations, 1088 openings in 17 inserts.
+    _deferred_span_case(
+        "deferred",
+        "columns",
+        "typed",
+        first_key=7001,
+        objects=32,
+        milestones=32,
+        work=FlushWork(1024 + 17, 16 + 17, 64, 64),
+    ),
+    _partial_successor_case(first_key=8001),
+)
+"""Deferred spans of typical, large, and exceptional reach across 32 objects,
+the large one under a concluding and a requesting flush, and a span whose
+coverage takes two reads, one object running before the second."""
 
 
 CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
@@ -1041,10 +1231,12 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
         groups=(64,),
         work=FlushWork(67, 4, 64, 64),
     ),
+    *DEFERRED_CASES,
 )
 """Keyed amendments under the default Optimistic strategy: each Write Group's
 closes share ordered invocations and its successors grouped inserts, and a
-Bitemporal interior amendment opens a head, a changed middle, and a tail."""
+Bitemporal interior amendment opens a head, a changed middle, and a tail. The
+deferred spans follow."""
 
 
 def cross_object_case_named(name: str) -> CrossObjectCase:
@@ -1116,6 +1308,106 @@ class OrderedAcceptingPort(AcceptingPort):
         return OrderedWriteResultComplete((1,) * presented)
 
 
+class SpanAcceptingPort(OrderedAcceptingPort):
+    """An :class:`OrderedAcceptingPort` over objects' whole histories: a read
+    of a key range as of an instant answers the ``stored`` milestones current
+    then, and a coverage read the ``acquired`` milestones its terms reach,
+    each once, looked up by key so answering costs what the rows it returns
+    do. A coverage read is the one naming a Valid-Time start strictly before
+    a window's end; its binds name each term's key and then each of its
+    windows' start and end. It counts the coverage reads of one flush beside
+    its :class:`FlushWork`."""
+
+    __slots__ = ("_acquired", "coverage_reads")
+    _acquired: Mapping[object, tuple[Mapping[str, object], ...]]
+    coverage_reads: int
+
+    def __init__(
+        self,
+        stored: Sequence[Mapping[str, object]] = (),
+        acquired: Sequence[Mapping[str, object]] = (),
+    ) -> None:
+        super().__init__(stored)
+        by_key: dict[object, list[Mapping[str, object]]] = {}
+        for row in acquired:
+            by_key.setdefault(row["id"], []).append(row)
+        self._acquired = {key: tuple(rows) for key, rows in by_key.items()}
+        self.coverage_reads = 0
+
+    def reset(self) -> None:
+        super().reset()
+        self.coverage_reads = 0
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        if " t0.from_z < " in sql:
+            self.coverage_reads += 1
+            rows = _covered(self._acquired, binds)
+        else:
+            rows = _current(self._stored, binds)
+        return projected_rows(
+            sql, (cast("Mapping[str, object]", _composed(row)) for row in rows), document_reads
+        )
+
+
+def _ends(row: Mapping[str, object]) -> tuple[dt.datetime, object]:
+    return cast("dt.datetime", row["from_z"]), row["thru_z"]
+
+
+def _overlaps(row: Mapping[str, object], since: dt.datetime, until: object) -> bool:
+    start, end = _ends(row)
+    return (until is OPEN_BOUND or start < cast("dt.datetime", until)) and (
+        end is OPEN_BOUND or cast("dt.datetime", end) > since
+    )
+
+
+def _current(
+    rows: Sequence[Mapping[str, object]], binds: Sequence[object]
+) -> list[Mapping[str, object]]:
+    """The rows of keys ``first`` through ``last`` current as of ``instant``,
+    the binds a key range read as of one instant names first."""
+    first, last, instant = cast("tuple[int, int, dt.datetime]", tuple(binds[:3]))
+    return [
+        row
+        for row in rows
+        if first <= cast("int", row["id"]) <= last
+        and _ends(row)[0] <= instant
+        and _overlaps(row, instant, OPEN_BOUND)
+    ]
+
+
+def _covered(
+    rows: Mapping[object, tuple[Mapping[str, object], ...]], binds: Sequence[object]
+) -> list[Mapping[str, object]]:
+    answered: dict[int, Mapping[str, object]] = {}
+    key: object = None
+    since: dt.datetime | None = None
+    for bind in binds:
+        if not isinstance(bind, dt.datetime):
+            if bind is not OPEN_BOUND:
+                key = bind
+        elif since is None:
+            since = bind
+        else:
+            for row in rows.get(key, ()):
+                if _overlaps(row, since, bind):
+                    answered.setdefault(id(row), row)
+            since = None
+    return list(answered.values())
+
+
+def flush_port(case: CrossObjectCase) -> OrderedAcceptingPort:
+    """The port ``case``'s flush writes through: a span port over a deferred
+    case's histories, otherwise one answering every read with its rows."""
+    if case.deferred:
+        return SpanAcceptingPort(case.stored, case.acquired)
+    return OrderedAcceptingPort(case.stored)
+
+
 @contextmanager
 def flush_database(
     case: CrossObjectCase, port: OrderedAcceptingPort | None = None
@@ -1123,26 +1415,40 @@ def flush_database(
     """A login-scoped handle over ``case``'s stored rows, composed outside every
     window, flushing at :data:`INSTANT`."""
     with Database(
-        (OrderedAcceptingPort(case.stored) if port is None else port).open(),
+        (flush_port(case) if port is None else port).open(),
         MODEL,
         clock=FixedClock(INSTANT),
     ) as root:
         yield root.using_database_login()
 
 
-def _read_all(tx: TxnContext, case: CrossObjectCase) -> list[Any]:
+def _query(case: CrossObjectCase) -> Any:
     entity = cast("Any", case.entity)
-    first = case.stored[0]["id"]
-    query = entity.where(entity.id.between(first, case.stored[-1]["id"]))
-    if case.bounded:
-        query = query.as_of(valid_time=INTERIOR_FROM)
-    if case.ingress == "wire":
-        return list(tx.wire.find(query).results())
-    return list(tx.find(query).results())
+    ids = [cast("int", row["id"]) for row in case.stored]
+    return entity.where(entity.id.between(min(ids), max(ids)))
 
 
-def _amend(tx: TxnContext, case: CrossObjectCase, source: Any) -> None:
-    until = INTERIOR_UNTIL if case.bounded else None
+def _read_all(tx: TxnContext, case: CrossObjectCase) -> list[tuple[Any, dt.datetime | None]]:
+    """Every source the case reads, beside the instant it was read as of."""
+    query = _query(case)
+    instants: tuple[dt.datetime | None, ...] = case.reads or (
+        (INTERIOR_FROM,) if case.bounded else (None,)
+    )
+    sources: list[tuple[Any, dt.datetime | None]] = []
+    for instant in instants:
+        read = query if instant is None else query.as_of(valid_time=instant)
+        found = tx.wire.find(read).results() if case.ingress == "wire" else tx.find(read).results()
+        sources.extend((source, instant) for source in found)
+    return sources
+
+
+def _until(case: CrossObjectCase, instant: dt.datetime | None) -> dt.datetime | None:
+    if case.reads:
+        return cast("dt.datetime", instant) + case.reach
+    return INTERIOR_UNTIL if case.bounded else None
+
+
+def _amend(tx: TxnContext, case: CrossObjectCase, source: Any, until: dt.datetime | None) -> None:
     if case.ingress == "wire":
         changes = case.changes[cast("int", source["id"])]
         if until is None:
@@ -1159,12 +1465,17 @@ def _amend(tx: TxnContext, case: CrossObjectCase, source: Any) -> None:
 
 def flush_objects(handle: ScopedDatabase, case: CrossObjectCase) -> None:
     """Run ``case`` as one committed transaction: read every object, then amend
-    each through its public verb, leaving all of them to its one pre-commit
-    flush."""
+    each source through its public verb, leaving all of them to one flush —
+    the pre-commit flush, or for a requesting case the read-dependency flush
+    a read of no object then causes, every source still held."""
 
     def body(tx: TxnContext) -> None:
-        for source in _read_all(tx, case):
-            _amend(tx, case, source)
+        sources = _read_all(tx, case)
+        for source, instant in sources:
+            _amend(tx, case, source, _until(case, instant))
+        if case.requesting:
+            nothing = cast("Any", case.entity).where(cast("Any", case.entity).id.between(0, 0))
+            tx.find(nothing.as_of(valid_time=case.reads[0])).results()
 
     handle.transact(body)
 
@@ -1177,12 +1488,16 @@ def unmarked() -> None:
 class FlushRegions:
     """The marks :func:`marked_flushes` calls: ``planning`` as finalization
     begins and ``planned`` once it has answered the plan, which is still held
-    and has executed nothing; ``executing`` before each Write Group's steps,
-    or a deferred range's, are handed to execution and ``executed`` once they
-    return, before any settled write of that group completes."""
+    and has executed nothing; ``binding`` as each advance of a deferred span's
+    scoped range binding begins and ``bound`` once it has answered the next
+    ready Write Group, or ended; and ``executing`` before each Write Group's
+    steps are handed to execution and ``executed`` once they return, before
+    any settled write of that group completes."""
 
     planning: Checkpoint = unmarked
     planned: Checkpoint = unmarked
+    binding: Checkpoint = unmarked
+    bound: Checkpoint = unmarked
     executing: Checkpoint = unmarked
     executed: Checkpoint = unmarked
 
@@ -1200,11 +1515,13 @@ def _replaced(owner: type, name: str, replacement: object) -> Generator[None]:
 @contextmanager
 def marked_flushes(regions: FlushRegions) -> Generator[None]:
     """Every flush inside the block calling ``regions`` around production's
-    own planning and step execution: :meth:`WritePlanner.finalize` and
+    own planning, range binding, and step execution:
+    :meth:`WritePlanner.finalize`, ``RangeBindings.__next__``, and
     :meth:`WriteStepExecutor.execute` are wrapped for the block's whole life,
     so the wrappers are installed once rather than around each flush, and the
     marks are read from ``regions`` at each call."""
     finalize = WritePlanner.finalize
+    advance = RangeBindings.__next__
     execute = WriteStepExecutor.execute
 
     def finalized(planner: WritePlanner, request: WritePlanningRequest, /) -> WritePlan:
@@ -1213,6 +1530,13 @@ def marked_flushes(regions: FlushRegions) -> Generator[None]:
         regions.planned()
         return plan
 
+    def advanced(bindings: RangeBindings, /) -> WriteGroup:
+        regions.binding()
+        try:
+            return advance(bindings)
+        finally:
+            regions.bound()
+
     def executed(
         executor: WriteStepExecutor,
         steps: tuple[PlannedStep, ...],
@@ -1220,14 +1544,25 @@ def marked_flushes(regions: FlushRegions) -> Generator[None]:
         *,
         allocates: bool,
         flush: FlushActivity,
+        capture_insert: Callable[[WriteRow, object | None], None] | None = None,
+        capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
+        | None = None,
     ) -> tuple[object, ...]:
         regions.executing()
-        answered = execute(executor, steps, allocates=allocates, flush=flush)
+        answered = execute(
+            executor,
+            steps,
+            allocates=allocates,
+            flush=flush,
+            capture_insert=capture_insert,
+            capture_revision=capture_revision,
+        )
         regions.executed()
         return answered
 
     with (
         _replaced(WritePlanner, "finalize", finalized),
+        _replaced(RangeBindings, "__next__", advanced),
         _replaced(WriteStepExecutor, "execute", executed),
     ):
         yield

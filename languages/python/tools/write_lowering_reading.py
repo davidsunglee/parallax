@@ -23,8 +23,8 @@ read it revises, the node answered with its row buffered, the model prepared —
 so sampling never prolongs a lifetime inside a timed run.
 
 The fourth window, a cross-object flush, is read over two regions of one
-pre-commit flush instead, after its transaction has read every object and
-buffered an amendment of each.
+flush instead, after its transaction has read every object and buffered an
+amendment of each.
 Planning runs from finalization's start to the finalized plan, and its elapsed
 time is one region; execution is every Write Group's steps, through lowering,
 production bind adaptation, psycopg serialization, and presentation to a port
@@ -36,6 +36,15 @@ are a separate checkpoint, read across finalization: what is reachable once the
 plan is answered, before any group executes, that was not before it began.
 Byte readings are reported per flush and per object, and every flush must
 present to the port exactly the work its case states.
+
+A flush reaching deferred spans is read over a third region as well: each
+advance of a span's scoped range binding, which prepares the span, reads
+coverage until its next write is ready, and binds the ready writes into the
+group the next execution region runs. Its elapsed time is the sum of those
+advances, and its high-water mark the highest rise any one advance reached
+above the level it opened at: the coverage a read materialized beside the
+group it bound, which execution's floor already holds. Such a flush must also
+make exactly the coverage reads its case states.
 """
 
 from __future__ import annotations
@@ -117,6 +126,13 @@ FLUSH_METRICS: Final = (
     "execution.transientBytesPerObject",
     *WORK_CELLS,
 )
+DEFERRED_FLUSH_METRICS: Final = (
+    "binding.elapsedUs",
+    "binding.transientBytes",
+    "binding.transientBytesPerObject",
+    "work.coverageReads",
+)
+"""The cells a flush reaching deferred spans answers beside every flush's."""
 RETAINED_WARMUPS: Final = WARMUP
 
 _MONITORING_TOOL_IDS: Final = range(6)
@@ -406,23 +422,31 @@ class _FlushDriver:
         *,
         planning: Sampler = lowering_support.unmarked,
         planned: Sampler = lowering_support.unmarked,
+        binding: Sampler = lowering_support.unmarked,
+        bound: Sampler = lowering_support.unmarked,
         executing: Sampler = lowering_support.unmarked,
         executed: Sampler = lowering_support.unmarked,
     ) -> lowering_support.FlushWork:
         regions = self.regions
         regions.planning, regions.planned = planning, planned
+        regions.binding, regions.bound = binding, bound
         regions.executing, regions.executed = executing, executed
         try:
             return self.run()
         finally:
             regions.planning = regions.planned = lowering_support.unmarked
+            regions.binding = regions.bound = lowering_support.unmarked
             regions.executing = regions.executed = lowering_support.unmarked
+
+
+def _coverage_reads(port: lowering_support.OrderedAcceptingPort) -> int:
+    return port.coverage_reads if isinstance(port, lowering_support.SpanAcceptingPort) else 0
 
 
 @contextmanager
 def _flush_driver_for(case: lowering_support.CrossObjectCase) -> Generator[_FlushDriver]:
     regions = lowering_support.FlushRegions()
-    port = lowering_support.OrderedAcceptingPort(case.stored)
+    port = lowering_support.flush_port(case)
 
     with (
         lowering_support.flush_database(case, port) as handle,
@@ -435,26 +459,48 @@ def _flush_driver_for(case: lowering_support.CrossObjectCase) -> Generator[_Flus
             work = port.work()
             if work != case.work:
                 raise RuntimeError(f"{case.name} presented {work}, expected {case.work}")
+            reads = _coverage_reads(port)
+            if reads != case.coverage_reads:
+                raise RuntimeError(
+                    f"{case.name} read coverage {reads} times, expected {case.coverage_reads}"
+                )
             return work
 
         yield _FlushDriver(case.objects, regions, run)
 
 
-def _timed_flush(driver: _FlushDriver) -> tuple[int, int, lowering_support.FlushWork]:
-    planning, execution = _Stopwatch(), _Stopwatch()
+@dataclass(frozen=True, slots=True)
+class _FlushTimes:
+    planning: int
+    binding: int
+    execution: int
+
+
+def _timed_flush(driver: _FlushDriver) -> tuple[_FlushTimes, lowering_support.FlushWork]:
+    planning, binding, execution = _Stopwatch(), _Stopwatch(), _Stopwatch()
     work = driver.marked(
         planning=planning.open,
         planned=planning.close,
+        binding=binding.open,
+        bound=binding.close,
         executing=execution.open,
         executed=execution.close,
     )
-    return planning.total, execution.total, work
+    return _FlushTimes(planning.total, binding.total, execution.total), work
 
 
-def _execution_peak(driver: _FlushDriver) -> int:
-    peak = _RegionalPeak()
-    driver.marked(executing=peak.open, executed=peak.close)
-    return peak.highest
+def _regional_peaks(driver: _FlushDriver) -> tuple[int, int]:
+    """The highest rise of any one binding advance and of any one group's
+    execution, read in one run: the regions never overlap, and each reads its
+    own floor."""
+    binding, execution = _RegionalPeak(), _RegionalPeak()
+    driver.marked(
+        binding=binding.open,
+        bound=binding.close,
+        executing=execution.open,
+        executed=execution.close,
+    )
+    return binding.highest, execution.highest
 
 
 def _plan_kept(driver: _FlushDriver) -> int:
@@ -470,21 +516,22 @@ def _measure_flush(name: str, *, warmups: int, measured: int) -> dict[str, objec
         with untraced():
             for _ in range(warmups):
                 driver.run()
-            planning: list[int] = []
-            execution: list[int] = []
+            times: list[_FlushTimes] = []
             works: set[lowering_support.FlushWork] = set()
             for _ in range(measured):
-                planning_ns, execution_ns, work = _timed_flush(driver)
-                planning.append(planning_ns)
-                execution.append(execution_ns)
+                timed, work = _timed_flush(driver)
+                times.append(timed)
                 works.add(work)
 
+        binding: list[int] = []
         transient: list[int] = []
         tracemalloc.start()
         try:
             with untraced():
                 for _ in range(measured):
-                    transient.append(_execution_peak(driver))
+                    bound, executed = _regional_peaks(driver)
+                    binding.append(bound)
+                    transient.append(executed)
             kept = _plan_kept(driver)
         finally:
             tracemalloc.stop()
@@ -492,14 +539,21 @@ def _measure_flush(name: str, *, warmups: int, measured: int) -> dict[str, objec
     (work,) = works
     objects = case.objects
     samples: dict[str, list[float]] = {
-        "plan.elapsedUs": [total / 1_000 for total in planning],
+        "plan.elapsedUs": [timed.planning / 1_000 for timed in times],
         "plan.retainedBytes": [float(kept)],
         "plan.retainedBytesPerObject": _per_unit([kept], objects),
-        "execution.elapsedUs": [total / 1_000 for total in execution],
+        "execution.elapsedUs": [timed.execution / 1_000 for timed in times],
         "execution.transientBytes": [float(peak) for peak in transient],
         "execution.transientBytesPerObject": _per_unit(transient, objects),
         **{cell: [float(count(work))] for cell, count in WORK_CELLS.items()},
     }
+    if case.deferred:
+        samples |= {
+            "binding.elapsedUs": [timed.binding / 1_000 for timed in times],
+            "binding.transientBytes": [float(peak) for peak in binding],
+            "binding.transientBytesPerObject": _per_unit(binding, objects),
+            "work.coverageReads": [float(case.coverage_reads)],
+        }
     return {
         "case": name,
         "window": FLUSH_WINDOW,

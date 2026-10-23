@@ -2,12 +2,14 @@
 the shipped transport (`m-execution` *Flush execution*).
 
 Each cell is a public temporal write — a keyed amendment, a Wire target
-replacement, or a keyed amendment carrying collection documents — over its own
-freshly seeded object. The one transaction a cell
-runs must cross the port exactly as :func:`expected_realization` calculates
-from the workload — ordered invocations of its closes where the acquired
-connection holds ordered write transport, and multi-row inserts of its
-openings — and must leave exactly the history :func:`expected_history`
+replacement, a keyed amendment carrying collection documents, or keyed
+amendments alternating between two Entities — over each of its freshly seeded
+objects. The one transaction a cell runs must cross the port exactly as
+:func:`expected_realization` calculates from the workload — ordered invocations
+of its closes where the acquired connection holds ordered write transport, and
+multi-row inserts of its openings within the bind limit the connection reports
+— its one flush must make exactly the calls :func:`expected_flush_calls`
+calculates, and it must leave exactly the history :func:`expected_history`
 calculates, each collection cell row still holding its seeded collections.
 """
 
@@ -15,7 +17,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, Literal, cast
 
 import psycopg
@@ -39,6 +41,7 @@ from tests._support.temporal_write_transport import (
     HistoryRow,
     PortTally,
     Workload,
+    expected_flush_calls,
     expected_history,
     expected_realization,
     object_key,
@@ -46,6 +49,7 @@ from tests._support.temporal_write_transport import (
     seeded_history,
     window,
 )
+from tests.api._flush_calls import FlushCalls, call_runs
 
 _NAMESPACE = "transport.realization"
 
@@ -77,17 +81,20 @@ class CollectionSpan(
 
 
 _MODEL = DomainModel(KeyedSpan, TargetSpan, CollectionSpan)
-_ENTITIES: dict[Workload, type[Any]] = {
-    "keyed-amend": KeyedSpan,
-    "target-replace": TargetSpan,
-    "collection-amend": CollectionSpan,
+_ENTITIES: dict[Workload, tuple[type[Any], ...]] = {
+    "keyed-amend": (KeyedSpan,),
+    "target-replace": (TargetSpan,),
+    "collection-amend": (CollectionSpan,),
+    "interleaved-amend": (KeyedSpan, TargetSpan),
 }
-_TABLES: dict[Workload, str] = {
-    "keyed-amend": "trn_keyed_span",
-    "target-replace": "trn_target_span",
-    "collection-amend": "trn_collection_span",
+"""Each workload's Entities; a sample's object belongs to the one its index
+selects in turn."""
+_TABLES: dict[type[Any], str] = {
+    KeyedSpan: "trn_keyed_span",
+    TargetSpan: "trn_target_span",
+    CollectionSpan: "trn_collection_span",
 }
-_DOCUMENTED: frozenset[Workload] = frozenset({"target-replace", "collection-amend"})
+_DOCUMENTED: frozenset[type[Any]] = frozenset({TargetSpan, CollectionSpan})
 _TAGS = ("a", "a", "", *(f"t{index}" for index in range(300)))
 _LEGS: tuple[dict[str, list[str]], ...] = (
     {"stops": []},
@@ -105,97 +112,141 @@ def _instant(value: object) -> str:
     return value.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def _entity(cell: Cell, sample: int) -> type[Any]:
+    entities = _ENTITIES[cell.workload]
+    return entities[sample % len(entities)]
+
+
 def _fixtures(cell: Cell) -> dict[str, object]:
-    rows: list[dict[str, object]] = []
-    for seeded in seeded_history(cell.workload, cell.size, 0):
-        row: dict[str, object] = {
-            "id": seeded.key,
-            "label": seeded.label,
-            "amount": seeded.amount,
-            "validStart": _instant(seeded.valid_from),
-            "validEnd": _instant(seeded.valid_to),
-            "txStart": _instant(seeded.tx_from),
-            "txEnd": _instant(seeded.tx_to),
-        }
-        if cell.workload == "collection-amend":
-            row["tags"] = list(_TAGS)
-            row["legs"] = [dict(leg) for leg in _LEGS]
-        rows.append(row)
-    return {_ENTITIES[cell.workload].__name__: rows}
+    fixtures: dict[str, list[dict[str, object]]] = {}
+    for sample in range(cell.objects):
+        rows = fixtures.setdefault(_entity(cell, sample).__name__, [])
+        for seeded in seeded_history(cell.workload, cell.size, sample):
+            row: dict[str, object] = {
+                "id": seeded.key,
+                "label": seeded.label,
+                "amount": seeded.amount,
+                "validStart": _instant(seeded.valid_from),
+                "validEnd": _instant(seeded.valid_to),
+                "txStart": _instant(seeded.tx_from),
+                "txEnd": _instant(seeded.tx_to),
+            }
+            if cell.workload == "collection-amend":
+                row["tags"] = list(_TAGS)
+                row["legs"] = [dict(leg) for leg in _LEGS]
+            rows.append(row)
+    return dict(fixtures)
+
+
+def _keys(cell: Cell, entity: type[Any]) -> list[int]:
+    return [object_key(sample) for sample in range(cell.objects) if _entity(cell, sample) is entity]
 
 
 def _write(cell: Cell) -> Callable[[TxnContext], None]:
-    workload = cell.workload
+    """Every object's write, in key order, buffered for the one pre-commit
+    flush. An amendment edits what one read of each Entity's objects, as of
+    the window's start, answered."""
     start, end = window(cell.size)
-    entity = _ENTITIES[workload]
-    key = object_key(0)
-    match workload:
-        case "keyed-amend" | "collection-amend":
+    entities = _ENTITIES[cell.workload]
+    samples = range(cell.objects)
+    if cell.workload == "target-replace":
+        (entity,) = entities
 
-            def amend(tx: TxnContext) -> None:
-                source = tx.find(entity.where(entity.id == key).as_of(valid_time=start)).result()
-                tx.amend(source.edit(amount=AMOUNT), until=end)
-
-            return amend
-        case "target-replace":
-
-            def replace(tx: TxnContext) -> None:
+        def replace(tx: TxnContext) -> None:
+            for sample in samples:
                 tx.wire.replace_if(
                     entity.__name__,
-                    {"id": key, "label": REPLACED_LABEL, "amount": AMOUNT},
+                    {"id": object_key(sample), "label": REPLACED_LABEL, "amount": AMOUNT},
                     tx_start=SEEDED_AT,
                     valid_from=start,
                     until=end,
                 )
 
-            return replace
+        return replace
+
+    def amend(tx: TxnContext) -> None:
+        sources: dict[int, Any] = {}
+        for entity in entities:
+            keys = _keys(cell, entity)
+            query = entity.where(entity.id.between(keys[0], keys[-1])).as_of(valid_time=start)
+            sources.update((source.id, source) for source in tx.find(query).results())
+        for sample in samples:
+            tx.amend(sources[object_key(sample)].edit(amount=AMOUNT), until=end)
+
+    return amend
 
 
 def _concurrency(workload: Workload) -> _Concurrency:
     return "locking" if workload == "target-replace" else "optimistic"
 
 
+def _stored_rows(profile_run: Any, cell: Cell, entity: type[Any]) -> list[HistoryRow]:
+    table = _TABLES[entity]
+    keys = _keys(cell, entity)
+    if entity in _DOCUMENTED:
+        document = _document_column(profile_run, table)
+        values = f"{document}->>'label', ({document}->>'amount')::int"
+    else:
+        values = "label, amount"
+    return [
+        HistoryRow(*cast("tuple[Any, ...]", row))
+        for row in profile_run.port.execute(
+            f"select id, from_z, thru_z, in_z, out_z, {values} from {table} "
+            "where id between %s and %s",
+            [keys[0], keys[-1]],
+        )
+    ]
+
+
+def _document_column(profile_run: Any, table: str) -> str:
+    ((document,),) = profile_run.port.execute(
+        "select column_name from information_schema.columns "
+        "where table_name = %s and data_type = 'jsonb' and column_name not in ('tags', 'legs')",
+        [table],
+    )
+    return cast("str", document)
+
+
 def _stored(profile_run: Any, cell: Cell) -> tuple[list[HistoryRow], int | None]:
     """The cell's stored history, and for the collection cell how many of its
     rows hold collections other than the seeded ones."""
-    table = _TABLES[cell.workload]
-    key = object_key(0)
-    bounds = [key, key]
-    port = profile_run.port
-    if cell.workload in _DOCUMENTED:
-        ((document,),) = port.execute(
-            "select column_name from information_schema.columns "
-            "where table_name = %s and data_type = 'jsonb' and column_name not in ('tags', 'legs')",
-            [table],
-        )
-        values = f"{document}->>'label', ({document}->>'amount')::int"
-    else:
-        document = None
-        values = "label, amount"
     rows = ordered_history(
-        HistoryRow(*cast("tuple[Any, ...]", row))
-        for row in port.execute(
-            f"select id, from_z, thru_z, in_z, out_z, {values} from {table} "
-            "where id between %s and %s",
-            bounds,
-        )
+        row
+        for entity in _ENTITIES[cell.workload]
+        for row in _stored_rows(profile_run, cell, entity)
     )
     if cell.workload != "collection-amend":
         return rows, None
-    ((differing,),) = port.execute(
-        f"select count(*) from {table} where id between %s and %s "
+    document = _document_column(profile_run, _TABLES[CollectionSpan])
+    ((differing,),) = profile_run.port.execute(
+        f"select count(*) from {_TABLES[CollectionSpan]} where id between %s and %s "
         f"and (({document}->'tags') is distinct from %s::jsonb "
         f"or ({document}->'legs') is distinct from %s::jsonb)",
-        [*bounds, json.dumps(_TAGS), json.dumps(_LEGS)],
+        [object_key(0), object_key(cell.objects - 1), json.dumps(_TAGS), json.dumps(_LEGS)],
     )
     return rows, int(differing)
 
 
-def _database(profile_run: Any, tally: PortTally) -> ScopedDatabase:
-    decorated = DecoratingAdapter(
-        profile_run.port, lambda connection: cast("Any", CountingConnection(connection, tally))
+def _expected_history(cell: Cell) -> list[HistoryRow]:
+    return ordered_history(
+        row
+        for sample in range(cell.objects)
+        for row in expected_history(cell.workload, cell.size, sample)
     )
-    return own_root(connect(decorated, _MODEL, clock=FixedClock(AMENDED_AT))).using_database_login()
+
+
+def _database(profile_run: Any, tally: PortTally, cell: Cell, calls: FlushCalls) -> ScopedDatabase:
+    decorated = DecoratingAdapter(
+        profile_run.port,
+        lambda connection: cast("Any", CountingConnection(connection, tally, cell.connection)),
+    )
+    return own_root(
+        connect(decorated, _MODEL, clock=FixedClock(AMENDED_AT), lifecycle_provider=calls)
+    ).using_database_login()
+
+
+def _flush_runs(calls: FlushCalls) -> Sequence[tuple[str, list[tuple[str, int | None]]]]:
+    return [(flush.trigger, call_runs(flush.calls)) for flush in calls.flushes]
 
 
 @pytest.mark.parametrize("cell", CELLS, ids=lambda cell: cell.id)
@@ -204,9 +255,12 @@ def test_a_temporal_write_crosses_the_port_as_calculated_and_leaves_its_history(
 ) -> None:
     profile_run.reset(model_of(_MODEL), _fixtures(cell))
     tally = PortTally()
-    _database(profile_run, tally).transact(_write(cell), concurrency=_concurrency(cell.workload))
+    calls = FlushCalls()
+    _database(profile_run, tally, cell, calls).transact(
+        _write(cell), concurrency=_concurrency(cell.workload)
+    )
     stored, differing = _stored(profile_run, cell)
-    expected = expected_history(cell.workload, cell.size, 0)
+    expected = _expected_history(cell)
     assert stored == expected
     # Each closed milestone and each opened row is one Planned Step, however
     # the statements carried them.
@@ -214,5 +268,6 @@ def test_a_temporal_write_crosses_the_port_as_calculated_and_leaves_its_history(
     assert tally.realization() == expected_realization(
         cell, ordered=psycopg.capabilities.has_pipeline()
     )
+    assert _flush_runs(calls) == [("pre_commit", expected_flush_calls(cell))]
     if differing is not None:
         assert differing == 0

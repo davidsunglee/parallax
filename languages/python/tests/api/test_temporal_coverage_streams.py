@@ -11,6 +11,11 @@ writes each read makes ready execute together as one Write Group. An eager read
 of the same roots buffers every write into one Flush, and a source written again
 after its write completed reads nothing.
 
+A tail stored as many milestones, each labelled apart, keeps every amended
+piece apart, so one ready group closes and opens more rows than one ordered
+invocation or one insert carries: its closes span several invocations and its
+openings several inserts, while each statement stays one Database Call.
+
 Each case reads the whole stored history back and compares it with the one
 these inputs determine. Every write runs under a clock answering 2024-11-01.
 """
@@ -22,14 +27,17 @@ import json
 from collections.abc import Iterable, Iterator
 from typing import Any, Final, Literal, cast
 
+import psycopg
 import pytest
 
+from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, connect
 from tests._support.root_ownership import own_root
+from tests._support.temporal_write_transport import CountingConnection, PortTally
 from tests.api._flush_calls import Call, FlushCalls, PageRead, call_runs
 
 _NAMESPACE: Final = "temporal.coverage.streams"
@@ -94,12 +102,30 @@ _REPRESENTATIONS = pytest.mark.parametrize("representation", ["typed", "wire"])
 _STRATEGIES = pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
 
 
-def _seeded(profile_run: Any, layout: _Layout, objects: int) -> None:
+def _day(days: int) -> dt.datetime:
+    return _JUN + dt.timedelta(days=days)
+
+
+def _tail(key: int, pieces: int) -> list[tuple[str, dt.datetime, object]]:
+    """Object ``key``'s tail from June: one milestone labelled as its head,
+    or ``pieces`` daily milestones each labelled apart, the last one open."""
+    if pieces == 1:
+        return [(f"k{key}", _JUN, INFINITY)]
+    return [
+        (f"k{key}-{index}", _day(index), INFINITY if index == pieces - 1 else _day(index + 1))
+        for index in range(pieces)
+    ]
+
+
+def _seeded(profile_run: Any, layout: _Layout, objects: int, *, tail_pieces: int = 1) -> None:
     profile_run.reset(model_of(_MODEL), {})
     rows = [
-        (key, amount, f"k{key}", start, end)
+        row
         for key in range(1, objects + 1)
-        for amount, start, end in ((100, _JAN, _JUN), (200, _JUN, INFINITY))
+        for row in (
+            (key, 100, f"k{key}", _JAN, _JUN),
+            *((key, 200, label, start, end) for label, start, end in _tail(key, tail_pieces)),
+        )
     ]
     control = profile_run.control()
     try:
@@ -162,6 +188,33 @@ def _corrected(keys: Iterable[int], *, again: Iterable[int] = ()) -> list[_Row]:
             (key, _AT, None, _MAR, _SEP, 150, "again" if key in relabelled else label),
             (key, _AT, None, _SEP, None, 200, label),
         ]
+    return sorted(history, key=_order)
+
+
+def _fragmented_corrected(keys: Iterable[int], pieces: int) -> list[_Row]:
+    """Each object's history once its March-to-September amendment to 150
+    committed over a tail of ``pieces`` milestones: every piece the window
+    reaches is amended apart, and only the last one, which outlasts
+    September, keeps a rest."""
+    history: list[_Row] = []
+    for key in keys:
+        label = f"k{key}"
+        tail = _tail(key, pieces)
+        history += [(key, _T0, _AT, _JAN, _JUN, 100, label)]
+        history += [
+            (key, _T0, _AT, start, None if end is INFINITY else end, 200, piece)
+            for piece, start, end in tail
+        ]
+        history += [
+            (key, _AT, None, _JAN, _MAR, 100, label),
+            (key, _AT, None, _MAR, _JUN, 150, label),
+        ]
+        history += [
+            (key, _AT, None, start, _SEP if end is INFINITY else end, 150, piece)
+            for piece, start, end in tail
+        ]
+        last = tail[-1][0]
+        history.append((key, _AT, None, _SEP, None, 200, last))
     return sorted(history, key=_order)
 
 
@@ -323,3 +376,80 @@ def test_a_default_page_flushes_1024_writes_in_32_shared_coverage_reads(
     assert last_flush.trigger == "pre_commit"
     assert call_runs(last_flush.calls) == [("read", 1), ("write", _group_writes(1))]
     assert _history(profile_run, "columns") == _corrected(range(1, objects + 1))
+
+
+# 35 roots at 33 per page, each tail stored as 40 daily milestones from June,
+# so each write closes 41 milestones and opens 43 rows: the head's rest, its
+# amended part, each tail piece's amended part, and the last piece's rest.
+_PIECES: Final = 40
+_FRAGMENTED: Final = 35
+_FRAGMENT_CLOSES: Final = 1 + _PIECES
+_FRAGMENT_OPENINGS: Final = 3 + _PIECES
+_STATEMENT_CAP: Final = 64
+
+
+def _invocations(closes: int) -> int:
+    """The ordered invocations one contiguous run of ``closes`` takes: full
+    ones of 64, and the rest in one more unless it is a lone close."""
+    full, rest = divmod(closes, _STATEMENT_CAP)
+    return full + (rest >= 2)
+
+
+def _fragmented_group(writes: int) -> tuple[list[Call], int, int]:
+    """One ready group of ``writes``: its coverage read and statements, its
+    ordered invocations, and its insert statements."""
+    inserts = -(-writes * _FRAGMENT_OPENINGS // _INSERT_ENTRIES)
+    calls: list[Call] = [
+        ("read", writes * _PIECES),
+        ("write", writes * _FRAGMENT_CLOSES + inserts),
+    ]
+    return calls, _invocations(writes * _FRAGMENT_CLOSES), inserts
+
+
+@_LAYOUTS
+@_REPRESENTATIONS
+def test_a_ready_groups_many_milestones_span_several_invocations_and_inserts_of_one_call_each(
+    profile_run: Any, layout: _Layout, representation: _Representation
+) -> None:
+    _seeded(profile_run, layout, _FRAGMENTED, tail_pieces=_PIECES)
+    calls = FlushCalls()
+    tally = PortTally()
+    decorated = DecoratingAdapter(
+        profile_run.port, lambda connection: cast("Any", CountingConnection(connection, tally))
+    )
+    db = own_root(
+        connect(decorated, _MODEL, clock=FixedClock(_AT), lifecycle_provider=calls)
+    ).using_database_login()
+
+    def fn(tx: TxnContext) -> None:
+        for root in _streamed(tx, layout, representation, batch_size=_PAGE):
+            _amend(tx, root, amount=150)
+
+    db.transact(fn)
+    span, span_invocations, span_inserts = _fragmented_group(32)
+    alone, alone_invocations, alone_inserts = _fragmented_group(1)
+    last, last_invocations, last_inserts = _fragmented_group(_FRAGMENTED - _PAGE)
+    assert calls.pages == [PageRead(_PAGE + 1, _PAGE + 1), PageRead(_PAGE + 1, 2)]
+    assert _flushes(calls) == [("read_dependency", [*span, *alone]), ("pre_commit", last)]
+    closes = _FRAGMENTED * _FRAGMENT_CLOSES
+    inserts = span_inserts + alone_inserts + last_inserts
+    assert (span_invocations, span_inserts) == (21, 22)
+    if psycopg.capabilities.has_pipeline():
+        # 1312 closes in 21 invocations, 41 in one, and 82 in two: one
+        # Database Call per statement, whichever invocation presented it.
+        assert (tally.ordered, tally.ordered_statements, tally.widest_ordered) == (
+            span_invocations + alone_invocations + last_invocations,
+            closes,
+            _STATEMENT_CAP,
+        )
+        assert tally.standalone_non_insert_statements == 0
+    else:
+        assert (tally.ordered, tally.standalone_non_insert_statements) == (0, closes)
+    assert (tally.inserts, tally.inserted_rows, tally.widest_insert) == (
+        inserts,
+        _FRAGMENTED * _FRAGMENT_OPENINGS,
+        _INSERT_ENTRIES,
+    )
+    assert _history(profile_run, layout) == _fragmented_corrected(
+        range(1, _FRAGMENTED + 1), _PIECES
+    )

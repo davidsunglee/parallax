@@ -49,7 +49,7 @@ def _gated_by_the_instruments() -> dict[tuple[str, str, str], str]:
         ((write_report.SUBJECT, case, metric), write_report.unit_of(window, metric))
         for case, window in write_report.WINDOWS.items()
         if window in GATED_WINDOWS
-        for metric in write_report.metrics_of(window)
+        for metric in write_report.metrics_of(window, case)
         if write_report.unit_of(window, metric) in BYTE_UNITS
     )
     return predicted

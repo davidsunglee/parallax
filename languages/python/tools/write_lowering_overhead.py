@@ -10,7 +10,8 @@ model-preparation checkpoints. The leaf-type cases are read only on the
 supported minors the leaf-type manifest scopes them to. The cross-object
 flushes are read on every supported minor: each one flush of keyed amendments
 over many distinct objects, read as its planning and Write Group execution
-regions. Measurements are observations: only an incomplete matrix changes this
+regions, and where it reaches deferred spans as its range-binding advances
+too. Measurements are observations: only an incomplete matrix changes this
 command's exit status.
 """
 
@@ -114,10 +115,21 @@ FLUSH_UNITS: Final[Mapping[str, str]] = {
     "work.largestOrderedInvocation": "statements",
     "work.largestGroupedInsert": "rows",
 }
-"""Every cell a cross-object flush answers, exactly and only, with its unit. A
-``B`` reading is per flush and its ``B/row`` peer the same reading divided by
-the flush's objects, so the two are distinct addresses of one quantity."""
+"""Every cell a cross-object flush answers, with its unit. A ``B`` reading is
+per flush and its ``B/row`` peer the same reading divided by the flush's
+objects, so the two are distinct addresses of one quantity."""
 FLUSH_METRICS: Final = tuple(FLUSH_UNITS)
+DEFERRED_FLUSH_UNITS: Final[Mapping[str, str]] = {
+    "binding.elapsedUs": "us",
+    "binding.transientBytes": "B",
+    "binding.transientBytesPerObject": "B/row",
+    "work.coverageReads": "statements",
+}
+"""The cells a cross-object flush reaching deferred spans answers beside
+:data:`FLUSH_UNITS`, with their units; every other flush answers exactly
+those."""
+DEFERRED_FLUSH_METRICS: Final = tuple(DEFERRED_FLUSH_UNITS)
+_FLUSH_CELL_UNITS: Final[Mapping[str, str]] = {**FLUSH_UNITS, **DEFERRED_FLUSH_UNITS}
 REPEATED_METRICS: Final = (
     "elapsedUs",
     "transientBytes",
@@ -125,6 +137,9 @@ REPEATED_METRICS: Final = (
     "execution.elapsedUs",
     "execution.transientBytes",
     "execution.transientBytesPerObject",
+    "binding.elapsedUs",
+    "binding.transientBytes",
+    "binding.transientBytesPerObject",
 )
 """The metrics sampled once per measured run. A retained reading is one
 checkpoint, a work count is exact, and every ``calls.*`` observation is one
@@ -134,7 +149,8 @@ POSITIVE_METRICS: Final = frozenset(
         "elapsedUs",
         "plan.elapsedUs",
         "execution.elapsedUs",
-        *(m for m in FLUSH_UNITS if m.startswith("work.")),
+        "binding.elapsedUs",
+        *(m for m in _FLUSH_CELL_UNITS if m.startswith("work.")),
     }
 )
 
@@ -160,15 +176,19 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
     ),
     MODEL_WINDOW: "one complete model preparation from the declared Entity Classes",
     FLUSH_WINDOW: (
-        "one pre-commit flush of a keyed amendment of each of many distinct objects its "
-        "transaction already read and buffered, over a provider-free port offering ordered "
-        "transport, read as two regions: planning, from finalization's start to the "
+        "one flush of a keyed amendment of each of many distinct objects its transaction "
+        "already read and buffered — the pre-commit flush, or a requesting case's "
+        "read-dependency flush a later read causes — over a provider-free port offering "
+        "ordered transport, read as two regions: planning, from finalization's start to the "
         "finalized plan, whose retained bytes are a separate checkpoint before any Write "
         "Group executes; and execution, summed over every Write Group's steps through "
         "lowering, production bind adaptation, psycopg's serialization, and presentation, "
-        "with each group's completion between regions and inside neither; the read, the "
-        "authored inputs, admission, and the commit precede or follow both; per-object "
-        "bytes divide a flush's by its objects"
+        "with each group's completion between regions and inside neither; a flush reaching "
+        "deferred spans adds a third region, summed over every advance of a span's range "
+        "binding through span preparation, the coverage reads the port answers, and binding "
+        "of the ready group the next execution region runs, and counts its coverage reads; "
+        "the reads before the flush, the authored inputs, admission, and the commit precede "
+        "or follow every region; per-object bytes divide a flush's by its objects"
     ),
 }
 
@@ -213,6 +233,10 @@ CROSS_OBJECT_OBJECTS: Final[Mapping[str, int]] = {
 """Each cross-object flush and the objects it amends: the denominator of its
 per-object readings."""
 CROSS_OBJECT_CASE_NAMES: Final = tuple(CROSS_OBJECT_OBJECTS)
+DEFERRED_CROSS_OBJECT_CASE_NAMES: Final = tuple(
+    case.name for case in lowering_support.CROSS_OBJECT_CASES if case.deferred
+)
+"""The cross-object flushes reaching deferred spans."""
 RETIRED_WINDOWS: Final[Mapping[str, str]] = {
     "acquisition.rows-8.columns": "predicate-acquisition",
     "acquisition.rows-32.columns": "predicate-acquisition",
@@ -271,15 +295,20 @@ type Cell = ChildReading | str
 type Matrix = dict[str, dict[str, Cell]]
 
 
-def metrics_of(window: str) -> tuple[str, ...]:
-    """The cells other than pass observations a reading over ``window`` answers."""
-    return FLUSH_METRICS if window == FLUSH_WINDOW else METRICS
+def metrics_of(window: str, case: str) -> tuple[str, ...]:
+    """The cells other than pass observations a reading of ``case`` over
+    ``window`` answers."""
+    if window != FLUSH_WINDOW:
+        return METRICS
+    if case in DEFERRED_CROSS_OBJECT_CASE_NAMES:
+        return (*FLUSH_METRICS, *DEFERRED_FLUSH_METRICS)
+    return FLUSH_METRICS
 
 
 def unit_of(window: str, metric: str) -> str:
     """The unit one metric is reported in over one window."""
     if window == FLUSH_WINDOW:
-        return FLUSH_UNITS[metric]
+        return _FLUSH_CELL_UNITS[metric]
     scale = "" if window == MODEL_WINDOW else "/row"
     return f"{'us' if metric == 'elapsedUs' else 'B'}{scale}"
 
@@ -353,7 +382,7 @@ def _decoded(output: str, case: str) -> Cell:
         if document["window"] != window:
             raise ValueError(f"the child read window {document['window']!r}, expected {window!r}")
         samples = cast("Mapping[str, object]", document["samples"])
-        metrics = metrics_of(window)
+        metrics = metrics_of(window, case)
         if set(samples) != set(metrics):
             raise ValueError(f"sampled metrics were {sorted(samples)}, expected {list(metrics)}")
         calls = cast("Mapping[str, object]", document["calls"])
@@ -455,7 +484,7 @@ def case_readings(runtime: str, reading: ChildReading) -> tuple[Reading, ...]:
                 window=reading.window,
                 runtime=runtime,
             )
-            for metric in metrics_of(reading.window)
+            for metric in metrics_of(reading.window, reading.case)
         ),
         *(
             Reading(
@@ -484,7 +513,7 @@ def expected_addresses(
     for runtime in runtimes:
         for case in runtime_cases(runtime, case_names):
             window = ENVELOPE_WINDOWS[case]
-            addresses.update((runtime, case, metric) for metric in metrics_of(window))
+            addresses.update((runtime, case, metric) for metric in metrics_of(window, case))
             if window == KEYED_WINDOW:
                 addresses.update((runtime, case, f"calls.{name}") for name in call_names)
     return frozenset(addresses)
@@ -549,7 +578,7 @@ def _canary_reading(case: str) -> ChildReading:
         case,
         window,
         1,
-        {metric: (10.0,) * samples_expected(metric) for metric in metrics_of(window)},
+        {metric: (10.0,) * samples_expected(metric) for metric in metrics_of(window, case)},
         dict.fromkeys(CALL_NAMES, 1.0) if window == KEYED_WINDOW else {},
         WARMUPS,
         MEASURED,

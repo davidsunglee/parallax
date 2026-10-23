@@ -2,15 +2,23 @@
 leaves, and how its statements cross the port, both calculated from the
 workload's own definition rather than from anything production settles.
 
-A cell is one workload at one size. Its writes close every seeded milestone the
-window reaches and open the rows the window leaves, so the cell's realization
-follows from the realization contract alone (`m-execution` *Flush execution*):
-a run of two or more contiguous closes is presented in ordered invocations of
-at most :data:`STATEMENT_CAP` statements wherever the connection holds ordered
-write transport, a close that would be its run's only one runs alone, and a run
-of contiguous openings is inserted at most :data:`ENTRY_CAP` rows to a
-statement. A :class:`CountingConnection` forwarding the acquired connection
-keeps the :class:`PortTally` the realization is compared with.
+A cell is one workload at one size over one or more objects, on a connection
+that holds the transport the server offers, holds none, or binds narrowly. Its
+writes close every seeded milestone the window reaches and open the rows the
+window leaves, so the cell's realization follows from the realization contract
+alone (`m-execution` *Flush execution*): a run of two or more contiguous closes
+is presented in ordered invocations of at most :data:`STATEMENT_CAP` statements
+wherever the connection holds ordered write transport, a close that would be
+its run's only one runs alone, and a run of contiguous openings is inserted at
+most :data:`ENTRY_CAP` rows, and no more than the bind limit admits, to a
+statement. Each write reaches milestones its transaction never read, so the
+flush reads their coverage first (`m-unit-work` *Shared coverage
+acquisition*): consecutive writes of one Entity share one read per span of at
+most :data:`SPAN_WRITES`, after which all of them are ready and execute as one
+Write Group, every close before every opening; a write of another Entity
+between them ends the span, and each such write reads and executes alone. A
+:class:`CountingConnection` forwarding the acquired connection keeps the
+:class:`PortTally` the realization is compared with.
 
 Nothing here opens a database.
 """
@@ -19,7 +27,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, cast
 
 from parallax.core.base import INFINITY
@@ -41,15 +49,19 @@ __all__ = [
     "AMOUNT",
     "CELLS",
     "ENTRY_CAP",
+    "NARROW_BIND_LIMIT",
     "REPLACED_LABEL",
     "SEEDED_AT",
+    "SPAN_WRITES",
     "STATEMENT_CAP",
     "Cell",
+    "ConnectionKind",
     "CountingConnection",
     "HistoryRow",
     "PortTally",
     "Realization",
     "Workload",
+    "expected_flush_calls",
     "expected_history",
     "expected_realization",
     "object_key",
@@ -58,22 +70,38 @@ __all__ = [
     "window",
 ]
 
-type Workload = Literal["keyed-amend", "target-replace", "collection-amend"]
+type Workload = Literal["keyed-amend", "target-replace", "collection-amend", "interleaved-amend"]
+"""An interleaved amendment alternates its objects between the keyed Entity
+and another one storing a document, each amended as a keyed amendment is."""
+type ConnectionKind = Literal["shipped", "unordered", "narrow"]
+"""The acquired connection as the server offers it, without ordered write
+transport, or reporting a bind limit of :data:`NARROW_BIND_LIMIT`."""
 
 STATEMENT_CAP: Final = 64
 """The most statements one ordered write transport invocation presents."""
 ENTRY_CAP: Final = 64
 """The most openings one multi-row insert carries."""
+SPAN_WRITES: Final = 32
+"""The most consecutive deferred writes one shared coverage read serves."""
+NARROW_BIND_LIMIT: Final = 21
+"""A bind limit admitting three keyed openings to an insert and every close."""
+_INSERTED_COLUMNS: Final[dict[Workload, int]] = {"keyed-amend": 7}
+"""The Columns one keyed opening binds: its key, label, amount, and the four
+axis ends."""
 
 
 @dataclass(frozen=True, slots=True, order=True)
 class Cell:
     workload: Workload
     size: int
+    objects: int = 1
+    connection: ConnectionKind = "shipped"
 
     @property
     def id(self) -> str:
-        return f"{self.workload}-{self.size}"
+        objects = "" if self.objects == 1 else f"x{self.objects}"
+        connection = "" if self.connection == "shipped" else f"-{self.connection}"
+        return f"{self.workload}-{self.size}{objects}{connection}"
 
 
 CELLS: Final[tuple[Cell, ...]] = (
@@ -83,9 +111,20 @@ CELLS: Final[tuple[Cell, ...]] = (
     Cell("target-replace", 1),
     Cell("target-replace", 64),
     Cell("collection-amend", 64),
+    Cell("keyed-amend", 3, 33),
+    Cell("keyed-amend", 70, 3),
+    Cell("keyed-amend", 3, 33, "unordered"),
+    Cell("keyed-amend", 3, 33, "narrow"),
+    Cell("target-replace", 4, 32),
+    Cell("collection-amend", 4, 8),
+    Cell("interleaved-amend", 3, 4),
 )
 """Small and wide ranges and one past both caps; the collection cell carries
-large, empty, duplicate-preserving, and nested collections."""
+large, empty, duplicate-preserving, and nested collections. The several-object
+cells share coverage reads: a full span and one past it, a few objects each
+past both caps, the full span without ordered transport and with a narrow bind
+limit, a target span, a collection span, and alternating Entities that share
+nothing."""
 
 
 # --------------------------------------------------------------------------- #
@@ -139,23 +178,34 @@ class CountingConnection:
     """A forwarding connection keeping ``tally``.
 
     It has ordered write transport exactly where the connection it forwards to
-    does, through a callable of its own stored once, and the connection a
-    transaction hands its body is forwarded through another one keeping the
-    same tally.
+    does, through a callable of its own stored once, unless ``kind`` withholds
+    it, and reports its dialect with :data:`NARROW_BIND_LIMIT` where ``kind``
+    narrows it; the connection a transaction hands its body is forwarded
+    through another one of the same kind keeping the same tally.
     """
 
-    __slots__ = ("_inner", "_ordered", "_tally")
+    __slots__ = ("_dialect", "_inner", "_kind", "_ordered", "_tally")
 
-    def __init__(self, inner: DatabaseConnection, tally: PortTally) -> None:
+    def __init__(
+        self, inner: DatabaseConnection, tally: PortTally, kind: ConnectionKind = "shipped"
+    ) -> None:
         self._inner = inner
         self._tally = tally
+        self._kind: ConnectionKind = kind
         self._ordered: Callable[[Sequence[Any]], Any] | None = (
-            None if inner.ordered_write_transport is None else self._ordered_write
+            None
+            if inner.ordered_write_transport is None or kind == "unordered"
+            else self._ordered_write
+        )
+        self._dialect = (
+            replace(inner.dialect, max_bind_parameters=NARROW_BIND_LIMIT)
+            if kind == "narrow"
+            else inner.dialect
         )
 
     @property
     def dialect(self) -> Dialect:
-        return self._inner.dialect
+        return self._dialect
 
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[DocumentReadOrdinals] = ()
@@ -198,9 +248,10 @@ class CountingConnection:
         access_mode: AccessMode | None = None,
     ) -> TransactionOutcome[T]:
         tally = self._tally
+        kind = self._kind
 
         def forwarded(connection: DatabaseConnection) -> T:
-            return body(cast("DatabaseConnection", CountingConnection(connection, tally)))
+            return body(cast("DatabaseConnection", CountingConnection(connection, tally, kind)))
 
         return self._inner.transaction(forwarded, isolation=isolation, access_mode=access_mode)
 
@@ -226,8 +277,8 @@ class Realization(NamedTuple):
 
 
 def _closes(closes: int, *, ordered: bool) -> tuple[int, int, int, int]:
-    """One object's run of ``closes``: the closes run alone, the invocations,
-    the statements they present, and the widest invocation."""
+    """One Write Group's run of ``closes``: the closes run alone, the
+    invocations, the statements they present, and the widest invocation."""
     if not ordered:
         return closes, 0, 0, 0
     invocations, rest = divmod(closes, STATEMENT_CAP)
@@ -237,25 +288,79 @@ def _closes(closes: int, *, ordered: bool) -> tuple[int, int, int, int]:
     return alone, invocations, presented, min(presented, STATEMENT_CAP)
 
 
-def expected_realization(cell: Cell, *, ordered: bool) -> Realization:
-    """What ``cell``'s one transaction presents to a connection that does, or
-    does not, hold ``ordered`` write transport.
+def _groups(cell: Cell) -> list[int]:
+    """How many of ``cell``'s objects each Write Group its flush executes
+    holds: alternating Entities each alone, otherwise every span's objects
+    together."""
+    if cell.workload == "interleaved-amend":
+        return [1] * cell.objects
+    spans, rest = divmod(cell.objects, SPAN_WRITES)
+    return [SPAN_WRITES] * spans + ([rest] if rest else [])
 
-    The cell's one object closes every seeded milestone the window reaches and
-    then opens its head, the rows the window leaves, and its tail: an amendment
-    one row per milestone, a replacement one row over all of them.
-    """
-    openings = 3 if cell.workload == "target-replace" else cell.size + 2
-    alone, invocations, presented, widest = _closes(cell.size, ordered=ordered)
+
+def _openings(cell: Cell) -> int:
+    """One object's openings: its head, the rows the window leaves, and its
+    tail; an amendment one row per milestone, a replacement one row over all of
+    them."""
+    return 3 if cell.workload == "target-replace" else cell.size + 2
+
+
+def _entries_per_insert(cell: Cell) -> int:
+    if cell.connection != "narrow":
+        return ENTRY_CAP
+    return min(ENTRY_CAP, NARROW_BIND_LIMIT // _INSERTED_COLUMNS[cell.workload])
+
+
+def _group_realization(cell: Cell, objects: int, *, ordered: bool) -> Realization:
+    alone, invocations, presented, widest = _closes(objects * cell.size, ordered=ordered)
+    openings = objects * _openings(cell)
+    per_insert = _entries_per_insert(cell)
     return Realization(
         alone,
         invocations,
         presented,
         widest,
-        -(-openings // ENTRY_CAP),
+        -(-openings // per_insert),
         openings,
-        min(openings, ENTRY_CAP),
+        min(openings, per_insert),
     )
+
+
+def expected_realization(cell: Cell, *, ordered: bool) -> Realization:
+    """What ``cell``'s one transaction presents to a connection acquired from
+    a server that does, or does not, offer ``ordered`` write transport.
+
+    Each Write Group closes every seeded milestone its objects' windows reach,
+    in one contiguous run, and then opens every object's rows in one run of
+    openings.
+    """
+    ordered = ordered and cell.connection != "unordered"
+    groups = [_group_realization(cell, objects, ordered=ordered) for objects in _groups(cell)]
+    return Realization(
+        sum(group.standalone_non_insert_statements for group in groups),
+        sum(group.ordered for group in groups),
+        sum(group.ordered_statements for group in groups),
+        max(group.widest_ordered for group in groups),
+        sum(group.inserts for group in groups),
+        sum(group.inserted_rows for group in groups),
+        max(group.widest_insert for group in groups),
+    )
+
+
+def expected_flush_calls(cell: Cell) -> list[tuple[str, int]]:
+    """The Database Calls of ``cell``'s one flush, each run of statements
+    collapsed into one ``("write", count)``: before each Write Group, the
+    shared coverage read returning every milestone its objects' windows reach
+    beyond the one their transaction already holds, and then the group's
+    closes and insert statements. A window inside the one milestone held reads
+    nothing."""
+    calls: list[tuple[str, int]] = []
+    per_insert = _entries_per_insert(cell)
+    for objects in _groups(cell):
+        if cell.size > 1:
+            calls.append(("read", objects * (cell.size - 1)))
+        calls.append(("write", objects * cell.size + -(-objects * _openings(cell) // per_insert)))
+    return calls
 
 
 # --------------------------------------------------------------------------- #
