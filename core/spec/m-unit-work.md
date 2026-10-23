@@ -985,9 +985,10 @@ every write of which binds before any step of the group executes. It hands each
 group's Planned Steps to the step-execution port as one sequence, which executes
 every step of the sequence and has its effect enforced. As soon as every step
 of a group has succeeded — at once for a group with no step — and the keys the
-database allocated are as many as the group's writes open, and before any step
-of a later group executes or any later write binds, the unit of work completes
-every write of the group synchronously, in order. A coverage read is no step:
+database allocated are as many as the group's writes open with keys it
+allocates, and before any step of a later group executes or any later write
+binds, the unit of work completes every write of the group synchronously, in
+order. A coverage read is no step:
 within an acquisition span a later write's coverage can be read before an
 earlier group completes, while its binding, steps, and completion still wait
 for its own group's turn (*Shared coverage acquisition*). No write of a group
