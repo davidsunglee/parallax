@@ -912,8 +912,8 @@ class UnitOfWork:
     def _execute_write_group(self, group: WriteGroup, *, captures: bool) -> None:
         """Execute ``group``'s steps once and complete each of its writes, in
         order, once they all succeeded and the keys the database allocated
-        are as many as its writes open, with the current rows its execution
-        captured where it ``captures``.
+        are as many as its writes open with keys it allocates, with the
+        current rows its execution captured where it ``captures``.
 
         However it ends, what the group's capture staged is released, and
         nothing here keeps the group or a write's captured rows."""
