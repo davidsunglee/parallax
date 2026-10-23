@@ -72,8 +72,10 @@ same base-against-result reading attributes to immutable sharing in planning,
 and Transaction-Time unchanged amendments' transient bytes fall up to 3.9%.
 Snapshot memory gates moved by at most 2%. Snapshot's advisory
 Budget Contract timing outcomes went from 16 to 22 outside: eight new live,
-first-result, or provider-free cells and two former ones back within. No read
-path changed, so these are attributed to run conditions. The cross-object
+first-result, or provider-free cells and two former ones back within. Read
+compilation and Snapshot's default stream page size also changed, and no
+matched-source reading separates them from run conditions, so these outcomes
+carry no attribution. The cross-object
 family took 11m12s of the collection, 9m15s of it the deferred spans. These
 span `90ff69ccb..c51ca3eac` and are not attributed to individual commits
 except where stated. The raw capture, its frozen predecessor gates, the
