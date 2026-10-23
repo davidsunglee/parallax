@@ -2232,7 +2232,7 @@ class GroupState:
 
     Every field holds published VALUES rather than derived evidence, because a
     value is what a keyed Wire verb is addressed and licensed by, and its claim
-    is one accessor away (:func:`_published_claims`). ``published`` is the flat
+    is one accessor away. ``published`` is the flat
     run a write with no reference resolves against, ``finds`` keys the same nodes
     by the step that published them — what a write step naming a find with ``on``
     addresses (`m-case-format` *Settling against a grouped find*) — and
