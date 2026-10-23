@@ -13,7 +13,7 @@ import pytest
 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
+    PreparedKeyedInstruction,
     prepare_typed_write,
 )
 from parallax.core._execution._write_lowering import lowered
@@ -31,7 +31,7 @@ from parallax.core.unit_work import (
     KeyedWriteInstruction,
     TransactionInstant,
     WritePlanningRequest,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import (
@@ -84,7 +84,7 @@ def _plan(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
             concurrency=concurrency,
-            buffered_writes=observed_buffer(buffer, model, observations),
+            composed_writes=observed_buffer(buffer, model, observations),
         )
     )
 
@@ -101,9 +101,9 @@ def _insert_rows(step: PlannedStep) -> list[dict[str, object]]:
     return [_row_values(entry.row) for entry in step.entries]
 
 
-def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedWrite:
+def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedInstruction:
     prepared = prepare_typed_write(write, model)
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
@@ -138,7 +138,7 @@ def test_a_literal_keyed_write_overlays_every_member_it_assigns(
         _BALANCE,
     )
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
-    literal = buffered_write(prepared, retained_observation(prepared, _BALANCE, observation))
+    literal = admitted_write(prepared, retained_observation(prepared, _BALANCE, observation))
     (_close, successor) = plan_steps(_plan([literal], _BALANCE))
     # The successor overlays every member the row assigns, whatever it equals.
     assert _insert_rows(successor)[0]["acctNum"] == "B"
@@ -197,7 +197,7 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
         model,
     )
     observed = retained_observation(prepared, model, TemporalObservation(predecessor))
-    plan = _plan([buffered_write(prepared, observed)], model)
+    plan = _plan([admitted_write(prepared, observed)], model)
 
     (changed,) = (
         step

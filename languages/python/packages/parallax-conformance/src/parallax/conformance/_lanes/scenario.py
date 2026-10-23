@@ -68,10 +68,10 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
-    PreparedTargetWrite,
-    PreparedWrite,
+    PreparedInstruction,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
     WriteInstruction,
 )
 from parallax.core.base import (
@@ -124,7 +124,7 @@ from parallax.core.unit_work import (
     WriteEffectError,
     WriteEvidenceError,
     WritePreconditionError,
-    buffered_write,
+    admitted_write,
     object_key,
 )
 from parallax.core.wire import WireValue, decode_wire
@@ -262,7 +262,7 @@ GroupRetainedObservations = list[RetainedObservation]
 class _ResolvedWrite:
     """A compile instruction and the observation its simulated unit retains."""
 
-    instruction: PreparedWrite | PreparedTargetWrite
+    instruction: PreparedInstruction | PreparedTargetInstruction
     supplied_observation: StateObservation | None
 
 
@@ -362,7 +362,7 @@ def _build_temporal_instruction(
     instruction = submission.instruction
     assert isinstance(instruction, KeyedWriteInstruction)
     prepared = instructions.prepare_wire_write(instruction, model)
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     entity = case_entity(model, instruction.entity)
     key = object_key(prepared, model)
     is_insert = instruction.mutation in INSERT_MUTATIONS
@@ -555,7 +555,7 @@ def _build_instructions(
         assert isinstance(instruction, KeyedWriteInstruction)
         row = _seed_insert_version(model, entity_name, mutation, instruction.rows[0])
         prepared = instructions.prepare_wire_write(replace(instruction, rows=(row,)), model)
-        assert isinstance(prepared, PreparedKeyedWrite)
+        assert isinstance(prepared, PreparedKeyedInstruction)
         observation: StateObservation | None = submission.declared_observation
         if binds_observations and mutation not in INSERT_MUTATIONS:
             key = object_key(prepared, model)
@@ -674,10 +674,10 @@ class _SimulatedUnit:
 
     def buffer(self, write: _ResolvedWrite) -> None:
         instruction = write.instruction
-        if isinstance(instruction, PreparedTargetWrite):
+        if isinstance(instruction, PreparedTargetInstruction):
             self._admit(instruction)
             return
-        assert isinstance(instruction, PreparedKeyedWrite)  # predicate writes execute apart
+        assert isinstance(instruction, PreparedKeyedInstruction)  # predicate writes execute apart
         key = object_key(instruction, self._model)
         observation = write.supplied_observation
         if instruction.mutation in INSERT_MUTATIONS:
@@ -691,9 +691,9 @@ class _SimulatedUnit:
             retained = self._retained(
                 object_state_key_from_observation(key, observation, shape), observation
             )
-            self._settled(instruction, key, retained)
+            self._admit_with_evidence(instruction, key, retained)
 
-    def execute_predicate(self, prepared: PreparedPredicateWrite) -> int:
+    def execute_predicate(self, prepared: PreparedPredicateInstruction) -> int:
         """Execute ``prepared`` once everything buffered has flushed before it,
         as the attempt's own predicate-selected write runs."""
         affected = self._uow.execute_predicate(prepared)
@@ -710,16 +710,16 @@ class _SimulatedUnit:
     def _retained(self, key: ObjectStateKey, evidence: StateObservation) -> RetainedObservation:
         return self._uow.retain(RetainedObservation(key, evidence, None))
 
-    def _authorized(self, instruction: PreparedKeyedWrite, key: ObjectKey | None) -> None:
+    def _authorized(self, instruction: PreparedKeyedInstruction, key: ObjectKey | None) -> None:
         identity = None if key is None else self._uow.insertion_identity(key)
         if identity is None:
-            self._settled(instruction, key, None)
+            self._admit_with_evidence(instruction, key, None)
         else:
-            self._admit(buffered_write(instruction, None, authority=identity))
+            self._admit(admitted_write(instruction, None, authority=identity))
 
-    def _settled(
+    def _admit_with_evidence(
         self,
-        instruction: PreparedKeyedWrite,
+        instruction: PreparedKeyedInstruction,
         key: ObjectKey | None,
         observation: RetainedObservation | None,
     ) -> None:
@@ -730,14 +730,14 @@ class _SimulatedUnit:
             observation=observation,
         )
         if not isinstance(evidence, ObjectKey):
-            self._admit(buffered_write(instruction, evidence))
+            self._admit(admitted_write(instruction, evidence))
             return
         source = ReadEvidence(instruction.target.identity, evidence, self._participation, None)
-        self._admit(buffered_write(instruction, evidence, source=source))
+        self._admit(admitted_write(instruction, evidence, source=source))
 
-    def _admit(self, item: AdmittedWrite | PreparedTargetWrite) -> None:
+    def _admit(self, item: AdmittedWrite | PreparedTargetInstruction) -> None:
         try:
-            if isinstance(item, PreparedTargetWrite):
+            if isinstance(item, PreparedTargetInstruction):
                 self._uow.buffer_target(item)
             else:
                 self._uow.buffer(item)
@@ -868,16 +868,16 @@ def lower_writes(
 
 def _prepared_case_predicate_write(
     raw_write: Mapping[str, object], model: AcceptedMetamodel
-) -> PreparedPredicateWrite:
+) -> PreparedPredicateInstruction:
     (submission,) = read_submissions(model, raw_write)
     assert isinstance(submission.instruction, PredicateWriteInstruction)
     prepared = instructions.prepare_wire_write(submission.instruction, model)
-    assert isinstance(prepared, PreparedPredicateWrite)
+    assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared
 
 
 def _lower_predicate_write_step(
-    prepared: PreparedPredicateWrite,
+    prepared: PreparedPredicateInstruction,
     model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,

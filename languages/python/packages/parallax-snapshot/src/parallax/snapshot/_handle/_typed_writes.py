@@ -20,8 +20,8 @@ from parallax.core._execution._unit_work.instructions import (
     PredicateMutation,
     PredicateSelection,
     PredicateWriteInstruction,
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
     TargetMutation,
     WriteAssignment,
 )
@@ -80,7 +80,7 @@ def prepared_typed_write(
     valid_from: dt.datetime | None,
     until: dt.datetime | None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedKeyedWrite:
+) -> PreparedKeyedInstruction:
     """One authored single-row keyed instruction, judged by Unit Work's sole
     typed preparation — target and window, then member names, values, and
     assignment legality, each of ``members`` judged as an assignment.
@@ -170,7 +170,7 @@ class TypedKeyedWriteSource:
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedKeyedWrite:
+    ) -> PreparedKeyedInstruction:
         """The instruction this value authors.
 
         An amendment authors the value's identity plus every member its edit
@@ -248,7 +248,7 @@ class TypedKeyedInsertSource:
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedKeyedWrite:
+    ) -> PreparedKeyedInstruction:
         return prepared_typed_write(
             model,
             mutation,
@@ -288,7 +288,7 @@ class TypedPredicateWriteAdapter:
 
     def prepare(
         self, write_model: SelectedWriteModel, mutation: PredicateMutation
-    ) -> PreparedPredicateWrite:
+    ) -> PreparedPredicateInstruction:
         selection = typed_selection(self._query, write_model)
         payload = self._payload
         if mutation in REPLACE_MUTATIONS:

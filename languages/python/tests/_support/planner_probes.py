@@ -12,7 +12,7 @@ from parallax.core import temporal_read
 from parallax.core._execution._unit_work.acquisition import AcquireRows, RowConsumer, RowRequest
 from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
+    PreparedKeyedInstruction,
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.retain import (
@@ -22,10 +22,10 @@ from parallax.core._execution._unit_work.retain import (
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import (
-    AfterRemoval,
-    CoalescedWrite,
+    ComposedWrite,
     OrderedWrite,
-    TargetKeyedWrite,
+    PostRemovalInsert,
+    TargetWrite,
 )
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep
 from parallax.core.metamodel import EntityIdentity, Metamodel
@@ -33,7 +33,7 @@ from parallax.core.unit_work import (
     AdmittedWrite,
     KeyedWriteInstruction,
     SubjectActor,
-    buffered_write,
+    admitted_write,
     object_key,
 )
 from parallax.core.write_plan import ObjectKey, StateObservation, WritePlan
@@ -90,7 +90,7 @@ def object_source(
 ) -> ReadEvidence:
     """Observation-free Read Evidence of ``target``, stamped with
     ``participation``, by default one no unit of work issued: what an
-    object-claimed write keeps where a suite admits it directly rather than
+    object-locked write keeps where a suite admits it directly rather than
     through a verb."""
     return ReadEvidence(
         target.entity,
@@ -105,7 +105,7 @@ def observed_buffer(
     model: Metamodel,
     observations: Mapping[ObjectKey, StateObservation] | None,
 ) -> list[OrderedWrite]:
-    """``buffer`` with every item ``observations`` names wrapped in its carrier,
+    """``buffer`` with every item ``observations`` names wrapped in its admitted write,
     admitted in authored order as a unit of work admits it.
 
     A planner-level suite states which objects the transaction observed, which
@@ -113,7 +113,7 @@ def observed_buffer(
     resolving is not in play. This turns that statement into what a verb
     buffers — the instruction travelling with the one retained observation its
     attempt holds for that object — through the same
-    :func:`~parallax.core.unit_work.buffered_write` a verb uses, so a suite
+    :func:`~parallax.core.unit_work.admitted_write` a verb uses, so a suite
     that names an object an insert also writes is refused here exactly as a verb
     would refuse it.
     """
@@ -121,7 +121,7 @@ def observed_buffer(
     retained: dict[ObjectKey, RetainedObservation] = {}
     resolved: list[AdmittedWrite] = []
     for item in prepared:
-        if not observations or not isinstance(item, PreparedKeyedWrite):
+        if not observations or not isinstance(item, PreparedKeyedInstruction):
             resolved.append(item)
             continue
         key = object_key(item, model)
@@ -132,12 +132,12 @@ def observed_buffer(
         held = retained.get(key)
         if held is None:
             held = retained[key] = retained_observation(item, model, observation)
-        resolved.append(buffered_write(item, held))
+        resolved.append(admitted_write(item, held))
     return [_settled(item) for item in admitted_writes(model, resolved)]
 
 
 def observed_write(
-    instruction: PreparedKeyedWrite, model: Metamodel, observation: StateObservation | None
+    instruction: PreparedKeyedInstruction, model: Metamodel, observation: StateObservation | None
 ) -> OrderedWrite:
     """``instruction`` buffered against ``observation``, as the one write a
     buffer holds."""
@@ -145,14 +145,12 @@ def observed_write(
     if observation is None:
         item = instruction
     else:
-        item = buffered_write(instruction, retained_observation(instruction, model, observation))
+        item = admitted_write(instruction, retained_observation(instruction, model, observation))
     (only,) = admitted_writes(model, [item])
     return _settled(only)
 
 
-def admitted_writes(
-    model: Metamodel, writes: Sequence[AdmittedWrite]
-) -> tuple[CoalescedWrite, ...]:
+def admitted_writes(model: Metamodel, writes: Sequence[AdmittedWrite]) -> tuple[ComposedWrite, ...]:
     """``writes`` admitted in authored order into one buffer, and that
     buffer's composed writes, under the Optimistic strategy, whose confirmation
     of a caller's revision reads nothing."""
@@ -162,7 +160,7 @@ def admitted_writes(
     return admission.composed_writes()
 
 
-def _optimistic(item: TargetKeyedWrite) -> TargetKeyedWrite:
+def _optimistic(item: TargetWrite) -> TargetWrite:
     return item
 
 
@@ -171,7 +169,7 @@ def _no_insertion_authorizes(entity: EntityIdentity, advanced_from: int | None) 
 
 
 def retained_observation(
-    instruction: PreparedKeyedWrite, model: Metamodel, observation: StateObservation
+    instruction: PreparedKeyedInstruction, model: Metamodel, observation: StateObservation
 ) -> RetainedObservation:
     """``observation`` retained under the exact state of ``instruction``'s
     object it is evidence about, with no participating read."""
@@ -184,10 +182,10 @@ def retained_observation(
     )
 
 
-def _settled(item: CoalescedWrite) -> OrderedWrite:
+def _settled(item: ComposedWrite) -> OrderedWrite:
     """``item`` as settlement reads it: these suites buffer no insert that
     waits on an earlier removal."""
-    assert not isinstance(item, AfterRemoval)
+    assert not isinstance(item, PostRemovalInsert)
     return item
 
 

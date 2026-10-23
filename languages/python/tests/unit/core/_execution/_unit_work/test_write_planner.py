@@ -31,16 +31,16 @@ from parallax.core._execution import _planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work import keys as keys_module
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
-    derive_keyed_write,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
+    derive_keyed_instruction,
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.retain import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.write_items import (
-    ObjectClaimedWrite,
-    ObservedKeyedWrite,
+    ObjectLockedWrite,
     OrderedWrite,
+    StateObservedWrite,
 )
 from parallax.core._execution._unit_work.write_settlement import SettledWriteWithSource
 from parallax.core._formation_profile import form_metamodel
@@ -153,7 +153,7 @@ def _plan(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
             concurrency=concurrency,
-            buffered_writes=observed_buffer(buffer, model, observations),
+            composed_writes=observed_buffer(buffer, model, observations),
         )
     )
 
@@ -199,25 +199,25 @@ def _single_key(step: PlannedUpdate | PlannedDelete) -> object:
     return value
 
 
-def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedWrite:
+def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedInstruction:
     prepared = prepare_typed_write(write, model)
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
 def _observed(
     write: KeyedWriteInstruction, evidence: StateObservation | RetainedObservation
-) -> ObservedKeyedWrite:
+) -> StateObservedWrite:
     prepared = _prepared_keyed(write, _ACCOUNT)
     if not isinstance(evidence, RetainedObservation):
         evidence = retained_observation(prepared, _ACCOUNT, evidence)
-    return ObservedKeyedWrite(prepared, evidence)
+    return StateObservedWrite(prepared, evidence)
 
 
-def _claimed(write: KeyedWriteInstruction) -> ObjectClaimedWrite:
+def _claimed(write: KeyedWriteInstruction) -> ObjectLockedWrite:
     (row,) = write.rows
     source = object_source(corpus_object_key("Wallet", ("id", row["id"])))
-    return ObjectClaimedWrite(_prepared_keyed(write, _WALLET), (source,))
+    return ObjectLockedWrite(_prepared_keyed(write, _WALLET), (source,))
 
 
 def _shape(plan: WritePlan) -> list[tuple[str, str]]:
@@ -305,7 +305,7 @@ def _changed_entry(plan: WritePlan) -> tuple[ChangedFrom, PlannedRow]:
     return cast("ChangedFrom", entry.origin), entry.row
 
 
-def test_coalesced_temporal_writes_overlay_every_member_any_of_them_assigned() -> None:
+def test_composed_temporal_writes_overlay_every_member_any_of_them_assigned() -> None:
     # The successor overlays each member at its last assigned value, a value
     # equal to the predecessor's own included, and carries only the members no
     # write named.
@@ -398,8 +398,8 @@ def test_a_second_state_of_one_object_does_not_close_the_first_states_claim() ->
     assert _assignment_values(standing) == {"owner": "Grace", "version": 6}
 
 
-def test_object_claimed_writes_of_one_unversioned_row_merge_into_one_step() -> None:
-    # The object-claimed arm reaches the same algebra by the same call: what such
+def test_object_locked_writes_of_one_unversioned_row_merge_into_one_step() -> None:
+    # The object-locked arm reaches the same algebra by the same call: what such
     # writes share is the object, because no state stands behind them.
     first = _claimed(
         KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("5.00")},))
@@ -411,7 +411,7 @@ def test_object_claimed_writes_of_one_unversioned_row_merge_into_one_step() -> N
     assert _assignment_values(step) == {"balance": Decimal("5.00"), "owner": "Grace"}
 
 
-def test_an_object_claimed_destruction_supersedes_the_assignment_before_it() -> None:
+def test_an_object_locked_destruction_supersedes_the_assignment_before_it() -> None:
     update = _claimed(
         KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("5.00")},))
     )
@@ -421,7 +421,7 @@ def test_an_object_claimed_destruction_supersedes_the_assignment_before_it() -> 
     assert isinstance(step, PlannedDelete)
 
 
-def test_identical_object_claimed_destructions_plan_one_step() -> None:
+def test_identical_object_locked_destructions_plan_one_step() -> None:
     # Unclaimed, the pair reaches the batch collapse as a repeated authored key,
     # which a Key Target refuses — so deduplication is what keeps a legal two-verb
     # sequence out of an internal invariant failure.
@@ -431,7 +431,7 @@ def test_identical_object_claimed_destructions_plan_one_step() -> None:
     assert isinstance(step, PlannedDelete)
 
 
-def test_object_claimed_writes_of_two_rows_still_collapse_into_one_batch() -> None:
+def test_object_locked_writes_of_two_rows_still_collapse_into_one_batch() -> None:
     # A claim is per object, so two objects' deletes are two claims — and each
     # batches as the bare instruction it carries would, which is what keeps
     # `m-batch-write`'s set-based collapse reachable for unversioned rows. The
@@ -671,7 +671,7 @@ def test_ordering_reads_each_ranked_writes_compiled_rank_once_and_derives_none(
         actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=_INSTANT,
         concurrency="locking",
-        buffered_writes=observed_buffer(buffer, _ORDERS, None),
+        composed_writes=observed_buffer(buffer, _ORDERS, None),
     )
     first = planner.finalize(request)
     second = planner.finalize(request)
@@ -723,7 +723,7 @@ def _predicate_step(
     instruction: PredicateWriteInstruction, model: Metamodel
 ) -> PlannedUpdate | PlannedDelete:
     prepared = prepare_typed_write(instruction, model)
-    assert isinstance(prepared, PreparedPredicateWrite)
+    assert isinstance(prepared, PreparedPredicateInstruction)
     return build_write_planner(model).predicate_step(
         prepared, actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=_INSTANT
     )
@@ -945,9 +945,9 @@ def test_recorded_observations_bind_to_their_own_planned_update() -> None:
 
 def test_an_observation_on_an_unversioned_non_temporal_update_is_refused() -> None:
     # `m-unit-work`: "unversioned Non-Temporal writes have no observation", and
-    # that absence is structural. The carrier can only refuse the half it can
+    # that absence is structural. The observed write can only refuse the half it can
     # see without the model (an insert, a plural instruction); the planner is
-    # the model-aware boundary every carrier crosses, so it refuses the other
+    # the model-aware boundary every admitted write crosses, so it refuses the other
     # half rather than settling the write with the evidence discarded.
     update = KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("7.00")},))
     key_ = object_key(update, _WALLET)
@@ -1155,7 +1155,7 @@ def test_batching_never_regroups_across_an_intervening_different_entity() -> Non
 def test_batching_never_merges_a_row_carrying_a_recorded_observation() -> None:
     # Two adjacent updates of one versioned entity assigning the SAME value are
     # exactly what the collapse decision admits — and they still settle as two
-    # steps, because each arrives wrapped in its own observation carrier and a
+    # steps, because each arrives wrapped in its own observed write and a
     # multi-row instruction has no way to carry a per-row observation forward.
     # Both rows are observed because only an observed write of a versioned row
     # can be planned at all; the exclusion is therefore proven on the shape
@@ -1396,7 +1396,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
         ),
         model,
     )
-    assert isinstance(predicate, PreparedPredicateWrite)
+    assert isinstance(predicate, PreparedPredicateInstruction)
     prepared = observed_buffer(
         buffer,
         model,
@@ -1418,7 +1418,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
             concurrency="optimistic",
-            buffered_writes=prepared,
+            composed_writes=prepared,
         )
     )
     kinds = [_step_mutation(step) for step in plan_steps(plan)]
@@ -1510,7 +1510,7 @@ def test_settlement_reads_each_temporal_mutations_family_shape_once(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
             concurrency="optimistic",
-            buffered_writes=buffered,
+            composed_writes=buffered,
         )
     )
     assert reads == ["SpotQuote", "DepositRate"]
@@ -1520,8 +1520,8 @@ def test_settlement_reads_each_temporal_mutations_family_shape_once(
 
 
 # --------------------------------------------------------------------------- #
-# Settlement decorates each update once, and the claims answered are the     #
-# surviving carriers' own.                                                     #
+# Settlement decorates each update once, and the claims answered are the      #
+# surviving writes' own.                                                      #
 # --------------------------------------------------------------------------- #
 def _wallet_and_account() -> Metamodel:
     return formed(
@@ -1547,7 +1547,7 @@ def test_audit_decorates_each_update_once_at_settlement_and_never_on_enumeration
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
             concurrency="locking",
-            buffered_writes=observed_buffer(_wallet_update(), model, None),
+            composed_writes=observed_buffer(_wallet_update(), model, None),
         )
     )
     assert audit.actors == [TEST_ACTOR_IDENTITY]
@@ -1718,7 +1718,7 @@ def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None
     # Two surviving writes settle against one observed state — a destruction and
     # an assignment of one state are a pair no verb admitted as combinable, so
     # both are left standing — and each one's settled write keeps its own
-    # source and publishes its own outcome. A carrier the earlier stages retire
+    # source and publishes its own outcome. A write the earlier stages retire
     # takes its source out of the flush with it: the key-only update below is
     # known no-op work, eliminated at stage 2, and never settled, so its source
     # is absent by ABSENCE rather than by a second filter.
@@ -1758,7 +1758,7 @@ def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_INSTANT,
             concurrency="locking",
-            buffered_writes=buffer,
+            composed_writes=buffer,
         )
     )
     assert [_step_mutation(step) for step in plan_steps(finalized)] == ["update", "delete"]
@@ -1772,15 +1772,15 @@ def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None
 
 
 # --------------------------------------------------------------------------- #
-# Settlement's own refusals judge the rows a prepared carrier holds. Each      #
-# carrier below is derived from a prepared write through the planner's own    #
+# Settlement's own refusals judge the rows a prepared instruction holds. Each #
+# instruction below is derived from a prepared one through the planner's own  #
 # controlled derivation, which retains rows without re-admitting them.        #
 # --------------------------------------------------------------------------- #
 def _derived(
     write: KeyedWriteInstruction, model: Metamodel, rows: tuple[Mapping[str, object], ...]
-) -> PreparedKeyedWrite:
+) -> PreparedKeyedInstruction:
     """A prepared keyed write whose rows no ingress would have produced."""
-    return derive_keyed_write(_prepared_keyed(write, model), rows)
+    return derive_keyed_instruction(_prepared_keyed(write, model), rows)
 
 
 def test_a_preformed_plural_temporal_update_of_key_only_rows_reaches_settlement_whole() -> None:

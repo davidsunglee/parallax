@@ -4,7 +4,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from parallax.core._execution._unit_work.instructions import INSERT_MUTATIONS, PreparedKeyedWrite
+from parallax.core._execution._unit_work.instructions import (
+    INSERT_MUTATIONS,
+    PreparedKeyedInstruction,
+)
 from parallax.core._execution._unit_work.retain import RetainedObservation
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
@@ -73,8 +76,8 @@ no scope either: it has no single object and no single observed state. Only a
 caller holding a pre-formed multi-row instruction can author one — a keyed
 developer verb writes the one row the value it was handed names — and where that
 caller supplies no evidence of its own, the write claims nothing and buffers
-bare. Evidence such a caller does supply is refused by the single-row carrier
-that would have had to hold it, before the write takes any claim, rather than
+bare. Evidence such a caller does supply is refused by the single-row admitted
+write that would have had to hold it, before the write takes any claim, rather than
 dropped in favour of the bare shape.
 
 Which arm a write takes is derived from declared facts — the target Entity's
@@ -104,7 +107,7 @@ A write against existing state that addresses no single object is derived
 neither and settles against nothing: an instruction naming several rows, or a
 row naming no complete primary key, has neither a state nor an object for
 evidence to be about. A caller can still hold one of the two and supply it with
-such a write, and the carrier it would travel in refuses that pairing rather than
+such a write, and the admitted write it would travel in refuses that pairing rather than
 settling the write bare.
 """
 
@@ -144,7 +147,7 @@ two cannot be combined, and the arriving verb refuses.
 """
 
 
-def keyed_intent(instruction: PreparedKeyedWrite) -> WriteIntent | None:
+def keyed_intent(instruction: PreparedKeyedInstruction) -> WriteIntent | None:
     """What ``instruction`` intends against existing state, or ``None`` for an
     insert, which intends nothing against any.
 

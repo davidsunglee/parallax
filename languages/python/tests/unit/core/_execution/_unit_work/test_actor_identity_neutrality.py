@@ -10,7 +10,7 @@ from parallax.conformance import models
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
-    PreparedPredicateWrite,
+    PreparedPredicateInstruction,
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
@@ -67,7 +67,7 @@ def _plan_under(
             actor_identity=actor,
             transaction_instant=tx_instant if tx_instant is not None else inert_instant(),
             concurrency=concurrency,
-            buffered_writes=buffered,
+            composed_writes=buffered,
         )
     )
 
@@ -146,7 +146,7 @@ def test_a_readless_predicate_write_is_actor_neutral() -> None:
         ),
     )
     prepared = prepare_typed_write(predicate, _WALLET)
-    assert isinstance(prepared, PreparedPredicateWrite)
+    assert isinstance(prepared, PreparedPredicateInstruction)
     planner = build_write_planner(_WALLET)
     subject, login = (
         planner.predicate_step(prepared, actor_identity=actor, transaction_instant=inert_instant())

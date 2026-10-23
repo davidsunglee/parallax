@@ -65,7 +65,7 @@ import pytest
 from parallax.conformance import case_format, engine
 from parallax.core._execution import _planning, _write_lowering
 from parallax.core._execution._publication import write_projection
-from parallax.core._execution._unit_work.instructions import PreparedPredicateWrite
+from parallax.core._execution._unit_work.instructions import PreparedPredicateInstruction
 from parallax.core._execution._unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
@@ -243,7 +243,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         seen.planned.append(
             _Planning(
                 planner=self,
-                shapes=[type(item).__name__ for item in request.buffered_writes],
+                shapes=[type(item).__name__ for item in request.composed_writes],
                 sequences=tuple(
                     entry.steps for entry in finalized.entries if isinstance(entry, WriteGroup)
                 ),
@@ -304,7 +304,7 @@ def _watch_predicate_plannings(seen: _Composition, monkeypatch: pytest.MonkeyPat
     predicating = WritePlanner.predicate_step
 
     def predicate_step(
-        self: WritePlanner, prepared: PreparedPredicateWrite, /, **identity: Any
+        self: WritePlanner, prepared: PreparedPredicateInstruction, /, **identity: Any
     ) -> PlannedUpdate | PlannedDelete:
         step = predicating(self, prepared, **identity)
         seen.planned.append(

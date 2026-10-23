@@ -33,7 +33,7 @@ from parallax.core.unit_work import (
     CardinalityCorruptionError,
     Concurrency,
     KeyedWriteInstruction,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import PredecessorRow, PredecessorRows
 from parallax.core.write_plan import plan as plan_module
@@ -326,7 +326,7 @@ def _reaching_past(observed: PredecessorRow, *, replaces: bool) -> AdmittedWrite
         ),
         MODEL,
     )
-    return buffered_write(prepared, observation(ShareCols, observed))
+    return admitted_write(prepared, observation(ShareCols, observed))
 
 
 def _window(step: PlannedStep) -> tuple[object, object]:
@@ -745,4 +745,4 @@ def _inside_write() -> AdmittedWrite:
         ),
         MODEL,
     )
-    return buffered_write(prepared, observation(ShareCols, observed))
+    return admitted_write(prepared, observation(ShareCols, observed))

@@ -21,7 +21,7 @@ from parallax.core._execution._transaction._attempt import TxnAttempt
 from parallax.core._execution._unit_work.admission import WriteEvidenceError
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
-    PreparedKeyedWrite,
+    PreparedKeyedInstruction,
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.retain import (
@@ -56,7 +56,7 @@ def _key(entity: EntityIdentity, account_id: int) -> ObjectKey:
 
 def _prepared(
     model: Metamodel, mutation: KeyedMutation, entity: EntityMetadata, row: Mapping[str, object]
-) -> PreparedKeyedWrite:
+) -> PreparedKeyedInstruction:
     return prepare_typed_write(keyed_instruction(mutation, entity.identity, row), model)
 
 
@@ -100,7 +100,7 @@ class _AmendingAccountOne:
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedKeyedWrite:
+    ) -> PreparedKeyedInstruction:
         return _prepared(model, mutation, resolved.entity, {"id": 1, "balance": Decimal("9.00")})
 
 
@@ -120,7 +120,7 @@ class _OpeningAccountSeven:
         *,
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
-    ) -> PreparedKeyedWrite:
+    ) -> PreparedKeyedInstruction:
         row = {"id": 7, "owner": "Newton", "balance": Decimal("5.00")}
         return _prepared(model, mutation, resolved.entity, row)
 

@@ -30,11 +30,11 @@ from parallax.core._execution._unit_work.retain import (
 )
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
-    CoalescedTemporalWrite,
-    InsertionKeyedWrite,
-    ObservedKeyedWrite,
-    PendingOpening,
-    TargetKeyedWrite,
+    ComposedBitemporalOpening,
+    ComposedTemporalWrite,
+    InsertionAuthorizedWrite,
+    StateObservedWrite,
+    TargetWrite,
     TemporalKeyedWrite,
     singleton_transform,
 )
@@ -108,13 +108,13 @@ class _ObservedSource:
 
 
 def range_source_evidence(
-    item: CoalescedTemporalWrite | TemporalKeyedWrite,
+    item: ComposedTemporalWrite | TemporalKeyedWrite,
 ) -> tuple[ReadEvidence, ...]:
     """The distinct Read Evidence of every source whose write a range composes,
     by identity, in authored order."""
-    if isinstance(item, ObservedKeyedWrite):
+    if isinstance(item, StateObservedWrite):
         return item.source_evidence
-    if not isinstance(item, CoalescedTemporalWrite):
+    if not isinstance(item, ComposedTemporalWrite):
         return ()
     distinct: list[ReadEvidence] = []
     for contribution in item.contributions:
@@ -146,7 +146,7 @@ def _finite_valid_time(evidence: ReadEvidence) -> dt.datetime | None:
 
 
 def _known_predecessors(
-    composed: CoalescedTemporalWrite,
+    composed: ComposedTemporalWrite,
     facts: TemporalFacts,
     target: ObjectKey,
     ownership: TemporalWriteOwnership,
@@ -229,7 +229,7 @@ _EXISTENCE: Final = object()
 of: the current row itself, wherever it lies on an axis that has no Valid Time."""
 
 
-def _anchor(composed: CoalescedTemporalWrite) -> object:
+def _anchor(composed: ComposedTemporalWrite) -> object:
     """Where a composed range requires current coverage because an insertion
     authorized one of its writes: that insertion's own start, which every such
     write states as its window's start."""
@@ -255,7 +255,7 @@ class _TargetCondition:
     expected: dt.datetime
 
 
-def _conditions(composed: CoalescedTemporalWrite) -> tuple[_TargetCondition, ...]:
+def _conditions(composed: ComposedTemporalWrite) -> tuple[_TargetCondition, ...]:
     """The distinct target conditions the callers of a composed range's
     addressed writes state, in authored order: one per exact-window operation,
     where admission let in only writes that agree on it, and another for each
@@ -596,7 +596,7 @@ class DeferredTemporalRange(DeferredRange):
 
 
 def settle_range(
-    item: CoalescedTemporalWrite | TemporalKeyedWrite,
+    item: ComposedTemporalWrite | TemporalKeyedWrite,
     *,
     view: InheritanceEntityView,
     shape: TransactionTimeOnly | Bitemporal,
@@ -611,8 +611,8 @@ def settle_range(
     coverage: bound now where planning knows that coverage, or else the
     deferred description of what binding needs once it is read.
 
-    A lone write reaches here as the carrier it was buffered in, and its
-    transform is built once, here, from that carrier; a composition brings the
+    A lone write reaches here as the admitted write it was buffered as, and
+    its transform is built once, here, from that write; a composition brings the
     transform its buffering composed.
 
     Every distinct observed state the attempt's completed writes did not
@@ -667,7 +667,7 @@ def settle_range(
 
 
 def settle_opening(
-    opening: PendingOpening,
+    opening: ComposedBitemporalOpening,
     *,
     view: InheritanceEntityView,
     shape: Bitemporal,
@@ -734,10 +734,10 @@ def _with_opening(
 
 
 def _range_of(
-    item: CoalescedTemporalWrite | TemporalKeyedWrite, key_attribute: AttributeIdentity
+    item: ComposedTemporalWrite | TemporalKeyedWrite, key_attribute: AttributeIdentity
 ) -> tuple[EntityMetadata, object, CoverageTransform]:
     """The object ``item`` writes, its key value, and its transform."""
-    if isinstance(item, CoalescedTemporalWrite):
+    if isinstance(item, ComposedTemporalWrite):
         return item.target, item.key[key_attribute.name], item.transform
     instruction = item.instruction
     return (
@@ -747,7 +747,7 @@ def _range_of(
     )
 
 
-def _retained(composed: CoalescedTemporalWrite) -> tuple[RetainedTargetState, ...]:
+def _retained(composed: ComposedTemporalWrite) -> tuple[RetainedTargetState, ...]:
     return tuple(
         contribution.retained
         for contribution in composed.contributions
@@ -756,7 +756,7 @@ def _retained(composed: CoalescedTemporalWrite) -> tuple[RetainedTargetState, ..
 
 
 def _known(
-    item: CoalescedTemporalWrite | TemporalKeyedWrite,
+    item: ComposedTemporalWrite | TemporalKeyedWrite,
     facts: TemporalFacts,
     target: ObjectKey,
     ownership: TemporalWriteOwnership,
@@ -770,13 +770,13 @@ def _known(
     """What planning knows of ``item``'s range: the predecessors it binds and
     validates, its insertion anchor, its callers' target conditions, and the
     starting rows their admissions retained."""
-    if isinstance(item, CoalescedTemporalWrite):
+    if isinstance(item, ComposedTemporalWrite):
         predecessors, validations = _known_predecessors(item, facts, target, ownership)
         return predecessors, validations, _anchor(item), _conditions(item), _retained(item)
     window = item.instruction.valid_time_window
-    if isinstance(item, InsertionKeyedWrite):
+    if isinstance(item, InsertionAuthorizedWrite):
         return (), (), _anchored_at(window), (), ()
-    if isinstance(item, TargetKeyedWrite):
+    if isinstance(item, TargetWrite):
         expectation = item.expectation
         conditions = (
             (_TargetCondition(window, expectation.instant),)

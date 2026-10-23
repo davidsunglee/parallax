@@ -73,8 +73,8 @@ from parallax.core._execution._unit_work.uow import (
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    ClaimedKeyedWrite,
-    buffered_write,
+    ReadAuthorizedWrite,
+    admitted_write,
 )
 from parallax.core._execution._unit_work.write_planner import (
     WritePlanner,
@@ -96,7 +96,6 @@ __all__ = [
     "CardinalityCorruptionError",
     "ClaimScope",
     "ClaimVerdict",
-    "ClaimedKeyedWrite",
     "Clock",
     "Concurrency",
     "DatabaseLoginActor",
@@ -111,6 +110,7 @@ __all__ = [
     "PredicateMutation",
     "PredicateSelection",
     "PredicateWriteInstruction",
+    "ReadAuthorizedWrite",
     "ReadEvidence",
     "RetainedObservation",
     "RollbackOnlyError",
@@ -137,8 +137,8 @@ __all__ = [
     "WritePreconditionError",
     "WriteRejectedError",
     "WriteResultError",
+    "admitted_write",
     "allocated_keys",
-    "buffered_write",
     "claim_scope",
     "claimed_object",
     "concurrency_preference",

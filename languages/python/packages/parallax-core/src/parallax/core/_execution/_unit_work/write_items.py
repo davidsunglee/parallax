@@ -19,10 +19,10 @@ from parallax.core._execution._unit_work.instructions import (
     REPLACE_MUTATIONS,
     ExpectedTxStart,
     ExpectedVersion,
-    PreparedKeyedWrite,
-    PreparedTargetWrite,
+    PreparedKeyedInstruction,
+    PreparedTargetInstruction,
     TargetExpectation,
-    target_instruction,
+    keyed_instruction_from_target,
 )
 from parallax.core._execution._unit_work.keys import resolve_object_key
 from parallax.core._execution._unit_work.retain import (
@@ -40,25 +40,25 @@ from parallax.core.write_plan.observe import StateObservation
 
 __all__ = [
     "AdmittedWrite",
-    "AfterRemoval",
-    "ClaimedKeyedWrite",
-    "CoalescedTemporalWrite",
-    "CoalescedWrite",
-    "InsertionKeyedWrite",
+    "ComposedBitemporalOpening",
+    "ComposedTemporalWrite",
+    "ComposedWrite",
+    "InsertionAuthorizedWrite",
     "MutationPhase",
-    "ObjectClaimedBatch",
-    "ObjectClaimedWrite",
-    "ObservedKeyedWrite",
+    "ObjectLockedBatch",
+    "ObjectLockedWrite",
     "OrderedWrite",
-    "PendingOpening",
-    "TargetKeyedWrite",
+    "PostRemovalInsert",
+    "ReadAuthorizedWrite",
+    "StateObservedWrite",
+    "TargetWrite",
     "TemporalContribution",
     "TemporalKeyedWrite",
+    "admitted_write",
     "buffered_claim_scope",
     "buffered_instruction",
     "buffered_object_key",
-    "buffered_write",
-    "composed_temporal_write",
+    "compose_temporal_write",
     "singleton_transform",
     "target_write",
     "temporal_contribution",
@@ -70,12 +70,12 @@ _REQUIRES_RETAINED_OBSERVATION: Final = (
 )
 
 _REQUIRES_SOURCE: Final = (
-    "An object-claimed write requires the source evidence it was admitted through."
+    "An object-locked write requires the source evidence it was admitted through."
 )
 
 
 @dataclass(frozen=True, slots=True)
-class ObservedKeyedWrite:
+class StateObservedWrite:
     """Carries verb-time evidence through planning without resolving it again.
 
     ``retained_observation`` is the state the write's source observed, which
@@ -90,13 +90,13 @@ class ObservedKeyedWrite:
     whose write composed into this one — it keeps their demand alive while the
     write is pending or planned, and nothing reads it. A caller-conditioned
     write that absorbs this one keeps it, even where that write's deletion
-    supersedes this one, and so does this carrier where a write an insertion
+    supersedes this one, and so does this write where a write an insertion
     authorized meets it. An update's row is its literal assignment set: the
     identity plus every member its producer expressed, each written whatever
     value the source observed for it.
     """
 
-    instruction: PreparedKeyedWrite
+    instruction: PreparedKeyedInstruction
     retained_observation: RetainedObservation
     current: VersionedObjectStateKey | None = None
     source_evidence: tuple[ReadEvidence, ...] = ()
@@ -131,7 +131,7 @@ class ObservedKeyedWrite:
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectClaimedWrite:
+class ObjectLockedWrite:
     """Coalesces by object identity, then settles as its own instruction.
 
     ``source_evidence`` holds, by identity, the observation-free Read Evidence
@@ -139,7 +139,7 @@ class ObjectClaimedWrite:
     alive while the write is pending or planned, and nothing reads it.
     """
 
-    instruction: PreparedKeyedWrite
+    instruction: PreparedKeyedInstruction
     source_evidence: tuple[ReadEvidence, ...]
 
     def __post_init__(self) -> None:
@@ -163,20 +163,20 @@ class ObjectClaimedWrite:
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectClaimedBatch:
-    """Object-claimed writes batching joined into one multi-row instruction,
+class ObjectLockedBatch:
+    """Object-locked writes batching joined into one multi-row instruction,
     with any bare writes batched beside them.
 
     ``source_evidence`` holds, by identity, the Read Evidence every joined
-    object-claimed write retained, which nothing reads.
+    object-locked write retained, which nothing reads.
     """
 
-    instruction: PreparedKeyedWrite
+    instruction: PreparedKeyedInstruction
     source_evidence: tuple[ReadEvidence, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class InsertionKeyedWrite:
+class InsertionAuthorizedWrite:
     """A keyed write authorized by an admitted insertion rather than by a read.
 
     ``identity`` is the insertion's authority, which the unit of work checks
@@ -187,7 +187,7 @@ class InsertionKeyedWrite:
     of the same state. A temporal write composes by object and takes none.
     """
 
-    instruction: PreparedKeyedWrite
+    instruction: PreparedKeyedInstruction
     identity: InsertionIdentity
     scope: VersionedObjectStateKey | ObjectKey | None = None
 
@@ -207,7 +207,7 @@ class InsertionKeyedWrite:
 
 
 @dataclass(frozen=True, slots=True)
-class TargetKeyedWrite:
+class TargetWrite:
     """A target write of one existing object, carrying the
     starting condition the caller stated rather than a read's evidence.
 
@@ -223,7 +223,7 @@ class TargetKeyedWrite:
     Locking temporal write's admission read whole, which its range may reuse.
     """
 
-    instruction: PreparedKeyedWrite
+    instruction: PreparedKeyedInstruction
     expectation: TargetExpectation
     scope: VersionedObjectStateKey | ObjectKey
     source_evidence: tuple[ReadEvidence, ...] = ()
@@ -239,15 +239,15 @@ class TargetKeyedWrite:
 
 
 def target_write(
-    prepared: PreparedTargetWrite, families: inheritance.InheritanceFacet
-) -> TargetKeyedWrite:
+    prepared: PreparedTargetInstruction, families: inheritance.InheritanceFacet
+) -> TargetWrite:
     """``prepared`` as the admitted write that carries its caller's condition: the
     keyed write it executes as, claimed at the scope its expectation names."""
-    instruction = target_instruction(prepared)
+    instruction = keyed_instruction_from_target(prepared)
     key = resolve_object_key(instruction, families)
     assert key is not None  # preparation required the key
     expectation = prepared.expectation
-    return TargetKeyedWrite(
+    return TargetWrite(
         instruction=instruction,
         expectation=expectation,
         scope=(
@@ -258,19 +258,19 @@ def target_write(
     )
 
 
-type ClaimedKeyedWrite = ObservedKeyedWrite | ObjectClaimedWrite
+type ReadAuthorizedWrite = StateObservedWrite | ObjectLockedWrite
 """One keyed write travelling with the claim its verb took for it, at either
-scope. The two carriers share what coalescing manipulates — an instruction —
+scope. The two share what coalescing manipulates — an instruction —
 and differ only in the grain their claims are taken at."""
 
 
-def buffered_write(
-    instruction: PreparedKeyedWrite,
+def admitted_write(
+    instruction: PreparedKeyedInstruction,
     evidence: SettledEvidence | None,
     *,
     source: ReadEvidence | None = None,
     authority: InsertionIdentity | None = None,
-) -> PreparedKeyedWrite | ClaimedKeyedWrite | InsertionKeyedWrite:
+) -> PreparedKeyedInstruction | ReadAuthorizedWrite | InsertionAuthorizedWrite:
     """``instruction`` as the admitted write that settles against ``evidence``,
     retaining ``source``, the Read Evidence it was admitted through, where it
     has one.
@@ -282,19 +282,19 @@ def buffered_write(
     """
     if evidence is None:
         if authority is not None:
-            return InsertionKeyedWrite(instruction=instruction, identity=authority)
+            return InsertionAuthorizedWrite(instruction=instruction, identity=authority)
         return instruction
     retained = () if source is None else (source,)
     if isinstance(evidence, ObjectKey):
-        return ObjectClaimedWrite(instruction=instruction, source_evidence=retained)
+        return ObjectLockedWrite(instruction=instruction, source_evidence=retained)
     if isinstance(evidence, RetainedObservation):
-        return ObservedKeyedWrite(
+        return StateObservedWrite(
             instruction=instruction, retained_observation=evidence, source_evidence=retained
         )
     observation = None if source is None else source.observation
     if observation is None:
         raise ValueError(_REQUIRES_RETAINED_OBSERVATION)
-    return ObservedKeyedWrite(
+    return StateObservedWrite(
         instruction=instruction,
         retained_observation=observation,
         current=None if evidence == observation.key else evidence,
@@ -336,7 +336,7 @@ class TemporalContribution:
 
 
 @dataclass(frozen=True, slots=True)
-class CoalescedTemporalWrite:
+class ComposedTemporalWrite:
     """Every pending observed write of one temporal object, composed in
     authored order at the position of the first.
 
@@ -357,7 +357,7 @@ class CoalescedTemporalWrite:
         return self.transform.assigns
 
 
-type TemporalKeyedWrite = ObservedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
+type TemporalKeyedWrite = StateObservedWrite | InsertionAuthorizedWrite | TargetWrite
 """One keyed write of a temporal object that composes with that object's other
 pending writes: an observed one, one an admitted insertion authorized, or a
 target write."""
@@ -365,8 +365,8 @@ target write."""
 
 def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
     """``item``'s lasting part once composed."""
-    observed = isinstance(item, ObservedKeyedWrite)
-    targeted = isinstance(item, TargetKeyedWrite)
+    observed = isinstance(item, StateObservedWrite)
+    targeted = isinstance(item, TargetWrite)
     expectation = item.expectation if targeted else None
     return TemporalContribution(
         kind="assignment" if item.instruction.mutation in ASSIGNMENT_MUTATIONS else "destructive",
@@ -378,9 +378,9 @@ def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
     )
 
 
-def composed_temporal_write(
-    held: TemporalKeyedWrite | CoalescedTemporalWrite, arriving: TemporalKeyedWrite, key_name: str
-) -> CoalescedTemporalWrite:
+def compose_temporal_write(
+    held: TemporalKeyedWrite | ComposedTemporalWrite, arriving: TemporalKeyedWrite, key_name: str
+) -> ComposedTemporalWrite:
     """``held`` followed by ``arriving``, one temporal object's writes composed
     in authored order.
 
@@ -389,13 +389,13 @@ def composed_temporal_write(
     condition stays. A caller's condition already held over the same window
     adds nothing to keep.
     """
-    if not isinstance(held, CoalescedTemporalWrite):
+    if not isinstance(held, ComposedTemporalWrite):
         held = _composed(held, key_name)
     contribution = temporal_contribution(arriving)
     contributions = held.contributions
     if contribution.condition is None or contribution not in contributions:
         contributions = (*contributions, contribution)
-    return CoalescedTemporalWrite(
+    return ComposedTemporalWrite(
         target=held.target,
         key=held.key,
         contributions=contributions,
@@ -403,9 +403,9 @@ def composed_temporal_write(
     )
 
 
-def _composed(item: TemporalKeyedWrite, key_name: str) -> CoalescedTemporalWrite:
+def _composed(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
     row = item.instruction.rows[0]
-    return CoalescedTemporalWrite(
+    return ComposedTemporalWrite(
         target=item.instruction.target,
         key={key_name: row[key_name]},
         contributions=(temporal_contribution(item),),
@@ -415,12 +415,12 @@ def _composed(item: TemporalKeyedWrite, key_name: str) -> CoalescedTemporalWrite
 
 def singleton_transform(item: TemporalKeyedWrite, key_name: str) -> CoverageTransform:
     """What ``item`` alone does to its object's existing coverage, built from
-    the carrier itself rather than from a composition of one write."""
+    the write itself rather than from a composition of one write."""
     return _contributed(NO_TRANSFORM, item.instruction, key_name)
 
 
 def _contributed(
-    transform: CoverageTransform, instruction: PreparedKeyedWrite, key_name: str
+    transform: CoverageTransform, instruction: PreparedKeyedInstruction, key_name: str
 ) -> CoverageTransform:
     """``transform`` followed by one prepared keyed write over its prepared
     window: an amendment or a replacement assigns every member its row names
@@ -434,14 +434,14 @@ def _contributed(
     )
 
 
-def _assigned(instruction: PreparedKeyedWrite, key_name: str) -> Mapping[str, object] | None:
+def _assigned(instruction: PreparedKeyedInstruction, key_name: str) -> Mapping[str, object] | None:
     if instruction.mutation not in ASSIGNMENT_MUTATIONS:
         return None
     return {name: value for name, value in instruction.rows[0].items() if name != key_name}
 
 
 @dataclass(frozen=True, slots=True)
-class PendingOpening:
+class ComposedBitemporalOpening:
     """A still-unflushed insert of a Bitemporal object, with the writes its
     insertion authorized since composed over the coverage it opens.
 
@@ -456,11 +456,13 @@ class PendingOpening:
     window so admission can judge the next one.
     """
 
-    insert: PreparedKeyedWrite
+    insert: PreparedKeyedInstruction
     transform: CoverageTransform
     intents: tuple[WriteIntent, ...]
 
-    def then(self, instruction: PreparedKeyedWrite, key_name: str) -> PendingOpening:
+    def followed_by(
+        self, instruction: PreparedKeyedInstruction, key_name: str
+    ) -> ComposedBitemporalOpening:
         """This opening with ``instruction`` composed after its earlier writes,
         an amendment's or a destruction's window clipped to the coverage the
         opening and its replacements establish."""
@@ -476,7 +478,7 @@ class PendingOpening:
             # the opening.
             assert clipped is not None
             window = clipped
-        return PendingOpening(
+        return ComposedBitemporalOpening(
             insert=self.insert,
             transform=self.transform.followed_by(
                 window, _assigned(instruction, key_name), replaces=replaces
@@ -520,34 +522,36 @@ class PendingOpening:
 
 
 @dataclass(frozen=True, slots=True)
-class AfterRemoval:
+class PostRemovalInsert:
     """An insert of an object whose earlier insertion an earlier pending write
     removes completely, which executes only after everything authored before
     it: an insert ordinarily runs ahead of every removal, and this one must
     follow the one that clears its way."""
 
-    insert: PreparedKeyedWrite | PendingOpening
+    insert: PreparedKeyedInstruction | ComposedBitemporalOpening
 
 
-AdmittedWrite = PreparedKeyedWrite | ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite
+AdmittedWrite = (
+    PreparedKeyedInstruction | ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
+)
 
 
 type OrderedWrite = (
-    PreparedKeyedWrite
-    | ObservedKeyedWrite
-    | ObjectClaimedWrite
-    | ObjectClaimedBatch
-    | InsertionKeyedWrite
-    | TargetKeyedWrite
-    | CoalescedTemporalWrite
-    | PendingOpening
+    PreparedKeyedInstruction
+    | StateObservedWrite
+    | ObjectLockedWrite
+    | ObjectLockedBatch
+    | InsertionAuthorizedWrite
+    | TargetWrite
+    | ComposedTemporalWrite
+    | ComposedBitemporalOpening
 )
 """One element of the sequence settlement reads: an admitted write once the
 planner's rewriting stages have finished with it.
 
-An object-claimed write keeps its source evidence through batching, which joins
+An object-locked write keeps its source evidence through batching, which joins
 it with other writes of its shape exactly as it joins bare instructions
-(:class:`ObjectClaimedBatch`); every stage after coalescing measures it by its
+(:class:`ObjectLockedBatch`); every stage after coalescing measures it by its
 instruction.
 """
 
@@ -556,23 +560,23 @@ type MutationPhase = tuple[OrderedWrite, ...]
 or its deletes. The planner hands settlement a flush's phases in flush
 order."""
 
-type CoalescedWrite = OrderedWrite | AfterRemoval
-"""One coalesced write as finalization receives it: what settlement
+type ComposedWrite = OrderedWrite | PostRemovalInsert
+"""One composed write as finalization receives it: what settlement
 reads, or inserts that must follow an earlier removal."""
 
 
-def buffered_instruction(item: AdmittedWrite) -> PreparedKeyedWrite:
+def buffered_instruction(item: AdmittedWrite) -> PreparedKeyedInstruction:
     """The write instruction ``item`` carries, unwrapped from any envelope."""
     if isinstance(
         item,
-        ObservedKeyedWrite | ObjectClaimedWrite | InsertionKeyedWrite | TargetKeyedWrite,
+        StateObservedWrite | ObjectLockedWrite | InsertionAuthorizedWrite | TargetWrite,
     ):
         return item.instruction
     return item
 
 
 def buffered_object_key(
-    item: PreparedKeyedWrite | ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite,
+    item: PreparedKeyedInstruction | ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite,
     families: inheritance.InheritanceFacet,
 ) -> ObjectKey | None:
     """The one object ``item`` writes, or ``None`` where it names none.
@@ -581,17 +585,17 @@ def buffered_object_key(
     already name it; only a write carrying none of them is resolved from its
     row.
     """
-    if isinstance(item, ObservedKeyedWrite):
+    if isinstance(item, StateObservedWrite):
         return item.retained_observation.key.object
-    if isinstance(item, InsertionKeyedWrite):
+    if isinstance(item, InsertionAuthorizedWrite):
         return item.identity.object_key
-    if isinstance(item, TargetKeyedWrite):
+    if isinstance(item, TargetWrite):
         return claimed_object(item.scope)
     return resolve_object_key(buffered_instruction(item), families)
 
 
 def buffered_claim_scope(
-    item: PreparedKeyedWrite | ClaimedKeyedWrite | InsertionKeyedWrite | TargetKeyedWrite,
+    item: PreparedKeyedInstruction | ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite,
     object_key: ObjectKey | None,
 ) -> ClaimScope | None:
     """The scope ``item`` claims where it composes by claimed scope rather than
@@ -602,10 +606,10 @@ def buffered_claim_scope(
     write an insertion authorized while it folds into its object's pending
     opening.
     """
-    if isinstance(item, ObservedKeyedWrite):
+    if isinstance(item, StateObservedWrite):
         return item.scope
-    if isinstance(item, ObjectClaimedWrite):
+    if isinstance(item, ObjectLockedWrite):
         return object_key
-    if isinstance(item, InsertionKeyedWrite | TargetKeyedWrite):
+    if isinstance(item, InsertionAuthorizedWrite | TargetWrite):
         return item.scope
     return None

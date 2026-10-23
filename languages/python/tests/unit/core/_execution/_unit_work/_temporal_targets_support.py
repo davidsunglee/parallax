@@ -12,8 +12,8 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.write_items import (
-    ObservedKeyedWrite,
-    TargetKeyedWrite,
+    StateObservedWrite,
+    TargetWrite,
     target_write,
 )
 from parallax.core.base import INFINITY
@@ -23,7 +23,7 @@ from parallax.core.unit_work import (
     KeyedWriteInstruction,
     RetainedObservation,
     TargetWriteInstruction,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -73,7 +73,7 @@ def addressed_write(
     until: dt.datetime | None = SEP,
     tx_start: dt.datetime = T0,
     **members: object,
-) -> TargetKeyedWrite:
+) -> TargetWrite:
     mutation: TargetMutation = (
         ("replace" if until is None else "replaceUntil")
         if replaces
@@ -102,13 +102,13 @@ def observed_write(
     valid_from: dt.datetime = MAR,
     until: dt.datetime | None = SEP,
     **members: object,
-) -> ObservedKeyedWrite:
+) -> StateObservedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
         POSITION,
     )
-    item = buffered_write(prepared, evidence)
-    assert isinstance(item, ObservedKeyedWrite)
+    item = admitted_write(prepared, evidence)
+    assert isinstance(item, StateObservedWrite)
     return item
 
 

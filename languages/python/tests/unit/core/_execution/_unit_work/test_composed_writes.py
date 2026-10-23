@@ -13,8 +13,8 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import prepare_wire_write
 from parallax.core._execution._unit_work.retain import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.write_items import (
-    CoalescedTemporalWrite,
-    ObservedKeyedWrite,
+    ComposedTemporalWrite,
+    StateObservedWrite,
 )
 from parallax.core._execution._unit_work.write_settlement import SettledWriteWithSource
 from parallax.core.base import INFINITY
@@ -26,7 +26,7 @@ from parallax.core.unit_work import (
     RetainedObservation,
     WriteEvidenceError,
     WritePlanningRequest,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import (
     SUPERSEDED,
@@ -99,22 +99,22 @@ def _write(
     *,
     source: ReadEvidence | None = None,
     **members: object,
-) -> ObservedKeyedWrite:
+) -> StateObservedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)), _BALANCE
     )
-    item = buffered_write(prepared, evidence, source=source)
-    assert isinstance(item, ObservedKeyedWrite)
+    item = admitted_write(prepared, evidence, source=source)
+    assert isinstance(item, StateObservedWrite)
     return item
 
 
-def _plan(*writes: ObservedKeyedWrite) -> WritePlan:
+def _plan(*writes: StateObservedWrite) -> WritePlan:
     return build_write_planner(_BALANCE).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
             concurrency="optimistic",
-            buffered_writes=admitted_writes(_BALANCE, writes),
+            composed_writes=admitted_writes(_BALANCE, writes),
         )
     )
 
@@ -152,7 +152,7 @@ def test_terminations_through_two_observations_compose_to_destruction_alone() ->
     stale, current = _observation(_JAN, "100.00"), _observation(_MAR, "120.00")
     composed = admitted_writes(_BALANCE, [_write("terminate", stale), _write("terminate", current)])
     (write,) = composed
-    assert isinstance(write, CoalescedTemporalWrite) and not write.assigns
+    assert isinstance(write, ComposedTemporalWrite) and not write.assigns
     steps = list(plan_steps(_plan(_write("terminate", stale), _write("terminate", current))))
     assert [type(step) for step in steps] == [PlannedClose, PlannedClose]
 
@@ -176,7 +176,7 @@ def test_a_repeated_termination_of_one_observation_adds_nothing() -> None:
     (write,) = admitted_writes(
         _BALANCE, [_write("terminate", current), _write("terminate", current)]
     )
-    assert isinstance(write, ObservedKeyedWrite)
+    assert isinstance(write, StateObservedWrite)
 
 
 def test_an_assignment_after_a_destruction_over_its_coverage_is_refused() -> None:
@@ -233,15 +233,15 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
     unobserved = RetainedObservation(
         VersionedObjectStateKey(position, 1), VersionObservation(observed_version=1), None
     )
-    write = buffered_write(prepared, unobserved)
-    assert isinstance(write, ObservedKeyedWrite)
+    write = admitted_write(prepared, unobserved)
+    assert isinstance(write, StateObservedWrite)
     with pytest.raises(WritePlanningError, match="requires the Temporal Observation"):
         build_write_planner(model).finalize(
             WritePlanningRequest(
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
                 concurrency="optimistic",
-                buffered_writes=(write,),
+                composed_writes=(write,),
             )
         )
 
@@ -281,7 +281,7 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
         state = object_state_key_from_observation(
             ObjectKey(position, (("id", 1),)), observed, shape
         )
-        return buffered_write(prepared, RetainedObservation(state, observed, None))
+        return admitted_write(prepared, RetainedObservation(state, observed, None))
 
     writes = admitted_writes(
         model,
@@ -295,7 +295,7 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
             concurrency="optimistic",
-            buffered_writes=writes,
+            composed_writes=writes,
         )
     )
     assert [type(step) for step in plan_steps(plan)] == [PlannedClose] * 2 + [PlannedInsert] * 3

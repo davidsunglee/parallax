@@ -17,8 +17,8 @@ from parallax.core._execution._unit_work import write_settlement as settlement
 from parallax.core._execution._unit_work.instructions import prepare_typed_write, prepare_wire_write
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    CoalescedTemporalWrite,
-    CoalescedWrite,
+    ComposedTemporalWrite,
+    ComposedWrite,
     target_write,
 )
 from parallax.core.base import INFINITY
@@ -30,7 +30,7 @@ from parallax.core.unit_work import (
     TargetWriteInstruction,
     TransactionInstant,
     WritePlanningRequest,
-    buffered_write,
+    admitted_write,
     object_key,
 )
 from parallax.core.write_plan import (
@@ -97,7 +97,7 @@ _ALLOCATED = model_of(DomainModel(Log, Tally))
 
 
 def _finalize(
-    buffered: Sequence[CoalescedWrite],
+    buffered: Sequence[ComposedWrite],
     model: Metamodel,
     *,
     concurrency: Concurrency = "optimistic",
@@ -108,7 +108,7 @@ def _finalize(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant,
             concurrency=concurrency,
-            buffered_writes=buffered,
+            composed_writes=buffered,
         )
     )
 
@@ -391,7 +391,7 @@ def _inside(key: int) -> AdmittedWrite:
         ),
         SHARED_MODEL,
     )
-    return buffered_write(prepared, observation(ShareCols, observed))
+    return admitted_write(prepared, observation(ShareCols, observed))
 
 
 def _terminated(key: int) -> AdmittedWrite:
@@ -403,7 +403,7 @@ def _terminated(key: int) -> AdmittedWrite:
         ),
         SHARED_MODEL,
     )
-    return buffered_write(prepared, observation(ShareCols, observed))
+    return admitted_write(prepared, observation(ShareCols, observed))
 
 
 def test_a_plan_with_no_deferred_write_records_no_span() -> None:
@@ -503,9 +503,9 @@ def test_a_deferred_write_joins_the_open_span_only_where_it_reads_alike_another_
     "key", [None, {"computed": "maxPlusOne"}], ids=["absent", "database-allocated"]
 )
 def test_a_deferred_write_naming_no_complete_key_reads_alone(key: object) -> None:
-    # Two parts' writes compose into one carrier naming the object's key.
+    # Two parts' writes compose into one write naming the object's key.
     (item,) = admitted_writes(SHARED_MODEL, frag(ShareCols, 1, 2))
-    assert isinstance(item, CoalescedTemporalWrite)
+    assert isinstance(item, ComposedTemporalWrite)
     (write,) = shared_plan(frag(ShareCols, 1, 2)).entries
     assert isinstance(write, SettledWrite)
     candidate = settlement._acquisition_candidate  # pyright: ignore[reportPrivateUsage] - what a span compares

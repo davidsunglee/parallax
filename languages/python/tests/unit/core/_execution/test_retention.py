@@ -57,7 +57,7 @@ from parallax.core.unit_work import (
     RetainedObservation,
     TransactionSettings,
     UnitOfWork,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import (
     ObjectStateKey,
@@ -613,7 +613,7 @@ def _balance_update(model: AcceptedMetamodel, hint: ReadEvidence) -> AdmittedWri
         KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("6.00")},)), model
     )
     assert hint.observation is not None
-    return buffered_write(
+    return admitted_write(
         instruction,
         hint.observation,
     )

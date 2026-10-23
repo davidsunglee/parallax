@@ -62,10 +62,10 @@ __all__ = [
     "PredicateMutation",
     "PredicateSelection",
     "PredicateWriteInstruction",
-    "PreparedKeyedWrite",
-    "PreparedPredicateWrite",
-    "PreparedTargetWrite",
-    "PreparedWrite",
+    "PreparedInstruction",
+    "PreparedKeyedInstruction",
+    "PreparedPredicateInstruction",
+    "PreparedTargetInstruction",
     "TargetExpectation",
     "TargetMutation",
     "TargetWriteInstruction",
@@ -75,13 +75,13 @@ __all__ = [
     "addressed_members",
     "assigned_members",
     "coerce_typed_row",
-    "derive_keyed_write",
+    "derive_keyed_instruction",
     "deserialize",
+    "keyed_instruction_from_target",
     "prepare_typed_write",
     "prepare_wire_write",
     "resolve_target",
     "serialize",
-    "target_instruction",
 ]
 
 # The keyed write mutation surface (write-instruction.schema.json): the opening,
@@ -119,7 +119,7 @@ type _WriteSurface = Literal["keyed", "target"]
 INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 """The keyed mutations that OPEN a row rather than write against an existing
 one, which is what makes them the mutations that carry no State Observation
-(`m-unit-work` "Absence is structural"). Shared so the buffered carrier's own
+(`m-unit-work` "Absence is structural"). Shared so the admitted write's own
 refusal and the planner's coalescing both answer "is this an insert?" from one
 definition."""
 
@@ -347,7 +347,7 @@ WriteInstruction = KeyedWriteInstruction | PredicateWriteInstruction | TargetWri
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class PreparedKeyedWrite:
+class PreparedKeyedInstruction:
     """A keyed mutation over an exact resolved target and owned managed rows.
 
     ``valid_time_window`` is the judged window, ``None`` for a target without
@@ -366,7 +366,7 @@ class PreparedKeyedWrite:
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class PreparedPredicateWrite:
+class PreparedPredicateInstruction:
     """A predicate mutation over a resolved selection and the managed row it
     assigns every selected object: the members an amendment names or a
     replacement completes, never the key, and nothing for a deletion.
@@ -406,7 +406,7 @@ type TargetExpectation = ExpectedVersion | ExpectedTxStart
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class PreparedTargetWrite:
+class PreparedTargetInstruction:
     """A target write over an exact resolved target, its owned managed
     row, its judged Valid-Time window — ``None`` for a target without Valid
     Time — and its validated starting expectation.
@@ -426,18 +426,19 @@ class PreparedTargetWrite:
     expectation: TargetExpectation
 
 
-PreparedWrite = PreparedKeyedWrite | PreparedPredicateWrite
-"""A prepared write a unit of work buffers as it is."""
+PreparedInstruction = PreparedKeyedInstruction | PreparedPredicateInstruction
+"""A prepared keyed or predicate instruction: a unit of work admits a keyed one
+to its buffer and executes a predicate one at the call."""
 
 
-def _prepared_keyed_write(
+def _prepared_keyed_instruction(
     mutation: KeyedMutation,
     assigns: bool,
     target: EntityMetadata,
     rows: tuple[Mapping[str, object], ...],
     valid_time_window: TimeInterval | None,
-) -> PreparedKeyedWrite:
-    prepared = object.__new__(PreparedKeyedWrite)
+) -> PreparedKeyedInstruction:
+    prepared = object.__new__(PreparedKeyedInstruction)
     object.__setattr__(prepared, "mutation", mutation)
     object.__setattr__(prepared, "assigns", assigns)
     object.__setattr__(prepared, "target", target)
@@ -446,27 +447,27 @@ def _prepared_keyed_write(
     return prepared
 
 
-def _prepared_predicate_write(
+def _prepared_predicate_instruction(
     mutation: PredicateMutation,
     selection: ResolvedMutationSelection,
     row: Mapping[str, object],
-) -> PreparedPredicateWrite:
-    prepared = object.__new__(PreparedPredicateWrite)
+) -> PreparedPredicateInstruction:
+    prepared = object.__new__(PreparedPredicateInstruction)
     object.__setattr__(prepared, "mutation", mutation)
     object.__setattr__(prepared, "selection", selection)
     object.__setattr__(prepared, "row", row)
     return prepared
 
 
-def _prepared_target_write(
+def _prepared_target_instruction(
     mutation: TargetMutation,
     assigns: bool,
     target: EntityMetadata,
     row: Mapping[str, object],
     valid_time_window: TimeInterval | None,
     expectation: TargetExpectation,
-) -> PreparedTargetWrite:
-    prepared = object.__new__(PreparedTargetWrite)
+) -> PreparedTargetInstruction:
+    prepared = object.__new__(PreparedTargetInstruction)
     object.__setattr__(prepared, "mutation", mutation)
     object.__setattr__(prepared, "assigns", assigns)
     object.__setattr__(prepared, "target", target)
@@ -476,15 +477,15 @@ def _prepared_target_write(
     return prepared
 
 
-def target_instruction(prepared: PreparedTargetWrite) -> PreparedKeyedWrite:
+def keyed_instruction_from_target(prepared: PreparedTargetInstruction) -> PreparedKeyedInstruction:
     """The keyed write a prepared target write executes as: its own verb and
     row, written against the object its key names, over its window.
 
-    The verb carries the replacement or destructive intent, so every carrier
-    and composition the write later travels through keeps it whatever
+    The verb carries the replacement or destructive intent, so every admitted
+    write and composition the write later travels through keeps it whatever
     authorized the write; nothing is judged again.
     """
-    return _prepared_keyed_write(
+    return _prepared_keyed_instruction(
         prepared.mutation,
         prepared.assigns,
         prepared.target,
@@ -493,13 +494,13 @@ def target_instruction(prepared: PreparedTargetWrite) -> PreparedKeyedWrite:
     )
 
 
-def derive_keyed_write(
-    prepared: PreparedKeyedWrite,
+def derive_keyed_instruction(
+    prepared: PreparedKeyedInstruction,
     rows: tuple[Mapping[str, object], ...],
     *,
     mutation: KeyedMutation | None = None,
     assigns: bool | None = None,
-) -> PreparedKeyedWrite:
+) -> PreparedKeyedInstruction:
     """Derive a keyed prepared product while retaining owned values by identity,
     under ``mutation`` where composition changed the verb over the same window.
 
@@ -507,7 +508,7 @@ def derive_keyed_write(
     a derivation keeping or splitting its assigning rows keeps it, and one
     overlaying another write's members states whether either assigns."""
     sealed = tuple(cast("Mapping[str, object]", retain_document_value(row)) for row in rows)
-    return _prepared_keyed_write(
+    return _prepared_keyed_instruction(
         prepared.mutation if mutation is None else mutation,
         prepared.assigns if assigns is None else assigns,
         prepared.target,
@@ -922,7 +923,7 @@ def prepare_typed_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedTargetWrite: ...
+) -> PreparedTargetInstruction: ...
 @overload
 def prepare_typed_write(
     instruction: KeyedWriteInstruction,
@@ -930,7 +931,7 @@ def prepare_typed_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedKeyedWrite: ...
+) -> PreparedKeyedInstruction: ...
 @overload
 def prepare_typed_write(
     instruction: PredicateWriteInstruction,
@@ -938,7 +939,7 @@ def prepare_typed_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedPredicateWrite: ...
+) -> PreparedPredicateInstruction: ...
 @overload
 def prepare_typed_write(
     instruction: WriteInstruction,
@@ -946,14 +947,14 @@ def prepare_typed_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedWrite | PreparedTargetWrite: ...
+) -> PreparedInstruction | PreparedTargetInstruction: ...
 def prepare_typed_write(
     instruction: WriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedWrite | PreparedTargetWrite:
+) -> PreparedInstruction | PreparedTargetInstruction:
     """Coerce developer values once, then judge and freeze the write.
 
     ``authored_members`` names the members a caller assigned explicitly rather
@@ -980,7 +981,7 @@ def prepare_wire_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedTargetWrite: ...
+) -> PreparedTargetInstruction: ...
 @overload
 def prepare_wire_write(
     instruction: KeyedWriteInstruction,
@@ -988,7 +989,7 @@ def prepare_wire_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedKeyedWrite: ...
+) -> PreparedKeyedInstruction: ...
 @overload
 def prepare_wire_write(
     instruction: PredicateWriteInstruction,
@@ -996,7 +997,7 @@ def prepare_wire_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedPredicateWrite: ...
+) -> PreparedPredicateInstruction: ...
 @overload
 def prepare_wire_write(
     instruction: WriteInstruction,
@@ -1004,14 +1005,14 @@ def prepare_wire_write(
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedWrite | PreparedTargetWrite: ...
+) -> PreparedInstruction | PreparedTargetInstruction: ...
 def prepare_wire_write(
     instruction: WriteInstruction,
     model: AcceptedMetamodel,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedWrite | PreparedTargetWrite:
+) -> PreparedInstruction | PreparedTargetInstruction:
     """Decode one serialized instruction, then judge and freeze the write.
 
     ``authored_members`` names the row members a Wire caller explicitly wrote:
@@ -1039,7 +1040,7 @@ def _prepare_write(
     source_access: SourceAccess,
     authored_members: Set[str] | None,
     members: Callable[[], Mapping[str, object]] | None,
-) -> PreparedWrite | PreparedTargetWrite:
+) -> PreparedInstruction | PreparedTargetInstruction:
     """The sole admissibility judgment of a write, each family's target first
     and then its payload, so a call whose verb or window is wrong for its
     target hears that before any complaint about what it carries."""
@@ -1077,7 +1078,7 @@ def _prepare_keyed_write(
     source_access: SourceAccess,
     authored_members: Set[str] | None,
     members: Callable[[], Mapping[str, object]] | None,
-) -> PreparedKeyedWrite:
+) -> PreparedKeyedInstruction:
     """Judge a keyed write: its verb and window against its target, then its
     row count, then its rows' subtype shape, members, and values."""
     entity = resolve_target(model, instruction.entity)
@@ -1110,7 +1111,7 @@ def _prepare_predicate_write(
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
-) -> PreparedPredicateWrite:
+) -> PreparedPredicateInstruction:
     """Judge a predicate write: whether its target can be written without
     being read at all, then its selecting predicate, family, and payload."""
     entity = resolve_target(model, instruction.target.entity)
@@ -1296,7 +1297,7 @@ def _prepare_target_write(
     source_access: SourceAccess,
     authored_members: Set[str] | None,
     members: Callable[[], Mapping[str, object]] | None,
-) -> PreparedTargetWrite:
+) -> PreparedTargetInstruction:
     """Judge a target write: its verb and window, then its revision
     arguments, then its payload.
 
@@ -1323,7 +1324,9 @@ def _prepare_target_write(
         source_access=source_access,
         authored_members=authored_members,
     )
-    return _prepared_target_write(instruction.mutation, assigns, entity, row, window, expectation)
+    return _prepared_target_instruction(
+        instruction.mutation, assigns, entity, row, window, expectation
+    )
 
 
 def _judge_expectation(
@@ -1630,7 +1633,7 @@ def _prepare_keyed_payload(
     converter: _LeafConverter,
     source_access: SourceAccess,
     authored_members: Set[str] | None,
-) -> PreparedKeyedWrite:
+) -> PreparedKeyedInstruction:
     """Judge a keyed write's rows: subtype shape, members, then values, and
     whether any of them assigns a member beside the key.
 
@@ -1672,7 +1675,7 @@ def _prepare_keyed_payload(
             )
             for row in instruction.rows
         )
-        return _prepared_keyed_write(
+        return _prepared_keyed_instruction(
             instruction.mutation,
             _states_beside(key, replaced),
             entity,
@@ -1714,7 +1717,7 @@ def _prepare_keyed_payload(
             known_failures=result.failures,
         )
     rows = tuple(result.value for result in transformed)
-    return _prepared_keyed_write(
+    return _prepared_keyed_instruction(
         instruction.mutation, _states_beside(key, rows), entity, rows, valid_time_window
     )
 
@@ -1746,7 +1749,7 @@ def _prepare_predicate_payload(
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
-) -> PreparedPredicateWrite:
+) -> PreparedPredicateInstruction:
     """Judge a predicate write's payload in `m-case-format`'s order: the
     selecting predicate, the family refusal, then the row it assigns.
 
@@ -1774,7 +1777,7 @@ def _prepare_predicate_payload(
     inheritance.reject_predicate_write(entity)
     selection = ResolvedMutationSelection(entity, validated)
     if instruction.mutation not in ASSIGNMENT_MUTATIONS:
-        return _prepared_predicate_write(instruction.mutation, selection, _NO_ROW)
+        return _prepared_predicate_instruction(instruction.mutation, selection, _NO_ROW)
     row = instruction.row
     if row is None:
         row = _row_from_assignments(model, entity, position, instruction.assignments)
@@ -1794,7 +1797,7 @@ def _prepare_predicate_payload(
         assigned = MappingProxyType(
             {name: value for name, value in assigned.items() if name != key}
         )
-    return _prepared_predicate_write(instruction.mutation, selection, assigned)
+    return _prepared_predicate_instruction(instruction.mutation, selection, assigned)
 
 
 _NO_ROW: Final[Mapping[str, object]] = MappingProxyType({})

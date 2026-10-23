@@ -17,9 +17,9 @@ from collections.abc import Iterable, Iterator
 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
-    PreparedPredicateWrite,
-    PreparedTargetWrite,
-    PreparedWrite,
+    PreparedInstruction,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
     WriteInstruction,
     prepare_typed_write,
 )
@@ -96,7 +96,7 @@ def _stream(
     instant = inert_instant() if tx_instant is None else tx_instant
     planner = build_write_planner(model)
     prepared = _prepared(instruction, model)
-    if isinstance(prepared, PreparedPredicateWrite):
+    if isinstance(prepared, PreparedPredicateInstruction):
         assert observation is None  # a readless predicate write observes nothing
         steps: tuple[PlannedStep, ...] = (
             planner.predicate_step(
@@ -110,7 +110,7 @@ def _stream(
                     actor_identity=TEST_ACTOR_IDENTITY,
                     transaction_instant=instant,
                     concurrency=concurrency,
-                    buffered_writes=[observed_write(prepared, model, observation)],
+                    composed_writes=[observed_write(prepared, model, observation)],
                     ownership=ownership,
                     counts_unchanged_rows=dialect.counts_unchanged_rows,
                 )
@@ -119,7 +119,9 @@ def _stream(
     return list(lowered_steps(steps, LayoutPayloadPreparer(model), model, dialect))
 
 
-def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedWrite:
+def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedInstruction:
     prepared = prepare_typed_write(instruction, model)
-    assert not isinstance(prepared, PreparedTargetWrite)  # a target write buffers through its UoW
+    assert not isinstance(
+        prepared, PreparedTargetInstruction
+    )  # a target write buffers through its UoW
     return prepared

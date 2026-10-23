@@ -32,8 +32,8 @@ from parallax.core._execution._unit_work.acquisition import (
     consume_target,
 )
 from parallax.core._execution._unit_work.instructions import (
-    PreparedPredicateWrite,
-    PreparedTargetWrite,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
     prepare_typed_write,
     prepare_wire_write,
 )
@@ -138,7 +138,7 @@ def _predicate(
     entity: str,
     mutation: PredicateMutation = "delete",
     assignments: Sequence[WriteAssignment] = (),
-) -> PreparedPredicateWrite:
+) -> PreparedPredicateInstruction:
     return prepare_typed_write(
         PredicateWriteInstruction(
             mutation,
@@ -154,7 +154,7 @@ def _predicate(
     )
 
 
-def _account_patch(*, version: int = 3) -> PreparedTargetWrite:
+def _account_patch(*, version: int = 3) -> PreparedTargetInstruction:
     return prepare_wire_write(
         TargetWriteInstruction(
             "amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version

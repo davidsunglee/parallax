@@ -22,13 +22,16 @@ from parallax.core._execution._unit_work._write_ownership import (
     WriteOwnership,
 )
 from parallax.core._execution._unit_work.admission import WriteAdmission
-from parallax.core._execution._unit_work.instructions import PreparedKeyedWrite, prepare_wire_write
+from parallax.core._execution._unit_work.instructions import (
+    PreparedKeyedInstruction,
+    prepare_wire_write,
+)
 from parallax.core._execution._unit_work.retain import (
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
 )
-from parallax.core._execution._unit_work.write_items import InsertionKeyedWrite, TargetKeyedWrite
+from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite, TargetWrite
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
@@ -62,7 +65,7 @@ _JAN, _FEB, _APR, _MAY, _JUN, _AUG, _SEP = (
 )
 
 
-def _confirmed(item: TargetKeyedWrite) -> TargetKeyedWrite:
+def _confirmed(item: TargetWrite) -> TargetWrite:
     return item
 
 
@@ -81,7 +84,7 @@ def _live(admission: WriteAdmission) -> WriteOwnership:
     return ownership
 
 
-def _insert(start: dt.datetime, until: dt.datetime | None = None) -> PreparedKeyedWrite:
+def _insert(start: dt.datetime, until: dt.datetime | None = None) -> PreparedKeyedInstruction:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             "insert" if until is None else "insertUntil",
@@ -92,7 +95,7 @@ def _insert(start: dt.datetime, until: dt.datetime | None = None) -> PreparedKey
         ),
         _POSITION,
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
@@ -240,8 +243,8 @@ def _cancel_reinsertion(admission: WriteAdmission, start: dt.datetime) -> None:
     termination = prepare_wire_write(
         KeyedWriteInstruction("terminate", "WherePosition", ({"id": 1},), start), _POSITION
     )
-    assert isinstance(termination, PreparedKeyedWrite)
-    admission.admit(InsertionKeyedWrite(termination, identity), confirm_target=_confirmed)
+    assert isinstance(termination, PreparedKeyedInstruction)
+    admission.admit(InsertionAuthorizedWrite(termination, identity), confirm_target=_confirmed)
 
 
 def test_a_row_named_again_after_its_insertion_ended_is_no_longer_tagged() -> None:

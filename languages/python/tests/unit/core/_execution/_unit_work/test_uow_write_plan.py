@@ -42,9 +42,9 @@ from parallax.core._execution._unit_work.acquisition import (
     consume_coverage,
 )
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
-    PreparedTargetWrite,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
+    PreparedTargetInstruction,
     prepare_typed_write,
     prepare_wire_write,
 )
@@ -72,7 +72,7 @@ from parallax.core.unit_work import (
     WriteAssignment,
     WritePlanner,
     WritePlanningRequest,
-    buffered_write,
+    admitted_write,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -285,7 +285,7 @@ _SPANS: Final = model_of(DomainModel(Span))
 _MAR: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 
 
-def _span_insert() -> PreparedKeyedWrite:
+def _span_insert() -> PreparedKeyedInstruction:
     prepared = prepare_typed_write(
         KeyedWriteInstruction(
             "insert",
@@ -295,7 +295,7 @@ def _span_insert() -> PreparedKeyedWrite:
         ),
         _SPANS,
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
 
@@ -318,8 +318,8 @@ def _span_amend(key: int) -> AdmittedWrite:
         KeyedWriteInstruction("amend", Span.identity.canonical, ({"id": key, "amount": 2},), _MAR),
         _SPANS,
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
-    return buffered_write(prepared, RetainedObservation(state, observation, None))
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    return admitted_write(prepared, RetainedObservation(state, observation, None))
 
 
 def test_the_rows_a_settled_write_opens_are_owned_under_the_keys_its_steps_answered() -> None:
@@ -343,7 +343,7 @@ def test_a_write_answered_another_number_of_keys_than_it_opens_completes_nothing
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
             concurrency="optimistic",
-            buffered_writes=[_span_insert()],
+            composed_writes=[_span_insert()],
         )
     )
     (group,) = _groups(plan)
@@ -393,7 +393,7 @@ class _Watched:
 
 def _target(
     valid_from: dt.datetime, until: dt.datetime, value: str, *, key: int = 1
-) -> PreparedTargetWrite:
+) -> PreparedTargetInstruction:
     prepared = prepare_wire_write(
         TargetWriteInstruction(
             "amendUntil",
@@ -405,7 +405,7 @@ def _target(
         ),
         TARGET_POSITION,
     )
-    assert isinstance(prepared, PreparedTargetWrite)
+    assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
 
 
@@ -417,8 +417,8 @@ def _observed_amend(key: int, claim: RetainedObservation) -> AdmittedWrite:
         KeyedWriteInstruction("amend", "Position", ({"id": key, "value": "150.00"},), _APR),
         TARGET_POSITION,
     )
-    assert isinstance(prepared, PreparedKeyedWrite)
-    return buffered_write(prepared, claim)
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    return admitted_write(prepared, claim)
 
 
 def _retained_row(key: int) -> RetainedObservation:
@@ -658,7 +658,7 @@ _T0: Final = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
 _FEB, _AUG = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (2, 8))
 
 
-def _tag_predicate_write() -> PreparedPredicateWrite:
+def _tag_predicate_write() -> PreparedPredicateInstruction:
     prepared = prepare_wire_write(
         PredicateWriteInstruction(
             "amend",
@@ -672,7 +672,7 @@ def _tag_predicate_write() -> PreparedPredicateWrite:
         ),
         _PREDICATED,
     )
-    assert isinstance(prepared, PreparedPredicateWrite)
+    assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared
 
 
@@ -716,7 +716,7 @@ def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_l
         ),
         _PREDICATED,
     )
-    assert isinstance(amendment, PreparedKeyedWrite)
+    assert isinstance(amendment, PreparedKeyedInstruction)
     later = prepare_wire_write(
         KeyedWriteInstruction(
             "amendUntil",
@@ -727,16 +727,16 @@ def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_l
         ),
         _PREDICATED,
     )
-    assert isinstance(later, PreparedKeyedWrite)
+    assert isinstance(later, PreparedKeyedInstruction)
     observed = uow.retain(retained_observation(amendment, _PREDICATED, observation))
     with store.transaction(rollback=False):
-        uow.buffer(buffered_write(amendment, observed))
+        uow.buffer(admitted_write(amendment, observed))
         # The predicate write executes the earlier amendment in its own flush.
         uow.execute_predicate(_tag_predicate_write())
         executed = len(simulated.statements)
         # A later write of the same source continues through what the earlier
         # write left of the state they observed.
-        uow.buffer(buffered_write(later, observed))
+        uow.buffer(admitted_write(later, observed))
         uow.flush(trigger="pre_commit")
     hundred, changed = Decimal("100.00"), Decimal("175.00")
     # The later write reads nothing: the attempt holds the row the earlier

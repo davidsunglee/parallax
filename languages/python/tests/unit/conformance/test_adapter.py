@@ -28,8 +28,8 @@ from parallax.conformance.provision import Provisioner
 from parallax.core import inheritance, wire
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
+    PreparedKeyedInstruction,
+    PreparedPredicateInstruction,
 )
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_error import DatabaseError
@@ -64,7 +64,7 @@ _ENGINE_GAP_CASE = (
 # The case-format boundary canonicalizes synthetic managed carriers before strict
 # Wire preparation. Corpus-authored values already use canonical Wire carriers;
 # classification, validation, and retained ownership remain assertions about its
-# PreparedWrite result or the core producer's own exception.
+# PreparedInstruction result or the core producer's own exception.
 
 
 def test_case_write_adapter_accepts_a_canonical_case_decimal() -> None:
@@ -79,7 +79,7 @@ rows:
         )
     )
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
 
 
@@ -95,7 +95,7 @@ rows:
         )
     )
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     assert prepared.rows[0]["balance"] == decimal.Decimal("1234567890123456.78")
 
 
@@ -108,7 +108,7 @@ def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() 
             ({"id": 7, "owner": "Newton", "balance": value, "version": 1},),
         )
         prepared = _case_ingress.prepare_case_write(instruction, model)
-        assert isinstance(prepared, PreparedKeyedWrite)
+        assert isinstance(prepared, PreparedKeyedInstruction)
         assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
 
 
@@ -127,7 +127,7 @@ assignments:
         )
     )
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["wallet"])
-    assert isinstance(prepared, PreparedPredicateWrite)
+    assert isinstance(prepared, PreparedPredicateInstruction)
     assert isinstance(prepared.selection.predicate, ResolvedComparison)
     assert prepared.selection.predicate.value == decimal.Decimal("200.00")
     assert prepared.row == {"balance": decimal.Decimal("0.00")}
@@ -142,7 +142,7 @@ def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
         valid_from=stated,
     )
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     assert prepared.valid_time_window == TimeInterval(
         dt.datetime(2024, 7, 1, tzinfo=dt.UTC), INFINITY
     )
@@ -160,7 +160,7 @@ def test_case_write_adapter_carries_the_decoded_case_temporal_bounds() -> None:
     assert isinstance(instruction, instructions.KeyedWriteInstruction)
     assert instruction.valid_from == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     assert prepared.valid_time_window == TimeInterval(
         dt.datetime(2024, 2, 1, tzinfo=dt.UTC), INFINITY
     )
@@ -192,7 +192,7 @@ rows:
         )
 
     assert any(call.args[1] is authored for call in decode_wire.call_args_list)
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     decoded = prepared.rows[0][member]
     assert (decoded, math.copysign(1.0, cast("float", decoded))) == (0.0, 1.0)
 
@@ -238,7 +238,7 @@ def test_case_write_adapter_normalizes_nested_value_object_documents() -> None:
 
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["document-codec"])
 
-    assert isinstance(prepared, PreparedKeyedWrite)
+    assert isinstance(prepared, PreparedKeyedInstruction)
     profile = cast("Mapping[str, object]", prepared.rows[0]["profile"])
     assert profile["amount"] == decimal.Decimal("12.50")
     assert cast("Mapping[str, object]", profile["origin"])["since"] == dt.date(2026, 1, 1)

@@ -39,7 +39,7 @@ from parallax.core._execution._unit_work.clock import Clock
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateMutation,
-    PreparedPredicateWrite,
+    PreparedPredicateInstruction,
     TargetMutation,
     TargetWriteInstruction,
     prepare_typed_write,
@@ -124,7 +124,7 @@ class PredicateWriteAdapter(Protocol):
 
     def prepare(
         self, write_model: SelectedWriteModel, mutation: PredicateMutation
-    ) -> PreparedPredicateWrite: ...
+    ) -> PreparedPredicateInstruction: ...
 
 
 WriteVerb = Literal["amend", "replace", "delete", "terminate"]

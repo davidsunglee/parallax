@@ -126,7 +126,7 @@ def _flush_of(entities: int, writes: int) -> Seam:
         actor_identity=TEST_ACTOR_IDENTITY,
         transaction_instant=INSTANT,
         concurrency="optimistic",
-        buffered_writes=tuple(_prepared_writes(model, writes)),
+        composed_writes=tuple(_prepared_writes(model, writes)),
     )
 
     def run(sample: Callable[[], None]) -> None:
