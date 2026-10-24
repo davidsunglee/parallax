@@ -1571,6 +1571,14 @@ _SHARED_COVERAGE_REASON: Final[str] = (
     "would add no developer surface"
 )
 
+_INDEPENDENT_OPENING_REASON: Final[str] = (
+    "a state-graded buffered sequence whose read-authorized correction and independent "
+    "pending insertion share one flush, run through the public verbs by the run "
+    "conformance lane and checked for consistency by the reference harness; its developer "
+    "spellings are the real-database public witnesses of insertion authority, so a story "
+    "here would add no developer surface"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-relationship-005": _RELATIONSHIP_FORMATION_REASON,
     "m-relationship-006": _RELATIONSHIP_FORMATION_REASON,
@@ -1605,6 +1613,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-026": _OBJECT_CLAIM_COALESCING_REASON,
     "m-unit-work-027": _OBJECT_CLAIM_COALESCING_REASON,
     "m-unit-work-058": _WRITE_GROUP_WITNESS_REASON,
+    "m-unit-work-065": _INDEPENDENT_OPENING_REASON,
     "m-unit-work-017": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-018": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-019": _WRITE_VALUE_PROVENANCE_REASON,

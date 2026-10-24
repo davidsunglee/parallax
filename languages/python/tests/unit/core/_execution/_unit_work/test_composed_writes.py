@@ -4,17 +4,23 @@ composition settles into, driven at the planner seam without a database."""
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from decimal import Decimal
 
 import pytest
 
 from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.instructions import prepare_wire_write
+from parallax.core._execution._unit_work.admission import WriteAdmission
+from parallax.core._execution._unit_work.instructions import (
+    PreparedKeyedInstruction,
+    prepare_wire_write,
+)
 from parallax.core._execution._unit_work.retain import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     StateObservedWrite,
+    TargetWrite,
 )
 from parallax.core._execution._unit_work.write_settlement import SettledWriteWithSource
 from parallax.core.base import INFINITY
@@ -45,6 +51,7 @@ from parallax.core.write_plan.keys import (
     object_state_key_from_observation,
 )
 from parallax.core.write_plan.plan import WritePlan
+from parallax.core.write_plan.steps import PlannedStep
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
@@ -53,6 +60,18 @@ from tests._support.planner_probes import (
     settled_writes,
 )
 from tests.unit._corpus_model_support import corpus_records, formed
+from tests.unit.core._execution._unit_work._temporal_targets_support import (
+    AUG,
+    DEC,
+    JAN,
+    JUN,
+    MAR,
+    MAY,
+    OBJECT,
+    POSITION,
+    SEP,
+    START,
+)
 
 _BALANCE = formed(corpus_records()["balance"])
 _ENTITY = EntityIdentity("parallax.compatibility", "Balance")
@@ -301,3 +320,98 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
     assert [type(step) for step in plan_steps(plan)] == [PlannedClose] * 2 + [PlannedInsert] * 3
     (write,) = settled_writes(plan)
     assert write.deferred is None
+
+
+def _position_write(
+    mutation: KeyedMutation,
+    valid_from: dt.datetime,
+    until: dt.datetime | None,
+    **members: object,
+) -> PreparedKeyedInstruction:
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
+        POSITION,
+    )
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    return prepared
+
+
+def _opened_rows(steps: Sequence[PlannedStep]) -> list[tuple[object, object, object]]:
+    return [
+        (cells["validStart"], cells["validEnd"], cells["value"])
+        for step in steps
+        if isinstance(step, PlannedInsert)
+        for entry in step.entries
+        for cells in [{ident.name: value for ident, value in entry.row.attributes.items()}]
+    ]
+
+
+def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening() -> None:
+    # Position 1 is stored over [January, June). The attempt read it at March,
+    # then inserted an independent [August, December) and, while that insert is
+    # pending, corrected March to May through the read and August to September
+    # through the insertion. The opening opens its own two pieces; the
+    # correction closes the stored rectangle it observed and keeps its source.
+    admission = WriteAdmission(
+        POSITION, inserted_version=lambda _entity, _from: None, observations={}
+    )
+    confirm = _unconditioned
+    admission.admit(
+        admitted_write(
+            _position_write("insertUntil", AUG, DEC, acctNum="N", value="300.00"), None, OBJECT
+        ),
+        confirm_target=confirm,
+    )
+    source = ReadEvidence(OBJECT.entity, OBJECT, _PARTICIPATION, START)
+    admission.admit(
+        admitted_write(
+            _position_write("amendUntil", MAR, MAY, value="150.00"), START, OBJECT, source=source
+        ),
+        confirm_target=confirm,
+    )
+    identity = admission.insertion_identity(OBJECT)
+    assert identity is not None
+    admission.admit(
+        admitted_write(
+            _position_write("amendUntil", AUG, SEP, value="350.00"),
+            None,
+            OBJECT,
+            authority=identity,
+        ),
+        confirm_target=confirm,
+    )
+    plan = build_write_planner(POSITION).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
+            concurrency="optimistic",
+            composed_writes=admission.composed_writes(),
+            ownership=admission.ownership,
+        )
+    )
+    opening, correction = settled_writes(plan)
+    assert (opening.deferred, correction.deferred) == (None, None)
+    steps = plan_steps(plan)
+    assert [type(step) for step in steps] == [
+        *[PlannedInsert] * 2,
+        PlannedClose,
+        *[PlannedInsert] * 3,
+    ]
+    assert _opened_rows(steps) == [
+        (AUG, SEP, Decimal("350.00")),
+        (SEP, DEC, Decimal("300.00")),
+        (JAN, MAR, Decimal("100.00")),
+        (MAR, MAY, Decimal("150.00")),
+        (MAY, JUN, Decimal("100.00")),
+    ]
+    close = steps[2]
+    assert isinstance(close, PlannedClose)
+    assert close.cause is SUPERSEDED
+    assert tuple(correction.changed) == (START.key,)
+    assert not isinstance(opening, SettledWriteWithSource)
+    assert isinstance(correction, SettledWriteWithSource)
+    assert tuple(map(id, correction.source_evidence)) == (id(source),)
+
+
+def _unconditioned(item: TargetWrite) -> TargetWrite:
+    raise AssertionError(f"no target write is admitted, but {item!r} was")

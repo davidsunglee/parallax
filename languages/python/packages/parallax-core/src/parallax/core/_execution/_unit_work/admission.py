@@ -196,8 +196,10 @@ class WriteAdmission:
 
     * an amendment or replacement of an object whose insert is still pending
       folds into that insert, and a destructive write of it cancels the pair; a
-      Bitemporal opening composes them over its coverage instead
-      (:class:`~parallax.core._execution._unit_work.write_items.ComposedBitemporalOpening`);
+      Bitemporal opening instead composes over its coverage only the writes its
+      own insertion authorized
+      (:class:`~parallax.core._execution._unit_work.write_items.ComposedBitemporalOpening`),
+      and a write a read authorized changes the coverage that read observed;
     * writes claiming one non-temporal scope coalesce by the claim algebra
       (:func:`~parallax.core._execution._unit_work.claims.admits`), a
       target write keeping its condition through every overwrite and
@@ -346,8 +348,11 @@ class WriteAdmission:
         if record is None:
             record = self._ownership.insertion_record(key)
         if record is not None and self._foldable(record):
-            return self._fold_into_opening(instruction, record)
-        self._add_existing(item, instruction, key, record, verdict=verdict, temporal=temporal)
+            if not self._is_bitemporal(instruction.target):
+                return self._fold_non_bitemporal_opening(instruction, record)
+            if isinstance(item, InsertionAuthorizedWrite):
+                return self._fold_bitemporal_opening(item, record)
+        self._add_existing(item, instruction, key, verdict=verdict, temporal=temporal)
         return BufferOutcome.BUFFERED
 
     def composed_writes(self) -> tuple[ComposedWrite, ...]:
@@ -513,7 +518,7 @@ class WriteAdmission:
             raise _already_claimed(target, key)
         if not proven:
             item = confirm_target(item)
-        self._add_existing(item, instruction, key, None, verdict=verdict, temporal=temporal)
+        self._add_existing(item, instruction, key, verdict=verdict, temporal=temporal)
 
     def _authorized(
         self, item: InsertionAuthorizedWrite
@@ -655,15 +660,13 @@ class WriteAdmission:
             != "incompatible"
         )
 
-    def _fold_into_opening(
-        self, instruction: PreparedKeyedInstruction, record: InsertionRecord
+    def _fold_bitemporal_opening(
+        self, write: InsertionAuthorizedWrite, record: InsertionRecord
     ) -> BufferOutcome:
-        """Fold a write into its object's still-pending insert.
+        """Compose a write its insertion authorized over the coverage that
+        insertion's still-pending Bitemporal opening opens.
 
-        A non-temporal or Transaction-Time-Only opening takes an amendment's
-        values in place and is cancelled by any destruction, which removes all
-        of it. A Bitemporal opening composes the write over the coverage it
-        opens and ends once nothing its writes opened survives. It is then
+        The opening ends once nothing its writes opened survives. It is then
         cancelled, unless a composed replacement reached stored coverage past
         it: the composed destruction still settles there, though the insert no
         longer stands, so a further insert of the object follows it.
@@ -672,32 +675,48 @@ class WriteAdmission:
         position = record.pending_position
         assert position is not None  # a foldable opening is pending
         base = writes[position]
-        target = instruction.target
-        if isinstance(self._temporal_facet.shape(target.identity), temporal_read.Bitemporal):
-            if not isinstance(base, ComposedBitemporalOpening):
-                assert isinstance(base, KeyedInsert)  # a pending insertion holds its insert
-                base = ComposedBitemporalOpening(insert=base, transform=NO_TRANSFORM, intents=())
-            opening = base.followed_by(instruction, self._key_name(target))
-            if opening.survives or opening.transform.assigns:
-                writes[position] = opening
-                return BufferOutcome.BUFFERED
-            if opening.beyond is not None:
-                writes[position] = opening
-                record.pending_state = "ended_opening"
-                record.identity = None
-                return BufferOutcome.BUFFERED
-        elif instruction.mutation in ASSIGNMENT_MUTATIONS:
-            # Only a Bitemporal opening composes, so this slot holds the
-            # insert itself, which the amendment leaves an insert.
-            assert isinstance(base, KeyedInsert)
-            writes[position] = replace(
-                base,
-                instruction=_merge_assignment_into_insert(
-                    base.instruction, instruction, self._key_name(target)
-                ),
-            )
+        if not isinstance(base, ComposedBitemporalOpening):
+            assert isinstance(base, KeyedInsert)  # a pending insertion holds its insert
+            base = ComposedBitemporalOpening(insert=base, transform=NO_TRANSFORM, intents=())
+        instruction = write.instruction
+        opening = base.followed_by(instruction, self._key_name(instruction.target))
+        if opening.survives or opening.transform.assigns:
+            writes[position] = opening
             return BufferOutcome.BUFFERED
-        writes[position] = None
+        if opening.beyond is not None:
+            writes[position] = opening
+            record.pending_state = "ended_opening"
+            record.identity = None
+            return BufferOutcome.BUFFERED
+        return self._cancel_opening(position, record)
+
+    def _fold_non_bitemporal_opening(
+        self, instruction: PreparedKeyedInstruction, record: InsertionRecord
+    ) -> BufferOutcome:
+        """Fold a write into its object's still-pending Non-Temporal or
+        Transaction-Time-Only insert, which takes an amendment's values in
+        place and is cancelled by any destruction, which removes all of it."""
+        position = record.pending_position
+        assert position is not None  # a foldable opening is pending
+        if instruction.mutation not in ASSIGNMENT_MUTATIONS:
+            return self._cancel_opening(position, record)
+        writes = self._writes
+        base = writes[position]
+        # Only a Bitemporal opening composes, so this slot holds the insert
+        # itself, which the amendment leaves an insert.
+        assert isinstance(base, KeyedInsert)
+        writes[position] = replace(
+            base,
+            instruction=_merge_assignment_into_insert(
+                base.instruction, instruction, self._key_name(instruction.target)
+            ),
+        )
+        return BufferOutcome.BUFFERED
+
+    def _cancel_opening(self, position: int, record: InsertionRecord) -> BufferOutcome:
+        """Cancel the pending insert at ``position`` against the write that
+        left nothing of it, ending its insertion."""
+        self._writes[position] = None
         record.unlink()
         record.identity = None
         if self._after_removal is not None:
@@ -709,15 +728,14 @@ class WriteAdmission:
         item: _Claimed,
         instruction: PreparedKeyedInstruction,
         key: ObjectKey,
-        record: InsertionRecord | None,
         *,
         verdict: ClaimVerdict | None,
         temporal: bool,
     ) -> None:
         """Compose an admitted write against existing state into the
         buffer."""
-        if instruction.mutation in DESTRUCTIVE_MUTATIONS and not isinstance(
-            self._temporal_facet.shape(instruction.target.identity), temporal_read.Bitemporal
+        if instruction.mutation in DESTRUCTIVE_MUTATIONS and not self._is_bitemporal(
+            instruction.target
         ):
             if self._removals is None:
                 self._removals = set()
@@ -1004,6 +1022,9 @@ class WriteAdmission:
             self._temporal_facet.shape(item.instruction.target.identity),
             temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
         )
+
+    def _is_bitemporal(self, entity: EntityMetadata) -> bool:
+        return isinstance(self._temporal_facet.shape(entity.identity), temporal_read.Bitemporal)
 
     def _key_name(self, entity: EntityMetadata) -> str:
         position = self._families.entity(entity.identity)

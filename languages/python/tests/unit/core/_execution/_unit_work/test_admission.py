@@ -9,15 +9,16 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from decimal import Decimal
 
 import pytest
 
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
-from parallax.core import inheritance
+from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work._write_ownership import SourceRefusal
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
+from parallax.core._execution._unit_work.claims import WriteIntent
 from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
     PreparedKeyedInstruction,
@@ -30,6 +31,7 @@ from parallax.core._execution._unit_work.retain import (
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
+    ComposedBitemporalOpening,
     ComposedTemporalWrite,
     InsertionAuthorizedWrite,
     KeyedInsert,
@@ -41,7 +43,9 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
+    KeyedMutation,
     KeyedWriteInstruction,
     RetainedObservation,
     TargetWriteInstruction,
@@ -50,6 +54,8 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import (
     ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
     VersionObservation,
 )
 from parallax.core.write_plan.keys import (
@@ -71,6 +77,7 @@ from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     APR,
     AUG,
+    DEC,
     ENTITY,
     FEB,
     JAN,
@@ -98,6 +105,8 @@ _ACCOUNT_ENTITY = EntityIdentity("parallax.compatibility", "Account")
 _PERSON = model_of(CLASS_MODELS["person"])
 _PERSON_ENTITY = EntityIdentity("parallax.compatibility", "Person")
 _WALLET = formed(corpus_records()["wallet"])
+_BALANCE = formed(corpus_records()["balance"])
+_BALANCE_OBJECT = ObjectKey(EntityIdentity("parallax.compatibility", "Balance"), (("id", 1),))
 _INSERTED_AT = dt.datetime(2024, 1, 10, tzinfo=dt.UTC)
 
 
@@ -512,6 +521,187 @@ def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None
     identity = admission.insertion_identity(OBJECT)
     assert identity is not None
     _refused(admission, InsertionAuthorizedWrite(amendment, OBJECT, identity))
+
+
+# --------------------------------------------------------------------------- #
+# Only a write its insertion authorized joins a pending Bitemporal opening.   #
+# --------------------------------------------------------------------------- #
+def _position(
+    mutation: KeyedMutation, valid_from: dt.datetime, until: dt.datetime | None, **members: object
+) -> PreparedKeyedInstruction:
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
+        POSITION,
+    )
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    return prepared
+
+
+def _pending_august_opening() -> tuple[WriteAdmission, KeyedInsert]:
+    """An admission holding a pending insertion of Position 1 over
+    [August, December), disjoint from the stored [January, June) a read
+    observed."""
+    insert = admitted_write(
+        _position("insertUntil", AUG, DEC, acctNum="N", value="300.00"), None, OBJECT
+    )
+    assert isinstance(insert, KeyedInsert)
+    return _admitted(insert), insert
+
+
+def _read_authorized(mutation: KeyedMutation, source: ReadEvidence) -> AdmittedWrite:
+    members: dict[str, object] = {"value": "150.00"} if mutation == "amendUntil" else {}
+    return admitted_write(_position(mutation, MAR, MAY, **members), START, OBJECT, source=source)
+
+
+@pytest.mark.parametrize("mutation", ["amendUntil", "terminateUntil"])
+def test_a_read_authorized_bitemporal_write_stays_apart_from_a_pending_opening(
+    mutation: KeyedMutation,
+) -> None:
+    admission, insert = _pending_august_opening()
+    source = ReadEvidence(ENTITY, OBJECT, ParticipationToken(), START)
+    outcome = admission.admit(_read_authorized(mutation, source), confirm_target=_confirmed)
+    assert outcome is BufferOutcome.BUFFERED
+    opening, stored = admission.composed_writes()
+    # The insertion's own coverage is untouched, and the read's change keeps
+    # its own evidence as a write against the coverage that read observed.
+    assert opening is insert
+    assert not isinstance(stored, KeyedInsert | ComposedBitemporalOpening | PostRemovalInsert)
+    assert (stored.phase, stored.object_key) == (
+        "update" if mutation == "amendUntil" else "delete",
+        OBJECT,
+    )
+    assert tuple(map(id, stored.source_evidence)) == (id(source),)
+
+
+def _through_the_insertion(
+    admission: WriteAdmission, mutation: KeyedMutation, until: dt.datetime | None, **members: object
+) -> BufferOutcome:
+    identity = admission.insertion_identity(OBJECT)
+    assert identity is not None
+    write = admitted_write(
+        _position(mutation, AUG, until, **members), None, OBJECT, authority=identity
+    )
+    return admission.admit(write, confirm_target=_confirmed)
+
+
+def test_a_write_through_the_insertion_still_composes_with_its_opening_beside_a_read() -> None:
+    admission, insert = _pending_august_opening()
+    source = ReadEvidence(ENTITY, OBJECT, ParticipationToken(), START)
+    _admit(admission, _read_authorized("amendUntil", source))
+    _through_the_insertion(admission, "amendUntil", SEP, value="350.00")
+    opening, stored = admission.composed_writes()
+    assert isinstance(opening, ComposedBitemporalOpening)
+    assert opening.insert is insert
+    assert opening.intents == (WriteIntent("assignment", TimeInterval(AUG, SEP)),)
+    assert not isinstance(stored, PostRemovalInsert)
+    assert tuple(map(id, stored.source_evidence)) == (id(source),)
+
+
+def test_cancelling_an_opening_leaves_a_read_authorized_write_beside_it_standing() -> None:
+    admission, _insert = _pending_august_opening()
+    source = ReadEvidence(ENTITY, OBJECT, ParticipationToken(), START)
+    _admit(admission, _read_authorized("amendUntil", source))
+    (_opening, stored) = admission.composed_writes()
+    outcome = _through_the_insertion(admission, "terminate", None)
+    assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
+    assert admission.composed_writes() == (stored,)
+    assert admission.insertion_identity(OBJECT) is None
+
+
+def _balance_insert() -> AdmittedWrite:
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction("insert", "Balance", ({"id": 1, "acctNum": "N", "value": "5.00"},)),
+        _BALANCE,
+    )
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    return admitted_write(prepared, None, _BALANCE_OBJECT)
+
+
+def _balance_observed(mutation: KeyedMutation) -> AdmittedWrite:
+    members: dict[str, object] = {"value": "7.00"} if mutation == "amend" else {}
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)), _BALANCE
+    )
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    row = PredecessorRow(
+        members={
+            "id": 1,
+            "acctNum": "A",
+            "value": Decimal("1.00"),
+            "txStart": T0,
+            "txEnd": INFINITY,
+        }
+    )
+    shape = temporal_read.view(_BALANCE).shape(_BALANCE_OBJECT.entity)
+    assert shape is not None
+    state = TemporalObjectStateKey(_BALANCE_OBJECT, temporal_read.milestone_edge(shape, row, None))
+    observation = RetainedObservation(state, TemporalObservation(predecessor=row), None)
+    return admitted_write(
+        prepared,
+        observation,
+        _BALANCE_OBJECT,
+        source=ReadEvidence(
+            _BALANCE_OBJECT.entity, _BALANCE_OBJECT, ParticipationToken(), observation
+        ),
+    )
+
+
+def _account_observed_delete(account_id: int, version: int) -> AdmittedWrite:
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction("delete", "Account", ({"id": account_id},)), _ACCOUNT
+    )
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    state = VersionedObjectStateKey(_account(account_id), version)
+    return admitted_write(
+        prepared, RetainedObservation(state, VersionObservation(version), None), state.object
+    )
+
+
+@pytest.mark.parametrize(
+    ("meta", "insert", "amendment", "member", "value"),
+    [
+        (_ACCOUNT, lambda: _account_insert(9), lambda: _account_observed(9, 3), "owner", "Bo"),
+        (
+            _BALANCE,
+            _balance_insert,
+            lambda: _balance_observed("amend"),
+            "value",
+            Decimal("7.00"),
+        ),
+    ],
+    ids=["non-temporal", "transaction-time-only"],
+)
+def test_a_read_authorized_amendment_still_folds_into_an_ordinary_pending_insert(
+    meta: Metamodel,
+    insert: Callable[[], AdmittedWrite],
+    amendment: Callable[[], AdmittedWrite],
+    member: str,
+    value: object,
+) -> None:
+    (folded,) = _admitted(insert(), amendment(), meta=meta).composed_writes()
+    assert isinstance(folded, KeyedInsert)
+    assert folded.instruction.mutation == "insert"
+    assert folded.instruction.rows[0][member] == value
+    assert folded.source_evidence == ()
+
+
+@pytest.mark.parametrize(
+    ("meta", "insert", "destruction"),
+    [
+        (_ACCOUNT, lambda: _account_insert(9), lambda: _account_observed_delete(9, 3)),
+        (_BALANCE, _balance_insert, lambda: _balance_observed("terminate")),
+    ],
+    ids=["non-temporal", "transaction-time-only"],
+)
+def test_a_read_authorized_destruction_still_cancels_an_ordinary_pending_insert(
+    meta: Metamodel,
+    insert: Callable[[], AdmittedWrite],
+    destruction: Callable[[], AdmittedWrite],
+) -> None:
+    admission = _admitted(insert(), meta=meta)
+    outcome = admission.admit(destruction(), confirm_target=_confirmed)
+    assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
+    assert admission.composed_writes() == ()
 
 
 def test_a_target_beside_writes_of_other_states_of_its_object_is_refused() -> None:
