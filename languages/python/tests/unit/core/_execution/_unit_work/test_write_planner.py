@@ -38,8 +38,10 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.retain import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.write_items import (
+    ComposedWrite,
+    KeyedInsert,
     ObjectLockedWrite,
-    OrderedWrite,
+    PostRemovalInsert,
     StateObservedWrite,
 )
 from parallax.core._execution._unit_work.write_settlement import SettledWriteWithSource
@@ -212,13 +214,13 @@ def _observed(
     prepared = _prepared_keyed(write, _ACCOUNT)
     if not isinstance(evidence, RetainedObservation):
         evidence = retained_observation(prepared, _ACCOUNT, evidence)
-    return StateObservedWrite(prepared, evidence)
+    return StateObservedWrite(prepared, evidence.key.object, evidence)
 
 
 def _claimed(write: KeyedWriteInstruction) -> ObjectLockedWrite:
     (row,) = write.rows
-    source = object_source(corpus_object_key("Wallet", ("id", row["id"])))
-    return ObjectLockedWrite(_prepared_keyed(write, _WALLET), (source,))
+    wallet = corpus_object_key("Wallet", ("id", row["id"]))
+    return ObjectLockedWrite(_prepared_keyed(write, _WALLET), wallet, (object_source(wallet),))
 
 
 def _shape(plan: WritePlan) -> list[tuple[str, str]]:
@@ -449,6 +451,80 @@ def test_object_locked_writes_of_two_rows_still_collapse_into_one_batch() -> Non
     assert write.source_evidence == (*first.source_evidence, *second.source_evidence)
     keys = tuple(corpus_object_key("Wallet", ("id", key)) for key in (1, 2))
     assert (tuple(write.changed), write.destroyed, write.advanced) == (keys, keys, ())
+
+
+def test_an_object_locked_batch_keeps_each_rows_object_and_distinct_evidence_in_first_order() -> (
+    None
+):
+    # The batch names the object of every row it writes, in row order, and keeps
+    # each evidence object its writes held once, in the order they first held
+    # it: equal evidence published twice is two lifetimes, kept apart.
+    keys = [corpus_object_key("Wallet", ("id", key)) for key in (3, 1, 2)]
+    participation = ParticipationToken()
+    third, first, twin, second = (
+        ReadEvidence(key.entity, key, participation, None)
+        for key in (keys[0], keys[1], keys[1], keys[2])
+    )
+    assert first == twin and first is not twin
+    held = ((third,), (first, third), (twin, second))
+    run = [
+        ObjectLockedWrite(
+            _prepared_keyed(
+                KeyedWriteInstruction("delete", "Wallet", (dict(key.primary_key),)), _WALLET
+            ),
+            key,
+            evidence,
+        )
+        for key, evidence in zip(keys, held, strict=True)
+    ]
+    plan = _finalized(run, _WALLET)
+    (step,) = plan_steps(plan)
+    assert isinstance(step, PlannedDelete)
+    assert _key_values(step) == ((3,), (1,), (2,))
+    (write,) = settled_writes(plan)
+    assert isinstance(write, SettledWriteWithSource)
+    assert write.destroyed == tuple(keys)
+    assert len(write.source_evidence) == 4
+    assert all(
+        kept is expected
+        for kept, expected in zip(write.source_evidence, (third, first, twin, second), strict=True)
+    )
+
+
+def test_an_insert_that_follows_a_removal_is_a_barrier_no_batch_spans() -> None:
+    # Three adjacent inserts would batch into one statement, but the second must
+    # follow everything authored before it, so it closes the first's run and
+    # opens a region the third orders with.
+    inserts = [
+        KeyedInsert(
+            _prepared_keyed(
+                KeyedWriteInstruction(
+                    "insert", "Wallet", ({"id": key, "owner": "Ada", "balance": Decimal("1.00")},)
+                ),
+                _WALLET,
+            ),
+            corpus_object_key("Wallet", ("id", key)),
+        )
+        for key in (1, 2, 3)
+    ]
+    batched = _finalized(inserts, _WALLET)
+    (step,) = plan_steps(batched)
+    assert len(_insert_rows(step)) == 3
+    first, second, third = inserts
+    plan = _finalized([first, PostRemovalInsert(second), third], _WALLET)
+    steps = plan_steps(plan)
+    assert [[row["id"] for row in _insert_rows(step)] for step in steps] == [[1], [2], [3]]
+
+
+def _finalized(composed: Sequence[ComposedWrite], model: Metamodel) -> WritePlan:
+    return build_write_planner(model).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=_INSTANT,
+            concurrency="optimistic",
+            composed_writes=composed,
+        )
+    )
 
 
 def _assignment_values(step: PlannedUpdate) -> dict[str, object]:
@@ -1491,7 +1567,7 @@ _TEMPORAL_FAMILIES = formed(
 _OPENED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
-def _temporal_family_writes() -> list[OrderedWrite]:
+def _temporal_family_writes() -> list[ComposedWrite]:
     """Observed updates of an inherited Transaction-Time-Only and an inherited
     Bitemporal position."""
     quote = KeyedWriteInstruction("amend", "SpotQuote", ({"id": 1, "price": Decimal("2.00")},))
@@ -1834,7 +1910,7 @@ def test_a_row_naming_a_member_outside_the_family_is_refused_at_settlement() -> 
         rows=({"id": 1, "owner": "Ada", "balance": Decimal("1.00"), "nickname": "w"},),
     )
     with pytest.raises(WritePlanningError, match="names 'nickname', which is not a member"):
-        _plan([admitted_write(stray, None)], _WALLET)
+        _plan([admitted_write(stray, None, corpus_object_key("Wallet", ("id", 1)))], _WALLET)
 
 
 def test_a_many_keyed_mapping_cell_is_an_ordinary_literal_not_a_computed_marker() -> None:
@@ -1849,5 +1925,6 @@ def test_a_many_keyed_mapping_cell_is_an_ordinary_literal_not_a_computed_marker(
         _WALLET,
         rows=({"id": 1, "owner": document, "balance": Decimal("1.00")},),
     )
-    (step,) = plan_steps(_plan([admitted_write(carried, None)], _WALLET))
+    wallet = corpus_object_key("Wallet", ("id", 1))
+    (step,) = plan_steps(_plan([admitted_write(carried, None, wallet)], _WALLET))
     assert _insert_rows(step)[0]["owner"] == document

@@ -23,8 +23,9 @@ from parallax.core._execution._unit_work.retain import (
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.write_items import (
+    ComposedBitemporalOpening,
+    ComposedTemporalWrite,
     ComposedWrite,
-    OrderedWrite,
     PostRemovalInsert,
     TargetWrite,
 )
@@ -106,7 +107,7 @@ def observed_buffer(
     buffer: Sequence[AdmittedWrite | KeyedWriteInstruction],
     model: Metamodel,
     observations: Mapping[ObjectKey, StateObservation] | None,
-) -> list[OrderedWrite]:
+) -> list[AdmittedWrite | ComposedTemporalWrite | ComposedBitemporalOpening]:
     """``buffer`` with every authored instruction prepared and admitted as the
     write a verb would build for it, admitted in authored order as a unit of
     work admits it.
@@ -134,7 +135,7 @@ def observed_buffer(
                 held = retained.get(key)
                 if held is None:
                     held = retained[key] = retained_observation(prepared, model, observation)
-                item = admitted_write(prepared, held)
+                item = admitted_write(prepared, held, key)
             else:
                 item = _authorized(admission, prepared, key, model)
         admission.admit(item, confirm_target=_optimistic)
@@ -154,19 +155,23 @@ def _authorized(
     )
     if identity is None:
         return unobserved_write(instruction, model)
-    return admitted_write(instruction, None, authority=identity)
+    return admitted_write(instruction, None, key, authority=identity)
 
 
 def observed_write(
     instruction: PreparedKeyedInstruction, model: Metamodel, observation: StateObservation | None
-) -> OrderedWrite:
+) -> AdmittedWrite | ComposedTemporalWrite | ComposedBitemporalOpening:
     """``instruction`` buffered against ``observation``, as the one write a
     buffer holds."""
     item: AdmittedWrite
     if observation is None:
         item = unobserved_write(instruction, model)
     else:
-        item = admitted_write(instruction, retained_observation(instruction, model, observation))
+        item = admitted_write(
+            instruction,
+            retained_observation(instruction, model, observation),
+            object_key(instruction, model),
+        )
     (only,) = admitted_writes(model, [item])
     return _settled(only)
 
@@ -176,17 +181,18 @@ def unobserved_write(instruction: PreparedKeyedInstruction, model: Metamodel) ->
     observed nothing: an insert, or an object-locked write of an unversioned
     row admitted through :func:`object_source` evidence. Any other write needs
     an observation, so a suite admitting one without it is refused."""
+    key = object_key(instruction, model)
     evidence = opt_lock.settled_evidence(
         opt_lock.optimistic_key(model, instruction.target.identity),
         instruction.mutation,
-        object_key=object_key(instruction, model),
+        object_key=key,
         observation=None,
     )
     if evidence is None:
-        return admitted_write(instruction, None)
+        return admitted_write(instruction, None, key)
     write = f"`{instruction.mutation}` on {instruction.target.identity.canonical!r}"
     assert isinstance(evidence, ObjectKey), f"{write} needs an observation"
-    return admitted_write(instruction, evidence, source=object_source(evidence))
+    return admitted_write(instruction, evidence, key, source=object_source(evidence))
 
 
 def admitted_writes(model: Metamodel, writes: Sequence[AdmittedWrite]) -> tuple[ComposedWrite, ...]:
@@ -225,7 +231,9 @@ def retained_observation(
     )
 
 
-def _settled(item: ComposedWrite) -> OrderedWrite:
+def _settled(
+    item: ComposedWrite,
+) -> AdmittedWrite | ComposedTemporalWrite | ComposedBitemporalOpening:
     """``item`` as settlement reads it: these suites buffer no insert that
     waits on an earlier removal."""
     assert not isinstance(item, PostRemovalInsert)

@@ -138,7 +138,9 @@ def _account_observed(account_id: int, version: int) -> AdmittedWrite:
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     state = VersionedObjectStateKey(_account(account_id), version)
-    return admitted_write(prepared, RetainedObservation(state, VersionObservation(version), None))
+    return admitted_write(
+        prepared, RetainedObservation(state, VersionObservation(version), None), state.object
+    )
 
 
 def _account_target(account_id: int, version: int) -> TargetWrite:
@@ -159,7 +161,7 @@ def _account_insert(account_id: int) -> AdmittedWrite:
         _ACCOUNT,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return admitted_write(prepared, None)
+    return admitted_write(prepared, None, _account(account_id))
 
 
 def _account_amend(account_id: int) -> PreparedKeyedInstruction:
@@ -244,7 +246,7 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     identity = admission.insertion_identity(_account(9))
     assert identity is not None
     outcome = admission.admit(
-        admitted_write(deletion, None, authority=identity), confirm_target=_confirmed
+        admitted_write(deletion, None, _account(9), authority=identity), confirm_target=_confirmed
     )
     assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
     assert admission
@@ -258,7 +260,7 @@ def test_an_amendment_folded_into_a_pending_insert_leaves_it_an_insert() -> None
     _admit(admission, _account_insert(9))
     identity = admission.insertion_identity(_account(9))
     assert identity is not None
-    _admit(admission, admitted_write(_account_amend(9), None, authority=identity))
+    _admit(admission, admitted_write(_account_amend(9), None, _account(9), authority=identity))
     (insert,) = admission.composed_writes()
     assert isinstance(insert, KeyedInsert)
     assert insert.instruction.mutation == "insert"
@@ -274,7 +276,7 @@ def _person_write(person_id: int, source: ReadEvidence) -> AdmittedWrite:
         KeyedWriteInstruction("amend", "Person", ({"id": person_id, "name": "Grace"},)), _PERSON
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return admitted_write(prepared, _person(person_id), source=source)
+    return admitted_write(prepared, _person(person_id), _person(person_id), source=source)
 
 
 def test_coalesced_object_locked_writes_keep_every_distinct_source_evidence() -> None:
@@ -309,7 +311,7 @@ def test_discard_forgets_every_source_registration_and_insertion() -> None:
         KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    _admit(admission, admitted_write(insertion, None))
+    _admit(admission, admitted_write(insertion, None, _person(9)))
     ownership = admission.ownership
     endpoint = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
     admission.complete(WriteEffects(opened=Openings(fresh=(endpoint,))), (), at=1)
@@ -354,16 +356,16 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
     admission.drain_planned()
     identity = admission.insertion_identity(_account(9))
     assert identity is not None
-    _admit(admission, InsertionAuthorizedWrite(_account_amend(9), identity))
+    _admit(admission, InsertionAuthorizedWrite(_account_amend(9), _account(9), identity))
     (before,) = admission.composed_writes()
     admission.drain_planned()
     admission.complete(WriteEffects(advanced=(VersionedObjectStateKey(_account(9), 1),)), (), at=1)
-    _admit(admission, InsertionAuthorizedWrite(_account_amend(9), identity))
+    _admit(admission, InsertionAuthorizedWrite(_account_amend(9), _account(9), identity))
     (after,) = admission.composed_writes()
     assert isinstance(before, InsertionAuthorizedWrite) and isinstance(
         after, InsertionAuthorizedWrite
     )
-    assert (before.scope, after.scope) == (
+    assert (before.claim_scope, after.claim_scope) == (
         VersionedObjectStateKey(_account(9), 1),
         VersionedObjectStateKey(_account(9), 2),
     )
@@ -390,7 +392,7 @@ def _position_insert() -> AdmittedWrite:
         POSITION,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return admitted_write(prepared, None)
+    return admitted_write(prepared, None, OBJECT)
 
 
 @pytest.mark.parametrize("earlier", [True, False], ids=["both-rows", "later-only"])
@@ -506,10 +508,10 @@ def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     assert isinstance(amendment, PreparedKeyedInstruction)
-    admission = _admitted(addressed_write(value="150.00"), admitted_write(insertion, None))
+    admission = _admitted(addressed_write(value="150.00"), admitted_write(insertion, None, OBJECT))
     identity = admission.insertion_identity(OBJECT)
     assert identity is not None
-    _refused(admission, InsertionAuthorizedWrite(amendment, identity))
+    _refused(admission, InsertionAuthorizedWrite(amendment, OBJECT, identity))
 
 
 def test_a_target_beside_writes_of_other_states_of_its_object_is_refused() -> None:

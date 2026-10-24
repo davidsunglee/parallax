@@ -148,7 +148,7 @@ def _update(
         ),
         _SPANS,
     )
-    return admitted_write(prepared, evidence)
+    return admitted_write(prepared, evidence, evidence.key.object)
 
 
 def _target(valid_from: dt.datetime, until: dt.datetime) -> AdmittedWrite:
@@ -468,10 +468,12 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
         _SPANS,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
+    span = ObjectKey(_SPAN, (("id", 1),))
     item = StateObservedWrite(
         prepared,
+        span,
         RetainedObservation(
-            VersionedObjectStateKey(ObjectKey(_SPAN, (("id", 1),)), 1),
+            VersionedObjectStateKey(span, 1),
             VersionObservation(observed_version=1),
             None,
         ),

@@ -23,7 +23,7 @@ from parallax.core._execution._unit_work.admission import (
     WriteEvidenceError,
     WriteEvidenceErrorCode,
 )
-from parallax.core._execution._unit_work.claims import SettledEvidence, claimed_object
+from parallax.core._execution._unit_work.claims import SettledEvidence
 from parallax.core._execution._unit_work.clock import Clock, TransactionInstant
 from parallax.core._execution._unit_work.effects import (
     CardinalityCorruptionError,
@@ -341,7 +341,7 @@ class UnitOfWork:
         The claim is read off the admitted write itself
         (:func:`~parallax.core._execution._unit_work.write_items.admitted_write`): a
         retained observation claims the state it observed, and an
-        object-locked write claims its instruction's object (`m-unit-work`
+        object-locked write claims the object it writes (`m-unit-work`
         "Observed-State Coalescing"). An insert claims nothing. An arriving
         keyed intent the held claim cannot absorb raises
         :class:`WriteEvidenceError` (``write-evidence-already-claimed``), and
@@ -478,8 +478,8 @@ class UnitOfWork:
         if policy.effective_strategy(self.settings.concurrency) != "locking":
             return item
         expectation = item.expectation
-        scope = item.scope
-        key = claimed_object(scope)
+        scope = item.claim_scope
+        key = item.object_key
         if isinstance(expectation, ExpectedTxStart):
             return self._confirm_temporal_target(item, key, expectation)
         if not self._participates(scope):

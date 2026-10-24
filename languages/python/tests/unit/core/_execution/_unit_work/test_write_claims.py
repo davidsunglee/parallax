@@ -362,9 +362,9 @@ def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> Non
         )
         prepared = instructions.prepare_wire_write(insertion, _PERSON_META)
         assert isinstance(prepared, PreparedKeyedInstruction)
-        ObjectLockedWrite(prepared, (object_source(_PERSON_ONE),))
+        ObjectLockedWrite(prepared, _PERSON_ONE, (object_source(_PERSON_ONE),))
     with pytest.raises(ValueError, match="an object claim addresses one object"):
-        ObjectLockedWrite(_prepared_person_delete(1, 2), (object_source(_PERSON_ONE),))
+        ObjectLockedWrite(_prepared_person_delete(1, 2), _PERSON_ONE, (object_source(_PERSON_ONE),))
 
 
 def test_an_object_locked_write_requires_the_source_it_was_admitted_through() -> None:
@@ -374,11 +374,11 @@ def test_an_object_locked_write_requires_the_source_it_was_admitted_through() ->
     prepared = _prepared_person_delete(1)
     message = "An object-locked write requires the source evidence it was admitted through"
     with pytest.raises(ValueError, match=message):
-        admitted_write(prepared, _PERSON_ONE)
+        admitted_write(prepared, _PERSON_ONE, _PERSON_ONE)
     with pytest.raises(ValueError, match=message):
-        ObjectLockedWrite(prepared, ())
+        ObjectLockedWrite(prepared, _PERSON_ONE, ())
     source = object_source(_PERSON_ONE)
-    claimed = admitted_write(prepared, _PERSON_ONE, source=source)
+    claimed = admitted_write(prepared, _PERSON_ONE, _PERSON_ONE, source=source)
     assert isinstance(claimed, ObjectLockedWrite)
     assert claimed.source_evidence == (source,) and claimed.source_evidence[0] is source
 
@@ -392,11 +392,11 @@ def test_an_observed_write_requires_a_retained_observation(evidence: object) -> 
     # it is refused where the observed write is built, before anything is buffered.
     prepared = _prepared_person_delete(1)
     with pytest.raises(ValueError, match="requires the retained observation"):
-        StateObservedWrite(prepared, evidence)  # pyright: ignore[reportArgumentType]
+        StateObservedWrite(prepared, _PERSON_ONE, evidence)  # pyright: ignore[reportArgumentType]
     if evidence is not None:
         with pytest.raises(ValueError, match="requires the retained observation"):
-            admitted_write(prepared, evidence)  # pyright: ignore[reportArgumentType]
-    observed = admitted_write(prepared, _RETAINED)
+            admitted_write(prepared, evidence, _PERSON_ONE)  # pyright: ignore[reportArgumentType]
+    observed = admitted_write(prepared, _RETAINED, _PERSON_ONE)
     assert isinstance(observed, StateObservedWrite)
     assert observed.observation is _RETAINED.evidence
 
@@ -410,4 +410,4 @@ def test_a_target_write_refuses_an_insert_and_a_write_of_several_objects() -> No
     for instruction in (insert, several):
         assert isinstance(instruction, PreparedKeyedInstruction)
         with pytest.raises(ValueError, match="addresses one existing object"):
-            TargetWrite(instruction, ExpectedVersion(3), VersionedObjectStateKey(person, 3))
+            TargetWrite(instruction, person, ExpectedVersion(3), VersionedObjectStateKey(person, 3))

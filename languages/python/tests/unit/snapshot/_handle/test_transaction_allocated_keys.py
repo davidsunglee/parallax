@@ -58,7 +58,8 @@ def _insert_allocated(tx: TxnContext, entity: type[Entity], amount: int) -> None
     instruction = KeyedWriteInstruction(
         "insert", entity.identity.canonical, ({"id": {"computed": "maxPlusOne"}, "amount": amount},)
     )
-    tx._attempt.uow.buffer(admitted_write(prepare_typed_write(instruction, model_of(_MODEL)), None))
+    prepared = prepare_typed_write(instruction, model_of(_MODEL))
+    tx._attempt.uow.buffer(admitted_write(prepared, None, None))
 
 
 def _ledger_row(key: int, amount: int) -> dict[str, object]:

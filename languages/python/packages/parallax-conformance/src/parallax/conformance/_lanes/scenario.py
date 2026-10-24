@@ -685,7 +685,7 @@ class _SimulatedUnit:
         key = object_key(instruction, self._model)
         observation = write.supplied_observation
         if instruction.mutation in INSERT_MUTATIONS:
-            self._admit(admitted_write(instruction, None))
+            self._admit(admitted_write(instruction, None, key))
         elif observation is None:
             self._authorized(instruction, key)
         else:
@@ -719,7 +719,7 @@ class _SimulatedUnit:
         if identity is None:
             self._admit_with_evidence(instruction, key, None)
         else:
-            self._admit(admitted_write(instruction, None, authority=identity))
+            self._admit(admitted_write(instruction, None, key, authority=identity))
 
     def _admit_with_evidence(
         self,
@@ -734,10 +734,10 @@ class _SimulatedUnit:
         if evidence is None:
             raise _unlicensed(instruction, optimistic, self._model)
         if not isinstance(evidence, ObjectKey):
-            self._admit(admitted_write(instruction, evidence))
+            self._admit(admitted_write(instruction, evidence, key))
             return
         source = ReadEvidence(instruction.target.identity, evidence, self._participation, None)
-        self._admit(admitted_write(instruction, evidence, source=source))
+        self._admit(admitted_write(instruction, evidence, key, source=source))
 
     def _admit(self, item: AdmittedWrite | PreparedTargetInstruction) -> None:
         try:

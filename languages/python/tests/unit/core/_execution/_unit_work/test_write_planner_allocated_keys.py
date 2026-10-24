@@ -72,7 +72,7 @@ def _plan(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-01-10T00:00:00+00:00"),
             concurrency="optimistic",
-            composed_writes=[admitted_write(prepared, None)],
+            composed_writes=[admitted_write(prepared, None, None)],
         )
     )
 

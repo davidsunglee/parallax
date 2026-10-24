@@ -40,7 +40,7 @@ from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
 )
-from parallax.core._execution._unit_work.write_items import OrderedWrite
+from parallax.core._execution._unit_work.write_items import ComposedWrite
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (
     Metamodel,
@@ -101,7 +101,7 @@ def _model(entities: int) -> Metamodel:
     return form_metamodel(source(*declarations))
 
 
-def _prepared_writes(model: Metamodel, count: int) -> Sequence[OrderedWrite]:
+def _prepared_writes(model: Metamodel, count: int) -> Sequence[ComposedWrite]:
     return observed_buffer(
         [
             KeyedWriteInstruction("amend", "Entity0", ({"id": row + 1, "value": row},))

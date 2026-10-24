@@ -19,7 +19,12 @@ from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ServingModel, TxnOptions, prepare_model
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
-from parallax.core.unit_work import AdmittedWrite, KeyedWriteInstruction, admitted_write
+from parallax.core.unit_work import (
+    AdmittedWrite,
+    KeyedWriteInstruction,
+    admitted_write,
+    object_key,
+)
 from tests._support.root_ownership import own_root
 
 ACCOUNT: Final = MODELS["account"]
@@ -78,4 +83,4 @@ def account_insert(account_id: int = 7) -> AdmittedWrite:
         model_of(ACCOUNT),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return admitted_write(prepared, None)
+    return admitted_write(prepared, None, object_key(prepared, model_of(ACCOUNT)))

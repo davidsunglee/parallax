@@ -7,10 +7,8 @@ from typing import Final, Literal
 
 from parallax.core import inheritance
 from parallax.core._execution._unit_work.claims import (
-    ClaimScope,
     SettledEvidence,
     WriteIntent,
-    claimed_object,
     keyed_intent,
 )
 from parallax.core._execution._unit_work.instructions import (
@@ -56,9 +54,8 @@ __all__ = [
     "TargetWrite",
     "TemporalContribution",
     "TemporalKeyedWrite",
+    "WritePhase",
     "admitted_write",
-    "buffered_claim_scope",
-    "buffered_object_key",
     "compose_temporal_write",
     "singleton_transform",
     "target_write",
@@ -74,13 +71,25 @@ _REQUIRES_SOURCE: Final = (
     "An object-locked write requires the source evidence it was admitted through."
 )
 
+type WritePhase = Literal["insert", "update", "delete"]
+"""The mutation phase ordering places a write in."""
+
+
+def _revision_phase(instruction: PreparedKeyedInstruction) -> WritePhase:
+    return "update" if instruction.mutation in ASSIGNMENT_MUTATIONS else "delete"
+
 
 @dataclass(frozen=True, slots=True)
 class KeyedInsert:
     """An insert admitted through its own verb: the one row it opens needs no
-    licence beyond the insert itself."""
+    licence beyond the insert itself.
+
+    ``object_key`` is the object its row names, or ``None`` where the database
+    computes that key.
+    """
 
     instruction: PreparedKeyedInstruction
+    object_key: ObjectKey | None
 
     def __post_init__(self) -> None:
         if self.instruction.mutation not in INSERT_MUTATIONS:
@@ -97,12 +106,40 @@ class KeyedInsert:
                 f"{len(self.instruction.rows)} rows"
             )
 
+    @property
+    def phase(self) -> WritePhase:
+        return "insert"
+
+    @property
+    def target(self) -> EntityMetadata:
+        return self.instruction.target
+
+    @property
+    def source_evidence(self) -> tuple[ReadEvidence, ...]:
+        return ()
+
 
 @dataclass(frozen=True, slots=True)
 class InsertBatch:
-    """Inserts batching joined into one multi-row instruction."""
+    """Inserts batching joined into one multi-row instruction.
+
+    ``object_keys`` names the object each of its rows opens, in row order.
+    """
 
     instruction: PreparedKeyedInstruction
+    object_keys: tuple[ObjectKey | None, ...]
+
+    @property
+    def phase(self) -> WritePhase:
+        return "insert"
+
+    @property
+    def target(self) -> EntityMetadata:
+        return self.instruction.target
+
+    @property
+    def source_evidence(self) -> tuple[ReadEvidence, ...]:
+        return ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +150,7 @@ class StateObservedWrite:
     never changes. A source's authority may reach a later state this attempt's
     own completed writes produced from it. For a versioned Non-Temporal source
     ``current`` names that protected state where it is not the observed one,
-    and :attr:`scope` is what the write claims and settles against either way;
+    and :attr:`claim_scope` is what the write claims and settles against either way;
     a temporal write settles against what those writes left of its observed
     state when its range binds.
 
@@ -128,6 +165,7 @@ class StateObservedWrite:
     """
 
     instruction: PreparedKeyedInstruction
+    object_key: ObjectKey
     retained_observation: RetainedObservation
     current: VersionedObjectStateKey | None = None
     source_evidence: tuple[ReadEvidence, ...] = ()
@@ -155,10 +193,18 @@ class StateObservedWrite:
         return self.retained_observation.evidence
 
     @property
-    def scope(self) -> ObjectStateKey:
+    def claim_scope(self) -> ObjectStateKey:
         """The state the write claims and settles against."""
         current = self.current
         return self.retained_observation.key if current is None else current
+
+    @property
+    def phase(self) -> WritePhase:
+        return _revision_phase(self.instruction)
+
+    @property
+    def target(self) -> EntityMetadata:
+        return self.instruction.target
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +217,7 @@ class ObjectLockedWrite:
     """
 
     instruction: PreparedKeyedInstruction
+    object_key: ObjectKey
     source_evidence: tuple[ReadEvidence, ...]
 
     def __post_init__(self) -> None:
@@ -192,17 +239,39 @@ class ObjectLockedWrite:
                 "write settles against)"
             )
 
+    @property
+    def claim_scope(self) -> ObjectKey:
+        return self.object_key
+
+    @property
+    def phase(self) -> WritePhase:
+        return _revision_phase(self.instruction)
+
+    @property
+    def target(self) -> EntityMetadata:
+        return self.instruction.target
+
 
 @dataclass(frozen=True, slots=True)
 class ObjectLockedBatch:
     """Object-locked writes batching joined into one multi-row instruction.
 
+    ``object_keys`` names the object each of its rows writes, in row order.
     ``source_evidence`` holds, by identity, the Read Evidence every joined
     object-locked write retained, which nothing reads.
     """
 
     instruction: PreparedKeyedInstruction
+    object_keys: tuple[ObjectKey, ...]
     source_evidence: tuple[ReadEvidence, ...]
+
+    @property
+    def phase(self) -> WritePhase:
+        return _revision_phase(self.instruction)
+
+    @property
+    def target(self) -> EntityMetadata:
+        return self.instruction.target
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,15 +280,17 @@ class InsertionAuthorizedWrite:
 
     ``identity`` is the insertion's authority, which the unit of work checks
     still stands when it admits the write; completion changes nothing of it.
-    ``scope`` is the claim scope a Non-Temporal write of a stored row takes —
+    ``claim_scope`` is the claim scope a Non-Temporal write of a stored row takes —
     the exact version this attempt's own writes left the row at, or the object
     itself when the row is unversioned — so it composes with an observed write
-    of the same state. A temporal write composes by object and takes none.
+    of the same state. A temporal write composes by object and takes none,
+    and neither does a write folding into its object's pending insert.
     """
 
     instruction: PreparedKeyedInstruction
+    object_key: ObjectKey
     identity: InsertionIdentity
-    scope: VersionedObjectStateKey | ObjectKey | None = None
+    claim_scope: VersionedObjectStateKey | ObjectKey | None = None
 
     def __post_init__(self) -> None:
         if self.instruction.mutation in INSERT_MUTATIONS:
@@ -235,13 +306,25 @@ class InsertionAuthorizedWrite:
                 f"{len(self.instruction.rows)} rows"
             )
 
+    @property
+    def phase(self) -> WritePhase:
+        return _revision_phase(self.instruction)
+
+    @property
+    def target(self) -> EntityMetadata:
+        return self.instruction.target
+
+    @property
+    def source_evidence(self) -> tuple[ReadEvidence, ...]:
+        return ()
+
 
 @dataclass(frozen=True, slots=True)
 class TargetWrite:
     """A target write of one existing object, carrying the
     starting condition the caller stated rather than a read's evidence.
 
-    ``scope`` is the claim scope that condition names — the exact version a
+    ``claim_scope`` is the claim scope that condition names — the exact version a
     versioned object is required to stand at, or the object itself when it is
     temporal — which is the scope an observed write of the same state takes, so
     the two compose there; a temporal object's writes compose by object
@@ -254,8 +337,9 @@ class TargetWrite:
     """
 
     instruction: PreparedKeyedInstruction
+    object_key: ObjectKey
     expectation: TargetExpectation
-    scope: VersionedObjectStateKey | ObjectKey
+    claim_scope: VersionedObjectStateKey | ObjectKey
     source_evidence: tuple[ReadEvidence, ...] = ()
     retained: RetainedTargetState | None = field(default=None, compare=False)
 
@@ -266,6 +350,14 @@ class TargetWrite:
                 f"`{self.instruction.mutation}` on "
                 f"{self.instruction.target.identity.canonical!r} is no such write"
             )
+
+    @property
+    def phase(self) -> WritePhase:
+        return _revision_phase(self.instruction)
+
+    @property
+    def target(self) -> EntityMetadata:
+        return self.instruction.target
 
 
 def target_write(
@@ -279,8 +371,9 @@ def target_write(
     expectation = prepared.expectation
     return TargetWrite(
         instruction=instruction,
+        object_key=key,
         expectation=expectation,
-        scope=(
+        claim_scope=(
             VersionedObjectStateKey(key, expectation.version)
             if isinstance(expectation, ExpectedVersion)
             else key
@@ -297,36 +390,51 @@ and differ only in the grain their claims are taken at."""
 def admitted_write(
     instruction: PreparedKeyedInstruction,
     evidence: SettledEvidence | None,
+    object_key: ObjectKey | None,
     *,
     source: ReadEvidence | None = None,
     authority: InsertionIdentity | None = None,
 ) -> KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite:
-    """``instruction`` as the admitted write that settles against ``evidence``,
-    retaining ``source``, the Read Evidence it was admitted through, where it
-    has one.
+    """``instruction`` as the admitted write of ``object_key`` that settles
+    against ``evidence``, retaining ``source``, the Read Evidence it was
+    admitted through, where it has one.
 
     A retained observation travels with the write; so does a versioned state,
     with its ``source``'s observation. An object key requires ``source`` in
     place of an observation. With no evidence, the instruction carries the
     insertion ``authority`` that licenses it, or is an insert, which needs no
-    licence.
+    licence. Only an insert may name no object.
     """
+    if evidence is None and authority is None:
+        return KeyedInsert(instruction, object_key)
+    if object_key is None:
+        raise ValueError(
+            f"`{instruction.mutation}` on {instruction.target.identity.canonical!r} writes "
+            "existing state, so it names the object it writes"
+        )
     if evidence is None:
-        if authority is not None:
-            return InsertionAuthorizedWrite(instruction=instruction, identity=authority)
-        return KeyedInsert(instruction)
+        assert authority is not None  # only an insert carries neither
+        return InsertionAuthorizedWrite(
+            instruction=instruction, object_key=object_key, identity=authority
+        )
     retained = () if source is None else (source,)
     if isinstance(evidence, ObjectKey):
-        return ObjectLockedWrite(instruction=instruction, source_evidence=retained)
+        return ObjectLockedWrite(
+            instruction=instruction, object_key=object_key, source_evidence=retained
+        )
     if isinstance(evidence, RetainedObservation):
         return StateObservedWrite(
-            instruction=instruction, retained_observation=evidence, source_evidence=retained
+            instruction=instruction,
+            object_key=object_key,
+            retained_observation=evidence,
+            source_evidence=retained,
         )
     observation = None if source is None else source.observation
     if observation is None:
         raise ValueError(_REQUIRES_RETAINED_OBSERVATION)
     return StateObservedWrite(
         instruction=instruction,
+        object_key=object_key,
         retained_observation=observation,
         current=None if evidence == observation.key else evidence,
         source_evidence=retained,
@@ -371,21 +479,32 @@ class ComposedTemporalWrite:
     """Every pending observed write of one temporal object, composed in
     authored order at the position of the first.
 
-    ``key`` is the object's identity row. ``contributions`` keeps each admitted
-    write's original condition and window, overwritten ones included;
-    ``transform`` holds only the assignments that still survive.
+    ``contributions`` keeps each admitted write's original condition and
+    window, overwritten ones included; ``transform`` holds only the
+    assignments that still survive.
     """
 
     target: EntityMetadata
-    key: Mapping[str, object]
+    object_key: ObjectKey
     contributions: tuple[TemporalContribution, ...]
     transform: CoverageTransform
 
     @property
-    def assigns(self) -> bool:
-        """Whether the composition still assigns somewhere, rather than only
-        destroying."""
-        return self.transform.assigns
+    def phase(self) -> WritePhase:
+        """An update while the composition still assigns somewhere, otherwise a
+        deletion."""
+        return "update" if self.transform.assigns else "delete"
+
+    @property
+    def source_evidence(self) -> tuple[ReadEvidence, ...]:
+        """The distinct Read Evidence of every source whose write the
+        composition holds, by identity, in authored order."""
+        distinct: list[ReadEvidence] = []
+        for contribution in self.contributions:
+            for evidence in contribution.source_evidence:
+                if all(evidence is not held for held in distinct):
+                    distinct.append(evidence)
+        return tuple(distinct)
 
 
 type TemporalKeyedWrite = StateObservedWrite | InsertionAuthorizedWrite | TargetWrite
@@ -428,17 +547,16 @@ def compose_temporal_write(
         contributions = (*contributions, contribution)
     return ComposedTemporalWrite(
         target=held.target,
-        key=held.key,
+        object_key=held.object_key,
         contributions=contributions,
         transform=_contributed(held.transform, arriving.instruction, key_name),
     )
 
 
 def _composed(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
-    row = item.instruction.rows[0]
     return ComposedTemporalWrite(
         target=item.instruction.target,
-        key={key_name: row[key_name]},
+        object_key=item.object_key,
         contributions=(temporal_contribution(item),),
         transform=singleton_transform(item, key_name),
     )
@@ -490,6 +608,22 @@ class ComposedBitemporalOpening:
     insert: KeyedInsert
     transform: CoverageTransform
     intents: tuple[WriteIntent, ...]
+
+    @property
+    def object_key(self) -> ObjectKey | None:
+        return self.insert.object_key
+
+    @property
+    def phase(self) -> WritePhase:
+        return "insert"
+
+    @property
+    def target(self) -> EntityMetadata:
+        return self.insert.target
+
+    @property
+    def source_evidence(self) -> tuple[ReadEvidence, ...]:
+        return ()
 
     def followed_by(
         self, instruction: PreparedKeyedInstruction, key_name: str
@@ -561,74 +695,44 @@ class PostRemovalInsert:
 
     insert: KeyedInsert | ComposedBitemporalOpening
 
+    @property
+    def phase(self) -> WritePhase:
+        return "insert"
 
-AdmittedWrite = KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
+    @property
+    def target(self) -> EntityMetadata:
+        return self.insert.target
 
+
+type AdmittedWrite = (
+    KeyedInsert | StateObservedWrite | ObjectLockedWrite | InsertionAuthorizedWrite | TargetWrite
+)
+"""What admission accepts: one write of one row, under the authority it
+carries."""
+
+type ComposedWrite = (
+    AdmittedWrite | ComposedTemporalWrite | ComposedBitemporalOpening | PostRemovalInsert
+)
+"""One write as admission composed it and finalization receives it: an
+admitted write it passed through, a composition, or an insert that must
+follow an earlier removal."""
 
 type OrderedWrite = (
-    KeyedInsert
-    | InsertBatch
-    | StateObservedWrite
-    | ObjectLockedWrite
-    | ObjectLockedBatch
-    | InsertionAuthorizedWrite
-    | TargetWrite
+    AdmittedWrite
     | ComposedTemporalWrite
     | ComposedBitemporalOpening
+    | InsertBatch
+    | ObjectLockedBatch
 )
-"""One element of the sequence settlement reads: an admitted write once the
+"""One element of the sequence settlement reads: a composed write once the
 planner's rewriting stages have finished with it.
 
 Batching joins inserts into an :class:`InsertBatch` and object-locked writes
-into an :class:`ObjectLockedBatch`, which keeps their source evidence; every
-stage after coalescing measures a write by its instruction.
+into an :class:`ObjectLockedBatch`, and ordering consumes every
+:class:`PostRemovalInsert`.
 """
 
 type MutationPhase = tuple[OrderedWrite, ...]
 """A region's ordered writes of one mutation kind: its inserts, its updates,
 or its deletes. The planner hands settlement a flush's phases in flush
 order."""
-
-type ComposedWrite = OrderedWrite | PostRemovalInsert
-"""One composed write as finalization receives it: what settlement
-reads, or inserts that must follow an earlier removal."""
-
-
-def buffered_object_key(
-    item: AdmittedWrite,
-    families: inheritance.InheritanceFacet,
-) -> ObjectKey | None:
-    """The one object ``item`` writes, or ``None`` where it names none.
-
-    A retained observation, an insertion's identity, and a caller's scope
-    already name it; only a write carrying none of them is resolved from its
-    row.
-    """
-    if isinstance(item, StateObservedWrite):
-        return item.retained_observation.key.object
-    if isinstance(item, InsertionAuthorizedWrite):
-        return item.identity.object_key
-    if isinstance(item, TargetWrite):
-        return claimed_object(item.scope)
-    return resolve_object_key(item.instruction, families)
-
-
-def buffered_claim_scope(
-    item: AdmittedWrite,
-    object_key: ObjectKey | None,
-) -> ClaimScope | None:
-    """The scope ``item`` claims where it composes by claimed scope rather than
-    by temporal object, given ``object_key``, the object it writes
-    (:func:`buffered_object_key`).
-
-    ``None`` for a write that claims nothing there: an insert, and a
-    write an insertion authorized while it folds into its object's pending
-    opening.
-    """
-    if isinstance(item, StateObservedWrite):
-        return item.scope
-    if isinstance(item, ObjectLockedWrite):
-        return object_key
-    if isinstance(item, InsertionAuthorizedWrite | TargetWrite):
-        return item.scope
-    return None

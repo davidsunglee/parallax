@@ -49,8 +49,6 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     TemporalContribution,
     TemporalKeyedWrite,
-    buffered_claim_scope,
-    buffered_object_key,
     compose_temporal_write,
     temporal_contribution,
 )
@@ -326,24 +324,24 @@ class WriteAdmission:
         item: KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite,
         insertion_advice: KeyedWriteRefusalAdvice | None,
     ) -> BufferOutcome:
+        if isinstance(item, KeyedInsert):
+            opened = item.object_key
+            if opened is None:
+                self._writes.append(item)
+                return BufferOutcome.BUFFERED
+            return self._open_insertion(item, opened, insertion_advice)
         record: InsertionRecord | None = None
         if isinstance(item, InsertionAuthorizedWrite):
             item, record = self._authorized(item)
-        key = buffered_object_key(item, self._families)
+        key = item.object_key
         temporal = self._is_temporal(item)
         verdict: ClaimVerdict | None = None
         if temporal:
-            assert key is not None  # such a write names one object
             self._check_temporal_claims(
                 cast("StateObservedWrite | InsertionAuthorizedWrite", item), key
             )
         else:
-            verdict = self._check_keyed_claim(item, key)
-        if key is None:
-            self._writes.append(item)
-            return BufferOutcome.BUFFERED
-        if isinstance(item, KeyedInsert):
-            return self._open_insertion(item, key, insertion_advice)
+            verdict = self._check_keyed_claim(item)
         instruction = item.instruction
         if record is None:
             record = self._ownership.insertion_record(key)
@@ -487,9 +485,8 @@ class WriteAdmission:
     ) -> None:
         instruction = item.instruction
         target = instruction.target
-        scope = item.scope
-        key = buffered_object_key(item, self._families)
-        assert key is not None  # a caller's condition addresses one object
+        scope = item.claim_scope
+        key = item.object_key
         if self._ownership.insertion_record(key) is not None:
             raise WriteEvidenceError(
                 code="write-evidence-inserted",
@@ -537,26 +534,20 @@ class WriteAdmission:
             return item, record
         if self._is_temporal(item):
             return item, record
-        key = item.identity.object_key
+        key = item.object_key
         version = self._inserted_version(instruction.target.identity, record.advanced_from)
         scope = key if version is None else VersionedObjectStateKey(key, version)
-        scoped = InsertionAuthorizedWrite(
-            instruction=instruction, identity=item.identity, scope=scope
-        )
-        return scoped, record
+        return replace(item, claim_scope=scope), record
 
     def _check_keyed_claim(
-        self,
-        item: KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite,
-        key: ObjectKey | None,
+        self, item: ReadAuthorizedWrite | InsertionAuthorizedWrite
     ) -> ClaimVerdict | None:
         """What a non-temporal write becomes against the claim held at its
         scope, or ``None`` where it claims nothing — refused where it cannot
         join that claim or its object's pending caller-conditioned write."""
-        scope = buffered_claim_scope(item, key)
+        scope = item.claim_scope
         if scope is None:
             return None
-        assert not isinstance(item, KeyedInsert)  # an insert claims nothing
         intent = keyed_intent(item.instruction)
         assert intent is not None  # a claimed write is no insert
         claimed = claimed_object(scope)
@@ -752,7 +743,7 @@ class WriteAdmission:
         the survivor keeps the observed write's evidence.
         """
         writes = self._writes
-        scope = buffered_claim_scope(item, key)
+        scope = item.claim_scope
         assert scope is not None  # admission gave every claimed write its scope
         if isinstance(item, TargetWrite):
             if self._conditioned is None:
@@ -809,7 +800,7 @@ class WriteAdmission:
                     writes.append(_with_composed_authority(item, held, item.instruction))
                     self._temporal[key] = len(writes) - 1
                     return
-        writes[index] = compose_temporal_write(held, item, self._key_name(item.instruction.target))
+        writes[index] = compose_temporal_write(held, item, self._key_name(item.target))
 
     def _admits_temporal(self, item: TemporalKeyedWrite, key: ObjectKey) -> bool:
         """Whether ``item``, a write of temporal object ``key`` against its
@@ -1195,15 +1186,18 @@ def _with_composed_authority(
         if isinstance(first, InsertionAuthorizedWrite)
         else first
     )
-    if isinstance(survivor, InsertionAuthorizedWrite):
-        return replace(survivor, instruction=instruction)
     retained = survivor.source_evidence
     for write in (first, second):
-        if write is survivor or isinstance(write, InsertionAuthorizedWrite):
+        if write is survivor:
             continue
         for evidence in write.source_evidence:
             if all(evidence is not held for held in retained):
                 retained = (*retained, evidence)
+    if not retained:
+        return replace(survivor, instruction=instruction)
+    # Only a pair of insertion-authorized writes leaves one of them surviving,
+    # and insertion authority holds no Read Evidence.
+    assert not isinstance(survivor, InsertionAuthorizedWrite)
     return replace(survivor, instruction=instruction, source_evidence=retained)
 
 

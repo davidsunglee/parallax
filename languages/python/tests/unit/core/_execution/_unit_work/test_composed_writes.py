@@ -103,7 +103,7 @@ def _write(
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)), _BALANCE
     )
-    item = admitted_write(prepared, evidence, source=source)
+    item = admitted_write(prepared, evidence, evidence.key.object, source=source)
     assert isinstance(item, StateObservedWrite)
     return item
 
@@ -152,7 +152,7 @@ def test_terminations_through_two_observations_compose_to_destruction_alone() ->
     stale, current = _observation(_JAN, "100.00"), _observation(_MAR, "120.00")
     composed = admitted_writes(_BALANCE, [_write("terminate", stale), _write("terminate", current)])
     (write,) = composed
-    assert isinstance(write, ComposedTemporalWrite) and not write.assigns
+    assert isinstance(write, ComposedTemporalWrite) and write.phase == "delete"
     steps = list(plan_steps(_plan(_write("terminate", stale), _write("terminate", current))))
     assert [type(step) for step in steps] == [PlannedClose, PlannedClose]
 
@@ -233,7 +233,7 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
     unobserved = RetainedObservation(
         VersionedObjectStateKey(position, 1), VersionObservation(observed_version=1), None
     )
-    write = admitted_write(prepared, unobserved)
+    write = admitted_write(prepared, unobserved, position)
     assert isinstance(write, StateObservedWrite)
     with pytest.raises(WritePlanningError, match="requires the Temporal Observation"):
         build_write_planner(model).finalize(
@@ -281,7 +281,7 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
         state = object_state_key_from_observation(
             ObjectKey(position, (("id", 1),)), observed, shape
         )
-        return admitted_write(prepared, RetainedObservation(state, observed, None))
+        return admitted_write(prepared, RetainedObservation(state, observed, None), state.object)
 
     writes = admitted_writes(
         model,
