@@ -39,10 +39,12 @@ from parallax.core.sql_gen._planning import SharedSourceRef
 from parallax.core.sql_gen._seek import lowered_terms
 from parallax.core.wire import WireEncodingError
 from parallax.descriptor import _records
+from tests.unit import _read_projection_support as projection_support
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 from tests.unit._prepared_read_support import result_row
+from tests.unit.core.sql_gen._delivery_support import deliver
 from tests.unit.core.sql_gen._plan_reuse_support import (
     assert_planned_once,
     reaches_compilation_state,
@@ -421,6 +423,155 @@ def test_a_postgres_locking_history_joins_every_temporal_identity_column() -> No
         2,
         2,
     )
+
+
+_MATRIX_ROOT = projection_support.matrix_entity("tph", "columns", "Root")
+_MATRIX_HOLDER = "read.projection.matrix.tph.columns.Root.holderId"
+# Spelled by the wrapper's own select list; each arm's capture cells repeat the
+# ordering members, which the structural fake reads through the first arm.
+_NULL_TAIL_ROWS: tuple[dict[str, object], ...] = (
+    {
+        "id": 2,
+        "kind": "plain",
+        "holder_id": 12,
+        "digest_hex": None,
+        "note": "memo",
+        "tags": ["a"],
+        "origin": {"city": "Bern"},
+    },
+    {"id": 3, "kind": "right", "digest_hex": "ff", "right_home": {"city": "Oslo"}},
+    {"id": 7, "kind": "ghost", "digest_hex": "00"},
+)
+
+
+def _null_tail_delivery(instance: bool) -> list[tuple[object, ...]]:
+    """(Entity, variant, members, issues, published items) for every row."""
+    unread = (("home", None), ("right_home", None)) if instance else ()
+    return [
+        (
+            "Plain",
+            "Plain",
+            {
+                "id": 2,
+                "holderId": 12,
+                "digest": None,
+                "note": "memo",
+                "tags": ("a",),
+                **({"origin": {"city": "Bern"}} if instance else {}),
+            },
+            (),
+            (
+                ("id", 2),
+                ("holder_id", 12),
+                ("note", "memo"),
+                ("tags", ("a",)),
+                *((("origin", {"city": "Bern"}),) if instance else ()),
+                ("digest_hex", None),
+                *unread,
+                ("familyVariant", "Plain"),
+            ),
+        ),
+        (
+            "Right",
+            "Right",
+            {
+                "id": 3,
+                "holderId": None,
+                "digest": b"\xff",
+                **({"origin": None, "home": {"city": "Oslo"}} if instance else {}),
+            },
+            (),
+            (
+                ("id", 3),
+                ("holder_id", None),
+                *((("origin", None), ("right_home", {"city": "Oslo"})) if instance else ()),
+                ("digest_hex", "ff"),
+                ("note", None),
+                ("tags", None),
+                *((("home", None),) if instance else ()),
+                ("familyVariant", "Right"),
+            ),
+        ),
+        (
+            # An unclaimed tag resolves to the family root, which reads its
+            # encoded Column by storage spelling and so carries none.
+            "Root",
+            None,
+            {"id": 7, "holderId": None, **({"origin": None} if instance else {})},
+            (("stored-data-family-tag-unknown", "ghost"),),
+            (
+                ("id", 7),
+                ("holder_id", None),
+                *((("origin", None),) if instance else ()),
+                ("digest_hex", None),
+                ("note", None),
+                ("tags", None),
+                *unread,
+            ),
+        ),
+    ]
+
+
+@pytest.mark.parametrize("instance", [False, True], ids=["row", "instance"])
+@pytest.mark.parametrize("lock", [None, "locking"])
+def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock(
+    lock: LockMode | None, instance: bool
+) -> None:
+    # The NULL-tail wrapper reselects each arm's cells through `u`, re-expanding
+    # document pairs at the ordinary arm's ordinals; the PostgreSQL locking form
+    # adds only a join back to the base row. Either way the rows deliver their
+    # encoded Bytes cell, own-Column collection and occurrences, an unclaimed
+    # tag, and no capture cell.
+    plan = continuation.plan(
+        validate_object_query(
+            _MATRIX_ROOT,
+            object_query(
+                _MATRIX_ROOT.identity, TrueNode(), order_by=(OrderKey(attr=_MATRIX_HOLDER),)
+            ),
+            projection_support.MATRIX_META,
+        ),
+        projection_support.MATRIX_META,
+    )
+    compiled = compile_entity_query(
+        deep_fetch.plan(
+            plan.after(ContinuationCoordinate((10, 1)), limit=3),
+            projection_support.MATRIX_META,
+            projection=deep_fetch.ReadProjectionRequest("all" if instance else "none", False),
+        ).root,
+        projection_support.MATRIX_META,
+        POSTGRES,
+        lock=lock,
+        result_form="instance" if instance else "row",
+    )
+    occurrences = (
+        ", not u.origin is null, u.origin, not u.home is null, u.home, "
+        "not u.right_home is null, u.right_home"
+        if instance
+        else ""
+    )
+    assert compiled.statement.sql.startswith(
+        "select u.id, u.kind, u.holder_id, u.digest_hex, u.note, not u.tags is null, u.tags"
+        f"{occurrences}, u.parallax_seek_0, u.parallax_seek_1 from ((select "
+    )
+    assert compiled.statement.sql.endswith(
+        (") u join mx_tph_columns t0 on u.id = t0.id" if lock else ") u")
+        + " order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?"
+        + (" for share of t0" if lock else "")
+    )
+    assert compiled.statement.binds == ("hex", 10, 10, 10, 1, 3, "hex", 3, 3)
+    assert compiled.document_reads == (
+        ((5, 6), (7, 8), (9, 10), (11, 12)) if instance else ((5, 6),)
+    )
+
+    rows = [
+        {key: value for key, value in row.items() if f"u.{key}" in compiled.statement.sql}
+        for row in _NULL_TAIL_ROWS
+    ]
+    delivered = deliver(projection_support.MATRIX_META, compiled, rows)
+
+    assert [
+        (row.entity, row.variant, row.members, row.issues, row.published) for row in delivered
+    ] == _null_tail_delivery(instance)
 
 
 def test_a_nullable_direct_leading_term_uses_the_same_seekable_two_arm_shape() -> None:
