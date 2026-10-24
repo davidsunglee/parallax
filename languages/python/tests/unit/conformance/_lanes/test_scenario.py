@@ -2579,6 +2579,45 @@ def test_run_conflict_case_single_attempt() -> None:
     assert table_state is not None and "account" in table_state
 
 
+def test_conflict_submissions_never_prepare_or_simulate_a_peer_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("conflict submission entered compile machinery")
+
+    monkeypatch.setattr(SimulatedTemporalStore, "__init__", refuse)
+    monkeypatch.setattr(_case_ingress, "prepare_case_write", refuse)
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    emissions, affected, _table_state, database_calls = scenario.run_conflict_case(
+        _load_case("m-opt-lock-006"), port
+    )
+    assert affected == 1 and database_calls == 2
+    assert len(port.reads) == 2 and len(port.writes) == 1
+    assert emissions[0].sql == (
+        "update account set balance = ?, version = ? where id = ? and version = ?"
+    )
+
+
+def test_a_conflict_attempt_counts_duplicate_addressed_keys_once() -> None:
+    case = _synthetic_write(
+        "conflict",
+        {
+            "when": {
+                "uow": {"concurrency": "optimistic", "maxRetries": 0},
+                "write": [
+                    {"id": 2, "owner": "Ada", "observedVersion": 1},
+                    {"id": 2, "balance": "500.00", "observedVersion": 1},
+                ],
+            }
+        },
+    )
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    emissions, affected, _table_state, database_calls = scenario.run_conflict_case(case, port)
+    assert affected == 1 and database_calls == 2
+    assert len(emissions) == len(port.reads) == len(port.writes) == 1
+    assert port.writes[0][1] == ["Ada", decimal.Decimal("500.00"), 2, 2, 1]
+
+
 def test_run_conflict_case_reads_its_source_before_applying_given_apply() -> None:
     # The concurrent writer commits BETWEEN the source read and the write it
     # invalidates: a read taken after it would observe the state it left, and
@@ -2620,7 +2659,7 @@ def test_a_conflict_attempt_whose_source_read_finds_no_row_is_refused() -> None:
     # write, so a case authoring that state is unauthorable through the public
     # verbs rather than merely unpleasant.
     port = FakeWritePort(find_rows=[])
-    with pytest.raises(EngineError, match="found no row for"):
+    with pytest.raises(EngineError, match="which no read of its own choreography unit published"):
         scenario.run_conflict_case(_load_case("m-opt-lock-006"), port)
 
 
@@ -2629,8 +2668,9 @@ def test_a_conflict_attempt_declaring_a_version_its_read_did_not_observe_is_refu
     # real write settles against what the read saw, so the two must name one
     # state or the case grades a statement no read of this lane produced.
     port = FakeWritePort(find_rows=[{**_ACCOUNT_ROW_2, "version": 7}])
-    with pytest.raises(EngineError, match="its own source read observed 7"):
-        scenario.run_conflict_case(_load_case("m-opt-lock-006"), port)
+    with pytest.raises(EngineError, match="its resolved source observed 7"):
+        scenario.run_conflict_case(_load_case("m-opt-lock-005"), port)
+    assert len(port.reads) == 1 and port.writes == []
 
 
 def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> None:
@@ -2872,9 +2912,9 @@ def test_a_conflict_case_whose_bound_admits_fewer_attempts_than_it_authors_is_re
 
 
 def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
-    case = _synthetic_write("conflict", {"when": {"write": {"id": 1, "bogus": True}}})
+    case = _synthetic_write("conflict", {"when": {"write": {"id": 2, "bogus": True}}})
     with pytest.raises(EngineError, match="undeclared member"):
-        scenario.run_conflict_case(case, FakeWritePort())
+        scenario.run_conflict_case(case, FakeWritePort(find_rows=[_ACCOUNT_ROW_2]))
 
 
 def test_a_projected_row_rejects_an_ambiguous_member() -> None:
