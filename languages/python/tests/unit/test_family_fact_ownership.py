@@ -454,7 +454,7 @@ def _record(published: object) -> NonConformingRoot | InvalidData[object]:
 def test_materializing_an_inherited_versioned_page_reads_the_version_from_its_owner(
     monkeypatch: pytest.MonkeyPatch, publication: str
 ) -> None:
-    row = {"id": 1, "name": "Chill", "version": 3, "litres": 40}
+    row = {"id": 1, "name": "Chill", "version": 3, "litres": 40, "serial_hex": None}
     prepared = _PreparedPage(
         _APPLIANCE, "OwnedFridge", row, {**row, "id": 2, "serial_hex": "not-hex"}, history=False
     )

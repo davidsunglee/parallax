@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Mapping
 
 import pytest
 
@@ -25,6 +26,12 @@ from parallax.snapshot import SnapshotConsistencyError
 from parallax.snapshot._publication._root import RootView
 from tests._support.tpcs_inverse_models import INVERSE_MODEL, LINK_ROW, PARENT_ROWS
 from tests.unit.snapshot._snapshot_page_support import PageFixture
+
+
+def _concrete(row: Mapping[str, object]) -> dict[str, object]:
+    """``row``, a union row naming its concrete, as that concrete's own read
+    selects it."""
+    return {key: value for key, value in row.items() if key != "family_variant"}
 
 
 def _forward_plan(target: str, relationship: str) -> deep_fetch.ObjectQueryPlan:
@@ -59,7 +66,7 @@ def test_forward_fanback_preserves_same_logical_concrete_witnesses(
     fixture = PageFixture(INVERSE_MODEL, relationship)
     root = fixture.node(target, LINK_ROW if to_one else {"id": 10})
     rows = list(reversed(PARENT_ROWS)) if reverse else PARENT_ROWS
-    children = tuple(fixture.node(str(row["family_variant"]), row) for row in rows)
+    children = tuple(fixture.node(str(row["family_variant"]), _concrete(row)) for row in rows)
     attach_children(fixture.builder, meta, plan.includes, step, (root,), children)
     with pytest.raises(SnapshotConsistencyError) as conflict:
         RootView(fixture.page(root))
@@ -80,8 +87,8 @@ def test_deferred_inverse_reuses_the_canonical_grouped_claim_and_overwritten_vie
         references={"InverseLink.parent": ("InverseAlpha",)},
     )
     owner = fixture.node("InverseOwner", {"id": 10})
-    first = fixture.node("InverseAlpha", PARENT_ROWS[0])
-    duplicate = fixture.node("InverseAlpha", PARENT_ROWS[0])
+    first = fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0]))
+    duplicate = fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0]))
     link = fixture.node("InverseLink", LINK_ROW)
     fixture.attach(owner, "InverseOwner.parents", (first,))
     fixture.attach(owner, "InverseOwner.parents", (duplicate,))
@@ -96,8 +103,8 @@ def test_deferred_inverse_reuses_the_canonical_grouped_claim_and_overwritten_vie
 
 def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime() -> None:
     fixture = PageFixture(INVERSE_MODEL, "InverseParent.links", references=_BOTH_PARENTS)
-    alpha = fixture.node("InverseAlpha", PARENT_ROWS[0])
-    beta = fixture.node("InverseBeta", PARENT_ROWS[1])
+    alpha = fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0]))
+    beta = fixture.node("InverseBeta", _concrete(PARENT_ROWS[1]))
     link = fixture.node("InverseLink", LINK_ROW)
     fixture.attach(alpha, "InverseParent.links", (link,))
     fixture.attach(beta, "InverseParent.links", (link,))
@@ -124,8 +131,8 @@ def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime()
 
 def test_a_later_root_resolves_an_inverse_to_a_released_claim_to_null() -> None:
     fixture = PageFixture(INVERSE_MODEL, "InverseParent.links", references=_BOTH_PARENTS)
-    other = fixture.node("InverseBeta", {**PARENT_ROWS[1], "id": 2})
-    released = fixture.node("InverseAlpha", PARENT_ROWS[0])
+    other = fixture.node("InverseBeta", {**_concrete(PARENT_ROWS[1]), "id": 2})
+    released = fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0]))
     link = fixture.node("InverseLink", LINK_ROW)
     fixture.attach(released, "InverseParent.links", (link,))
     fixture.attach(other, "InverseParent.links", (link,))
@@ -146,9 +153,9 @@ def test_a_later_root_resolves_an_inverse_to_a_released_claim_to_null() -> None:
 
 def test_an_inverse_to_a_grouped_claim_this_root_never_reached_is_null() -> None:
     fixture = PageFixture(INVERSE_MODEL, "InverseParent.links", references=_BOTH_PARENTS)
-    other = fixture.node("InverseBeta", {**PARENT_ROWS[1], "id": 2})
+    other = fixture.node("InverseBeta", {**_concrete(PARENT_ROWS[1]), "id": 2})
     for row in PARENT_ROWS:
-        fixture.node(str(row["family_variant"]), row)
+        fixture.node(str(row["family_variant"]), _concrete(row))
     link = fixture.node("InverseLink", LINK_ROW)
     fixture.attach(other, "InverseParent.links", (link,))
     fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
@@ -164,8 +171,8 @@ def test_every_root_of_a_multi_root_view_resolves_its_edges_and_inverse_to_its_o
         references={"InverseLink.parent": ("InverseAlpha",)},
     )
     parents = (
-        fixture.node("InverseAlpha", PARENT_ROWS[0]),
-        fixture.node("InverseAlpha", PARENT_ROWS[0]),
+        fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0])),
+        fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0])),
     )
     link = fixture.node("InverseLink", LINK_ROW)
     for parent in parents:
@@ -185,8 +192,8 @@ def test_an_inverse_resolves_only_to_a_reached_node_its_targets_admit() -> None:
     fixture = PageFixture(
         INVERSE_MODEL, "InverseParent.links", references={"InverseLink.parent": ("InverseBeta",)}
     )
-    alpha = fixture.node("InverseAlpha", PARENT_ROWS[0])
-    beta = fixture.node("InverseBeta", PARENT_ROWS[1])
+    alpha = fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0]))
+    beta = fixture.node("InverseBeta", _concrete(PARENT_ROWS[1]))
     link = fixture.node("InverseLink", LINK_ROW)
     fixture.attach(alpha, "InverseParent.links", (link,))
     fixture.attach(beta, "InverseParent.links", (link,))
@@ -217,7 +224,7 @@ def test_an_inverse_naming_no_claim_on_the_page_is_refused() -> None:
 
 def test_an_inverse_is_refused_on_a_slot_holding_projections() -> None:
     fixture = PageFixture(INVERSE_MODEL, "InverseLink.parent")
-    fixture.node("InverseAlpha", PARENT_ROWS[0])
+    fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0]))
     link = fixture.node("InverseLink", LINK_ROW)
     with pytest.raises(ValueError, match="holds projections"):
         fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
@@ -226,8 +233,8 @@ def test_an_inverse_is_refused_on_a_slot_holding_projections() -> None:
 def test_to_one_selection_among_distinct_logical_targets_remains_unchanged() -> None:
     fixture = PageFixture(INVERSE_MODEL, "InverseLink.parent")
     link = fixture.node("InverseLink", LINK_ROW)
-    first = fixture.node("InverseAlpha", PARENT_ROWS[0])
-    other = fixture.node("InverseBeta", {**PARENT_ROWS[1], "id": 2})
+    first = fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0]))
+    other = fixture.node("InverseBeta", {**_concrete(PARENT_ROWS[1]), "id": 2})
     fixture.builder.write_to_one(link, fixture.view_key("InverseLink.parent"), (first, other))
     root = RootView(fixture.page(link))
     assert [entity.name for entity in root.order] == ["InverseLink", "InverseAlpha"]

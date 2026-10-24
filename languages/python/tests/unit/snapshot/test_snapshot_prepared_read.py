@@ -20,9 +20,9 @@ leave it in. And the observation reads one row's physical columns under the same
 level, including the occurrences only the position's OTHER concretes ever store
 at.
 
-Each stored row is spelled by result key and converted positionally through the
-read carrying exactly the cells it names, so a row that omits a cell grades a
-read that projected none for it.
+Each stored row is spelled by the names its statement selects and converted
+positionally through that read. A read whose contract carries no source for a
+member is stated as one, while its rows still select that member's cell.
 
 Where a guarantee is about when or how often a stored value is judged rather
 than about what was published, the case records conversion's own decoding and
@@ -34,11 +34,11 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import gc
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
 from types import MappingProxyType
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 import pytest
 
@@ -57,7 +57,7 @@ from parallax.core import predicate as oa
 from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.deep_fetch import RelationshipViewKey
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, scalar_result
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -105,6 +105,7 @@ from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.descriptor._records import ValueObject as DescriptorValueObject
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publication_issue, publish_roots
+from tests._support.document_reads import folded_names
 from tests._support.sql import compile_read
 from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit import _read_projection_support as projection_support
@@ -116,7 +117,9 @@ from tests.unit._prepared_read_support import (
     bound_read,
     compiled_read,
     convert_cells,
+    projected_read,
     result_row,
+    uncarried,
 )
 from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
@@ -342,11 +345,25 @@ def test_a_narrowed_read_converts_rows_of_every_entity_it_can_resolve() -> None:
     prepared = partial(bound_cells, CatalogedModel(ANIMAL), compiled)
     rex = _converted(
         prepared,
-        {"id": 1, "kind": "dog", "name": "Rex", "owner_id": 10, "bark_volume": 3},
+        {
+            "id": 1,
+            "kind": "dog",
+            "name": "Rex",
+            "owner_id": 10,
+            "license_id": None,
+            "bark_volume": 3,
+        },
     )
     boar = _converted(
         prepared,
-        {"id": 2, "kind": "boar", "name": "Bo", "owner_id": 10, "tusk_length": None},
+        {
+            "id": 2,
+            "kind": "boar",
+            "name": "Bo",
+            "owner_id": 10,
+            "license_id": None,
+            "bark_volume": None,
+        },
     )
     assert {identity.name for identity in compiled.result_contract.resolvable} >= {
         "Dog",
@@ -360,9 +377,10 @@ def test_a_sibling_outside_the_narrowed_position_converts_under_its_own_concrete
     # and still projects the family's whole tag column, so the shared table can
     # hand back a row of a concrete the narrow excluded. That row converts under
     # `WildBoar`'s own member layout — bound with the read, before any row proved
-    # the Entity was reachable — and each of its Attributes reads under its own
-    # storage spelling, since the statement projected no contract for an Entity
-    # outside its position.
+    # the Entity was reachable — and reads exactly the cells that carry its own
+    # members. The narrow selects no Column for `tuskLength`, so the row
+    # carries no value for it, and the position's `Pet` and `Dog` cells are
+    # never this row's members.
     prepared = _prepared(ANIMAL, "Animal", narrow_to=("Dog",))
     boar = _converted(
         prepared,
@@ -371,11 +389,12 @@ def test_a_sibling_outside_the_narrowed_position_converts_under_its_own_concrete
             "kind": "boar",
             "name": "Bo",
             "owner_id": 10,
-            "tusk_length": decimal.Decimal("3.00"),
+            "license_id": "L-1",
+            "bark_volume": 3,
         },
     )
     assert boar.concrete.name == "WildBoar"
-    assert boar.members["tuskLength"] == decimal.Decimal("3.00")
+    assert boar.members == {"id": 2, "name": "Bo", "ownerId": 10}
     assert boar.issues == ()
 
 
@@ -428,7 +447,7 @@ def test_a_missing_shared_document_occurrence_is_classified_as_sql_null() -> Non
 def test_a_direct_document_occurrence_is_classified_under_the_concrete_its_row_names() -> None:
     node = _converted(
         _prepared(CRAFT, "Craft"),
-        {"id": 1, "kind": "tug", "berth": _stored_document({"quay": "7"})},
+        {"id": 1, "kind": "tug", "berth": _stored_document({"quay": "7"}), "decks": None},
     )
 
     assert node.concrete == target(CRAFT, "Tug").identity
@@ -529,8 +548,8 @@ def test_identity_routing_skips_an_absent_non_identity_cell() -> None:
     builder = PageBuilder(ViewSchema.of())
     index = convert_cells(
         CatalogedModel(ENCODED_IDENTITY),
-        compiled_read(ENCODED_IDENTITY, "EncodedIdentity"),
-        {"id": KEY},
+        uncarried(compiled_read(ENCODED_IDENTITY, "EncodedIdentity"), "token"),
+        {"id": KEY, "token_hex": "0e", "address": None},
         builder,
         source=ROOT_LEVEL,
         correlation_members=(token,),
@@ -549,7 +568,7 @@ def test_identity_routing_keeps_native_non_identity_cells_unchanged() -> None:
     index = convert_cells(
         CatalogedModel(SCALARS),
         compiled_read(SCALARS, "ScalarThing"),
-        {"id": 1, "payload_hex": "0a1b", "f32": 1.5},
+        {**_SCALAR_THING, "payload_hex": "0a1b", "f32": 1.5},
         builder,
         source=ROOT_LEVEL,
         correlation_members=(payload, f32),
@@ -562,7 +581,8 @@ def test_identity_routing_keeps_native_non_identity_cells_unchanged() -> None:
 def test_sql_null_in_a_nullable_encoded_column_bypasses_wire_decoding() -> None:
     with recorded_conversion_dependencies() as calls:
         node = _converted(
-            _prepared(ENCODED_IDENTITY, "EncodedIdentity"), {"id": KEY, "token_hex": None}
+            _prepared(ENCODED_IDENTITY, "EncodedIdentity"),
+            {"id": KEY, "token_hex": None, "address": None},
         )
 
     assert node.members == {"id": KEY, "token": None, "address": None}
@@ -575,28 +595,31 @@ def test_sql_null_in_a_nullable_encoded_column_bypasses_wire_decoding() -> None:
 # The observation, taken under the same level the conversion read.             #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    "stored",
+    ("value_objects", "stored"),
     [
-        pytest.param({}, id="the-column-is-not-in-the-row"),
-        pytest.param({"decks": None}, id="the-column-is-null-padding"),
-        pytest.param({"decks": SQL_NULL}, id="the-column-is-a-sql-null-document"),
+        pytest.param(frozenset({"berth"}), {}, id="the-column-is-not-selected"),
+        pytest.param("all", {"decks": None}, id="the-column-is-null-padding"),
+        pytest.param("all", {"decks": SQL_NULL}, id="the-column-is-a-sql-null-document"),
     ],
 )
 def test_a_sibling_occurrence_does_not_enter_the_concrete_entity_state(
-    stored: dict[str, object],
+    value_objects: frozenset[str] | Literal["all"], stored: dict[str, object]
 ) -> None:
     # A polymorphic statement may carry every concrete's occurrence column, but
     # the Page-owned Entity State is laid out by the row's resolved concrete.
-    # Sibling-only storage therefore contributes no member, whether the driver
-    # omitted it, null-padded it, or returned a SQL-null document marker.
-    prepared = _prepared(CRAFT, "Craft")
+    # Sibling-only storage therefore contributes no member, whether the
+    # statement selected no such column, or the driver null-padded it, or
+    # returned a SQL-null document marker.
     tug = _observed(
-        prepared,
+        partial(bound_cells, CatalogedModel(CRAFT), projected_read(CRAFT, "Craft", value_objects)),
         {"id": 1, "kind": "tug", "berth": _stored_document({"quay": "7"}), **stored},
     )
     assert tug["berth"] == {"quay": "7"}
     assert "decks" not in tug
-    barge = _observed(prepared, {"id": 2, "kind": "barge", "decks": _stored_decks()})
+    barge = _observed(
+        _prepared(CRAFT, "Craft"),
+        {"id": 2, "kind": "barge", "berth": None, "decks": _stored_decks()},
+    )
     decks = cast("tuple[Mapping[str, object], ...]", barge["decks"])
     assert tuple(map(dict, decks)) == ({"label": _ONE_DECK},)
     assert "berth" not in barge
@@ -608,7 +631,7 @@ def test_a_sibling_document_does_not_enter_the_concrete_entity_state() -> None:
     # member that concrete does not own.
     observed = _observed(
         _prepared(CRAFT, "Craft"),
-        {"id": 1, "kind": "tug", "decks": _stored_decks()},
+        {"id": 1, "kind": "tug", "berth": None, "decks": _stored_decks()},
     )
     assert "decks" not in observed
 
@@ -716,7 +739,14 @@ def _narrowed_matrix_row(layout: projection_support.Layout, concrete: str) -> di
     # row leaves null.
     spot = PresentDocument({"city": "Rome"})
     home = spot if concrete == "Left" else SQL_NULL
-    return {"id": 1, "kind": concrete.lower(), "holder_id": None, "origin": spot, "home": home}
+    return {
+        "id": 1,
+        "kind": concrete.lower(),
+        "holder_id": None,
+        "digest_hex": None,
+        "origin": spot,
+        "home": home,
+    }
 
 
 @pytest.mark.parametrize("layout", projection_support.LAYOUTS)
@@ -801,7 +831,7 @@ _SCALAR_THING: Final[Mapping[str, object]] = {
 }
 
 
-_POSITION_CONTRACT: Final = compiled_read(POSITION, "Position").result_contract
+_POSITION_READ: Final = compiled_read(POSITION, "Position")
 
 
 def _position(**cells: object) -> dict[str, object]:
@@ -829,8 +859,12 @@ class _Delivered:
     flat: Mapping[str, object]
 
 
-def _delivered(model: Metamodel, entity: str, cells: Mapping[str, object]) -> _Delivered:
-    prepared, row = bound_cells(CatalogedModel(model), compiled_read(model, entity), cells)
+def _delivered(
+    model: Metamodel, entity: str, cells: Mapping[str, object], *, uncarrying: tuple[str, ...] = ()
+) -> _Delivered:
+    prepared, row = bound_cells(
+        CatalogedModel(model), uncarried(compiled_read(model, entity), *uncarrying), cells
+    )
     builder = PageBuilder(ViewSchema.of())
     index, resolved, _document, variant = prepared.convert_row(row, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
@@ -984,20 +1018,36 @@ def test_a_member_stored_at_another_members_result_key_reads_its_own_cell() -> N
 
 
 def test_a_read_without_a_members_cell_carries_no_value_for_it() -> None:
-    # A read that projected no cell for a member: an omitted Attribute holds no
-    # value rather than a null, while an omitted occurrence reads as one stored
-    # without a document: no value for a One and nothing for a Many.
-    delivered = _delivered(TWIN_COLUMNS, "Person", {"id": 1, "display_name": "Ada"})
+    # A read that carries no source for a member: such an Attribute holds no
+    # value rather than a null, while such a requested occurrence reads as one
+    # stored without a document: no value for a One and nothing for a Many.
+    delivered = _delivered(
+        TWIN_COLUMNS,
+        "Person",
+        {
+            "id": 1,
+            "display_name": "Ada",
+            "score": 9,
+            "joined_on": dt.date(2024, 1, 1),
+            "address": {"city": "Oslo"},
+            "tags": ["a"],
+        },
+        uncarrying=("score", "joined_on", "address", "tags"),
+    )
     assert delivered.members == {"id": 1, "displayName": "Ada", "address": None, "tags": ()}
     assert delivered.issues == ()
 
 
 def test_a_row_without_its_key_column_still_publishes_what_it_carried() -> None:
-    # Omitting the key leaves the row no logical node to share, yet a level that
-    # keeps its witness as its member row still judges and publishes the rest.
-    prepared = _prepared(ORDERS, "Order")
-    keyed = _converted(prepared, _ORDER)
-    unkeyed = _converted(prepared, {key: value for key, value in _ORDER.items() if key != "id"})
+    # A read carrying no key leaves the row no logical node to share, yet a level
+    # that keeps its witness as its member row still judges and publishes the rest.
+    keyed = _converted(_prepared(ORDERS, "Order"), _ORDER)
+    unkeyed = _converted(
+        partial(
+            bound_cells, CatalogedModel(ORDERS), uncarried(compiled_read(ORDERS, "Order"), "id")
+        ),
+        _ORDER,
+    )
     assert unkeyed.members == {name: value for name, value in keyed.members.items() if name != "id"}
     assert unkeyed.issues == ()
 
@@ -1058,7 +1108,7 @@ def test_a_rejected_temporal_end_is_diagnosed_once_its_state_is_judged(
 ) -> None:
     builder = PageBuilder(ViewSchema.of())
     index, *_ = bound_read(POSITION, "Position").convert_row(
-        result_row(_POSITION_CONTRACT, _position(**{column: stored})), builder, source=ROOT_LEVEL
+        result_row(_POSITION_READ, _position(**{column: stored})), builder, source=ROOT_LEVEL
     )
     page = builder.finish((index,), Pin())
     assert page_rows(page).keys[index] == (
@@ -1078,7 +1128,7 @@ def test_rows_share_a_logical_node_only_where_key_and_axis_starts_agree() -> Non
     prepared = bound_read(POSITION, "Position")
     builder = PageBuilder(ViewSchema.of())
     refs = tuple(
-        prepared.convert_row(result_row(_POSITION_CONTRACT, cells), builder, source=ROOT_LEVEL)[0]
+        prepared.convert_row(result_row(_POSITION_READ, cells), builder, source=ROOT_LEVEL)[0]
         for cells in (
             _position(),
             _position(),
@@ -1124,7 +1174,7 @@ def _milestone(entity: str, **bounds: object) -> dict[str, object]:
 def _milestone_page(entity: str, row: Mapping[str, object]) -> tuple[Page, int, Bitemporal]:
     builder = PageBuilder(ViewSchema.of())
     index, *_ = bound_read(_MILESTONES, entity).convert_row(
-        result_row(compiled_read(_MILESTONES, entity).result_contract, row),
+        result_row(compiled_read(_MILESTONES, entity), row),
         builder,
         source=ROOT_LEVEL,
     )
@@ -1238,12 +1288,15 @@ _CUSTODIAN = AttributeIdentity(_HOLDING, "custodianId")
 _TERMS_LABEL = ValueObjectAttributeIdentity(ValueObjectIdentity(_HOLDING, ("terms",)), "label")
 
 
-def _held(builder: PageBuilder, row: Mapping[str, object]) -> int:
+def _held(
+    builder: PageBuilder, row: Mapping[str, object], *, uncarrying: tuple[str, ...] = ()
+) -> int:
     """``row`` converted into ``builder`` at the holding level, bound with its
-    correlations named in reverse attribute order, as a plan may select them."""
+    correlations named in reverse attribute order, as a plan may select them,
+    through a read carrying no source for ``uncarrying``."""
     return convert_cells(
         CatalogedModel(HOLDINGS),
-        compiled_read(HOLDINGS, "CorrelatedHolding"),
+        uncarried(compiled_read(HOLDINGS, "CorrelatedHolding"), *uncarrying),
         row,
         builder,
         source=ROOT_LEVEL,
@@ -1301,11 +1354,13 @@ def test_native_correlations_are_reused_without_scalar_admission() -> None:
 def test_native_correlation_presence_is_retained_through_payload_consumption(
     stored: object, routed: object
 ) -> None:
-    row = _holding(holder_id=stored)
-    if stored is ABSENT:
-        del row["holder_id"]
+    absent = stored is ABSENT
     builder = PageBuilder(ViewSchema.of())
-    index = _held(builder, row)
+    index = _held(
+        builder,
+        _holding(holder_id=None if absent else stored),
+        uncarrying=("holder_id",) if absent else (),
+    )
     assert builder.member_value(index, _HOLDER) is routed or (
         builder.member_value(index, _HOLDER) == routed
     )
@@ -1369,21 +1424,17 @@ def test_a_rejected_payload_freezes_its_evidence_when_it_is_judged() -> None:
 def test_a_keyless_holding_keeps_its_payload_finding_for_every_holder_reaching_it(
     holders: tuple[int, ...], atomic: bool
 ) -> None:
-    # A holding read without its key claims no logical node, so every holder
+    # A holding read carrying no key claims no logical node, so every holder
     # reaching it judges its payload again, after the first holder's release.
     holdings = RelationshipViewKey(
         RelationshipIdentity(EntityIdentity(_NAMESPACE, "CorrelatedHolder"), "holdings")
     )
     builder = PageBuilder(ViewSchema.of(holdings))
-    keyless = _holding(digest_hex="zz")
-    del keyless["id"]
-    holding = _held(builder, keyless)
+    holding = _held(builder, _holding(digest_hex="zz"), uncarrying=("id",))
     holder_read = bound_read(HOLDINGS, "CorrelatedHolder")
-    holder_contract = compiled_read(HOLDINGS, "CorrelatedHolder").result_contract
+    holder = compiled_read(HOLDINGS, "CorrelatedHolder")
     roots = tuple(
-        holder_read.convert_row(
-            result_row(holder_contract, {"id": key}), builder, source=ROOT_LEVEL
-        )[0]
+        holder_read.convert_row(result_row(holder, {"id": key}), builder, source=ROOT_LEVEL)[0]
         for key in holders
     )
     for root in roots:
@@ -1465,25 +1516,29 @@ def _workload(
 
 
 def _host_checked_payload_cells(layout: Layout, owners: int) -> int:
-    """Non-identity Attribute cells whose storage contract needs a host check."""
+    """Non-identity Attribute cells whose storage contract needs a host check:
+    each distinct row's encoded Columns and temporal ends."""
     model, reads, rows = _workload(layout, owners)
     total = 0
     seen: set[object] = set()
     for compiled, level_rows in zip(reads, rows, strict=True):
         if compiled is None:
             continue
+        names = folded_names(compiled.statement.sql, compiled.document_reads)
         for driver in level_rows:
             resolved, _variant, _unknown, _document = row_identity(compiled.result_contract, driver)
             entity_layout = model.layouts.entity(resolved)
             identity_positions = frozenset(
                 (*entity_layout.primary_key, *entity_layout.temporal_starts)
             )
-            contracts = dict(compiled.result_contract.attribute_reads).get(resolved, ())
-            keys: Sequence[str] = [contract.result_key for contract in contracts]
+            cells = [
+                scalar_result(attribute.storage.name, attribute.type)
+                for attribute in entity_layout.attributes
+            ]
             occurrence: object = (
                 resolved,
                 tuple(
-                    driver[compiled.result_contract.result_keys.index(keys[position])]
+                    driver[names.index(cells[position].publication_key)]
                     for position in identity_positions
                 ),
             )
@@ -1494,9 +1549,14 @@ def _host_checked_payload_cells(layout: Layout, owners: int) -> int:
             seen.add(occurrence)
             total += sum(
                 1
-                for position, contract in enumerate(contracts)
+                for position, (attribute, cell) in enumerate(
+                    zip(entity_layout.attributes, cells, strict=True)
+                )
                 if position not in identity_positions
-                and (contract.encoded or contract.temporal_end)
+                and (
+                    (cell.encoded and cell.publication_key in names)
+                    or attribute.identity in entity_layout.temporal_ends
+                )
             )
     return total
 

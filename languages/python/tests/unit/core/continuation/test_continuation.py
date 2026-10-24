@@ -495,7 +495,7 @@ def test_a_page_captures_one_hidden_cell_per_continuation_order_term() -> None:
     compiled = compile_entity_query(
         deep_fetch.plan(plan.first(limit=2), ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
     )
-    assert compiled.result_contract.coordinate_reads == ("parallax_seek_0", "parallax_seek_1")
+    assert compiled.result_contract.coordinate_ordinals == (7, 8)
     assert compiled.statement.sql.startswith(
         "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
         "t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0"
@@ -517,7 +517,7 @@ def test_an_eager_read_of_the_same_query_captures_nothing() -> None:
         ORDERS,
         POSTGRES,
     )
-    assert compiled.result_contract.coordinate_reads == ()
+    assert compiled.result_contract.coordinate_ordinals == ()
     assert "parallax_seek" not in compiled.statement.sql
 
 

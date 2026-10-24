@@ -1,13 +1,15 @@
 """Row decoding over compiled result contracts.
 
-Compilation supplies each contract and every row is laid out positionally in its
-result order; what is graded is how the decoder reads, classifies, and refuses a
-row against it.
+Compilation supplies each contract and every row is laid out positionally as
+its statement selects it; what is graded is how binding prepares a row's
+member sources and how the decoder classifies and refuses a row against them.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 
@@ -15,19 +17,18 @@ from parallax.core import predicate as oa
 from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
+from parallax.core.document_codec import locate_raw_entity_member
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import ValueObjectIdentity
+from parallax.core.metamodel import AttributeMetadata, Metamodel, ValueObjectIdentity
 from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema
-from parallax.core.read_delivery._row_decoding import (
-    member_classifier,
-    raw_member,
-    row_identity,
-)
+from parallax.core.read_delivery._row_converter import bind
+from parallax.core.read_delivery._row_decoding import member_classifiers, row_identity
 from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen._compile import CompiledRead
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, model, target
 from tests.unit._document_layout_support import columns_model, document_model, entity
-from tests.unit._prepared_read_support import bound_cells, result_row
+from tests.unit._prepared_read_support import bound_cells
 
 ORDERS = model("orders")
 DOCUMENT = document_model()
@@ -57,48 +58,82 @@ _COLUMNS_CELLS = {
 }
 
 
-def test_a_positional_row_is_refused_at_the_wrong_arity_and_an_unknown_member() -> None:
+def test_a_positional_row_is_refused_at_the_wrong_arity() -> None:
     compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
     with pytest.raises(ValueError, match="does not match row arity"):
         row_identity(compiled.result_contract, ())
-    with pytest.raises(KeyError, match="missing"):
-        raw_member(compiled.result_contract, (), compiled.target, "missing")
 
 
-def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() -> None:
-    person = entity(DOCUMENT, "Person").identity
-    marker = entity(DOCUMENT, "Marker").identity
+def _classifiers(
+    meta: Metamodel, compiled: CompiledRead
+) -> dict[str, Callable[[object], tuple[object, tuple[object, ...]]]]:
+    """``compiled``'s prepared classifiers for its target, by member name."""
+    layout = CatalogedModel(meta).layouts.entity(compiled.target)
+    sources = compiled.result_contract.sources(compiled.target)
+    return {
+        (
+            member.identity.name
+            if isinstance(member, AttributeMetadata)
+            else member.identity.path[-1]
+        ): classifier
+        for member, classifier in zip(
+            layout.member_selection.bindings,
+            member_classifiers(
+                compiled.result_contract,
+                compiled.target,
+                layout.member_selection.bindings,
+                sources.document_member_names(),
+            ),
+            strict=True,
+        )
+        if classifier is not None
+    }
+
+
+def test_document_classification_reads_the_resolved_member_off_a_folded_carrier() -> None:
     document = compile_read(
         oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
     )
-    row = result_row(document.result_contract, _DOCUMENT_CELLS)
-
-    display_name = member_classifier(document.result_contract, person, "display_name")
-    assert display_name(raw_member(document.result_contract, row, person, "display_name")) == (
+    classifiers = _classifiers(DOCUMENT, document)
+    assert set(classifiers) == {"displayName", "score", "joinedOn", "address", "tags"}
+    assert classifiers["displayName"](locate_raw_entity_member(_DOCUMENT_VALUE, "displayName")) == (
         "Ada",
         (),
     )
-    address = member_classifier(document.result_contract, person, "address")
-    address_value, address_findings = address(
-        raw_member(document.result_contract, row, person, "address")
+    assert classifiers["address"](locate_raw_entity_member(_DOCUMENT_VALUE, "address")) == (
+        ("Oslo", ("NO",)),
+        (),
     )
-    assert address_value == ("Oslo", ("NO",))
-    assert address_findings == ()
-    with pytest.raises(KeyError, match="missing"):
-        member_classifier(document.result_contract, marker, "missing")
-    with pytest.raises(KeyError, match="missing"):
-        member_classifier(document.result_contract, person, "missing")
 
     columns = compile_read(
         oa.TrueNode(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
-    classify_address = member_classifier(columns.result_contract, person, "address")
+    column_classifiers = _classifiers(COLUMNS, columns)
+    assert set(column_classifiers) == {"address", "tags"}
+    classify_address = column_classifiers["address"]
     assert classify_address(_COLUMNS_CELLS["address"])[0] == ("Oslo", ("NO",))
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         classify_address({"city": "Oslo"})
-    with pytest.raises(KeyError, match="missing"):
-        member_classifier(columns.result_contract, person, "missing")
+
+
+def test_binding_refuses_sources_laid_out_for_another_member_order() -> None:
+    orders = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
+    item = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "OrderItem"))
+    (sources,) = orders.result_contract.entity_sources
+    (item_sources,) = item.result_contract.entity_sources
+    misaligned = replace(
+        orders.result_contract,
+        entity_sources=(
+            replace(
+                sources,
+                selection=item_sources.selection,
+                sources=(None,) * len(item_sources.sources),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="not this model's member order"):
+        bind(CatalogedModel(ORDERS), misaligned, orders.projection)
 
 
 def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() -> None:
@@ -131,12 +166,10 @@ def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() ->
         entity(holder_model, "Holder"),
         result_form="instance",
     )
+    converter = bind(CatalogedModel(holder_model), compiled.result_contract, compiled.projection)
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        raw_member(
-            compiled.result_contract,
-            result_row(compiled.result_contract, {"id": 1, "payload": {"profile": {"label": "x"}}}),
-            compiled.target,
-            "profile",
+        converter.convert_row(
+            (1, {"profile": {"label": "x"}}), PageBuilder(ViewSchema.of()), source=ROOT_LEVEL
         )
 
 
@@ -145,9 +178,7 @@ def test_predecessor_document_retention_requires_a_folded_carrier() -> None:
         oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"), result_form="instance"
     )
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        row_identity(
-            compiled.result_contract, result_row(compiled.result_contract, {"id": 1, "payload": {}})
-        )
+        row_identity(compiled.result_contract, (1, {}))
 
 
 def test_binding_prepares_each_occurrence_selection_once_rather_than_per_row(

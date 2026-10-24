@@ -5,6 +5,7 @@ import pytest
 from parallax.core._execution._publication import read_projection
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.execution import prepare_model
+from tests._support.document_reads import folded_names
 from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
     Layout,
@@ -48,7 +49,9 @@ def _first_rows(layout: Layout) -> tuple[tuple[tuple[str, ...], tuple[object, ..
     reads = compiled_levels(layout, plan)
     positional = rows_per_level(layout, model, plan, reads)
     return tuple(
-        None if read is None else (read.result_contract.result_keys, level_rows[0])
+        None
+        if read is None
+        else (folded_names(read.statement.sql, read.document_reads), level_rows[0])
         for read, level_rows in zip(reads, positional, strict=True)
     )
 

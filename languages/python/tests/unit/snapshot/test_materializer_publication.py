@@ -119,6 +119,7 @@ _ORDER_ROW: dict[str, object] = {
     "active": True,
     "ordered_on": dt.date(2024, 1, 1),
 }
+_UNCARRIED_ORDER_MEMBERS: tuple[str, ...] = ("sku", "qty", "price", "active", "ordered_on")
 _ITEM_ROW: dict[str, object] = {
     "id": 11,
     "order_id": 1,
@@ -1250,7 +1251,7 @@ def test_one_view_shape_is_shared_by_every_node_that_carries_it() -> None:
 
 def test_a_member_the_read_did_not_carry_reads_absent_rather_than_null() -> None:
     fixture = PageFixture(_ORDERS)
-    order = fixture.node("SnapOrder", {key: _ORDER_ROW[key] for key in ("id", "name")})
+    order = fixture.node("SnapOrder", _ORDER_ROW, uncarrying=_UNCARRIED_ORDER_MEMBERS)
     root_view = RootView(fixture.page(order))
     layout = root_view.layout(0)
     values = root_view.member_values(0)
@@ -1306,7 +1307,7 @@ def test_no_published_value_is_the_absent_sentinel() -> None:
     # and it is never a value: a consumer skips the position, so what publishes
     # is a member the value does not have rather than a member holding a marker.
     fixture = PageFixture(_ORDERS)
-    order = fixture.node("SnapOrder", {key: _ORDER_ROW[key] for key in ("id", "name")})
+    order = fixture.node("SnapOrder", _ORDER_ROW, uncarrying=_UNCARRIED_ORDER_MEMBERS)
     (root,) = fixture.materialize(order)
     assert isinstance(root, sm.SnapOrder)
     assert "sku" not in root.model_fields_set

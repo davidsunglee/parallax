@@ -287,9 +287,9 @@ def test_a_non_hydrating_root_publishes_no_data() -> None:
     assert published.object_key == ObjectKey(EntityIdentity(_NAMESPACE, "Customer"), (("id", 1),))
 
 
-def _balance(row: dict[str, object]) -> InvalidData[object]:
+def _balance(row: dict[str, object], *, uncarrying: tuple[str, ...] = ()) -> InvalidData[object]:
     fixture = PageFixture(read_models.BALANCE_MODEL)
-    root = fixture.node("Balance", row)
+    root = fixture.node("Balance", row, uncarrying=uncarrying)
     return invalid_record(fixture.materialize(root)[0])
 
 
@@ -316,14 +316,25 @@ def test_a_temporal_root_locates_itself_by_the_milestone_it_decoded() -> None:
 def test_a_temporal_root_whose_milestone_was_not_carried_locates_no_edge() -> None:
     # The locator is a decoded fact or nothing: a milestone the row never carried
     # is not manufactured to fill the field.
-    published = _balance({"bal_id": 1, "acct_num": "A-1", "val": Decimal("1.00"), "out_z": None})
+    published = _balance(
+        {
+            "bal_id": 1,
+            "acct_num": "A-1",
+            "val": Decimal("1.00"),
+            "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            "out_z": None,
+        },
+        uncarrying=("in_z",),
+    )
     assert published.edge is None
     assert {issue.code for issue in published.issues} == {"stored-data-attribute-null"}
 
 
 def test_a_versioned_root_whose_version_was_not_carried_locates_no_version() -> None:
     fixture = PageFixture(ENCODED_ACCOUNT)
-    root = fixture.node("EncodedAccount", {"id": 1, "token_hex": "not-hex"})
+    root = fixture.node(
+        "EncodedAccount", {"id": 1, "token_hex": "not-hex", "version": 3}, uncarrying=("version",)
+    )
     published = invalid_record(fixture.materialize(root)[0])
     assert published.version is None
     assert published.edge is None

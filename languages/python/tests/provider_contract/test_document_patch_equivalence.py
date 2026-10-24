@@ -179,7 +179,7 @@ def _persisted(profile_run: Any) -> object:
     answers it."""
     port = profile_run.port
     dialect = port.dialect
-    presence, document = dialect.project_document_read("t0.payload")
+    presence, document = dialect.render_document_pair("t0.payload")
     ((present, raw),) = port.execute(
         f"select {presence}, {document} from {_TABLE} t0 where t0.id = %s", [1]
     )

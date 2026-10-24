@@ -19,8 +19,6 @@ from parallax.core.sql_gen._predicate import MemberSubject
 __all__ = [
     "LoweredTerm",
     "TermSubject",
-    "capture_cells",
-    "coordinate_reads",
     "emits_null_tail",
     "lower_seek",
     "lowered_terms",
@@ -89,11 +87,6 @@ def lowered_terms(
     return tuple(terms)
 
 
-def coordinate_reads(terms: Sequence[LoweredTerm]) -> tuple[str, ...]:
-    """The result keys a materializing consumer lifts this read's coordinate off."""
-    return tuple(term.alias for term in terms)
-
-
 def null_pattern(coordinate: ContinuationCoordinate) -> NullPattern:
     """The reusable statement-template shape of one coordinate."""
     return tuple(carrier is None for carrier in coordinate.carriers)
@@ -108,16 +101,6 @@ def emits_null_tail(seek: ResolvedSeek, dialect: Dialect, *, leading_resident: b
         and not leading_resident
         and _placement(seek.terms[0], dialect) == "last"
     )
-
-
-def capture_cells(terms: Sequence[LoweredTerm], subject: TermSubject) -> str:
-    """The hidden select-list cells that capture one coordinate per term.
-
-    Emitted through the same ``subject`` the ``order by`` clause is, so what a
-    row carries back is what the database ordered it by. Empty for a read that
-    pages through nothing, which is every eager read.
-    """
-    return "".join(f", {subject(term.member).compared} {term.alias}" for term in terms)
 
 
 def order_clause(terms: Sequence[LoweredTerm], subject: TermSubject, dialect: Dialect) -> str:

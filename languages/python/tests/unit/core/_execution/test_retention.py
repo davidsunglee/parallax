@@ -547,7 +547,7 @@ def _instrument_root(builder: PageBuilder, tag: str, price: Decimal) -> int:
         "out_z": _INFINITY,
     }
     model = _accepted("instrument")
-    row = result_row(compiled_read(model, "Instrument").result_contract, stored)
+    row = result_row(compiled_read(model, "Instrument"), stored)
     ref, _resolved, _document, _variant = bound_read(model, "Instrument").convert_row(
         row, builder, source=ROOT_LEVEL
     )

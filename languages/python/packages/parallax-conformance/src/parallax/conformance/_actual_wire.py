@@ -6,7 +6,7 @@ from typing import cast
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY, INFINITY_LITERAL, JSON, ManagedValue, NeutralType
 from parallax.core.db_port import MappingRow
-from parallax.core.dialect import projection_result_key
+from parallax.core.dialect import scalar_result
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -69,9 +69,9 @@ class ActualWireProjection:
         for member in (*attributes, *value_objects):
             by_column.setdefault(member.storage.name, {})[member.identity] = member
             if isinstance(member, AttributeMetadata):
-                by_column.setdefault(projection_result_key(member.storage.name, member.type), {})[
-                    member.identity
-                ] = member
+                by_column.setdefault(
+                    scalar_result(member.storage.name, member.type).publication_key, {}
+                )[member.identity] = member
         selected: dict[str, AttributeMetadata | ValueObjectMetadata] | None = None
         projected: MappingRow = {}
         for name, value in row.items():
@@ -92,7 +92,7 @@ class ActualWireProjection:
                     }
                     selected.update(
                         {
-                            projection_result_key(item.storage.name, item.type): item
+                            scalar_result(item.storage.name, item.type).publication_key: item
                             for item in concrete_attributes
                         }
                     )
@@ -100,10 +100,10 @@ class ActualWireProjection:
             else:
                 member = None
             if isinstance(member, AttributeMetadata):
-                result_key = projection_result_key(member.storage.name, member.type)
+                result = scalar_result(member.storage.name, member.type)
                 projected[name] = (
                     self.published_scalar(member, value)
-                    if name == result_key and result_key != member.storage.name
+                    if result.encoded and name == result.publication_key
                     else self.scalar(member, value)
                 )
             elif member is not None:

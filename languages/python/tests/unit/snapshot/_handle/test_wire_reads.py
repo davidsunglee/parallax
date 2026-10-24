@@ -104,7 +104,12 @@ from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
 from tests._support.sql import compile_read
 from tests.unit._metamodel_support import Declaration, key, source
-from tests.unit._prepared_read_support import bound_cells, compiled_read, convert_cells
+from tests.unit._prepared_read_support import (
+    bound_cells,
+    compiled_read,
+    convert_cells,
+    uncarried,
+)
 from tests.unit._transact_support import BALANCE, db_for
 from tests.unit.snapshot._snapshot_page_support import (
     driver_row,
@@ -435,9 +440,12 @@ def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty
     assert _mapping(root["address"])["phones"] == []
 
 
-def _converted_customer(cells: Mapping[str, object], builder: PageBuilder) -> int:
-    """``cells`` converted into ``builder`` through the Customer read carrying them."""
-    compiled = compiled_read(CUSTOMER_META, "Customer")
+def _converted_customer(
+    cells: Mapping[str, object], builder: PageBuilder, *, uncarrying: tuple[str, ...] = ()
+) -> int:
+    """``cells`` converted into ``builder`` through the Customer read, carrying no
+    source for the members stored under ``uncarrying``."""
+    compiled = uncarried(compiled_read(CUSTOMER_META, "Customer"), *uncarrying)
     return convert_cells(
         CatalogedModel(CUSTOMER_META),
         compiled,
@@ -475,7 +483,13 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
     identity = identity_of(CUSTOMER_META, "Customer")
     builder = PageBuilder(ViewSchema.of())
     ref = _converted_customer(
-        {"id": 3, "address": {"street": "9 Beacon St", "geo": {"country": "NO"}}}, builder
+        {
+            "id": 3,
+            "name": "Grace",
+            "address": {"street": "9 Beacon St", "geo": {"country": "NO"}},
+        },
+        builder,
+        uncarrying=("name",),
     )
     (published,) = wire_roots(
         RootView(builder.finish((ref,), Pin())),

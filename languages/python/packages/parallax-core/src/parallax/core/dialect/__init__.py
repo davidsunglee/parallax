@@ -39,8 +39,10 @@ __all__ = [
     "IndexColumnDdl",
     "LockMode",
     "PhysicalIndexName",
+    "RenderedScalarCell",
+    "ScalarResult",
     "Unsupported",
-    "projection_result_key",
+    "scalar_result",
 ]
 
 LockMode = Literal["locking", "optimistic"]
@@ -49,9 +51,45 @@ EncodedJsonKind = Literal["boolean", "number", "string"]
 """The JSON primitive kind a scalar's canonical document encoding takes."""
 
 
-def projection_result_key(column: str, neutral_type: NeutralType) -> str:
-    """The driver-row key produced by the canonical projection of one Column."""
-    return f"{column}_hex" if isinstance(neutral_type, Bytes) else column
+@dataclass(frozen=True, slots=True)
+class ScalarResult:
+    """How one Column's scalar arrives in a result row and is published.
+
+    ``encoded`` cells arrive in the value's canonical Wire spelling rather than
+    as the driver's native scalar, under ``publication_key`` rather than the
+    Column's own spelling.
+    """
+
+    publication_key: str
+    encoded: bool
+
+
+def scalar_result(column: str, neutral_type: NeutralType) -> ScalarResult:
+    """The result spelling and encoding of ``column``'s scalar of ``neutral_type``.
+
+    A pure function of the value's type, shared by every dialect: `bytes`
+    arrives as its canonical hexadecimal text under ``<column>_hex``.
+    """
+    if isinstance(neutral_type, Bytes):
+        return ScalarResult(f"{column}_hex", True)
+    return ScalarResult(column, False)
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedScalarCell:
+    """One rendered scalar select-list cell.
+
+    ``select_sql`` is the cell as the select list spells it, naming
+    ``output_alias`` where that differs from the expression's own name;
+    ``expression_sql`` is the same value without an alias, for a comparison
+    that reads the Column directly. ``binds`` belong to either spelling.
+    """
+
+    select_sql: str
+    expression_sql: str
+    binds: tuple[object, ...]
+    output_alias: str
+    scalar_result: ScalarResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,28 +267,35 @@ class Dialect:
         """An alias-qualified column reference (`t0.col` / `t0."order"`)."""
         return f"{alias}.{self.quote(column)}"
 
-    # -- projections ------------------------------------------------------- #
-    def project(
+    # -- select-list rendering ------------------------------------------- #
+    def render_scalar(
         self,
         alias: str,
         column: str,
         neutral_type: NeutralType,
         *,
-        result_key: str | None = None,
-    ) -> tuple[str, list[object]]:
-        """The select-list expression (and any projection-introduced binds) for a column.
+        output_alias: str | None = None,
+    ) -> RenderedScalarCell:
+        """One Column's scalar select-list cell against ``alias``.
 
-        A `bytes` column projects the hex-encoded text so the wire value is stable
-        (`encode(t0.col, ?) col_hex`, bind `hex`); every other column projects the
-        plain alias-qualified reference with no bind.
+        A `bytes` column renders its hex-encoded text so the wire value is stable
+        (`encode(t0.col, ?) col_hex`, bind `hex`); every other column renders the
+        plain alias-qualified reference with no bind. The cell is named by its
+        publication key unless ``output_alias`` names it otherwise, which changes
+        only the SQL name, never the encoding or the publication key.
         """
-        output = projection_result_key(column, neutral_type) if result_key is None else result_key
-        if isinstance(neutral_type, Bytes):
-            return f"encode({self.qualified(alias, column)}, ?) {output}", ["hex"]
-        expression = self.qualified(alias, column)
-        return (expression if output == column else f"{expression} {output}"), []
+        result = scalar_result(column, neutral_type)
+        output = result.publication_key if output_alias is None else output_alias
+        reference = self.qualified(alias, column)
+        if result.encoded:
+            expression = f"encode({reference}, ?)"
+            return RenderedScalarCell(
+                f"{expression} {output}", expression, ("hex",), output, result
+            )
+        select = reference if output == column else f"{reference} {output}"
+        return RenderedScalarCell(select, reference, (), output, result)
 
-    def project_document_read(self, expression: str) -> tuple[str, str]:
+    def render_document_pair(self, expression: str) -> tuple[str, str]:
         """The adjacent SQL presence/document cells for ``expression``."""
         return f"not {expression} is null", expression
 

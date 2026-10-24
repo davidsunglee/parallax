@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import replace
+from decimal import Decimal
 from typing import Final
 
 import pytest
@@ -30,7 +31,7 @@ from parallax.core.object_query._resolved import (
     ResolvedSeek,
 )
 from parallax.core.predicate import Comparison, FieldSubject, Or, TrueNode
-from parallax.core.read_delivery._row_decoding import publication_keys, raw_member, row_coordinates
+from parallax.core.read_delivery._row_decoding import row_coordinates
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._context import LoweredStatement
@@ -198,14 +199,36 @@ def test_the_appended_key_still_captures_a_cell_of_its_own() -> None:
         ORDERS,
         POSTGRES,
     )
-    assert compiled.result_contract.coordinate_reads == ("parallax_seek_0",)
-    assert "parallax_seek_0" not in publication_keys(
-        compiled.result_contract, compiled.target, None
-    )
     assert compiled.statement.sql.startswith(
         "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
         "t0.id parallax_seek_0 from orders t0"
     )
+    assert compiled.result_contract.coordinate_ordinals == (7,)
+    (row,) = deliver(
+        ORDERS,
+        compiled,
+        [
+            {
+                "id": 1,
+                "name": "Ada",
+                "sku": None,
+                "qty": 2,
+                "price": Decimal("1.50"),
+                "active": True,
+                "ordered_on": None,
+                "parallax_seek_0": 1,
+            }
+        ],
+    )
+    assert [key for key, _value in row.published] == [
+        "id",
+        "name",
+        "sku",
+        "qty",
+        "price",
+        "active",
+        "ordered_on",
+    ]
 
 
 def test_a_coordinate_carried_at_another_width_than_the_order_is_refused() -> None:
@@ -649,7 +672,7 @@ def test_a_coordinate_is_read_off_the_capture_cell_projected_last() -> None:
         ORDERS,
         POSTGRES,
     )
-    width = len(compiled.result_contract.result_keys)
+    width = len(compiled.result_contract.slots)
     assert row_coordinates(compiled.result_contract, (tuple(range(width)),)) == (
         ContinuationCoordinate((width - 1,)),
     )
@@ -672,19 +695,16 @@ def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -
         model,
         POSTGRES,
     )
-    assert compiled.result_contract.coordinate_reads == ("parallax_seek_1", "parallax_seek_2")
-    row = result_row(
-        compiled.result_contract,
-        {
-            "id": 1,
-            "payload": PresentDocument({"parallax_seek_0": 3}),
-            "parallax_seek_1": 3,
-            "parallax_seek_2": 1,
-        },
-    )
-    beacon = compiled.target
-    assert raw_member(compiled.result_contract, row, beacon, "parallax_seek_0") == 3
-    assert publication_keys(compiled.result_contract, beacon, None) == ("id",)
+    cells = {
+        "id": 1,
+        "payload": PresentDocument({"parallax_seek_0": 3}),
+        "parallax_seek_1": 3,
+        "parallax_seek_2": 1,
+    }
+    (delivered,) = deliver(model, compiled, [cells])
+    assert delivered.members == {"id": 1, "parallax_seek_0": 3}
+    assert delivered.published == (("id", 1), ("parallax_seek_0", 3))
+    row = result_row(compiled, cells)
     assert row_coordinates(compiled.result_contract, (row,)) == (ContinuationCoordinate((3, 1)),)
 
 

@@ -30,7 +30,6 @@ from parallax.core.base import (
     STRING,
     TIMESTAMP,
     DocumentValue,
-    PresentDocument,
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata
@@ -40,7 +39,6 @@ from parallax.core.navigate import (
     resolve_temporal_visibility,
 )
 from parallax.core.object_query._nodes import IncludePathNode, TemporalDimension
-from parallax.core.read_delivery._row_decoding import publication_keys, row_identity
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_template
 from parallax.core.sql_gen._compile import (
@@ -50,7 +48,7 @@ from parallax.descriptor._ingest import ingest_document
 from tests._support.sql import compile_projected_read, compile_read, compile_write_predicate
 from tests.unit._corpus_model_support import formed
 from tests.unit._document_layout_support import columns_model, document_model, entity
-from tests.unit._prepared_read_support import result_row
+from tests.unit.core.sql_gen._delivery_support import deliver
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -117,9 +115,9 @@ def test_an_observing_read_of_the_same_shape_projects_the_structured_column(
     # The column is still never a result field: it carries no member here and the
     # raw value leaves the published row all the same.
     document: DocumentValue = {"berthCode": "NB-118"}
-    row = result_row(compiled.result_contract, {"id": 1, "payload": PresentDocument(document)})
-    assert publication_keys(compiled.result_contract, compiled.target, None) == ("id",)
-    assert row_identity(compiled.result_contract, row)[3] == document
+    (row,) = deliver(DOCUMENT, compiled, [{"id": 1, "payload": document}])
+    assert row.published == (("id", 1),)
+    assert row.document == document
 
 
 def test_a_versioned_targets_narrowed_widening_still_projects_only_what_it_needs() -> None:
@@ -143,21 +141,50 @@ def test_a_direct_document_carrier_is_a_classified_member() -> None:
     compiled = compile_read(
         oa.TrueNode(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
     )
-    assert compiled.result_contract.classified_by_entity.get(
-        compiled.target, frozenset()
-    ).issuperset({"address", "tags"})
+    (row,) = deliver(
+        COLUMNS,
+        compiled,
+        [
+            {
+                "id": 1,
+                "display_name": "Ada",
+                "score": 7,
+                "joined_on": None,
+                "address": {"city": "Oslo", "geo": {"country": "NO"}},
+                "tags": [{"label": "x"}, "wrong"],
+            }
+        ],
+    )
+    assert row.members["address"] == {"city": "Oslo", "geo": {"country": "NO"}}
+    assert row.members["tags"] == ()
+    assert [code for code, _stored in row.issues] == ["stored-data-many-wrong-kind"]
 
 
 def test_the_raw_document_is_never_a_result_field() -> None:
     compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    assert "payload" not in publication_keys(compiled.result_contract, compiled.target, None)
+    (row,) = deliver(DOCUMENT, compiled, [{"id": 1, "payload": {"displayName": "Ada"}}])
+    assert "payload" not in dict(row.published)
 
 
 def test_an_entity_document_classifies_each_requested_member() -> None:
     compiled = compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    assert compiled.result_contract.classified_by_entity.get(
-        compiled.target, frozenset()
-    ) == frozenset({"display_name", "score", "joined_on"})
+    (row,) = deliver(
+        DOCUMENT,
+        compiled,
+        [{"id": 1, "payload": {"displayName": "Ada", "score": 7, "joinedOn": "2026-01-15"}}],
+    )
+    assert row.members == {
+        "id": 1,
+        "displayName": "Ada",
+        "score": 7,
+        "joinedOn": dt.date(2026, 1, 15),
+    }
+    assert row.published == (
+        ("id", 1),
+        ("display_name", "Ada"),
+        ("score", 7),
+        ("joined_on", dt.date(2026, 1, 15)),
+    )
 
 
 @pytest.mark.parametrize(

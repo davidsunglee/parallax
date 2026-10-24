@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import itertools
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, assert_never
 
-from parallax.core.base import STRING, Bytes, ManagedValue, NeutralType
-from parallax.core.dialect import Dialect, projection_result_key
+from parallax.core.base import STRING, ManagedValue, NeutralType
+from parallax.core.dialect import Dialect, ScalarResult
 from parallax.core.document_codec import comparison_text, is_text_compared
 from parallax.core.inheritance import InheritanceFacet, root_metadata
 from parallax.core.metamodel import (
@@ -163,11 +163,12 @@ class EntityRowScope:
     A branch of a table-per-concrete-subtype union carries its OWN branch layout
     even though its active entity stays the read's queried `target`.
 
-    ``wrapped`` says :attr:`alias` is a derived table over a union of branches
-    that already applied their own per-type projection, so a direct member is
-    named by the RESULT key a branch projected it under rather than by the
-    physical Column no such union yields — and a `bytes` member is then the
-    hex-encoded text that key carries rather than octets.
+    ``wrapped`` is the alias and scalar facts of each scalar cell a union's
+    branches select, by contributor, where :attr:`alias` is a derived table
+    over that union: a direct member is then named by the alias its branch
+    cell was selected under rather than by the physical Column no such union
+    yields — and an encoded member is the canonical text that cell carries
+    rather than the stored value.
     """
 
     ctx: StatementBuilder[EntityRowScope]
@@ -175,7 +176,7 @@ class EntityRowScope:
     layout: TableLayout
     alias: str = "t0"
     unaliased: bool = False
-    wrapped: bool = False
+    wrapped: Mapping[ColumnContributor, tuple[str, ScalarResult]] | None = None
 
     @property
     def meta(self) -> Metamodel:
@@ -247,11 +248,16 @@ class EntityRowScope:
         """
         placement = self.layout.placement(attribute.identity)
         if not isinstance(placement, DocumentPath):
-            spelling = self.slot_column(attribute.identity)
-            encoded = self.wrapped and isinstance(attribute.type, Bytes)
-            column = self.own_column(
-                projection_result_key(spelling, attribute.type) if self.wrapped else spelling
-            )
+            if self.wrapped is None:
+                column = self.own_column(self.slot_column(attribute.identity))
+                encoded = False
+            else:
+                cell = self.wrapped.get(attribute.identity)
+                if cell is None:  # pragma: no cover - a wrapped union selects every direct member
+                    raise SqlGenError(f"{attribute.identity} is not selected through the union")
+                alias, result = cell
+                column = self.own_column(alias)
+                encoded = result.encoded
             return MemberSubject(
                 column, column, attribute.type, document_resident=False, text_compared=encoded
             )

@@ -71,7 +71,7 @@ from parallax.core import (
 from parallax.core._execution._preflight import preflight
 from parallax.core.base import SQL_NULL, DocumentValue, ManagedValue, PresentDocument
 from parallax.core.db_port import DocumentReadOrdinals, Row
-from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.dialect import POSTGRES, Dialect, scalar_result
 from parallax.core.document_codec import (
     Leaf,
     MemberShape,
@@ -102,6 +102,7 @@ from parallax.core.storage_layout import DirectColumn, TableLayout
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import ReadEvidence
 from tests._support.db_port import ConnectsAsItself
+from tests._support.document_reads import fold_mapping_rows
 
 __all__ = [
     "LAYOUTS",
@@ -400,18 +401,15 @@ def _occurrence_value(shape: MemberShape, multiplicity: Multiplicity, raw: objec
 def _driver_row(
     model: CatalogedModel, compiled: CompiledRead, entity: EntityIdentity, spec: _RowSpec
 ) -> Row:
-    """One stored row as the driver answers it: direct Columns under their own
-    result keys, and every document-resident member inside the Structured Column."""
+    """One stored row as the driver answers it: direct Columns under the names
+    the statement selects them as, and every document-resident member inside
+    the Structured Column; a cell the row names no value for is SQL NULL."""
     meta = model.meta
     layout = model.layouts.entity(entity)
     table = _table_layout(meta, entity)
     storage_view = storage_layout_view(meta).entity(entity)
     if storage_view is None:  # pragma: no cover - every materialized concrete owns rows
         raise AssertionError(f"{entity.canonical}: no storage layout view")
-    contracts = {
-        contract.attribute.identity: contract
-        for contract in dict(compiled.result_contract.attribute_reads).get(entity, ())
-    }
     projected = frozenset(member.storage.name for member in compiled.projection.value_objects)
     row: dict[str, object] = {}
     residents = storage_view.document_residents
@@ -426,17 +424,15 @@ def _driver_row(
     for attribute in layout.attributes:
         if not isinstance(table.placement(attribute.identity), DirectColumn):
             continue
-        contract = contracts[attribute.identity]
+        result = scalar_result(attribute.storage.name, attribute.type)
         raw = spec.values.get(attribute.identity.name)
         scalar = (
             fixture_literal(attribute.type, raw)
             if attribute.identity.name in spec.values and raw is not None
             else None
         )
-        row[contract.result_key] = (
-            encode_leaf(attribute.type, scalar)
-            if contract.encoded and scalar is not None
-            else scalar
+        row[result.publication_key] = (
+            encode_leaf(attribute.type, scalar) if result.encoded and scalar is not None else scalar
         )
     for occurrence in layout.occurrences:
         if occurrence.storage.name not in projected or not isinstance(
@@ -458,7 +454,8 @@ def _driver_row(
     shared = compiled.result_contract.shared_document
     if shared is not None:
         row[shared.column] = PresentDocument(document)
-    return tuple(row.get(result_key) for result_key in compiled.result_contract.result_keys)
+    (folded,) = fold_mapping_rows([row], compiled.document_reads, compiled.statement.sql)
+    return folded
 
 
 def driver_rows(

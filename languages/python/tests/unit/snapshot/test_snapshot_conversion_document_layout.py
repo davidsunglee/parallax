@@ -45,12 +45,14 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
     page_rows,
 )
+from parallax.core.read_delivery._row_converter import bind
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
+from tests._support.document_reads import folded_names
 from tests._support.sql import compile_read
 from tests.unit._document_layout_support import columns_model, document_model, entity
-from tests.unit._prepared_read_support import convert_cells
+from tests.unit._prepared_read_support import convert_cells, result_row
 from tests.unit.snapshot._snapshot_page_support import documents_of, rendered_members
 
 _CORPUS = models.load_models()["document-layout"]
@@ -67,8 +69,8 @@ class _Converted:
 
 
 def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Converted:
-    """One stored row, spelled by result key, through the production read
-    sequence, database aside."""
+    """One stored row, spelled by the names its read selects, through the
+    production read sequence, database aside."""
     compiled = compile_read(
         oa.TrueNode(), model, POSTGRES, entity(model, name), result_form="instance"
     )
@@ -194,6 +196,7 @@ def test_wrong_kind_occurrences_classify_identically_without_retaining_valid_sib
             "display_name": None,
             "score": None,
             "joined_on": None,
+            "address": None,
             "tags": PresentDocument([{"label": "valid"}, "wrong"]),
         },
     )
@@ -267,8 +270,22 @@ def test_an_occurrence_column_classifies_an_absent_required_member() -> None:
 
 
 def test_an_occurrence_column_requires_a_folded_document_read() -> None:
+    compiled = compile_read(
+        oa.TrueNode(),
+        _TWIN_COLUMNS,
+        POSTGRES,
+        entity(_TWIN_COLUMNS, "Person"),
+        result_form="instance",
+    )
+    folded = list(result_row(compiled, {**_COLUMNS_ROW, "address": None}))
+    folded[folded_names(compiled.statement.sql, compiled.document_reads).index("address")] = {
+        "city": "Oslo"
+    }
+    prepared = bind(CatalogedModel(_TWIN_COLUMNS), compiled.result_contract, compiled.projection)
+    builder = PageBuilder(ViewSchema.of())
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        _converted(_TWIN_COLUMNS, "Person", {**_COLUMNS_ROW, "address": {"city": "Oslo"}})
+        index, *_ = prepared.convert_row(tuple(folded), builder, source=ROOT_LEVEL)
+        RootView(builder.finish((index,), Pin())).member_values(0)
 
 
 _BO_ONLY: Mapping[str, object] = {

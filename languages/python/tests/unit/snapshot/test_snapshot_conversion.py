@@ -7,9 +7,9 @@ that contradicts its declared type), scalar provenance, Page identity claims
     (family normalization and projection independence), and the whole converted
     row with its documents decoded.
 
-Every row is spelled by result key and laid out positionally for a real compiled
-read carrying exactly the cells it names, bound as a find binds it and converted
-through ``ReadRowConverter.convert_row``. A converted row is
+Every row is spelled by the names a real compiled read selects and laid out
+positionally for that read, bound as a find binds it and converted through
+``ReadRowConverter.convert_row``. A converted row is
 POSITIONAL: every applicable member occupies its declared position and ``ABSENT``
 stands where the read carried nothing, so what the suite asserts of a member is
 what the row holds at that member's own position.
@@ -26,7 +26,7 @@ import decimal
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 
@@ -94,7 +94,7 @@ from tests._support.model_capabilities import graph_construction_for
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
-from tests.unit._prepared_read_support import bound_cells, compiled_read
+from tests.unit._prepared_read_support import bound_cells, compiled_read, uncarried
 from tests.unit.snapshot._encoded_identity_read import encoded_identity_page
 from tests.unit.snapshot._snapshot_page_support import (
     driver_row,
@@ -164,9 +164,12 @@ class _Projection:
         return self.key.family, self.key.primary_key
 
 
-def _converted(model: Metamodel, entity: str, row: Mapping[str, object]) -> _Projection:
-    """``row``, spelled by result key, converted through ``entity``'s bound read."""
-    return _converted_by(model, compiled_read(model, entity), row)
+def _converted(
+    model: Metamodel, entity: str, row: Mapping[str, object], *, uncarrying: tuple[str, ...] = ()
+) -> _Projection:
+    """``row``, spelled by the names ``entity``'s read selects, converted through
+    that read bound with no source for the members stored under ``uncarrying``."""
+    return _converted_by(model, uncarried(compiled_read(model, entity), *uncarrying), row)
 
 
 def _converted_by(
@@ -189,7 +192,7 @@ def _converted_by(
 def _bound(
     model: Metamodel, entity: str, cells: Mapping[str, object]
 ) -> tuple[ReadRowConverter, Row]:
-    """``entity``'s read carrying exactly ``cells``, bound, beside their positional row."""
+    """``entity``'s read, bound, beside ``cells`` as its positional row."""
     return bound_cells(CatalogedModel(model), compiled_read(model, entity), cells)
 
 
@@ -231,9 +234,34 @@ def _names(record: _Record) -> set[str]:
 # Scalar provenance: physical columns become Attribute Identities, and only    #
 # columns this concrete actually declares contribute.                          #
 # --------------------------------------------------------------------------- #
+_ORDER: Final[Mapping[str, object]] = {
+    "id": 1,
+    "name": "Ada",
+    "sku": None,
+    "qty": 2,
+    "price": decimal.Decimal("1.50"),
+    "active": True,
+    "ordered_on": dt.date(2024, 1, 1),
+}
+_ITEM: Final[Mapping[str, object]] = {"sku": "S-1", "quantity": 1, "shipped_on": None}
+_SCALAR_THING: Final[Mapping[str, object]] = {
+    "id": 1,
+    "f32": 1.5,
+    "f64": 2.5,
+    "local_time": dt.time(9, 30),
+    "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
+}
+_PETS: Final[Mapping[str, object]] = {
+    "license_id": None,
+    "indoor": None,
+    "bark_volume": None,
+    "tusk_length": None,
+}
+
+
 def test_a_scalar_column_becomes_its_own_attribute_identity() -> None:
-    node = _converted(ORDERS, "Order", {"id": 1, "name": "Ada"})
-    assert node.carried == {"id", "name"}
+    node = _converted(ORDERS, "Order", _ORDER)
+    assert node.carried == {"id", "name", "sku", "qty", "price", "active", "orderedOn"}
     assert node.member(AttributeIdentity(EntityIdentity(_NAMESPACE, "Order"), "id")) == 1
 
 
@@ -243,39 +271,43 @@ def test_an_encoded_projection_key_decodes_into_its_logical_attribute() -> None:
     assert entity is not None
     payload = entity.attribute("payload")
     assert payload is not None
-    node = _converted(SCALARS, "ScalarThing", {"id": 1, "payload_hex": "0a1b"})
+    node = _converted(SCALARS, "ScalarThing", {**_SCALAR_THING, "payload_hex": "0a1b"})
     assert node.member(payload.identity) == b"\x0a\x1b"
 
     # An undecodable scalar records its issue AND leaves its own position absent,
     # so nothing downstream reads the raw stored spelling in its place.
-    invalid = _converted(SCALARS, "ScalarThing", {"id": 1, "payload_hex": "not-hex"})
+    invalid = _converted(SCALARS, "ScalarThing", {**_SCALAR_THING, "payload_hex": "not-hex"})
     assert [issue.code for issue in invalid.issues] == ["stored-data-leaf-undecodable"]
     assert invalid.member(payload.identity) is ABSENT
 
 
-def test_a_sibling_column_and_the_synthetic_family_tag_contribute_nothing() -> None:
+def test_a_sibling_column_and_the_family_tag_contribute_nothing() -> None:
     # A table-per-hierarchy row arrives null-padded with every sibling's own
-    # columns, and the compiled read hands the resolved concrete separately. Only
-    # what `Dog` declares in its own family reaches a member here — `indoor` is
-    # `Cat`'s, and `familyVariant` is nobody's.
+    # columns, and its tag names the resolved concrete rather than a member.
+    # Only what `Dog` declares in its own family reaches a member here —
+    # `indoor` is `Cat`'s, `tusk_length` is `WildBoar`'s, and `kind` is nobody's.
     node = _converted(
         ANIMAL,
-        "Dog",
+        "Animal",
         {
+            **_PETS,
             "id": 1,
+            "kind": "dog",
             "name": "Rex",
             "owner_id": 10,
             "license_id": "L-100",
             "bark_volume": 7,
-            "indoor": None,
-            "familyVariant": "Dog",
         },
     )
     assert node.carried == {"id", "name", "ownerId", "licenseId", "barkVolume"}
 
 
 def test_an_inherited_attribute_reaches_a_concrete_under_its_declaring_identity() -> None:
-    node = _converted(ANIMAL, "Dog", {"id": 1, "name": "Rex", "owner_id": 10, "bark_volume": 7})
+    node = _converted(
+        ANIMAL,
+        "Dog",
+        {"id": 1, "name": "Rex", "owner_id": 10, "license_id": None, "bark_volume": 7},
+    )
     assert node.declaring("name") == EntityIdentity(_NAMESPACE, "Animal")
 
 
@@ -367,7 +399,9 @@ def test_a_present_leaf_outside_its_declared_type_is_classified_where_absence_co
     assert _nested(profile, "origin") is None
     assert _nested(profile, "entries") == ()
 
-    invalid = _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"amount": "bogus"}})
+    invalid = _converted(
+        DOCUMENT_CODEC, "Sample", {"id": 1, "label": "Ada", "profile": {"amount": "bogus"}}
+    )
     assert invalid.issues[0].code == "stored-data-leaf-undecodable"
     assert invalid.issues[0].entity == EntityIdentity(_NAMESPACE, "Sample")
     assert invalid.issues[0].member == ValueObjectAttributeIdentity(
@@ -379,7 +413,7 @@ def test_a_classified_decoding_issue_names_a_nested_leaf_and_the_value_it_reject
     invalid = _converted(
         DOCUMENT_CODEC,
         "Sample",
-        {"id": 1, "profile": {"entries": [{"issued": "2026-13-40"}]}},
+        {"id": 1, "label": "Ada", "profile": {"entries": [{"issued": "2026-13-40"}]}},
     )
     assert invalid.issues[0].code == "stored-data-leaf-undecodable"
     assert invalid.issues[0].member == ValueObjectAttributeIdentity(
@@ -514,12 +548,16 @@ def test_an_integral_float_leaf_answers_the_same_whichever_rendering_carries_it(
     # value binary32 does not hold in either rendering, so both are invalid stored
     # data rather than the silently rounded `16777216.0` a narrow-first reader gives.
     for rendering in (2**24 + 1, float(2**24 + 1)):
-        invalid = _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"ratio": rendering}})
+        invalid = _converted(
+            DOCUMENT_CODEC, "Sample", {"id": 1, "label": "Ada", "profile": {"ratio": rendering}}
+        )
         assert invalid.issues[0].code == "stored-data-leaf-undecodable"
         assert isinstance(invalid.issues[0].member, ValueObjectAttributeIdentity)
         assert invalid.issues[0].member.name == "ratio"
     for rendering in (20, 20.0):
-        node = _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"ratio": rendering}})
+        node = _converted(
+            DOCUMENT_CODEC, "Sample", {"id": 1, "label": "Ada", "profile": {"ratio": rendering}}
+        )
         assert _leaf(cast("_Record", _occurrence(node, "profile")), "ratio") == 20.0
 
 
@@ -640,18 +678,28 @@ def test_a_top_level_many_cardinality_value_object_converts_to_a_record_tuple() 
 # Page identity claims: family normalization and projection independence.       #
 # --------------------------------------------------------------------------- #
 def test_a_logical_key_is_family_normalized_for_a_concrete_subtype() -> None:
-    node = _converted(ANIMAL, "Dog", {"id": 1, "name": "Rex", "owner_id": 10, "bark_volume": 7})
+    node = _converted(
+        ANIMAL,
+        "Dog",
+        {"id": 1, "name": "Rex", "owner_id": 10, "license_id": None, "bark_volume": 7},
+    )
     assert node.logical_key() == (EntityIdentity(_NAMESPACE, "Animal"), 1)
 
 
 def test_two_projections_of_one_row_key_alike_whichever_position_reached_it() -> None:
-    broad = _converted(ANIMAL, "Animal", {"id": 1, "kind": "dog", "name": "Rex", "owner_id": 10})
-    narrowed = _converted(ANIMAL, "Dog", {"id": 1, "name": "Rex", "owner_id": 10})
+    broad = _converted(
+        ANIMAL, "Animal", {**_PETS, "id": 1, "kind": "dog", "name": "Rex", "owner_id": 10}
+    )
+    narrowed = _converted(
+        ANIMAL,
+        "Dog",
+        {"id": 1, "name": "Rex", "owner_id": 10, "license_id": None, "bark_volume": None},
+    )
     assert broad.logical_key() == narrowed.logical_key()
 
 
 def test_a_non_participant_keys_by_its_own_identity() -> None:
-    node = _converted(ORDERS, "Order", {"id": 1, "name": "Ada"})
+    node = _converted(ORDERS, "Order", _ORDER)
     assert node.logical_key() == (EntityIdentity(_NAMESPACE, "Order"), 1)
 
 
@@ -706,10 +754,10 @@ _ITEM_ORDER_ID = AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "ord
 
 def test_a_back_reference_names_the_logical_claim_not_a_projection_winner() -> None:
     builder, items, item_order = _back_referenced_orders()
-    orders, order_row = _bound(ORDERS, "Order", {"id": 1, "name": "Ada"})
+    orders, order_row = _bound(ORDERS, "Order", _ORDER)
     first, *_ = orders.convert_row(order_row, builder, source=ROOT_LEVEL)
     second, *_ = orders.convert_row(order_row, builder, source=ROOT_LEVEL)
-    order_items, item_row = _bound(ORDERS, "OrderItem", {"id": 11, "order_id": 1})
+    order_items, item_row = _bound(ORDERS, "OrderItem", {**_ITEM, "id": 11, "order_id": 1})
     item, *_ = order_items.convert_row(item_row, builder, source=ROOT_LEVEL)
     assert first != second
     for order in (first, second):
@@ -724,7 +772,7 @@ def test_a_back_reference_names_the_logical_claim_not_a_projection_winner() -> N
 
 def test_a_back_reference_to_a_key_the_builder_never_registered_is_refused() -> None:
     builder, _items, item_order = _back_referenced_orders()
-    order_items, item_row = _bound(ORDERS, "OrderItem", {"id": 11, "order_id": 999})
+    order_items, item_row = _bound(ORDERS, "OrderItem", {**_ITEM, "id": 11, "order_id": 999})
     item, *_ = order_items.convert_row(item_row, builder, source=ROOT_LEVEL)
     with pytest.raises(ValueError, match="no already-converted"):
         builder.write_reference(
@@ -788,11 +836,12 @@ def test_a_whole_document_stored_in_a_kind_it_cannot_be_read_as_names_the_occurr
 
 def test_a_member_the_read_did_not_carry_is_absent_rather_than_null() -> None:
     # A positional row cannot omit, so the distinction omission used to carry is
-    # spelled: the member the read never projected reads ABSENT, and a nullable
-    # member the row stored NULL at reads None. Both name no child row, which is
-    # why a gathered correlation key still skips each.
-    unread = _converted(ORDERS, "OrderItem", {"id": 11})
-    stored_null = _converted(ORDERS, "OrderItem", {"id": 11, "shipped_on": None})
+    # spelled: the member the read carries no source for reads ABSENT, and a
+    # nullable member the row stored NULL at reads None. Both name no child row,
+    # which is why a gathered correlation key still skips each.
+    row = {**_ITEM, "id": 11, "order_id": 1}
+    unread = _converted(ORDERS, "OrderItem", row, uncarrying=("shipped_on",))
+    stored_null = _converted(ORDERS, "OrderItem", row)
     shipped = AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "shippedOn")
     assert unread.member(shipped) is ABSENT
     assert stored_null.member(shipped) is None
@@ -972,7 +1021,7 @@ def test_an_unknown_family_tag_carries_the_tag_it_could_not_resolve() -> None:
     # The same evidence contract for the one issue no member owns: the stored
     # tag itself, at no path, on the family root the row converted under.
     (issue,) = _converted(
-        ANIMAL, "Animal", {"id": 1, "kind": "unicorn", "name": "Ada", "owner_id": 10}
+        ANIMAL, "Animal", {**_PETS, "id": 1, "kind": "unicorn", "name": "Ada", "owner_id": 10}
     ).issues
     assert (issue.code, issue.member, issue.path, issue.stored_value) == (
         "stored-data-family-tag-unknown",
@@ -1024,7 +1073,7 @@ def test_a_mutable_provider_carrier_is_copied_out_of_the_evidence(view: bool) ->
     # evidence must therefore be detached from that mutable carrier.
     buffer = bytearray(b"\x0a\x1b")
     carrier: object = memoryview(buffer) if view else buffer
-    (issue,) = _converted(SCALARS, "ScalarThing", {"id": 1, "payload_hex": carrier}).issues
+    (issue,) = _converted(SCALARS, "ScalarThing", {**_SCALAR_THING, "payload_hex": carrier}).issues
     del carrier
     buffer[0] = 0xFF
     assert issue.stored_value == b"\x0a\x1b"
@@ -1119,18 +1168,20 @@ def test_an_occurrence_no_compiled_stage_classified_decodes_as_a_classified_one_
     # an omitted Many is carried empty, and a leaf outside its declared type is
     # diagnosed at its own path.
     profile: dict[str, object] = {"label": "a"}
-    classified = _narrowed_hull({"id": 1, "kind": "skiff", "profile": profile})
-    sibling = _narrowed_hull({"id": 1, "kind": "barge", "profile": profile})
-    unknown = _narrowed_hull({"id": 1, "kind": "galley", "profile": profile})
+    classified = _narrowed_hull({"id": 1, "kind": "skiff", "oars": None, "profile": profile})
+    sibling = _narrowed_hull({"id": 1, "kind": "barge", "oars": None, "profile": profile})
+    unknown = _narrowed_hull({"id": 1, "kind": "galley", "oars": None, "profile": profile})
     assert (classified.concrete_entity.name, sibling.concrete_entity.name) == ("Skiff", "Barge")
     for node in (classified, sibling, unknown):
         assert _occurrence(node, "profile") == {"label": "a", "marks": ()}
 
-    invalid = _narrowed_hull({"id": 2, "kind": "barge", "profile": {"label": 7}})
+    invalid = _narrowed_hull({"id": 2, "kind": "barge", "oars": None, "profile": {"label": 7}})
     assert _diagnoses(invalid) == [
         ("stored-data-leaf-undecodable", _HULL_PROFILE_LABEL, ("profile", "label"), 7)
     ]
-    unknown_invalid = _narrowed_hull({"id": 2, "kind": "galley", "profile": {"label": 7}})
+    unknown_invalid = _narrowed_hull(
+        {"id": 2, "kind": "galley", "oars": None, "profile": {"label": 7}}
+    )
     assert _diagnoses(unknown_invalid) == [
         ("stored-data-family-tag-unknown", None, (), "galley"),
         ("stored-data-leaf-undecodable", _HULL_PROFILE_LABEL, ("profile", "label"), 7),
