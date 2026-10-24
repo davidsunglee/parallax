@@ -1275,7 +1275,17 @@ def _animal(ordinal: int, kind: str) -> MappingRow:
     return {**_ANIMAL_ROW, "id": ordinal, "kind": kind}
 
 
-def test_row_form_derives_one_publication_per_concrete_and_variant(
+# The abstract root a tag no composed concrete claims resolves to, then every
+# composed concrete with the variant it publishes.
+_ANIMAL_PAIRS: Final = [
+    ("Animal", None),
+    ("Cat", "Cat"),
+    ("Dog", "Dog"),
+    ("WildBoar", "WildBoar"),
+]
+
+
+def test_row_form_prepares_every_resolvable_pair_once_on_first_publication(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     derived = _counting_publication_preparation(monkeypatch)
@@ -1290,10 +1300,10 @@ def test_row_form_derives_one_publication_per_concrete_and_variant(
     )
 
     assert len(published) == 6
-    assert derived == [("Dog", "Dog"), ("Cat", "Cat"), ("Animal", None)]
+    assert sorted(derived, key=repr) == sorted(_ANIMAL_PAIRS, key=repr)
 
 
-def test_a_row_form_page_derives_afresh_without_a_post_bind_layout_lookup(
+def test_a_cached_plans_later_page_reuses_its_publisher_without_a_post_bind_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cataloged, planner = _cataloged(ANIMAL), ReadPlanCache()
@@ -1307,18 +1317,47 @@ def test_a_row_form_page_derives_afresh_without_a_post_bind_layout_lookup(
     monkeypatch.setattr(_row_converter, "member_classifiers", forbidden)
     monkeypatch.setattr(LayoutCatalog, "entity", forbidden)
     derived = _counting_publication_preparation(monkeypatch)
-    second = _row_form(ANIMAL, "Animal", stored, cataloged=cataloged, planner=planner)
+    second = _row_form(
+        ANIMAL, "Animal", [*stored, _animal(3, "boar")], cataloged=cataloged, planner=planner
+    )
+
+    assert second[:2] == first
+    assert _items(second[2])[-1] == ("familyVariant", "WildBoar")
+    assert derived == []
+
+
+def test_reads_bound_separately_prepare_their_own_publishers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    derived = _counting_publication_preparation(monkeypatch)
+    stored = [_animal(1, "dog")]
+
+    first = _row_form(ANIMAL, "Animal", stored)
+    second = _row_form(ANIMAL, "Animal", stored)
 
     assert second == first
-    assert derived == [("Dog", "Dog"), ("Cat", "Cat")]
+    assert sorted(derived, key=repr) == sorted(_ANIMAL_PAIRS * 2, key=repr)
 
 
-def test_history_reads_derive_no_row_publication(monkeypatch: pytest.MonkeyPatch) -> None:
+def _forbid_row_publication(patched: pytest.MonkeyPatch) -> None:
     def forbidden(*args: object, **kwargs: object) -> object:
         del args, kwargs
-        raise AssertionError("a history read derived a row publication")
+        raise AssertionError("a read that publishes no flat row prepared a publisher")
 
-    monkeypatch.setattr(_row_converter, "_row_operation", forbidden)
+    patched.setattr(_row_converter, "_prepare_row_publisher", forbidden)
+    patched.setattr(_row_converter, "_row_operation", forbidden)
+
+
+def test_graph_reads_prepare_no_row_publisher(monkeypatch: pytest.MonkeyPatch) -> None:
+    _forbid_row_publication(monkeypatch)
+    port = QueuePort([[_animal(1, "dog"), _animal(2, "zebra")]])
+    query = deserialize_query({"target": "Animal", "predicate": {"true": {}}})
+
+    assert _find(query, ANIMAL, port).page.root_count == 2
+
+
+def test_history_reads_prepare_no_row_publisher(monkeypatch: pytest.MonkeyPatch) -> None:
+    _forbid_row_publication(monkeypatch)
     port = QueuePort(
         [
             [

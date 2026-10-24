@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Lock
 from types import MappingProxyType
 from typing import cast
 
@@ -22,7 +23,11 @@ from parallax.core.metamodel import (
 )
 from parallax.core.read_delivery._convert import EntityReadMapping, register_reduced_row
 from parallax.core.read_delivery._page import ABSENT, LogicalKey, PageBuilder, SourceLevel
-from parallax.core.read_delivery._row_decoding import member_classifiers, row_identity
+from parallax.core.read_delivery._row_decoding import (
+    member_classifiers,
+    resolved_variants,
+    row_identity,
+)
 from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.wire import encode_wire
 from parallax.core.write_plan.observe import occurrence_value
@@ -44,10 +49,14 @@ class ReadRowConverter:
     Everything it is built from is private for that reason: the mapping table
     is reachable only through conversion, so nothing outside can read a mapping,
     replace one, or hold the contract apart from the mappings bound with it.
+    The flat-row publisher is prepared on first request and lives as long as
+    the converter; a read that never publishes flat rows prepares none.
     """
 
     _contract: ReadResultContract
     _mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping]
+    _publication_lock: Lock = field(default_factory=Lock, init=False, repr=False, compare=False)
+    _publisher: RowPublisher | None = field(default=None, init=False, repr=False, compare=False)
 
     def convert_row(
         self,
@@ -140,36 +149,50 @@ class ReadRowConverter:
         return ref, resolved, document, variant
 
     def row_publisher(self) -> RowPublisher:
-        """Open one Page's flat-row publisher; what it derives dies with it."""
-        return RowPublisher(self._contract, self._mappings_by_entity)
+        """This converter's flat-row publisher, prepared by the first call.
+
+        Concurrent first calls prepare it once; a preparation that fails
+        leaves none, so a later call prepares it afresh.
+        """
+        with self._publication_lock:
+            publisher = self._publisher
+            if publisher is None:
+                publisher = _prepare_row_publisher(self._contract, self._mappings_by_entity)
+                # Frozen to callers; this lazily prepared slot is the converter's own.
+                object.__setattr__(self, "_publisher", publisher)
+            return publisher
 
 
 class RowPublisher:
-    """Publishes one Page's flat rows, deriving one operation per concrete
-    Entity and `familyVariant` pair on first sight of that pair."""
+    """Publishes flat rows through one prepared operation per `(Entity,
+    familyVariant)` pair a row of the read can resolve to."""
 
-    __slots__ = ("_contract", "_mappings_by_entity", "_operations")
+    __slots__ = ("_operations",)
 
     def __init__(
-        self,
-        contract: ReadResultContract,
-        mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping],
+        self, operations: Mapping[tuple[EntityIdentity, str | None], _RowOperation]
     ) -> None:
-        self._contract = contract
-        self._mappings_by_entity = mappings_by_entity
-        self._operations: dict[tuple[EntityIdentity, str | None], _RowOperation] = {}
+        self._operations = operations
 
     def publish(
         self, concrete: EntityIdentity, row: tuple[object, ...], variant: str | None
     ) -> dict[str, object]:
-        """One positional member row of ``concrete`` as its result-keyed flat row."""
-        pair = (concrete, variant)
-        operation = self._operations.get(pair)
-        if operation is None:
-            operation = self._operations[pair] = _row_operation(
-                self._contract, self._mappings_by_entity[concrete], variant
-            )
-        return operation(row)
+        """One positional member row of ``concrete`` as its result-keyed flat row.
+
+        Raises ``KeyError`` for a pair no row of the read resolves to.
+        """
+        return self._operations[concrete, variant](row)
+
+
+def _prepare_row_publisher(
+    contract: ReadResultContract, mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping]
+) -> RowPublisher:
+    return RowPublisher(
+        {
+            (entity, variant): _row_operation(contract, mappings_by_entity[entity], variant)
+            for entity, variant in resolved_variants(contract)
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)
