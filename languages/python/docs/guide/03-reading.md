@@ -83,9 +83,10 @@ version, so that read also takes a shared lock on the customer's row, which hold
 the transaction ends.
 
 Sometimes you do need to write a value read earlier, such as one a user edited on a form.
-Then state the revision the value carries with a
-[target write](04-writing.md#target-writes). It applies only if the row still stands at
-that revision.
+If its entity carries a revision, a version or a Transaction-Time start, state the
+revision the value carries with a [target write](04-writing.md#target-writes). It
+applies only if the row still stands at that revision. An unversioned entity such as
+`Customer` has no revision to state, so read it again inside the transaction.
 
 ### Several reads must agree
 

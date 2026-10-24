@@ -1,310 +1,646 @@
 # Writing
 
-Writes run inside a transaction. A keyed write to an existing object needs a licence: a
-read of that object in the same transaction attempt, the attempt's own insertion of it, or
-a revision the caller states.
+Writes run inside a transaction, through the context `db.transact` hands its callback.
+The values a read returns are immutable, so nothing is written by changing an object.
+Instead you tell the transaction what to do: insert a new value, amend or replace an
+edited copy of one you read, or delete it. The transaction's unit of work buffers those
+writes, combines writes to the same object, batches them, and orders them around their
+dependencies. It sends them when a read needs them, when a predicate write runs, or when
+the transaction commits, and they all commit together or not at all.
 
-Returned values are immutable, and writes are explicit rather than inferred from changes
-to a live object: you insert a new value, amend an edited copy, or delete through the
-transaction. The transaction's unit of work buffers your writes, combines or cancels
-writes to the same object, batches them, and orders them around their dependencies. A
-read inside the transaction first flushes the pending writes it needs, so it sees your
-own changes. Predicate writes change every row a query selects without reading them first.
+Parallax refuses blind writes. A write to an object that already exists needs a licence,
+something that shows what the write applies to:
+
+- a read of that object in the same transaction attempt;
+- the attempt's own insertion of it; or
+- a revision you state yourself, in a [target write](#target-writes).
+
+[Predicate writes](#predicate-writes) are the one exception. They change every row a
+query selects without reading it first, and only entities with no version and no history
+accept them.
+
+This chapter starts with the simplest temporality profile and adds time one axis at a
+time: Non-Temporal entities, then Transaction-Time-Only, then Bitemporal. After that it
+covers target writes, predicate writes and writing through Wire. The examples use the
+shop model from [Modeling](02-modeling.md).
 
 ## Non-Temporal entities
 
 ### Insert, then read your own write
 
-<!-- example: m-unit-work-001 -->
-```python
-def insert_then_read_your_own_write(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: TxnContext) -> list[Entity]:
-        tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
-        return list(tx.find(Account.where(Account.id == 7)).results())
+`tx.insert` takes a new instance:
 
-    return db.transact(fn)
+<!-- example: insert-and-read-your-own-write -->
+```python
+def register_a_customer(db: ScopedDatabase, customer_id: int, name: str) -> Customer:
+    """Insert a customer, then read it back before the transaction commits."""
+
+    def register(tx: TxnContext) -> Customer:
+        tx.insert(Customer(id=customer_id, name=name, email=None))
+        return tx.find(Customer.where(Customer.id == customer_id)).result()
+
+    return db.transact(register)
 ```
 <!-- /example -->
 
-### Keyed amendment, observed in-transaction
+The insert waits in the transaction's buffer. The `find` after it needs the new customer,
+so the transaction flushes the insert first, and the read sees it. A flushed write is
+still inside the transaction: if the callback raises, or the commit fails, the insert is
+discarded like everything else the transaction did.
 
-<!-- example: m-unit-work-005 -->
+The instance you inserted carries a licence of its own for the rest of the attempt. You
+can amend or delete it, or an edited copy of it, without reading it back.
+
+### Amend or replace an edited value
+
+To change an object, read it inside the transaction, edit a copy, and hand the copy to
+`amend` or `replace`:
+
+<!-- example: amend-or-replace-an-edited-value -->
 ```python
-def keyed_amendment_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: TxnContext) -> list[Entity]:
-        current = tx.find(Account.where(Account.id == 1)).result()
-        tx.amend(current.edit(balance=Decimal("175.00")))
-        return list(tx.find(Account.where(Account.id == 1)).results())
+def change_an_email(db: ScopedDatabase, customer_id: int, email: str) -> None:
+    """Write the members ``edit`` changed; every other member keeps its stored value."""
 
-    return db.transact(fn)
+    def change(tx: TxnContext) -> None:
+        customer = tx.find(Customer.where(Customer.id == customer_id)).result()
+        tx.amend(customer.edit(email=email))
+
+    db.transact(change)
+
+
+def replace_contact_details(db: ScopedDatabase, customer_id: int, name: str) -> None:
+    """Write every writable member the value holds, the unedited email included."""
+
+    def rewrite(tx: TxnContext) -> None:
+        customer = tx.find(Customer.where(Customer.id == customer_id)).result()
+        tx.replace(customer.edit(name=name))
+
+    db.transact(rewrite)
 ```
 <!-- /example -->
 
-### Keyed delete, observed in-transaction
+`edit(...)` returns a copy with the members you name changed, and leaves the value you
+read as it was. `amend` writes the members the copy's edits touched, and every other
+member keeps its stored value. `replace` writes the copy's whole writable state, edited
+or not, so the second function writes `email` too.
 
-<!-- example: m-unit-work-006 -->
+For a value read in the same transaction, the two end in the same stored state, because
+the members you didn't edit already hold their stored values. `replace` matters when the
+state comes from somewhere else. A Wire document or a target write's payload states a
+whole state, and `replace` writes every member it leaves out as empty. Over a window of
+Valid Time, `replace` also fills Valid Time that nothing covered, as
+[Bitemporal entities](#bitemporal-entities) shows.
+
+When the new value is computed from the old one, you can pass `Attr.set(...)`
+assignments beside the value you read instead of editing it:
+
+<!-- example: amend-with-an-assignment -->
 ```python
-def keyed_delete_observed_in_transaction(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: TxnContext) -> list[Entity]:
-        current = tx.find(Account.where(Account.id == 3)).result()
-        tx.delete(current)
-        return list(tx.find(Account.where(Account.id == 3)).results())
+def add_to_an_order(db: ScopedDatabase, order_id: int, amount: Decimal) -> None:
+    """Amend with an assignment computed from the value just read."""
 
-    return db.transact(fn)
+    def add(tx: TxnContext) -> None:
+        order = tx.find(Order.where(Order.id == order_id)).result()
+        tx.amend(order, Order.total.set(order.total + amount))
+
+    db.transact(add)
 ```
 <!-- /example -->
 
-### A row with no revision is written through a read of the writing transaction
+The two forms don't mix: a value with edits takes no assignments.
 
-<!-- example: m-opt-lock-023 -->
+### Delete a value you read
+
+`delete` removes the row of a value read in the transaction:
+
+<!-- example: delete-a-value-you-read -->
 ```python
-def an_unversioned_wallet_is_written_through_a_read_of_the_writing_transaction(
-    adapter: DatabaseAdapter, model: DomainModel
-) -> Decimal:
-    """Top up a wallet, an Entity with no version and no temporal history.
+def cancel_an_order(db: ScopedDatabase, order_id: int) -> None:
+    """Delete an order this transaction read."""
 
-    ``adapter`` holds the seeded wallets. No revision describes a wallet's
-    state, so no caller-stated condition could detect a change since an
-    earlier read; the write reads the wallet in the writing transaction
-    instead, where the shared lock the read takes protects it until commit.
-    """
-    with connect(adapter, model) as database:
-        db = database.using_database_login()
-        query = Wallet.where(Wallet.id == 1)
+    def cancel(tx: TxnContext) -> None:
+        order = tx.find(Order.where(Order.id == order_id)).result()
+        tx.delete(order)
 
-        def top_up(tx: TxnContext) -> None:
-            wallet = tx.find(query).result()
-            tx.amend(wallet, Wallet.balance.set(wallet.balance + Decimal("75.00")))
-
-        db.transact(top_up)
-        return db.find(query).result().balance
+    db.transact(cancel)
 ```
 <!-- /example -->
+
+`delete` physically removes the row, so only Non-Temporal entities accept it. A temporal
+entity keeps its history instead, and you end its current state with `terminate`.
+
+### Locks and versions
+
+Every example above reads before it writes, and that read is the write's licence. What
+else the read does depends on whether the entity has a version.
+
+`Customer` has none, so nothing in a customer's row shows whether it changed. Its read
+takes a shared lock on the row instead, and the lock holds until the transaction ends.
+Until then, other transactions can still read the customer but can't change it, so the
+row your write applies to is the row you read.
+
+`Order` declares a `version`. Its read takes no lock; it records the version it saw, and
+the write applies only if the order still has that version. Parallax advances the
+version on every write, so after `add_to_an_order` the order's version is 2. If another
+transaction changed the order between your read and your write, the write conflicts, and
+Parallax rolls the transaction back and runs your callback again against fresh reads.
+[Transactions](05-transactions.md) explains that replay, and how a transaction can
+choose to lock versioned entities too.
+
+A value read outside the transaction licenses nothing, whichever kind of entity it
+belongs to. [Reading](03-reading.md#youll-write-what-you-read) shows the refusal, and
+[target writes](#target-writes) show how to write such a value when it has a revision.
+
+## Transaction-Time-Only entities
+
+A `TxTemporal` entity, such as `CreditLimit`, keeps every state it has held. An insert
+opens its first milestone. After that, a write never changes a committed milestone's
+values: it closes the current milestone at the transaction's instant and chains what
+follows it.
+
+<!-- example: change-a-credit-limit -->
+```python
+class CreditLimit(TxTemporal, table="credit_limit"):
+    customer_id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=12, scale=2)
+
+
+def grant_a_credit_limit(db: ScopedDatabase, customer_id: int, amount: Decimal) -> None:
+    """Open the first milestone of a customer's limit."""
+    db.transact(lambda tx: tx.insert(CreditLimit(customer_id=customer_id, amount=amount)))
+
+
+def change_a_credit_limit(db: ScopedDatabase, customer_id: int, amount: Decimal) -> None:
+    """Close the current milestone and chain a new one; the old limit stays in history."""
+
+    def change(tx: TxnContext) -> None:
+        limit = tx.find(CreditLimit.where(CreditLimit.customer_id == customer_id)).result()
+        tx.amend(limit.edit(amount=amount))
+
+    db.transact(change)
+```
+<!-- /example -->
+
+Suppose the limit is granted in a transaction that commits on 15 December 2023 and
+changed in one on 10 January 2024. The table then holds two rows, one for each
+milestone:
+
+```text
+amount      tx_start      tx_end
+1000.00     15 Dec 2023   10 Jan 2024
+2500.00     10 Jan 2024   ∞
+```
+
+The amendment closed the first milestone by setting its `tx_end`, and chained the
+second, which is current: its `tx_end` is open, shown as ∞. The first milestone's
+values are untouched. `replace` chains the same way, with a successor that states the
+whole writable state. No write ever edits a closed milestone, which is what makes a read
+of the past stable.
+
+`terminate` closes the current milestone and chains nothing after it:
+
+<!-- example: withdraw-a-credit-limit -->
+```python
+def withdraw_a_credit_limit(db: ScopedDatabase, customer_id: int) -> None:
+    """Close the current milestone and chain nothing after it."""
+
+    def withdraw(tx: TxnContext) -> None:
+        limit = tx.find(CreditLimit.where(CreditLimit.customer_id == customer_id)).result()
+        tx.terminate(limit)
+
+    db.transact(withdraw)
+```
+<!-- /example -->
+
+After a withdrawal on 15 February 2024, no milestone is current:
+
+```text
+amount      tx_start      tx_end
+1000.00     15 Dec 2023   10 Jan 2024
+2500.00     10 Jan 2024   15 Feb 2024
+```
+
+A read of the latest state now finds no limit, while a read as of 1 February still
+answers 2500.00, and history still lists both milestones. `tx.delete` is refused for a
+temporal entity, because it would remove rows; the error names `terminate` instead.
 
 ## Bitemporal entities
 
-### Bitemporal amend-until splits head/middle/tail
+Every Bitemporal write applies to a stretch of Valid Time. Transaction Time is not yours
+to choose: every row a write closes ends at the transaction's instant, and every row it
+opens starts there. So every row a write reaches stays in place, closed in Transaction
+Time, and the Valid Time the write didn't reach keeps its price.
 
-<!-- example: m-temporal-write-017 -->
+This section follows one price list through a year, using `Price` from
+[Modeling](02-modeling.md#choosing-a-temporality-profile). Suppose its transactions
+commit on the dates the `tx_start` column shows. Each picture lists every stored row of
+one product: its amount, the Valid Time it covers, from `|` up to the next `|` or onwards
+for `--->`, and its `tx_start` and `tx_end`. A row whose `tx_end` is ∞ is current.
+
+### Insert from a date
+
+A Bitemporal insert takes `valid_from`, where the price starts to apply. With `until`
+as well, it applies up to that instant and not after:
+
+<!-- example: list-a-price -->
 ```python
-def bitemporal_amend_until_splits_head_middle_tail(db: ScopedDatabase) -> None:
-    def insert(tx: TxnContext) -> None:
-        tx.insert(
-            Position(id=1, acct_num="A", value=Decimal("100.00")),
-            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        )
+class Price(Bitemporal, table="price"):
+    sku: Attr[str] = attr(primary_key=True, max_length=20)
+    amount: Attr[Decimal] = attr(precision=12, scale=2)
 
-    def split(tx: TxnContext) -> None:
-        current = tx.find(
-            Position.where(Position.id == 1).as_of(
-                valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-            )
-        ).result()
-        tx.amend(
-            current.edit(value=Decimal("200.00")),
-            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
-        )
 
-    db.transact(insert)
-    db.transact(split)
+def list_a_tea(db: ScopedDatabase, sku: str, amount: Decimal, start: dt.datetime) -> None:
+    """Open a price from ``start``, with no end."""
+    db.transact(lambda tx: tx.insert(Price(sku=sku, amount=amount), valid_from=start))
+
+
+def list_a_seasonal_tea(
+    db: ScopedDatabase, sku: str, amount: Decimal, start: dt.datetime, end: dt.datetime
+) -> None:
+    """Open a price from ``start`` up to, but not including, ``end``."""
+    db.transact(lambda tx: tx.insert(Price(sku=sku, amount=amount), valid_from=start, until=end))
 ```
 <!-- /example -->
+
+`TEA-1`, listed at 10.00 from January, has one row, open on both axes:
+
+```text
+            Jan         Apr     Jun         Sep         Dec         tx_start      tx_end
+10.00       |--------------------------------------------------->   15 Dec 2023   ∞
+```
+
+`TEA-2`, a summer blend listed at 6.00 from June until September, covers only that
+window. `until` is excluded, so the blend has no price from 1 September:
+
+```text
+                                Jun         Sep                     tx_start      tx_end
+6.00                            |-----------|                       10 Jan 2024   ∞
+```
+
+### Amend from a date onwards
+
+An amendment starts where its source was read, at the Valid Time the `find` asked for,
+and applies from there onwards:
+
+<!-- example: amend-a-price-from-a-date -->
+```python
+def change_a_price_from(db: ScopedDatabase, sku: str, amount: Decimal, start: dt.datetime) -> None:
+    """Change a price from ``start`` onwards; earlier Valid Time keeps the old price."""
+
+    def change(tx: TxnContext) -> None:
+        price = tx.find(Price.where(Price.sku == sku).as_of(valid_time=start)).result()
+        tx.amend(price.edit(amount=amount))
+
+    db.transact(change)
+```
+<!-- /example -->
+
+Raising `TEA-1` to 12.00 from April closes the January row in Transaction Time and opens
+two in its place, the old price up to April and the new one after it:
+
+```text
+            Jan         Apr     Jun         Sep         Dec         tx_start      tx_end
+10.00       |--------------------------------------------------->   15 Dec 2023   15 Feb 2024
+10.00       |-----------|                                           15 Feb 2024   ∞
+12.00                   |--------------------------------------->   15 Feb 2024   ∞
+```
+
+The closed row still answers a read at an earlier Transaction Time: asked as recorded
+in January, the price for May is 10.00. Because the write starts where its source was
+read, a Bitemporal source must be read at a finite Valid Time. A value read at
+`valid_time=LATEST` names no instant, and amending it is refused.
+
+### Amend a window
+
+With `until`, an amendment changes a window of Valid Time and leaves the time after it
+alone. This is the summer sale from Modeling:
+
+<!-- example: amend-a-valid-time-window -->
+```python
+class Price(Bitemporal, table="price"):
+    sku: Attr[str] = attr(primary_key=True, max_length=20)
+    amount: Attr[Decimal] = attr(precision=12, scale=2)
+
+
+def run_a_summer_sale(db: ScopedDatabase) -> None:
+    """Lower a price from June to September; the rest of the year keeps the old price."""
+    june = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    september = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def discount(tx: TxnContext) -> None:
+        price = tx.find(Price.where(Price.sku == "TEA-1").as_of(valid_time=june)).result()
+        tx.amend(price.edit(amount=Decimal("8.00")), until=september)
+
+    db.transact(discount)
+```
+<!-- /example -->
+
+The sale reaches only the row from April, which splits into three: 12.00 before the
+window, 8.00 inside it, and 12.00 again after it. The January to April row is outside
+the window and stays as it was:
+
+```text
+            Jan         Apr     Jun         Sep         Dec         tx_start      tx_end
+10.00       |--------------------------------------------------->   15 Dec 2023   15 Feb 2024
+10.00       |-----------|                                           15 Feb 2024   ∞
+12.00                   |--------------------------------------->   15 Feb 2024   1 May 2024
+12.00                   |-------|                                   1 May 2024    ∞
+8.00                            |-----------|                       1 May 2024    ∞
+12.00                                       |------------------->   1 May 2024    ∞
+```
+
+A window can reach several rows. Each row it reaches is closed and reopened in pieces,
+and the pieces inside the window take the new values while keeping every member the
+write doesn't assign.
+
+### Replace over a window
+
+`replace` makes its state the whole state over its window, including where nothing was
+covered before:
+
+<!-- example: replace-a-price-over-a-window -->
+```python
+def reprice_a_tea_for(
+    db: ScopedDatabase, sku: str, amount: Decimal, start: dt.datetime, end: dt.datetime
+) -> None:
+    """Make ``amount`` the whole state from ``start`` up to ``end``, gaps included."""
+
+    def reprice(tx: TxnContext) -> None:
+        price = tx.find(Price.where(Price.sku == sku).as_of(valid_time=start)).result()
+        tx.replace(price.edit(amount=amount), until=end)
+
+    db.transact(reprice)
+```
+<!-- /example -->
+
+In June, the summer blend is repriced to 7.00 from July and extended to October:
+
+```text
+                                Jun Jul     Sep Oct                 tx_start      tx_end
+6.00                            |-----------|                       10 Jan 2024   20 Jun 2024
+6.00                            |---|                               20 Jun 2024   ∞
+7.00                                |-----------|                   20 Jun 2024   ∞
+```
+
+The replacement covers September, which had no price, and stores July to October as one
+row, because its pieces hold the same state. An amendment over the same window changes
+only what is already covered, so it would leave September without a price:
+
+```text
+                                Jun Jul     Sep Oct                 tx_start      tx_end
+6.00                            |-----------|                       10 Jan 2024   20 Jun 2024
+6.00                            |---|                               20 Jun 2024   ∞
+7.00                                |-------|                       20 Jun 2024   ∞
+```
+
+A replacement still needs a licence, here the read at July. It can't create a product
+that has no row where it starts, so it is never an insert in disguise.
+
+### Terminate
+
+`terminate` ends a price from the Valid Time its source was read at:
+
+<!-- example: terminate-a-price -->
+```python
+def discontinue_a_tea(db: ScopedDatabase, sku: str, day: dt.datetime) -> None:
+    """End a price from ``day`` onwards; earlier Valid Time keeps it."""
+
+    def discontinue(tx: TxnContext) -> None:
+        price = tx.find(Price.where(Price.sku == sku).as_of(valid_time=day)).result()
+        tx.terminate(price)
+
+    db.transact(discontinue)
+```
+<!-- /example -->
+
+`TEA-1` is discontinued from December. The row from September closes, and its piece
+before December reopens:
+
+```text
+            Jan         Apr     Jun         Sep         Dec         tx_start      tx_end
+10.00       |--------------------------------------------------->   15 Dec 2023   15 Feb 2024
+10.00       |-----------|                                           15 Feb 2024   ∞
+12.00                   |--------------------------------------->   15 Feb 2024   1 May 2024
+12.00                   |-------|                                   1 May 2024    ∞
+8.00                            |-----------|                       1 May 2024    ∞
+12.00                                       |------------------->   1 May 2024    1 Nov 2024
+12.00                                       |-----------|           1 Nov 2024    ∞
+```
+
+From December, a read finds no price for `TEA-1`. Every earlier month keeps its price,
+and every earlier row stays on record. `terminate` takes `until` too, which ends the
+price only inside that window.
+
+### Correct the past
+
+In November, you find that `TEA-1` should have cost 9.50 from January to April. A
+correction is an ordinary write whose Valid Time has already passed:
+
+<!-- example: correct-a-past-price -->
+```python
+def correct_a_past_price(
+    db: ScopedDatabase, sku: str, amount: Decimal, start: dt.datetime, end: dt.datetime
+) -> None:
+    """Correct a window of Valid Time that has already passed."""
+
+    def correct(tx: TxnContext) -> None:
+        price = tx.find(Price.where(Price.sku == sku).as_of(valid_time=start)).result()
+        tx.amend(price.edit(amount=amount), until=end)
+
+    db.transact(correct)
+
+
+def correct_a_price_as_recorded_then(
+    db: ScopedDatabase,
+    sku: str,
+    amount: Decimal,
+    start: dt.datetime,
+    end: dt.datetime,
+    recorded_at: dt.datetime,
+) -> None:
+    """Refused with ``TransactionTimePinReadOnlyError``: the value was read at a past
+    Transaction Time."""
+
+    def correct(tx: TxnContext) -> None:
+        query = Price.where(Price.sku == sku).as_of(valid_time=start, tx_time=recorded_at)
+        price = tx.find(query).result()
+        tx.amend(price.edit(amount=amount), until=end)
+
+    db.transact(correct)
+```
+<!-- /example -->
+
+The first function closes the January to April row and opens the corrected one. Its
+Transaction Time is still the moment the correction commits:
+
+```text
+            Jan         Apr     Jun         Sep         Dec         tx_start      tx_end
+10.00       |--------------------------------------------------->   15 Dec 2023   15 Feb 2024
+10.00       |-----------|                                           15 Feb 2024   15 Nov 2024
+9.50        |-----------|                                           15 Nov 2024   ∞
+12.00                   |--------------------------------------->   15 Feb 2024   1 May 2024
+12.00                   |-------|                                   1 May 2024    ∞
+8.00                            |-----------|                       1 May 2024    ∞
+12.00                                       |------------------->   1 May 2024    1 Nov 2024
+12.00                                       |-----------|           1 Nov 2024    ∞
+```
+
+Now the price for February is 9.50. Asked as recorded on 1 November, it is still 10.00,
+because that is what the database held then.
+
+The second function is refused. Its source was read at a finite Transaction Time, and a
+value read there is read-only: amending it raises `TransactionTimePinReadOnlyError`,
+which reaches the caller as the `cause` of an `ExecutionFailure`. A correction always
+starts from what the database knows now and appends to it. What the database knew at an
+earlier instant never changes.
 
 ## Target writes
 
-### A value read before the transaction is written under the version it showed
+A value from a standalone or read-only read can't license `amend`, as
+[You'll write what you read](03-reading.md#youll-write-what-you-read) showed. One way to
+write it is to read it again inside `transact`. The other is a target write: `amend_if`,
+`replace_if`, `delete_if` or `terminate_if`. A target write names the object by its
+entity and key, and states the revision the value showed: its `version` for a versioned
+entity, or its `tx_start` for a temporal one. It applies only if the object still stands
+at that revision.
 
-<!-- example: m-unit-work-056 -->
+Here a user reviewed an order or a credit limit on a page, which a standalone read
+filled, and then confirmed a change:
+
+<!-- example: amend-what-a-review-showed -->
 ```python
-@dataclass(frozen=True, slots=True)
-class ReviewedWriteReport:
-    """Whether the reviewed value licensed a source write, and the balance the
-    target write committed."""
-
-    source_write_refused: bool
-    balance: Decimal
-
-
-def a_reviewed_value_is_written_under_the_version_its_review_saw(
-    adapter: DatabaseAdapter, model: DomainModel
-) -> ReviewedWriteReport:
-    """Credit an account a caller reviewed in an earlier read-only transaction.
-
-    ``adapter`` is the shipped adapter's configuration for the story database,
-    which holds the seeded account row. Only a read of the writing transaction
-    licenses ``tx.amend``, so the reviewed value — read before that transaction
-    began — is refused, and catching the refusal leaves the transaction usable.
-    The write states instead the version the review saw through ``amend_if``,
-    which fails as a precondition if anyone changed the account since.
-    """
-    with connect(adapter, model) as database:
-        db = database.using_database_login()
-        query = Account.where(Account.id == _TARGET_ID)
-        reviewed = db.read_only(lambda rtx: rtx.find(query).result())
-        credited = reviewed.balance + Decimal("25.00")
-
-        def credit(tx: TxnContext) -> bool:
-            refused = False
-            try:
-                tx.amend(reviewed.edit(balance=credited))
-            except WriteEvidenceError:
-                refused = True
-            tx.amend_if(
-                Account, Account.balance.set(credited), key=reviewed.id, version=reviewed.version
-            )
-            return refused
-
-        refused = db.transact(credit)
-        return ReviewedWriteReport(refused, db.find(query).result().balance)
-```
-<!-- /example -->
-
-### A target amendment states its key and the version its caller last observed
-
-<!-- example: m-opt-lock-027 -->
-```python
-def target_amendment_gates_on_the_callers_version(db: ScopedDatabase) -> None:
-    def fn(tx: TxnContext) -> None:
-        tx.amend_if(Account, Account.balance.set(Decimal("250.00")), key=2, version=1)
-
-    db.transact(fn)
-```
-<!-- /example -->
-
-### A target replacement states the object's whole writable state
-
-<!-- example: m-opt-lock-028 -->
-```python
-def target_replacement_states_every_writable_member(db: ScopedDatabase) -> None:
-    def fn(tx: TxnContext) -> None:
-        tx.replace_if(Account(id=3, owner="Hopper", balance=Decimal("12.00")), version=1)
-
-    db.transact(fn)
-```
-<!-- /example -->
-
-### Accounts reviewed earlier are deleted under the versions the review saw
-
-<!-- example: m-opt-lock-041 -->
-```python
-@dataclass(frozen=True, slots=True)
-class ClosingReport:
-    """The reviewed accounts each target deletion removed or refused, and
-    the accounts left standing."""
-
-    closed: tuple[int, ...]
-    refused: tuple[int, ...]
-    remaining: tuple[int, ...]
-
-
-def reviewed_accounts_are_deleted_under_the_versions_their_review_saw(
-    adapter: DatabaseAdapter, model: DomainModel
-) -> ClosingReport:
-    """Close every account a caller reviewed in an earlier read-only transaction.
-
-    ``adapter`` is the shipped adapter's configuration for the story database,
-    which holds the seeded accounts. Each deletion states the version its
-    review saw, so an account another writer changed after the review fails
-    that precondition instead of being deleted, and one nobody changed is
-    deleted. A failed precondition is never retried: the stated version stays
-    what the review saw.
-    """
-    with connect(adapter, model) as database:
-        db = database.using_database_login()
-        reviewed = db.read_only(
-            lambda rtx: list(
-                rtx.find(Account.where(Account.id >= 2).order_by(Account.id.asc())).results()
-            )
+def change_a_reviewed_total(db: ScopedDatabase, reviewed: Order, total: Decimal) -> None:
+    """``reviewed`` came from an earlier read: state the version it showed."""
+    db.transact(
+        lambda tx: tx.amend_if(
+            Order, Order.total.set(total), key=reviewed.id, version=reviewed.version
         )
+    )
 
-        def credit(tx: TxnContext) -> None:
-            current = tx.find(Account.where(Account.id == 2)).result()
-            tx.amend(current, Account.balance.set(current.balance + Decimal("5.00")))
 
-        db.transact(credit)
-        closed: list[int] = []
-        refused: list[int] = []
-        for account in reviewed:
-
-            def close(tx: TxnContext, account: Account = account) -> None:
-                tx.delete_if(Account, key=account.id, version=account.version)
-
-            try:
-                db.transact(close)
-            except ExecutionFailure as failure:
-                if not isinstance(failure.cause, WritePreconditionError):
-                    raise
-                refused.append(account.id)
-            else:
-                closed.append(account.id)
-        everyone = Account.where(Account.id >= 1).order_by(Account.id.asc())
-        remaining = tuple(account.id for account in db.find(everyone).results())
-        return ClosingReport(tuple(closed), tuple(refused), remaining)
+def change_a_reviewed_limit(db: ScopedDatabase, reviewed: CreditLimit, amount: Decimal) -> None:
+    """A temporal entity states where the milestone it showed starts in Transaction Time."""
+    db.transact(
+        lambda tx: tx.amend_if(
+            CreditLimit,
+            CreditLimit.amount.set(amount),
+            key=reviewed.customer_id,
+            tx_start=reviewed.tx_start,
+        )
+    )
 ```
 <!-- /example -->
 
-### A bitemporal target amendment states its window and its caller's milestone
+The stated revision is the write's condition. If the object has moved on since the
+review, the write fails with `WritePreconditionError`, raised at the call or when the
+transaction flushes, depending on the concurrency strategy. That failure is never
+retried, because running the callback again would state the same revision again. A
+revision the transaction observed through its own read is different: when that one
+moves, Parallax can read again and retry. [Transactions](05-transactions.md) explains
+which failures are retried.
 
-<!-- example: m-temporal-write-042 -->
+`Customer` has no version, so a target write can't name a revision for it, and Parallax
+refuses one. Read a customer inside the transaction instead; its shared lock protects
+the write. On a Bitemporal entity, a target write also states `valid_from`, and
+optionally `until`, and its `tx_start` describes the row at `valid_from`. `replace_if`
+takes a whole instance, which can be an edited copy of the reviewed value, and states
+that instance's writable state.
+
+A failed precondition is the caller's to handle. This function cancels each order a user
+reviewed, unless it has changed since:
+
+<!-- example: cancel-reviewed-orders -->
 ```python
-def bitemporal_target_amendment_gates_on_the_callers_milestone(db: ScopedDatabase) -> None:
-    def insert(tx: TxnContext) -> None:
-        tx.insert(
-            Position(id=1, acct_num="A", value=Decimal("100.00")),
-            valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        )
+def cancel_reviewed_orders(db: ScopedDatabase, reviewed: list[Order]) -> list[int]:
+    """Cancel each order unless it changed since its review; return the ones that changed."""
+    changed: list[int] = []
+    for order in reviewed:
 
-    def patch(tx: TxnContext) -> None:
-        tx.wire.amend_if(
-            "Position",
-            {"id": 1, "value": "200.00"},
-            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
-            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
-            tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        )
+        def cancel(tx: TxnContext, order: Order = order) -> None:
+            tx.delete_if(Order, key=order.id, version=order.version)
 
-    db.transact(insert)
-    db.transact(patch)
+        try:
+            db.transact(cancel)
+        except ExecutionFailure as failure:
+            if not isinstance(failure.cause, WritePreconditionError):
+                raise
+            changed.append(order.id)
+    return changed
 ```
 <!-- /example -->
+
+Each order is cancelled in its own transaction, so one that changed doesn't stop the
+others, and the function reports it instead. Any other failure passes through.
 
 ## Predicate writes
 
-### A predicate-selected delete over an unversioned entity is readless
+`amend_where`, `replace_where` and `delete_where` write every row a query selects, in one
+statement, without reading any of them:
 
-<!-- example: m-batch-write-005 -->
+<!-- example: amend-and-delete-where -->
 ```python
-def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: TxnContext) -> list[Entity]:
-        deleted = tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
-        assert deleted == 2
-        return list(tx.find(Wallet.where(Wallet.balance < Decimal("200.00"))).results())
+def forget_an_email_address(db: ScopedDatabase, email: str) -> int:
+    """Clear an email address from every customer holding it; answers how many did."""
+    return db.transact(
+        lambda tx: tx.amend_where(Customer.where(Customer.email == email), Customer.email.set(None))
+    )
 
-    return db.transact(fn)
+
+def delete_the_shipments_of(db: ScopedDatabase, order_id: int) -> int:
+    """Delete every shipment of an order; answers how many there were."""
+    return db.transact(lambda tx: tx.delete_where(Shipment.where(Shipment.order_id == order_id)))
 ```
 <!-- /example -->
 
-### A predicate-selected amendment over an unversioned entity is readless
+A predicate write runs at the call, not at the next flush. The transaction first sends
+the writes it buffered before the call, then runs the statement, and the verb returns
+how many rows it matched or deleted, `0` when nothing matched. An amendment counts a row
+it matched even when the row already held the assigned values. `replace_where` takes the
+query and an instance of its entity, and writes that instance's whole writable state to
+every selected row; the instance's key selects nothing and is never written.
 
-<!-- example: m-batch-write-006 -->
-```python
-def wallet_predicate_amend_is_readless(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: TxnContext) -> list[Entity]:
-        amended = tx.amend_where(
-            Wallet.where(Wallet.balance < Decimal("200.00")),
-            Wallet.balance.set(Decimal("150.00")),
-            Wallet.owner.set("Updated"),
-        )
-        assert amended == 2
-        return list(tx.find(Wallet.where(Wallet.owner == "Updated")).results())
-
-    return db.transact(fn)
-```
-<!-- /example -->
+Because nothing is read, there is no version to check and no milestone to close. So a
+predicate write accepts only an entity with no version and no history, such as
+`Customer` and `Shipment` here. Over `Order` or `CreditLimit` it is refused with
+`InstructionRejectedError` before anything runs. Read those objects and write each one,
+or state each revision in a target write.
 
 ## Wire writes
 
-### Condition a Wire write on the milestone a read returned
+The transaction's `wire` has the same verbs as the transaction, and takes plain mappings
+in Wire spelling instead of instances:
+
+<!-- example: write-through-wire -->
+```python
+def add_a_customer_from_json(db: ScopedDatabase, payload: str) -> None:
+    """Insert a customer from a JSON document in Wire spelling."""
+    db.transact(lambda tx: tx.wire.insert("Customer", json.loads(payload)))
+
+
+def rename_a_customer_through_wire(db: ScopedDatabase, customer_id: int, name: str) -> None:
+    """Amend the node a Wire read of this transaction returned."""
+
+    def rename(tx: TxnContext) -> None:
+        customer = tx.wire.find(Customer.where(Customer.id == customer_id)).result()
+        tx.wire.amend(customer, {"name": name})
+
+    db.transact(rename)
+```
+<!-- /example -->
+
+`tx.wire.insert` names the entity and returns the node it opened, which carries the
+insertion's licence just as an inserted instance does. `tx.wire.amend` takes a node a
+Wire read of this transaction returned and a document naming the members to change;
+`tx.wire.replace` takes a node and the whole new state. The target verbs take an entity
+name and a document holding the key, and the predicate verbs take a Typed query or a
+selection document. `tx.wire.editable_data(node)` copies a node's key and writable
+members into plain mutable mappings, ready to edit and pass back.
+
+A Wire read outside the transaction licenses no write either, but it tells you which
+milestone a temporal node stands on. `edge_of(node)` returns that milestone's `Edge`,
+and its `tx_time` is the revision a target write can state. This example comes from
+Parallax's conformance suite, whose `Balance` is a Transaction-Time-Only entity in the
+`parallax.compatibility` namespace:
 
 <!-- example: condition-wire-write-on-read-milestone -->
 ```python
@@ -339,3 +675,34 @@ def condition_a_wire_write_on_the_milestone_it_read(
     )
 ```
 <!-- /example -->
+
+The amendment applies only while the milestone the read returned is still current.
+Otherwise it fails with `WritePreconditionError`, like any target write.
+
+## How it works →
+
+- [The write flow](../../../../docs/concepts/write-flow.md) follows a write from the
+  verb you call to the statements that commit, in domain terms, and
+  [the temporal model](../../../../docs/concepts/temporal-model.md) explains the two
+  time axes and how a Bitemporal write reshapes coverage. The
+  [Python write-flow architecture](../architecture/write-flow.md) maps the write path
+  onto the implementation.
+- The [unit of work](../../../../core/spec/m-unit-work.md) defines buffering, flushing
+  and [abort](../../../../core/spec/m-unit-work.md#abort), which reads
+  [license a write](../../../../core/spec/m-unit-work.md#current-attempt-source-admission),
+  [insertion authority](../../../../core/spec/m-unit-work.md#insertion-authority),
+  [replacement](../../../../core/spec/m-unit-work.md#source-authorized-replacement) and
+  [target writes](../../../../core/spec/m-unit-work.md#target-writes).
+- [Temporal writes](../../../../core/spec/m-temporal-write.md) define
+  Transaction-Time-Only chaining, the Bitemporal rectangle split, and why
+  [the Transaction-Time past is never rewritten](../../../../core/spec/m-temporal-write.md#the-transaction-time-past-is-never-rewritten).
+- [Optimistic locking](../../../../core/spec/m-opt-lock.md) and
+  [read locks](../../../../core/spec/m-read-lock.md) define the two concurrency
+  strategies, and [batch writes](../../../../core/spec/m-batch-write.md) define
+  predicate writes.
+- The [Wire codec](../../../../core/spec/m-wire.md) defines the canonical values Wire
+  writes accept.
+- The [Python execution binding](../../spec/execution.md#transactions-and-failure-boundaries)
+  records the Python write verbs, and the
+  [queries and results binding](../../spec/queries-and-results.md#wire-results-and-projection)
+  records `edge_of`.

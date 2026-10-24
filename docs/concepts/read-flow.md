@@ -220,7 +220,8 @@ evidence must come from a read of the current attempt, and the Entity's effectiv
 strategy then asks for the shared lock under Locking or the observed revision under
 Optimistic ([current-attempt source admission](../../core/spec/m-unit-work.md#current-attempt-source-admission)).
 A retried attempt re-runs its reads, so a value from an earlier attempt licenses
-nothing in the next one.
+nothing in the next one. [The write flow](write-flow.md#admitted-write) follows the
+write from there.
 
 ## Common use cases
 

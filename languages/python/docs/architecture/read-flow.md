@@ -425,6 +425,8 @@ even when a writable attempt read it. Publication provenance — the concrete En
 the Pin, and whether the root conformed — is recorded on every published value, with
 or without evidence. A standalone or read-only value therefore stays a stored value
 whose revision a target write can state, though it cannot license a source write.
+[Write flow](write-flow.md#what-licenses-each-admitted-write) follows the write from
+admission onward.
 
 A stream keeps the selection it adopted at entry for every page. A participating stream
 is admitted again for each page, so a stream that outlives its attempt reads nothing

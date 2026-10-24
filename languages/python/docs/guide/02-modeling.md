@@ -274,6 +274,8 @@ to the other is a schema and data migration that you run yourself.
 - [Relationships](../../../../core/spec/m-relationship.md),
   [value objects](../../../../core/spec/m-value-object.md) and
   [inheritance](../../../../core/spec/m-inheritance.md) define each building block.
+- [The temporal model](../../../../docs/concepts/temporal-model.md) explains the two time
+  axes, milestones and how a write composes over existing history.
 - [Temporal reads](../../../../core/spec/m-temporal-read.md) and
   [temporal writes](../../../../core/spec/m-temporal-write.md) define the two time axes.
 - [Optimistic locking](../../../../core/spec/m-opt-lock.md) and

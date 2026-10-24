@@ -251,6 +251,91 @@ RECIPES: Final[list[Recipe]] = [
         title="Query with a Wire document and serialize the result",
         snippet=_sources(guide_recipes.customer_as_json),
     ),
+    Recipe(
+        recipe_id="insert-and-read-your-own-write",
+        title="Insert a value and read it back in the same transaction",
+        snippet=_sources(guide_recipes.register_a_customer),
+    ),
+    Recipe(
+        recipe_id="amend-or-replace-an-edited-value",
+        title="Amend or replace an edited copy of a value read in the transaction",
+        snippet=_sources(guide_recipes.change_an_email, guide_recipes.replace_contact_details),
+    ),
+    Recipe(
+        recipe_id="amend-with-an-assignment",
+        title="Amend a value read in the transaction with an explicit assignment",
+        snippet=_sources(guide_recipes.add_to_an_order),
+    ),
+    Recipe(
+        recipe_id="delete-a-value-you-read",
+        title="Delete a value read in the transaction",
+        snippet=_sources(guide_recipes.cancel_an_order),
+    ),
+    Recipe(
+        recipe_id="change-a-credit-limit",
+        title="Insert and amend a Transaction-Time-Only entity",
+        snippet=_sources(
+            CreditLimit, guide_recipes.grant_a_credit_limit, guide_recipes.change_a_credit_limit
+        ),
+    ),
+    Recipe(
+        recipe_id="withdraw-a-credit-limit",
+        title="Terminate a Transaction-Time-Only entity",
+        snippet=_sources(guide_recipes.withdraw_a_credit_limit),
+    ),
+    Recipe(
+        recipe_id="list-a-price",
+        title="Insert a Bitemporal value from a Valid-Time start, with or without an end",
+        snippet=_sources(Price, guide_recipes.list_a_tea, guide_recipes.list_a_seasonal_tea),
+    ),
+    Recipe(
+        recipe_id="amend-a-price-from-a-date",
+        title="Amend a Bitemporal value from a Valid-Time instant onwards",
+        snippet=_sources(guide_recipes.change_a_price_from),
+    ),
+    Recipe(
+        recipe_id="replace-a-price-over-a-window",
+        title="Replace a Bitemporal value over a window of Valid Time",
+        snippet=_sources(guide_recipes.reprice_a_tea_for),
+    ),
+    Recipe(
+        recipe_id="terminate-a-price",
+        title="Terminate a Bitemporal value from a Valid-Time instant onwards",
+        snippet=_sources(guide_recipes.discontinue_a_tea),
+    ),
+    Recipe(
+        recipe_id="correct-a-past-price",
+        title="Correct past Valid Time under the latest Transaction Time",
+        snippet=_sources(
+            guide_recipes.correct_a_past_price, guide_recipes.correct_a_price_as_recorded_then
+        ),
+    ),
+    Recipe(
+        recipe_id="amend-what-a-review-showed",
+        title="Amend a value read earlier under the revision it showed",
+        snippet=_sources(
+            guide_recipes.change_a_reviewed_total, guide_recipes.change_a_reviewed_limit
+        ),
+    ),
+    Recipe(
+        recipe_id="cancel-reviewed-orders",
+        title="Delete values read earlier unless they changed since",
+        snippet=_sources(guide_recipes.cancel_reviewed_orders),
+    ),
+    Recipe(
+        recipe_id="amend-and-delete-where",
+        title="Amend and delete every row a predicate selects",
+        snippet=_sources(
+            guide_recipes.forget_an_email_address, guide_recipes.delete_the_shipments_of
+        ),
+    ),
+    Recipe(
+        recipe_id="write-through-wire",
+        title="Insert and amend through Wire",
+        snippet=_sources(
+            guide_recipes.add_a_customer_from_json, guide_recipes.rename_a_customer_through_wire
+        ),
+    ),
 ]
 
 
