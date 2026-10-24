@@ -152,6 +152,7 @@ def _write(
     )
     assert isinstance(instruction, PreparedKeyedInstruction)
     settled = uow.resolve_read_evidence(entity, source, mutation=mutation, object_key=key)
+    assert settled is not None  # a write of existing state settles against something
     item = admitted_write(instruction, settled, key, source=source)
     uow.buffer(item)
     return item
@@ -253,9 +254,8 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
         KeyedWriteInstruction("insert", "Person", ({"id": 5, "name": "New"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    uow.buffer(admitted_write(insertion, None, _person(5)))
+    identity = uow.buffer_insert(admitted_write(insertion, None, _person(5)), insertion_advice=None)
     _flush(uow)
-    identity = uow.insertion_identity(_person(5))
     assert identity is not None
     for name in ("First", "Second"):
         amendment = prepare_typed_write(
@@ -301,7 +301,7 @@ def test_a_page_read_before_a_deletion_stays_stale_after_its_demand_and_a_reinse
         KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "New"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    uow.buffer(admitted_write(insertion, None, _person(1)))
+    uow.buffer_insert(admitted_write(insertion, None, _person(1)), insertion_advice=None)
     _flush(uow)
     delayed = _published(uow, _person(1), read_at=read_at)
     assert _refusal(lambda: _write(uow, _PERSON, delayed, "amend", name="Bo")) == (
@@ -375,7 +375,7 @@ def _reinserted(uow: UnitOfWork, key: int) -> None:
         KeyedWriteInstruction("insert", "Person", ({"id": key, "name": "Again"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    uow.buffer(admitted_write(insertion, None, _person(key)))
+    uow.buffer_insert(admitted_write(insertion, None, _person(key)), insertion_advice=None)
     _flush(uow)
 
 
@@ -544,6 +544,7 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
     source = ReadEvidence(entity.identity, key, uow.participation, observation)
     held.append(weakref.ref(source))
     resolved = uow.resolve_read_evidence(entity, source, mutation="amend", object_key=key)
+    assert resolved is not None  # a write of existing state settles against something
     write = admitted_write(prepared, resolved, key, source=source)
     uow.buffer(write)
     del source, observation, resolved

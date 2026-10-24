@@ -36,6 +36,7 @@ from parallax.core.inheritance import view as inheritance_view
 from parallax.core.unit_work import (
     Concurrency,
     KeyedWriteInstruction,
+    ReadAuthorizedWrite,
     RetainedObservation,
     TargetWriteInstruction,
     TransactionInstant,
@@ -163,11 +164,11 @@ def observation(entity: type[Bitemporal], row: PredecessorRow) -> RetainedObserv
     return RetainedObservation(_state(entity, row), TemporalObservation(predecessor=row), None)
 
 
-def frag(entity: type[Bitemporal], key: int, parts: int) -> list[AdmittedWrite]:
+def frag(entity: type[Bitemporal], key: int, parts: int) -> list[ReadAuthorizedWrite]:
     """``frag(key, parts)``'s writes, each through its observation of an even
     rectangle, in Valid-Time order."""
     rows = frag_rows(entity, key, parts)
-    writes: list[AdmittedWrite] = []
+    writes: list[ReadAuthorizedWrite] = []
     for pair in range(parts):
         prepared = prepare_wire_write(
             KeyedWriteInstruction(

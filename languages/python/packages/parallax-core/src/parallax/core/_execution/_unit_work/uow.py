@@ -8,21 +8,19 @@ from typing import Literal, Protocol, cast
 from weakref import WeakValueDictionary
 
 from parallax.core import inheritance, temporal_read
+from parallax.core._execution._unit_work._errors import (
+    WRITE_EVIDENCE_CODES,
+    UnitOfWorkError,
+    WriteEvidenceError,
+    WriteEvidenceErrorCode,
+)
 from parallax.core._execution._unit_work._write_ownership import SourceRefusal
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     TargetReadRequest,
     consume_target,
 )
-from parallax.core._execution._unit_work.admission import (
-    WRITE_EVIDENCE_CODES,
-    BufferOutcome,
-    NoInsertionAuthority,
-    UnitOfWorkError,
-    WriteAdmission,
-    WriteEvidenceError,
-    WriteEvidenceErrorCode,
-)
+from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.claims import SettledEvidence
 from parallax.core._execution._unit_work.clock import Clock, TransactionInstant
 from parallax.core._execution._unit_work.effects import (
@@ -41,6 +39,7 @@ from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
+    NoInsertionAuthority,
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
@@ -53,7 +52,9 @@ from parallax.core._execution._unit_work.strategy import (
     EvidencePolicyLookup,
 )
 from parallax.core._execution._unit_work.write_items import (
-    AdmittedWrite,
+    InsertionAuthorizedWrite,
+    KeyedInsert,
+    ReadAuthorizedWrite,
     TargetWrite,
     target_write,
 )
@@ -219,7 +220,8 @@ class UnitOfWork:
     It is not the transaction: the attempt owns the native transaction and its
     lifetime, and hands this the lifetime to consult and doom rather than a
     state of its own. The attempt drives it with :meth:`buffer`,
-    :meth:`buffer_target`, :meth:`execute_predicate`, :meth:`retain`, and
+    :meth:`buffer_insert`, :meth:`buffer_target`, :meth:`execute_predicate`,
+    :meth:`retain`, and
     :meth:`read`, asking :meth:`resolve_read_evidence` what a keyed write's
     source licenses here, flushes it once more before commit, and has it
     :meth:`discard` its state when the attempt does not commit.
@@ -332,17 +334,18 @@ class UnitOfWork:
         return self._participation
 
     def buffer(
-        self, item: AdmittedWrite, *, insertion_advice: KeyedWriteRefusalAdvice | None = None
+        self, item: ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
     ) -> BufferOutcome:
-        """Admit ``item`` under the authority it carries and buffer it for flush
-        at the unit-of-work boundary — all of it, or nothing
+        """Admit ``item``, a write of existing state, under the authority it
+        carries and buffer it for flush at the unit-of-work boundary — all of
+        it, or nothing
         (:meth:`~parallax.core._execution._unit_work.admission.WriteAdmission.admit`).
 
         The claim is read off the admitted write itself
         (:func:`~parallax.core._execution._unit_work.write_items.admitted_write`): a
         retained observation claims the state it observed, and an
         object-locked write claims the object it writes (`m-unit-work`
-        "Observed-State Coalescing"). An insert claims nothing. An arriving
+        "Observed-State Coalescing"). An arriving
         keyed intent the held claim cannot absorb raises
         :class:`WriteEvidenceError` (``write-evidence-already-claimed``), and
         the pending writes, their claims, and the pending inserts are left as
@@ -355,13 +358,7 @@ class UnitOfWork:
         A target write
         (:class:`~parallax.core._execution._unit_work.write_items.TargetWrite`)
         is admitted as :meth:`buffer_target` describes, its caller's revision
-        confirmed under this attempt's concurrency strategy.
-
-        An insert admits an insertion of the object it opens and issues that
-        insertion's identity (:meth:`insertion_identity`), and retains
-        ``insertion_advice`` for a repeat of it (:meth:`insertion_advice`).
-        Where an earlier insertion of the object is stored and a pending write
-        removes all of it, the insert executes after that removal. A write an
+        confirmed under this attempt's concurrency strategy. A write an
         insertion authorized
         (:class:`~parallax.core._execution._unit_work.write_items.InsertionAuthorizedWrite`) is
         admitted only while that authority stands, and a write leaving nothing
@@ -373,9 +370,27 @@ class UnitOfWork:
         recognized when the pair is complete rather than when it is planned.
         """
         self._ensure_open()
-        return self._admission.admit(
-            item, confirm_target=self._confirm_target, insertion_advice=insertion_advice
-        )
+        return self._admission.admit(item, confirm_target=self._confirm_target)
+
+    def buffer_insert(
+        self, insert: KeyedInsert, *, insertion_advice: KeyedWriteRefusalAdvice | None
+    ) -> InsertionIdentity | None:
+        """Admit ``insert`` and buffer it — all of it, or nothing — answering
+        the identity of the insertion it opens, which a source the insertion
+        was stated through carries from then on
+        (:meth:`~parallax.core._execution._unit_work.admission.WriteAdmission.admit_insert`).
+
+        An insert of an object whose admitted insertion still stands is refused
+        (:class:`~parallax.core._execution._unit_work._errors.KeyedWriteValueError`,
+        ``write-value-already-stored``) with the advice that insertion's opener
+        supplied, and ``insertion_advice`` is kept for a repeat of this one.
+        Where an earlier insertion of the object is stored and a pending write
+        removes all of it, the insert executes after that removal. An insert
+        whose key the database allocates opens no insertion and answers
+        ``None``.
+        """
+        self._ensure_open()
+        return self._admission.admit_insert(insert, insertion_advice=insertion_advice)
 
     def execute_predicate(self, prepared: PreparedPredicateInstruction) -> int:
         """Execute a prepared predicate-selected write now, as one readless
@@ -577,13 +592,6 @@ class UnitOfWork:
             held is not None and held.participation is self._participation and not held.invalidated
         )
 
-    def insertion_identity(self, target: ObjectKey) -> InsertionIdentity | None:
-        """The authority the standing admitted insertion of ``target`` grants,
-        or ``None`` where none stands — the identity a source the insertion was
-        stated through carries from then on."""
-        self._ensure_open()
-        return self._admission.insertion_identity(target)
-
     def insertion_authority(
         self, identity: InsertionIdentity
     ) -> TimeInterval | NoInsertionAuthority | None:
@@ -591,20 +599,12 @@ class UnitOfWork:
         with — whose start is where a write it authorizes starts — while its
         authority stands in this unit of work, ``None`` for a standing insertion
         of an object without Valid Time, or
-        :data:`~parallax.core._execution._unit_work.admission.NO_INSERTION_AUTHORITY`
+        :data:`~parallax.core._execution._unit_work.retain.NO_INSERTION_AUTHORITY`
         once it does not stand: never issued here, retired by the complete
         removal of what it opened, or superseded by a later insertion of the
         same object."""
         self._ensure_open()
         return self._admission.insertion_authority(identity)
-
-    def insertion_advice(self, target: ObjectKey) -> KeyedWriteRefusalAdvice | None:
-        """The refusal advice of the admitted insertion of ``target`` that a
-        further insertion of it would repeat, or ``None`` where an insertion of
-        it is a first opening or its opener supplied none
-        (:meth:`~parallax.core._execution._unit_work.admission.WriteAdmission.insertion_advice`)."""
-        self._ensure_open()
-        return self._admission.insertion_advice(target)
 
     def resolve_read_evidence(
         self,

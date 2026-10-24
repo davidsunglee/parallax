@@ -395,7 +395,7 @@ def test_an_observed_write_requires_a_retained_observation(evidence: object) -> 
         StateObservedWrite(prepared, _PERSON_ONE, evidence)  # pyright: ignore[reportArgumentType]
     if evidence is not None:
         with pytest.raises(ValueError, match="requires the retained observation"):
-            admitted_write(prepared, evidence, _PERSON_ONE)  # pyright: ignore[reportArgumentType]
+            admitted_write(prepared, evidence, _PERSON_ONE)  # pyright: ignore[reportArgumentType, reportCallIssue]
     observed = admitted_write(prepared, _RETAINED, _PERSON_ONE)
     assert isinstance(observed, StateObservedWrite)
     assert observed.observation is _RETAINED.evidence

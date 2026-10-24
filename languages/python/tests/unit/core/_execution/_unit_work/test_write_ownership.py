@@ -2,8 +2,11 @@
 opened, the insertions it admitted and how much of each stays stored, and what
 its completed writes left of the observed states its temporal sources share.
 
-Insertion records come from real admission and drain; every other fact is
-published by completion, as a successful settled write publishes it. The
+Insertions are opened, composed, and planned through real admission and
+drain; every other fact is published by completion, as a successful settled
+write publishes it. What an insertion left stored is observed through its
+transitions: whether its authority still stands, and whether pending removals
+reach everything it stored, so that a further insertion follows them. The
 ``OpenedRows`` fake the planning suites read is held to the same
 ``TemporalWriteOwnership`` answers here.
 """
@@ -15,9 +18,12 @@ import gc
 from decimal import Decimal
 from weakref import WeakValueDictionary
 
+import pytest
+
 from parallax.core import temporal_read
+from parallax.core._execution._unit_work._errors import UnitOfWorkError
 from parallax.core._execution._unit_work._write_ownership import (
-    InsertionRecord,
+    InsertionComposition,
     SourceRefusal,
     WriteOwnership,
 )
@@ -27,16 +33,26 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.retain import (
+    NO_INSERTION_AUTHORITY,
+    InsertionIdentity,
+    KeyedWriteRefusalAdvice,
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
 )
-from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite, TargetWrite
-from parallax.core.base import INFINITY
+from parallax.core._execution._unit_work.write_items import (
+    ComposedBitemporalOpening,
+    InsertionAuthorizedWrite,
+    KeyedInsert,
+    TargetWrite,
+)
+from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.entity._model import model_of
+from parallax.core.execution import KeyedWriteValueError
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.temporal_read import TimeInterval
-from parallax.core.unit_work import AdmittedWrite, KeyedWriteInstruction, admitted_write
+from parallax.core.temporal_write.coverage import NO_TRANSFORM
+from parallax.core.unit_work import KeyedWriteInstruction, admitted_write
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.keys import ObjectStateKey, object_state_key_from_observation
 from parallax.core.write_plan.plan import (
@@ -60,8 +76,14 @@ _KEY = corpus_object_key("WherePosition", ("id", 1))
 _T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
 _SECOND_START = dt.datetime(2023, 12, 15, tzinfo=dt.UTC)
 _REVISED_AT = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-_JAN, _FEB, _APR, _MAY, _JUN, _AUG, _SEP = (
-    dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 2, 4, 5, 6, 8, 9)
+_JAN, _FEB, _MAR, _APR, _MAY, _JUN, _AUG, _SEP = (
+    dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 2, 3, 4, 5, 6, 8, 9)
+)
+_OPENER = KeyedWriteRefusalAdvice(
+    not_stored="not stored", already_stored="already stored", repeated_insert="amend the opener"
+)
+_REPEATER = KeyedWriteRefusalAdvice(
+    not_stored="not stored", already_stored="already stored", repeated_insert="amend the repeat"
 )
 
 
@@ -84,7 +106,7 @@ def _live(admission: WriteAdmission) -> WriteOwnership:
     return ownership
 
 
-def _insert(start: dt.datetime, until: dt.datetime | None = None) -> AdmittedWrite:
+def _insert(start: dt.datetime, until: dt.datetime | None = None) -> KeyedInsert:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             "insert" if until is None else "insertUntil",
@@ -101,13 +123,12 @@ def _insert(start: dt.datetime, until: dt.datetime | None = None) -> AdmittedWri
 
 def _stored(
     start: dt.datetime, until: dt.datetime | None = None
-) -> tuple[WriteAdmission, InsertionRecord]:
+) -> tuple[WriteAdmission, InsertionIdentity]:
     admission = _admission()
-    admission.admit(_insert(start, until), confirm_target=_confirmed)
+    identity = admission.admit_insert(_insert(start, until), insertion_advice=None)
+    assert identity is not None
     admission.drain_planned()
-    record = _live(admission).insertion_record(_KEY)
-    assert record is not None
-    return admission, record
+    return admission, identity
 
 
 def _position_endpoint(end: dt.datetime | None) -> TemporalRowCoordinates:
@@ -144,6 +165,24 @@ def _state(start: dt.datetime, tx_start: dt.datetime) -> ObjectStateKey:
     return _observed(start, tx_start).key
 
 
+def _follows_removal(
+    ownership: WriteOwnership,
+    start: dt.datetime,
+    end: dt.datetime | TemporalBound,
+) -> bool:
+    """Whether a further insertion, beside pending writes destroying
+    ``[start, end)`` of the object, is a first opening that follows them: the
+    removal reaches everything the object's admissions left stored."""
+    assert end is INFINITY or isinstance(end, dt.datetime)
+    _identity, follows = ownership.open_insertion(
+        _insert(_SEP),
+        pending_removal=NO_TRANSFORM.followed_by(TimeInterval(start, end), None, replaces=False),
+        removes_object=False,
+        insertion_advice=None,
+    )
+    return follows
+
+
 # --------------------------------------------------------------------------- #
 # Owned rows and the insertions they continue.                                #
 # --------------------------------------------------------------------------- #
@@ -151,94 +190,16 @@ def test_a_row_a_settled_write_removes_and_reopens_at_one_address_stays_owned() 
     # Removals are retired before openings register, so the row a settled write
     # reopened at the address it removed is still the attempt's to revise.
     endpoint = TemporalRowCoordinates(_KEY.entity, (1,), (Finite(instant=_JUN), PLANNED_INFINITY))
-    ownership = WriteOwnership(version_after=_no_version, observations={})
+    ownership = WriteOwnership(_POSITION, version_after=_no_version, observations={})
     ownership.complete((), Openings(fresh=(endpoint,)))
     ownership.complete((endpoint,), Openings(fresh=(endpoint,)))
     assert ownership.owns(endpoint)
 
 
-def test_a_stored_insertions_removal_window_is_kept_until_what_it_derives_from_changes() -> None:
-    admission, record = _stored(_FEB)
-    ownership = _live(admission)
-    open_row = _position_endpoint(None)
-    ownership.complete((), Openings(continued=(open_row,)))
-    window = ownership.removal_window(record)
-    assert window == TimeInterval(_FEB, INFINITY)
-    assert ownership.removal_window(record) is window
-    # Retiring the open row and tagging a bounded one leaves an earlier end.
-    bounded = _position_endpoint(_JUN)
-    ownership.complete((open_row,), Openings(continued=(bounded,)))
-    narrowed = ownership.removal_window(record)
-    assert narrowed == TimeInterval(_FEB, _JUN)
-    assert narrowed is not window
-    # A stored object's further admission keeps its anchor until its buffer is
-    # drained, and composition cancelling a pending one changes neither tags
-    # nor anchor.
-    admission.admit(_insert(_APR), confirm_target=_confirmed)
-    assert ownership.removal_window(record) is narrowed
-    admission.drain_planned()
-    moved = ownership.removal_window(record)
-    assert moved == TimeInterval(_APR, _JUN)
-    _cancel_reinsertion(admission, _MAY)
-    assert record.identity is None
-    assert ownership.removal_window(record) is moved
-
-
-def test_an_insertion_keeps_only_its_own_part_of_a_merged_row_and_ends_with_it() -> None:
-    admission, record = _stored(_JAN, _APR)
-    ownership = _live(admission)
-    identity = record.identity
-    assert identity is not None
-    merged = _position_endpoint(_JUN)
-    ownership.complete((), Openings(shared=((merged, (TimeInterval(_JAN, _APR),)),)))
-    assert ownership.continues_insertion(merged)
-    assert ownership.insertion_coverage(merged, TimeInterval(_JAN, _JUN)) == (
-        TimeInterval(_JAN, _APR),
-    )
-    # Its removal window ends where its own part does, not the merged row.
-    assert ownership.removal_window(record) == TimeInterval(_JAN, _APR)
-    assert record.identity is identity
-    # Revised in place to [April, June), the row holds none of its part.
-    ownership.complete((), Openings(fresh=(merged,)))
-    assert not ownership.continues_insertion(merged)
-    assert ownership.owns(merged)
-    assert record.identity is None
-
-
-def test_a_row_still_holding_part_of_an_insertion_keeps_it_standing() -> None:
-    admission, record = _stored(_JAN, _APR)
-    ownership = _live(admission)
-    identity = record.identity
-    merged = _position_endpoint(_JUN)
-    ownership.complete((), Openings(shared=((merged, (TimeInterval(_JAN, _APR),)),)))
-    narrowed = (TimeInterval(_FEB, _APR),)
-    ownership.complete((), Openings(shared=((merged, narrowed),)))
-    assert ownership.insertion_coverage(merged, TimeInterval(_FEB, _JUN)) == narrowed
-    assert record.identity is identity
-    # Whole again once a successor lies inside the part it contributed.
-    head = _position_endpoint(_FEB)
-    ownership.complete((merged,), Openings(continued=(head,)))
-    assert ownership.insertion_coverage(head, TimeInterval(_JAN, _FEB)) == (
-        TimeInterval(_JAN, _FEB),
-    )
-    assert record.identity is identity
-
-
-def test_an_insertions_part_running_on_without_end_leaves_its_removal_window_open() -> None:
-    admission, record = _stored(_JAN, _APR)
-    ownership = _live(admission)
-    merged = _position_endpoint(None)
-    untagged = _position_endpoint(_JAN)
-    ownership.complete(
-        (), Openings(fresh=(untagged,), shared=((merged, (TimeInterval(_APR, INFINITY),)),))
-    )
-    assert ownership.insertion_coverage(untagged, TimeInterval(_JAN, _FEB)) == ()
-    assert ownership.removal_window(record) == TimeInterval(_JAN, INFINITY)
-
-
-def _cancel_reinsertion(admission: WriteAdmission, start: dt.datetime) -> None:
-    admission.admit(_insert(start), confirm_target=_confirmed)
-    identity = admission.insertion_identity(_KEY)
+def _cancel_reinsertion(admission: WriteAdmission, start: dt.datetime) -> InsertionIdentity:
+    """Insert the stored object again at ``start`` and terminate that pending
+    opening whole through the identity it issued, answering that identity."""
+    identity = admission.admit_insert(_insert(start), insertion_advice=None)
     assert identity is not None
     termination = prepare_wire_write(
         KeyedWriteInstruction("terminate", "WherePosition", ({"id": 1},), start), _POSITION
@@ -247,19 +208,227 @@ def _cancel_reinsertion(admission: WriteAdmission, start: dt.datetime) -> None:
     admission.admit(
         InsertionAuthorizedWrite(termination, _KEY, identity), confirm_target=_confirmed
     )
+    return identity
+
+
+def _stored_through(stage: str) -> WriteOwnership:
+    """An insertion stored from February, whose open row a later write bounds
+    at June, then admitted again from April and drained, then reinserted
+    from May and cancelled, as far as ``stage``."""
+    admission, stored = _stored(_FEB)
+    ownership = _live(admission)
+    open_row = _position_endpoint(None)
+    ownership.complete((), Openings(continued=(open_row,)))
+    if stage == "open":
+        return ownership
+    ownership.complete((open_row,), Openings(continued=(_position_endpoint(_JUN),)))
+    if stage == "bounded":
+        return ownership
+    # A stored object's further admission keeps its anchor until its buffer
+    # is drained, and supersedes the earlier insertion's authority.
+    further = admission.admit_insert(_insert(_APR), insertion_advice=None)
+    assert further is not None
+    admission.drain_planned()
+    assert ownership.insertion_authority(stored) is NO_INSERTION_AUTHORITY
+    if stage == "drained":
+        return ownership
+    # Composition cancelling a pending one changes neither tags nor anchor.
+    cancelled = _cancel_reinsertion(admission, _MAY)
+    assert ownership.insertion_authority(cancelled) is NO_INSERTION_AUTHORITY
+    assert ownership.insertion_authority(further) is NO_INSERTION_AUTHORITY
+    return ownership
+
+
+@pytest.mark.parametrize(
+    ("stage", "start", "end", "follows"),
+    [
+        ("open", _FEB, INFINITY, True),
+        ("open", _MAR, INFINITY, False),
+        ("open", _FEB, _SEP, False),
+        ("bounded", _FEB, _JUN, True),
+        ("bounded", _FEB, _MAY, False),
+        ("bounded", _MAR, _JUN, False),
+        ("drained", _MAR, _JUN, True),
+        ("drained", _MAY, _JUN, False),
+        ("cancelled", _MAR, _JUN, True),
+        ("cancelled", _MAY, _JUN, False),
+    ],
+)
+def test_a_stored_insertion_is_removed_whole_from_its_anchor_to_its_latest_row_end(
+    stage: str, start: dt.datetime, end: dt.datetime | TemporalBound, follows: bool
+) -> None:
+    assert _follows_removal(_stored_through(stage), start, end) is follows
+
+
+def test_an_insertion_keeps_only_its_own_part_of_a_merged_row_and_ends_with_it() -> None:
+    admission, identity = _stored(_JAN, _APR)
+    ownership = _live(admission)
+    merged = _position_endpoint(_JUN)
+    ownership.complete((), Openings(shared=((merged, (TimeInterval(_JAN, _APR),)),)))
+    assert ownership.continues_insertion(merged)
+    assert ownership.insertion_coverage(merged, TimeInterval(_JAN, _JUN)) == (
+        TimeInterval(_JAN, _APR),
+    )
+    assert ownership.insertion_authority(identity) == TimeInterval(_JAN, _APR)
+    # Revised in place to [April, June), the row holds none of its part.
+    ownership.complete((), Openings(fresh=(merged,)))
+    assert not ownership.continues_insertion(merged)
+    assert ownership.owns(merged)
+    assert ownership.insertion_authority(identity) is NO_INSERTION_AUTHORITY
+
+
+@pytest.mark.parametrize(("end", "follows"), [(_APR, True), (_MAR, False)])
+def test_an_insertions_removal_ends_where_its_part_of_a_merged_row_does(
+    end: dt.datetime, follows: bool
+) -> None:
+    admission, _identity = _stored(_JAN, _APR)
+    ownership = _live(admission)
+    merged = _position_endpoint(_JUN)
+    ownership.complete((), Openings(shared=((merged, (TimeInterval(_JAN, _APR),)),)))
+    assert _follows_removal(ownership, _JAN, end) is follows
+
+
+def test_a_row_still_holding_part_of_an_insertion_keeps_it_standing() -> None:
+    admission, identity = _stored(_JAN, _APR)
+    ownership = _live(admission)
+    merged = _position_endpoint(_JUN)
+    ownership.complete((), Openings(shared=((merged, (TimeInterval(_JAN, _APR),)),)))
+    narrowed = (TimeInterval(_FEB, _APR),)
+    ownership.complete((), Openings(shared=((merged, narrowed),)))
+    assert ownership.insertion_coverage(merged, TimeInterval(_FEB, _JUN)) == narrowed
+    assert ownership.insertion_authority(identity) == TimeInterval(_JAN, _APR)
+    # Whole again once a successor lies inside the part it contributed.
+    head = _position_endpoint(_FEB)
+    ownership.complete((merged,), Openings(continued=(head,)))
+    assert ownership.insertion_coverage(head, TimeInterval(_JAN, _FEB)) == (
+        TimeInterval(_JAN, _FEB),
+    )
+    assert ownership.insertion_authority(identity) == TimeInterval(_JAN, _APR)
+
+
+@pytest.mark.parametrize(("end", "follows"), [(INFINITY, True), (_SEP, False)])
+def test_an_insertions_part_running_on_without_end_leaves_its_removal_open(
+    end: dt.datetime | TemporalBound, follows: bool
+) -> None:
+    admission, _identity = _stored(_JAN, _APR)
+    ownership = _live(admission)
+    merged = _position_endpoint(None)
+    untagged = _position_endpoint(_JAN)
+    ownership.complete(
+        (), Openings(fresh=(untagged,), shared=((merged, (TimeInterval(_APR, INFINITY),)),))
+    )
+    assert ownership.insertion_coverage(untagged, TimeInterval(_JAN, _FEB)) == ()
+    assert _follows_removal(ownership, _JAN, end) is follows
 
 
 def test_a_row_named_again_after_its_insertion_ended_is_no_longer_tagged() -> None:
-    admission, record = _stored(_JAN, _APR)
+    admission, stored = _stored(_JAN, _APR)
     ownership = _live(admission)
     row = _position_endpoint(_APR)
     ownership.complete((), Openings(continued=(row,)))
-    _cancel_reinsertion(admission, _FEB)
-    assert record.identity is None
+    cancelled = _cancel_reinsertion(admission, _FEB)
+    assert ownership.insertion_authority(stored) is NO_INSERTION_AUTHORITY
+    assert ownership.insertion_authority(cancelled) is NO_INSERTION_AUTHORITY
     assert ownership.continues_insertion(row)
     ownership.complete((), Openings(continued=(row,)))
     assert not ownership.continues_insertion(row)
     assert ownership.owns(row)
+    # The attempt still admitted an insertion of the object.
+    assert ownership.has_admitted_insertion(_KEY)
+
+
+# --------------------------------------------------------------------------- #
+# An insertion's lifecycle moves only through its named transitions.          #
+# --------------------------------------------------------------------------- #
+def test_a_repeat_of_a_standing_insertion_is_refused_with_its_openers_advice() -> None:
+    ownership = WriteOwnership(_POSITION, version_after=_no_version, observations={})
+    identity, follows = ownership.open_insertion(
+        _insert(_FEB), pending_removal=None, removes_object=False, insertion_advice=_OPENER
+    )
+    assert not follows
+    for stored in (False, True):
+        if stored:
+            ownership.finish_insertion_planning(pending_keys=(_KEY,), removed_objects=())
+            ownership.complete((), Openings(continued=(_position_endpoint(None),)))
+        with pytest.raises(KeyedWriteValueError) as refusal:
+            ownership.open_insertion(
+                _insert(_FEB),
+                pending_removal=NO_TRANSFORM.followed_by(
+                    TimeInterval(_MAR, INFINITY), None, replaces=False
+                ),
+                removes_object=False,
+                insertion_advice=_REPEATER,
+            )
+        assert refusal.value.code == "write-value-already-stored"
+        assert refusal.value.message.endswith("amend the opener")
+        assert ownership.insertion_authority(identity) == TimeInterval(_FEB, INFINITY)
+
+
+def test_a_reinsertion_supersedes_the_identity_before_it_and_issues_its_own() -> None:
+    admission, first = _stored(_FEB)
+    ownership = _live(admission)
+    ownership.complete((), Openings(continued=(_position_endpoint(None),)))
+    second, follows = ownership.open_insertion(
+        _insert(_APR),
+        pending_removal=NO_TRANSFORM.followed_by(
+            TimeInterval(_FEB, INFINITY), None, replaces=False
+        ),
+        removes_object=False,
+        insertion_advice=None,
+    )
+    assert follows and second is not first
+    assert ownership.insertion_authority(first) is NO_INSERTION_AUTHORITY
+    assert ownership.insertion_authority(second) == TimeInterval(_APR, INFINITY)
+    amendment = prepare_wire_write(
+        KeyedWriteInstruction("amend", "WherePosition", ({"id": 1, "value": "2.00"},), _FEB),
+        _POSITION,
+    )
+    assert isinstance(amendment, PreparedKeyedInstruction)
+    with pytest.raises(UnitOfWorkError, match="no longer stands"):
+        ownership.resolve_insertion_authorized_write(
+            InsertionAuthorizedWrite(amendment, _KEY, first)
+        )
+
+
+def test_an_ended_opening_retires_its_identity_and_its_reinsertion_follows_it() -> None:
+    ownership = WriteOwnership(_POSITION, version_after=_no_version, observations={})
+    insert = _insert(_FEB, _JUN)
+    identity, _follows = ownership.open_insertion(
+        insert, pending_removal=None, removes_object=False, insertion_advice=_OPENER
+    )
+    replacement = prepare_wire_write(
+        KeyedWriteInstruction(
+            "replaceUntil",
+            "WherePosition",
+            ({"id": 1, "acctNum": "B", "value": "2.00"},),
+            _FEB,
+            _SEP,
+        ),
+        _POSITION,
+    )
+    destruction = prepare_wire_write(
+        KeyedWriteInstruction("terminateUntil", "WherePosition", ({"id": 1},), _FEB, _SEP),
+        _POSITION,
+    )
+    assert isinstance(replacement, PreparedKeyedInstruction)
+    assert isinstance(destruction, PreparedKeyedInstruction)
+    # A replacement reaching past the opening, then a destruction of all it
+    # reached, leave nothing of the opening while stored coverage past it is
+    # still replaced.
+    opening = ComposedBitemporalOpening(insert=insert, transform=NO_TRANSFORM, intents=())
+    opening = opening.followed_by(replacement, "id").followed_by(destruction, "id")
+    assert opening.beyond is not None
+    arriving = InsertionAuthorizedWrite(destruction, _KEY, identity)
+    composition = ownership.apply_insertion_composition(
+        _KEY, arriving=arriving, proposed_opening=opening
+    )
+    assert composition is InsertionComposition.ENDED
+    assert ownership.insertion_authority(identity) is NO_INSERTION_AUTHORITY
+    # The ended opening refuses no repeat, and the next insertion follows it.
+    again, follows = ownership.open_insertion(
+        _insert(_FEB), pending_removal=None, removes_object=False, insertion_advice=_REPEATER
+    )
+    assert follows and again is not identity
 
 
 # --------------------------------------------------------------------------- #
@@ -272,7 +441,7 @@ def _observing(*observations: RetainedObservation) -> tuple[WriteOwnership, _Ind
     index: _Index = WeakValueDictionary()
     for observation in observations:
         index[observation.key] = observation
-    return WriteOwnership(version_after=_no_version, observations=index), index
+    return WriteOwnership(_POSITION, version_after=_no_version, observations=index), index
 
 
 def _parts(
@@ -787,7 +956,7 @@ def test_a_transaction_time_origin_continues_while_its_one_row_survives() -> Non
 # The fake planning suites read answers as production does.                   #
 # --------------------------------------------------------------------------- #
 def test_the_fake_answers_only_the_part_of_an_insertion_a_row_covers() -> None:
-    admission, _record = _stored(_JAN, _APR)
+    admission, _identity = _stored(_JAN, _APR)
     production = _live(admission)
     first, second = _position_endpoint(_APR), _position_endpoint(_JUN)
     parts = (TimeInterval(_JAN, _FEB), TimeInterval(_MAY, _JUN))

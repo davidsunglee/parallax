@@ -11,9 +11,9 @@ from typing import Final, Literal, Protocol, cast
 # per-name underscores.
 from parallax.core._execution._family import temporal_shape
 from parallax.core._execution._options import OMITTED, Omitted
-from parallax.core._execution._unit_work.admission import (
-    NO_INSERTION_AUTHORITY,
-    NoInsertionAuthority,
+from parallax.core._execution._unit_work._errors import (
+    KEYED_WRITE_VALUE_CODES,
+    KeyedWriteValueError,
 )
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
@@ -26,8 +26,10 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.keys import object_key
 from parallax.core._execution._unit_work.retain import (
+    NO_INSERTION_AUTHORITY,
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
+    NoInsertionAuthority,
     ReadEvidence,
 )
 from parallax.core._execution._unit_work.uow import UnitOfWork
@@ -57,41 +59,6 @@ __all__ = [
     "target_revision_arguments",
     "validate_source_pin",
 ]
-
-KEYED_WRITE_VALUE_CODES: Final[frozenset[str]] = frozenset(
-    {
-        "write-value-not-stored",
-        "write-value-already-stored",
-        "write-value-foreign-lifecycle",
-    }
-)
-"""The complete keyed-write value refusal vocabulary (`m-unit-work` "Write value
-provenance"). The three answer to the three :data:`Provenance` answers — no
-managed source published this value, this verb's own source did, another managed
-source did — so a refused value carries exactly one of them."""
-
-
-class KeyedWriteValueError(ValueError):
-    """A keyed write verb was handed a value whose PROVENANCE it does not accept.
-
-    A ``ValueError`` for :class:`TransactionTimePinReadOnlyError`'s reason, which
-    is the sibling this shares a vocabulary with: both report a neutral
-    application-lifecycle refusal of an argument a caller supplied, so a caller
-    catching one kind of refused write value catches the other the same way.
-
-    ``code`` is the neutral `m-unit-work` refusal and ``identity`` the Entity
-    Identity the write addressed. The value itself is never retained: what the
-    refusal is about is which source published it, and the message names the verb
-    that does accept it.
-    """
-
-    def __init__(self, *, code: str, message: str, identity: EntityIdentity) -> None:
-        if code not in KEYED_WRITE_VALUE_CODES:
-            raise ValueError(f"{code!r} is not a keyed write value code")
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
-        self.identity = identity
 
 
 class TransactionTimePinReadOnlyError(ValueError):
@@ -172,8 +139,9 @@ def validate_provenance(
     :class:`~parallax.core.entity.EntityRowError` raised on its behalf. It is the
     amendment and replacement family's exemption only: the insert family asks whether an insertion
     of the object still stands for the opposite verdict, and that refusal is
-    :func:`refuse_repeated_insert`'s, asked once the row is prepared rather
-    than here.
+    buffering's
+    (:meth:`~parallax.core._execution._unit_work.uow.UnitOfWork.buffer_insert`),
+    asked once the row is prepared rather than here.
     """
     if mutation not in ASSIGNMENT_MUTATIONS and mutation not in INSERT_MUTATIONS:
         return
@@ -210,54 +178,6 @@ def validate_provenance(
             ),
             identity=identity,
         )
-
-
-def refuse_repeated_insert(
-    identity: EntityIdentity,
-    mutation: KeyedMutation,
-    *,
-    opener_advice: KeyedWriteRefusalAdvice | None,
-) -> None:
-    """Refuse an insert of an object whose insertion in this transaction still
-    stands, whichever value spells the repeat and whichever representation
-    opened the row.
-
-    The insert family's half of read-your-own-writes: a row this unit of work
-    opens is a row it stores, so a second opening of it names a row already
-    held, exactly as a value this store published does — and it carries that
-    value's code, because what is wrong is the same thing. The database would
-    otherwise refuse the pair at commit; the verb answers instead.
-
-    ``opener_advice`` is the unit of work's answer for the object the PREPARED
-    row names, which is why this stands after preparation
-    rather than beside the provenance question: a Wire payload's key members are
-    canonical only once its row is prepared. A Typed instance could answer
-    earlier and does not, so both representations hear pin, provenance, and
-    preparation ahead of this. ``None`` is the whole "not held" answer, so
-    the refusal and the spelling of the way out come from one reading. The
-    answer is about an insertion that still STANDS: once everything it opened
-    has been removed, or a pending write removes all of it, an insert of the
-    object is a first opening and is not refused (`m-unit-work` *Insertion
-    authority*).
-
-    The advice is the one the OPENING insert supplied, never the refusing
-    call's. The two values need not be the same object at all — two values of
-    one primary key open one row, so revising the refused one would author a
-    change against a value nothing buffered and commit the first insert
-    unaltered — and only the opening interface produced a carrier the repair
-    can name.
-    """
-    if opener_advice is None:
-        return
-    raise KeyedWriteValueError(
-        code="write-value-already-stored",
-        message=(
-            f"{identity.canonical}: {mutation!r} was handed a value naming an object this "
-            "transaction already buffered an insert of, so there is no row to open; "
-            f"{opener_advice.repeated_insert}"
-        ),
-        identity=identity,
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -593,6 +513,8 @@ def keyed_write(
         item = admitted_write(prepared, evidence, addressed, source=read)
     if mutation in AMEND_MUTATIONS and not prepared.assigns:
         return
+    # Evidence resolution settles every write of existing state against something.
+    assert not isinstance(item, KeyedInsert)
     uow.buffer(item)
 
 
@@ -665,18 +587,26 @@ def keyed_insert(
     two can never both be pending: a value the provenance rule refuses came from
     no read of this store at all, so it carries no view to be pinned.)
 
-    One stage stands after preparation, the last before the buffer: an insert
-    of an object whose insertion in this transaction still stands is refused,
-    whichever value spells it and whichever representation opened the row. It
-    is asked over the object the PREPARED row names, because a Wire payload's
-    key members are canonical only once the row is — so pin, provenance, and
-    preparation are all heard ahead of it, on both lanes.
+    One stage stands after preparation, as buffering admits the insert: an
+    insert of an object whose insertion in this transaction still stands is
+    refused (``write-value-already-stored``), whichever value spells it and
+    whichever representation opened the row, before anything pending changes.
+    It is asked over the object the PREPARED row names, because a Wire
+    payload's key members are canonical only once the row is — so pin,
+    provenance, and preparation are all heard ahead of it, on both lanes. This
+    is the insert family's half of read-your-own-writes: a row this unit of
+    work opens is a row it stores, so a second opening of it names a row
+    already held, exactly as a value this store published does, and carries
+    that value's code; the database would otherwise refuse the pair at commit.
+    Once everything the standing insertion opened has been removed, or
+    a pending write removes all of it, an insert of the object is a first
+    opening and is not refused (`m-unit-work` *Insertion authority*).
 
     The insertion this admits retains the advice of the interface that opened
     it, which is what a later repeat's refusal names the way out in: the caller
     is sent to the amend verb over the carrier THIS call produced, which the
     opposite interface has no spelling for. The answer carries the authority the
-    admission granted, which the caller's interface binds to that carrier, and
+    admission issued, which the caller's interface binds to that carrier, and
     names the row so a caller holding no Entity Class can revise it.
     """
     refuse_reentry(lifecycle)
@@ -697,14 +627,8 @@ def keyed_insert(
     # A Create Payload is a complete document, so the row it buffers always names
     # its own object by the time validation has admitted it.
     assert opened is not None
-    refuse_repeated_insert(
-        resolved.entity.identity,
-        mutation,
-        opener_advice=uow.insertion_advice(opened),
-    )
-    uow.buffer(KeyedInsert(prepared, opened), insertion_advice=resolved.advice)
-    authority = uow.insertion_identity(opened)
-    assert authority is not None  # the admission just issued it
+    authority = uow.buffer_insert(KeyedInsert(prepared, opened), insertion_advice=resolved.advice)
+    assert authority is not None  # an insert naming its object opens an insertion of it
     return OpenedKeyedWrite(
         identity=resolved.entity.identity,
         row=prepared.rows[0],

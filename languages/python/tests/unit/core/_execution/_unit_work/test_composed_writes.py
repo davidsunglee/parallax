@@ -29,6 +29,7 @@ from parallax.core.unit_work import (
     AdmittedWrite,
     KeyedMutation,
     KeyedWriteInstruction,
+    ReadAuthorizedWrite,
     RetainedObservation,
     WriteEvidenceError,
     WritePlanningRequest,
@@ -63,6 +64,7 @@ from parallax.core.write_plan.steps import PlannedStep
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
+    admit,
     admitted_writes,
     plan_steps,
     settled_writes,
@@ -366,11 +368,11 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
         POSITION, inserted_version=lambda _entity, _from: None, observations={}
     )
     confirm = _unconditioned
-    admission.admit(
+    identity = admission.admit_insert(
         admitted_write(
             _position_write("insertUntil", AUG, DEC, acctNum="N", value="300.00"), None, OBJECT
         ),
-        confirm_target=confirm,
+        insertion_advice=None,
     )
     source = ReadEvidence(OBJECT.entity, OBJECT, _PARTICIPATION, START)
     admission.admit(
@@ -379,7 +381,6 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
         ),
         confirm_target=confirm,
     )
-    identity = admission.insertion_identity(OBJECT)
     assert identity is not None
     admission.admit(
         admitted_write(
@@ -463,7 +464,7 @@ def _balance(
 
 def _observed_balance(
     mutation: KeyedMutation, observation: RetainedObservation, **members: object
-) -> AdmittedWrite:
+) -> ReadAuthorizedWrite:
     ((_, balance_id),) = observation.key.object.primary_key
     assert isinstance(balance_id, int)
     return admitted_write(
@@ -518,9 +519,9 @@ def test_a_superseding_destruction_follows_a_same_rank_destruction_authored_befo
 def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reinsertion() -> None:
     admission = _admission()
     stored = _balance_key(2)
-    admission.admit(
+    identity = admission.admit_insert(
         admitted_write(_balance("insert", 2, acctNum="A", value="1.00"), None, stored),
-        confirm_target=_unconfirmed,
+        insertion_advice=None,
     )
     admission.drain_planned()
     admission.complete(
@@ -530,7 +531,6 @@ def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reins
         (),
         at=1,
     )
-    identity = admission.insertion_identity(stored)
     assert identity is not None
     observed = _balance_observation(1)
     for write in (
@@ -539,7 +539,7 @@ def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reins
         admitted_write(_balance("insert", 2, acctNum="B", value="2.00"), None, stored),
         _observed_balance("terminate", observed),
     ):
-        admission.admit(write, confirm_target=_unconfirmed)
+        admit(admission, write)
     removal, reinsertion, termination = _admitted_plan(admission).entries
     assert isinstance(removal, SettledWrite) and removal.deferred is not None
     assert isinstance(reinsertion, WriteGroup)

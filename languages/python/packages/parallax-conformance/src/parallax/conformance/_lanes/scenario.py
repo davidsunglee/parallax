@@ -107,9 +107,9 @@ from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.temporal_read import TemporalReadError
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
-    AdmittedWrite,
     CardinalityCorruptionError,
     Concurrency,
+    InsertionIdentity,
     KeyedWriteInstruction,
     MissingTargetError,
     OptimisticLockConflictError,
@@ -640,8 +640,9 @@ class _SimulatedUnit:
     an application's would against its source's: an observation is retained
     here, detached from any participation, so this unit's completions never
     invalidate what a real read retained; a write with no observation, of an
-    object this unit's own insertion opened, is authorized by the identity this
-    unit issued; and an
+    object this unit's own insertion opened, is authorized by the identity
+    buffering that insertion issued, while the unit of work answers it as
+    standing; and an
     observation-free write of an unversioned row carries Read Evidence of its
     own, stamped with a participation no unit of work issued. A write against
     existing state that none of these licenses is refused when it is
@@ -657,10 +658,12 @@ class _SimulatedUnit:
     ``inserted`` holds the keys temporal inserts opened in this unit's pending
     buffer: a later write of one, resolved into the same buffer, composes onto
     that insert (:func:`_build_temporal_instruction`). It spans every step a
-    held group buffers before the unit's next flush, which empties it.
+    held group buffers before the unit's next flush, which empties it. Each
+    object's latest insertion identity, the handle a source of that insertion
+    would carry, outlives every flush instead.
     """
 
-    __slots__ = ("_model", "_participation", "_steps", "_uow", "inserted")
+    __slots__ = ("_handles", "_model", "_participation", "_steps", "_uow", "inserted")
 
     def __init__(
         self, model: AcceptedMetamodel, uow: UnitOfWork, steps: SimulatedWriteSteps
@@ -669,6 +672,7 @@ class _SimulatedUnit:
         self._uow = uow
         self._steps = steps
         self._participation = ParticipationToken()
+        self._handles: dict[ObjectKey, InsertionIdentity] = {}
         self.inserted: set[ObjectKey] = set()
 
     @property
@@ -679,13 +683,14 @@ class _SimulatedUnit:
     def buffer(self, write: _ResolvedWrite) -> None:
         instruction = write.instruction
         if isinstance(instruction, PreparedTargetInstruction):
-            self._admit(instruction)
+            with _composition_refusal():
+                self._uow.buffer_target(instruction)
             return
         assert isinstance(instruction, PreparedKeyedInstruction)  # predicate writes execute apart
         key = object_key(instruction, self._model)
         observation = write.supplied_observation
         if instruction.mutation in INSERT_MUTATIONS:
-            self._admit(admitted_write(instruction, None, key))
+            self._insert(instruction, key)
         elif observation is None:
             self._authorized(instruction, key)
         else:
@@ -714,12 +719,20 @@ class _SimulatedUnit:
     def _retained(self, key: ObjectStateKey, evidence: StateObservation) -> RetainedObservation:
         return self._uow.retain(RetainedObservation(key, evidence, None))
 
+    def _insert(self, instruction: PreparedKeyedInstruction, key: ObjectKey | None) -> None:
+        identity = self._uow.buffer_insert(
+            admitted_write(instruction, None, key), insertion_advice=None
+        )
+        if identity is not None:
+            self._handles[identity.object_key] = identity
+
     def _authorized(self, instruction: PreparedKeyedInstruction, key: ObjectKey | None) -> None:
-        identity = None if key is None else self._uow.insertion_identity(key)
-        if identity is None:
+        handle = None if key is None else self._handles.get(key)
+        if handle is None or not _stands(self._uow.insertion_authority(handle)):
             self._admit_with_evidence(instruction, key, None)
-        else:
-            self._admit(admitted_write(instruction, None, key, authority=identity))
+            return
+        with _composition_refusal():
+            self._uow.buffer(admitted_write(instruction, None, key, authority=handle))
 
     def _admit_with_evidence(
         self,
@@ -733,23 +746,33 @@ class _SimulatedUnit:
         )
         if evidence is None:
             raise _unlicensed(instruction, optimistic, self._model)
-        if not isinstance(evidence, ObjectKey):
-            self._admit(admitted_write(instruction, evidence, key))
-            return
-        source = ReadEvidence(instruction.target.identity, evidence, self._participation, None)
-        self._admit(admitted_write(instruction, evidence, key, source=source))
+        source = (
+            ReadEvidence(instruction.target.identity, evidence, self._participation, None)
+            if isinstance(evidence, ObjectKey)
+            else None
+        )
+        with _composition_refusal():
+            self._uow.buffer(admitted_write(instruction, evidence, key, source=source))
 
-    def _admit(self, item: AdmittedWrite | PreparedTargetInstruction) -> None:
-        try:
-            if isinstance(item, PreparedTargetInstruction):
-                self._uow.buffer_target(item)
-            else:
-                self._uow.buffer(item)
-        except WriteEvidenceError as refusal:
-            raise EngineError(
-                f"a simulated transaction cannot admit this write beside the ones it already "
-                f"buffered — {refusal}"
-            ) from refusal
+
+def _stands(authority: object) -> bool:
+    """Whether an insertion authority answer is a standing insertion's window,
+    or ``None`` for one without Valid Time, rather than the absent sentinel."""
+    return authority is None or isinstance(authority, temporal_read.TimeInterval)
+
+
+@contextlib.contextmanager
+def _composition_refusal() -> Generator[None]:
+    """Refuse a write its unit of work will not admit beside the ones it
+    already buffered as the case's composition, rather than leak the
+    production refusal."""
+    try:
+        yield
+    except WriteEvidenceError as refusal:
+        raise EngineError(
+            f"a simulated transaction cannot admit this write beside the ones it already "
+            f"buffered — {refusal}"
+        ) from refusal
 
 
 def _unlicensed(

@@ -119,7 +119,7 @@ def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
     port = ScriptedAdapter(Transact())
 
     def fn(tx: TxnAttempt) -> str:
-        tx.uow.buffer(account_insert())
+        tx.uow.buffer_insert(account_insert(), insertion_advice=None)
         raise RuntimeError("boom")
 
     with raises_contextualized(RuntimeError, match="boom"):
@@ -137,7 +137,7 @@ def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:
 
     scope(port).transact(fn, itself)
     with pytest.raises(EscapedTransactionError):
-        escaped[0].uow.buffer(account_insert())
+        escaped[0].uow.buffer_insert(account_insert(), insertion_advice=None)
 
 
 # --------------------------------------------------------------------------- #
@@ -303,7 +303,9 @@ def test_write_planning_receives_the_original_captured_actor(
     )
     captured_actor = cast("Any", scoped)._capture.actor
 
-    scoped.transact(lambda tx: tx.uow.buffer(account_insert()), itself)
+    scoped.transact(
+        lambda tx: tx.uow.buffer_insert(account_insert(), insertion_advice=None), itself
+    )
 
     assert seen == [captured_actor]
     assert isinstance(seen[0], actor_type)

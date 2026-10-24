@@ -46,6 +46,7 @@ from parallax.core._execution._unit_work.instructions import (
 )
 from parallax.core._execution._unit_work.keys import object_key
 from parallax.core._execution._unit_work.retain import (
+    InsertionIdentity,
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
@@ -101,6 +102,7 @@ __all__ = [
     "DatabaseLoginActor",
     "EvidencePolicyLookup",
     "FlushTrigger",
+    "InsertionIdentity",
     "InstructionRejectedError",
     "KeyedMutation",
     "KeyedWriteInstruction",

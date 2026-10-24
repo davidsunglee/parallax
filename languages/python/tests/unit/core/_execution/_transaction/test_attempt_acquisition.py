@@ -211,7 +211,7 @@ def test_a_target_read_is_a_read_of_its_own_that_flushes_nothing_pending() -> No
     port = ScriptedAdapter(Transact(Read(rows=[_account()]), Write(), Write()))
 
     def fn(tx: TxnAttempt) -> None:
-        tx.uow.buffer(account_insert())
+        tx.uow.buffer_insert(account_insert(), insertion_advice=None)
         tx.uow.buffer_target(_patch())
 
     scope(port, provider=recorder).transact(fn, itself, concurrency="locking")
