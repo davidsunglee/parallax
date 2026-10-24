@@ -159,6 +159,10 @@ Every snippet on this page runs against a real PostgreSQL database in the test s
 - **Run it in production**: the
   [PostgreSQL connection lifecycle](languages/python/docs/postgresql-lifecycle.md) covers
   pooling, credentials, timeouts and observability.
+- **Understand how it works**: the [concepts](docs/concepts/README.md) explain each
+  feature family in domain terms, and the
+  [Python architecture](languages/python/docs/architecture/README.md) maps how the
+  implementation is built.
 - **Look up exact behaviour**: the [Python binding](languages/python/spec/python.md) and
   the [core specification](core/spec/00-overview.md).
 - **Build or extend an implementation**: [Implementing Parallax](IMPLEMENTING.md).
