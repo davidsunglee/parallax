@@ -208,6 +208,11 @@ class ProvisionedRun(ProfileRun):
         )
 
     @property
+    def connection_info(self) -> str:  # pragma: no cover - Docker
+        """This run's libpq connection string, carrying no secret."""
+        return self._provisioner.connection_info
+
+    @property
     def login_identity(self) -> str:  # pragma: no cover - Docker
         return self._provisioner.login_identity
 

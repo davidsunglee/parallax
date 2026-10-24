@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Final
 
@@ -12,6 +12,7 @@ from parallax.conformance import (
     edit_runner,
     execution_authority_stories,
     execution_lifecycle_stories,
+    guide_recipes,
     read_only_stories,
     snapshot_recipes,
     source_admission_stories,
@@ -19,6 +20,18 @@ from parallax.conformance import (
 )
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
+from parallax.conformance.guide_models import (
+    Address,
+    BankTransfer,
+    CardPayment,
+    CreditLimit,
+    Customer,
+    Order,
+    Payment,
+    Price,
+    Product,
+    Shipment,
+)
 from parallax.conformance.read_models import Balance
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
 from parallax.conformance.stories import WRITE_STORIES, story_snippet
@@ -60,6 +73,12 @@ class Recipe:
     snippet: str
 
 
+def _sources(*declarations: type | Callable[..., object]) -> str:
+    return "\n\n\n".join(
+        inspect.getsource(declaration).rstrip("\n") for declaration in declarations
+    )
+
+
 RECIPES: Final[list[Recipe]] = [
     Recipe(
         recipe_id="read-optional-relationships",
@@ -92,6 +111,80 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="stream-results",
         title="Stream results",
         snippet=inspect.getsource(snapshot_recipes.stream_a_result_one_root_at_a_time),
+    ),
+    Recipe(
+        recipe_id="getting-started-imports",
+        title="Import what a first program uses",
+        snippet=(
+            "import datetime as dt\n"
+            "from decimal import Decimal\n"
+            "\n"
+            "from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, attr, "
+            "index, rel\n"
+            "from parallax.core.db_port import Password\n"
+            "from parallax.core.dialect import POSTGRES\n"
+            "from parallax.core.entity import model_of\n"
+            "from parallax.evolution import ABSENT, evolve, schema_delta\n"
+            "from parallax.postgres import PostgresAdapter\n"
+            "from parallax.snapshot import connect\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="declare-customers-and-orders",
+        title="Declare customers and their orders",
+        snippet=_sources(Customer, Order),
+    ),
+    Recipe(
+        recipe_id="create-tables-from-the-model",
+        title="Create tables from the model",
+        snippet=_sources(guide_recipes.table_statements),
+    ),
+    Recipe(
+        recipe_id="connect-and-run-a-first-transaction",
+        title="Connect and run a first transaction",
+        snippet=_sources(
+            guide_recipes.configure_the_database, guide_recipes.add_and_find_a_customer
+        ),
+    ),
+    Recipe(
+        recipe_id="filter-on-a-relationship",
+        title="Filter on a relationship and load it",
+        snippet=_sources(guide_recipes.customers_with_an_order_over),
+    ),
+    Recipe(
+        recipe_id="read-through-wire",
+        title="Run the same read through Wire",
+        snippet=_sources(guide_recipes.customers_with_an_order_over_as_wire),
+    ),
+    Recipe(
+        recipe_id="insert-and-amend-in-one-transaction",
+        title="Insert and amend in one transaction",
+        snippet=_sources(guide_recipes.place_an_order),
+    ),
+    Recipe(
+        recipe_id="read-as-of-a-past-instant",
+        title="Read what the database recorded at a past instant",
+        snippet=_sources(CreditLimit, guide_recipes.credit_limit_on_record),
+    ),
+    Recipe(
+        recipe_id="amend-a-valid-time-window",
+        title="Amend a Bitemporal value for a window of Valid Time",
+        snippet=_sources(Price, guide_recipes.run_a_summer_sale),
+    ),
+    Recipe(
+        recipe_id="query-a-value-object",
+        title="Store and query a value object",
+        snippet=_sources(Address, Shipment, guide_recipes.shipments_to),
+    ),
+    Recipe(
+        recipe_id="read-an-inheritance-family",
+        title="Read an inheritance family",
+        snippet=_sources(Payment, CardPayment, BankTransfer, guide_recipes.payments_for),
+    ),
+    Recipe(
+        recipe_id="query-a-document-layout-entity",
+        title="Query an entity stored in Relational Document Layout",
+        snippet=_sources(Product, guide_recipes.products_named),
     ),
 ]
 

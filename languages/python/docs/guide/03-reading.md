@@ -1,7 +1,15 @@
 # Reading and querying
 
 Reads return immutable values. The relationships a read requests are loaded before a value
-is delivered, so following one never runs another query.
+is delivered, so following one never runs another query. Building a query performs no I/O.
+
+Within each result root's graph, a row reached along two include paths, or through a
+cycle, is one shared object. A `Snapshot` answers exactly one, at most one, or many
+results, and a context-managed stream delivers a large result a page at a time. A
+temporal read carries its instant through the whole requested graph, so related objects
+are read from the same point in time. The Wire API takes canonical query documents and
+returns immutable mappings; it shares the Typed API's execution, and a Typed result can
+be published as Wire data without another read.
 
 ## Where a read runs
 

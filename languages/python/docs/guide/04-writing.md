@@ -4,6 +4,13 @@ Writes run inside a transaction. A keyed write to an existing object needs a lic
 read of that object in the same transaction attempt, the attempt's own insertion of it, or
 a revision the caller states.
 
+Returned values are immutable, and writes are explicit rather than inferred from changes
+to a live object: you insert a new value, amend an edited copy, or delete through the
+transaction. The transaction's unit of work buffers your writes, combines or cancels
+writes to the same object, batches them, and orders them around their dependencies. A
+read inside the transaction first flushes the pending writes it needs, so it sees your
+own changes. Predicate writes change every row a query selects without reading them first.
+
 ## Non-Temporal entities
 
 ### Insert, then read your own write

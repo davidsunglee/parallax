@@ -3,6 +3,39 @@
 Use this guide to find the contract owners for a change. It is not a second
 specification or a required reading sequence for every task.
 
+## A shared specification, tested against real databases
+
+Behind the ORM is a language-neutral behavioral specification and an executable
+compatibility corpus. They make the difficult parts — temporal corrections,
+transaction boundaries, SQL generation, and object materialization — explicit and
+testable. Parallax is informed by the bitemporal ORM
+[Reladomo](https://github.com/goldmansachs/reladomo); adopted semantics are
+expressed independently of Java or any other host language.
+
+The Python implementation proves the
+[`slice-snapshot-1`](core/spec/slices.md#snapshot-conformance-slice) capability
+set against PostgreSQL. Shared cases check emitted SQL, returned graphs, final
+table state, errors, and concurrency observations. A separate API suite drives
+the idiomatic Python interface and supplies the README's and the guide's
+executable examples. The reference harness validates the corpus against real
+databases; it is not the ORM implementation. Inspect the Python capability set
+with:
+
+```bash
+just core-show-slice slice-snapshot-1
+```
+
+This foundation lets other language implementations offer their own idiomatic
+APIs while sharing behavioral contracts. It does not imply that every language
+or database described by the core has a shipped ORM adapter.
+
+- The [core overview](core/spec/00-overview.md),
+  [module catalog](core/spec/modules.md), and
+  [slice catalog](core/spec/slices.md) describe the behavior and capability
+  boundaries.
+- [Schemas](core/schemas/) and [compatibility cases](core/compatibility/) hold
+  serialized forms and concrete expected observations.
+
 ## Changing an existing implementation
 
 1. Identify the affected public surface or internal module. Read its binding
