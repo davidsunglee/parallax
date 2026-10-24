@@ -150,6 +150,18 @@ def test_a_settled_write_publishes_nothing_it_does_not_name() -> None:
     assert write.deferred is None
 
 
+def test_a_source_free_settled_write_shares_the_empty_evidence_tuple() -> None:
+    shared: tuple[()] = ()
+    assert SettledWrite().source_evidence is shared
+    assert SettledWrite(deferred=_Deferred()).source_evidence is shared
+
+
+def test_a_settled_write_holds_the_evidence_tuple_it_is_given() -> None:
+    evidence = (object(), object())
+    assert SettledWrite(source_evidence=evidence).source_evidence is evidence
+    assert SettledWrite(source_evidence=evidence, deferred=_Deferred()).source_evidence is evidence
+
+
 def _delete(key: int) -> PlannedDelete:
     return PlannedDelete(
         entity=_ACCOUNT,

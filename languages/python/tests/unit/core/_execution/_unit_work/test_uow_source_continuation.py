@@ -6,7 +6,8 @@ the freshness its read captured — resolves it as a keyed verb does, and buffer
 the write it licenses, over simulated step execution. What it grades is which
 state each source reaches after a flush, which sources a completed write
 leaves stale or ends, and how long the attempt keeps any of that: exactly as
-long as a value or a pending or planned write reaches the evidence.
+long as a value or a pending or planned write reaches the evidence, and a
+planned write keeps that evidence alone of what it was buffered as.
 """
 
 from __future__ import annotations
@@ -23,10 +24,12 @@ import pytest
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import opt_lock
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
+from parallax.core._execution._unit_work import uow as uow_module
 from parallax.core._execution._unit_work._write_ownership import (
     SourceRefusal,
     _ReadRegistration,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
@@ -39,12 +42,15 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
     WriteAssignment,
     prepare_typed_write,
+    prepare_wire_write,
 )
 from parallax.core._execution._unit_work.write_items import StateObservedWrite
+from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.unit_work import (
+    AdmittedWrite,
     KeyedWriteInstruction,
     ReadEvidence,
     RetainedObservation,
@@ -54,18 +60,30 @@ from parallax.core.unit_work import (
     WriteEvidenceError,
     admitted_write,
 )
-from parallax.core.write_plan import ObjectKey, VersionObservation
+from parallax.core.write_plan import (
+    ObjectKey,
+    PredecessorRow,
+    TemporalObservation,
+    VersionObservation,
+)
 from parallax.core.write_plan.keys import VersionedObjectStateKey
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.planner_probes import (
+    NO_COUNTED_STEPS,
+    TEST_ACTOR_IDENTITY,
+    retained_observation,
+)
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._gc_reachability import reachable_objects
+from tests.unit._where_position_model import WHERE_POSITION_META
+from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 from tests.unit.core._execution._unit_work._flush_support import ObservedSteps, statement_kinds
 
 _ACCOUNT = formed(corpus_records()["account"])
 _PERSON = model_of(CLASS_MODELS["person"])
 _PAYMENT = model_of(CLASS_MODELS["payment"])
+_POSITION = model_of(WHERE_POSITION_META)
 
 
 def _uow(
@@ -123,7 +141,7 @@ def _write(
     source: ReadEvidence,
     mutation: KeyedMutation,
     **members: object,
-) -> None:
+) -> AdmittedWrite:
     entity = _entity(meta, source.entity.name)
     key = source.object_key
     instruction = prepare_typed_write(
@@ -134,10 +152,12 @@ def _write(
     )
     assert isinstance(instruction, PreparedKeyedInstruction)
     settled = uow.resolve_read_evidence(entity, source, mutation=mutation, object_key=key)
-    uow.buffer(admitted_write(instruction, settled, key, source=source))
+    item = admitted_write(instruction, settled, key, source=source)
+    uow.buffer(item)
+    return item
 
 
-def _refusal(write: Callable[[], None]) -> str:
+def _refusal(write: Callable[[], object]) -> str:
     with pytest.raises(WriteEvidenceError) as refused:
         write()
     return refused.value.code
@@ -422,7 +442,13 @@ def test_a_failed_group_neither_advances_nor_ends_its_sources_and_a_traceback_ho
     uow, _ = _uow(_ACCOUNT, ObservedSteps(simulated, failing=0, failure=failure))
     source = _published(uow, _account(1), version=1)
     held = weakref.ref(source)
-    _write(uow, _ACCOUNT, source, "delete")
+    write = _write(uow, _ACCOUNT, source, "delete")
+    # A key-only amendment is no-op work planning eliminates, so no settled
+    # write keeps its source.
+    eliminated = _published(uow, _account(2), version=1)
+    unplanned = weakref.ref(eliminated)
+    _write(uow, _ACCOUNT, eliminated, "amend")
+    del eliminated
     with pytest.raises(RuntimeError, match="the group failed") as raised:
         _flush(uow)
     assert uow._admission.resolve_source(source) == VersionedObjectStateKey(_account(1), 1)  # pyright: ignore[reportPrivateUsage] - nothing published for the failed group
@@ -430,14 +456,114 @@ def test_a_failed_group_neither_advances_nor_ends_its_sources_and_a_traceback_ho
         _flush(uow)
     del source
     gc.collect()
-    # The traceback still reaches the plan, which keeps the evidence it settled.
+    # The traceback still reaches the plan, which keeps the evidence it settled
+    # and nothing else of what was buffered.
+    owned = frames(raised.value.__traceback__, module=uow_module.__file__)
+    assert reaches(owned, held(), depth=_PLANNED_EVIDENCE_DEPTH)
+    assert not reaches(owned, write, depth=_PLANNED_EVIDENCE_DEPTH)
+    del write, owned
+    gc.collect()
     assert held() is not None
+    assert unplanned() is None
     traceback: Any = raised.value.__traceback__
     assert traceback is not None
     raised.value.__traceback__ = None
     del raised, traceback
     gc.collect()
     assert held() is None
+
+
+_PLANNED_EVIDENCE_DEPTH = 7
+"""The longest path from a failed flush's frames to the evidence its plan keeps:
+a frame's plan, its entries, a group, its writes, a settled write, its evidence
+tuple, and the evidence."""
+
+_JAN, _FEB, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 2, 9))
+
+
+def _position_rows() -> list[dict[str, object]]:
+    """WherePosition 1 as two stored rows, the earlier ending in September."""
+    return [
+        {
+            "id": 1,
+            "acctNum": "A",
+            "value": Decimal("100.00"),
+            "validStart": start,
+            "validEnd": end,
+            "txStart": dt.datetime(2023, 12, 1, tzinfo=dt.UTC),
+            "txEnd": INFINITY,
+        }
+        for start, end in ((_JAN, _SEP), (_SEP, INFINITY))
+    ]
+
+
+def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as() -> None:
+    # The source observed the row ending in September and the write reaches
+    # the stored row past it, so the plan defers its range to execution, after
+    # the buffer has drained.
+    rows = _position_rows()
+    store = SimulatedTemporalStore()
+    entity = _entity(_POSITION, "WherePosition")
+    store.seed_fixtures(_POSITION, entity, rows)
+    failure = RuntimeError("the deferred group failed")
+    simulated = SimulatedWriteSteps(
+        build_write_planner(_POSITION).payloads, _POSITION, POSTGRES, store=store
+    )
+    held: list[weakref.ref[ReadEvidence]] = []
+    alive: list[bool] = []
+
+    def observe(_position: int, _steps: object) -> None:
+        gc.collect()
+        alive.append(held[0]() is not None)
+
+    uow = UnitOfWork(
+        settings=TransactionSettings(),
+        lifetime=TxnAttemptLifetime(),
+        clock=FixedClock(dt.datetime(2024, 6, 15, tzinfo=dt.UTC)),
+        meta=_POSITION,
+        execute_write_steps=ObservedSteps(simulated, observe=observe, failing=0, failure=failure),
+        execute_counted_step=NO_COUNTED_STEPS,
+        acquire_rows=store.acquisition(_POSITION),
+        planner=build_write_planner(_POSITION),
+        actor_identity=TEST_ACTOR_IDENTITY,
+        evidence_policy_for=opt_lock.view(_POSITION).required_key,
+    )
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction(
+            "amend", "WherePosition", ({"id": 1, "acctNum": "O"},), valid_from=_FEB
+        ),
+        _POSITION,
+    )
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    observation = uow.retain(
+        retained_observation(
+            prepared, _POSITION, TemporalObservation(predecessor=PredecessorRow(members=rows[0]))
+        )
+    )
+    key = observation.key.object
+    source = ReadEvidence(entity.identity, key, uow.participation, observation)
+    held.append(weakref.ref(source))
+    resolved = uow.resolve_read_evidence(entity, source, mutation="amend", object_key=key)
+    write = admitted_write(prepared, resolved, key, source=source)
+    uow.buffer(write)
+    del source, observation, resolved
+    with store.transaction(rollback=False), pytest.raises(RuntimeError) as raised:
+        _flush(uow)
+    assert raised.value is failure
+    assert alive == [True]
+    owned = frames(raised.value.__traceback__, module=uow_module.__file__)
+    assert "_execute_deferred" in {frame.f_code.co_name for frame in owned}
+    assert reaches(owned, held[0](), depth=_PLANNED_EVIDENCE_DEPTH)
+    assert not reaches(owned, write, depth=_PLANNED_EVIDENCE_DEPTH)
+    del write, owned
+    gc.collect()
+    assert held[0]() is not None
+    traceback: Any = raised.value.__traceback__
+    assert traceback is not None
+    raised.value.__traceback__ = None
+    del raised, traceback
+    gc.collect()
+    assert held[0]() is None
 
 
 def test_discarding_the_attempt_releases_every_registration_an_escaped_source_had() -> None:
