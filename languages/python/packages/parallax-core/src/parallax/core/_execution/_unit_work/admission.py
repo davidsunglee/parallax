@@ -636,8 +636,9 @@ class WriteAdmission:
         return BufferOutcome.BUFFERED
 
     def _foldable(self, record: InsertionRecord) -> bool:
-        """Whether a write of ``record``'s object composes with its
-        still-pending insert, which is whether one is pending."""
+        """Whether ``record``'s insert is still pending, so a later write of
+        its object composes with it — for a Bitemporal object, only a write
+        that insertion authorized."""
         return record.pending_state == "opening" and record.pending_position is not None
 
     def _opening_admits(
@@ -974,8 +975,10 @@ class WriteAdmission:
         """Whether the pending writes of ``key`` remove everything its
         admissions opened, so a further insertion of it is a first opening.
 
-        An insertion still pending is never removed whole: a removal beside it
-        folds into it and cancels it instead.
+        An insertion still pending is never removed whole: a removal it
+        composes with folds into it, and a Bitemporal removal a read authorized
+        changes only the coverage that read observed, leaving the opening
+        standing.
         """
         if record.pending_state == "opening":
             return False
