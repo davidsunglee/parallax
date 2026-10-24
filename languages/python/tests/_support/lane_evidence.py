@@ -33,7 +33,6 @@ DOCUMENT_CASES = frozenset({"m-temporal-write-011", "m-temporal-write-012", "m-s
 _BASELINE_SUPPORT = (
     "languages/python/tests/_support/lane_evidence.py",
     "languages/python/tests/unit/test_lane_evidence.py",
-    "languages/python/tests/compatibility/test_lane_evidence.py",
     "languages/python/tests/compatibility/test_compile_sweep.py",
     "languages/python/tests/compatibility/test_run_sweep.py",
 )

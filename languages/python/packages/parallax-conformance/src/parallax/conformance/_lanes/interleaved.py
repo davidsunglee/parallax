@@ -16,7 +16,7 @@ from parallax.conformance._database_control import (
 )
 from parallax.conformance._lanes.scenario import (
     CaseContext,
-    GroupState,
+    GroupReport,
     LoweredStep,
     flush_failure,
     group_tx_instant,
@@ -36,6 +36,7 @@ from parallax.conformance._mechanism.envelope import EngineError, ScenarioRun
 from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance._mechanism.model_facts import case_serving_model
 from parallax.conformance._mechanism.transaction_control import transact
+from parallax.conformance._wire_submission import WireSubmitter
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core.base import normalize_instant
 from parallax.core.unit_work import OptimisticLockConflictError
@@ -69,7 +70,7 @@ class _InterleavedGroupResult:
     failure: BaseException | None = None
     rows: dict[int, dict[str, object]] = field(default_factory=_empty_group_rows)
     database_calls: int = 0
-    state: GroupState = field(default_factory=GroupState)
+    state: GroupReport = field(default_factory=GroupReport)
 
 
 def _run_interleaved_group(
@@ -143,6 +144,7 @@ def _run_interleaved_group(
                 "error states `maxRetries: 0`"
             )
         entered = True
+        submitter = WireSubmitter(tx, context.model)
         for position, index in enumerate(indices):
             turnstile.wait_for(index)
             running.append(index)
@@ -150,6 +152,7 @@ def _run_interleaved_group(
             lowered[index], read = run_group_step(
                 tx,
                 context,
+                submitter,
                 state,
                 steps[index],
                 index,

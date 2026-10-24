@@ -6,7 +6,7 @@ import functools
 import itertools
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Final, Literal, Never, cast
+from typing import Final, Literal, Never, cast
 
 from parallax.conformance import (
     _case_ingress,
@@ -48,17 +48,22 @@ from parallax.conformance._mechanism.transaction_control import (
     write_connection,
 )
 from parallax.conformance._simulated_write_steps import SimulatedWriteSteps
+from parallax.conformance._wire_submission import (
+    Executed,
+    Refused,
+    Submission,
+    WireSubmitter,
+    read_submissions,
+)
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core import (
     batch_write,
     inheritance,
     opt_lock,
-    read_delivery,
     storage_layout,
     temporal_read,
 )
-from parallax.core._execution._keyed_writes import validate_source_pin
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import instructions
@@ -80,7 +85,6 @@ from parallax.core.db_port import (
 from parallax.core.dialect import Dialect
 from parallax.core.execution import (
     ServingModel,
-    TransactionTimePinReadOnlyError,
     TxnOptions,
 )
 from parallax.core.metamodel import (
@@ -88,10 +92,8 @@ from parallax.core.metamodel import (
     AbstractSubtype,
     AttributeMetadata,
     EntityMetadata,
-    Leaf,
     MemberIdentity,
     PrimaryKey,
-    TemporalDimension,
     ValueObjectMetadata,
     entity_by_name,
 )
@@ -117,7 +119,6 @@ from parallax.core.unit_work import (
     RetainedObservation,
     StaleWriteError,
     SubjectActor,
-    TargetWriteInstruction,
     TransactionSettings,
     UnitOfWork,
     WriteEffectError,
@@ -126,7 +127,6 @@ from parallax.core.unit_work import (
     buffered_write,
     object_key,
 )
-from parallax.core.wire import WireValue, decode_wire
 from parallax.core.write_plan import (
     ObjectKey,
     ObjectStateKey,
@@ -138,13 +138,13 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.steps import KeyTarget
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity
-from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
+from parallax.snapshot._publication._wire import read_evidence_of
 
 __all__ = [
     "INERT_CLOCK_INSTANT",
     "LOWERING_ERRORS",
     "CaseContext",
-    "GroupState",
+    "GroupReport",
     "LoweredStep",
     "compile_scenario_case",
     "compile_write_sequence_case",
@@ -249,31 +249,6 @@ class LoweredStep:
     rollback: bool
 
 
-# The ONE reserved observation control key a case writeRow can author
-# (`compatibility-case.schema.json` `$defs/writeRow`): the version the unit of
-# work observed, stripped into a Version Observation before the durable
-# instruction is built (the durable row forbids it, ADR 0013). Which write
-# shapes are entitled to author it is `_observation_refusal`'s answer, not the
-# schema's — one shared `writeRow` definition spans every shape.
-_VERSION_OBSERVATION_KEY: Final[str] = "observedVersion"
-
-# The two halves of an observed milestone's own EDGE coordinate. NEITHER is a
-# write-row key in any shape (`compatibility-case.schema.json` `$defs/writeRow`):
-# a temporal write observes a whole predecessor milestone, which no flat row cell
-# can name, so a row carrying one is refused rather than stripped.
-_TEMPORAL_GATE_KEY: Final[str] = "observedTxStart"
-_TEMPORAL_VALID_START_KEY: Final[str] = "observedValidStart"
-
-# Every reserved observation control key a case can spell on a write row. The
-# durable instruction forbids all of them (ADR 0013); which one a given write is
-# entitled to author BEFORE stripping is :func:`_observation_refusal`'s answer.
-_ROW_OBSERVATION_KEYS: Final[tuple[str, ...]] = (
-    _VERSION_OBSERVATION_KEY,
-    _TEMPORAL_GATE_KEY,
-    _TEMPORAL_VALID_START_KEY,
-)
-
-
 # What ONE grouped find step retained, in the order production filed it. A later
 # write step of the same group names that step with `on` and settles against the
 # record of its OWN key (`m-case-format` "Settling against a grouped find").
@@ -362,40 +337,6 @@ def _is_temporal_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
     return bool(family_declarer(model, case_entity(model, entity_name)).declared_as_of_axes)
 
 
-_TEMPORAL_INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
-
-
-def _temporal_entry_row(
-    entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
-) -> Mapping[str, object]:
-    """The ONE case-authored row a TEMPORAL write entry mutates.
-
-    `m-unit-work` "A temporal keyed instruction carries exactly one row": each row
-    closes its own current milestone, settles against its own Temporal
-    Observation, and opens its own successors, and a temporal entity never
-    collapses into a set-based statement (`m-batch-write`), so several rows under
-    one entry denote
-    several independent milestone chains rather than one wider write. That rule
-    forbids reducing the entry to a first row the case did not single out, so it
-    is refused HERE, where the authoring diagnosis can name the entry. The shared
-    case schema cannot express it, because the row count it may admit depends on
-    whether the target entity is temporal, which only the model knows.
-
-    Refusing before :func:`_durable_row` is what makes "every case-authored row
-    reaches the seam" true rather than approximately true: a row this function
-    admits is the entry's only row, so none is left behind unrefused.
-    """
-    if len(raw_rows) != 1:
-        raise EngineError(
-            f"{entity_name!r} {mutation!r}: a temporal write entry carries ONE row "
-            f"({len(raw_rows)} authored) — each row closes its own milestone and chains its "
-            "own successors, and a temporal entity never collapses into a set-based statement "
-            "(m-unit-work 'A temporal keyed instruction carries exactly one row'); author one "
-            "entry per row"
-        )
-    return raw_rows[0]
-
-
 def _compile_temporal_observation(
     model: AcceptedMetamodel,
     store: SimulatedTemporalStore,
@@ -413,65 +354,26 @@ def _compile_temporal_observation(
 
 
 def _build_temporal_instruction(
-    entry: Mapping[str, object],
+    submission: Submission,
     model: AcceptedMetamodel,
     store: SimulatedTemporalStore,
     unit_inserted: set[ObjectKey],
     source: RetainedObservations | None,
 ) -> _ResolvedWrite:
-    """One TEMPORAL writeSequence/scenario entry -> its canonical keyed
-    instruction plus the observation its close/chain settles against, which
-    :func:`_compile_temporal_observation` answers.
-
-    The corpus and canonical instruction share the same ``validFrom`` / ``until``
-    spelling. Bounds are instruction-level fields; temporal row payloads never
-    carry authoring aliases. A temporal entry carries exactly ONE row, which
-    :func:`_temporal_entry_row` enforces rather than assumes.
-
-    That row reaches the same :func:`_durable_row` seam every other producer's
-    does, which entitles a temporal row to no observation control key at all —
-    the observation this entry settles against is a whole predecessor
-    milestone, never a cell the row carried.
-
-    ``unit_inserted`` is the SAME choreography unit's own running set of
-    (entity, pk) pairs a PRIOR entry in this SAME buffer already inserted
-    (`m-unit-work` same-transaction coalescing, `m-temporal-write-008` /
-    `m-temporal-write-030`): a later entry targeting one of them is a
-    same-buffer coalescing candidate whose OWN close/chain arithmetic never
-    runs (the planner folds it into the pending insert before finalization
-    ever sees it) — its observation is forced to `None`, and the store is never
-    asked. What the store ends up holding for the key is the COALESCED row:
-    executing the flush stores the surviving Planned Insert's own row, so the
-    stored state is the milestone the flush actually writes rather than a
-    stand-in for it.
-    """
-    mutation = cast("str", entry["mutation"])
-    entity_name = cast("str", entry["entity"])
-    raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-    row, _authored_none = _durable_row(
-        model, entity_name, mutation, _temporal_entry_row(entity_name, mutation, raw_rows)
-    )
-    valid_from = cast("str | None", entry.get("validFrom"))
-    until = cast("str | None", entry.get("until"))
-    doc: dict[str, object] = {"mutation": mutation, "entity": entity_name, "rows": [row]}
-    if valid_from is not None:
-        doc["validFrom"] = valid_from
-    if until is not None:
-        doc["until"] = until
-    instruction = instructions.deserialize(doc)
-    prepared = _case_ingress.prepare_case_write(instruction, model)
-    assert isinstance(prepared, PreparedKeyedWrite)  # a temporal entry is always keyed
-    entity_metadata = case_entity(model, entity_name)
-    pk_key = object_key(prepared, model)
-    is_insert = mutation in _TEMPORAL_INSERT_MUTATIONS
-    is_coalescing_candidate = not is_insert and pk_key is not None and pk_key in unit_inserted
-    observation: TemporalObservation | None = None
-    if not is_insert and not is_coalescing_candidate:
+    instruction = submission.instruction
+    assert isinstance(instruction, KeyedWriteInstruction)
+    prepared = instructions.prepare_wire_write(instruction, model)
+    assert isinstance(prepared, PreparedKeyedWrite)
+    entity = case_entity(model, instruction.entity)
+    key = object_key(prepared, model)
+    is_insert = instruction.mutation in INSERT_MUTATIONS
+    observation = None
+    if not is_insert and (key is None or key not in unit_inserted):
         observation = _compile_temporal_observation(
-            model, store, entity_metadata, pk_key, row, source
+            model, store, entity, key, instruction.rows[0], source
         )
-    if is_insert and pk_key is not None:
-        unit_inserted.add(pk_key)
+    if is_insert and key is not None:
+        unit_inserted.add(key)
     return _ResolvedWrite(prepared, observation)
 
 
@@ -527,112 +429,21 @@ def write_entries(raw_write: object) -> Sequence[Mapping[str, object]]:
     return cast("Sequence[Mapping[str, object]]", raw_write)
 
 
-def _observation_refusal(
-    model: AcceptedMetamodel, entity_name: str, mutation: str, key: str
-) -> str | None:
-    """Why a write row against ``entity_name`` under ``mutation`` may not author
-    the reserved observation control key ``key`` — ``None`` when that pair is the
-    ONE the corpus vocabulary entitles to author it.
-
-    This is the whole licensing rule `m-unit-work`'s "Absence is structural"
-    states, total over every (target, mutation) pair a case can write, so no
-    producer decides any part of it locally. A VERSIONED, NON-TEMPORAL update or
-    delete may author ``observedVersion``; nothing else may author anything:
-
-    - neither half of an observed milestone's own EDGE coordinate
-      (``observedTxStart`` / ``observedValidStart``) is entitled ANYWHERE. Neither
-      is a write-row control key in any shape:
-      `compatibility-case.schema.json`'s ``writeRow`` reserves ``observedVersion``
-      alone and every other key names an entity member. Stripping one from a row
-      — or projecting the row past it — would silently discard the very
-      coordinate the author meant to observe.
-    - a TEMPORAL write observes a whole predecessor milestone, never a row cell.
-    - an INSERT opens a row rather than writing against one, so an observed
-      version names a milestone that does not yet exist.
-    - an UNVERSIONED non-temporal target has no version to observe, so an
-      observed version on it is evidence about nothing. Wrapping such a row would
-      still exclude it from batching, splitting a collapsible run into one
-      statement per key on the strength of an observation the planner then
-      ignores.
-
-    The last two restate what `compatibility-case.schema.json`'s own prose
-    already says — "absent on a versioned insert and on a non-versioned write" —
-    and which its single shared ``writeRow`` definition cannot express. Deciding
-    them here is what makes the carrier's own guarantee complete: the carrier can
-    decide "is this an insert?" from the instruction alone, but "is this target
-    versioned?" and "is it temporal?" need the model, which only this translation
-    holds.
-    """
-    if key in {_TEMPORAL_GATE_KEY, _TEMPORAL_VALID_START_KEY}:
-        return (
-            f"a write row authors no `{key}` (m-case-format: a writeRow reserves "
-            "`observedVersion` alone and every other key names an entity member — a temporal "
-            "write observes a whole predecessor milestone, which no row cell can name)"
-        )
-    if _is_temporal_entity(model, entity_name):
-        return (
-            f"a temporal row authors no `{key}` (m-unit-work: a temporal write observes a whole "
-            "predecessor milestone, which no flat row cell can name — the engine resolves one "
-            "from tracked case state or from the find its own step settles against)"
-        )
-    if mutation in INSERT_MUTATIONS:
-        return (
-            f"an insert row authors no `{key}` (m-unit-work: inserts have no observation — an "
-            "observed version names the milestone a write against an EXISTING row observed)"
-        )
-    if _versioned_non_temporal_version_attribute(model, entity_name) is None:
-        return (
-            f"an unversioned row authors no `{key}` (m-unit-work: unversioned Non-Temporal "
-            "writes have no observation — there is no observed version for it to name)"
-        )
-    return None
-
-
-def _durable_row(
-    model: AcceptedMetamodel, entity_name: str, mutation: str, row: Mapping[str, object]
-) -> tuple[dict[str, object], VersionObservation | None]:
-    """One case-authored write row as the DURABLE row a write carries, plus the
-    Version Observation that row described (``None`` when it described none — an
-    unobserved write, one whose observation instead comes from this SAME `uow`
-    group's own prior find step (:func:`_observed_nodes`), or a temporal
-    write, whose observation is a whole milestone — held by
-    :class:`SimulatedTemporalStore`, or, where the step named the find it settles against,
-    by that same group's observations).
-
-    Observation legality and stripping share :func:`_without_observation_controls`
-    with unprepared routing, which needs the durable row but no observation.
-    """
-    durable = _without_observation_controls(model, entity_name, mutation, row)
-    version = row.get(_VERSION_OBSERVATION_KEY)
-    if version is None:
-        return durable, None
-    return durable, VersionObservation(observed_version=cast("int", version))
-
-
-def _without_observation_controls(
-    model: AcceptedMetamodel, entity_name: str, mutation: str, row: Mapping[str, object]
-) -> dict[str, object]:
-    for key in _ROW_OBSERVATION_KEYS:
-        if key not in row:
-            continue
-        refusal = _observation_refusal(model, entity_name, mutation, key)
-        if refusal is not None:
-            raise EngineError(f"{entity_name!r} {mutation!r}: {refusal}")
-    durable = dict(row)
-    durable.pop(_VERSION_OBSERVATION_KEY, None)
-    return durable
-
-
 def _durable_rows(
     model: AcceptedMetamodel,
     entity_name: str,
     mutation: str,
     raw_rows: Sequence[Mapping[str, object]],
 ) -> list[tuple[dict[str, object], VersionObservation | None]]:
-    """Every row of one multi-row write entry through :func:`_durable_row`,
-    resolved EAGERLY so an entry is refused on any row it authors before its
-    first row is planned — a partially translated entry is never observable."""
-    return [_durable_row(model, entity_name, mutation, row) for row in raw_rows]
+    submissions = read_submissions(
+        model, [{"entity": entity_name, "mutation": mutation, "rows": raw_rows}]
+    )
+    result: list[tuple[dict[str, object], VersionObservation | None]] = []
+    for submission in submissions:
+        instruction = submission.instruction
+        assert isinstance(instruction, KeyedWriteInstruction)
+        result.append((dict(instruction.rows[0]), submission.declared_observation))
+    return result
 
 
 def _binds_row_observations(
@@ -745,80 +556,26 @@ def _build_instructions(
     unit_inserted: set[ObjectKey],
     group_observations: GroupRetainedObservations,
     source: RetainedObservations | None,
+    submissions: Sequence[Submission] | None = None,
 ) -> list[_ResolvedWrite]:
-    """One case write entry -> one or more canonical keyed write instructions.
-
-    A STRUCTURED PREDICATE-write entry (`target`/`predicate` shaped, no
-    `entity` key at all) refuses loudly here too — defensive coverage for the
-    writeSequence path, which shares this function with every scenario write
-    entry (the scenario `write`-field-is-itself-a-mapping shape is caught one
-    layer up, by :func:`is_predicate_write_step`, and routed to the readless
-    predicate-write translation instead — a predicate
-    write is never a legal writeSequence entry shape, `m-case-format`'s
-    writeSequence vocabulary is keyed-only).
-
-    A TEMPORAL entity's entry dispatches to :func:`_build_temporal_instruction`,
-    settling against compile's explicit observation lookup, and admits exactly ONE row: its
-    authored ``statements`` count is the DML
-    STATEMENT count (a close plus zero-to-three chained opens), a DIFFERENT
-    accounting from the row-decomposition below, which assumes non-temporal
-    semantics and is never applied to a temporal entry's entry. Decomposition
-    would answer no question there either — a temporal entity never collapses
-    (`m-batch-write`), so there is no set-based statement for a decomposed row to
-    be re-merged into, and several rows under one entry are several independent
-    milestone chains the case must author as several entries.
-
-    Otherwise, a write entry carries the instruction triple (``mutation`` /
-    ``entity`` / ``rows``) beside case-authoring keys (``note`` / ``statements``
-    / ``databaseCalls`` / ``rollback``). ``rows`` MAY batch several logical
-    per-object writes into one entry (the write-instruction schema's "one or
-    more rows" vocabulary), and this seam ALWAYS buffers one single-row
-    instruction per row, exactly as that many separate ``TxnContext`` calls
-    would. Nothing is ever pre-merged here: whether buffered rows share one
-    statement is the planner's own collapse stage to decide.
-
-    :func:`_durable_rows` resolves every row first, so an observation surviving
-    from a row belongs to a versioned non-temporal write against an existing row
-    — the only write shape `m-unit-work` gives an observation at all.
-
-    What :func:`_binds_row_observations` derives SEMANTICALLY is whether each row
-    binds its OWN object key and Version Observation (its reserved
-    ``observedVersion`` stripped into one — `m-opt-lock`; ADR 0013), which in
-    turn tells the planner to keep that row separately identifiable rather than
-    merging it. A row that authors no observed version takes its evidence from
-    the group instead: from the find the entry NAMED with ``on``
-    (:func:`_observation_from_source`) where it named one, and otherwise from
-    ``group_observations`` — a writeSequence's own permanently-empty sequence, or
-    (the scenario RUN lane only) a `uow` GROUP's own prior find step(s), scanned
-    from the end. A versioned target holds one ROW per primary key but a unit of
-    work may hold several observed GENERATIONS of it, so the unnamed fallback
-    answers the latest reading while the reference is what names any other.
-
-    An entry's authored ``statements`` count is graded later, once the buffer
-    these instructions join has actually been lowered or delivered
-    (:func:`_check_statement_count_consistency`) — nothing here predicts what
-    the flush will emit.
-    """
     entity_name = _keyed_entry_entity(entry)
+    parsed = read_submissions(model, [entry]) if submissions is None else submissions
     if "row" in entry:
-        return [_build_target_instruction(entry, model)]
+        return [_ResolvedWrite(instructions.prepare_wire_write(parsed[0].instruction, model), None)]
     if _is_temporal_entity(model, entity_name):
-        return [_build_temporal_instruction(entry, model, store, unit_inserted, source)]
+        return [_build_temporal_instruction(parsed[0], model, store, unit_inserted, source)]
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-    durable = _durable_rows(model, entity_name, mutation, raw_rows)
     binds_observations = _binds_row_observations(model, entity_name, mutation, raw_rows)
-    out: list[_ResolvedWrite] = []
-    opens_a_row = mutation in INSERT_MUTATIONS
-    for clean_row, row_observation in durable:
-        observation: StateObservation | None = row_observation
-        clean_row = _seed_insert_version(model, entity_name, mutation, clean_row)
-        instruction = instructions.deserialize(
-            {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
-        )
-        assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
-        prepared = _case_ingress.prepare_case_write(instruction, model)
-        if binds_observations and not opens_a_row:
+    result: list[_ResolvedWrite] = []
+    for submission in parsed:
+        instruction = submission.instruction
+        assert isinstance(instruction, KeyedWriteInstruction)
+        row = _seed_insert_version(model, entity_name, mutation, instruction.rows[0])
+        prepared = instructions.prepare_wire_write(replace(instruction, rows=(row,)), model)
+        assert isinstance(prepared, PreparedKeyedWrite)
+        observation: StateObservation | None = submission.declared_observation
+        if binds_observations and mutation not in INSERT_MUTATIONS:
             key = object_key(prepared, model)
             if observation is None and key is not None:
                 if source is not None:
@@ -829,8 +586,8 @@ def _build_instructions(
                         observation = observed.evidence
         else:
             observation = None
-        out.append(_ResolvedWrite(prepared, observation))
-    return out
+        result.append(_ResolvedWrite(prepared, observation))
+    return result
 
 
 def _keyed_entry_entity(entry: Mapping[str, object]) -> str:
@@ -848,23 +605,6 @@ def _keyed_entry_entity(entry: Mapping[str, object]) -> str:
             "entry vocabulary is keyed-only)"
         )
     return cast("str", entry["entity"])
-
-
-def _build_target_instruction(
-    entry: Mapping[str, object], model: AcceptedMetamodel
-) -> _ResolvedWrite:
-    """A target entry as the target instruction it states, prepared by
-    the one producer every ingress reaches. It carries its caller's revision
-    and no evidence of any read."""
-    instruction = instructions.deserialize(
-        {
-            name: value
-            for name, value in entry.items()
-            if name in ("mutation", "entity", "row", "ifVersion", "ifTxStart", "validFrom", "until")
-        }
-    )
-    assert isinstance(instruction, TargetWriteInstruction)  # a `row` document is a target write
-    return _ResolvedWrite(_case_ingress.prepare_case_write(instruction, model), None)
 
 
 def _observed_for(
@@ -890,13 +630,19 @@ def _resolve_entries(
     model: AcceptedMetamodel,
     store: SimulatedTemporalStore,
     group_observations: GroupRetainedObservations,
+    submissions: Sequence[Submission] | None = None,
 ) -> list[_ResolvedWrite]:
-    """Resolve a compile buffer against its explicit case-long simulated store."""
+    """Resolve compile submissions against the explicit case-long simulated store."""
+    parsed = read_submissions(model, entries) if submissions is None else submissions
     resolved: list[_ResolvedWrite] = []
     unit_inserted: set[ObjectKey] = set()
+    position = 0
     for entry in entries:
+        count = len(cast("Sequence[object]", entry["rows"])) if "rows" in entry else 1
+        own = parsed[position : position + count]
+        position += count
         resolved.extend(
-            _build_instructions(entry, model, store, unit_inserted, group_observations, None)
+            _build_instructions(entry, model, store, unit_inserted, group_observations, None, own)
         )
     return resolved
 
@@ -1081,42 +827,6 @@ def _refuse_marker_rows(request: object, consumer: object, /) -> Never:
     raise EngineError("store-free framework marker lowering cannot acquire rows")
 
 
-def _case_write_instructions(
-    entries: Sequence[Mapping[str, object]], model: AcceptedMetamodel
-) -> tuple[WriteInstruction, ...]:
-    translated: list[WriteInstruction] = []
-    for entry in entries:
-        entity = _keyed_entry_entity(entry)
-        mutation = cast("str", entry["mutation"])
-        document = {
-            name: entry[name]
-            for name in (
-                "mutation",
-                "entity",
-                "row",
-                "ifVersion",
-                "ifTxStart",
-                "validFrom",
-                "until",
-            )
-            if name in entry
-        }
-        if "row" in entry:
-            translated.append(
-                _case_ingress.normalize_case_write(instructions.deserialize(document), model)
-            )
-            continue
-        rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-        if _is_temporal_entity(model, entity):
-            _temporal_entry_row(entity, mutation, rows)
-        for row in rows:
-            document["rows"] = [_without_observation_controls(model, entity, mutation, row)]
-            translated.append(
-                _case_ingress.normalize_case_write(instructions.deserialize(document), model)
-            )
-    return tuple(translated)
-
-
 def _lower_marker_unit(
     instruction: WriteInstruction,
     model: AcceptedMetamodel,
@@ -1149,13 +859,15 @@ def lower_writes(
     are graded against (:func:`_check_statement_count_consistency`). A
     ``rollback`` transaction still flushes, and then restores the rows it
     advanced."""
-    translated = _case_write_instructions(entries, model)
-    if _framework_unit(translated, model):
-        statements = _lower_marker_unit(translated[0], model, dialect, concurrency, tx_instant)
+    translated = read_submissions(model, entries)
+    if _framework_unit(translated):
+        statements = _lower_marker_unit(
+            translated[0].instruction, model, dialect, concurrency, tx_instant
+        )
         _check_statement_count_consistency(entries, len(statements))
         return statements
     with store.transaction(rollback=rollback):
-        resolved = _resolve_entries(entries, model, store, group_observations)
+        resolved = _resolve_entries(entries, model, store, group_observations, translated)
         with _simulated_unit(
             model,
             dialect,
@@ -1175,9 +887,9 @@ def lower_writes(
 def _prepared_case_predicate_write(
     raw_write: Mapping[str, object], model: AcceptedMetamodel
 ) -> PreparedPredicateWrite:
-    instruction = instructions.deserialize(raw_write)
-    assert isinstance(instruction, PredicateWriteInstruction)
-    prepared = _case_ingress.prepare_case_write(instruction, model)
+    (submission,) = read_submissions(model, raw_write)
+    assert isinstance(submission.instruction, PredicateWriteInstruction)
+    prepared = instructions.prepare_wire_write(submission.instruction, model)
     assert isinstance(prepared, PreparedPredicateWrite)
     return prepared
 
@@ -1221,38 +933,6 @@ def _lower_predicate_write_step(
     statements = tuple(unit.statements)
     assert len(statements) <= 1  # a readless predicate write is at most one statement
     return statements
-
-
-def _execute_wire_predicate_write(
-    tx: TxnContext, model: AcceptedMetamodel, raw_write: Mapping[str, object]
-) -> int:
-    """Execute one scenario predicate write through its public Wire verb, which
-    prepares the case's own authored target and changes or row, once, and
-    answer the count the verb returned.
-
-    Only a synthetic case's managed carrier values are spelled in Wire first
-    (:func:`~parallax.conformance._case_ingress.normalize_case_write`). Dict
-    insertion order preserves the authored assignment order; the Entity Layout
-    still decides emitted SET order.
-    """
-    instruction = instructions.deserialize(raw_write)
-    assert isinstance(instruction, PredicateWriteInstruction)
-    authored = _case_ingress.normalize_case_write(instruction, model)
-    target = cast("Mapping[str, object]", raw_write["target"])
-    match authored.mutation:
-        case "amend":
-            return tx.wire.amend_where(
-                target,
-                {
-                    assignment.attr.rpartition(".")[2]: assignment.value
-                    for assignment in authored.assignments
-                },
-            )
-        case "replace":
-            assert authored.row is not None  # a replacement states its row
-            return tx.wire.replace_where(target, authored.row)
-        case "delete":
-            return tx.wire.delete_where(target)
 
 
 def _compile_find(
@@ -1545,7 +1225,7 @@ def _lower_group(
     before it, and a predicate write's flush to the predicate's own step.
     """
     model = context.model
-    state = GroupState()
+    state = GroupReport()
     lowered: list[LoweredStep] = []
     with (
         store.transaction(rollback=doomed),
@@ -1575,8 +1255,9 @@ def _lower_group(
                 )
             else:
                 entries = write_entries(raw_write)
-                _refuse_group_markers(entries, model)
-                for write in _resolve_entries(entries, model, store, []):
+                submissions = read_submissions(model, entries)
+                _refuse_group_markers(submissions)
+                for write in _resolve_entries(entries, model, store, [], submissions):
                     unit.buffer(write)
                 state.buffered.append((index, len(unit.statements)))
             lowered.append(
@@ -1627,7 +1308,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
     before this function ever runs (`adapter.compile_case`). A keyed write's
     Version Observation therefore comes from its OWN row's reserved
     ``observedVersion`` control key alone
-    (:func:`_durable_row`), exactly as a writeSequence entry's does, and a
+    retained by :func:`read_submissions`, as a writeSequence entry's does, and a
     temporal write's whole-milestone observation from the store above.
 
     Each ungrouped write step is its own transaction and each `uow` group one
@@ -1772,55 +1453,8 @@ def compile_write_sequence_case(
     return emissions, len(emissions)
 
 
-def _is_framework_write(
-    instruction: WriteInstruction | PreparedWrite | PreparedTargetWrite, model: AcceptedMetamodel
-) -> bool:
-    """Whether ``instruction`` states the FRAMEWORK's own bookkeeping rather than
-    a write a developer authors.
-
-    The signal is a DB-computed write marker AT A SCALAR ATTRIBUTE — the
-    ``{"increment": n}`` a `m-pk-gen` sequence-registry block reservation
-    carries, and the ``{"computed": …}`` a `max` allocation carries beside it
-    (`m-value-object` "Writing"). Such a value is the framework's to produce, so
-    no public verb accepts it: the instruction-level validator exempts it at a
-    scalar leaf, while the assignment judgement every verb reaches does not, and
-    those two rules disagreeing is exactly what says the value is not developer
-    input.
-
-    The attribute's DECLARED ROLE is what decides, never the value's shape: a
-    Value Object member binds its whole literal document even when that document
-    is shaped like a marker, and only a scalar Attribute can carry the marker
-    form at all (`m-case-format` "Write-sequence cases").
-    """
-    if not isinstance(instruction, (KeyedWriteInstruction, PreparedKeyedWrite)):
-        return False
-    entity = (
-        instruction.target.identity.canonical
-        if isinstance(instruction, PreparedKeyedWrite)
-        else instruction.entity
-    )
-    position = inheritance.view(model).entity(case_entity(model, entity).identity)
-    if position is None:  # pragma: no cover - accepted entities have an inheritance position
-        return False
-    shape = position.member_selection.shape
-    return any(
-        isinstance(shape.member(name), Leaf)
-        and isinstance(value, Mapping)
-        and frozenset(cast("Mapping[str, object]", value)) in _MARKER_KEYS
-        for row in instruction.rows
-        for name, value in row.items()
-    )
-
-
-_MARKER_KEYS: Final[frozenset[frozenset[str]]] = frozenset(
-    {frozenset({"computed"}), frozenset({"increment"})}
-)
-
-
-def _refuse_group_markers(
-    entries: Sequence[Mapping[str, object]], model: AcceptedMetamodel
-) -> None:
-    if any(_is_framework_write(write, model) for write in _case_write_instructions(entries, model)):
+def _refuse_group_markers(submissions: Sequence[Submission]) -> None:
+    if any(s.is_framework_marker for s in submissions):
         raise EngineError(
             "a DB-computed write marker is a choreography unit of its own; "
             "a `uow` group's held transaction has no verb to buffer one through"
@@ -1869,119 +1503,10 @@ def _execute_framework_write_unit(
     return len(statements)
 
 
-_LATEST_SELECTION: Final[Mapping[TemporalDimension, str]] = {
-    TemporalDimension.VALID_TIME: "valid-time",
-    TemporalDimension.TRANSACTION_TIME: "transaction-time",
-}
-
-
-def _unit_source_query(
-    model: AcceptedMetamodel,
-    entity_name: str,
-    keys: Sequence[ObjectKey],
-    valid_at: dt.datetime | None = None,
-) -> dict[str, object]:
-    """The canonical Object Query resolving every row of ``entity_name`` — a
-    CANONICAL Entity spelling — one choreography unit writes against existing
-    state, at the Valid-Time instant ``valid_at`` its Bitemporal writes start
-    from.
-
-    Membership over the family-declared primary key, one read per target Entity
-    however many rows the unit addresses, which is what a caller holding several
-    writes of one Entity does: it reads them together and writes what the read
-    returned. Reading per row instead would cost the corpus a Database Call per row
-    for no semantic gain, and reading between two writes would force-flush the
-    first — destroying the very batch collapse the goldens pin.
-
-    A temporal target selects ``latest`` on Transaction Time, the only milestone
-    a keyed write may address: the Transaction-Time past is read-only. A
-    Bitemporal target is read at the instant its writes start from, because an
-    observed write starts at its source's own Valid-Time pin; one read per
-    distinct start, so writes starting apart read apart.
-    """
-    declaring = family_declarer(model, case_entity(model, entity_name))
-    pk = [
-        attr for attr in declaring.declared_attributes if isinstance(attr.primary_key, PrimaryKey)
-    ]
-    if len(pk) != 1:  # pragma: no cover - no witnessed write target is composite-keyed
-        raise EngineError(
-            f"{entity_name!r}: a unit's source read selects by a single-attribute primary key, "
-            f"and this Entity declares {len(pk)}"
-        )
-    name = pk[0].identity.name
-    query: dict[str, object] = {
-        "target": entity_name,
-        "predicate": {
-            "in": {
-                "path": f"{declaring.identity.canonical}.{name}",
-                "values": [dict(key.primary_key)[name] for key in keys],
-            }
-        },
-    }
-    temporal: dict[str, object] = {
-        _LATEST_SELECTION[axis.dimension]: {"asOf": "latest"}
-        for axis in declaring.declared_as_of_axes
-    }
-    if valid_at is not None:
-        temporal[_LATEST_SELECTION[TemporalDimension.VALID_TIME]] = {
-            "asOf": f"{valid_at:%Y-%m-%dT%H:%M:%S.%fZ}"
-        }
-    if temporal:
-        query["temporal"] = temporal
-    return query
-
-
-def _unit_source_reads(
-    model: AcceptedMetamodel, translated: Sequence[WriteInstruction]
-) -> list[dict[str, object]]:
-    """Every resolving read one choreography unit owes, in target order.
-
-    A keyed verb is stated against a value the caller holds, so each Entity this
-    unit writes against EXISTING state needs one read to hold it by — except for
-    a row this same unit opened, which read-your-own-writes covers and which no
-    read could return anyway, since the insert has not flushed. Insert rows are
-    therefore gathered first and the reads derived from what is left.
-
-    The membership is over OBJECTS rather than over authored rows: two entries
-    writing one row — an update the delete after it supersedes — address one
-    object and contribute one key. A row naming no whole object is gathered for
-    no read at all, because the write it states is addressed by nothing and is
-    refused where the diagnosis can name the key.
-
-    Both the object identity and the TARGET are canonical, never the spelling the
-    case authored: a bare local name and its canonical form name one Entity
-    (`m-case-format`), so two entries spelling one target differently owe one
-    read between them rather than one each.
-    """
-    opened: set[ObjectKey] = set()
-    for instruction in translated:
-        if not isinstance(instruction, KeyedWriteInstruction):
-            continue
-        if instruction.mutation in INSERT_MUTATIONS:
-            key = _instruction_key(instruction, model)
-            if key is not None:
-                opened.add(key)
-    needed: dict[tuple[str, dt.datetime | None], dict[ObjectKey, None]] = {}
-    for instruction in translated:
-        if not isinstance(instruction, KeyedWriteInstruction):
-            continue
-        if instruction.mutation in INSERT_MUTATIONS:
-            continue
-        key = _instruction_key(instruction, model)
-        if key is None or key in opened:
-            continue
-        canonical = case_entity(model, instruction.entity).identity.canonical
-        needed.setdefault((canonical, instruction.valid_from), {})[key] = None
-    return [
-        _unit_source_query(model, entity, tuple(keys), valid_at)
-        for (entity, valid_at), keys in needed.items()
-    ]
-
-
 def _execute_write_unit(
     port: CaseDatabase,
     context: CaseContext,
-    translated: Sequence[WriteInstruction],
+    submissions: Sequence[Submission],
     tx_instant: str,
     lifecycle: LifecycleRun,
     *,
@@ -2001,19 +1526,17 @@ def _execute_write_unit(
         database = _root_database.using_database_login()
 
         def body(tx: TxnContext) -> None:
-            state = GroupState()
-            with observed.resolving_reads():
-                for query in _unit_source_reads(model, translated):
-                    state.published.extend(_published_nodes(tx.wire.find(query)))
-            for instruction in translated:
-                _buffer_wire_write(tx, model, state, instruction, None)
+            submitter = WireSubmitter(tx, model)
+            with contextlib.ExitStack() as resolving:
+                resolving.enter_context(observed.resolving_reads())
+                submitter.submit_unit(submissions, before_writes=resolving.close)
 
         with absorbing_rollback():
             transact(database, body, **context.requests)
         return observed.writes, observed.database_calls
 
 
-def _framework_unit(translated: Sequence[WriteInstruction], model: AcceptedMetamodel) -> bool:
+def _framework_unit(translated: Sequence[Submission]) -> bool:
     """Whether one choreography unit states the framework's own bookkeeping,
     which :func:`_execute_framework_write_unit` executes because no public verb
     states it.
@@ -2026,7 +1549,7 @@ def _framework_unit(translated: Sequence[WriteInstruction], model: AcceptedMetam
     of the framework's own units into one flush, hiding whichever boundary the
     corpus meant to grade.
     """
-    framework = [write for write in translated if _is_framework_write(write, model)]
+    framework = [write for write in translated if write.is_framework_marker]
     if not framework:
         return False
     if len(framework) != len(translated):
@@ -2056,11 +1579,13 @@ def execute_keyed_unit(
     """Execute one keyed choreography unit and report the lifecycle-delivered DML.
 
     Only isolated framework markers use store-free lowering instead of public verbs."""
+    for entry in entries:
+        _keyed_entry_entity(entry)
     tx_instant = entry_instant(entries[0])
-    translated = _case_write_instructions(entries, context.model)
-    if _framework_unit(translated, context.model):
+    translated = read_submissions(context.model, entries)
+    if _framework_unit(translated):
         statements = _lower_marker_unit(
-            translated[0], context.model, port.dialect, context.concurrency, tx_instant
+            translated[0].instruction, context.model, port.dialect, context.concurrency, tx_instant
         )
         _check_statement_count_consistency(entries, len(statements))
         return statements, _execute_framework_write_unit(port, statements, rollback=rollback)
@@ -2102,7 +1627,11 @@ def _run_readless_predicate_write(
         affected: list[int] = []
 
         def body(tx: TxnContext) -> None:
-            affected[:] = [_execute_wire_predicate_write(tx, context.model, raw_write)]
+            submitter = WireSubmitter(tx, context.model)
+            (submission,) = read_submissions(context.model, raw_write)
+            outcome = submitter.submit(submission)
+            assert isinstance(outcome, Executed)
+            affected[:] = [outcome.affected]
 
         with absorbing_rollback():
             transact(database, body, **context.requests)
@@ -2206,22 +1735,6 @@ class CaseContext:
     options: TxnOptions
 
 
-def _empty_published() -> list[WireEntity]:
-    return []
-
-
-def _empty_group_finds() -> dict[int, tuple[WireEntity, ...]]:
-    return {}
-
-
-def _empty_opened() -> dict[ObjectKey, WireEntity]:
-    return {}
-
-
-def _empty_answered() -> dict[str, list[WireEntity]]:
-    return {}
-
-
 def _empty_buffered() -> list[tuple[int, int]]:
     return []
 
@@ -2231,35 +1744,14 @@ def _empty_affected() -> dict[int, int]:
 
 
 @dataclass(frozen=True, slots=True)
-class GroupState:
-    """What ONE `uow` group accumulates as its own steps run, and nothing wider.
-
-    Every field holds published VALUES rather than derived evidence, because a
-    value is what a keyed Wire verb is addressed and licensed by, and its claim
-    is one accessor away. ``published`` is the flat
-    run a write with no reference resolves against, ``finds`` keys the same nodes
-    by the step that published them — what a write step naming a find with ``on``
-    addresses (`m-case-format` *Settling against a grouped find*) — and
-    ``opened`` and ``insertions`` hold the same accepted insert results by object
-    key and submission pointer. Explicit references never fall back to another value.
-    ``buffered`` holds each write step's index,
-    in step order, beside how many writes the group had delivered once that step
-    finished buffering, or, for a predicate write, before it executed
-    (:func:`group_writes`). ``affected`` holds the count each predicate-write
-    step's verb returned, by step index. All are built fresh per attempt,
-    never a scenario-wide store, so no value crosses a transaction boundary.
-    """
-
-    published: list[WireEntity] = field(default_factory=_empty_published)
-    finds: dict[int, tuple[WireEntity, ...]] = field(default_factory=_empty_group_finds)
-    opened: dict[ObjectKey, WireEntity] = field(default_factory=_empty_opened)
-    insertions: dict[str, list[WireEntity]] = field(default_factory=_empty_answered)
+class GroupReport:
     buffered: list[tuple[int, int]] = field(default_factory=_empty_buffered)
     affected: dict[int, int] = field(default_factory=_empty_affected)
+    refusals: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
 
 
 def group_writes(
-    state: GroupState, delivered: Sequence[LoweredStatement], where: str
+    state: GroupReport, delivered: Sequence[LoweredStatement], where: str
 ) -> dict[int, tuple[LoweredStatement, ...]]:
     """Each write step's share of the writes one held group's flushes delivered,
     keyed by step index.
@@ -2287,361 +1779,6 @@ def group_writes(
         stop = buffered[position + 1][1] if position + 1 < len(buffered) else len(delivered)
         shares[index] = (*shares.get(index, ()), *delivered[start:stop])
     return shares
-
-
-def _published_nodes(snapshot: Snapshot[WireEntity]) -> tuple[WireEntity, ...]:
-    """Every Entity node ``snapshot`` published, each once, in walk order.
-
-    The roots come from the CHECKED view, because invalid stored data is a fact
-    about a root rather than a refusal of the read.
-    """
-    return _published_from(snapshot.checked().results())
-
-
-def _published_from(roots: Iterable[object]) -> tuple[WireEntity, ...]:
-    """Every Entity node ``roots`` carry, each once, in walk order.
-
-    Publication is what settles ownership: a value a caller was handed is the one
-    a later keyed write may be addressed by, so the walk starts at the published
-    roots and descends the values they carry rather than reading the read's own
-    retained sources. A frozen Wire node is a ``dict`` and therefore unhashable,
-    which is why the visited set is identity-keyed over objects the caller holds
-    for the walk's whole duration.
-
-    How the roots ARRIVED is not among the things this reads: a Snapshot's whole
-    result and a Snapshot Stream's delivered roots walk identically, which is the
-    claim `m-unit-work-030` states in the corpus — evidence belongs to the value
-    rather than to the delivery that carried it. A HYDRATABLE record's collapse
-    produced legal member values, so the node in its ``data`` is an ordinary
-    observed source and enters the walk unwrapped, while a NON-HYDRATING record
-    carries no value to publish and contributes none — which is what leaves the
-    wrapper itself unwritable.
-    """
-    nodes: list[WireEntity] = []
-    visited: set[int] = set()
-    frontier: list[object] = [
-        cast("read_delivery.InvalidData[object]", root).data
-        if isinstance(root, read_delivery.InvalidData)
-        else root
-        for root in roots
-    ]
-    cursor = 0
-    while cursor < len(frontier):
-        value = frontier[cursor]
-        cursor += 1
-        if isinstance(value, list):
-            frontier.extend(cast("list[object]", value))
-            continue
-        if not isinstance(value, WireEntity) or id(value) in visited:
-            continue
-        visited.add(id(value))
-        nodes.append(value)
-        frontier.extend(cast("Mapping[str, object]", value).values())
-    return tuple(nodes)
-
-
-def _node_object_key(node: WireEntity) -> ObjectKey:
-    """The object ``node`` names: the one its read observed, or the one the
-    insert that answered it opened."""
-    hint = read_evidence_of(node)
-    if hint is not None:
-        return hint.object_key
-    authority = authoring_of(node)
-    assert authority is not None  # every node this lane holds a read or an insert published
-    return authority.object_key
-
-
-def _writable_source(node: WireEntity) -> bool:
-    """Whether a keyed write may be addressed by ``node`` at all.
-
-    A group may publish SEVERAL milestones of one key — an audit read of the
-    Transaction-Time past beside a read of the current row — and only the
-    current one is writable, because the Transaction-Time past records what the
-    system knew and is never rewritten. A caller holding both hands the verb the
-    writable one, so an unreferenced scan skips what the verb would refuse
-    rather than reaching for the refusal.
-    """
-    hint = read_evidence_of(node)
-    assert hint is not None
-    try:
-        validate_source_pin(hint.entity, hint.pin)
-    except TransactionTimePinReadOnlyError:
-        return False
-    return True
-
-
-def _group_source_node(
-    entity_name: str,
-    key: ObjectKey | None,
-    state: GroupState,
-    named: Sequence[WireEntity] | None,
-    valid_from: dt.datetime | None = None,
-) -> WireEntity:
-    """The published value one keyed write is addressed by, from what its own
-    choreography unit produced.
-
-    Shared by both lanes that state keyed writes: a `uow` group's steps, where
-    the values come from the group's own find steps, and an ungrouped unit,
-    where they come from the resolving reads that unit issued for itself
-    (:func:`_unit_source_reads`).
-
-    ``named`` is what a grouped step's own ``on`` reference resolved to, and is
-    the whole answer where it is present: a versioned target holds one row per
-    key but a unit of work may observe several GENERATIONS of it, and the
-    reference is how a case says which. With no reference, a row this unit's own
-    insert opened wins over any find — that is read-your-own-writes, and no read
-    could have returned it — and otherwise the published run is scanned from the
-    END, so a write settles against the latest reading rather than a stale one.
-
-    ``valid_from`` is a Bitemporal write's start, which an observed write takes
-    from the Valid-Time pin of the value it is handed rather than as an argument
-    of its own: a published value read anywhere else states a different write,
-    so it is never the source, and a named one is refused.
-    """
-    if named is not None:
-        matched = [node for node in named if _node_object_key(node) == key]
-        if len(matched) != 1:
-            raise EngineError(
-                f"{entity_name!r}: the find step this write settles against published "
-                f"{len(matched)} rows of {key!r} — a keyed write settles against the ONE "
-                "observed state the value it was handed came from (m-case-format 'Settling "
-                "against a grouped find')"
-            )
-        (node,) = matched
-        if read_evidence_of(node) is not None and not _pinned_at(node, valid_from):
-            raise EngineError(
-                f"{entity_name!r}: the write starts at {valid_from!r}, but the find it settles "
-                "against was read at another Valid-Time instant — an observed write starts at "
-                "its source's own pin and states no start of its own (m-case-format 'Settling "
-                "against a grouped find')"
-            )
-        return node
-    opened = None if key is None else state.opened.get(key)
-    if opened is not None:
-        return opened
-    for node in reversed(state.published):
-        if (
-            _node_object_key(node) == key
-            and _writable_source(node)
-            and _pinned_at(node, valid_from)
-        ):
-            return node
-    raise EngineError(
-        f"{entity_name!r}: a keyed write addresses {key!r}, which no read of its own "
-        "choreography unit published and no write of it opened — every keyed write here is "
-        "stated through the public verb its mutation names, against a value the caller holds, "
-        "and a choreography unit comes to hold one only by reading the row or by opening it "
-        "with its own insert (m-case-format 'Resolving reads a write owes')"
-    )
-
-
-def _pinned_at(node: WireEntity, valid_from: dt.datetime | None) -> bool:
-    """Whether ``node`` was read at the Valid-Time instant a write starting at
-    ``valid_from`` takes from its source; a write with no Valid-Time start
-    takes none."""
-    if valid_from is None:
-        return True
-    hint = read_evidence_of(node)
-    assert hint is not None
-    pin = hint.pin
-    return pin is not None and pin.valid_time == valid_from
-
-
-def _source_find_nodes(
-    entry: Mapping[str, object],
-    index: int,
-    group_finds: Mapping[int, tuple[WireEntity, ...]],
-) -> tuple[WireEntity, ...] | None:
-    """What the find step a submission of the WRITE step at ``index`` names with
-    ``on`` published (`m-case-format` *Settling against a grouped find*) —
-    ``None`` when it names no find, which is every submission but one settling
-    against its group's own read.
-
-    ``group_finds`` holds one entry per find step of THIS group that has already
-    run, so a reference it cannot satisfy names a step outside the group, a step
-    that is not a find, or one that has not run yet. All three are the same
-    authoring defect and all three are refused here, rather than resolved to an
-    empty tuple that would read as "the find published nothing".
-    """
-    source = entry.get("on")
-    if source is None or isinstance(source, str):
-        return None
-    if not isinstance(source, int) or isinstance(source, bool):
-        raise EngineError(
-            f"scenario[{index}]: a write settles against ONE find step, named by its "
-            f"index — {source!r} is not one (m-case-format 'Settling against a grouped find')"
-        )
-    published = group_finds.get(source)
-    if published is None:
-        raise EngineError(
-            f"scenario[{index}]: settles against step {source}, which is not an EARLIER find "
-            "step of its own `uow` group — the evidence a write settles against is "
-            "transaction-scoped (m-case-format 'Settling against a grouped find')"
-        )
-    return published
-
-
-def _source_nodes(
-    entry: Mapping[str, object], index: int, state: GroupState
-) -> Sequence[WireEntity] | None:
-    source = entry.get("on")
-    if isinstance(source, str):
-        opened = state.insertions.get(source)
-        if opened is None:
-            raise EngineError(
-                f"scenario[{index}]: writes through {source!r}, which opened no value "
-                "in this attempt of its own `uow` group"
-            )
-        return opened
-    return _source_find_nodes(entry, index, state.finds)
-
-
-def _buffer_wire_write(
-    tx: TxnContext,
-    model: AcceptedMetamodel,
-    state: GroupState,
-    instruction: WriteInstruction,
-    named: Sequence[WireEntity] | None,
-    *,
-    pointer: str | None = None,
-) -> None:
-    """Submit an unprepared instruction through its public Wire verb."""
-    if isinstance(instruction, TargetWriteInstruction):
-        _buffer_wire_target(tx, model, instruction)
-        return
-    assert isinstance(instruction, KeyedWriteInstruction)
-    if instruction.mutation in INSERT_MUTATIONS:
-        _buffer_wire_insert(tx, model, state, instruction, pointer)
-        return
-    _buffer_wire_keyed(
-        tx,
-        model,
-        instruction,
-        _group_source_node(
-            case_entity(model, instruction.entity).identity.canonical,
-            _instruction_key(instruction, model),
-            state,
-            named,
-            instruction.valid_from,
-        ),
-    )
-
-
-def _instruction_key(
-    instruction: KeyedWriteInstruction, model: AcceptedMetamodel
-) -> ObjectKey | None:
-    entity = case_entity(model, instruction.entity)
-    declaring = family_declarer(model, entity)
-    attributes = [
-        attr for attr in declaring.declared_attributes if isinstance(attr.primary_key, PrimaryKey)
-    ]
-    row = instruction.rows[0]
-    if not attributes or any(row.get(attr.identity.name) is None for attr in attributes):
-        return None
-    return ObjectKey(
-        entity.identity,
-        tuple(
-            (attr.identity.name, decode_wire(attr.type, cast("WireValue", row[attr.identity.name])))
-            for attr in attributes
-        ),
-    )
-
-
-def _buffer_wire_insert(
-    tx: TxnContext,
-    model: AcceptedMetamodel,
-    state: GroupState,
-    instruction: KeyedWriteInstruction,
-    pointer: str | None,
-) -> WireEntity:
-    """Buffer ONE insert through ``tx.wire.insert`` and record the value it
-    answered: a row no find can have returned, which a later write of the
-    same unit is addressed by — read-your-own-writes."""
-    valid_from, until = instruction.valid_from, instruction.until
-    entity = case_entity(model, instruction.entity)
-    version = _versioned_non_temporal_version_attribute(model, instruction.entity)
-    payload = {
-        name: value
-        for name, value in instruction.rows[0].items()
-        if version is None or name != version.identity.name
-    }
-    opened = (
-        tx.wire.insert(
-            entity.identity.canonical,
-            payload,
-            valid_from=_required(valid_from),
-            until=_required(until),
-        )
-        if instruction.mutation == "insertUntil"
-        else tx.wire.insert(entity.identity.canonical, payload, **_stated_start(valid_from))
-    )
-    state.opened[_node_object_key(opened)] = opened
-    if pointer is not None:
-        state.insertions.setdefault(pointer, []).append(opened)
-    return opened
-
-
-def _buffer_wire_keyed(
-    tx: TxnContext, model: AcceptedMetamodel, instruction: KeyedWriteInstruction, node: WireEntity
-) -> None:
-    """Submit authored changes against the published source, leaving admission to production."""
-    key = _instruction_key(instruction, model)
-    identity = dict(key.primary_key) if key is not None else {}
-    changes = {name: value for name, value in instruction.rows[0].items() if name not in identity}
-    until = instruction.until
-    match instruction.mutation:
-        case "amend":
-            tx.wire.amend(node, changes)
-        case "amendUntil":
-            tx.wire.amend(node, changes, until=_required(until))
-        case "replace" | "replaceUntil":
-            tx.wire.replace(node, changes, **({} if until is None else {"until": until}))
-        case "delete":
-            tx.wire.delete(node)
-        case "terminate":
-            tx.wire.terminate(node)
-        case _:
-            tx.wire.terminate(node, until=_required(until))
-
-
-def _buffer_wire_target(
-    tx: TxnContext, model: AcceptedMetamodel, instruction: TargetWriteInstruction
-) -> None:
-    """Buffer ONE target write through the public ``tx.wire`` verb
-    its mutation names, with the caller's own revision beside its document."""
-    entity_name = case_entity(model, instruction.entity).identity.canonical
-    document = dict(instruction.row)
-    valid_from, until = instruction.valid_from, instruction.until
-    condition: dict[str, Any] = (
-        {"version": instruction.if_version}
-        if instruction.if_version is not None
-        else {"tx_start": instruction.if_tx_start}
-    )
-    bounds: dict[str, Any] = {**_stated_start(valid_from)}
-    if until is not None:
-        bounds["until"] = until
-    match instruction.mutation:
-        case "amend" | "amendUntil":
-            tx.wire.amend_if(entity_name, document, **condition, **bounds)
-        case "replace" | "replaceUntil":
-            tx.wire.replace_if(entity_name, document, **condition, **bounds)
-        case "delete":
-            tx.wire.delete_if(entity_name, document, **condition)
-        case _:
-            tx.wire.terminate_if(entity_name, document, **condition, **bounds)
-
-
-def _stated_start(valid_from: dt.datetime | None) -> dict[str, dt.datetime]:
-    """``valid_from`` as the keyword a public verb takes, omitted where the
-    instruction states no start."""
-    return {} if valid_from is None else {"valid_from": valid_from}
-
-
-def _required(instant: dt.datetime | None) -> dt.datetime:
-    """A bound a bounded mutation always carries, narrowed for the verb that
-    requires it — the instruction build already refused one that states none."""
-    assert instant is not None
-    return instant
 
 
 @dataclass(frozen=True, slots=True)
@@ -2725,50 +1862,44 @@ class GroupSession:
 def run_group_step(
     tx: TxnContext,
     context: CaseContext,
-    state: GroupState,
+    submitter: WireSubmitter,
+    report: GroupReport,
     step: Mapping[str, object],
     index: int,
     observation: LifecycleObservation,
 ) -> tuple[LoweredStep, _StepRead | None]:
-    """Interpret a held group step through public verbs using this attempt's values.
-
-    Reads publish sources and flush pending writes through production. Predicate writes
-    record their returned count; buffered writes record a lifecycle attribution mark."""
-    model = context.model
-    if "write" in step and is_predicate_write_step(step["write"]):
-        raw_write = cast("Mapping[str, object]", step["write"])
-        state.buffered.append((index, len(observation.writes)))
-        state.affected[index] = _execute_wire_predicate_write(tx, model, raw_write)
-        return (
-            LoweredStep(f"/scenario/{index}/write", (), True, step.get("rollback") is True),
-            None,
-        )
-    if "write" in step:
-        entries = write_entries(step["write"])
-        _refuse_group_markers(entries, model)
-        for position, entry in enumerate(entries):
-            named = _source_nodes(entry, index, state)
-            for write in _case_write_instructions([entry], model):
-                _buffer_wire_write(
-                    tx, model, state, write, named, pointer=f"/scenario/{index}/write/{position}"
-                )
-        state.buffered.append((index, len(observation.writes)))
-        return LoweredStep(f"/scenario/{index}/write", (), True, False), None
-    return _group_read(tx, context, state, step, index, observation)
+    """Execute a group step and record its lifecycle attribution and returned counts."""
+    if "write" not in step:
+        return _group_read(tx, context, submitter, step, index, observation)
+    submissions = read_submissions(context.model, step["write"], step=index)
+    _refuse_group_markers(submissions)
+    predicate = is_predicate_write_step(step["write"])
+    if predicate:
+        report.buffered.append((index, len(observation.writes)))
+    for submission in submissions:
+        outcome = submitter.submit(submission)
+        if isinstance(outcome, Refused):
+            report.refusals.append({"at": outcome.at, "errorClass": outcome.code})
+        elif isinstance(outcome, Executed):
+            report.affected[index] = outcome.affected
+    if not predicate:
+        report.buffered.append((index, len(observation.writes)))
+    return LoweredStep(
+        f"/scenario/{index}/write", (), True, step.get("rollback") is True if predicate else False
+    ), None
 
 
 def _group_read(
     tx: TxnContext,
     context: CaseContext,
-    state: GroupState,
+    submitter: WireSubmitter,
     step: Mapping[str, object],
     index: int,
     observation: LifecycleObservation,
 ) -> tuple[LoweredStep, _StepRead]:
     """One `uow` group's find step, through ``tx.wire.find`` or, for a step
     carrying `stream`, ``tx.wire.stream`` at its page size — recording into
-    ``state`` the nodes it published, which a later write of the group is
-    addressed by."""
+    the submitter the checked values a later write may use."""
     model = context.model
     mark = observation.database_calls
     batch_size = case_document.batch_size_of(step, f"/scenario/{index}/stream")
@@ -2778,9 +1909,7 @@ def _group_read(
     else:
         with tx.wire.stream(step_query(step, model), batch_size=batch_size) as delivery:
             read = _StepRead(tuple(delivery.checked()), None)
-    nodes = _published_from(read.roots)
-    state.finds[index] = nodes
-    state.published.extend(nodes)
+    submitter.record_find(index, read.graph if read.graph is not None else read.roots)
     return LoweredStep(
         f"/scenario/{index}/objectQuery", observation.own_reads_since(mark), False, False
     ), read
@@ -2808,16 +1937,19 @@ def _run_uow_group(
         lowered: list[LoweredStep] = []
         rows_observed: list[dict[str, object]] = []
         step_graphs: list[dict[str, object]] = []
-        state = GroupState()
+        state = GroupReport()
         prior_buffered: list[tuple[int, int]] = []
 
         def body(tx: TxnContext) -> None:
             nonlocal state, lowered, rows_observed, step_graphs
             prior_buffered.extend(state.buffered)
-            state = GroupState()
+            state = GroupReport()
             lowered, rows_observed, step_graphs = [], [], []
+            submitter = WireSubmitter(tx, context.model)
             for index in range(start, end + 1):
-                step, read = run_group_step(tx, context, state, steps[index], index, observation)
+                step, read = run_group_step(
+                    tx, context, submitter, state, steps[index], index, observation
+                )
                 lowered.append(step)
                 if read is None:
                     continue
@@ -2852,56 +1984,6 @@ def _run_uow_group(
 # --------------------------------------------------------------------------- #
 # State-graded groups: public verbs only, graded on what they leave.           #
 # --------------------------------------------------------------------------- #
-
-
-def _empty_refusals() -> list[dict[str, object]]:
-    return []
-
-
-@dataclass(frozen=True, slots=True)
-class _Submitted:
-    refusals: list[dict[str, object]] = field(default_factory=_empty_refusals)
-
-
-def _submission_writes(
-    entry: Mapping[str, object], model: AcceptedMetamodel
-) -> tuple[WriteInstruction, ...]:
-    """One keyed submission as the instructions its verb is handed, one per row.
-
-    A state-graded group drives public verbs only, so nothing here resolves an
-    observation: the value a verb is handed carries its own.
-    """
-    _refuse_group_markers([entry], model)
-    return _case_write_instructions([entry], model)
-
-
-def _submit(
-    tx: TxnContext,
-    model: AcceptedMetamodel,
-    state: GroupState,
-    submitted: _Submitted,
-    entry: Mapping[str, object],
-    pointer: str,
-    index: int,
-) -> None:
-    """Hand one submission to the public verb its form names, catching the one
-    refusal it declares, as a caller that continues past it does."""
-    refusal = entry.get("expectError")
-    try:
-        if "target" in entry:
-            _execute_wire_predicate_write(tx, model, entry)
-        elif "row" in entry:
-            (target,) = _case_write_instructions([entry], model)
-            assert isinstance(target, TargetWriteInstruction)
-            _buffer_wire_target(tx, model, target)
-        else:
-            named = _source_nodes(entry, index, state)
-            for write in _submission_writes(entry, model):
-                _buffer_wire_write(tx, model, state, write, named, pointer=pointer)
-    except WriteEvidenceError as exc:
-        if exc.code != refusal:
-            raise
-        submitted.refusals.append({"at": pointer, "errorClass": exc.code})
 
 
 _FLUSH_FAILURES = (
@@ -2979,25 +2061,22 @@ def _run_state_graded_group(
     )
     observation = lifecycle.observation()
     session = GroupSession(write_adapter(port, rollback=abandoned), context, instant, observation)
-    state = GroupState()
-    submitted = _Submitted()
+    report = GroupReport()
     rows_observed: list[dict[str, object]] = []
     running: list[int] = []
 
     def body(tx: TxnContext) -> None:
-        nonlocal state, submitted, rows_observed, running
-        state = GroupState()
-        submitted = _Submitted()
+        nonlocal report, rows_observed, running
+        report = GroupReport()
+        submitter = WireSubmitter(tx, context.model)
         rows_observed, running = [], []
         for index in range(start, end + 1):
             running.append(index)
             step = steps[index]
-            if "write" in step:
-                for position, entry in enumerate(write_entries(step["write"])):
-                    pointer = f"/scenario/{index}/write/{position}"
-                    _submit(tx, context.model, state, submitted, entry, pointer, index)
-            else:
-                _lowered, read = _group_read(tx, context, state, step, index, observation)
+            _lowered, read = run_group_step(
+                tx, context, submitter, report, step, index, observation
+            )
+            if read is not None:
                 query = step_query(step, context.model)
                 rows_observed.append(step_rows(context.model, index, query, read.roots))
         running.clear()
@@ -3012,7 +2091,7 @@ def _run_state_graded_group(
         outcome = {"outcome": "rolledBack", "flushFailure": reported}
     finally:
         session.close()
-    return _StateGroupRun(outcome, rows_observed, submitted.refusals, observation.database_calls)
+    return _StateGroupRun(outcome, rows_observed, report.refusals, observation.database_calls)
 
 
 def _run_state_graded_case(
@@ -3326,7 +2405,7 @@ def _resolve_conflict_writes(
 
     A conflict attempt authors its rows in the SAME ``writeRow`` vocabulary a
     writeSequence entry does, so they become durable rows through the SAME
-    :func:`_durable_row` seam: an unversioned conflict target — a supported
+    :func:`read_submissions` seam: an unversioned conflict target — a supported
     surface (``m-unit-work-013`` / ``-014``, ``m-batch-write-008``) — has no
     version to observe, and wrapping its rows anyway would exclude them from the
     collapse this lane exists to exercise.
