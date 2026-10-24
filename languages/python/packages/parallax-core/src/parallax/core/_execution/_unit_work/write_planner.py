@@ -39,6 +39,7 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.write_plan.keys import ObjectKey
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -253,16 +254,11 @@ class WritePlanner:
             return self._batching.batch_key(self._model, item.target, item.mutation, item.rows[0])
 
         def close_batch() -> None:
-            if not candidates:
-                return
-            first = candidates[0].instruction
-            rows = [row for w in candidates for row in w.instruction.rows]
-            if len(candidates) == 1:
+            collapsed = self._collapsed(candidates) if len(candidates) > 1 else None
+            if collapsed is None:
                 result.extend(candidates)
-            elif self._batching.collapses(self._model, first.target, first.mutation, rows):
-                result.append(_merged_batch(candidates, rows))
             else:
-                result.extend(candidates)
+                result.append(collapsed)
             candidates.clear()
 
         # Inserts and object-locked writes batch; an object-locked batch keeps
@@ -303,6 +299,42 @@ class WritePlanner:
                 result.append(item)
         close_batch()
         return result
+
+    def _collapsed(
+        self, run: Sequence[KeyedInsert | ObjectLockedWrite]
+    ) -> InsertBatch | ObjectLockedBatch | None:
+        """``run`` as one multi-row instruction over every row of its
+        single-row instructions in run (buffer) order, with the entity,
+        mutation, and Valid-Time window its members already share, keeping the
+        object each row names and, for object-locked writes, every distinct
+        source evidence they retained; ``None`` where batching declines to
+        collapse it. A run shares one mutation, so it never mixes the two."""
+        rows: list[Mapping[str, object]] = []
+        assigns = False
+        insert_keys: list[ObjectKey | None] = []
+        locked_keys: list[ObjectKey] = []
+        retained: dict[int, ReadEvidence] = {}
+        for item in run:
+            rows.extend(item.instruction.rows)
+            assigns = assigns or item.instruction.assigns
+            if isinstance(item, KeyedInsert):
+                insert_keys.append(item.object_key)
+                continue
+            locked_keys.append(item.object_key)
+            for held in item.source_evidence:
+                retained.setdefault(id(held), held)
+        first = run[0].instruction
+        if not self._batching.collapses(self._model, first.target, first.mutation, rows):
+            return None
+        merged = derive_keyed_instruction(first, tuple(rows), assigns=assigns)
+        if not locked_keys:
+            return InsertBatch(instruction=merged, object_keys=tuple(insert_keys))
+        assert not insert_keys  # a run shares one mutation
+        return ObjectLockedBatch(
+            instruction=merged,
+            object_keys=tuple(locked_keys),
+            source_evidence=tuple(retained.values()),
+        )
 
     def _order(self, items: Sequence[OrderedWrite | PostRemovalInsert]) -> list[MutationPhase]:
         """``items`` as mutation phases in flush order: within each region the
@@ -392,38 +424,6 @@ def _shares_statement(last: PreparedKeyedInstruction, arriving: PreparedKeyedIns
         last.target == arriving.target
         and last.mutation == arriving.mutation
         and last.valid_time_window == arriving.valid_time_window
-    )
-
-
-def _merged_batch(
-    run: Sequence[KeyedInsert | ObjectLockedWrite], rows: Sequence[Mapping[str, object]]
-) -> InsertBatch | ObjectLockedBatch:
-    """``run`` collapsed into one multi-row instruction over ``rows``, every
-    row of its single-row instructions in run (buffer) order, with the same
-    entity, mutation, and Valid-Time window its members already share: a run
-    of inserts, or one of object-locked writes, each keeping the object every
-    row names and, for object-locked writes, every distinct source evidence
-    they retained. A run shares one mutation, so it never mixes the two."""
-    inserts: list[KeyedInsert] = []
-    locked: list[ObjectLockedWrite] = []
-    retained: dict[int, ReadEvidence] = {}
-    for item in run:
-        if isinstance(item, KeyedInsert):
-            inserts.append(item)
-            continue
-        locked.append(item)
-        for held in item.source_evidence:
-            retained.setdefault(id(held), held)
-    merged = derive_keyed_instruction(
-        run[0].instruction, tuple(rows), assigns=any(w.instruction.assigns for w in run)
-    )
-    if not locked:
-        return InsertBatch(instruction=merged, object_keys=tuple(w.object_key for w in inserts))
-    assert not inserts  # a run shares one mutation
-    return ObjectLockedBatch(
-        instruction=merged,
-        object_keys=tuple(w.object_key for w in locked),
-        source_evidence=tuple(retained.values()),
     )
 
 
