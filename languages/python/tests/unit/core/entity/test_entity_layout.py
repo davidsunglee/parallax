@@ -59,6 +59,7 @@ from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchem
 from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
+from tests._support.document_reads import folded_names
 from tests.unit._corpus_model_support import corpus, formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import bound_read, compiled_read
@@ -564,7 +565,9 @@ def _claimed(builder: PageBuilder, model: Metamodel, identity: EntityIdentity, s
         else f"{seed + position:04x}"
         if key.endswith("_hex")
         else seed + position
-        for position, key in enumerate(compiled.result_contract.result_keys)
+        for position, key in enumerate(
+            folded_names(compiled.statement.sql, compiled.document_reads)
+        )
     )
     ref, _resolved, _document, _variant = bound_read(model, identity).convert_row(
         row, builder, source=ROOT_LEVEL

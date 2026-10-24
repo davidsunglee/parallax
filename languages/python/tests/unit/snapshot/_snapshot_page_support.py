@@ -66,7 +66,7 @@ from parallax.core.temporal_read import Pin
 from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.snapshot._handle._read import typed_publication
 from tests._support.model_capabilities import graph_construction_for
-from tests.unit._prepared_read_support import carrying, compiled_read
+from tests.unit._prepared_read_support import compiled_read, result_row, uncarried
 
 __all__ = [
     "ConversionCalls",
@@ -341,18 +341,22 @@ class PageFixture:
         """The production builder this fixture accumulates into."""
         return self._builder
 
-    def node(self, entity: str, columns: Mapping[str, object]) -> int:
-        """Convert one driver row of ``entity``, spelled by result key, through
-        that Entity's read carrying exactly those cells, bound once for this
-        fixture, as a read level would."""
-        compiled = compiled_read(self._model, entity)
-        contract, row = carrying(compiled.result_contract, driver_row(compiled, columns))
-        address = (entity, contract.result_keys)
+    def node(
+        self, entity: str, columns: Mapping[str, object], *, uncarrying: tuple[str, ...] = ()
+    ) -> int:
+        """Convert one driver row of ``entity``, spelled by the names its read
+        selects, through that read bound once for this fixture, as a read level
+        would; the read carries no source for the members stored under
+        ``uncarrying``."""
+        compiled = uncarried(compiled_read(self._model, entity), *uncarrying)
+        address = (entity, uncarrying)
         prepared = self._reads.get(address)
         if prepared is None:
-            prepared = self._reads[address] = bind(self._cataloged, contract, compiled.projection)
+            prepared = self._reads[address] = bind(
+                self._cataloged, compiled.result_contract, compiled.projection
+            )
         ref, _resolved, _document, _variant = prepared.convert_row(
-            row, self._builder, source=ROOT_LEVEL
+            result_row(compiled, driver_row(compiled, columns)), self._builder, source=ROOT_LEVEL
         )
         return ref
 

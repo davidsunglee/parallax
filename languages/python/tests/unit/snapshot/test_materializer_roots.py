@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import Any, cast
+from collections.abc import Iterator, Mapping
+from typing import Any, Final, cast
 
 import pytest
 
@@ -24,7 +24,7 @@ from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
 from tests.unit._corpus_model_support import model as corpus_model
-from tests.unit._prepared_read_support import compiled_read, convert_cells
+from tests.unit._prepared_read_support import compiled_read, convert_cells, uncarried
 from tests.unit.snapshot._encoded_identity_read import encoded_identity_page
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import (
@@ -49,6 +49,14 @@ def _order(order_id: object, name: str = "Ada") -> dict[str, object]:
         "active": True,
         "ordered_on": None,
     }
+
+
+_PETS: Final[Mapping[str, object]] = {
+    "license_id": None,
+    "indoor": None,
+    "bark_volume": None,
+    "tusk_length": None,
+}
 
 
 def _encoded_order(key: str | None, name: str = "Ada", badge: str = "0f") -> dict[str, object]:
@@ -159,7 +167,7 @@ def test_page_storage_reports_projection_width_and_handles_a_view_cycle() -> Non
 
 
 def test_releasing_a_root_view_twice_is_idempotent() -> None:
-    page, _roots = _page(((ROOT_LEVEL, _order(1)),))
+    page, _roots = _page(((ROOT_LEVEL, _encoded_order("01")),))
     root = RootView(cast("Any", page), 0)
 
     root.release_finished_page_rows(0, root_last_uses(cast("Any", page)))
@@ -186,14 +194,21 @@ def test_root_zero_publishes_before_root_one_state_is_decoded() -> None:
     assert relevant == ["states_decoded", "root_published", "states_decoded", "root_published"]
 
 
-def _shared_keyless_animal(owners: tuple[int, ...], animal_row: dict[str, object]) -> object:
+def _shared_keyless_animal(
+    owners: tuple[int, ...], animal_row: dict[str, object], uncarrying: tuple[str, ...]
+) -> object:
     """A Page rooted at ``owners``, each Person owning the one keyless Animal
-    occurrence ``animal_row`` claims."""
+    occurrence ``animal_row`` claims through a read carrying no source for the
+    members stored under ``uncarrying``."""
     animals = RelationshipViewKey(RelationshipIdentity(identity_of(_ANIMAL, "Person"), "animals"))
     builder = PageBuilder(ViewSchema.of(animals))
     cataloged = CatalogedModel(_ANIMAL)
     animal = convert_cells(
-        cataloged, compiled_read(_ANIMAL, "Animal"), animal_row, builder, source=ROOT_LEVEL
+        cataloged,
+        uncarried(compiled_read(_ANIMAL, "Animal"), *uncarrying),
+        animal_row,
+        builder,
+        source=ROOT_LEVEL,
     )
     people = compiled_read(_ANIMAL, "Person")
     roots = tuple(
@@ -216,17 +231,25 @@ def _shared_keyless_animal(owners: tuple[int, ...], animal_row: dict[str, object
     ],
 )
 @pytest.mark.parametrize(
-    ("animal_row", "expected"),
+    ("animal_row", "uncarrying", "expected"),
     [
         pytest.param(
-            {"id": 7, "kind": "unicorn", "owner_id": 1},
-            ({"id": 7, "ownerId": 1}, [("stored-data-family-tag-unknown", "unicorn")]),
+            {**_PETS, "id": 7, "kind": "unicorn", "name": "Uni", "owner_id": 1},
+            (),
+            (
+                {"id": 7, "name": "Uni", "ownerId": 1},
+                [("stored-data-family-tag-unknown", "unicorn")],
+            ),
             id="unknown-concrete",
         ),
         pytest.param(
-            {"kind": "dog", "name": "Rex", "owner_id": 1},
-            ({"name": "Rex", "ownerId": 1}, list[object]()),
-            id="without-key-column",
+            {**_PETS, "id": 7, "kind": "dog", "name": "Rex", "owner_id": 1},
+            ("id",),
+            (
+                {"name": "Rex", "ownerId": 1, "licenseId": None, "barkVolume": None},
+                list[object](),
+            ),
+            id="without-key",
         ),
     ],
 )
@@ -234,11 +257,12 @@ def test_a_keyless_occurrence_is_judged_again_for_every_root_reaching_it(
     owners: tuple[int, ...],
     atomic: bool,
     animal_row: dict[str, object],
+    uncarrying: tuple[str, ...],
     expected: tuple[object, ...],
 ) -> None:
     # A keyless claim shares no judged state, so each root reaching it judges its
     # payload anew, after earlier roots released what they alone reached.
-    page = _shared_keyless_animal(owners, animal_row)
+    page = _shared_keyless_animal(owners, animal_row, uncarrying)
 
     def publish(root: RootView, _position: int) -> Iterator[tuple[object, ...]]:
         (node,) = (node for node, concrete in enumerate(root.order) if concrete.name != "Person")

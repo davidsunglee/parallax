@@ -30,10 +30,7 @@ from parallax.core import storage_layout
 from parallax.core.base import PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.inheritance import family_variant_name
-from parallax.core.inheritance import view as inheritance_view
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.read_delivery._row_decoding import publication_keys
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.sql_gen._inheritance import SingleTableReadPlan, TpcsUnionReadPlan
 from tests._support.sql import compile_projected_read, compile_read
@@ -371,14 +368,6 @@ def _direct_mapping(compiled: CompiledRead) -> dict[str, list[str]] | None:
     }
 
 
-def _variant(shape: _Shape, identity: EntityIdentity) -> str | None:
-    return (
-        None
-        if shape.strategy is None
-        else family_variant_name(inheritance_view(shape.meta()), identity)
-    )
-
-
 @pytest.mark.parametrize(
     "demand", _DEMANDS, ids=[f"{demand.request}-observe={demand.observe}" for demand in _DEMANDS]
 )
@@ -410,10 +399,6 @@ def test_a_read_fetches_its_resolved_demand_whatever_its_result_form(
     for form, compiled in zip(_FORMS, (row, instance), strict=True):
         assert _shared_mapping(compiled) == _shared(shape, demand, form)
         assert _direct_mapping(compiled) == _direct(shape, demand)
-        for identity in compiled.resolved_position:
-            assert publication_keys(
-                compiled.result_contract, identity, _variant(shape, identity)
-            ) == _published(shape, demand, identity.name, form)
 
 
 @pytest.mark.parametrize(

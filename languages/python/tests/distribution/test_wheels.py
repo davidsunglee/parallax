@@ -82,6 +82,7 @@ def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
         "parallax/core/sql_gen/_planning.py",
         "parallax/core/sql_gen/_predicate.py",
         "parallax/core/sql_gen/_seek.py",
+        "parallax/core/sql_gen/_select_list.py",
         "parallax/core/sql_gen/_write.py",
     }
     assert "parallax/core/sql_gen/compile.py" not in _names(wheelhouse, "parallax-core")

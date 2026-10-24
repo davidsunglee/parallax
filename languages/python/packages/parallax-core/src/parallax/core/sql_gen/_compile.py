@@ -10,7 +10,7 @@ from parallax.core.base import (
     ManagedValue,
 )
 from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
-from parallax.core.dialect import Dialect, LockMode, projection_result_key
+from parallax.core.dialect import Dialect, LockMode
 from parallax.core.document_codec import is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as _inheritance_view
@@ -20,7 +20,6 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    Multiplicity,
 )
 from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import (
@@ -39,7 +38,6 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 # above, which is the metamodel module. Each name is aliased down to the
 # module-private spelling it had while this file owned it, so a use site below
 # never confuses the two.
-from parallax.core.sql_gen._inheritance import AttributeReadContract as _AttributeReadContract
 from parallax.core.sql_gen._inheritance import ReadResultContract as _ReadResultContract
 from parallax.core.sql_gen._inheritance import SingleTableReadPlan as _SingleTableReadPlan
 from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
@@ -70,19 +68,19 @@ from parallax.core.sql_gen._predicate import render_shared_sources as _render_sh
 # the hidden capture cell, and the seek alike.
 from parallax.core.sql_gen._seek import LoweredTerm as _LoweredTerm
 from parallax.core.sql_gen._seek import TermSubject as _TermSubject
-from parallax.core.sql_gen._seek import capture_cells as _capture_cells
-from parallax.core.sql_gen._seek import coordinate_reads as _coordinate_reads
 from parallax.core.sql_gen._seek import emits_null_tail as _emits_null_tail
 from parallax.core.sql_gen._seek import lower_seek as _lower_seek
 from parallax.core.sql_gen._seek import lowered_terms as _lowered_terms
 from parallax.core.sql_gen._seek import order_clause as _order_clause
+
+# The select-list lane: every read select list is emitted through one owner,
+# which also yields what each of its cells carries.
+from parallax.core.sql_gen._select_list import SelectListBuilder as _SelectListBuilder
 from parallax.core.storage_layout import DirectColumn as _DirectColumn
 from parallax.core.storage_layout import DocumentPath as _DocumentPath
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
 from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
-from parallax.core.temporal_read import ranked_axes as _ranked_axes
-from parallax.core.temporal_read import view as _temporal_view
 
 __all__ = [
     "CompiledRead",
@@ -205,50 +203,6 @@ def _template(compiled: CompiledRead, *, postgres_array: bool) -> CompiledTempla
     )
 
 
-def _scalar_read_contracts(
-    model: Metamodel,
-    facet: InheritanceFacet,
-    storage: _StorageLayoutFacet,
-    dialect: Dialect,
-    position: tuple[EntityIdentity, ...],
-) -> tuple[tuple[EntityIdentity, tuple[_AttributeReadContract, ...]], ...]:
-    contracts: list[tuple[EntityIdentity, tuple[_AttributeReadContract, ...]]] = []
-    temporal = _temporal_view(model)
-    for identity in position:
-        view = _entity_view(facet, identity)
-        layout = _table_layout(storage, facet, identity)
-        shape = temporal.shape(identity)
-        temporal_ends: frozenset[AttributeIdentity] = (
-            frozenset()
-            if shape is None
-            else frozenset(axis.end_attribute for axis in _ranked_axes(shape))
-        )
-        entity_contracts: list[_AttributeReadContract] = []
-        for attribute in view.applicable_attributes:
-            # A scalar collection's own Column holds a structured document, never
-            # a native scalar lane, so it keeps its storage key.
-            direct = (
-                isinstance(layout.placement(attribute.identity), _DirectColumn)
-                and attribute.multiplicity is Multiplicity.ONE
-            )
-            projected_key = projection_result_key(attribute.storage.name, attribute.type)
-            entity_contracts.append(
-                _AttributeReadContract(
-                    attribute,
-                    projected_key if direct else attribute.storage.name,
-                    attribute.identity in temporal_ends,
-                    direct and projected_key != attribute.storage.name,
-                )
-            )
-        contracts.append(
-            (
-                identity,
-                tuple(entity_contracts),
-            )
-        )
-    return tuple(contracts)
-
-
 def compile_read(
     query: PlannedEntityQuery,
     model: Metamodel,
@@ -284,9 +238,7 @@ def compile_read(
         order_terms=query.order_by,
     )
     position = tuple(read_shape.concrete_types)
-    attribute_reads = _scalar_read_contracts(model, facet, storage, dialect, position)
-    coordinate_reads = _coordinate_reads(terms) if query.paging is not None else ()
-    statement, document_reads, arm_keys = _render_read_arm(
+    statement, select_list = _render_read_arm(
         query,
         read_shape,
         statement_plan,
@@ -298,9 +250,8 @@ def compile_read(
         lock=arm_lock,
         null_tail=False,
     )
-    result_keys = (*arm_keys, *coordinate_reads)
     if two_arms:
-        null_tail, _tail_document_reads, _tail_keys = _render_read_arm(
+        null_tail, tail_list = _render_read_arm(
             query,
             read_shape,
             statement_plan,
@@ -312,12 +263,11 @@ def compile_read(
             lock=arm_lock,
             null_tail=True,
         )
-        statement = _union_null_tail(
+        select_list.require_agreement(tail_list)
+        statement, select_list = _union_null_tail(
             statement,
             null_tail,
-            result_keys,
-            document_reads,
-            attribute_reads,
+            select_list,
             query,
             terms,
             model,
@@ -332,14 +282,9 @@ def compile_read(
         query.entity.identity,
         position,
         query.projection,
-        document_reads,
-        _ReadResultContract(
-            read_shape.row_identity,
-            read_shape.shared_document,
-            read_shape.direct_documents,
-            attribute_reads,
-            result_keys,
-            coordinate_reads,
+        select_list.document_reads,
+        select_list.result_contract(
+            read_shape, facet, query.projection, terms if query.paging is not None else ()
         ),
     )
 
@@ -347,9 +292,7 @@ def compile_read(
 def _union_null_tail(
     ordinary: LoweredStatement,
     null_tail: LoweredStatement,
-    result_keys: tuple[str, ...],
-    document_reads: tuple[DocumentReadOrdinals, ...],
-    attribute_reads: tuple[tuple[EntityIdentity, tuple[_AttributeReadContract, ...]], ...],
+    select_list: _SelectListBuilder,
     query: PlannedEntityQuery,
     terms: tuple[_LoweredTerm, ...],
     model: Metamodel,
@@ -358,27 +301,15 @@ def _union_null_tail(
     dialect: Dialect,
     *,
     locking: bool,
-) -> LoweredStatement:
+) -> tuple[LoweredStatement, _SelectListBuilder]:
     """The ordered, capped `union all` of a continuing page's ordinary and
-    NULL-tail arms, selecting the ordinary arm's ``result_keys`` and document
-    read pairs; a ``locking`` union joins back to the target's base Table and
-    locks that row instead."""
+    NULL-tail arms, selected through the cells both arms emit; a ``locking``
+    union joins back to the target's base Table and locks that row instead."""
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
     statement_ctx.append_fragment(ordinary)
     statement_ctx.append_fragment(null_tail)
     outer_alias = "u"
-    projection_parts: list[str] = []
-    document_presence = {presence for presence, _document in document_reads}
-    ordinal = 0
-    for result_key in result_keys:
-        expression = dialect.qualified(outer_alias, result_key)
-        if ordinal in document_presence:
-            projection_parts.extend(dialect.project_document_read(expression))
-            ordinal += 2
-        else:
-            projection_parts.append(expression)
-            ordinal += 1
-    projection = ", ".join(projection_parts)
+    outer_list = select_list.select_through(outer_alias)
     ordering = ", ".join(
         dialect.null_order(
             dialect.qualified(outer_alias, term.alias), term.term.direction, term.term.nulls
@@ -392,7 +323,7 @@ def _union_null_tail(
     if locking:
         base_join, lock_suffix = _locking_base_join(
             statement_ctx,
-            attribute_reads,
+            select_list,
             _table_layout(storage, facet, query.entity.identity),
             dialect,
             outer_alias,
@@ -400,10 +331,10 @@ def _union_null_tail(
         source += base_join
     statement_ctx.bind_structural(query.limit)
     statement = statement_ctx.finish(
-        f"select {projection} from {source} order by {ordering} "
+        f"select {outer_list.sql} from {source} order by {ordering} "
         f"{dialect.limit_clause()}{lock_suffix}"
     )
-    return _normalize(statement)
+    return _normalize(statement), outer_list
 
 
 def _needs_null_tail(seek: ResolvedSeek, storage: _StorageLayoutFacet, dialect: Dialect) -> bool:
@@ -424,42 +355,24 @@ def _needs_null_tail(seek: ResolvedSeek, storage: _StorageLayoutFacet, dialect: 
 
 def _locking_base_join(
     ctx: StatementBuilder,
-    attribute_reads: tuple[tuple[EntityIdentity, tuple[_AttributeReadContract, ...]], ...],
+    select_list: _SelectListBuilder,
     layout: _TableLayout,
     dialect: Dialect,
     outer_alias: str,
 ) -> tuple[str, str]:
     """The join from a wrapped union back to the target's base Table, matched on
-    every physical key Column under the result key ``attribute_reads`` gives it,
+    every physical key Column under the alias ``select_list`` emitted it as,
     and the lock suffix naming that Table; the key cells' binds are appended to
     ``ctx`` in join order."""
-    contracts = {
-        contract.attribute.identity: contract
-        for _identity, reads in attribute_reads
-        for contract in reads
-    }
     base_alias = "t0"
     join_terms: list[str] = []
     for slot in layout.physical_primary_key:
         if not isinstance(slot.contributor, AttributeIdentity):  # pragma: no cover
             raise SqlGenError("a physical primary-key column must be Attribute-owned")
-        contract = contracts.get(slot.contributor)
-        if contract is None:  # pragma: no cover - every physical key is projected
-            raise SqlGenError(
-                f"physical key column {slot.column.name!r} is absent from the read projection"
-            )
-        base_expression, base_binds = dialect.project(
-            base_alias,
-            slot.column.name,
-            contract.attribute.type,
-            result_key=contract.result_key,
-        )
-        if contract.encoded:
-            base_expression = base_expression.removesuffix(f" {contract.result_key}")
-        ctx.bind_structural_all(base_binds)
-        join_terms.append(
-            f"{dialect.qualified(outer_alias, contract.result_key)} = {base_expression}"
-        )
+        alias, neutral_type = select_list.selected_scalar(slot.contributor)
+        base = dialect.render_scalar(base_alias, slot.column.name, neutral_type)
+        ctx.bind_structural_all(base.binds)
+        join_terms.append(f"{dialect.qualified(outer_alias, alias)} = {base.expression_sql}")
     return (
         f" join {layout.table.name} {base_alias} on " + " and ".join(join_terms),
         f" {dialect.read_lock_suffix(base_alias)}",
@@ -555,11 +468,22 @@ def _reserved_result_keys(model: Metamodel, storage: _StorageLayoutFacet) -> fro
     )
 
 
-def _render_coordinates(
-    terms: tuple[_LoweredTerm, ...], subject: _TermSubject, paging: Paging | None
-) -> str:
-    """This read's hidden coordinate cells, or nothing where it pages nowhere."""
-    return "" if paging is None else _capture_cells(terms, subject)
+def _emit_coordinates(
+    select_list: _SelectListBuilder,
+    terms: tuple[_LoweredTerm, ...],
+    subject: _TermSubject,
+    paging: Paging | None,
+) -> None:
+    """Emit this read's hidden coordinate cells, none where it pages nowhere.
+
+    Each captures the expression the ``order by`` clause compares, through the
+    same ``subject``, so what a row carries back is what the database ordered
+    it by.
+    """
+    if paging is None:
+        return
+    for term in terms:
+        select_list.emit_coordinate(term, subject(term.member).compared)
 
 
 def _render_seek(
@@ -660,15 +584,10 @@ def _render_read_arm(
     *,
     lock: LockMode | None,
     null_tail: bool,
-) -> tuple[
-    LoweredStatement,
-    tuple[DocumentReadOrdinals, ...],
-    tuple[str, ...],
-]:
+) -> tuple[LoweredStatement, _SelectListBuilder]:
     """Render one ordinary or NULL-tail arm of ``query`` from its one physical
     plan and one statement plan, through builders of this arm's own: its
-    statement, its document read pairs, and the result keys of its projected
-    cells, which precede any coordinate captures.
+    statement and its outermost select list.
 
     The physical plan decides whether a read is one Table or a union, and the
     statement plan whether a table-per-hierarchy read partitions by variant.
@@ -678,7 +597,7 @@ def _render_read_arm(
     limit = query.limit
     match plan:
         case _TpcsUnionReadPlan():
-            statement, document_reads = _render_tpcs_union_read(
+            return _render_tpcs_union_read(
                 plan,
                 statement_plan,
                 entity,
@@ -691,13 +610,8 @@ def _render_read_arm(
                 dialect,
                 null_tail,
             )
-            return (
-                statement,
-                document_reads,
-                (*(column.result_alias for column in plan.columns), "family_variant"),
-            )
         case _SingleTableReadPlan() if statement_plan.requires_tph_partition:
-            statement, document_reads = _render_tph_partitioned_read(
+            return _render_tph_partitioned_read(
                 plan,
                 statement_plan,
                 entity,
@@ -712,7 +626,7 @@ def _render_read_arm(
                 null_tail,
             )
         case _SingleTableReadPlan():
-            statement, document_reads = _render_single_table_read(
+            return _render_single_table_read(
                 plan,
                 statement_plan,
                 entity,
@@ -728,16 +642,24 @@ def _render_read_arm(
             )
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
-    return (
-        statement,
-        document_reads,
-        tuple(
-            column.column
-            if column.type is None
-            else projection_result_key(column.column, column.type)
-            for column in plan.columns
-        ),
-    )
+
+
+def _agreed(first: _SelectListBuilder | None, branch: _SelectListBuilder) -> _SelectListBuilder:
+    """The select list one union's branches share, once ``branch`` agrees with
+    the ``first`` branch's."""
+    if first is None:
+        return branch
+    first.require_agreement(branch)
+    return first
+
+
+def _select_list(
+    plan: _SingleTableReadPlan, dialect: Dialect, alias: str, *, document_pairs: bool = True
+) -> _SelectListBuilder:
+    select_list = _SelectListBuilder(dialect, document_pairs=document_pairs)
+    for column in plan.columns:
+        select_list.emit(column, table_alias=alias)
+    return select_list
 
 
 def _render_single_table_read(
@@ -753,7 +675,7 @@ def _render_single_table_read(
     dialect: Dialect,
     lock: LockMode | None,
     null_tail: bool,
-) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...]]:
+) -> tuple[LoweredStatement, _SelectListBuilder]:
     """Render one SELECT over the plan's one Table (m-sql "Inheritance —
     table-per-hierarchy lowering" and "… — table-per-concrete-subtype
     lowering"): select list, user predicate, seek, the plan's framework tag
@@ -765,12 +687,10 @@ def _render_single_table_read(
     """
     ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
     scope = _EntityRowScope(ctx, entity, _table_layout(storage, facet, plan.concrete_types[0]))
-    proj_sql, proj_binds, document_reads = plan.render_select_list(dialect, scope.alias)
-    ctx.bind_structural_all(proj_binds)
-    parts = [
-        f"select {proj_sql}{_render_coordinates(terms, scope.subject_for, paging)}",
-        f"from {plan.table} {scope.alias}",
-    ]
+    select_list = _select_list(plan, dialect, scope.alias)
+    ctx.bind_structural_all(select_list.binds)
+    _emit_coordinates(select_list, terms, scope.subject_for, paging)
+    parts = [f"select {select_list.sql}", f"from {plan.table} {scope.alias}"]
     where_sql = _render_selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
     seek_sql = _render_seek(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
     conjoined = bool(seek_sql) or plan.tag_guard is not None
@@ -787,7 +707,7 @@ def _render_single_table_read(
         ctx.bind_framework_all(tag_binds)
     _append_where(parts, *where_terms)
     _append_read_tail(parts, scope, terms, scope.subject_for, limit, lock)
-    return _normalize(ctx.finish(" ".join(parts))), document_reads
+    return _normalize(ctx.finish(" ".join(parts))), select_list
 
 
 def _render_tph_partitioned_read(
@@ -803,10 +723,11 @@ def _render_tph_partitioned_read(
     dialect: Dialect,
     lock: LockMode | None,
     null_tail: bool,
-) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...]]:
+) -> tuple[LoweredStatement, _SelectListBuilder]:
     """Render one tag-disjoint branch per selected TPH document variant."""
     branch_sqls: list[str] = []
     branches: list[LoweredStatement] = []
+    branch_list: _SelectListBuilder | None = None
     layout = _table_layout(storage, facet, entity.identity)
     key_columns = tuple(slot.column.name for slot in layout.physical_primary_key)
     for branch_index, concrete in enumerate(plan.concrete_types):
@@ -833,12 +754,12 @@ def _render_tph_partitioned_read(
                 dialect.qualified(branch_scope.alias, column) for column in key_columns
             )
         else:
-            projection, projection_binds, _branch_document_reads = plan.render_select_list(
-                dialect,
-                branch_scope.alias,
-                document_pairs=not terms and limit is None,
+            selected = _select_list(
+                plan, dialect, branch_scope.alias, document_pairs=not terms and limit is None
             )
-            branch_ctx.bind_structural_all(projection_binds)
+            branch_list = _agreed(branch_list, selected)
+            branch_ctx.bind_structural_all(selected.binds)
+            projection = selected.sql
         branch_ctx.bind_framework_all(tag_binds)
         branch_ctx.bind_framework_all(fence_binds)
         parts = [f"select {projection}", f"from ({tagged}) {tagged_alias}"]
@@ -857,16 +778,15 @@ def _render_tph_partitioned_read(
             model, facet, storage, dialect
         )
         outer_scope = _EntityRowScope(statement_ctx, entity, layout)
-        projection, projection_binds, document_reads = plan.render_select_list(
-            dialect, outer_scope.alias
-        )
-        statement_ctx.bind_structural_all(projection_binds)
+        select_list = _select_list(plan, dialect, outer_scope.alias)
+        statement_ctx.bind_structural_all(select_list.binds)
+        _emit_coordinates(select_list, terms, outer_scope.subject_for, paging)
         join_terms = " and ".join(
             f"{dialect.qualified('u', column)} = {dialect.qualified(outer_scope.alias, column)}"
             for column in key_columns
         )
         parts = [
-            f"select {projection}{_render_coordinates(terms, outer_scope.subject_for, paging)}",
+            f"select {select_list.sql}",
             f"from {plan.table} {outer_scope.alias}",
             f"join ({union}) u on {join_terms}",
         ]
@@ -884,25 +804,23 @@ def _render_tph_partitioned_read(
             ),
         )
         _append_read_tail(parts, outer_scope, terms, outer_scope.subject_for, limit, lock)
-        return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
+        return _normalize(statement_ctx.finish(" ".join(parts))), select_list
 
+    if branch_list is None:  # pragma: no cover - a position names at least one concrete
+        raise SqlGenError("a partitioned read selects no variant")
     if not terms and limit is None:
-        _projection, _projection_binds, document_reads = plan.render_select_list(dialect, "t0")
         statement_ctx = StatementBuilder(model, facet, storage, dialect)
         for branch in branches:
             statement_ctx.append_fragment(branch)
-        return _normalize(statement_ctx.finish(union)), document_reads
+        return _normalize(statement_ctx.finish(union)), branch_list
 
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
-    outer_scope = _EntityRowScope(statement_ctx, entity, layout, alias="u", wrapped=True)
-    projection, projection_binds, document_reads = plan.render_select_list(
-        dialect, outer_scope.alias, wrapped=True
+    outer_scope = _EntityRowScope(
+        statement_ctx, entity, layout, alias="u", wrapped=branch_list.scalar_cells()
     )
-    statement_ctx.bind_structural_all(projection_binds)
-    parts = [
-        f"select {projection}{_render_coordinates(terms, outer_scope.subject_for, paging)}",
-        f"from ({union}) {outer_scope.alias}",
-    ]
+    select_list = branch_list.select_through(outer_scope.alias)
+    _emit_coordinates(select_list, terms, outer_scope.subject_for, paging)
+    parts = [f"select {select_list.sql}", f"from ({union}) {outer_scope.alias}"]
     for branch in branches:
         statement_ctx.append_fragment(branch)
     _append_where(
@@ -917,7 +835,7 @@ def _render_tph_partitioned_read(
         ),
     )
     _append_read_tail(parts, outer_scope, terms, outer_scope.subject_for, limit, None)
-    return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
+    return _normalize(statement_ctx.finish(" ".join(parts))), select_list
 
 
 def _render_tpcs_union_read(
@@ -932,7 +850,7 @@ def _render_tpcs_union_read(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     null_tail: bool,
-) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...]]:
+) -> tuple[LoweredStatement, _SelectListBuilder]:
     """Render a table-per-concrete-subtype `union all` read (m-sql "Inheritance —
     table-per-concrete-subtype lowering").
 
@@ -952,7 +870,7 @@ def _render_tpcs_union_read(
     wrapped = bool(terms) or limit is not None
     branch_sqls: list[str] = []
     branch_statements: list[LoweredStatement] = []
-    document_reads: tuple[DocumentReadOrdinals, ...] | None = None
+    union_list: _SelectListBuilder | None = None
     for branch in plan.branches:
         branch_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(
             model, facet, storage, dialect
@@ -960,15 +878,13 @@ def _render_tpcs_union_read(
         branch_scope = _EntityRowScope(
             branch_ctx, entity, _table_layout(storage, facet, branch.identity)
         )
-        proj_sql, proj_binds, branch_document_reads = branch.render_select_list(
-            dialect, branch_scope.alias, document_pairs=not wrapped
-        )
-        if document_reads is None:
-            document_reads = branch_document_reads
-        elif document_reads != branch_document_reads:  # pragma: no cover - aligned union invariant
-            raise SqlGenError("table-per-concrete-subtype branches disagree on document ordinals")
-        branch_ctx.bind_structural_all(proj_binds)
-        parts = [f"select {proj_sql}", f"from {branch.table} {branch_scope.alias}"]
+        branch_list = _SelectListBuilder(dialect, document_pairs=not wrapped)
+        for column in branch.columns:
+            branch_list.emit_branch(column, table_alias=branch_scope.alias)
+        branch_list.emit_variant(branch.variant)
+        union_list = _agreed(union_list, branch_list)
+        branch_ctx.bind_structural_all(branch_list.binds)
+        parts = [f"select {branch_list.sql}", f"from {branch.table} {branch_scope.alias}"]
         where_sql = _render_selection(
             statement_plan, statement_plan.root_scopes[branch.identity], branch_scope, parts
         )
@@ -977,14 +893,15 @@ def _render_tpcs_union_read(
         branch_sql = " ".join(parts)
         branch_sqls.append(branch_sql)
         branch_statements.append(branch_ctx.finish(branch_sql))
+    if union_list is None:  # pragma: no cover - a union position has several concretes
+        raise SqlGenError("a table-per-concrete-subtype union selects no branch")
 
     union = " union all ".join(branch_sqls)
     if not wrapped:
         statement_ctx = StatementBuilder(model, facet, storage, dialect)
         for branch in branch_statements:
             statement_ctx.append_fragment(branch)
-        statement = _normalize(statement_ctx.finish(union))
-        return statement, document_reads or ()
+        return _normalize(statement_ctx.finish(union)), union_list
 
     # The outer select brackets the union in the emitted text — its capture
     # cells precede every branch and its tail follows them all — so its binds
@@ -998,15 +915,10 @@ def _render_tpcs_union_read(
     capture_scope = _EntityRowScope(capture_ctx, entity, outer_layout, alias="u")
     tail_ctx: StatementBuilder[_EntityRowScope] = StatementBuilder(model, facet, storage, dialect)
     outer_scope = _EntityRowScope(tail_ctx, entity, outer_layout, alias="u")
-    projection, _projection_binds, outer_document_reads = plan.render_select_list(
-        dialect, outer_scope.alias
-    )
+    select_list = union_list.select_through(outer_scope.alias)
     tail_subject = _tpcs_subject(plan, outer_scope)
-    coordinates = _render_coordinates(terms, _tpcs_subject(plan, capture_scope), paging)
-    outer_parts = [
-        f"select {projection}{coordinates}",
-        f"from ({union}) {outer_scope.alias}",
-    ]
+    _emit_coordinates(select_list, terms, _tpcs_subject(plan, capture_scope), paging)
+    outer_parts = [f"select {select_list.sql}", f"from ({union}) {outer_scope.alias}"]
     _append_where(
         outer_parts,
         _render_seek(
@@ -1025,7 +937,7 @@ def _render_tpcs_union_read(
         statement_ctx.append_fragment(branch)
     statement_ctx.append_fragment(tail_ctx.finish(""))
     statement = _normalize(statement_ctx.finish(" ".join(outer_parts)))
-    return statement, outer_document_reads
+    return statement, select_list
 
 
 def _tpcs_subject(plan: _TpcsUnionReadPlan, scope: _EntityRowScope) -> _TermSubject:

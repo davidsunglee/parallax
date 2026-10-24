@@ -17,8 +17,9 @@ from typing import Any
 
 import pytest
 
+from parallax.core.dialect import RenderedScalarCell
 from parallax.core.sql_gen import _compile as sql_compile
-from parallax.core.sql_gen import _inheritance, _planning
+from parallax.core.sql_gen import _inheritance, _planning, _select_list
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.sql_gen._context import StatementBuilder
 from parallax.core.sql_gen._inheritance import (
@@ -126,7 +127,8 @@ def assert_planned_once(reuse: PlanReuse) -> ReadShape:
 
 
 def reaches_compilation_state(root: object) -> bool:
-    """Whether a statement plan, a lexical plan, or a statement builder is
+    """Whether a statement plan, a lexical plan, a statement builder, a select
+    list under construction or anything it records, or a rendered scalar cell is
     reachable from ``root``, ignoring what only a class or module holds."""
     module_namespaces = {id(vars(module)) for module in tuple(sys.modules.values())}
     seen: set[int] = set()
@@ -136,7 +138,9 @@ def reaches_compilation_state(root: object) -> bool:
         if id(current) in seen:
             continue
         seen.add(id(current))
-        if isinstance(current, (StatementPlan, LexicalScopePlan, StatementBuilder)):
+        if isinstance(
+            current, (StatementPlan, LexicalScopePlan, StatementBuilder, RenderedScalarCell)
+        ) or (type(current).__module__ == _select_list.__name__):
             return True
         if isinstance(current, (type, ModuleType)) or id(current) in module_namespaces:
             continue

@@ -13,9 +13,11 @@ from parallax.core import predicate as oa
 from parallax.core.base import PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import UNAVAILABLE, DocumentFinding
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import EntityMetadata, entity_by_name
-from parallax.core.read_delivery._row_decoding import member_classifier
+from parallax.core.read_delivery._row_decoding import member_classifiers
 from tests._support.sql import compile_read
+from tests.unit.core.sql_gen._delivery_support import deliver
 
 _COLUMNS = models.load_model(
     models.default_models_dir() / "scalar-collection-layout-twin-columns.yaml"
@@ -33,24 +35,32 @@ def test_a_row_form_read_projects_every_collection_as_a_document_pair() -> None:
     )
     assert "encode(" not in compiled.statement.sql
     assert compiled.document_reads[0] == (1, 2)
-    assert {"tags", "blobs"} <= compiled.result_contract.classified_by_entity.get(
-        _ITEM.identity, frozenset()
-    )
 
 
-def test_a_bytes_collection_keeps_its_storage_key_rather_than_an_encoded_one() -> None:
+def test_a_bytes_collection_publishes_under_its_storage_key_rather_than_an_encoded_one() -> None:
     compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
-    contracts = {
-        contract.attribute.identity.name: contract
-        for contract in dict(compiled.result_contract.attribute_reads).get(_ITEM.identity, ())
-    }
+    (row,) = deliver(_COLUMNS, compiled, [{"id": 1, "tags": ["b", "a"], "blobs": ["0a1b"]}])
 
-    assert (contracts["blobs"].result_key, contracts["blobs"].encoded) == ("blobs", False)
+    assert (row.members["tags"], row.members["blobs"]) == (("b", "a"), (b"\x0a\x1b",))
+    published = dict(row.published)
+    assert published["blobs"] == (b"\x0a\x1b",)
+    assert "blobs_hex" not in published
 
 
 def test_a_collection_column_classifies_through_the_codec_with_its_logical_path() -> None:
     compiled = compile_read(oa.TrueNode(), _COLUMNS, POSTGRES, _ITEM)
-    classify = member_classifier(compiled.result_contract, _ITEM.identity, "tags")
+    layout = CatalogedModel(_COLUMNS).layouts.entity(_ITEM.identity)
+    sources = compiled.result_contract.sources(_ITEM.identity)
+    classifiers = member_classifiers(
+        compiled.result_contract,
+        _ITEM.identity,
+        layout.member_selection.bindings,
+        sources.document_member_names(),
+    )
+    tags = layout.member_selection.attribute("tags")
+    assert tags is not None
+    classify = classifiers[layout.index_of[tags.identity]]
+    assert classify is not None
 
     assert classify(PresentDocument(["b", "a", "b"])) == (("b", "a", "b"), ())
     assert classify(PresentDocument(["b", 5])) == (

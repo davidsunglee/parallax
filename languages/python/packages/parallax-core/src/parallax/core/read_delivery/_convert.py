@@ -46,7 +46,6 @@ from parallax.core.read_delivery._page import (
     StoredDataIssueCode,
     StoredDataIssueInput,
 )
-from parallax.core.sql_gen._inheritance import AttributeReadContract
 from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 
 __all__ = [
@@ -62,17 +61,17 @@ __all__ = [
 class EntityReadMapping:
     """What every row a compiled read resolves to one exact Entity converts under.
 
-    ``layout`` is that Entity's model-owned member layout. ``attribute_reads``
-    carries the statement's contract for each of its Attributes in
-    ``layout.attributes`` order, read at the Attribute's own position, and is
-    empty for an Entity the read projected no column for, whose Attributes each
-    carry their own storage spelling. The remaining member sources align with
-    ``layout.members``.
+    ``layout`` is that Entity's model-owned member layout, and every member
+    source aligns with ``layout.members``: the folded driver-row cell a member
+    is read from, its prepared document classifier, and its member name in the
+    row's unwrapped shared document. A member with neither a cell nor a
+    document location is not carried. ``encoded_positions`` marks, one bit per
+    position, the Attributes whose cell arrives in its canonical Wire spelling.
 
     Only encoded result cells and temporal ends are host-checked: their storage
     contract does not itself establish the managed value. Native scalar Columns
-    are accepted exactly as the provider normalized them, and document-resident
-    members are classified by their document codec rather than admitted.
+    are accepted exactly as the provider normalized them, and document members
+    are classified by their document codec rather than admitted.
 
     The judgment selections are fixed here, once per bound read. A reduced row's
     host-checked identity positions, then its host-checked non-identity
@@ -87,14 +86,13 @@ class EntityReadMapping:
 
     layout: EntityLayout
     projection: InitVar[ResolvedReadProjection]
-    attribute_reads: tuple[AttributeReadContract, ...]
-    classified_members: frozenset[str]
-    result_keys: tuple[str, ...]
     result_ordinals: tuple[int | None, ...]
     classifiers: tuple[Callable[[object], tuple[object, tuple[DocumentFinding, ...]]] | None, ...]
     document_member_names: tuple[str | None, ...]
+    encoded_positions: int
     correlation_members: InitVar[tuple[MemberIdentity, ...]]
     concrete_entity: EntityIdentity = field(init=False)
+    classifies: bool = field(init=False)
     projected_by_position: tuple[bool, ...] = field(init=False)
     direct_row: Callable[[tuple[object, ...]], object] | None = field(init=False)
     every_member_present: int = field(init=False)
@@ -110,16 +108,16 @@ class EntityReadMapping:
         correlation_members: tuple[MemberIdentity, ...],
     ) -> None:
         layout = self.layout
-        reads = self.attribute_reads
         member_count = len(layout.members)
-        if (  # pragma: no cover - bind derives every member source from one key sequence
-            len(self.result_keys) != member_count
-            or len(self.result_ordinals) != member_count
+        if (  # pragma: no cover - bind derives every member source from one source tuple
+            len(self.result_ordinals) != member_count
             or len(self.classifiers) != member_count
             or len(self.document_member_names) != member_count
         ):
             raise ValueError("an entity read mapping's member sources must align with its members")
         object.__setattr__(self, "concrete_entity", layout.concrete)
+        classifies = any(classifier is not None for classifier in self.classifiers)
+        object.__setattr__(self, "classifies", classifies)
         projected_by_position = tuple(
             projection.includes_value_object(occurrence.identity)
             for occurrence in layout.occurrences
@@ -138,11 +136,7 @@ class EntityReadMapping:
         host_checked = frozenset(
             position
             for position, attribute in enumerate(layout.attributes)
-            if (
-                reads[position].encoded or reads[position].temporal_end
-                if reads
-                else attribute.identity in layout.temporal_ends
-            )
+            if self.encoded_positions >> position & 1 or attribute.identity in layout.temporal_ends
         )
         identity = frozenset((*layout.primary_key, *layout.temporal_starts))
         eager_identity = tuple(
@@ -175,10 +169,7 @@ class EntityReadMapping:
         object.__setattr__(
             self,
             "requires_state_reduction",
-            bool(self.classified_members)
-            or bool(payload)
-            or bool(eager_identity)
-            or any(projected_by_position),
+            classifies or bool(payload) or bool(eager_identity) or any(projected_by_position),
         )
 
     def decode_payload(
@@ -305,7 +296,7 @@ def _classify_payload(
 ) -> tuple[tuple[object, ...], tuple[DocumentFinding, ...], int]:
     """Classify each document member the row carried, answering the classified
     values, the codec's findings, and the classified positions, one bit each."""
-    if not mapping.classified_members:
+    if not mapping.classifies:
         return witness, (), 0
     values = list(witness)
     findings: list[DocumentFinding] = []
@@ -424,7 +415,6 @@ def _judge(  # noqa: C901
     position is a host-checked stored scalar, decoded and admitted here.
     """
     layout = mapping.layout
-    reads = mapping.attribute_reads
     reused = mapping.eager_correlation_positions if routed_values else ()
     next_reused = 0
     next_captured = 0
@@ -449,9 +439,8 @@ def _judge(  # noqa: C901
                 ABSENT if raw is UNAVAILABLE or (raw is None and not attribute.nullable) else raw
             )
         else:
-            contract = reads[position] if reads else None
             value = raw
-            if raw is not None and contract is not None and contract.encoded:
+            if raw is not None and mapping.encoded_positions >> position & 1:
                 try:
                     value = decode_canonical_wire(attribute.type, cast("WireValue", raw))
                 except WireDecodingError:
@@ -460,11 +449,7 @@ def _judge(  # noqa: C901
                 value,
                 attribute.type,
                 nullable=attribute.nullable,
-                temporal_end=(
-                    attribute.identity in layout.temporal_ends
-                    if contract is None
-                    else contract.temporal_end
-                ),
+                temporal_end=attribute.identity in layout.temporal_ends,
             )
             if not verdict.accepted:
                 if issues is None:

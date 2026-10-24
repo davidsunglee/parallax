@@ -80,6 +80,15 @@ def fold_mapping_rows(
     return folded
 
 
+def folded_names(sql: str, document_reads: Sequence[DocumentReadOrdinals]) -> tuple[str, ...]:
+    """The names a select statement's folded row cells are selected under, in
+    row order: each document pair is one cell, named by its document."""
+    presences = {presence for presence, _document in document_reads}
+    return tuple(
+        name for ordinal, (name, _source) in enumerate(_projection(sql)) if ordinal not in presences
+    )
+
+
 _RESULT_ALIAS = re.compile(r"\s+as\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*$", re.IGNORECASE)
 _TRAILING_ALIAS = re.compile(r"\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*$")
 _IDENTIFIER = re.compile(r"[a-zA-Z_][a-zA-Z0-9_]*$")

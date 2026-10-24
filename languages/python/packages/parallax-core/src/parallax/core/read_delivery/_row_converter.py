@@ -22,12 +22,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.read_delivery._convert import EntityReadMapping, register_reduced_row
 from parallax.core.read_delivery._page import ABSENT, LogicalKey, PageBuilder, SourceLevel
-from parallax.core.read_delivery._row_decoding import (
-    member_sources,
-    publication_keys,
-    raw_member,
-    row_identity,
-)
+from parallax.core.read_delivery._row_decoding import member_classifiers, row_identity
 from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.wire import encode_wire
 from parallax.core.write_plan.observe import occurrence_value
@@ -83,28 +78,24 @@ class ReadRowConverter:
         else:
             classifiable = 0
             layout = mapping.layout
-            keys = mapping.result_keys
             ordinals = mapping.result_ordinals
             document_members = mapping.document_member_names
             witness_values: list[object] = [ABSENT] * len(layout.members)
             for position in range(layout.attribute_count):
                 document_member = document_members[position]
                 if document_member is not None:
-                    raw = (
+                    witness_values[position] = (
                         SQL_NULL
                         if document is None
                         else locate_raw_entity_member(
                             cast("DocumentValue", document), document_member
                         )
                     )
-                    present = True
+                elif (ordinal := ordinals[position]) is not None:
+                    witness_values[position] = row[ordinal]
                 else:
-                    raw, present = self._raw_driver_presence(
-                        row, resolved, keys[position], ordinal=ordinals[position]
-                    )
-                witness_values[position] = raw
-                if present:
-                    classifiable |= 1 << position
+                    continue
+                classifiable |= 1 << position
             for position, projected in enumerate(
                 mapping.projected_by_position, start=layout.attribute_count
             ):
@@ -112,21 +103,21 @@ class ReadRowConverter:
                     continue
                 document_member = document_members[position]
                 if document_member is not None:
-                    raw = (
+                    witness_values[position] = (
                         SQL_NULL
                         if document is None
                         else locate_raw_entity_member(
                             cast("DocumentValue", document), document_member
                         )
                     )
-                    present = True
+                elif (ordinal := ordinals[position]) is not None:
+                    witness_values[position] = row[ordinal]
                 else:
-                    raw, present = self._raw_driver_presence(
-                        row, resolved, keys[position], ordinal=ordinals[position], default=None
-                    )
-                witness_values[position] = raw
-                if present:
-                    classifiable |= 1 << position
+                    # A requested occurrence this row's Entity carries no
+                    # source for reads as stored SQL NULL.
+                    witness_values[position] = None
+                    continue
+                classifiable |= 1 << position
             witness = tuple(witness_values)
         if not mapping.requires_state_reduction and unknown is None:
             layout = mapping.layout
@@ -147,22 +138,6 @@ class ReadRowConverter:
                 unknown_family_tag=unknown,
             )
         return ref, resolved, document, variant
-
-    def _raw_driver_presence(
-        self,
-        row: Row,
-        resolved: EntityIdentity,
-        key: str,
-        *,
-        ordinal: int | None = None,
-        default: object = ABSENT,
-    ) -> tuple[object, bool]:
-        if ordinal is not None:
-            return row[ordinal], True
-        try:
-            return raw_member(self._contract, row, resolved, key), True
-        except KeyError:
-            return default, False
 
     def row_publisher(self) -> RowPublisher:
         """Open one Page's flat-row publisher; what it derives dies with it."""
@@ -192,9 +167,7 @@ class RowPublisher:
         operation = self._operations.get(pair)
         if operation is None:
             operation = self._operations[pair] = _row_operation(
-                self._mappings_by_entity[concrete],
-                publication_keys(self._contract, concrete, variant),
-                variant,
+                self._contract, self._mappings_by_entity[concrete], variant
             )
         return operation(row)
 
@@ -224,34 +197,58 @@ class _RowOperation:
 
 
 def _row_operation(
-    mapping: EntityReadMapping, keys: tuple[str, ...], variant: str | None
+    contract: ReadResultContract, mapping: EntityReadMapping, variant: str | None
 ) -> _RowOperation:
-    # Key order is observable: kept members in layout order, then renamed
-    # Attributes, then publication-key padding, then `familyVariant`. An
-    # Attribute's own result key wins over its storage key, which may be another
-    # Attribute's result key.
+    """How rows resolving to ``mapping``'s Entity under ``variant`` publish.
+
+    Key order is observable: kept members in layout order, then encoded
+    Attributes under their encoded keys, then the remaining publication keys as
+    null, then `familyVariant`. Those keys are, in cell order, every cell that
+    stays in each resolved row, then this Entity's own cells that publish only
+    for it, then the shared document's sibling padding.
+    """
     layout = mapping.layout
-    reads = mapping.attribute_reads
-    published = frozenset(keys)
+    slots = contract.slots
+    ordinals = mapping.result_ordinals
+    members = layout.member_selection.bindings
     kept: list[tuple[int, str, NeutralType | None, Occurrence | None]] = []
-    renamed: list[tuple[int, str, NeutralType | None, Occurrence | None]] = []
+    encoded: list[tuple[int, str, NeutralType | None, Occurrence | None]] = []
     for position, attribute in enumerate(layout.attributes):
-        storage = attribute.storage.name
-        if not reads:
-            kept.append((position, storage, None, None))
-            continue
-        read = reads[position]
-        result = read.result_key
-        encoded = attribute.type if read.encoded else None
-        if result != storage and result in published:
-            renamed.append((position, result, encoded, None))
+        if mapping.encoded_positions >> position & 1:
+            encoded.append(
+                (position, _scalar_key(contract, ordinals[position]), attribute.type, None)
+            )
         else:
-            kept.append((position, storage, encoded if storage in published else None, None))
+            kept.append((position, attribute.storage.name, None, None))
     kept.extend(
         (position, occurrence.storage.name, None, occurrence.definition)
         for position, occurrence in enumerate(layout.occurrences, start=len(layout.attributes))
     )
-    return _RowOperation((*kept, *renamed), keys, variant)
+    keys = dict.fromkeys(
+        slot.padding_key for slot in slots if slot is not None and slot.padding_key is not None
+    )
+    for ordinal, position in sorted(
+        (ordinal, position) for position, ordinal in enumerate(ordinals) if ordinal is not None
+    ):
+        slot = slots[ordinal]
+        if slot is None or slot.padding_key is None:
+            keys.setdefault(
+                members[position].storage.name
+                if slot is None or slot.scalar is None
+                else slot.scalar.publication_key
+            )
+    shared = contract.shared_document
+    entry = None if shared is None else shared.by_entity.get(mapping.concrete_entity)
+    if entry is not None:
+        keys.update(dict.fromkeys(entry.padding))
+    return _RowOperation((*kept, *encoded), tuple(keys), variant)
+
+
+def _scalar_key(contract: ReadResultContract, ordinal: int | None) -> str:
+    slot = None if ordinal is None else contract.slots[ordinal]
+    if slot is None or slot.scalar is None:  # pragma: no cover - an encoded cell is a scalar's
+        raise ValueError("an encoded Attribute is read from a scalar cell")
+    return slot.scalar.publication_key
 
 
 def bind(
@@ -265,8 +262,10 @@ def bind(
     ``model``: one mapping per Entity its rows can resolve to.
 
     Paid once per compiled read, which is where the state belongs — the member
-    layouts are the model's and the projected occurrences and Attribute
-    contracts are this statement's, and no row of the read can change either.
+    layouts are the model's and the projected occurrences and member sources
+    are this statement's, and no row of the read can change either. Raises
+    ``ValueError`` where the contract's sources are laid out for another
+    member order than ``model``'s.
     An occurrence is projected exactly where ``projection`` selects its
     identity, including for an Entity outside the read's position.
     ``correlation_members`` are the members this read's rows route by; a read
@@ -293,20 +292,29 @@ def _entity_read_mapping(
     correlation_members: tuple[AttributeIdentity, ...],
 ) -> EntityReadMapping:
     layout = model.layouts.entity(identity)
-    reads = next((reads for entity, reads in contract.attribute_reads if entity == identity), ())
-    keys = tuple(
-        attribute.storage.name if not reads else reads[position].result_key
-        for position, attribute in enumerate(layout.attributes)
-    ) + tuple(occurrence.storage.name for occurrence in layout.occurrences)
-    classified, ordinals, classifiers, locations = member_sources(contract, identity, keys)
+    sources = contract.sources(identity)
+    if sources.selection is not layout.member_selection and tuple(
+        sources.selection.identities
+    ) != tuple(layout.members):
+        raise ValueError(
+            f"{identity.canonical}: the read's member sources are not this model's member order"
+        )
+    ordinals = sources.cell_ordinals()
+    document_members = sources.document_member_names()
+    slots = contract.slots
     return EntityReadMapping(
         layout,
         projection,
-        reads,
-        classified,
-        keys,
         ordinals,
-        classifiers,
-        locations,
+        member_classifiers(contract, identity, layout.member_selection.bindings, document_members),
+        document_members,
+        sum(
+            1 << position
+            for position, ordinal in enumerate(ordinals[: layout.attribute_count])
+            if ordinal is not None
+            and (slot := slots[ordinal]) is not None
+            and slot.scalar is not None
+            and slot.scalar.encoded
+        ),
         correlation_members,
     )

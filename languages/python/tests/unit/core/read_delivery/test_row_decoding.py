@@ -1,176 +1,159 @@
-"""Row decoding over hand-built result contracts.
+"""Where the decoder reads a row's carriers and shared-document members.
 
-Each case pairs a contract with a positional row laid out in its result order:
-where the decoder reads each carrier and member, what it answers, and what it
-refuses. Building the contracts directly also reaches what compilation never
-produces: a carrier with no result cell, which the decoder refuses by key at
-the row, and a row whose width disagrees with the contract.
+Every contract is a compiled read's own, and every row is laid out
+positionally as its statement selects it: where the row identity, the shared
+document, and each Continuation Order coordinate are read, what a
+document-resident member reads before classification, and the width a row
+must have.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 
+from parallax.core import continuation, deep_fetch
+from parallax.core import predicate as oa
 from parallax.core.base import SQL_NULL, PresentDocument
-from parallax.core.db_port import Row
+from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import MISSING
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.metamodel import AttributeIdentity, Metamodel
+from parallax.core.object_query import object_query, validate_object_query
 from parallax.core.object_query._resolved import ContinuationCoordinate
-from parallax.core.read_delivery._row_decoding import (
-    publication_keys,
-    raw_member,
-    row_coordinates,
-    row_identity,
-)
-from parallax.core.sql_gen import SqlGenError
-from parallax.core.sql_gen._inheritance import (
-    DocumentFanOut,
-    FixedRowIdentity,
-    LiteralRowIdentity,
-    ReadResultContract,
-    RowIdentity,
-    SharedDocumentMapping,
-    TaggedRowIdentity,
-)
+from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema
+from parallax.core.read_delivery._row_converter import bind
+from parallax.core.read_delivery._row_decoding import row_coordinates, row_identity
+from parallax.core.sql_gen._compile import CompiledRead
+from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from tests._support.sql import compile_read
+from tests.unit._corpus_model_support import model, target
+from tests.unit._document_layout_support import document_model, entity
+from tests.unit._prepared_read_support import result_row
+from tests.unit.core.sql_gen._delivery_support import deliver
 
-_ROOT = EntityIdentity("decoding", "Root")
-_LEAF = EntityIdentity("decoding", "Leaf")
-_TAGS = TaggedRowIdentity("kind", _ROOT, (("leaf", _LEAF, "Leaf"),))
-_LITERAL = LiteralRowIdentity(
-    "family_variant", (("Leaf", _LEAF),), (("Leaf", ()),), narrow_to_owned=False
-)
+ORDERS = model("orders")
+DOCUMENT = document_model()
+DOCUMENT_LAYOUT = model("document-layout")
+PAYMENT = model("payment")
 
 
-_NO_MEMBERS = DocumentFanOut(None, ())
-_DISPLAY_NAME = DocumentFanOut(None, (("display_name", ("displayName",)),))
-
-
-def _contract(
-    resolve: RowIdentity,
-    result_keys: tuple[str, ...],
-    *,
-    shared: bool = False,
-    leaf_document: DocumentFanOut = _NO_MEMBERS,
-) -> ReadResultContract:
-    return ReadResultContract(
-        resolve,
-        SharedDocumentMapping("payload", ((_LEAF, leaf_document),)) if shared else None,
-        None,
-        (),
-        result_keys,
-        (),
-    )
-
-
-_FIXED_DOCUMENT = _contract(
-    FixedRowIdentity(_LEAF), ("id", "payload"), shared=True, leaf_document=_DISPLAY_NAME
-)
+def _read(meta: Metamodel, name: str) -> CompiledRead:
+    return compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, name), result_form="instance")
 
 
 @pytest.mark.parametrize(
-    "contract",
+    ("meta", "name"),
     [
-        _contract(FixedRowIdentity(_LEAF), ("id",)),
-        _contract(FixedRowIdentity(_LEAF), ("id", "payload"), shared=True),
-        _contract(_TAGS, ("id", "kind")),
-        _contract(_LITERAL, ("id", "family_variant")),
+        (ORDERS, "Order"),
+        (DOCUMENT_LAYOUT, "CardPayment"),
+        (PAYMENT, "Payment"),
+        (DOCUMENT_LAYOUT, "Publication"),
     ],
     ids=["fixed", "fixed-document", "tag", "literal"],
 )
-def test_a_positional_row_of_the_wrong_width_is_refused(contract: ReadResultContract) -> None:
+def test_a_positional_row_of_the_wrong_width_is_refused(meta: Metamodel, name: str) -> None:
+    contract = _read(meta, name).result_contract
     with pytest.raises(
-        ValueError, match=f"result key count {len(contract.result_keys)} does not match row arity 3"
+        ValueError, match=f"result cell count {len(contract.slots)} does not match row arity 9"
     ):
-        row_identity(contract, (1, 2, 3))
+        row_identity(contract, tuple(range(9)))
 
 
 def test_a_coordinate_is_read_only_off_a_row_of_the_contracts_width() -> None:
-    contract = ReadResultContract(
-        FixedRowIdentity(_LEAF), None, None, (), ("id", "parallax_seek_0"), ("parallax_seek_0",)
+    entity_metadata = target(ORDERS, "Order")
+    plan = continuation.plan(
+        validate_object_query(
+            entity_metadata, object_query(entity_metadata.identity, oa.TrueNode()), ORDERS
+        ),
+        ORDERS,
     )
-    assert row_coordinates(contract, ((1, 2),)) == (ContinuationCoordinate((2,)),)
-    for row in ((1,), (1, 2, 3)):
+    compiled = compile_entity_query(
+        deep_fetch.plan(
+            plan.first(limit=2),
+            ORDERS,
+            projection=deep_fetch.ReadProjectionRequest("none", False),
+        ).root,
+        ORDERS,
+        POSTGRES,
+    )
+    contract = compiled.result_contract
+    width = len(contract.slots)
+    assert row_coordinates(contract, (tuple(range(width)),)) == (
+        ContinuationCoordinate((width - 1,)),
+    )
+    for row in (tuple(range(width - 1)), tuple(range(width + 1))):
         with pytest.raises(ValueError, match="does not match row arity"):
             row_coordinates(contract, (row,))
 
 
 @pytest.mark.parametrize(
-    ("contract", "row", "missing"),
-    [
-        (_contract(FixedRowIdentity(_LEAF), ("id",), shared=True), (1,), "payload"),
-        (_contract(_TAGS, ("id",)), (1,), "kind"),
-        (_contract(_TAGS, ("id", "kind"), shared=True), (1, "leaf"), "payload"),
-        (_contract(_LITERAL, ("id",)), (1,), "family_variant"),
-        (_contract(_LITERAL, ("id", "family_variant"), shared=True), (1, "Leaf"), "payload"),
-    ],
-    ids=["fixed-document", "tag", "tag-document", "literal", "literal-document"],
-)
-def test_a_carrier_without_a_result_cell_is_refused_at_the_row(
-    contract: ReadResultContract, row: tuple[object, ...], missing: str
-) -> None:
-    with pytest.raises(KeyError, match=missing):
-        row_identity(contract, row)
-
-
-@pytest.mark.parametrize(
-    ("contract", "row", "identity"),
+    ("name", "cells", "identity"),
     [
         (
-            _contract(_TAGS, ("id", "kind", "payload"), shared=True),
-            (1, "leaf", SQL_NULL),
-            (_LEAF, "Leaf", None, None),
+            "Payment",
+            {"id": 1, "kind": "card", "payload": SQL_NULL},
+            ("CardPayment", "CardPayment", None, None),
         ),
         (
-            _contract(_LITERAL, ("id", "family_variant", "payload"), shared=True),
-            (1, "Leaf", PresentDocument({})),
-            (_LEAF, "Leaf", None, dict[str, object]()),
+            "Publication",
+            {"id": 1, "payload": PresentDocument({}), "family_variant": "Film"},
+            ("Film", "Film", None, dict[str, object]()),
         ),
     ],
     ids=["tag", "literal"],
 )
 def test_a_row_reads_its_carriers_at_their_result_cells(
-    contract: ReadResultContract, row: Row, identity: tuple[object, ...]
+    name: str, cells: Mapping[str, object], identity: tuple[object, ...]
 ) -> None:
-    assert row_identity(contract, row) == identity
+    compiled = _read(DOCUMENT_LAYOUT, name)
+    resolved, variant, unknown, document = row_identity(
+        compiled.result_contract, result_row(compiled, cells)
+    )
+    assert (resolved.name, variant, unknown, document) == identity
 
 
 @pytest.mark.parametrize(
-    ("row", "member"),
-    [
-        ((1, SQL_NULL), SQL_NULL),
-        ((1, PresentDocument({})), MISSING),
-    ],
+    ("payload", "member"),
+    [(SQL_NULL, SQL_NULL), (PresentDocument({}), MISSING)],
     ids=["sql-null-document", "present-empty-document"],
 )
-def test_a_shared_document_member_keeps_its_carriers_raw_state(row: Row, member: object) -> None:
+def test_a_shared_document_member_keeps_its_carriers_raw_state(
+    payload: object, member: object
+) -> None:
     # A shared Structured Column's SQL-null carrier and a present document that
     # omits the same member collapse to the same read value, but they are distinct
     # stored structure and must remain distinct before witness comparison.
-    assert raw_member(_FIXED_DOCUMENT, row, _LEAF, "display_name") is member
-
-
-@pytest.mark.parametrize(
-    ("resolved", "key"),
-    [(_LEAF, "missing"), (_ROOT, "missing")],
-    ids=["outside-the-document", "entity-without-a-document-entry"],
-)
-def test_a_member_the_row_carries_neither_way_is_refused_by_key(
-    resolved: EntityIdentity, key: str
-) -> None:
-    with pytest.raises(KeyError, match=key):
-        raw_member(_FIXED_DOCUMENT, (1, PresentDocument({"displayName": "Ada"})), resolved, key)
-
-
-def test_a_shared_document_member_refuses_a_carrier_the_port_never_folded() -> None:
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        raw_member(_FIXED_DOCUMENT, (1, {"displayName": "Ada"}), _LEAF, "display_name")
-
-
-def test_row_identity_refuses_a_raw_document_outside_the_database_port_contract() -> None:
-    with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        row_identity(_FIXED_DOCUMENT, (1, {"displayName": "Ada"}))
+    compiled = _read(DOCUMENT, "Person")
+    builder = PageBuilder(ViewSchema.of())
+    converter = bind(CatalogedModel(DOCUMENT), compiled.result_contract, compiled.projection)
+    index, *_ = converter.convert_row(
+        result_row(compiled, {"id": 1, "payload": payload}), builder, source=ROOT_LEVEL
+    )
+    person = entity(DOCUMENT, "Person").identity
+    assert builder.member_value(index, AttributeIdentity(person, "displayName")) is member
 
 
 def test_a_root_outside_the_shared_document_publishes_no_padding() -> None:
-    contract = _contract(_TAGS, ("id", "kind", "payload"), shared=True)
-    assert publication_keys(contract, _ROOT, None) == ("id",)
+    # A flat row resolving to a concrete pads its siblings' document members, while
+    # a row an unrecognized tag resolved to the family root carries no document of
+    # the position's and so pads nothing.
+    compiled = compile_read(
+        oa.TrueNode(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "Payment")
+    )
+    card, unknown = deliver(
+        DOCUMENT_LAYOUT,
+        compiled,
+        [
+            {"id": 1, "kind": "card", "payload": {"detail": "visa", "authorizationCode": "A"}},
+            {"id": 3, "kind": "wire", "payload": {"detail": "x"}},
+        ],
+    )
+    assert card.published == (
+        ("id", 1),
+        ("detail", "visa"),
+        ("authorization_code", "A"),
+        ("familyVariant", "CardPayment"),
+    )
+    assert unknown.published == (("id", 3),)

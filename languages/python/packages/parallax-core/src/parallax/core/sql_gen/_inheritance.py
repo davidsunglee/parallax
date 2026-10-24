@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal
 
 from parallax.core.base import (
-    JSON,
-    DocumentReadOrdinals,
     NeutralType,
     UnknownFamilyTag,
 )
 from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
-from parallax.core.dialect import Dialect, LockMode, projection_result_key
+from parallax.core.dialect import LockMode, ScalarResult
 from parallax.core.document_codec import MemberShape
 from parallax.core.inheritance import (
+    EntityMemberSelection,
     InheritanceEntityView,
     InheritanceFacet,
     InheritancePositionView,
@@ -26,6 +26,7 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
+    MemberIdentity,
     Multiplicity,
     TablePerConcreteSubtype,
     TablePerHierarchy,
@@ -148,54 +149,22 @@ class LiteralRowIdentity:
     column to derive it from.
 
     The branch that produced a row owns some of the union's result aliases and
-    reads the rest as its siblings' typed `NULL` padding. ``renames`` and
-    ``result_keys`` pair each branch's aliases with the rendered keys they carry.
-    ``drop`` is every alias the read's own lane discards, compiled from
-    ``projected_fields`` once: a narrow-to-owned read keeps only what the
-    resolved branch owns, while a row-form read keeps a sibling's null padding
-    under an unrenamed alias, as the corpus expects.
+    reads the rest as its siblings' typed `NULL` padding. ``narrow_to_owned``
+    is the object lane's: such a read publishes only what the resolved branch
+    owns, while a row-form read keeps a sibling's null padding under an alias
+    that is its own publication key, as the corpus expects.
     """
 
     column: str
     variants: tuple[tuple[str, EntityIdentity], ...]
-    projected_fields: tuple[tuple[str, tuple[tuple[str, str], ...]], ...]
     narrow_to_owned: bool
     by_spelling: Mapping[object, ResolvedVariant] = field(init=False, compare=False, repr=False)
-    renames: Mapping[str, tuple[tuple[str, str], ...]] = field(
-        init=False, compare=False, repr=False
-    )
-    result_keys: Mapping[EntityIdentity, Mapping[str, str]] = field(
-        init=False, compare=False, repr=False
-    )
-    drop: frozenset[str] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "by_spelling",
             {spelling: (identity, spelling, None) for spelling, identity in self.variants},
-        )
-        object.__setattr__(self, "renames", dict(self.projected_fields))
-        identity_by_spelling = dict(self.variants)
-        object.__setattr__(
-            self,
-            "result_keys",
-            {
-                identity_by_spelling[spelling]: {
-                    rendered_key: alias for alias, rendered_key in variant_fields
-                }
-                for spelling, variant_fields in self.projected_fields
-            },
-        )
-        object.__setattr__(
-            self,
-            "drop",
-            frozenset(
-                alias
-                for _, variant_fields in self.projected_fields
-                for alias, rendered_key in variant_fields
-                if self.narrow_to_owned or alias != rendered_key
-            ),
         )
 
 
@@ -277,111 +246,164 @@ class DirectDocumentMappings:
 
 
 @dataclass(frozen=True, slots=True)
-class AttributeReadContract:
-    """One projected Attribute's driver-result contract.
+class CellSource:
+    """A member read from its own folded driver-row cell."""
 
-    ``attribute`` is the accepted metadata itself, held by reference: the logical
-    identity, physical Column, Neutral Type, and nullability this contract reads
-    against are the compiler's INPUTS rather than its decisions, and copies of
-    them here would be a second place they could disagree with the model.
+    ordinal: int
 
-    What the contract adds is what this statement decided. ``result_key`` is the
-    alias the projection actually rendered, which departs from the Column
-    spelling exactly when the cell is ``encoded`` and so arrives in a dialect's
-    wire spelling rather than its stored one. ``temporal_end`` marks the
-    Attribute a family's As-Of Axis may leave open, which admits the infinity
-    sentinel no other Attribute of its type admits.
+
+@dataclass(frozen=True, slots=True)
+class DocumentMemberSource:
+    """A member located at ``member_name`` in the shared Structured Column the
+    folded driver-row cell at ``ordinal`` carries."""
+
+    ordinal: int
+    member_name: str
+
+
+type MemberSource = CellSource | DocumentMemberSource
+
+
+@dataclass(frozen=True, slots=True)
+class EntitySources:
+    """Where a row resolving to ``entity`` carries each of its members, aligned
+    with ``selection``'s canonical member order.
+
+    ``None`` is a member the read intentionally does not carry, which a row
+    delivers as absent; a carried SQL `NULL` is a present cell.
     """
 
-    attribute: AttributeMetadata
-    result_key: str
-    temporal_end: bool
-    encoded: bool
+    entity: EntityIdentity
+    selection: EntityMemberSelection
+    sources: tuple[MemberSource | None, ...]
+
+    def cell_ordinals(self) -> tuple[int | None, ...]:
+        """Each member's own cell, absent for a shared-document resident."""
+        return tuple(
+            source.ordinal if isinstance(source, CellSource) else None for source in self.sources
+        )
+
+    def document_member_names(self) -> tuple[str | None, ...]:
+        """Each shared-document resident's member name in the unwrapped document."""
+        return tuple(
+            source.member_name if isinstance(source, DocumentMemberSource) else None
+            for source in self.sources
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DriverRowSlot:
+    """What publication needs to know about one folded value cell.
+
+    ``scalar`` is the cell's scalar publication spelling and encoding; a
+    document cell has none. ``padding_key`` is the key under which the cell
+    stays in every resolved row's flat publication, as null where that row's
+    Entity carries nothing there; a cell only its owners publish has none.
+    """
+
+    scalar: ScalarResult | None
+    padding_key: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class ReadResultContract:
-    """What one compiled read's driver rows carry, and where.
+    """What one compiled read's folded driver rows carry, and where.
 
     ``row_identity`` is how this read's rows name their Entity, and every read
     has one: a tag map, a union's variant literal, or an identity fixed when the
     read was compiled. A fixed identity — a standalone read, a concrete-target
     table-per-hierarchy read, or a table-per-concrete-subtype read whose position
-    resolved to a single concrete — has no `familyVariant` to materialize. The
-    document entries are the projection's decision alone: a read fills them when
-    it projected a document, however its rows are named.
+    resolved to a single concrete — has no carrier and no `familyVariant` to
+    materialize. The document entries are the projection's decision alone: a
+    read fills them when it projected a document, however its rows are named.
 
-    ``attribute_reads`` pairs each concrete of the read's resolved position with
-    its Attribute contracts, in that Entity's own applicable-Attribute order. An
-    Entity this read projected no columns for — a family root an unrecognized
-    tag resolved to, or a sibling outside the narrow — has none, and every
-    Attribute of such a row carries its own storage spelling. ``result_keys``
-    names every positional cell of a row, in order. ``coordinate_reads`` is the
-    hidden result aliases the statement allocated to capture one Continuation
-    Order coordinate per ordering term, in term order — empty for every read
-    that pages through nothing; publishing it here is what makes the compiler
-    the only interpreter of a carrier, since it chose the expressions.
+    ``entity_sources`` covers every Entity this read's rows can name: the
+    position, and whatever the row identity reaches past it. A homogeneous tag
+    map is the WHOLE family's rather than the read's narrow, so a narrowed
+    abstract read still resolves a sibling's row to that sibling, and a tag no
+    composed concrete claims resolves the row to the family root — which is
+    never a concrete in the position. Such an Entity carries only the cells
+    that are its own members under their own spelling.
 
-    ``resolvable`` closes the set of Entities this read's rows can name, so a
-    consumer preparing one structure per such Entity prepares them all at once
-    instead of on the first row that reaches one: the position and whatever the
-    row identity reaches past it. A homogeneous tag map is the WHOLE family's
-    rather than the read's narrow, so a narrowed abstract read still resolves a
-    sibling's row to that sibling, and a tag no composed concrete claims
-    resolves the row to the family root — which is never a concrete in the
-    position. ``classified_by_entity`` is the union of the document members both
-    document entries carry for one resolved concrete, compiled here because
-    their keys are fixed by the projection.
-
-    ``shared_document`` names the Structured Column this read projected, and
-    its absence means none: `Columns` layout, and a `Document`-layout read whose
-    members are all direct. Fan-out keeps the raw column off a published row, so
-    a caller that needs the stored document — a temporal observation, which
-    retains it (`m-write-plan`'s Predecessor Row) — reads it off the driver row
-    by that column.
+    ``slots`` has one entry per folded cell, so its length is the row's arity;
+    carriers and document cells no row publishes have none. The carrier
+    ordinals locate the row identity's cell, the shared Structured Column, and
+    one Continuation Order coordinate per ordering term, in term order — none
+    for a read that pages through nothing. A caller that needs the stored
+    document — a temporal observation retains it (`m-write-plan`'s Predecessor
+    Row) — reads it from the shared document's cell.
     """
 
     row_identity: RowIdentity
     shared_document: SharedDocumentMapping | None
     direct_documents: DirectDocumentMappings | None
-    attribute_reads: tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...] = field(
-        repr=False
-    )
-    result_keys: tuple[str, ...]
-    coordinate_reads: tuple[str, ...]
+    entity_sources: tuple[EntitySources, ...] = field(repr=False)
+    slots: tuple[DriverRowSlot | None, ...] = field(repr=False)
+    identity_ordinal: int | None
+    shared_document_ordinal: int | None
+    coordinate_ordinals: tuple[int, ...]
     resolvable: tuple[EntityIdentity, ...] = field(init=False, repr=False, compare=False)
-    index_by_key: Mapping[str, int] = field(init=False, repr=False, compare=False)
-    classified_by_entity: Mapping[EntityIdentity, frozenset[str]] = field(
-        init=False, compare=False, repr=False
+    _by_entity: Mapping[EntityIdentity, EntitySources] = field(
+        init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
-        index_by_key = {key: index for index, key in enumerate(self.result_keys)}
-        if len(index_by_key) != len(self.result_keys):
-            duplicate = next(
-                key
-                for position, key in enumerate(self.result_keys)
-                if key in self.result_keys[:position]
-            )
-            raise ValueError(f"duplicate result key {duplicate!r}")
-        object.__setattr__(self, "index_by_key", index_by_key)
+        carriers = self._carriers()
+        by_entity = {sources.entity: sources for sources in self.entity_sources}
+        if len(by_entity) != len(self.entity_sources):
+            raise ValueError("an Entity's sources are given once")
+        if set(_named_entities(self.row_identity)) - by_entity.keys():
+            raise ValueError("every Entity the row identity names has sources")
+        for sources in self.entity_sources:
+            self._require_sources(sources, carriers)
+        object.__setattr__(self, "_by_entity", MappingProxyType(by_entity))
         object.__setattr__(
-            self,
-            "resolvable",
-            tuple(
-                dict.fromkeys(
-                    (
-                        *(identity for identity, _reads in self.attribute_reads),
-                        *_named_entities(self.row_identity),
-                    )
-                )
-            ),
+            self, "resolvable", tuple(sources.entity for sources in self.entity_sources)
         )
-        object.__setattr__(
-            self,
-            "classified_by_entity",
-            _classified_by_entity(self.shared_document, self.direct_documents),
+
+    def _carriers(self) -> frozenset[int]:
+        carriers = (
+            *(() if self.identity_ordinal is None else (self.identity_ordinal,)),
+            *(() if self.shared_document_ordinal is None else (self.shared_document_ordinal,)),
+            *self.coordinate_ordinals,
         )
+        if any(
+            not 0 <= ordinal < len(self.slots) or self.slots[ordinal] is not None
+            for ordinal in carriers
+        ):
+            raise ValueError("a result carrier must name a cell the row carries no value in")
+        if len(set(carriers)) != len(carriers):
+            raise ValueError("two result carriers name one cell")
+        if isinstance(self.row_identity, FixedRowIdentity) != (self.identity_ordinal is None):
+            raise ValueError("a row identity carrier is required exactly where rows name it")
+        if (self.shared_document is None) != (self.shared_document_ordinal is None):
+            raise ValueError("a shared document carrier is required exactly where one is read")
+        return frozenset(carriers)
+
+    def _require_sources(self, sources: EntitySources, carriers: frozenset[int]) -> None:
+        if len(sources.sources) != len(sources.selection.identities):
+            raise ValueError(f"{sources.entity.canonical}: sources must align with its members")
+        for source in sources.sources:
+            if isinstance(source, DocumentMemberSource):
+                if source.ordinal != self.shared_document_ordinal:
+                    raise ValueError("a document resident is read from the shared document")
+            elif source is not None and (
+                not 0 <= source.ordinal < len(self.slots) or source.ordinal in carriers
+            ):
+                raise ValueError(f"{sources.entity.canonical}: a member names no value cell")
+
+    def sources(self, entity: EntityIdentity) -> EntitySources:
+        """Where a row resolving to ``entity`` carries its members.
+
+        Raises ``KeyError`` for an Entity this read's rows never name.
+        """
+        return self._by_entity[entity]
+
+    def source(self, entity: EntityIdentity, member: MemberIdentity) -> MemberSource | None:
+        """Where a row resolving to ``entity`` carries ``member``, or ``None``
+        where it intentionally carries none."""
+        sources = self._by_entity[entity]
+        return sources.sources[sources.selection.position(member)]
 
 
 def _named_entities(row_identity: RowIdentity) -> tuple[EntityIdentity, ...]:
@@ -394,25 +416,11 @@ def _named_entities(row_identity: RowIdentity) -> tuple[EntityIdentity, ...]:
             return tuple(identity for _, identity in variants)
 
 
-def _classified_by_entity(
-    shared: SharedDocumentMapping | None, direct: DirectDocumentMappings | None
-) -> dict[EntityIdentity, frozenset[str]]:
-    classified: dict[EntityIdentity, frozenset[str]] = {}
-    if shared is not None:
-        for identity, entry in shared.per_entity:
-            keys = (
-                frozenset(entry.padding)
-                if entry.shape is None
-                else frozenset(key for key, _path in entry.members)
-            )
-            if keys:
-                classified[identity] = keys
-    if direct is not None:
-        for identity, members in direct.per_entity:
-            keys = frozenset(member.storage.name for member in members)
-            if keys:
-                classified[identity] = classified.get(identity, frozenset()) | keys
-    return classified
+def resolvable_entities(
+    position: Sequence[EntityIdentity], row_identity: RowIdentity
+) -> tuple[EntityIdentity, ...]:
+    """The Entities a read of ``position`` can name a row by, position first."""
+    return tuple(dict.fromkeys((*position, *_named_entities(row_identity))))
 
 
 def tag_pairs(
@@ -517,14 +525,15 @@ def tag_guard(
 
 @dataclass(frozen=True, slots=True)
 class ProjectedColumn:
-    """One selected physical Column and the seam the dialect renders it through.
+    """One selected physical Column, the contributor it carries, and the seam
+    the dialect renders it through.
 
     ``type`` is the contributing Attribute's neutral type, or ``None`` for a slot
-    with no scalar rendering seam — a top-level Value Object document column or
-    the framework-owned discriminator — which projects as a plain
-    alias-qualified reference.
+    with no scalar rendering seam — a document column or the framework-owned
+    discriminator — which projects as a plain alias-qualified reference.
     """
 
+    contributor: ColumnContributor
     column: str
     type: NeutralType | None
     document: bool = False
@@ -698,57 +707,15 @@ def select_projection(
     for slot in slots:
         if isinstance(slot.contributor, InheritanceDiscriminator):
             if project_discriminator:
-                selected.append(ProjectedColumn(slot.column.name, None))
+                selected.append(ProjectedColumn(slot.contributor, slot.column.name, None))
             continue
         if slot.contributor not in types:
             continue
         neutral_type, document = types[slot.contributor]
-        selected.append(ProjectedColumn(slot.column.name, neutral_type, document=document))
+        selected.append(
+            ProjectedColumn(slot.contributor, slot.column.name, neutral_type, document=document)
+        )
     return tuple(selected)
-
-
-def render_projection(
-    dialect: Dialect,
-    alias: str,
-    columns: Sequence[ProjectedColumn],
-    *,
-    document_pairs: bool = True,
-    wrapped: bool = False,
-) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
-    """Render one select list and its ordered projection binds against ``alias``.
-
-    A `bytes` column projects `encode(col, ?)`, which is where a projection BIND
-    comes from and why projection binds lead the statement's bind tuple.
-
-    ``wrapped`` says ``alias`` is a derived table over a union whose branches
-    already applied that rendering, so each column is selected THROUGH under the
-    result key the branch projected it as — a second `encode` there would name a
-    column the union does not yield.
-    """
-    exprs: list[str] = []
-    binds: list[object] = []
-    document_reads: list[DocumentReadOrdinals] = []
-    ordinal = 0
-    for projected in columns:
-        if projected.document and document_pairs:
-            expression = dialect.qualified(alias, projected.column)
-            presence, document = dialect.project_document_read(expression)
-            exprs.extend((presence, document))
-            document_reads.append((ordinal, ordinal + 1))
-            ordinal += 2
-            continue
-        if projected.type is None:
-            exprs.append(dialect.qualified(alias, projected.column))
-        elif wrapped:
-            exprs.append(
-                dialect.qualified(alias, projection_result_key(projected.column, projected.type))
-            )
-        else:
-            expr, extra = dialect.project(alias, projected.column, projected.type)
-            exprs.append(expr)
-            binds.extend(extra)
-        ordinal += 1
-    return ", ".join(exprs), tuple(binds), tuple(document_reads)
 
 
 @dataclass(frozen=True, slots=True)
@@ -790,23 +757,6 @@ class SingleTableReadPlan:
     def concrete_types(self) -> Sequence[EntityIdentity]:
         return self.position.concrete_subtypes
 
-    def render_select_list(
-        self,
-        dialect: Dialect,
-        alias: str,
-        *,
-        document_pairs: bool = True,
-        wrapped: bool = False,
-    ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
-        """The select list and its ordered projection binds, against ``alias``.
-
-        ``wrapped`` is the variant-partitioned form, where ``alias`` is a derived
-        table over the per-variant union rather than the family's own Table.
-        """
-        return render_projection(
-            dialect, alias, self.columns, document_pairs=document_pairs, wrapped=wrapped
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class TpcsUnionBranchColumn:
@@ -817,6 +767,7 @@ class TpcsUnionBranchColumn:
     placeholder under the same allocated ``result_alias`` its owning branches use.
     """
 
+    contributor: AttributeIdentity | ValueObjectIdentity | RelationalDocument
     column: str
     type: NeutralType | None
     max_length: int | None
@@ -834,75 +785,6 @@ class TpcsUnionBranchPlan:
     variant: str
     table: str
     columns: tuple[TpcsUnionBranchColumn, ...]
-
-    def render_select_list(
-        self, dialect: Dialect, alias: str, *, document_pairs: bool = True
-    ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
-        """The branch's select list, its binds, and its document-read ordinals.
-
-        ``document_pairs`` is ``False`` when the union is wrapped by an ordered or
-        limited outer select: a presence cell has no result alias to be addressed
-        by from outside the derived table, so the document slot stays a single
-        aliased cell here and :meth:`TpcsUnionReadPlan.render_select_list` expands the pair
-        against the union alias instead.
-        """
-        exprs: list[str] = []
-        binds: list[object] = []
-        document_reads: list[DocumentReadOrdinals] = []
-        ordinal = 0
-        for branch_column in self.columns:
-            if branch_column.owned:
-                if branch_column.document:
-                    expression = dialect.qualified(alias, branch_column.column)
-                    if not document_pairs:
-                        exprs.append(
-                            expression
-                            if branch_column.result_alias == branch_column.column
-                            else f"{expression} {branch_column.result_alias}"
-                        )
-                        ordinal += 1
-                        continue
-                    presence, document = dialect.project_document_read(expression)
-                    if branch_column.result_alias != branch_column.column:
-                        document = f"{document} {branch_column.result_alias}"
-                    exprs.extend((presence, document))
-                    document_reads.append((ordinal, ordinal + 1))
-                    ordinal += 2
-                    continue
-                if branch_column.type is None:  # pragma: no cover - formation makes it universal
-                    expr, extra = dialect.qualified(alias, branch_column.column), ()
-                else:
-                    expr, extra = dialect.project(
-                        alias,
-                        branch_column.column,
-                        branch_column.type,
-                        result_key=branch_column.result_alias,
-                    )
-                exprs.append(expr)
-                binds.extend(extra)
-            else:
-                if branch_column.document:
-                    document_type = dialect.null_cast(JSON, None)
-                    placeholder = f"cast(null as {document_type}) {branch_column.result_alias}"
-                    if not document_pairs:
-                        exprs.append(placeholder)
-                        ordinal += 1
-                        continue
-                    exprs.extend(("false", placeholder))
-                    document_reads.append((ordinal, ordinal + 1))
-                    ordinal += 2
-                    continue
-                if branch_column.type is None:
-                    raise SqlGenError(  # pragma: no cover
-                        "a TPCS document column must be owned by every concrete branch"
-                    )
-                cast_type = dialect.null_cast(branch_column.type, branch_column.max_length)
-                exprs.append(f"cast(null as {cast_type}) {branch_column.result_alias}")
-            ordinal += 1
-        # The settled TPH/TPCS asymmetry: TPCS projects the variant NAME literal
-        # per branch directly — there is no discriminator slot to derive it from.
-        exprs.append(f"'{self.variant}' family_variant")
-        return ", ".join(exprs), tuple(binds), tuple(document_reads)
 
 
 @dataclass(frozen=True, slots=True)
@@ -935,8 +817,8 @@ class TpcsUnionReadPlan:
     ``columns`` is the union's own result sequence, aligned with every branch's
     :attr:`TpcsUnionBranchPlan.columns`. A `union all` has no clause tail of its own,
     so an ordered or limited read wraps it as a derived table and applies the
-    tail against :meth:`render_select_list` — the only place a Position Layout
-    contributor is reachable by the one name all branches agree on.
+    tail against the union's own result aliases — the only place a Position
+    Layout contributor is reachable by the one name all branches agree on.
     """
 
     branches: tuple[TpcsUnionBranchPlan, ...]
@@ -950,32 +832,6 @@ class TpcsUnionReadPlan:
     @property
     def concrete_types(self) -> Sequence[EntityIdentity]:
         return self.position.concrete_subtypes
-
-    def render_select_list(
-        self, dialect: Dialect, alias: str
-    ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
-        """The select list of an outer read over the union's ``alias``.
-
-        Every branch already applied its own per-type rendering, so this selects
-        each result alias through rather than projecting it a second time — the
-        one exception being a `Document` slot, whose presence cell is expanded
-        here because the branch left it unexpanded for exactly that reason.
-        """
-        exprs: list[str] = []
-        document_reads: list[DocumentReadOrdinals] = []
-        ordinal = 0
-        for column in self.columns:
-            reference = dialect.qualified(alias, column.result_alias)
-            if column.document:
-                presence, document = dialect.project_document_read(reference)
-                exprs.extend((presence, document))
-                document_reads.append((ordinal, ordinal + 1))
-                ordinal += 2
-                continue
-            exprs.append(reference)
-            ordinal += 1
-        exprs.append(dialect.qualified(alias, "family_variant"))
-        return ", ".join(exprs), (), tuple(document_reads)
 
     def column_of(self, contributor: ColumnContributor) -> TpcsUnionColumn:
         """``contributor``'s union result column.
@@ -1091,7 +947,13 @@ def _plan_single_table_read(
         project_discriminator=abstract_target,
     )
     if shared is not None:
-        columns = (*columns, ProjectedColumn(shared.column, None, document=True))
+        document_slot = _structured_column_slot(table)
+        if document_slot is None:  # pragma: no cover - a mapped document is a layout's own
+            raise SqlGenError(f"{table.table.name}: a shared document needs a Structured Column")
+        columns = (
+            *columns,
+            ProjectedColumn(document_slot.contributor, shared.column, None, document=True),
+        )
     tag_guard: TagPredicate | None = None
     # A single-table read with no tag to read names the one concrete its
     # position resolved to: a standalone Entity, a concrete target, or a
@@ -1229,6 +1091,7 @@ def _plan_tpcs_union_read(
             table=branch.layout.table.name,
             columns=tuple(
                 TpcsUnionBranchColumn(
+                    contributor=union_column.contributor,
                     column=spelling,
                     type=None if attribute is None else attribute.type,
                     max_length=None if attribute is None else attribute.max_length,
@@ -1236,8 +1099,8 @@ def _plan_tpcs_union_read(
                     result_alias=result_alias,
                     document=layout.columns[index].tier is ColumnTier.DOCUMENT,
                 )
-                for index, attribute, spelling, result_alias in zip(
-                    scalars, attributes, spellings, result_aliases, strict=True
+                for index, attribute, spelling, result_alias, union_column in zip(
+                    scalars, attributes, spellings, result_aliases, union_columns, strict=True
                 )
             ),
         )
@@ -1248,22 +1111,6 @@ def _plan_tpcs_union_read(
     literal = LiteralRowIdentity(
         "family_variant",
         tuple((branch.variant, branch.identity) for branch in branches),
-        tuple(
-            (
-                branch.variant,
-                tuple(
-                    (
-                        branch_column.result_alias,
-                        branch_column.column
-                        if branch_column.type is None
-                        else projection_result_key(branch_column.column, branch_column.type),
-                    )
-                    for branch_column in branch.columns
-                    if branch_column.owned
-                ),
-            )
-            for branch in branches
-        ),
         instance_form,
     )
     return TpcsUnionReadPlan(

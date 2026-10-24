@@ -3,7 +3,8 @@ they convert, for unit suites that convert driver rows without a database.
 
 Conversion is graded through the same ``bind`` plus ``ReadRowConverter.convert_row``
 boundary every production read crosses. These helpers only compile, bind, and lay
-cells out by result key; witness extraction and stored-value judgment stay in
+cells out by the names the compiled statement selects them under, folded as a
+database port folds them; witness extraction and stored-value judgment stay in
 production code.
 
 Exported names carry no leading underscore: importing an underscored name across
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
+from typing import Literal
 
 from parallax.core import predicate as oa
 from parallax.core.db_port import Row
@@ -26,18 +28,19 @@ from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.read_delivery._page import PageBuilder, SourceLevel
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import CompiledRead
-from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.temporal_read import view as temporal_view
-from tests._support.sql import compile_read
+from tests._support.document_reads import fold_mapping_rows, folded_names
+from tests._support.sql import compile_projected_read, compile_read
 
 __all__ = [
     "bound_cells",
     "bound_read",
-    "carrying",
     "compiled_read",
     "convert_cells",
+    "projected_read",
     "result_row",
+    "uncarried",
 ]
 
 
@@ -112,29 +115,58 @@ def bound_read(
     return held[1]
 
 
-def result_row(contract: ReadResultContract, cells: Mapping[str, object]) -> Row:
-    """``cells`` laid out in ``contract``'s result order, as a port returns a
-    provider row; a cell ``cells`` leaves unnamed is NULL."""
-    unknown = set(cells) - set(contract.result_keys)
-    assert not unknown, f"{sorted(unknown)} are not result keys of {contract.result_keys}"
-    return tuple(cells.get(key) for key in contract.result_keys)
-
-
-def carrying(
-    contract: ReadResultContract, cells: Mapping[str, object]
-) -> tuple[ReadResultContract, Row]:
-    """``contract`` narrowed to the result cells ``cells`` carries, beside
-    ``cells`` as its positional row.
-
-    The narrowed contract keeps ``contract``'s own result keys in their order,
-    less any ``cells`` leaves out, then adds any other cell ``cells`` names: a
-    statement that projected no cell for a member, or one more for it.
-    """
-    keys = (
-        *(key for key in contract.result_keys if key in cells),
-        *(key for key in cells if key not in contract.index_by_key),
+def projected_read(
+    model: Metamodel, entity: str, value_objects: Literal["none", "all"] | frozenset[str]
+) -> CompiledRead:
+    """The instance-form read of every ``entity`` row as of latest, fetching only
+    ``value_objects``: a read whose rows carry no cell for any other occurrence."""
+    metadata = entity_by_name(model, entity)
+    assert metadata is not None, entity
+    return compile_projected_read(
+        oa.TrueNode(),
+        model,
+        POSTGRES,
+        metadata,
+        value_objects=value_objects,
+        observe_structured_document=False,
+        result_form="instance",
+        temporal=_latest(model, metadata.identity) or None,
     )
-    return replace(contract, result_keys=keys), tuple(cells[key] for key in keys)
+
+
+def result_row(compiled: CompiledRead, cells: Mapping[str, object]) -> Row:
+    """``cells``, named as ``compiled``'s statement selects them, as the folded
+    positional row a port returns.
+
+    Every selected cell is named, and nothing else: a SQL NULL is an explicit
+    ``None``, never a cell left out.
+    """
+    sql = compiled.statement.sql
+    names = folded_names(sql, compiled.document_reads)
+    assert set(cells) == set(names), (
+        f"{sorted(set(names) - set(cells))} unnamed and "
+        f"{sorted(set(cells) - set(names))} unselected by {sql!r}"
+    )
+    (row,) = fold_mapping_rows([cells], compiled.document_reads, sql)
+    return row
+
+
+def uncarried(compiled: CompiledRead, *storage_names: str) -> CompiledRead:
+    """``compiled`` with a result contract carrying no source for the members
+    stored under ``storage_names``, as a contract leaves a member it does not
+    carry; its statement, and so its rows, still select their cells."""
+    contract = compiled.result_contract
+    entity_sources = tuple(
+        replace(
+            sources,
+            sources=tuple(
+                None if member.storage.name in storage_names else source
+                for member, source in zip(sources.selection.bindings, sources.sources, strict=True)
+            ),
+        )
+        for sources in contract.entity_sources
+    )
+    return replace(compiled, result_contract=replace(contract, entity_sources=entity_sources))
 
 
 def bound_cells(
@@ -144,17 +176,16 @@ def bound_cells(
     *,
     correlation_members: tuple[AttributeIdentity, ...] = (),
 ) -> tuple[ReadRowConverter, Row]:
-    """``compiled``'s contract :func:`carrying` ``cells``, bound against ``model``
-    routing by ``correlation_members``, beside its positional row."""
-    contract, row = carrying(compiled.result_contract, cells)
+    """``compiled`` bound against ``model`` routing by ``correlation_members``,
+    beside ``cells`` as its :func:`result_row`."""
     return (
         bind(
             model,
-            contract,
+            compiled.result_contract,
             compiled.projection,
             correlation_members=correlation_members,
         ),
-        row,
+        result_row(compiled, cells),
     )
 
 

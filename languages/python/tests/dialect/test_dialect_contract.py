@@ -45,7 +45,10 @@ from parallax.core.dialect import (
     DocumentValueAssignment,
     IndexColumnDdl,
     PhysicalIndexName,
+    RenderedScalarCell,
+    ScalarResult,
     Unsupported,
+    scalar_result,
 )
 
 DIALECTS: list[Dialect] = [POSTGRES]
@@ -109,12 +112,33 @@ def test_null_cast_spells_a_decimal_placeholder_apart_from_its_ddl_type(
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_bytes_projection_shape(dialect: Dialect) -> None:
-    expr, binds = dialect.project("t0", "payload", BYTES)
-    assert expr == "encode(t0.payload, ?) payload_hex"
-    assert binds == ["hex"]
-    plain_expr, plain_binds = dialect.project("t0", "name", STRING)
-    assert plain_expr == "t0.name"
-    assert plain_binds == []
+    encoded = dialect.render_scalar("t0", "payload", BYTES)
+    assert encoded == RenderedScalarCell(
+        "encode(t0.payload, ?) payload_hex",
+        "encode(t0.payload, ?)",
+        ("hex",),
+        "payload_hex",
+        ScalarResult("payload_hex", True),
+    )
+    plain = dialect.render_scalar("t0", "name", STRING)
+    assert plain == RenderedScalarCell(
+        "t0.name", "t0.name", (), "name", ScalarResult("name", False)
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_an_output_alias_renames_the_cell_and_keeps_its_scalar_result(dialect: Dialect) -> None:
+    # A union alias changes the SQL name a select addresses the cell by, never
+    # the value's encoding or the key it publishes under.
+    encoded = dialect.render_scalar("t0", "payload", BYTES, output_alias="parallax_attr_0")
+    assert (encoded.select_sql, encoded.output_alias) == (
+        "encode(t0.payload, ?) parallax_attr_0",
+        "parallax_attr_0",
+    )
+    assert encoded.scalar_result == scalar_result("payload", BYTES)
+    renamed = dialect.render_scalar("t0", "name", STRING, output_alias="parallax_attr_1")
+    assert (renamed.select_sql, renamed.expression_sql) == ("t0.name parallax_attr_1", "t0.name")
+    assert dialect.render_scalar("t0", "name", STRING, output_alias="name").select_sql == "t0.name"
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

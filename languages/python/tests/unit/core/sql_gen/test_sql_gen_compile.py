@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import datetime as dt
 import inspect
-import pickle
-from collections.abc import Callable, Mapping
+import uuid
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, Literal, cast
 
@@ -66,13 +67,15 @@ from parallax.core.sql_gen._compile import (
     CompiledRead,
 )
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
-from parallax.core.sql_gen._inheritance import AttributeReadContract
 from parallax.core.storage_layout import _compile as storage_layout_compile
 from parallax.core.temporal_read import _compile as temporal_read_compile
+from parallax.descriptor._records import Attribute, Entity, Inheritance
+from parallax.descriptor._records import Metamodel as Records
 from tests._support import fake_metamodel
 from tests._support.binary32 import narrowed
 from tests._support.sql import compile_read, read_position, resolved_as_stated
 from tests.unit._corpus_model_support import formed, model, target
+from tests.unit.core.sql_gen._delivery_support import deliver
 from tests.unit.core.sql_gen._plan_reuse_support import (
     assert_planned_once,
     reaches_compilation_state,
@@ -193,7 +196,6 @@ def test_instance_form_projects_value_object_document_last() -> None:
         "select t0.id, t0.name, not t0.address is null, t0.address from customer t0"
     )
     assert instance.document_reads == ((2, 3),)
-    assert instance.result_contract.result_keys == ("id", "name", "address")
     # Row-form (the default values lane) omits slot 4 — the scalars alone.
     row = compile_read(oa.TrueNode(), CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
     assert row.statement.sql == "select t0.id, t0.name from customer t0"
@@ -283,8 +285,8 @@ def test_statement_is_frozen_value() -> None:
 # The supported interface itself. `parallax.core.sql_gen` exports exactly two   #
 # names; every compiler operation and compiler product is private implementation. #
 # The result objects are ordinary frozen dataclasses, so equality, `repr`,      #
-# hashing, copying, and same-version pickling are all structural — no           #
-# `__reduce__`, no stored callable, nothing to keep in sync by hand.            #
+# hashing, and copying are all structural — no stored callable, nothing to keep #
+# in sync by hand.                                                              #
 # --------------------------------------------------------------------------- #
 def test_the_package_exports_only_statement_and_error_values() -> None:
     # An EXACT set, not a superset: re-exporting a private helper is precisely the
@@ -295,7 +297,8 @@ def test_the_package_exports_only_statement_and_error_values() -> None:
     assert set(sql_gen.__all__) == {"LoweredStatement", "SqlGenError"}
     assert sql_gen.SqlGenError is SqlGenError
     assert sql_gen.LoweredStatement is LoweredStatement
-    assert not hasattr(sql_gen, "AttributeReadContract")
+    assert not hasattr(sql_gen, "ReadResultContract")
+    assert not hasattr(sql_gen, "SelectListBuilder")
     assert not hasattr(sql_gen, "CompiledPredicate")
     assert not hasattr(sql_gen, "CompiledRead")
     assert not hasattr(sql_gen, "PreparedRow")
@@ -333,17 +336,10 @@ def test_compiled_read_is_an_equatable_hashable_value() -> None:
     assert first != compile_read(oa.FalseNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
 
-def test_a_result_contract_rejects_a_duplicate_result_key() -> None:
-    compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
-
-    with pytest.raises(ValueError, match="duplicate result key 'id'"):
-        dataclasses.replace(compiled.result_contract, result_keys=("id", "id"))
-
-
 def test_a_read_paging_through_nothing_reads_no_coordinate_off_any_row() -> None:
     compiled = compile_read(oa.TrueNode(), ORDERS, POSTGRES, target(ORDERS, "Order"))
 
-    assert compiled.result_contract.coordinate_reads == ()
+    assert compiled.result_contract.coordinate_ordinals == ()
     assert row_coordinates(compiled.result_contract, ((), ())) == (None, None)
 
 
@@ -363,29 +359,14 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         "projection=ResolvedReadProjection(value_objects=(), "
         "observe_structured_document=False), document_reads=(), "
         f"result_contract=ReadResultContract(row_identity=FixedRowIdentity(entity={order}), "
-        "shared_document=None, direct_documents=None, "
-        "result_keys=('id', 'name', 'sku', 'qty', 'price', 'active', 'ordered_on'), "
-        "coordinate_reads=()))"
+        "shared_document=None, direct_documents=None, identity_ordinal=None, "
+        "shared_document_ordinal=None, coordinate_ordinals=()))"
     )
 
 
-def _unpickle(value: CompiledRead) -> CompiledRead:
-    return cast("CompiledRead", pickle.loads(pickle.dumps(value)))
-
-
-@pytest.mark.parametrize(
-    "route",
-    [copy.copy, copy.deepcopy, _unpickle],
-    ids=["copy", "deepcopy", "pickle"],
-)
-def test_compiled_read_round_trips_preserving_equality_and_repr(
-    route: Callable[[CompiledRead], CompiledRead],
-) -> None:
-    # Deliberately NOT asserting on pickle BYTES — the ticket excludes them from
-    # the contract (private definition paths and `__module__` may move). What
-    # must survive a same-version round trip is the VALUE: equality and repr.
+def test_a_copied_compiled_read_keeps_its_equality_and_repr() -> None:
     compiled = compile_read(oa.TrueNode(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
-    reconstructed = route(compiled)
+    reconstructed = copy.copy(compiled)
     assert reconstructed == compiled
     assert repr(reconstructed) == repr(compiled)
 
@@ -430,64 +411,119 @@ def test_projection_binds_precede_predicate_binds() -> None:
     assert compiled.statement.binds == ("hex", 1.5)
 
 
-def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> None:
-    entity = target(SCALARS, "ScalarThing")
-    compiled = compile_read(oa.TrueNode(), SCALARS, POSTGRES, entity)
-    payload = entity.attribute("payload")
-    assert payload is not None
-    assert compiled.result_contract.result_keys == (
-        "id",
-        "f32",
-        "f64",
-        "payload_hex",
-        "local_time",
-        "external_id",
+def test_an_encoded_cell_delivers_its_logical_scalar_under_its_encoded_key() -> None:
+    compiled = compile_read(oa.TrueNode(), SCALARS, POSTGRES, target(SCALARS, "ScalarThing"))
+    clock = dt.time(9, 30)
+    token = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
+    (row,) = deliver(
+        SCALARS,
+        compiled,
+        [
+            {
+                "id": 1,
+                "f32": 1.5,
+                "f64": 2.5,
+                "payload_hex": "0a1b",
+                "local_time": clock,
+                "external_id": token,
+            }
+        ],
     )
-    assert AttributeReadContract(
-        attribute=payload,
-        result_key="payload_hex",
-        temporal_end=False,
-        encoded=True,
-    ) in dict(compiled.result_contract.attribute_reads).get(entity.identity, ())
+    assert row.members == {
+        "id": 1,
+        "f32": 1.5,
+        "f64": 2.5,
+        "payload": b"\x0a\x1b",
+        "localTime": clock,
+        "externalId": token,
+    }
+    assert row.published == (
+        ("id", 1),
+        ("f32", 1.5),
+        ("f64", 2.5),
+        ("local_time", clock),
+        ("external_id", token),
+        ("payload_hex", "0a1b"),
+    )
 
 
-@pytest.mark.parametrize("hierarchy", [False, True], ids=["standalone", "table-per-hierarchy"])
+_BLOB_ID = Attribute(name="id", type="int64", column="id", primary_key=True)
+_BLOB = Attribute(name="blob", type="bytes", column="blob", nullable=True)
+_BLOB_HEX = Attribute(name="blobHex", type="string", column="blob_hex", nullable=True)
+
+
+def _blob_family(
+    strategy: Literal["table-per-hierarchy", "table-per-concrete-subtype"],
+    root: tuple[Attribute, ...],
+    *concretes: tuple[Attribute, ...],
+) -> Metamodel:
+    """A ``strategy`` family whose root declares ``root`` and whose concretes
+    `C0`, `C1`, … declare ``concretes`` in order."""
+    union = strategy == "table-per-concrete-subtype"
+    return formed(
+        Records(
+            entities=(
+                Entity(
+                    name="Item",
+                    table=None if union else "item",
+                    inheritance=Inheritance(
+                        role="root", strategy=strategy, tag_column=None if union else "kind"
+                    ),
+                    attributes=(_BLOB_ID, *root),
+                ),
+                *(
+                    Entity(
+                        name=f"C{index}",
+                        table=f"item_c{index}" if union else None,
+                        inheritance=Inheritance(
+                            role="concrete-subtype",
+                            parent="Item",
+                            tag_value=None if union else f"c{index}",
+                        ),
+                        attributes=declared,
+                    )
+                    for index, declared in enumerate(concretes)
+                ),
+            )
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("meta", "result_form"),
+    [
+        pytest.param(
+            formed(
+                Records(
+                    entities=(
+                        Entity(name="Item", table="item", attributes=(_BLOB_ID, _BLOB, _BLOB_HEX)),
+                    )
+                )
+            ),
+            "row",
+            id="standalone",
+        ),
+        pytest.param(
+            _blob_family("table-per-hierarchy", (_BLOB, _BLOB_HEX), ()),
+            "row",
+            id="table-per-hierarchy",
+        ),
+        pytest.param(
+            _blob_family("table-per-concrete-subtype", (_BLOB, _BLOB_HEX), (), ()),
+            "instance",
+            id="union-inherited",
+        ),
+    ],
+)
 def test_an_encoded_result_key_an_authored_column_also_spells_refuses_the_read(
-    hierarchy: bool,
+    meta: Metamodel, result_form: Literal["row", "instance"]
 ) -> None:
     # `blob` encodes under `blob_hex`, which `blobHex` stores as its own Column:
-    # one statement would answer both under one name, so the read is refused
-    # when compiled rather than delivering either member from the other's cell.
-    from parallax.descriptor._records import Attribute, Entity, Inheritance
-    from parallax.descriptor._records import Metamodel as Records
-
-    attributes = (
-        Attribute(name="id", type="int64", column="id", primary_key=True),
-        Attribute(name="blob", type="bytes", column="blob", nullable=True),
-        Attribute(name="blobHex", type="string", column="blob_hex", nullable=True),
-    )
-    entities = (
-        (
-            Entity(
-                name="Item",
-                table="item",
-                inheritance=Inheritance(
-                    role="root", strategy="table-per-hierarchy", tag_column="kind"
-                ),
-                attributes=attributes,
-            ),
-            Entity(
-                name="Part",
-                inheritance=Inheritance(role="concrete-subtype", parent="Item", tag_value="p"),
-            ),
-        )
-        if hierarchy
-        else (Entity(name="Item", table="item", attributes=attributes),)
-    )
-    meta = formed(Records(entities=entities))
-
-    with pytest.raises(ValueError, match="blob_hex"):
-        compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "Item"))
+    # one row would answer both under one name — in one statement's select list,
+    # or among one union branch's members — so the read is refused when compiled
+    # rather than delivering either member from the other's cell.
+    with pytest.raises(ValueError, match="duplicate result key 'blob_hex'"):
+        compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "Item"), result_form=result_form)
 
 
 _MARIADB = dataclasses.replace(POSTGRES, name="mariadb")
@@ -697,34 +733,31 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
     ],
     ids=["plain", "encoded", "documents", "family", "document-layout", "temporal"],
 )
-def test_attribute_contracts_align_by_position_with_each_resolvable_layout(
+def test_member_sources_align_with_each_resolvable_entitys_own_member_selection(
     meta: Metamodel,
     name: str,
     temporal: Mapping[TemporalDimension, TemporalSelection] | None,
 ) -> None:
-    # The compiled contracts and the model's exact member layout are two readings
-    # of ONE position view, so contract `i` describes layout Attribute `i` — the
-    # same metadata object, not an equal copy. That is what lets a consumer read
-    # the two together by position instead of indexing one by identity per row.
-    # The interval-closing Attributes agree for the same reason, both being the
-    # family root's declared axes, so a consumer admitting a stored scalar reads
-    # the flag off the contract rather than re-testing the layout's own set.
-    # An Entity this read projected no columns for — a family root only an
-    # unrecognized tag names — answers nothing, and its rows read storage keys.
+    # The compiled sources and the model's exact member layout read ONE member
+    # selection — the same object, not an equal copy — so source `i` describes
+    # layout member `i` and a consumer reads the two together by position
+    # instead of indexing one by identity per row. Every Attribute of a
+    # concrete in the position has a source; an Entity the read planned no
+    # branch for — a family root only an unrecognized tag names — reads only
+    # the cells carrying its own members.
     cataloged = CatalogedModel(meta)
     compiled = compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, name), temporal=temporal)
-    assert compiled.result_contract.resolvable
-    for identity in compiled.result_contract.resolvable:
-        reads = dict(compiled.result_contract.attribute_reads).get(identity, ())
-        if identity not in compiled.resolved_position:
-            assert reads == ()
-            continue
+    contract = compiled.result_contract
+    assert contract.resolvable
+    for identity in contract.resolvable:
+        sources = contract.sources(identity)
         layout = cataloged.layouts.entity(identity)
-        assert reads
-        for contract, attribute in zip(reads, layout.attributes, strict=True):
-            assert contract.attribute is attribute
-            assert contract.temporal_end == (attribute.identity in layout.temporal_ends)
-        assert any(contract.temporal_end for contract in reads) == bool(layout.temporal_ends)
+        assert sources.selection is layout.member_selection
+        attributes = sources.sources[: layout.attribute_count]
+        if identity in compiled.resolved_position:
+            assert all(source is not None for source in attributes)
+        for member, source in zip(layout.member_selection.bindings, sources.sources, strict=True):
+            assert contract.source(identity, member.identity) is source
 
 
 def test_limit_bind_lands_after_predicate_binds() -> None:
