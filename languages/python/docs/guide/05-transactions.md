@@ -3,6 +3,11 @@
 A transaction runs a callback. Parallax commits when the callback returns and retries the
 whole callback when a transient failure or a conflict it can resolve ends an attempt.
 
+Concurrency control combines optimistic conflict detection, locking reads and a
+configurable isolation level. A nested call joins the active transaction when it is
+eligible to, and a joined callback that fails marks the whole transaction rollback-only,
+so its caller can't catch the failure and commit anyway.
+
 ## Retries
 
 ### A write another writer overtook is replayed from a fresh read
