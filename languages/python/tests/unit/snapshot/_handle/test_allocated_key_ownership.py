@@ -85,7 +85,11 @@ def _insert_allocated(
         valid_from=valid_from,
     )
     prepared = prepare_typed_write(instruction, model_of(_MODEL))
-    tx._attempt.uow.buffer(admitted_write(prepared, None, None))
+    # An insert whose key the database allocates opens no insertion authority.
+    assert (
+        tx._attempt.uow.buffer_insert(admitted_write(prepared, None, None), insertion_advice=None)
+        is None
+    )
 
 
 def _seed(profile_run: Any, entity: type[Any], key: int) -> None:

@@ -59,7 +59,11 @@ def _insert_allocated(tx: TxnContext, entity: type[Entity], amount: int) -> None
         "insert", entity.identity.canonical, ({"id": {"computed": "maxPlusOne"}, "amount": amount},)
     )
     prepared = prepare_typed_write(instruction, model_of(_MODEL))
-    tx._attempt.uow.buffer(admitted_write(prepared, None, None))
+    # An insert whose key the database allocates opens no insertion authority.
+    assert (
+        tx._attempt.uow.buffer_insert(admitted_write(prepared, None, None), insertion_advice=None)
+        is None
+    )
 
 
 def _ledger_row(key: int, amount: int) -> dict[str, object]:

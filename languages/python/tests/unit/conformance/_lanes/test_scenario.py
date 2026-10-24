@@ -38,6 +38,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
 )
+from parallax.core._execution._unit_work.retain import KeyedWriteRefusalAdvice
 from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedWrite,
     KeyedInsert,
@@ -69,10 +70,15 @@ from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     AdmittedWrite,
     Concurrency,
+    InsertionIdentity,
+    KeyedMutation,
+    KeyedWriteInstruction,
     MissingTargetError,
     OptimisticLockConflictError,
+    ReadAuthorizedWrite,
     RetainedObservation,
     StaleWriteError,
+    UnitOfWork,
     WriteEffectError,
     WriteEvidenceError,
     WriteRejectedError,
@@ -3875,18 +3881,32 @@ def test_a_staged_writer_runs_at_a_requested_read_committed_over_a_snapshot_root
 
 
 def _admitted(monkeypatch: pytest.MonkeyPatch) -> list[AdmittedWrite | PreparedTargetInstruction]:
+    """Every write the lane hands a unit of work to buffer, in order, recorded
+    before buffering judges it."""
     admitted: list[AdmittedWrite | PreparedTargetInstruction] = []
-    admit = scenario._SimulatedUnit._admit  # pyright: ignore[reportPrivateUsage] - observes what the lane hands its simulated unit of work
-
-    def recorded(unit: Any, item: AdmittedWrite | PreparedTargetInstruction) -> None:
-        admitted.append(item)
-        admit(unit, item)
-
-    monkeypatch.setattr(
-        scenario._SimulatedUnit,  # pyright: ignore[reportPrivateUsage] - observes what the lane hands its simulated unit of work
-        "_admit",
-        recorded,
+    buffer, buffer_insert, buffer_target = (
+        UnitOfWork.buffer,
+        UnitOfWork.buffer_insert,
+        UnitOfWork.buffer_target,
     )
+
+    def recorded(uow: UnitOfWork, item: ReadAuthorizedWrite | InsertionAuthorizedWrite) -> object:
+        admitted.append(item)
+        return buffer(uow, item)
+
+    def recorded_insert(
+        uow: UnitOfWork, insert: KeyedInsert, *, insertion_advice: KeyedWriteRefusalAdvice | None
+    ) -> InsertionIdentity | None:
+        admitted.append(insert)
+        return buffer_insert(uow, insert, insertion_advice=insertion_advice)
+
+    def recorded_target(uow: UnitOfWork, prepared: PreparedTargetInstruction) -> None:
+        admitted.append(prepared)
+        buffer_target(uow, prepared)
+
+    monkeypatch.setattr(UnitOfWork, "buffer", recorded)
+    monkeypatch.setattr(UnitOfWork, "buffer_insert", recorded_insert)
+    monkeypatch.setattr(UnitOfWork, "buffer_target", recorded_target)
     return admitted
 
 
@@ -3952,6 +3972,48 @@ def test_a_compiled_write_of_an_object_its_transaction_inserted_is_insertion_aut
     assert isinstance(insert, KeyedInsert)
     assert isinstance(authorized, InsertionAuthorizedWrite)
     assert authorized.identity.object_key.primary_key == (("id", key),)
+
+
+def test_a_simulated_unit_writes_through_its_latest_returned_insertion_across_flushes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The handle buffering returned outlives read-triggered flushes, and only a
+    # later successful insertion of the object replaces it.
+    admitted = _admitted(monkeypatch)
+    model = models.load_models()["account"]
+
+    def keyed(mutation: KeyedMutation, **row: object) -> scenario._ResolvedWrite:  # pyright: ignore[reportPrivateUsage] - what the lane resolves a compile entry into
+        prepared = instructions.prepare_wire_write(
+            KeyedWriteInstruction(mutation, "Account", ({"id": 9, **row},)),
+            model,
+        )
+        return scenario._ResolvedWrite(prepared, None)  # pyright: ignore[reportPrivateUsage] - what the lane resolves a compile entry into
+
+    with scenario._simulated_unit(  # pyright: ignore[reportPrivateUsage] - the lane's own simulated transaction
+        model,
+        POSTGRES,
+        "optimistic",
+        "2024-06-01T00:00:00+00:00",
+        None,
+        rollback=True,
+        record_statements=True,
+    ) as unit:
+        unit.buffer(keyed("insert", owner="N", balance="5.00"))
+        unit.read(lambda: None)
+        unit.buffer(keyed("amend", owner="Ada"))
+        unit.read(lambda: None)
+        unit.buffer(keyed("delete"))
+        unit.buffer(keyed("insert", owner="M", balance="1.00"))
+        unit.read(lambda: None)
+        unit.buffer(keyed("amend", owner="Bo"))
+    insert, amendment, deletion, reinsertion, later = admitted
+    assert isinstance(insert, KeyedInsert) and isinstance(reinsertion, KeyedInsert)
+    assert isinstance(amendment, InsertionAuthorizedWrite)
+    assert isinstance(deletion, InsertionAuthorizedWrite)
+    assert isinstance(later, InsertionAuthorizedWrite)
+    assert deletion.identity is amendment.identity
+    assert later.identity is not amendment.identity
+    assert unit.statements[-1].sql.startswith("update")
 
 
 def _account_amend(account_id: int, **members: object) -> dict[str, object]:

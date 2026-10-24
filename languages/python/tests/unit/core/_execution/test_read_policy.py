@@ -351,7 +351,7 @@ def test_a_participating_eager_read_force_flushes_before_its_body_runs() -> None
     body = _Body(adapter=adapter)
 
     def run(attempt: TxnAttempt) -> None:
-        attempt.uow.buffer(account_insert(9))
+        attempt.uow.buffer_insert(account_insert(9), insertion_advice=None)
         assert attempt.eager(_TARGET, "typed", body) is _ANSWER
 
     _participating(run, adapter, provider=provider)
@@ -370,7 +370,7 @@ def test_a_participating_read_opens_inside_the_flush_as_its_activitys_ordered_si
     body = _Body(provider, adapter)
 
     def run(attempt: TxnAttempt) -> None:
-        attempt.uow.buffer(account_insert(9))
+        attempt.uow.buffer_insert(account_insert(9), insertion_advice=None)
         attempt.eager(_TARGET, "typed", body)
 
     _participating(run, adapter, provider=provider)
@@ -515,7 +515,7 @@ def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_
 
     def run(attempt: TxnAttempt) -> None:
         with attempt.open_stream(_TARGET, "typed", 5) as stream:
-            attempt.uow.buffer(account_insert(9))
+            attempt.uow.buffer_insert(account_insert(9), insertion_advice=None)
             attempt.paged(stream.batch(), body)
 
     _participating(run, adapter, provider=provider)

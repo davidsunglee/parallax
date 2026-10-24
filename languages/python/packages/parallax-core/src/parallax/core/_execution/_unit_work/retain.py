@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import Final, cast, final
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
@@ -9,8 +9,10 @@ from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObj
 from parallax.core.write_plan.observe import StateObservation
 
 __all__ = [
+    "NO_INSERTION_AUTHORITY",
     "InsertionIdentity",
     "KeyedWriteRefusalAdvice",
+    "NoInsertionAuthority",
     "ParticipationToken",
     "ReadEvidence",
     "RetainedObservation",
@@ -35,6 +37,18 @@ class InsertionIdentity:
 
     def __init__(self, object_key: ObjectKey) -> None:
         self.object_key: Final = object_key
+
+
+@final
+class NoInsertionAuthority:
+    """The answer an insertion authority query gives where no admitted
+    insertion's authority stands: distinct from the ``None`` window of a
+    standing insertion without Valid Time."""
+
+    __slots__ = ()
+
+
+NO_INSERTION_AUTHORITY: Final = NoInsertionAuthority()
 
 
 @dataclass(frozen=True, slots=True)

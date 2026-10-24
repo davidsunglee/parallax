@@ -17,6 +17,8 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.retain import (
+    InsertionIdentity,
+    NoInsertionAuthority,
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
@@ -26,6 +28,7 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
     ComposedWrite,
+    KeyedInsert,
     PostRemovalInsert,
     TargetWrite,
 )
@@ -47,6 +50,7 @@ __all__ = [
     "NO_COUNTED_STEPS",
     "NO_ROW_READS",
     "TEST_ACTOR_IDENTITY",
+    "admit",
     "admitted_writes",
     "object_source",
     "observed_buffer",
@@ -126,6 +130,7 @@ def observed_buffer(
     """
     admission = _admission(model)
     retained: dict[ObjectKey, RetainedObservation] = {}
+    handles: dict[ObjectKey, InsertionIdentity] = {}
     for item in buffer:
         if isinstance(item, KeyedWriteInstruction):
             prepared = prepare_typed_write(item, model)
@@ -137,25 +142,27 @@ def observed_buffer(
                     held = retained[key] = retained_observation(prepared, model, observation)
                 item = admitted_write(prepared, held, key)
             else:
-                item = _authorized(admission, prepared, key, model)
-        admission.admit(item, confirm_target=_optimistic)
+                item = _authorized(admission, handles, prepared, key, model)
+        identity = admit(admission, item)
+        if identity is not None:
+            handles[identity.object_key] = identity
     return [_settled(item) for item in admission.composed_writes()]
 
 
 def _authorized(
     admission: WriteAdmission,
+    handles: Mapping[ObjectKey, InsertionIdentity],
     instruction: PreparedKeyedInstruction,
     key: ObjectKey | None,
     model: Metamodel,
 ) -> AdmittedWrite:
-    identity = (
-        None
-        if key is None or instruction.mutation in INSERT_MUTATIONS
-        else admission.insertion_identity(key)
-    )
-    if identity is None:
+    """``instruction`` licensed by the latest insertion of its object buffering
+    issued while that insertion still stands, else as :func:`unobserved_write`
+    admits it."""
+    handle = None if key is None or instruction.mutation in INSERT_MUTATIONS else handles.get(key)
+    if handle is None or isinstance(admission.insertion_authority(handle), NoInsertionAuthority):
         return unobserved_write(instruction, model)
-    return admitted_write(instruction, None, key, authority=identity)
+    return admitted_write(instruction, None, key, authority=handle)
 
 
 def observed_write(
@@ -196,13 +203,23 @@ def unobserved_write(instruction: PreparedKeyedInstruction, model: Metamodel) ->
 
 
 def admitted_writes(model: Metamodel, writes: Sequence[AdmittedWrite]) -> tuple[ComposedWrite, ...]:
-    """``writes`` admitted in authored order into one buffer, and that
-    buffer's composed writes, under the Optimistic strategy, whose confirmation
-    of a caller's revision reads nothing."""
+    """``writes`` admitted in authored order into one buffer (:func:`admit`),
+    and that buffer's composed writes."""
     admission = _admission(model)
     for item in writes:
-        admission.admit(item, confirm_target=_optimistic)
+        admit(admission, item)
     return admission.composed_writes()
+
+
+def admit(admission: WriteAdmission, item: AdmittedWrite) -> InsertionIdentity | None:
+    """``item`` admitted through the operation admission takes it by — an
+    insert, with no opener advice, through its own, answering the identity it
+    issued — under the Optimistic strategy, whose confirmation of a caller's
+    revision reads nothing."""
+    if isinstance(item, KeyedInsert):
+        return admission.admit_insert(item, insertion_advice=None)
+    admission.admit(item, confirm_target=_optimistic)
+    return None
 
 
 def _admission(model: Metamodel) -> WriteAdmission:

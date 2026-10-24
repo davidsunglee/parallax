@@ -40,7 +40,6 @@ from parallax.core._execution._unit_work.acquisition import (
     RowRequest,
     TargetReadRequest,
 )
-from parallax.core._execution._unit_work.admission import NO_INSERTION_AUTHORITY
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
@@ -49,11 +48,16 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.retain import InsertionIdentity, ReadEvidence
+from parallax.core._execution._unit_work.retain import (
+    NO_INSERTION_AUTHORITY,
+    InsertionIdentity,
+    ReadEvidence,
+)
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import EscapedTransactionError, OpenFlush
 from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedWrite,
+    KeyedInsert,
     StateObservedWrite,
     target_write,
 )
@@ -66,7 +70,6 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.unit_work import (
-    AdmittedWrite,
     BufferOutcome,
     Clock,
     FlushTrigger,
@@ -74,6 +77,7 @@ from parallax.core.unit_work import (
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
+    ReadAuthorizedWrite,
     RetainedObservation,
     RollbackOnlyError,
     SystemClock,
@@ -197,7 +201,7 @@ def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedK
     return prepared
 
 
-def _account_insert(account_id: int) -> AdmittedWrite:
+def _account_insert(account_id: int) -> KeyedInsert:
     return admitted_write(
         _prepared_keyed(
             KeyedWriteInstruction(
@@ -212,26 +216,25 @@ def _account_insert(account_id: int) -> AdmittedWrite:
     )
 
 
-def _inserted(meta: Metamodel, write: KeyedWriteInstruction) -> AdmittedWrite:
+def _inserted(meta: Metamodel, write: KeyedWriteInstruction) -> KeyedInsert:
     """``write`` admitted as the unit of work admits an insert."""
     prepared = _prepared_keyed(write, meta)
     return admitted_write(prepared, None, object_key(prepared, meta))
 
 
 def _insertion_write(
-    uow: UnitOfWork, meta: Metamodel, write: KeyedWriteInstruction
-) -> AdmittedWrite:
-    """``write`` licensed by ``uow``'s standing insertion of the object it
-    names, as a verb writing through the inserted value admits it."""
+    identity: InsertionIdentity | None, meta: Metamodel, write: KeyedWriteInstruction
+) -> InsertionAuthorizedWrite:
+    """``write`` licensed by the insertion ``identity`` buffering issued, as a
+    verb writing through the inserted value admits it."""
+    assert identity is not None
     prepared = _prepared_keyed(write, meta)
     key = object_key(prepared, meta)
-    assert key is not None
-    identity = uow.insertion_identity(key)
-    assert identity is not None
+    assert key == identity.object_key
     return admitted_write(prepared, None, key, authority=identity)
 
 
-def _unclosable(meta: Metamodel, write: KeyedWriteInstruction) -> AdmittedWrite:
+def _unclosable(meta: Metamodel, write: KeyedWriteInstruction) -> ReadAuthorizedWrite:
     """A temporal ``write`` admitted against a Version Observation, which no
     close can address, gate on, or carry state forward from, so planning
     refuses it."""
@@ -263,7 +266,7 @@ def test_the_pre_commit_flush_plans_what_is_buffered() -> None:
     simulated = _simulated()
 
     def body(tx: UnitOfWork) -> str:
-        tx.buffer(_account_insert(9))
+        tx.buffer_insert(_account_insert(9), insertion_advice=None)
         return "ok"
 
     assert _run(body, steps=simulated) == "ok"
@@ -275,7 +278,7 @@ def test_discarding_drops_every_buffered_write() -> None:
     simulated = _simulated()
 
     def body(tx: UnitOfWork) -> None:
-        tx.buffer(_account_insert(9))
+        tx.buffer_insert(_account_insert(9), insertion_advice=None)
         tx.discard()
 
     _run(body, steps=simulated, opening=_opener(order))
@@ -289,11 +292,11 @@ def test_a_doomed_lifetime_refuses_the_pre_commit_flush_with_its_first_cause() -
     first = RuntimeError("first")
 
     def body(tx: UnitOfWork) -> str:
-        tx.buffer(_account_insert(9))
+        tx.buffer_insert(_account_insert(9), insertion_advice=None)
         lifetime.doom(first)
         lifetime.doom(RuntimeError("second"))
         with pytest.raises(RollbackOnlyError):
-            tx.buffer(_account_insert(10))
+            tx.buffer_insert(_account_insert(10), insertion_advice=None)
         return "withheld"
 
     with pytest.raises(RollbackOnlyError) as exc:
@@ -317,7 +320,7 @@ def test_read_force_flushes_pending_writes_first() -> None:
     simulated = _simulated()
 
     def body(tx: UnitOfWork) -> str:
-        tx.buffer(_account_insert(9))
+        tx.buffer_insert(_account_insert(9), insertion_advice=None)
         result = tx.read(lambda: (order.append("read"), "row")[1])
         order.append("after")
         return result
@@ -349,13 +352,14 @@ def test_clock_supplies_the_flush_transaction_time_instant() -> None:
     simulated = _simulated(_BALANCE)
 
     def body(tx: UnitOfWork) -> None:
-        tx.buffer(
+        tx.buffer_insert(
             _inserted(
                 _BALANCE,
                 KeyedWriteInstruction(
                     "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("100.00")},)
                 ),
-            )
+            ),
+            insertion_advice=None,
         )
 
     _run(body, clock=FixedClock(_FIXED), steps=simulated, meta=_BALANCE)
@@ -492,15 +496,23 @@ def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused(
         stranger = InsertionIdentity(corpus_object_key("Account", ("id", 1)))
         with pytest.raises(UnitOfWorkError, match="no longer stands"):
             tx.buffer(admitted_write(update, None, stranger.object_key, authority=stranger))
-        tx.buffer(_account_insert(1))
-        standing = tx.insertion_identity(corpus_object_key("Account", ("id", 1)))
-        assert standing is not None
+        superseded = tx.buffer_insert(_account_insert(1), insertion_advice=None)
+        assert superseded is not None
+        # An opener that supplied no advice is not refused a repeat; the
+        # repeat issues its own identity, which supersedes the first.
+        standing = tx.buffer_insert(_account_insert(1), insertion_advice=None)
+        assert standing is not None and standing is not superseded
         assert tx.insertion_authority(stranger) is NO_INSERTION_AUTHORITY
+        assert tx.insertion_authority(superseded) is NO_INSERTION_AUTHORITY
+        with pytest.raises(UnitOfWorkError, match="no longer stands"):
+            tx.buffer(admitted_write(update, None, superseded.object_key, authority=superseded))
         # A standing insertion of an object without Valid Time has no window,
         # which is not the absence of its authority.
         assert tx.insertion_authority(standing) is None
+        raise _Abandoned
 
-    _run(body)
+    with pytest.raises(_Abandoned):
+        _run(body)
 
 
 def test_evidence_of_this_attempt_carrying_no_observation_licenses_no_gated_write() -> None:
@@ -572,22 +584,24 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
     simulated = _simulated(_BALANCE)
 
     def body(tx: UnitOfWork) -> None:
-        tx.buffer(
+        tx.buffer_insert(
             _inserted(
                 _BALANCE,
                 KeyedWriteInstruction(
                     "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("1.00")},)
                 ),
-            )
+            ),
+            insertion_advice=None,
         )
         tx.read(lambda: "row")  # forces the first flush
-        tx.buffer(
+        tx.buffer_insert(
             _inserted(
                 _BALANCE,
                 KeyedWriteInstruction(
                     "insert", "Balance", ({"id": 10, "acctNum": "E", "value": Decimal("2.00")},)
                 ),
-            )
+            ),
+            insertion_advice=None,
         )
 
     _run(body, clock=clock, steps=simulated, meta=_BALANCE)
@@ -634,9 +648,9 @@ def test_each_flush_is_a_scope_around_its_own_planning_and_execution() -> None:
     steps = ObservedSteps(_simulated(), observe=lambda _position, _steps: order.append("executed"))
 
     def body(tx: UnitOfWork) -> None:
-        tx.buffer(_account_insert(1))
+        tx.buffer_insert(_account_insert(1), insertion_advice=None)
         tx.read(lambda: None)
-        tx.buffer(_account_insert(2))
+        tx.buffer_insert(_account_insert(2), insertion_advice=None)
 
     _run(body, steps=steps, opening=_opener(order))
     assert order == [
@@ -653,7 +667,7 @@ def test_a_unit_of_work_without_a_flush_opening_still_flushes() -> None:
     simulated = _simulated()
 
     def body(tx: UnitOfWork) -> None:
-        tx.buffer(_account_insert(3))
+        tx.buffer_insert(_account_insert(3), insertion_advice=None)
 
     _run(body, steps=simulated)
     assert _kinds(simulated) == ["insert"]
@@ -671,7 +685,7 @@ def test_escaped_reference_raises_on_every_use() -> None:
     _run(body)
     tx = captured["tx"]
     with pytest.raises(EscapedTransactionError):
-        tx.buffer(_account_insert(1))
+        tx.buffer_insert(_account_insert(1), insertion_advice=None)
     with pytest.raises(EscapedTransactionError):
         tx.retain(
             RetainedObservation(
@@ -717,7 +731,7 @@ def _balance_state(key: int) -> ObjectStateKey:
     )
 
 
-def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> AdmittedWrite:
+def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> ReadAuthorizedWrite:
     row: dict[str, object] = {"id": account_id}
     if mutation == "amend":
         row["balance"] = Decimal("1.00")
@@ -729,7 +743,7 @@ def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> Ad
     )
 
 
-def _balance_update(key: int) -> AdmittedWrite:
+def _balance_update(key: int) -> ReadAuthorizedWrite:
     observation = TemporalObservation(predecessor=PredecessorRow(_balance_members(key)))
     return admitted_write(
         _prepared_keyed(
@@ -741,7 +755,7 @@ def _balance_update(key: int) -> AdmittedWrite:
     )
 
 
-def _refused_as_claimed(uow: UnitOfWork, item: AdmittedWrite) -> WriteEvidenceError:
+def _refused_as_claimed(uow: UnitOfWork, item: ReadAuthorizedWrite) -> WriteEvidenceError:
     with pytest.raises(WriteEvidenceError) as refusal:
         uow.buffer(item)
     assert refusal.value.code == "write-evidence-already-claimed"
@@ -757,7 +771,7 @@ _PERSON_META = model_of(PERSON)
 
 def _person_write(
     mutation: KeyedMutation, person_id: int, source: ReadEvidence | None = None
-) -> AdmittedWrite:
+) -> ReadAuthorizedWrite:
     """An unversioned Non-Temporal Person write settling against its object."""
     row: dict[str, object] = {"id": person_id}
     if mutation == "amend":
@@ -863,7 +877,7 @@ def test_every_composed_object_source_stays_reachable_until_its_settled_write_is
 
 def test_a_refused_admitted_write_or_claim_leaves_claims_and_pending_inserts_as_they_were() -> None:
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_insert(9))
+        inserted = uow.buffer_insert(_account_insert(9), insertion_advice=None)
         uow.buffer(_account_write("delete", 1, 7))
         with pytest.raises(ValueError, match="evidence about one row"):
             uow.buffer(
@@ -878,7 +892,7 @@ def test_a_refused_admitted_write_or_claim_leaves_claims_and_pending_inserts_as_
                 )
             )
         _refused_as_claimed(uow, _account_write("amend", 1, 7))
-        assert uow.buffer(_account_delete(uow, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
+        assert uow.buffer(_account_delete(inserted, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
         _refused_as_claimed(uow, _account_write("amend", 1, 7))
 
     _run(body)
@@ -891,10 +905,12 @@ class _Abandoned(Exception):
 # --------------------------------------------------------------------------- #
 # Buffering reports the pending-insert transition it made.                    #
 # --------------------------------------------------------------------------- #
-def _account_delete(uow: UnitOfWork, account_id: int) -> AdmittedWrite:
-    """A delete of the Account ``uow``'s standing insertion opened."""
+def _account_delete(
+    identity: InsertionIdentity | None, account_id: int
+) -> InsertionAuthorizedWrite:
+    """A delete of the Account the insertion ``identity`` opened."""
     return _insertion_write(
-        uow, _ACCOUNT, KeyedWriteInstruction("delete", "Account", ({"id": account_id},))
+        identity, _ACCOUNT, KeyedWriteInstruction("delete", "Account", ({"id": account_id},))
     )
 
 
@@ -902,11 +918,12 @@ def test_a_destructive_write_of_a_pending_insert_reports_the_cancellation() -> N
     simulated = _simulated()
 
     def body(uow: UnitOfWork) -> None:
-        assert uow.buffer(_account_insert(9)) is BufferOutcome.BUFFERED
+        first = uow.buffer_insert(_account_insert(9), insertion_advice=None)
         assert uow.buffer(_account_write("delete", 8, 1)) is BufferOutcome.BUFFERED
-        assert uow.buffer(_account_delete(uow, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
-        assert uow.buffer(_account_insert(9)) is BufferOutcome.BUFFERED
-        assert uow.buffer(_account_delete(uow, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
+        assert uow.buffer(_account_delete(first, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
+        assert first is not None and uow.insertion_authority(first) is NO_INSERTION_AUTHORITY
+        again = uow.buffer_insert(_account_insert(9), insertion_advice=None)
+        assert uow.buffer(_account_delete(again, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
         assert uow.buffer(_account_write("delete", 9, 1)) is BufferOutcome.BUFFERED
         raise _Abandoned
 
@@ -937,7 +954,7 @@ def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
     simulated = _simulated()
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_account_insert(9))
+        uow.buffer_insert(_account_insert(9), insertion_advice=None)
         uow.read(lambda: None)
         assert uow.buffer(_account_write("delete", 9, 1)) is BufferOutcome.BUFFERED
 
@@ -948,7 +965,7 @@ def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
 # --------------------------------------------------------------------------- #
 # Settled writes: completion, ownership, freshness and failure containment.   #
 # --------------------------------------------------------------------------- #
-def _balance_insert(key: int) -> AdmittedWrite:
+def _balance_insert(key: int) -> KeyedInsert:
     return _inserted(
         _BALANCE,
         KeyedWriteInstruction(
@@ -957,7 +974,7 @@ def _balance_insert(key: int) -> AdmittedWrite:
     )
 
 
-def _balance_update_from(key: int, tx_start: object) -> AdmittedWrite:
+def _balance_update_from(key: int, tx_start: object) -> ReadAuthorizedWrite:
     members = _balance_members(key, tx_start)
     observation = TemporalObservation(predecessor=PredecessorRow(members))
     state = object_state_key_from_observation(
@@ -985,7 +1002,7 @@ def test_a_row_an_earlier_flush_opened_is_revised_rather_than_closed() -> None:
     simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_balance_insert(1))
+        uow.buffer_insert(_balance_insert(1), insertion_advice=None)
         uow.read(lambda: None)
         uow.buffer(_balance_update_from(1, _FIXED))
 
@@ -993,7 +1010,7 @@ def test_a_row_an_earlier_flush_opened_is_revised_rather_than_closed() -> None:
     assert _kinds(simulated) == ["insert", "update"]
 
 
-def _balance_terminate_from(key: int, tx_start: object) -> AdmittedWrite:
+def _balance_terminate_from(key: int, tx_start: object) -> ReadAuthorizedWrite:
     members = _balance_members(key, tx_start)
     observation = TemporalObservation(predecessor=PredecessorRow(members))
     state = object_state_key_from_observation(
@@ -1010,8 +1027,8 @@ def test_a_row_its_settled_write_removed_is_no_longer_owned() -> None:
     simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_balance_insert(1))
-        uow.buffer(_balance_insert(2))
+        uow.buffer_insert(_balance_insert(1), insertion_advice=None)
+        uow.buffer_insert(_balance_insert(2), insertion_advice=None)
         uow.read(lambda: None)
         uow.buffer(_balance_terminate_from(1, _FIXED))
         uow.read(lambda: None)
@@ -1116,7 +1133,7 @@ def test_a_caught_execution_failure_still_dooms_the_attempt() -> None:
             uow.read(lambda: None)
         assert refused.value.__cause__ is failure
         with pytest.raises(RollbackOnlyError):
-            uow.buffer(_account_insert(5))
+            uow.buffer_insert(_account_insert(5), insertion_advice=None)
         return "withheld"
 
     with pytest.raises(RollbackOnlyError) as exc:
@@ -1197,7 +1214,7 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
     coverage = HeldRows(_POSITION)
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(
+        uow.buffer_insert(
             _inserted(
                 _POSITION,
                 KeyedWriteInstruction(
@@ -1207,7 +1224,8 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
                     valid_from=_JAN,
                     until=_DEC,
                 ),
-            )
+            ),
+            insertion_advice=None,
         )
         uow.read(lambda: None)
         read_at = uow.freshness
@@ -1282,7 +1300,7 @@ def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool)
     assert _kinds(simulated) == (["guard"] if kept else ["close", "insert"])
 
 
-def _account_amend(account_id: int, claim: RetainedObservation) -> AdmittedWrite:
+def _account_amend(account_id: int, claim: RetainedObservation) -> ReadAuthorizedWrite:
     row = {"id": account_id, "balance": Decimal("1.00")}
     prepared = _prepared_keyed(KeyedWriteInstruction("amend", "Account", (row,)), _ACCOUNT)
     return admitted_write(prepared, claim, claim.key.object)
@@ -1445,7 +1463,7 @@ def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetIn
     return prepared
 
 
-def _observed_amendment(claim: RetainedObservation) -> AdmittedWrite:
+def _observed_amendment(claim: RetainedObservation) -> ReadAuthorizedWrite:
     observed = prepare_wire_write(
         KeyedWriteInstruction(
             "amendUntil",
@@ -1519,7 +1537,7 @@ def test_writes_of_one_source_predicate_writes_flush_each_continue_from_what_the
 
 def _observed_value(
     claim: RetainedObservation, start: dt.datetime, until: dt.datetime
-) -> AdmittedWrite:
+) -> ReadAuthorizedWrite:
     observed = prepare_wire_write(
         KeyedWriteInstruction(
             "amendUntil",
@@ -1634,7 +1652,7 @@ def _shell_predicate_write(
     return prepared
 
 
-def _tag_insert(tag_id: int) -> AdmittedWrite:
+def _tag_insert(tag_id: int) -> KeyedInsert:
     return _inserted(
         _PREDICATED, KeyedWriteInstruction("insert", "ShellTag", ({"id": tag_id, "label": "t"},))
     )
@@ -1670,7 +1688,7 @@ def test_a_predicate_write_runs_after_everything_buffered_in_one_flush_and_answe
     answered: list[int] = []
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_tag_insert(2))
+        uow.buffer_insert(_tag_insert(2), insertion_advice=None)
         answered.append(uow.execute_predicate(_shell_predicate_write()))
         # Nothing is left buffered for a later flush.
         uow.read(lambda: None)
@@ -1713,10 +1731,10 @@ def test_a_predicate_write_whose_buffered_writes_cancelled_executes_no_other_sta
     simulated = _simulated(_PREDICATED)
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_tag_insert(2))
+        inserted = uow.buffer_insert(_tag_insert(2), insertion_advice=None)
         assert uow.buffer(
             _insertion_write(
-                uow, _PREDICATED, KeyedWriteInstruction("delete", "ShellTag", ({"id": 2},))
+                inserted, _PREDICATED, KeyedWriteInstruction("delete", "ShellTag", ({"id": 2},))
             )
         ) is (BufferOutcome.CANCELLED_PENDING_INSERT)
         uow.execute_predicate(_shell_predicate_write())
@@ -1754,7 +1772,7 @@ def test_an_empty_predicate_write_answers_zero_and_leaves_the_buffer_pending(
     assert not empty.assigns
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_tag_insert(2))
+        uow.buffer_insert(_tag_insert(2), insertion_advice=None)
         assert uow.execute_predicate(empty) == 0
         order.append("answered")
 
@@ -1848,7 +1866,7 @@ def test_an_execution_failure_before_a_predicate_write_dooms_it_unplanned(
     monkeypatch.setattr(WritePlanner, "predicate_step", recording)
 
     def body(uow: UnitOfWork) -> None:
-        uow.buffer(_tag_insert(2))
+        uow.buffer_insert(_tag_insert(2), insertion_advice=None)
         with pytest.raises(RuntimeError, match="the insert failed"):
             uow.execute_predicate(_shell_predicate_write())
 
@@ -1866,7 +1884,7 @@ def test_a_refused_predicate_step_fails_its_flush_without_dooming_or_restoring_e
     simulated = _simulated(_PREDICATED)
 
     def body(uow: UnitOfWork) -> str:
-        uow.buffer(_tag_insert(2))
+        uow.buffer_insert(_tag_insert(2), insertion_advice=None)
         with pytest.raises(WritePlanningError):
             uow.execute_predicate(_shell_predicate_write())
         return uow.read(lambda: "still usable")

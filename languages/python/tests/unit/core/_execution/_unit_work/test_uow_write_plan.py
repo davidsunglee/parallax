@@ -49,6 +49,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.strategy import AuditDecoration
+from parallax.core._execution._unit_work.write_items import KeyedInsert
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep, ExecuteWriteSteps
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
@@ -57,12 +58,12 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
-    AdmittedWrite,
     CardinalityCorruptionError,
     Concurrency,
     KeyedWriteInstruction,
     PredicateSelection,
     PredicateWriteInstruction,
+    ReadAuthorizedWrite,
     RetainedObservation,
     RollbackOnlyError,
     TargetWriteInstruction,
@@ -286,7 +287,7 @@ _SPANS: Final = model_of(DomainModel(Span))
 _MAR: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 
 
-def _span_insert() -> AdmittedWrite:
+def _span_insert() -> KeyedInsert:
     prepared = prepare_typed_write(
         KeyedWriteInstruction(
             "insert",
@@ -300,7 +301,7 @@ def _span_insert() -> AdmittedWrite:
     return admitted_write(prepared, None, object_key(prepared, _SPANS))
 
 
-def _span_amend(key: int) -> AdmittedWrite:
+def _span_amend(key: int) -> ReadAuthorizedWrite:
     members = {
         "id": key,
         "amount": 1,
@@ -326,7 +327,7 @@ def _span_amend(key: int) -> AdmittedWrite:
 def test_the_rows_a_settled_write_opens_are_owned_under_the_keys_its_steps_answered() -> None:
     simulated = _simulated(_SPANS, (42,))
     uow = _uow(_SPANS, simulated)
-    uow.buffer(_span_insert())
+    uow.buffer_insert(_span_insert(), insertion_advice=None)
     uow.read(lambda: None)
     uow.buffer(_span_amend(42))
     uow.flush(trigger="pre_commit")
@@ -368,7 +369,7 @@ def test_a_write_answered_another_number_of_keys_than_it_opens_completes_nothing
 
 def test_a_flush_whose_write_answered_the_wrong_keys_dooms_the_attempt() -> None:
     uow = _uow(_SPANS, _simulated(_SPANS, ()))
-    uow.buffer(_span_insert())
+    uow.buffer_insert(_span_insert(), insertion_advice=None)
     with pytest.raises(UnitOfWorkError, match="key"):
         uow.read(lambda: None)
     with pytest.raises(RollbackOnlyError):
@@ -413,7 +414,7 @@ def _target(
 _JAN, _APR, _JUN, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 4, 6, 9))
 
 
-def _observed_amend(key: int, claim: RetainedObservation) -> AdmittedWrite:
+def _observed_amend(key: int, claim: RetainedObservation) -> ReadAuthorizedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Position", ({"id": key, "value": "150.00"},), _APR),
         TARGET_POSITION,

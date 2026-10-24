@@ -25,6 +25,9 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.retain import (
+    NO_INSERTION_AUTHORITY,
+    InsertionIdentity,
+    KeyedWriteRefusalAdvice,
     ParticipationToken,
     ReadEvidence,
     RetainedTargetState,
@@ -47,11 +50,13 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core.base import INFINITY
 from parallax.core.entity._model import model_of
+from parallax.core.execution import KeyedWriteValueError
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
+    ReadAuthorizedWrite,
     RetainedObservation,
     TargetWriteInstruction,
     WriteEvidenceError,
@@ -77,7 +82,7 @@ from parallax.core.write_plan.plan import (
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite
-from tests._support.planner_probes import object_source
+from tests._support.planner_probes import admit, object_source
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     APR,
@@ -127,17 +132,18 @@ def _unversioned(entity: EntityIdentity, advanced_from: int | None) -> int | Non
 
 def _admitted(*writes: AdmittedWrite, meta: Metamodel = POSITION) -> WriteAdmission:
     admission = WriteAdmission(meta, inserted_version=_unversioned, observations={})
-    for write in writes:
-        admission.admit(write, confirm_target=_confirmed)
+    _admit(admission, *writes)
     return admission
 
 
 def _admit(admission: WriteAdmission, *writes: AdmittedWrite) -> None:
     for write in writes:
-        admission.admit(write, confirm_target=_confirmed)
+        admit(admission, write)
 
 
-def _refused(admission: WriteAdmission, write: AdmittedWrite) -> None:
+def _refused(
+    admission: WriteAdmission, write: ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
+) -> None:
     with pytest.raises(WriteEvidenceError) as refusal:
         admission.admit(write, confirm_target=_confirmed)
     assert refusal.value.code == "write-evidence-already-claimed"
@@ -147,7 +153,7 @@ def _account(account_id: int) -> ObjectKey:
     return ObjectKey(_ACCOUNT_ENTITY, (("id", account_id),))
 
 
-def _account_observed(account_id: int, version: int) -> AdmittedWrite:
+def _account_observed(account_id: int, version: int) -> ReadAuthorizedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Bo"},)), _ACCOUNT
     )
@@ -168,7 +174,7 @@ def _account_target(account_id: int, version: int) -> TargetWrite:
     return target_write(prepared, inheritance.view(_ACCOUNT))
 
 
-def _account_insert(account_id: int) -> AdmittedWrite:
+def _account_insert(account_id: int) -> KeyedInsert:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             "insert", "Account", ({"id": account_id, "owner": "N", "balance": "5.00"},)
@@ -222,7 +228,7 @@ def test_a_pending_write_of_the_targets_state_proves_it_before_confirmation_is_a
 def test_an_inserted_objects_target_is_refused_before_its_conflicts_or_confirmation() -> None:
     confirm = _Confirmations()
     admission = WriteAdmission(_ACCOUNT, inserted_version=lambda _entity, _from: 1, observations={})
-    admission.admit(_account_insert(1), confirm_target=confirm)
+    admission.admit_insert(_account_insert(1), insertion_advice=None)
     admission.drain_planned()
     # A pending write of another state of the object would also refuse it.
     admission.admit(_account_observed(1, 1), confirm_target=confirm)
@@ -256,12 +262,11 @@ def test_the_write_confirmation_answers_is_the_one_composed() -> None:
 def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     admission = WriteAdmission(_ACCOUNT, inserted_version=_unversioned, observations={})
     assert not admission
-    _admit(admission, _account_insert(9))
+    identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
     deletion = prepare_wire_write(
         KeyedWriteInstruction("delete", "Account", ({"id": 9},)), _ACCOUNT
     )
     assert isinstance(deletion, PreparedKeyedInstruction)
-    identity = admission.insertion_identity(_account(9))
     assert identity is not None
     outcome = admission.admit(
         admitted_write(deletion, None, _account(9), authority=identity), confirm_target=_confirmed
@@ -275,8 +280,7 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
 
 def test_an_amendment_folded_into_a_pending_insert_leaves_it_an_insert() -> None:
     admission = WriteAdmission(_ACCOUNT, inserted_version=_unversioned, observations={})
-    _admit(admission, _account_insert(9))
-    identity = admission.insertion_identity(_account(9))
+    identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
     assert identity is not None
     _admit(admission, admitted_write(_account_amend(9), None, _account(9), authority=identity))
     (insert,) = admission.composed_writes()
@@ -289,7 +293,7 @@ def _person(person_id: int) -> ObjectKey:
     return ObjectKey(_PERSON_ENTITY, (("id", person_id),))
 
 
-def _person_write(person_id: int, source: ReadEvidence) -> AdmittedWrite:
+def _person_write(person_id: int, source: ReadEvidence) -> ReadAuthorizedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Person", ({"id": person_id, "name": "Grace"},)), _PERSON
     )
@@ -329,14 +333,17 @@ def test_discard_forgets_every_source_registration_and_insertion() -> None:
         KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    _admit(admission, admitted_write(insertion, None, _person(9)))
+    identity = admission.admit_insert(
+        admitted_write(insertion, None, _person(9)), insertion_advice=None
+    )
+    assert identity is not None
     ownership = admission.ownership
     endpoint = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
     admission.complete(WriteEffects(opened=Openings(fresh=(endpoint,))), (), at=1)
     admission.discard()
     assert admission.resolve_source(source) == _person(1)
     assert not admission
-    assert admission.insertion_identity(ObjectKey(_PERSON_ENTITY, (("id", 9),))) is None
+    assert admission.insertion_authority(identity) is NO_INSERTION_AUTHORITY
     assert admission.ownership is ownership
     assert not ownership.owns(endpoint)
 
@@ -370,9 +377,8 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
         return 1 if advanced_from is None else advanced_from + 1
 
     admission = WriteAdmission(_ACCOUNT, inserted_version=inserted_version, observations={})
-    _admit(admission, _account_insert(9))
+    identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
     admission.drain_planned()
-    identity = admission.insertion_identity(_account(9))
     assert identity is not None
     _admit(admission, InsertionAuthorizedWrite(_account_amend(9), _account(9), identity))
     (before,) = admission.composed_writes()
@@ -387,9 +393,9 @@ def test_a_completed_version_advance_scopes_the_next_write_its_insertion_authori
         VersionedObjectStateKey(_account(9), 1),
         VersionedObjectStateKey(_account(9), 2),
     )
-    # Completion asks once for the version its update produced, and the later
-    # write once for the version it claims.
-    assert advanced == [None, 1, 1]
+    # The first write claims the version an insert stores; completion asks
+    # once for the version its update produced, which the later write reuses.
+    assert advanced == [None, 1]
 
 
 def _stored_insertion_across_two_rows() -> WriteAdmission:
@@ -402,7 +408,7 @@ def _stored_insertion_across_two_rows() -> WriteAdmission:
     return admission
 
 
-def _position_insert() -> AdmittedWrite:
+def _position_insert() -> KeyedInsert:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
             "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), FEB
@@ -432,6 +438,133 @@ def test_a_composed_removal_reaches_the_whole_insertion_only_with_every_row(
     _admit(admission, _position_insert())
     reinsertion = admission.composed_writes()[-1]
     assert isinstance(reinsertion, PostRemovalInsert) is earlier
+
+
+# --------------------------------------------------------------------------- #
+# Buffering an insert refuses a repeat or answers the identity it issued.     #
+# --------------------------------------------------------------------------- #
+_OPENER = KeyedWriteRefusalAdvice(
+    not_stored="not stored", already_stored="already stored", repeated_insert="amend the opener"
+)
+_REPEATER = KeyedWriteRefusalAdvice(
+    not_stored="not stored", already_stored="already stored", repeated_insert="amend the repeat"
+)
+_POSITION_ROW = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
+
+
+@pytest.mark.parametrize(
+    ("meta", "insert", "stored_rows"),
+    [
+        (_ACCOUNT, lambda: _account_insert(9), ()),
+        (_BALANCE, lambda: _balance_insert(), ()),
+        (POSITION, _position_insert, (_POSITION_ROW,)),
+    ],
+    ids=["non-temporal", "transaction-time-only", "bitemporal"],
+)
+def test_a_repeated_insert_is_refused_with_its_openers_advice_and_changes_nothing(
+    meta: Metamodel, insert: Callable[[], KeyedInsert], stored_rows: tuple[TemporalRowCoordinates]
+) -> None:
+    admission = _admitted(meta=meta)
+    identity = admission.admit_insert(insert(), insertion_advice=_OPENER)
+    assert identity is not None
+    for stored in (False, True):
+        if stored:
+            # Stored, its coverage still repeats it.
+            admission.drain_planned()
+            admission.complete(WriteEffects(opened=Openings(continued=stored_rows)), (), at=1)
+        pending = admission.composed_writes()
+        with pytest.raises(KeyedWriteValueError) as refusal:
+            admission.admit_insert(insert(), insertion_advice=_REPEATER)
+        assert refusal.value.code == "write-value-already-stored"
+        assert refusal.value.message.endswith("amend the opener")
+        assert admission.composed_writes() == pending
+        assert admission.insertion_authority(identity) is not NO_INSERTION_AUTHORITY
+
+
+def _account_delete_through(identity: InsertionIdentity) -> InsertionAuthorizedWrite:
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction("delete", "Account", ({"id": 9},)), _ACCOUNT
+    )
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    return InsertionAuthorizedWrite(prepared, _account(9), identity)
+
+
+def _balance_terminate_through(identity: InsertionIdentity) -> InsertionAuthorizedWrite:
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction("terminate", "Balance", ({"id": 1},)), _BALANCE
+    )
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    return InsertionAuthorizedWrite(prepared, _BALANCE_OBJECT, identity)
+
+
+@pytest.mark.parametrize(
+    ("meta", "insert", "removal"),
+    [
+        (_ACCOUNT, lambda: _account_insert(9), _account_delete_through),
+        (_BALANCE, lambda: _balance_insert(), _balance_terminate_through),
+    ],
+    ids=["non-temporal", "transaction-time-only"],
+)
+def test_an_insert_after_a_pending_whole_removal_follows_it_as_a_first_opening(
+    meta: Metamodel,
+    insert: Callable[[], KeyedInsert],
+    removal: Callable[[InsertionIdentity], InsertionAuthorizedWrite],
+) -> None:
+    admission = _admitted(meta=meta)
+    stored = admission.admit_insert(insert(), insertion_advice=_OPENER)
+    assert stored is not None
+    admission.drain_planned()
+    _admit(admission, removal(stored))
+    again = admission.admit_insert(insert(), insertion_advice=_REPEATER)
+    assert again is not None and again is not stored
+    assert isinstance(admission.composed_writes()[-1], PostRemovalInsert)
+    assert admission.insertion_authority(stored) is NO_INSERTION_AUTHORITY
+    # Planning stores the reinsertion after the removal it follows, so the
+    # removal retires nothing of it, and a further insert repeats it.
+    admission.drain_planned()
+    assert admission.insertion_authority(again) is None
+    with pytest.raises(KeyedWriteValueError, match="amend the repeat"):
+        admission.admit_insert(insert(), insertion_advice=None)
+
+
+def test_a_pending_reinsertion_claims_from_the_version_an_insert_stores() -> None:
+    def inserted_version(entity: EntityIdentity, advanced_from: int | None) -> int | None:
+        del entity
+        return 1 if advanced_from is None else advanced_from + 1
+
+    admission = WriteAdmission(_ACCOUNT, inserted_version=inserted_version, observations={})
+    stored = admission.admit_insert(_account_insert(9), insertion_advice=None)
+    assert stored is not None
+    admission.drain_planned()
+    admission.complete(WriteEffects(advanced=(VersionedObjectStateKey(_account(9), 1),)), (), at=1)
+    _admit(admission, _account_delete_through(stored))
+    again = admission.admit_insert(_account_insert(9), insertion_advice=None)
+    assert again is not None
+    (deletion, _reinsertion) = admission.composed_writes()
+    assert isinstance(deletion, InsertionAuthorizedWrite)
+    assert deletion.claim_scope == VersionedObjectStateKey(_account(9), 2)
+    admission.drain_planned()
+    _admit(admission, InsertionAuthorizedWrite(_account_amend(9), _account(9), again))
+    (amendment,) = admission.composed_writes()
+    assert isinstance(amendment, InsertionAuthorizedWrite)
+    assert amendment.claim_scope == VersionedObjectStateKey(_account(9), 1)
+
+
+@pytest.mark.parametrize("flushed", [False, True], ids=["cancelled-pending", "removed-stored"])
+def test_an_inserted_objects_target_stays_refused_once_its_insertion_retires(
+    flushed: bool,
+) -> None:
+    admission = WriteAdmission(_ACCOUNT, inserted_version=lambda _entity, _from: 1, observations={})
+    identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
+    assert identity is not None
+    if flushed:
+        admission.drain_planned()
+    _admit(admission, _account_delete_through(identity))
+    admission.drain_planned()
+    assert admission.insertion_authority(identity) is NO_INSERTION_AUTHORITY
+    with pytest.raises(WriteEvidenceError) as refusal:
+        admission.admit(_account_target(9, 1), confirm_target=_confirmed)
+    assert refusal.value.code == "write-evidence-inserted"
 
 
 # --------------------------------------------------------------------------- #
@@ -526,8 +659,10 @@ def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     assert isinstance(amendment, PreparedKeyedInstruction)
-    admission = _admitted(addressed_write(value="150.00"), admitted_write(insertion, None, OBJECT))
-    identity = admission.insertion_identity(OBJECT)
+    admission = _admitted(addressed_write(value="150.00"))
+    identity = admission.admit_insert(
+        admitted_write(insertion, None, OBJECT), insertion_advice=None
+    )
     assert identity is not None
     _refused(admission, InsertionAuthorizedWrite(amendment, OBJECT, identity))
 
@@ -546,18 +681,20 @@ def _position(
     return prepared
 
 
-def _pending_august_opening() -> tuple[WriteAdmission, KeyedInsert]:
+def _pending_august_opening() -> tuple[WriteAdmission, KeyedInsert, InsertionIdentity]:
     """An admission holding a pending insertion of Position 1 over
     [August, December), disjoint from the stored [January, June) a read
-    observed."""
+    observed, and the identity buffering it issued."""
     insert = admitted_write(
         _position("insertUntil", AUG, DEC, acctNum="N", value="300.00"), None, OBJECT
     )
-    assert isinstance(insert, KeyedInsert)
-    return _admitted(insert), insert
+    admission = _admitted()
+    identity = admission.admit_insert(insert, insertion_advice=None)
+    assert identity is not None
+    return admission, insert, identity
 
 
-def _read_authorized(mutation: KeyedMutation, source: ReadEvidence) -> AdmittedWrite:
+def _read_authorized(mutation: KeyedMutation, source: ReadEvidence) -> ReadAuthorizedWrite:
     members: dict[str, object] = {"value": "150.00"} if mutation == "amendUntil" else {}
     return admitted_write(_position(mutation, MAR, MAY, **members), START, OBJECT, source=source)
 
@@ -566,7 +703,7 @@ def _read_authorized(mutation: KeyedMutation, source: ReadEvidence) -> AdmittedW
 def test_a_read_authorized_bitemporal_write_stays_apart_from_a_pending_opening(
     mutation: KeyedMutation,
 ) -> None:
-    admission, insert = _pending_august_opening()
+    admission, insert, _identity = _pending_august_opening()
     source = ReadEvidence(ENTITY, OBJECT, ParticipationToken(), START)
     outcome = admission.admit(_read_authorized(mutation, source), confirm_target=_confirmed)
     assert outcome is BufferOutcome.BUFFERED
@@ -583,10 +720,12 @@ def test_a_read_authorized_bitemporal_write_stays_apart_from_a_pending_opening(
 
 
 def _through_the_insertion(
-    admission: WriteAdmission, mutation: KeyedMutation, until: dt.datetime | None, **members: object
+    admission: WriteAdmission,
+    identity: InsertionIdentity,
+    mutation: KeyedMutation,
+    until: dt.datetime | None,
+    **members: object,
 ) -> BufferOutcome:
-    identity = admission.insertion_identity(OBJECT)
-    assert identity is not None
     write = admitted_write(
         _position(mutation, AUG, until, **members), None, OBJECT, authority=identity
     )
@@ -594,10 +733,10 @@ def _through_the_insertion(
 
 
 def test_a_write_through_the_insertion_still_composes_with_its_opening_beside_a_read() -> None:
-    admission, insert = _pending_august_opening()
+    admission, insert, identity = _pending_august_opening()
     source = ReadEvidence(ENTITY, OBJECT, ParticipationToken(), START)
     _admit(admission, _read_authorized("amendUntil", source))
-    _through_the_insertion(admission, "amendUntil", SEP, value="350.00")
+    _through_the_insertion(admission, identity, "amendUntil", SEP, value="350.00")
     opening, stored = admission.composed_writes()
     assert isinstance(opening, ComposedBitemporalOpening)
     assert opening.insert is insert
@@ -607,17 +746,17 @@ def test_a_write_through_the_insertion_still_composes_with_its_opening_beside_a_
 
 
 def test_cancelling_an_opening_leaves_a_read_authorized_write_beside_it_standing() -> None:
-    admission, _insert = _pending_august_opening()
+    admission, _insert, identity = _pending_august_opening()
     source = ReadEvidence(ENTITY, OBJECT, ParticipationToken(), START)
     _admit(admission, _read_authorized("amendUntil", source))
     (_opening, stored) = admission.composed_writes()
-    outcome = _through_the_insertion(admission, "terminate", None)
+    outcome = _through_the_insertion(admission, identity, "terminate", None)
     assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
     assert admission.composed_writes() == (stored,)
-    assert admission.insertion_identity(OBJECT) is None
+    assert admission.insertion_authority(identity) is NO_INSERTION_AUTHORITY
 
 
-def _balance_insert() -> AdmittedWrite:
+def _balance_insert() -> KeyedInsert:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("insert", "Balance", ({"id": 1, "acctNum": "N", "value": "5.00"},)),
         _BALANCE,
@@ -626,7 +765,7 @@ def _balance_insert() -> AdmittedWrite:
     return admitted_write(prepared, None, _BALANCE_OBJECT)
 
 
-def _balance_observed(mutation: KeyedMutation) -> AdmittedWrite:
+def _balance_observed(mutation: KeyedMutation) -> ReadAuthorizedWrite:
     members: dict[str, object] = {"value": "7.00"} if mutation == "amend" else {}
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)), _BALANCE
@@ -655,7 +794,7 @@ def _balance_observed(mutation: KeyedMutation) -> AdmittedWrite:
     )
 
 
-def _account_observed_delete(account_id: int, version: int) -> AdmittedWrite:
+def _account_observed_delete(account_id: int, version: int) -> ReadAuthorizedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("delete", "Account", ({"id": account_id},)), _ACCOUNT
     )
@@ -682,8 +821,8 @@ def _account_observed_delete(account_id: int, version: int) -> AdmittedWrite:
 )
 def test_a_read_authorized_amendment_still_folds_into_an_ordinary_pending_insert(
     meta: Metamodel,
-    insert: Callable[[], AdmittedWrite],
-    amendment: Callable[[], AdmittedWrite],
+    insert: Callable[[], KeyedInsert],
+    amendment: Callable[[], ReadAuthorizedWrite],
     member: str,
     value: object,
 ) -> None:
@@ -704,8 +843,8 @@ def test_a_read_authorized_amendment_still_folds_into_an_ordinary_pending_insert
 )
 def test_a_read_authorized_destruction_still_cancels_an_ordinary_pending_insert(
     meta: Metamodel,
-    insert: Callable[[], AdmittedWrite],
-    destruction: Callable[[], AdmittedWrite],
+    insert: Callable[[], KeyedInsert],
+    destruction: Callable[[], ReadAuthorizedWrite],
 ) -> None:
     admission = _admitted(insert(), meta=meta)
     outcome = admission.admit(destruction(), confirm_target=_confirmed)
@@ -733,7 +872,7 @@ def _sourced(
     valid_from: dt.datetime = MAR,
     until: dt.datetime | None = SEP,
     **members: object,
-) -> AdmittedWrite:
+) -> ReadAuthorizedWrite:
     write = observed_write(mutation, evidence, valid_from=valid_from, until=until, **members)
     return admitted_write(write.instruction, evidence, write.object_key, source=source)
 
@@ -791,8 +930,10 @@ def test_a_first_target_write_stays_alone_and_answers_its_caller_condition() -> 
 
 
 def test_a_first_write_a_flushed_insertion_authorized_stays_alone_with_its_anchor() -> None:
-    admission = _admitted(
-        admitted_write(_position("insert", FEB, None, acctNum="A", value="100.00"), None, OBJECT)
+    admission = _admitted()
+    identity = admission.admit_insert(
+        admitted_write(_position("insert", FEB, None, acctNum="A", value="100.00"), None, OBJECT),
+        insertion_advice=None,
     )
     admission.drain_planned()
     admission.complete(
@@ -802,7 +943,6 @@ def test_a_first_write_a_flushed_insertion_authorized_stays_alone_with_its_ancho
         (),
         at=1,
     )
-    identity = admission.insertion_identity(OBJECT)
     assert identity is not None
     _admit(
         admission,

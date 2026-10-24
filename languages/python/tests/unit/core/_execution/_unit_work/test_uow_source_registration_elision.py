@@ -140,6 +140,7 @@ class _Run:
         )
         assert isinstance(instruction, PreparedKeyedInstruction)
         settled = self.uow.resolve_read_evidence(entity, source, mutation=mutation, object_key=key)
+        assert settled is not None  # a write of existing state settles against something
         self.uow.buffer(admitted_write(instruction, settled, key, source=source))
 
     def insert(self, entity: str, **members: object) -> None:
@@ -147,7 +148,10 @@ class _Run:
             KeyedWriteInstruction("insert", entity, (members,)), self.meta
         )
         assert isinstance(instruction, PreparedKeyedInstruction)
-        self.uow.buffer(admitted_write(instruction, None, object_key(instruction, self.meta)))
+        self.uow.buffer_insert(
+            admitted_write(instruction, None, object_key(instruction, self.meta)),
+            insertion_advice=None,
+        )
 
     def flush(self) -> None:
         self.uow.read(lambda: None)

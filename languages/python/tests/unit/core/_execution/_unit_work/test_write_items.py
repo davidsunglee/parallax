@@ -362,8 +362,9 @@ def _position_opening() -> ComposedBitemporalOpening:
     assert isinstance(insertion, PreparedKeyedInstruction)
     assert isinstance(amendment, PreparedKeyedInstruction)
     admission = WriteAdmission(POSITION, inserted_version=_no_version, observations={})
-    admission.admit(admitted_write(insertion, None, OBJECT), confirm_target=_confirmed)
-    identity = admission.insertion_identity(OBJECT)
+    identity = admission.admit_insert(
+        admitted_write(insertion, None, OBJECT), insertion_advice=None
+    )
     assert identity is not None
     admission.admit(
         admitted_write(amendment, None, OBJECT, authority=identity), confirm_target=_confirmed

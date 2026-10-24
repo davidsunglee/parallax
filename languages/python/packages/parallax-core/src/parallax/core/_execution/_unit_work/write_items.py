@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Final, Literal
+from typing import Final, Literal, overload
 
 from parallax.core import inheritance
 from parallax.core._execution._unit_work.claims import (
@@ -424,6 +424,50 @@ type ReadAuthorizedWrite = StateObservedWrite | ObjectLockedWrite
 """One keyed write travelling with the claim its verb took for it, at either
 scope. The two share what coalescing manipulates — an instruction —
 and differ only in the grain their claims are taken at."""
+
+
+@overload
+def admitted_write(
+    instruction: PreparedKeyedInstruction,
+    evidence: None,
+    object_key: ObjectKey | None,
+    *,
+    source: ReadEvidence | None = None,
+    authority: None = None,
+) -> KeyedInsert: ...
+
+
+@overload
+def admitted_write(
+    instruction: PreparedKeyedInstruction,
+    evidence: None,
+    object_key: ObjectKey | None,
+    *,
+    source: ReadEvidence | None = None,
+    authority: InsertionIdentity,
+) -> InsertionAuthorizedWrite: ...
+
+
+@overload
+def admitted_write(
+    instruction: PreparedKeyedInstruction,
+    evidence: SettledEvidence,
+    object_key: ObjectKey | None,
+    *,
+    source: ReadEvidence | None = None,
+    authority: InsertionIdentity | None = None,
+) -> ReadAuthorizedWrite: ...
+
+
+@overload
+def admitted_write(
+    instruction: PreparedKeyedInstruction,
+    evidence: SettledEvidence | None,
+    object_key: ObjectKey | None,
+    *,
+    source: ReadEvidence | None = None,
+    authority: InsertionIdentity | None = None,
+) -> KeyedInsert | ReadAuthorizedWrite | InsertionAuthorizedWrite: ...
 
 
 def admitted_write(

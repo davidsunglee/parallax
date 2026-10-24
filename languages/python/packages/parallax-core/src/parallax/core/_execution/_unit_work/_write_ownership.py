@@ -3,19 +3,32 @@ from __future__ import annotations
 import bisect
 import datetime as dt
 import weakref
-from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import replace
 from enum import Enum
 from typing import Final, Literal, cast, final
 
+from parallax.core import temporal_read
+from parallax.core._execution._unit_work._errors import KeyedWriteValueError, UnitOfWorkError
+from parallax.core._execution._unit_work.instructions import ASSIGNMENT_MUTATIONS
 from parallax.core._execution._unit_work.retain import (
+    NO_INSERTION_AUTHORITY,
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
+    NoInsertionAuthority,
     ReadEvidence,
     RetainedObservation,
 )
+from parallax.core._execution._unit_work.write_items import (
+    ComposedBitemporalOpening,
+    InsertionAuthorizedWrite,
+    KeyedInsert,
+    ReadAuthorizedWrite,
+)
 from parallax.core.base import INFINITY, TemporalBound, retain_document_value
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval
+from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.write_plan.keys import (
     ObjectKey,
     ObjectStateKey,
@@ -32,15 +45,14 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import Finite, MaxPlusOne, SelfIncrement
 
 __all__ = [
-    "InsertionRecord",
-    "PendingInsertionState",
+    "InsertionComposition",
     "SourceRefusal",
     "SourceScope",
     "WriteOwnership",
 ]
 
-type PendingInsertionState = Literal["opening", "ended_opening"]
-"""How an insertion of the buffer stands, while the buffer links it.
+type _PendingInsertionState = Literal["opening", "ended_opening"]
+"""How an insertion of the buffer stands, while the buffer holds it.
 
 ``opening`` is the object's current insertion, still to execute, which a later
 write of the object folds into — for a Bitemporal object, only a write that
@@ -51,6 +63,22 @@ again only after that replacement.
 """
 
 
+class InsertionComposition(Enum):
+    """What composing a write into its object's still-pending insertion did to
+    that insertion.
+
+    ``SURVIVES``: the insertion still opens something and stands. ``ENDED``: a
+    Bitemporal opening its writes left nothing of, whose composed replacement
+    still reaches older stored coverage; its work stays where it is and its
+    authority ends. ``CANCELLED``: nothing of the pair remains, and the
+    insertion's authority ends with it.
+    """
+
+    SURVIVES = "survives"
+    ENDED = "ended"
+    CANCELLED = "cancelled"
+
+
 class InsertionRecord:
     """What one attempt holds about one object it inserted.
 
@@ -59,9 +87,9 @@ class InsertionRecord:
     window it was admitted with, ``None`` for an object without Valid Time — its
     start is the anchor every write it authorizes starts at. ``identity`` is the
     authority that insertion grants while it stands, and ``None`` once its
-    complete removal retired it. ``pending_position`` and ``pending_state`` link
-    the insertion to the buffer that buffered it, at its position there,
-    until the buffer drains or composition cancels it.
+    complete removal, or a composition leaving nothing of it, retired it.
+    ``pending_state`` is how the insertion stands in the buffer that buffered
+    it, until the buffer drains or composition cancels it.
 
     What survives of the object's admitted insertions is counted where it is
     stored: ``stored_count`` — the owned current rows an admission of the
@@ -70,22 +98,21 @@ class InsertionRecord:
     takes whole. ``earliest_stored_anchor`` is the earliest anchor of any
     admission whose coverage may still be stored — once a flush executes an
     insertion, its own anchor, since what an earlier admission opened was
-    removed before it — and ``advanced_from`` the version the last completed
-    update of a versioned row advanced from. ``cached_removal_window`` keeps the
-    stored removal window once it is asked for
-    (:meth:`WriteOwnership.removal_window`), until what it derives from
+    removed before it — and ``produced_version`` the version the last completed
+    update of a versioned row produced since the latest insertion opened.
+    ``cached_removal_window`` keeps the stored removal window once it is asked
+    for (:meth:`WriteOwnership._removal_window`), until what it derives from
     changes. A record lasts until the attempt ends, whatever became of the
     insertion: it is also the fact that this attempt admitted one.
     """
 
     __slots__ = (
-        "advanced_from",
         "cached_removal_window",
         "earliest_stored_anchor",
         "identity",
         "insertion_advice",
-        "pending_position",
         "pending_state",
+        "produced_version",
         "stored_count",
         "valid_time_window",
     )
@@ -95,16 +122,14 @@ class InsertionRecord:
         insertion_advice: KeyedWriteRefusalAdvice | None,
         valid_time_window: TimeInterval | None,
         identity: InsertionIdentity,
-        pending_position: int,
     ) -> None:
         self.insertion_advice = insertion_advice
         self.valid_time_window = valid_time_window
         self.identity: InsertionIdentity | None = identity
-        self.pending_position: int | None = pending_position
-        self.pending_state: PendingInsertionState | None = "opening"
+        self.pending_state: _PendingInsertionState | None = "opening"
         self.stored_count = 0
         self.earliest_stored_anchor = _window_start(valid_time_window)
-        self.advanced_from: int | None = None
+        self.produced_version: int | None = None
         self.cached_removal_window: TimeInterval | _Uncomputed = _UNCOMPUTED
 
     def set_earliest_stored_anchor(self, anchor: dt.datetime | None) -> None:
@@ -119,7 +144,6 @@ class InsertionRecord:
         return self.stored_count > 0
 
     def unlink(self) -> None:
-        self.pending_position = None
         self.pending_state = None
 
 
@@ -374,9 +398,10 @@ class _Release:
 class WriteOwnership:
     """The attempt's write-owned facts about the objects it writes.
 
-    Each target's admitted insertion, and every current temporal row the
-    attempt successfully opened, by its coordinates. A row of a Bitemporal
-    object that continues an admission standing when it opens — the
+    Each target's admitted insertion, which only this owner's named
+    transitions open, compose, plan, store, and retire, and every current
+    temporal row the attempt successfully opened, by its coordinates. A row of
+    a Bitemporal object that continues an admission standing when it opens — the
     admission's own insert, or a successor of the part of a row an admission
     contributed — is tagged with that admission's identity, and with the parts
     of it the admission contributed where that is not the whole row; a
@@ -406,7 +431,7 @@ class WriteOwnership:
 
     A source holds nothing of its ownership. ``version_after`` answers the
     version a row of an Entity holds once a completed update advanced it from a
-    version.
+    version, or, from none, the version an insert stores.
     """
 
     __slots__ = (
@@ -424,16 +449,19 @@ class WriteOwnership:
         "_records",
         "_release",
         "_tags",
+        "_temporal_facet",
         "_updating",
         "_version_after",
     )
 
     def __init__(
         self,
+        meta: Metamodel,
         *,
         version_after: Callable[[EntityIdentity, int | None], int | None],
         observations: Mapping[ObjectStateKey, RetainedObservation],
     ) -> None:
+        self._temporal_facet = temporal_read.view(meta)
         self._version_after = version_after
         self._observations = observations
         # Every registered Non-Temporal source by its evidence's identity; each
@@ -499,9 +527,6 @@ class WriteOwnership:
     ) -> Sequence[PredecessorRow]:
         rows = self._current_rows.get(_address(target)) if self._current_rows else None
         return () if rows is None else rows.overlapping(valid_time_window)
-
-    def insertion_record(self, target: ObjectKey) -> InsertionRecord | None:
-        return self._records.get(target)
 
     def register_read_evidence(
         self,
@@ -586,8 +611,11 @@ class WriteOwnership:
         each versioned state it ``advanced`` from now stands at the version it
         produced, and each object it ``destroyed`` ends every source read before
         it, so no later state of the object, a reinserted one's included,
-        revives them."""
+        revives them. A versioned row this attempt inserted stands at the
+        version produced, which a write its insertion authorizes claims from
+        then on."""
         versions = self._current_versions
+        records = self._records
         for state in advanced:
             target = state.object
             produced = self._version_after(target.entity, state.version)
@@ -595,6 +623,9 @@ class WriteOwnership:
             held = versions.get(target)
             first = held[0] if held is not None and held[1] == state.version else state.version
             versions[target] = (first, produced)
+            record = records.get(target) if records else None
+            if record is not None:
+                record.produced_version = produced
         for target in destroyed:
             self._destroyed[target] = at
             versions.pop(target, None)
@@ -605,41 +636,204 @@ class WriteOwnership:
         if self._read_registrations.get(key) is registration:
             del self._read_registrations[key]
 
-    def authorized_insertion(self, identity: InsertionIdentity) -> InsertionRecord | None:
+    def has_admitted_insertion(self, target: ObjectKey) -> bool:
+        """Whether this attempt admitted an insertion of ``target`` at all,
+        whether or not any insertion of it still stands."""
+        return target in self._records
+
+    def insertion_authority(
+        self, identity: InsertionIdentity
+    ) -> TimeInterval | NoInsertionAuthority | None:
+        """The Valid-Time window the insertion ``identity`` names was admitted
+        with while its authority stands, ``None`` for a standing insertion of
+        an object without Valid Time, or :data:`NO_INSERTION_AUTHORITY` once it
+        does not stand: never issued here, retired, or superseded by a later
+        insertion of the same object."""
+        record = self._standing(identity)
+        return NO_INSERTION_AUTHORITY if record is None else record.valid_time_window
+
+    def open_insertion(
+        self,
+        insert: KeyedInsert,
+        *,
+        pending_removal: CoverageTransform | None,
+        removes_object: bool,
+        insertion_advice: KeyedWriteRefusalAdvice | None,
+    ) -> tuple[InsertionIdentity, bool]:
+        """Open an insertion of the object ``insert`` names, superseding the
+        authority of any earlier one, and answer the identity it issues beside
+        whether the insert must follow a pending removal — or refuse a repeat,
+        with nothing changed.
+
+        A repeat is an insert of an object whose admitted insertion still
+        stands: one still pending, or one whose stored coverage survives what
+        is pending. It is refused with the advice the standing insertion's
+        opener supplied, and admitted where that opener supplied none.
+        ``removes_object`` is whether a pending write removes a Non-Temporal or
+        Transaction-Time-Only object whole, and ``pending_removal`` what the
+        pending writes of a Bitemporal object do to its existing coverage. Once
+        they remove everything the object's admissions left stored, or once
+        composition ended its pending opening, the insert is a first opening
+        again, which executes after that removal. ``insertion_advice`` is kept
+        for a repeat of this insertion.
+        """
+        target = insert.object_key
+        assert target is not None  # a key the database allocates opens no insertion
+        window = insert.instruction.valid_time_window
+        record = self._records.get(target)
+        if record is None:
+            identity = InsertionIdentity(target)
+            record = InsertionRecord(insertion_advice, window, identity)
+            self._records[target] = record
+            if window is not None:
+                self._addresses[_address(target)] = record
+            return identity, False
+        removed = self._removed_whole(record, pending_removal, removes_object)
+        if not removed and (record.pending_state == "opening" or record.has_stored_coverage):
+            advice = record.insertion_advice
+            if advice is not None:
+                raise _repeated_insert(insert, advice)
+        follows_removal = removed or record.pending_state == "ended_opening"
+        identity = InsertionIdentity(target)
+        if not record.has_stored_coverage:
+            record.set_earliest_stored_anchor(_window_start(window))
+        record.insertion_advice = insertion_advice
+        record.valid_time_window = window
+        record.identity = identity
+        record.pending_state = "opening"
+        record.produced_version = None
+        return identity, follows_removal
+
+    def apply_insertion_composition(
+        self,
+        target: ObjectKey,
+        *,
+        arriving: ReadAuthorizedWrite | InsertionAuthorizedWrite,
+        proposed_opening: ComposedBitemporalOpening | None,
+    ) -> InsertionComposition:
+        """What composing ``arriving`` into the still-pending insertion of
+        ``target`` does to that insertion, ending its authority where nothing
+        of it survives.
+
+        A Bitemporal opening is judged by ``proposed_opening``, the opening
+        with ``arriving`` composed over its coverage: it survives while some of
+        the opened coverage survives or an assignment remains, and otherwise
+        ends where a composed replacement reaches stored coverage past it, or
+        is cancelled. Any other insert takes an amendment's values in place
+        and is cancelled by any destruction, which removes all of it.
+        """
+        record = self._records[target]
+        if proposed_opening is None:
+            if arriving.instruction.mutation in ASSIGNMENT_MUTATIONS:
+                return InsertionComposition.SURVIVES
+        elif proposed_opening.survives or proposed_opening.transform.assigns:
+            return InsertionComposition.SURVIVES
+        elif proposed_opening.beyond is not None:
+            record.pending_state = "ended_opening"
+            record.identity = None
+            return InsertionComposition.ENDED
+        record.unlink()
+        record.identity = None
+        return InsertionComposition.CANCELLED
+
+    def finish_insertion_planning(
+        self, *, pending_keys: Iterable[ObjectKey], removed_objects: Iterable[ObjectKey]
+    ) -> None:
+        """End the pending lifecycle of the insertions a planned buffer held.
+
+        A pending removal of a whole Non-Temporal or Transaction-Time-Only
+        object ``removed_objects`` names leaves nothing of what its admissions
+        stored, which retires an insertion of it no longer pending. Each
+        insertion of an object ``pending_keys`` names that is still pending is
+        stored from then on, anchored at its own window's start since what an
+        earlier admission opened was removed before it; an ended opening is no
+        longer pending either.
+        """
+        records = self._records
+        for target in removed_objects:
+            record = records.get(target)
+            if record is None:
+                continue
+            if record.valid_time_window is None:
+                record.stored_count = 0
+            if record.pending_state != "opening":
+                record.identity = None
+        for target in pending_keys:
+            record = records[target]
+            if record.pending_state == "opening":
+                window = record.valid_time_window
+                if window is None:
+                    record.stored_count = 1
+                record.set_earliest_stored_anchor(None if window is None else window.start)
+            record.unlink()
+
+    def resolve_insertion_authorized_write(
+        self, write: InsertionAuthorizedWrite
+    ) -> InsertionAuthorizedWrite:
+        """``write`` while the insertion authority it carries stands, given
+        the claim scope a stored Non-Temporal row takes — the version this
+        attempt's completed updates left it at, the version an insert stores
+        where none completed, or the object itself where it is unversioned.
+        A write of a temporal object, or of one whose insertion is still
+        pending, takes none.
+
+        Raises :class:`UnitOfWorkError` once that authority no longer stands.
+        """
+        record = self._standing(write.identity)
+        instruction = write.instruction
+        target = instruction.target
+        if record is None:
+            raise UnitOfWorkError(
+                f"{target.identity.canonical}: the insertion this write was authored "
+                "through no longer stands in this unit of work"
+            )
+        if record.pending_state == "opening" or self._is_temporal(target):
+            return write
+        version = record.produced_version
+        if version is None:
+            version = self._version_after(target.identity, None)
+        key = write.object_key
+        scope = key if version is None else VersionedObjectStateKey(key, version)
+        return replace(write, claim_scope=scope)
+
+    def _standing(self, identity: InsertionIdentity) -> InsertionRecord | None:
         """The record whose standing authority ``identity`` is, if any."""
         record = self._records.get(identity.object_key)
         return record if record is not None and record.identity is identity else None
 
-    def open_insert(
-        self,
-        target: ObjectKey,
-        insertion_advice: KeyedWriteRefusalAdvice | None,
-        valid_time_window: TimeInterval | None,
-        pending_position: int,
-    ) -> InsertionRecord:
-        """Admit an insertion of ``target`` pending at ``pending_position``,
-        superseding the authority of any earlier one, and answer its record."""
-        identity = InsertionIdentity(target)
-        record = self._records.get(target)
-        if record is None:
-            record = InsertionRecord(
-                insertion_advice, valid_time_window, identity, pending_position
-            )
-            self._records[target] = record
-            if valid_time_window is not None:
-                self._addresses[_address(target)] = record
-            return record
-        if not record.has_stored_coverage:
-            record.set_earliest_stored_anchor(_window_start(valid_time_window))
-        record.insertion_advice = insertion_advice
-        record.valid_time_window = valid_time_window
-        record.identity = identity
-        record.pending_position = pending_position
-        record.pending_state = "opening"
-        record.advanced_from = None
-        return record
+    def _is_temporal(self, entity: EntityMetadata) -> bool:
+        return isinstance(
+            self._temporal_facet.shape(entity.identity),
+            temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
+        )
 
-    def removal_window(self, record: InsertionRecord) -> TimeInterval:
+    def _removed_whole(
+        self,
+        record: InsertionRecord,
+        pending_removal: CoverageTransform | None,
+        removes_object: bool,
+    ) -> bool:
+        """Whether the pending writes of ``record``'s object remove everything
+        its admissions left stored, so a further insertion of it is a first
+        opening.
+
+        An insertion still pending is never removed whole: a removal it
+        composes with folds into it, and a Bitemporal removal a read authorized
+        changes only the coverage that read observed, leaving the opening
+        standing. A Non-Temporal row is removed whole by a pending delete, and
+        so is a Transaction-Time-Only object by a termination. A Bitemporal
+        object's stored coverage lies within its removal window, which the
+        pending writes must destroy all of.
+        """
+        if record.pending_state == "opening" or not record.has_stored_coverage:
+            return False
+        if record.valid_time_window is None:
+            return removes_object
+        if pending_removal is None:
+            return False
+        return self._removal_window(record).first_uncovered(_destroyed(pending_removal)) is None
+
+    def _removal_window(self, record: InsertionRecord) -> TimeInterval:
         """The Valid Time a removal of everything a Bitemporal ``record``'s
         admissions left stored must destroy: from its earliest stored anchor to
         the latest end among the owned rows they opened, the open bound
@@ -956,6 +1150,36 @@ def _gathered(
                         continue
                 gathered.setdefault(row.coordinates, []).append((origin, shared))
     return gathered
+
+
+def _destroyed(transform: CoverageTransform) -> Iterator[TimeInterval]:
+    """The Valid-Time intervals ``transform`` destroys, ordered by start."""
+    for segment in transform.segments:
+        if segment.assigned is None:
+            window = segment.valid_time_window
+            assert window is not None  # only a Bitemporal object's coverage is asked for
+            yield window
+
+
+def _repeated_insert(insert: KeyedInsert, advice: KeyedWriteRefusalAdvice) -> KeyedWriteValueError:
+    """The refusal of ``insert``, a repeat of an insertion still standing,
+    naming the way out its opener's interface offers.
+
+    The advice is the OPENING insert's, never the refusing call's: two values
+    of one primary key open one row, so revising the refused value would
+    author a change against a value nothing buffered, and only the opening
+    interface produced a carrier the repair can name.
+    """
+    entity = insert.target.identity
+    return KeyedWriteValueError(
+        code="write-value-already-stored",
+        message=(
+            f"{entity.canonical}: {insert.instruction.mutation!r} was handed a value naming an "
+            "object this transaction already buffered an insert of, so there is no row to open; "
+            f"{advice.repeated_insert}"
+        ),
+        identity=entity,
+    )
 
 
 def _finite_valid_time(evidence: ReadEvidence) -> dt.datetime | None:
