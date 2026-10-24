@@ -14,24 +14,29 @@ database learned each fact, and when each fact is true in the world. It ships to
   relationship never runs a hidden query, so there is no lazy loading and no N+1
   surprise. See [Reading and querying](languages/python/docs/guide/03-reading.md).
 - **Transactions are explicit, and blind writes are refused.** Every write runs inside
-  `db.transact(...)`. Changing an existing row needs a reason to trust what you are
-  changing: a read in the same transaction, or a revision you state yourself. See
+  `db.transact(...)`, and Parallax refuses a blind write, one that changes a row without
+  knowing what it holds. Changing an existing row needs a licence: a read of it in the
+  same transaction, the transaction's own insert of it, or the revision you read it at,
+  stated with the write. See
   [Writing](languages/python/docs/guide/04-writing.md).
 - **Conflicts are retried for you, within a bound.** When a deadlock, or a change to a
   row the transaction read, ends an attempt, Parallax runs your whole callback again
-  against fresh reads. See [Transactions](languages/python/docs/guide/05-transactions.md).
+  against fresh reads, up to ten more times by default. See
+  [Transactions](languages/python/docs/guide/05-transactions.md).
 - **History is part of the model.** Declare an entity `TxTemporal` to keep every state the
   database held, or `Bitemporal` to also record when each fact is true. The tour below
   reads the past and corrects a window of time.
 - **Storage layout is invisible to callers.** Store an entity in ordinary columns or as
-  one JSON document per row; your queries, results and writes stay the same. See
+  one JSON document per row. For the same stored data, your queries, results and writes
+  are the same. What changes is who guards that data: the database's column
+  constraints, or Parallax checking each document as it reads it. See
   [Modeling](languages/python/docs/guide/02-modeling.md#choosing-a-storage-layout).
-- **Typed and Wire are peers.** One query returns instances of your classes or immutable,
-  serializable mappings, and both work inside the same transaction. The tour ends with
-  the same read both ways.
+- **Typed and Wire are peers.** One query returns instances of your classes or, through
+  the Wire API, immutable mappings of JSON-ready values, and both work inside the same
+  transaction. The tour ends with the same read both ways.
 - **Models evolve without a restart.** A running process can adopt a new edition of its
-  model, and each transaction uses exactly one edition. See
-  [model evolution](core/spec/m-model-evolution.md).
+  model, a changed model you publish while it runs, and each transaction uses exactly
+  one edition. See [model evolution](core/spec/m-model-evolution.md).
 - **One specification, proven against real PostgreSQL.** A language-neutral
   specification and a compatibility corpus define the behaviour, and the Python
   implementation is tested against them on a real database. See
@@ -39,8 +44,13 @@ database learned each fact, and when each fact is true in the world. It ships to
 
 ## A 60-second tour
 
+The snippets below leave out imports and the setup that gives you `db`.
+[Getting started](languages/python/docs/guide/01-getting-started.md) shows both, and each
+chapter of the guide lists the imports its examples use.
+
 Declare your entities as Pydantic classes. Annotations name each attribute and
-relationship, and a `version` attribute turns on optimistic locking.
+relationship, and an attribute declared with `optimistic_locking=True`, here `version`,
+turns on optimistic locking.
 
 <!-- example: declare-customers-and-orders -->
 ```python
@@ -114,9 +124,10 @@ def credit_limit_on_record(db: ScopedDatabase, customer_id: int, when: dt.dateti
 ```
 <!-- /example -->
 
-A `Bitemporal` entity also records when each fact is true. An amendment with `until`
-changes only its window of time. The price before and after the window is untouched, and
-the previous prices stay readable as history.
+A `Bitemporal` entity also records when each fact is true. An amendment starts at the
+time its read asked for, June here, and `until` ends it, so it changes only that window.
+The price before and after the window is untouched, and the previous prices stay
+readable as history.
 
 <!-- example: amend-a-valid-time-window -->
 ```python
@@ -138,8 +149,9 @@ def run_a_summer_sale(db: ScopedDatabase) -> None:
 ```
 <!-- /example -->
 
-The same query runs through Wire, which delivers immutable mappings in canonical form,
-ready to serialize.
+The same query runs through Wire, which delivers immutable mappings ready to serialize.
+Their names and values take Parallax's language-neutral canonical form, such as
+`customerId` for `customer_id` and a decimal as a string.
 
 <!-- example: read-through-wire -->
 ```python
