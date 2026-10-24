@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Final, cast
@@ -48,8 +48,9 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
+from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.strategy import AuditDecoration
-from parallax.core._execution._unit_work.write_items import KeyedInsert
+from parallax.core._execution._unit_work.write_items import KeyedInsert, StateObservedWrite
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep, ExecuteWriteSteps
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
@@ -178,7 +179,7 @@ class _Executions:
         del position
         uow = self.uow
         assert uow is not None
-        self.seen.append((steps, uow.freshness))
+        self.seen.append((steps, uow.source_authority.freshness))
 
     def run(self, plan: WritePlan) -> None:
         self.uow = _uow(POSITION_META, self.steps)
@@ -186,7 +187,7 @@ class _Executions:
 
 
 def _run(uow: UnitOfWork, plan: WritePlan) -> None:
-    ownership = uow._admission.ownership  # pyright: ignore[reportPrivateUsage] - the live ownership a requesting flush walks under
+    ownership = uow.source_authority.planning_ownership(concluding=False)
     uow._run_write_plan(plan, ownership=ownership, captures=True)  # pyright: ignore[reportPrivateUsage] - the flush's walk over a plan built here
 
 
@@ -226,7 +227,7 @@ def test_each_group_executes_its_own_steps_once_every_earlier_group_completed() 
         for (steps, _completed), group in zip(executions.seen, _groups(plan), strict=True)
     )
     assert [completed for _steps, completed in executions.seen] == [0, 1, 2]
-    assert executions.uow is not None and executions.uow.freshness == 3
+    assert executions.uow is not None and executions.uow.source_authority.freshness == 3
     assert statement_kinds(simulated.statements) == ["close", "close", "close"]
 
 
@@ -258,7 +259,7 @@ def test_a_group_whose_steps_fail_completes_nothing_and_no_later_group_executes(
     assert raised.value is failure
     # The earlier group stays published; the failed one publishes nothing.
     assert executions.steps.executions == 2
-    assert executions.uow is not None and executions.uow.freshness == 1
+    assert executions.uow is not None and executions.uow.source_authority.freshness == 1
     assert statement_kinds(simulated.statements) == ["close"]
 
 
@@ -364,7 +365,7 @@ def test_a_write_answered_another_number_of_keys_than_it_opens_completes_nothing
     uow = _uow(_SPANS, simulated)
     with pytest.raises(UnitOfWorkError, match=rf"opening 1 row\(s\).*{len(answered)} key\(s\)"):
         _run(uow, changing)
-    assert uow._freshness == 0  # pyright: ignore[reportPrivateUsage] - what a doomed attempt completed
+    assert uow.source_authority.is_unchanged_since(ObjectKey(Span.identity, (("id", 1),)), 0)
 
 
 def test_a_flush_whose_write_answered_the_wrong_keys_dooms_the_attempt() -> None:
@@ -446,7 +447,7 @@ def test_a_deferred_range_binds_only_once_every_earlier_write_completed() -> Non
 
     def watch(request: RowRequest) -> None:
         assert uow is not None
-        reads.append((type(request), uow.freshness, len(simulated.statements)))
+        reads.append((type(request), uow.source_authority.freshness, len(simulated.statements)))
 
     held = HeldRows(TARGET_POSITION, [rectangle(_JAN, INFINITY, "100.00")], overlapping=True)
     uow = _uow(TARGET_POSITION, simulated, rows=_Watched(held, watch))
@@ -471,11 +472,11 @@ def test_a_spans_ready_ranges_share_one_read_and_bind_together_before_their_grou
     def watch(request: RowRequest) -> None:
         assert uow is not None and isinstance(request, CoverageReadRequest)
         keys = tuple(term.key_value for term in request.terms)
-        reads.append((uow.freshness, len(simulated.statements), keys))
+        reads.append((uow.source_authority.freshness, len(simulated.statements), keys))
 
     def binding(*arguments: Any, **keywords: Any) -> BoundRange:
         assert uow is not None
-        bindings.append((uow.freshness, len(simulated.statements)))
+        bindings.append((uow.source_authority.freshness, len(simulated.statements)))
         return _BIND_RANGE(*arguments, **keywords)
 
     monkeypatch.setattr(ranges_module, "_bind_range", binding)
@@ -489,7 +490,7 @@ def test_a_spans_ready_ranges_share_one_read_and_bind_together_before_their_grou
     # executes anything or completes either.
     assert reads == [(0, 0, (1, 2))]
     assert bindings == [(0, 0), (0, 0)]
-    assert uow.freshness == 2
+    assert uow.source_authority.freshness == 2
     assert statement_kinds(simulated.statements) == ["close", "close", "insert"]
 
 
@@ -584,13 +585,16 @@ def test_planning_and_deferred_binding_borrow_the_one_ownership_view_of_their_fl
     uow = _uow(TARGET_POSITION, simulated, rows=held)
     uow.buffer(_observed_amend(2, _retained_row(2)))
     uow.buffer_target(_target(_APR, _SEP, "150.00"))
-    live = uow._admission.ownership  # pyright: ignore[reportPrivateUsage] - the ownership both stages borrow
+    authority = uow.source_authority
+    live = authority.planning_ownership(concluding=False)
     uow.flush(trigger=trigger)
     (view,) = planned
     ((ownership, published),) = bound
     assert ownership is view
     assert published
     assert (view is live) is (trigger == "read_dependency")
+    # The concluding view is one reusable wrapper of that live ownership.
+    assert authority.planning_ownership(concluding=trigger == "pre_commit") is view
 
 
 def test_a_retained_row_still_current_at_its_writes_turn_is_completed_without_a_read() -> None:
@@ -730,7 +734,9 @@ def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_l
         _PREDICATED,
     )
     assert isinstance(later, PreparedKeyedInstruction)
-    observed = uow.retain(retained_observation(amendment, _PREDICATED, observation))
+    observed = uow.source_authority.retain(
+        retained_observation(amendment, _PREDICATED, observation)
+    )
     with store.transaction(rollback=False):
         uow.buffer(admitted_write(amendment, observed, observed.key.object))
         # The predicate write executes the earlier amendment in its own flush.
@@ -777,17 +783,17 @@ def test_writes_a_span_completed_before_its_later_read_failed_stay_published_unt
 
     simulated = _simulated(SHARED_MODEL)
     uow = _uow(SHARED_MODEL, simulated, rows=acquire)
-    for key, count in parts:
-        for write in frag(ShareCols, key, count):
-            uow.buffer(write)
+    writes = [write for key, count in parts for write in frag(ShareCols, key, count)]
+    for write in writes:
+        uow.buffer(write)
     with pytest.raises(DatabaseError) as raised:
         uow.flush(trigger="pre_commit")
     assert raised.value is deadlock
     # The first write executed and completed before the second read; no
     # waiting write executed.
     assert {_close_key(statement) for statement in simulated.statements} == {1}
-    assert uow._freshness == 1  # pyright: ignore[reportPrivateUsage] - the changes a doomed attempt still holds
-    ownership = uow._admission.ownership  # pyright: ignore[reportPrivateUsage] - what the completed write published
+    assert _completed_changes(uow, writes) == [True] + [False] * (len(writes) - 1)
+    ownership = uow.source_authority.planning_ownership(concluding=False)
     for ends in ((Finite(instant=day(2)), PLANNED_INFINITY), (PLANNED_INFINITY, PLANNED_INFINITY)):
         assert ownership.owns(TemporalRowCoordinates(ShareCols.identity, (1,), ends))
     with pytest.raises(RollbackOnlyError):
@@ -820,6 +826,17 @@ def _span_uow(
     return uow, simulated
 
 
+def _completed_changes(uow: UnitOfWork, writes: Sequence[ReadAuthorizedWrite]) -> list[bool]:
+    """Whether a completed write of ``uow`` changed what each of ``writes``
+    observed, judged as a read before any change would be."""
+    changed: list[bool] = []
+    for write in writes:
+        assert isinstance(write, StateObservedWrite)
+        state = write.retained_observation.key
+        changed.append(not uow.source_authority.is_unchanged_since(state, 0))
+    return changed
+
+
 def test_a_ready_group_completes_before_the_read_its_successors_wait_for() -> None:
     parts = ((1, 1), (2, 64), (3, 1))
     stored = [row for key, count in parts for row in frag_rows(ShareCols, key, count)]
@@ -830,7 +847,7 @@ def test_a_ready_group_completes_before_the_read_its_successors_wait_for() -> No
 
     def watch(request: RowRequest) -> None:
         assert uow is not None and simulated is not None
-        seen.append((uow.freshness, len(simulated.statements)))
+        seen.append((uow.source_authority.freshness, len(simulated.statements)))
 
     uow, simulated = _span_uow(parts, _Watched(held, watch))
     uow.flush(trigger="pre_commit")
@@ -841,7 +858,7 @@ def test_a_ready_group_completes_before_the_read_its_successors_wait_for() -> No
     assert second[0] == 1
     assert [_close_key(statement) for statement in simulated.statements[: second[1]]] == [1] * 3
     assert {_close_key(statement) for statement in simulated.statements[second[1] :]} == {2, 3}
-    assert uow.freshness == 3
+    assert uow.source_authority.freshness == 3
 
 
 class _Refused(Exception):
@@ -852,16 +869,16 @@ def test_a_failing_completion_keeps_its_groups_earlier_publications_and_complete
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     refused = _Refused()
-    complete = UnitOfWork._complete_write  # pyright: ignore[reportPrivateUsage] - the completion a group applies per write
+    complete = SourceAuthority.complete_write
     completed: list[int] = []
 
-    def completing(uow: UnitOfWork, *arguments: Any) -> None:
+    def completing(authority: SourceAuthority, *arguments: Any, **keywords: Any) -> None:
         completed.append(1)
         if len(completed) == 2:
             raise refused
-        complete(uow, *arguments)
+        complete(authority, *arguments, **keywords)
 
-    monkeypatch.setattr(UnitOfWork, "_complete_write", completing)
+    monkeypatch.setattr(SourceAuthority, "complete_write", completing)
     uow, simulated = _span_uow(((1, 1), (2, 1), (3, 1)))
     with pytest.raises(_Refused) as raised:
         uow.flush(trigger="pre_commit")
@@ -869,8 +886,9 @@ def test_a_failing_completion_keeps_its_groups_earlier_publications_and_complete
     # One group executed every object's steps; only the first completed.
     assert {_close_key(statement) for statement in simulated.statements} == {1, 2, 3}
     assert len(completed) == 2
-    assert uow._freshness == 1  # pyright: ignore[reportPrivateUsage] - the changes a doomed attempt still holds
-    ownership = uow._admission.ownership  # pyright: ignore[reportPrivateUsage] - what the completed write published
+    writes = [write for key in (1, 2, 3) for write in frag(ShareCols, key, 1)]
+    assert _completed_changes(uow, writes) == [True, False, False]
+    ownership = uow.source_authority.planning_ownership(concluding=False)
     tail = (PLANNED_INFINITY, PLANNED_INFINITY)
     assert ownership.owns(TemporalRowCoordinates(ShareCols.identity, (1,), tail))
     assert not ownership.owns(TemporalRowCoordinates(ShareCols.identity, (2,), tail))
@@ -884,13 +902,14 @@ def test_a_later_writes_binding_failure_executes_and_completes_nothing_of_its_gr
     held = HeldRows(SHARED_MODEL, [*frag_rows(ShareCols, 1, 1), start, start], overlapping=True)
     simulated = _simulated(SHARED_MODEL)
     uow = _uow(SHARED_MODEL, simulated, rows=held)
-    for write in (*frag(ShareCols, 1, 1), target):
+    ready = frag(ShareCols, 1, 1)
+    for write in (*ready, target):
         uow.buffer(write)
     with pytest.raises(CardinalityCorruptionError):
         uow.flush(trigger="pre_commit")
     # Object 1 was bound beside object 2 and is ready, yet nothing executes
     # before every write of the group is bound.
     assert not simulated.statements
-    assert uow._freshness == 0  # pyright: ignore[reportPrivateUsage] - what a doomed attempt completed
+    assert _completed_changes(uow, ready) == [False]
     with pytest.raises(RollbackOnlyError):
         uow.read(lambda: None)

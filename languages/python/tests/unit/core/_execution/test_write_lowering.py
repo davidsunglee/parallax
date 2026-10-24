@@ -1830,7 +1830,7 @@ def test_a_refused_revision_fails_its_group_after_earlier_groups_completed() -> 
         run_plan(port, plan, flush, _SPANS_DOCUMENT, units=units)
     assert [call.binds[-3] for call in port.calls if isinstance(call, WriteCall)] == [1, 2]
     (uow,) = units
-    assert uow.freshness == 1
+    assert uow.source_authority.freshness == 1
 
 
 def test_the_compiler_places_no_cell_its_layout_does_not_hold() -> None:

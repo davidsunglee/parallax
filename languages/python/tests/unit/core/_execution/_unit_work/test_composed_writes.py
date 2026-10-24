@@ -17,6 +17,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.retain import ParticipationToken, ReadEvidence
+from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     StateObservedIntent,
@@ -68,6 +69,7 @@ from tests._support.planner_probes import (
     admitted_writes,
     plan_steps,
     settled_writes,
+    source_authority,
 )
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
@@ -364,9 +366,8 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
     # pending, corrected March to May through the read and August to September
     # through the insertion. The opening opens its own two pieces; the
     # correction closes the stored rectangle it observed and keeps its source.
-    admission = WriteAdmission(
-        POSITION, inserted_version=lambda _entity, _from: None, observations={}
-    )
+    authority = source_authority(POSITION, inserted_version=_unversioned)
+    admission = WriteAdmission(POSITION, authority=authority)
     confirm = _unconditioned
     identity = admission.admit_insert(
         admitted_write(
@@ -397,7 +398,7 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
             transaction_instant=instant_at("2024-10-01T00:00:00+00:00"),
             concurrency="optimistic",
             composed_writes=admission.composed_writes(),
-            ownership=admission.ownership,
+            ownership=authority.planning_ownership(concluding=False),
         )
     )
     opening, correction = settled_writes(plan)
@@ -486,25 +487,26 @@ def _unversioned(entity: EntityIdentity, advanced_from: int | None) -> int | Non
     return None
 
 
-def _admission() -> WriteAdmission:
-    return WriteAdmission(_BALANCE, inserted_version=_unversioned, observations={})
+def _admission() -> tuple[WriteAdmission, SourceAuthority]:
+    authority = source_authority(_BALANCE, inserted_version=_unversioned)
+    return WriteAdmission(_BALANCE, authority=authority), authority
 
 
-def _admitted_plan(admission: WriteAdmission) -> WritePlan:
+def _admitted_plan(admission: WriteAdmission, authority: SourceAuthority) -> WritePlan:
     return build_write_planner(_BALANCE).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
             concurrency="optimistic",
             composed_writes=admission.composed_writes(),
-            ownership=admission.ownership,
+            ownership=authority.planning_ownership(concluding=False),
         )
     )
 
 
 def test_a_superseding_destruction_follows_a_same_rank_destruction_authored_before_it() -> None:
     first, other = _balance_observation(1), _balance_observation(3)
-    admission = _admission()
+    admission, authority = _admission()
     for write in (
         _observed_balance("amend", first, value="150.00"),
         _observed_balance("terminate", other),
@@ -513,23 +515,22 @@ def test_a_superseding_destruction_follows_a_same_rank_destruction_authored_befo
         admission.admit(write, confirm_target=_unconfirmed)
     # Ordering keeps authored order among same-rank deletions, and the run's
     # destruction was authored last.
-    assert _closed(_admitted_plan(admission)) == [(3,), (1,)]
+    assert _closed(_admitted_plan(admission, authority)) == [(3,), (1,)]
 
 
 def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reinsertion() -> None:
-    admission = _admission()
+    admission, authority = _admission()
     stored = _balance_key(2)
     identity = admission.admit_insert(
         admitted_write(_balance("insert", 2, acctNum="A", value="1.00"), None, stored),
         insertion_advice=None,
     )
     admission.drain_planned()
-    admission.complete(
+    authority.complete_write(
         WriteEffects(
             opened=Openings(continued=(TemporalRowCoordinates(_ENTITY, (2,), (OPEN_END,)),))
         ),
         (),
-        at=1,
     )
     assert identity is not None
     observed = _balance_observation(1)
@@ -540,7 +541,7 @@ def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reins
         _observed_balance("terminate", observed),
     ):
         admit(admission, write)
-    removal, reinsertion, termination = _admitted_plan(admission).entries
+    removal, reinsertion, termination = _admitted_plan(admission, authority).entries
     assert isinstance(removal, SettledWrite) and removal.deferred is not None
     assert isinstance(reinsertion, WriteGroup)
     assert [type(step) for step in reinsertion.steps] == [PlannedInsert]

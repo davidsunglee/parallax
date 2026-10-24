@@ -84,7 +84,7 @@ class ReadInputs:
     Concurrency Preference, and no evidence context; a read-only transaction's
     read carries its attempt's connection and neither of the other two; a
     writable one carries the attempt's connection, the unit of work's
-    preference, and the unit of work itself as the evidence context retained
+    preference, and its source authority as the evidence context retained
     evidence indexes into. Only that last read collects Read Evidence. Either way the
     connection is the one the operation currently holds rather than anything a
     scope retains, which is what makes an operation's statements provably run
@@ -253,7 +253,7 @@ def _page_origin_collector(
     A read with no evidence context collects no Read Evidence, and neither does
     a read scanning an As-Of Axis, whose roots stand at no single observed
     state: both record nothing and build nothing. A writable attempt's other
-    reads take a fresh collector filing into that attempt's unit of work.
+    reads take a fresh collector filing into that attempt's source authority.
     """
     if evidence_context is None or scanned:
         return EMPTY_PAGE_ORIGIN_COLLECTOR

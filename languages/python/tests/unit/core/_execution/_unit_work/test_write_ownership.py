@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import datetime as dt
 import gc
+import sys
+from collections.abc import Iterator
 from decimal import Decimal
 from weakref import WeakValueDictionary
 
@@ -24,7 +26,6 @@ from parallax.core import temporal_read
 from parallax.core._execution._unit_work._errors import UnitOfWorkError
 from parallax.core._execution._unit_work._write_ownership import (
     InsertionComposition,
-    SourceRefusal,
     WriteOwnership,
 )
 from parallax.core._execution._unit_work.admission import WriteAdmission
@@ -36,8 +37,6 @@ from parallax.core._execution._unit_work.retain import (
     NO_INSERTION_AUTHORITY,
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
-    ParticipationToken,
-    ReadEvidence,
     RetainedObservation,
 )
 from parallax.core._execution._unit_work.write_items import (
@@ -67,6 +66,7 @@ from parallax.core.write_plan.plan import (
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, MaxPlusOne, PlannedRow, WriteRow
+from tests._support.planner_probes import source_authority
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import WHERE_POSITION_META
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
@@ -96,16 +96,6 @@ def _no_version(entity: EntityIdentity, advanced_from: int | None) -> int | None
     return None
 
 
-def _admission() -> WriteAdmission:
-    return WriteAdmission(_POSITION, inserted_version=_no_version, observations={})
-
-
-def _live(admission: WriteAdmission) -> WriteOwnership:
-    ownership = admission.ownership
-    assert isinstance(ownership, WriteOwnership)
-    return ownership
-
-
 def _insert(start: dt.datetime, until: dt.datetime | None = None) -> KeyedInsert:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(
@@ -123,12 +113,17 @@ def _insert(start: dt.datetime, until: dt.datetime | None = None) -> KeyedInsert
 
 def _stored(
     start: dt.datetime, until: dt.datetime | None = None
-) -> tuple[WriteAdmission, InsertionIdentity]:
-    admission = _admission()
+) -> tuple[WriteAdmission, WriteOwnership, InsertionIdentity]:
+    """A drained insertion of the object from ``start``, beside the buffer and
+    the source authority's live helper it was planned into."""
+    authority = source_authority(_POSITION, inserted_version=_no_version)
+    admission = WriteAdmission(_POSITION, authority=authority)
     identity = admission.admit_insert(_insert(start, until), insertion_advice=None)
     assert identity is not None
     admission.drain_planned()
-    return admission, identity
+    ownership = authority.planning_ownership(concluding=False)
+    assert isinstance(ownership, WriteOwnership)  # the authority's own live helper
+    return admission, ownership, identity
 
 
 def _position_endpoint(end: dt.datetime | None) -> TemporalRowCoordinates:
@@ -215,8 +210,7 @@ def _stored_through(stage: str) -> WriteOwnership:
     """An insertion stored from February, whose open row a later write bounds
     at June, then admitted again from April and drained, then reinserted
     from May and cancelled, as far as ``stage``."""
-    admission, stored = _stored(_FEB)
-    ownership = _live(admission)
+    admission, ownership, stored = _stored(_FEB)
     open_row = _position_endpoint(None)
     ownership.complete((), Openings(continued=(open_row,)))
     if stage == "open":
@@ -261,8 +255,7 @@ def test_a_stored_insertion_is_removed_whole_from_its_anchor_to_its_latest_row_e
 
 
 def test_an_insertion_keeps_only_its_own_part_of_a_merged_row_and_ends_with_it() -> None:
-    admission, identity = _stored(_JAN, _APR)
-    ownership = _live(admission)
+    _admission, ownership, identity = _stored(_JAN, _APR)
     merged = _position_endpoint(_JUN)
     ownership.complete((), Openings(shared=((merged, (TimeInterval(_JAN, _APR),)),)))
     assert ownership.continues_insertion(merged)
@@ -281,16 +274,14 @@ def test_an_insertion_keeps_only_its_own_part_of_a_merged_row_and_ends_with_it()
 def test_an_insertions_removal_ends_where_its_part_of_a_merged_row_does(
     end: dt.datetime, follows: bool
 ) -> None:
-    admission, _identity = _stored(_JAN, _APR)
-    ownership = _live(admission)
+    _admission, ownership, _identity = _stored(_JAN, _APR)
     merged = _position_endpoint(_JUN)
     ownership.complete((), Openings(shared=((merged, (TimeInterval(_JAN, _APR),)),)))
     assert _follows_removal(ownership, _JAN, end) is follows
 
 
 def test_a_row_still_holding_part_of_an_insertion_keeps_it_standing() -> None:
-    admission, identity = _stored(_JAN, _APR)
-    ownership = _live(admission)
+    _admission, ownership, identity = _stored(_JAN, _APR)
     merged = _position_endpoint(_JUN)
     ownership.complete((), Openings(shared=((merged, (TimeInterval(_JAN, _APR),)),)))
     narrowed = (TimeInterval(_FEB, _APR),)
@@ -310,8 +301,7 @@ def test_a_row_still_holding_part_of_an_insertion_keeps_it_standing() -> None:
 def test_an_insertions_part_running_on_without_end_leaves_its_removal_open(
     end: dt.datetime | TemporalBound, follows: bool
 ) -> None:
-    admission, _identity = _stored(_JAN, _APR)
-    ownership = _live(admission)
+    _admission, ownership, _identity = _stored(_JAN, _APR)
     merged = _position_endpoint(None)
     untagged = _position_endpoint(_JAN)
     ownership.complete(
@@ -322,8 +312,7 @@ def test_an_insertions_part_running_on_without_end_leaves_its_removal_open(
 
 
 def test_a_row_named_again_after_its_insertion_ended_is_no_longer_tagged() -> None:
-    admission, stored = _stored(_JAN, _APR)
-    ownership = _live(admission)
+    admission, ownership, stored = _stored(_JAN, _APR)
     row = _position_endpoint(_APR)
     ownership.complete((), Openings(continued=(row,)))
     cancelled = _cancel_reinsertion(admission, _FEB)
@@ -365,8 +354,7 @@ def test_a_repeat_of_a_standing_insertion_is_refused_with_its_openers_advice() -
 
 
 def test_a_reinsertion_supersedes_the_identity_before_it_and_issues_its_own() -> None:
-    admission, first = _stored(_FEB)
-    ownership = _live(admission)
+    _admission, ownership, first = _stored(_FEB)
     ownership.complete((), Openings(continued=(_position_endpoint(None),)))
     second, follows = ownership.open_insertion(
         _insert(_APR),
@@ -748,23 +736,33 @@ def test_an_observation_collected_while_a_completion_runs_is_pruned_once_it_is_d
     observed = _observed(_JAN)
     ownership, _index = _observing(observed)
     whole = _position_endpoint(None)
+    successor = _state(_JAN, _REVISED_AT)
+    predecessor = observed.key
+    holders = [observed]
+    del observed
+    during: list[bool] = []
+
+    def captured() -> Iterator[tuple[CurrentRowOutput, object | None]]:
+        # The derivation has recorded what the observation left; releasing its
+        # last holder now runs the origin's callback while completion runs.
+        holders.clear()
+        gc.collect()
+        during.append(ownership.demanded(successor, whole))
+        yield (_output(whole, TimeInterval(_JAN, INFINITY), "1.00"), None)
+
     ownership.complete(
         (),
         Openings(fresh=(whole,)),
         (
             _derived(
-                observed.key, TimeInterval(_JAN, INFINITY), (whole, TimeInterval(_JAN, INFINITY))
+                predecessor, TimeInterval(_JAN, INFINITY), (whole, TimeInterval(_JAN, INFINITY))
             ),
         ),
-        ((_output(whole, TimeInterval(_JAN, INFINITY), "1.00"), None),),
+        captured(),
     )
-    (origin,) = ownership._origins.values()  # pyright: ignore[reportPrivateUsage] - its one origin
-    ownership._updating = True  # pyright: ignore[reportPrivateUsage] - as a completion runs
-    ownership._prune_origin(origin)  # pyright: ignore[reportPrivateUsage] - its callback, early
-    assert _values(ownership, None) == [Decimal("1.00")]
-    ownership._updating = False  # pyright: ignore[reportPrivateUsage] - the completion ends
-    ownership._drain_prunes()  # pyright: ignore[reportPrivateUsage] - as completion drains
+    assert during == [True]
     assert _values(ownership, None) == []
+    assert not ownership.demanded(successor, whole)
 
 
 def test_clearing_releases_every_origin_and_held_row() -> None:
@@ -901,23 +899,11 @@ def test_a_row_holding_a_generated_value_is_not_held_however_a_part_reaches_it()
     assert _values(ownership, None) == []
 
 
-def test_a_stale_temporal_source_reaches_nothing_and_a_live_one_its_own_state() -> None:
-    participation = ParticipationToken()
-    observed = _observed(_JAN)
-    ownership, _index = _observing(observed)
-    fresh = ReadEvidence(_KEY.entity, _KEY, participation, observed)
-    assert ownership.resolve_source(fresh) is observed
-    # Published from rows read before a completed change, its observation was
-    # never indexed, so no completed write recorded anything of it.
-    stale = _observed(_JAN)
-    stale.invalidate()
-    assert (
-        ownership.resolve_source(ReadEvidence(_KEY.entity, _KEY, participation, stale))
-        is SourceRefusal.STALE
-    )
-
-
-def test_an_observation_collected_after_its_ownership_was_cleared_prunes_nothing() -> None:
+def test_an_observation_collected_after_its_ownership_was_cleared_prunes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unraisable: list[object] = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
     observed = _observed(_JAN)
     ownership, _index = _observing(observed)
     whole = _position_endpoint(None)
@@ -930,11 +916,12 @@ def test_an_observation_collected_after_its_ownership_was_cleared_prunes_nothing
             ),
         ),
     )
-    (origin,) = ownership._origins.values()  # pyright: ignore[reportPrivateUsage] - its one origin
     ownership.clear()
-    ownership._forget_origin(origin)  # pyright: ignore[reportPrivateUsage] - its callback, late
-    assert ownership._origins == {}  # pyright: ignore[reportPrivateUsage] - nothing came back
-    assert ownership.continues(observed, None) is None
+    del observed
+    gc.collect()
+    assert unraisable == []
+    assert ownership.continues(_observed(_JAN), None) is None
+    assert not ownership.demanded(_state(_JAN, _REVISED_AT), whole)
 
 
 def test_a_transaction_time_origin_continues_while_its_one_row_survives() -> None:
@@ -956,8 +943,7 @@ def test_a_transaction_time_origin_continues_while_its_one_row_survives() -> Non
 # The fake planning suites read answers as production does.                   #
 # --------------------------------------------------------------------------- #
 def test_the_fake_answers_only_the_part_of_an_insertion_a_row_covers() -> None:
-    admission, _identity = _stored(_JAN, _APR)
-    production = _live(admission)
+    _admission, production, _identity = _stored(_JAN, _APR)
     first, second = _position_endpoint(_APR), _position_endpoint(_JUN)
     parts = (TimeInterval(_JAN, _FEB), TimeInterval(_MAY, _JUN))
     for endpoint in (first, second):

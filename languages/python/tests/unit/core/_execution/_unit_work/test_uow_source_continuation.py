@@ -1,13 +1,14 @@
 """A Non-Temporal source's authority across this attempt's own completed writes,
-at the unit-of-work seam (`m-unit-work` *Observation ownership and lifetime*).
+at the source-authority seam (`m-unit-work` *Observation ownership and lifetime*).
 
 Each case publishes Read Evidence as a read's retention does — registered with
-the freshness its read captured — resolves it as a keyed verb does, and buffers
-the write it licenses, over simulated step execution. What it grades is which
-state each source reaches after a flush, which sources a completed write
-leaves stale or ends, and how long the attempt keeps any of that: exactly as
-long as a value or a pending or planned write reaches the evidence, and a
-planned write keeps that evidence alone of what it was buffered as.
+the attempt's source authority at the freshness its read captured — resolves
+it as a keyed verb does, and buffers the write it licenses, over simulated
+step execution. What it grades is which state each source reaches after a
+flush, which sources a completed write leaves stale or ends, and how long the
+evidence lives: exactly as long as a value or a pending or planned write
+reaches it, the authority holding none of it, and a planned write keeps that
+evidence alone of what it was buffered as.
 """
 
 from __future__ import annotations
@@ -30,10 +31,6 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work import uow as uow_module
-from parallax.core._execution._unit_work._write_ownership import (
-    SourceRefusal,
-    _ReadRegistration,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
-)
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateSelection,
@@ -119,19 +116,19 @@ def _published(
 ) -> ReadEvidence:
     """Evidence of ``key`` as a read capturing ``read_at`` publishes it: at its
     observed ``version``, or observation-free."""
-    stamp = uow.freshness if read_at is None else read_at
+    stamp = uow.source_authority.freshness if read_at is None else read_at
     observation = None
     if version is not None:
-        observation = uow.retain(
+        observation = uow.source_authority.retain(
             RetainedObservation(
                 VersionedObjectStateKey(key, version),
                 VersionObservation(observed_version=version),
-                uow.participation,
+                uow.source_authority.participation,
             ),
             read_at=stamp,
         )
-    evidence = ReadEvidence(key.entity, key, uow.participation, observation)
-    uow.register_read_evidence(evidence, read_at=stamp)
+    evidence = ReadEvidence(key.entity, key, uow.source_authority.participation, observation)
+    uow.source_authority.register_read_evidence(evidence, read_at=stamp)
     return evidence
 
 
@@ -151,7 +148,9 @@ def _write(
         meta,
     )
     assert isinstance(instruction, PreparedKeyedInstruction)
-    settled = uow.resolve_read_evidence(entity, source, mutation=mutation, object_key=key)
+    settled = uow.source_authority.resolve_read_evidence(
+        entity, source, mutation=mutation, object_key=key
+    )
     assert settled is not None  # a write of existing state settles against something
     item = admitted_write(instruction, settled, key, source=source)
     uow.buffer(item)
@@ -164,13 +163,20 @@ def _refusal(write: Callable[[], object]) -> str:
     return refused.value.code
 
 
+def _resolved(uow: UnitOfWork, meta: Metamodel, source: ReadEvidence) -> object:
+    """What an amendment through ``source`` settles against, or the code of
+    the refusal resolving it raises."""
+    entity = _entity(meta, source.entity.name)
+    try:
+        return uow.source_authority.resolve_read_evidence(
+            entity, source, mutation="amend", object_key=source.object_key
+        )
+    except WriteEvidenceError as refused:
+        return refused.code
+
+
 def _flush(uow: UnitOfWork) -> None:
     uow.read(lambda: None)
-
-
-def _registrations(uow: UnitOfWork) -> int:
-    gc.collect()
-    return sum(isinstance(held, _ReadRegistration) for held in reachable_objects(uow))
 
 
 def _account(key: int) -> ObjectKey:
@@ -189,7 +195,7 @@ def test_a_versioned_source_settles_against_the_version_its_completed_write_prod
     source = _published(uow, _account(1), version=4)
     _write(uow, _ACCOUNT, source, "amend", owner="Ada")
     _flush(uow)
-    assert uow.resolve_read_evidence(
+    assert uow.source_authority.resolve_read_evidence(
         _entity(_ACCOUNT, "Account"), source, mutation="amend", object_key=_account(1)
     ) == VersionedObjectStateKey(_account(1), 5)
     _write(uow, _ACCOUNT, source, "amend", owner="Bo")
@@ -225,7 +231,7 @@ def test_an_old_and_a_fresh_source_of_one_produced_version_share_one_claim() -> 
 
 def test_a_versioned_source_read_before_its_states_completed_change_is_stale() -> None:
     uow, _simulated = _uow(_ACCOUNT)
-    read_at = uow.freshness
+    read_at = uow.source_authority.freshness
     source = _published(uow, _account(1), version=1)
     _write(uow, _ACCOUNT, source, "amend", owner="Ada")
     _flush(uow)
@@ -240,10 +246,14 @@ def test_a_locking_versioned_source_carrying_no_observation_settles_against_noth
     # Locking needs no observation to admit the source, and the planner's
     # required-observation rule refuses the write it would settle.
     uow, _simulated = _uow(_ACCOUNT, settings=TransactionSettings(concurrency="locking"))
-    evidence = ReadEvidence(_account(1).entity, _account(1), uow.participation, None)
+    evidence = ReadEvidence(
+        _account(1).entity, _account(1), uow.source_authority.participation, None
+    )
     account = _entity(_ACCOUNT, "Account")
     assert (
-        uow.resolve_read_evidence(account, evidence, mutation="amend", object_key=_account(1))
+        uow.source_authority.resolve_read_evidence(
+            account, evidence, mutation="amend", object_key=_account(1)
+        )
         is None
     )
 
@@ -272,7 +282,7 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
 # --------------------------------------------------------------------------- #
 def test_an_unversioned_source_published_from_rows_read_before_a_keyed_update_is_stale() -> None:
     uow, simulated = _uow(_PERSON)
-    read_at = uow.freshness
+    read_at = uow.source_authority.freshness
     earlier = _published(uow, _person(1))
     _write(uow, _PERSON, earlier, "amend", name="Ada")
     _flush(uow)
@@ -289,7 +299,7 @@ def test_an_unversioned_source_published_from_rows_read_before_a_keyed_update_is
 
 def test_a_page_read_before_a_deletion_stays_stale_after_its_demand_and_a_reinsertion() -> None:
     uow, _simulated = _uow(_PERSON)
-    read_at = uow.freshness
+    read_at = uow.source_authority.freshness
     deleted = _published(uow, _person(1))
     _write(uow, _PERSON, deleted, "delete")
     _flush(uow)
@@ -312,7 +322,7 @@ def test_a_page_read_before_a_deletion_stays_stale_after_its_demand_and_a_reinse
 
 def test_every_key_a_collapsed_deletion_batch_removes_ends_its_sources() -> None:
     uow, simulated = _uow(_PERSON)
-    read_at = uow.freshness
+    read_at = uow.source_authority.freshness
     sources = [_published(uow, _person(key)) for key in (1, 2)]
     for source in sources:
         _write(uow, _PERSON, source, "delete")
@@ -332,18 +342,19 @@ def test_a_subtypes_completed_write_changes_its_concrete_entitys_object() -> Non
     uow, _simulated = _uow(_PAYMENT)
     card = corpus_object_key("CardPayment", ("id", 1))
     root = corpus_object_key("Payment", ("id", 1))
-    read_at = uow.freshness
+    read_at = uow.source_authority.freshness
     _write(uow, _PAYMENT, _published(uow, card), "amend", amount=Decimal("2.00"))
     _flush(uow)
-    assert uow._admission.resolve_source(_published(uow, card, read_at=read_at)) is (  # pyright: ignore[reportPrivateUsage] - the registration the delayed publication made
-        SourceRefusal.STALE
+    assert _resolved(uow, _PAYMENT, _published(uow, card, read_at=read_at)) == (
+        "write-evidence-consumed"
     )
-    assert uow._admission.resolve_source(_published(uow, root, read_at=read_at)) == root  # pyright: ignore[reportPrivateUsage] - the family root names another object
+    # The family root names another object, which the write did not change.
+    assert _resolved(uow, _PAYMENT, _published(uow, root, read_at=read_at)) == root
 
 
 def test_a_readless_write_neither_ends_nor_stales_a_source() -> None:
     uow, _simulated = _uow(_PERSON)
-    read_at = uow.freshness
+    read_at = uow.source_authority.freshness
     source = _published(uow, _person(1))
     predicate = prepare_typed_write(
         PredicateWriteInstruction(
@@ -364,11 +375,12 @@ def test_a_readless_write_neither_ends_nor_stales_a_source() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A registration lasts exactly as long as something reaches the evidence.     #
+# Evidence lives exactly as long as something other than the attempt holds it. #
 # --------------------------------------------------------------------------- #
-def _reinserted(uow: UnitOfWork, key: int) -> None:
+def _reinserted(uow: UnitOfWork, key: int) -> int:
     """Delete person ``key`` through a source and insert it again, both
-    completed, after which every publication of it registers its evidence."""
+    completed, answering the freshness a read captured before the deletion."""
+    before = uow.source_authority.freshness
     _write(uow, _PERSON, _published(uow, _person(key)), "delete")
     _flush(uow)
     insertion = prepare_typed_write(
@@ -377,50 +389,41 @@ def _reinserted(uow: UnitOfWork, key: int) -> None:
     assert isinstance(insertion, PreparedKeyedInstruction)
     uow.buffer_insert(admitted_write(insertion, None, _person(key)), insertion_advice=None)
     _flush(uow)
+    return before
 
 
-def test_only_a_stale_publication_or_one_of_a_deleted_object_registers() -> None:
+def test_equal_evidence_keeps_its_own_judgment_and_lifetime() -> None:
     uow, _simulated = _uow(_PERSON)
-    read_at = uow.freshness
-    held = [_published(uow, _person(key)) for key in (1, 2)]
-    _write(uow, _PERSON, held[0], "amend", name="Ada")
+    before = _reinserted(uow, 1)
+    fresh = _published(uow, _person(1))
+    stale = ReadEvidence(fresh.entity, fresh.object_key, fresh.participation, None)
+    assert stale == fresh
+    uow.source_authority.register_read_evidence(stale, read_at=before)
+    # Each judges the read that published it, whatever value it equals.
+    assert _resolved(uow, _PERSON, fresh) == _person(1)
+    assert _resolved(uow, _PERSON, stale) == "write-evidence-consumed"
+    released = weakref.ref(fresh)
+    del fresh
+    gc.collect()
+    assert released() is None
+    assert _resolved(uow, _PERSON, stale) == "write-evidence-consumed"
+    survivor = _published(uow, _person(1))
+    _write(uow, _PERSON, survivor, "amend", name="Kept")
+    lapsing = weakref.ref(stale)
+    del stale, survivor
     _flush(uow)
-    _reinserted(uow, 3)
-    assert _registrations(uow) == 0
-    held.extend(_published(uow, _person(key)) for key in (1, 2))
-    assert _registrations(uow) == 0
-    held.append(_published(uow, _person(1), read_at=read_at))
-    held.append(_published(uow, _person(3)))
-    assert _registrations(uow) == 2
-
-
-def test_equal_evidence_keeps_two_registrations_and_each_releases_with_its_last_holder() -> None:
-    uow, _simulated = _uow(_PERSON)
-    _reinserted(uow, 1)
-    first = _published(uow, _person(1))
-    second = ReadEvidence(first.entity, first.object_key, first.participation, None)
-    assert second == first
-    uow.register_read_evidence(second, read_at=uow.freshness)
-    assert _registrations(uow) == 2
-    del first
-    assert _registrations(uow) == 1
-    # The survivor keeps its own read's judgment.
-    _write(uow, _PERSON, second, "amend", name="Kept")
-    del second
-    _flush(uow)
-    assert _registrations(uow) == 0
+    gc.collect()
+    assert lapsing() is None
 
 
 def test_a_pending_or_planned_write_keeps_its_source_until_released() -> None:
-    seen: list[tuple[bool, int]] = []
-    uow: UnitOfWork | None = None
+    seen: list[bool] = []
     held: list[weakref.ref[ReadEvidence]] = []
 
     def observe(_position: int, _steps: object) -> None:
-        assert uow is not None
         if held:
             gc.collect()
-            seen.append((held[-1]() is not None, _registrations(uow)))
+            seen.append(held[-1]() is not None)
 
     simulated = SimulatedWriteSteps(build_write_planner(_PERSON).payloads, _PERSON, POSTGRES)
     uow, _ = _uow(_PERSON, ObservedSteps(simulated, observe=observe))
@@ -430,10 +433,11 @@ def test_a_pending_or_planned_write_keeps_its_source_until_released() -> None:
     _write(uow, _PERSON, source, "amend", name="Ada")
     del source
     gc.collect()
-    assert held[-1]() is not None and _registrations(uow) == 1
+    assert held[-1]() is not None
     _flush(uow)
-    assert seen == [(True, 1)]
-    assert held[-1]() is None and _registrations(uow) == 0
+    assert seen == [True]
+    gc.collect()
+    assert held[-1]() is None
 
 
 def test_a_failed_group_neither_advances_nor_ends_its_sources_and_a_traceback_holds_them() -> None:
@@ -451,7 +455,9 @@ def test_a_failed_group_neither_advances_nor_ends_its_sources_and_a_traceback_ho
     del eliminated
     with pytest.raises(RuntimeError, match="the group failed") as raised:
         _flush(uow)
-    assert uow._admission.resolve_source(source) == VersionedObjectStateKey(_account(1), 1)  # pyright: ignore[reportPrivateUsage] - nothing published for the failed group
+    # Nothing was published for the failed group: no change of what the
+    # source observed completed.
+    assert uow.source_authority.is_unchanged_since(VersionedObjectStateKey(_account(1), 1), 0)
     with pytest.raises(RollbackOnlyError):
         _flush(uow)
     del source
@@ -535,15 +541,17 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
         _POSITION,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    observation = uow.retain(
+    observation = uow.source_authority.retain(
         retained_observation(
             prepared, _POSITION, TemporalObservation(predecessor=PredecessorRow(members=rows[0]))
         )
     )
     key = observation.key.object
-    source = ReadEvidence(entity.identity, key, uow.participation, observation)
+    source = ReadEvidence(entity.identity, key, uow.source_authority.participation, observation)
     held.append(weakref.ref(source))
-    resolved = uow.resolve_read_evidence(entity, source, mutation="amend", object_key=key)
+    resolved = uow.source_authority.resolve_read_evidence(
+        entity, source, mutation="amend", object_key=key
+    )
     assert resolved is not None  # a write of existing state settles against something
     write = admitted_write(prepared, resolved, key, source=source)
     uow.buffer(write)
@@ -567,11 +575,13 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
     assert held[0]() is None
 
 
-def test_discarding_the_attempt_releases_every_registration_an_escaped_source_had() -> None:
+def test_discarding_the_attempt_forgets_what_an_escaped_source_was_judged_by() -> None:
     uow, _simulated = _uow(_PERSON)
-    _reinserted(uow, 1)
-    escaped = _published(uow, _person(1))
-    assert _registrations(uow) == 1
+    before = _reinserted(uow, 1)
+    escaped = _published(uow, _person(1), read_at=before)
+    assert _resolved(uow, _PERSON, escaped) == "write-evidence-consumed"
     uow.discard()
-    assert _registrations(uow) == 0
-    assert not any(held is uow for held in reachable_objects(escaped))
+    # Nothing this attempt completed survives it, its deletion included.
+    assert _resolved(uow, _PERSON, escaped) == _person(1)
+    reached = reachable_objects(escaped)
+    assert not any(held is uow or held is uow.source_authority for held in reached)

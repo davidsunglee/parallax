@@ -544,7 +544,7 @@ def test_retaining_read_evidence_reads_each_familys_locator_from_its_owner(
         actor_identity=TEST_ACTOR_IDENTITY,
         evidence_policy_for=opt_lock.view(meta).required_key,
     )
-    retained = retained_sources(meta, judged, evidence_context=uow)[0].observation
+    retained = retained_sources(meta, judged, evidence_context=uow.source_authority)[0].observation
 
     assert callers == []
     assert retained is not None

@@ -888,13 +888,13 @@ def _retained(
     than a second copy.
     """
     hint = judged_evidence(
-        model, entity, _SPOT_QUOTE_COLUMNS, document=document, evidence_context=uow
+        model, entity, _SPOT_QUOTE_COLUMNS, document=document, evidence_context=uow.source_authority
     )[0]
     assert hint.observation is not None
     state = TemporalObjectStateKey(ObjectKey(entity, (("id", 1),)), _SPOT_QUOTE_EDGE)
     assert hint.observation.key == state
     reread = judged_evidence(
-        model, entity, _SPOT_QUOTE_COLUMNS, document=document, evidence_context=uow
+        model, entity, _SPOT_QUOTE_COLUMNS, document=document, evidence_context=uow.source_authority
     )[0]
     assert reread.observation is hint.observation
     return hint.observation.evidence

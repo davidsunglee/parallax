@@ -12,6 +12,10 @@ a completed write holds the rows it produced only for the observations it
 changed, until those are collected. Each byte reading is a DIFFERENCE between
 two row counts or two arms, so everything a transaction costs that does not
 grow with them cancels, and an equality says nothing grows.
+
+A read's sources that have not all resolved yet keep the attempt's source
+authority as their evidence context, and through it nothing of the unit of
+work that executes the attempt's writes.
 """
 
 from __future__ import annotations
@@ -21,13 +25,21 @@ import sys
 import tracemalloc
 import weakref
 from collections.abc import Callable
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core._execution._retention import (
+    _DeferredReadEvidenceMap,  # pyright: ignore[reportPrivateUsage] - what a reachability scan names
+)
 from parallax.core._execution._unit_work._write_ownership import (
     _HeldCurrentRows,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
     _Origin,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
 )
+from parallax.core._execution._unit_work.source_authority import (
+    SourceAuthority,
+    _ReadRegistration,  # pyright: ignore[reportPrivateUsage] - what a reachability count names
+)
+from parallax.core.unit_work import UnitOfWork
 from parallax.snapshot import connect
 from parallax.snapshot._inspection import snapshot_state_of
 from tests._support import mirrored_models as mm
@@ -35,10 +47,12 @@ from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests.unit._stream_page_support import paged_reads
 from tests.unit._transact_support import FIXED, PERSON
 from tests.unit._where_position_model import WHERE_POSITION_META, WherePosition
+from tests.unit.core._execution._reach_support import reaches
 from tests.unit.core._execution._unit_work._source_continuation_scenarios import (
     BATCH,
     people_rows,
     position_rows,
+    writable_reads,
 )
 from tests.unit.memory_instruments import (
     Seam,
@@ -138,6 +152,74 @@ def test_releasing_published_sources_leaves_nothing_of_their_registrations() -> 
     kept_few = _reading(lambda: retained_increment(_released(_FEW, keeping=True)))
     kept_many = _reading(lambda: retained_increment(_released(_MANY, keeping=True)))
     assert kept_many - kept_few > kept_few - few > 0
+
+
+def _registrations() -> int:
+    gc.collect()
+    return sum(1 for held in tracked_objects() if isinstance(held, _ReadRegistration))
+
+
+@in_a_child_interpreter
+def test_only_publications_after_their_objects_deletion_register_and_only_while_held() -> None:
+    # After an unrelated completed change, a fresh read of objects no
+    # completed deletion removed registers nothing; one of objects deleted and
+    # inserted again registers each source until nothing reaches it.
+    counted: list[int] = []
+
+    def counting() -> None:
+        counted.append(_registrations())
+
+    writable_reads("unversioned", "eager", _MANY, writes="before")(counting)
+
+    def held_then_released(tx: Any) -> None:
+        held = tx.find(mm.Person.where(mm.Person.id >= 1)).results()
+        counting()
+        del held
+        counting()
+
+    _after_reinsertion(_MANY, held_then_released, Read(rows=_ROWS[_MANY]))
+    assert counted == [0, _MANY, 0]
+
+
+_SHELL_DEPTH: Final = 12
+"""Deeper than any path from a read's sources through its authority to what
+that authority holds."""
+
+
+@in_a_child_interpreter
+def test_a_streamed_reads_unresolved_sources_hold_nothing_of_the_unit_of_work() -> None:
+    rows = _ROWS[_MANY]
+    port = ScriptedAdapter(Transact(*paged_reads(rows, size=BATCH)))
+    seen: list[tuple[int, bool, bool]] = []
+
+    def run(tx: Any) -> None:
+        with tx.stream(mm.Person.where(mm.Person.id >= 1), batch_size=BATCH) as stream:
+            first = next(iter(stream))
+            gc.collect()
+            objects = tracked_objects()
+            unresolved = [
+                held
+                for held in objects
+                if isinstance(held, _DeferredReadEvidenceMap)
+                and cast("object | None", held._evidence_context) is not None  # pyright: ignore[reportPrivateUsage] - released to None once every source resolves
+            ]
+            (unit,) = (held for held in objects if isinstance(held, UnitOfWork))
+            seen.append(
+                (
+                    len(unresolved),
+                    reaches(unresolved, unit.source_authority, depth=1),
+                    any(
+                        reaches(unresolved, part, depth=_SHELL_DEPTH)
+                        for part in (unit, unit.execute_write_steps, unit.acquire_rows)
+                    ),
+                )
+            )
+            assert isinstance(unit.source_authority, SourceAuthority)
+            del first, objects, unresolved, unit
+
+    with connect(port, PERSON, clock=FixedClock(FIXED)) as root:
+        root.using_database_login().transact(run)
+    assert seen == [(1, True, False)]
 
 
 def _evidence_of(value: object) -> object:

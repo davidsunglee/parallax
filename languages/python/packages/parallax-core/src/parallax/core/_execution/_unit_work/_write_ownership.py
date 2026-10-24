@@ -6,7 +6,7 @@ import weakref
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from enum import Enum
-from typing import Final, Literal, cast, final
+from typing import Final, Literal, final
 
 from parallax.core import temporal_read
 from parallax.core._execution._unit_work._errors import KeyedWriteValueError, UnitOfWorkError
@@ -16,7 +16,6 @@ from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
     NoInsertionAuthority,
-    ReadEvidence,
     RetainedObservation,
 )
 from parallax.core._execution._unit_work.write_items import (
@@ -32,7 +31,6 @@ from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.write_plan.keys import (
     ObjectKey,
     ObjectStateKey,
-    TemporalObjectStateKey,
     VersionedObjectStateKey,
 )
 from parallax.core.write_plan.observe import PredecessorRow
@@ -46,8 +44,6 @@ from parallax.core.write_plan.steps import Finite, MaxPlusOne, SelfIncrement
 
 __all__ = [
     "InsertionComposition",
-    "SourceRefusal",
-    "SourceScope",
     "WriteOwnership",
 ]
 
@@ -168,70 +164,6 @@ type _ObjectAddress = tuple[EntityIdentity, tuple[object, ...]]
 type _InsertionTag = tuple[InsertionIdentity, tuple[TimeInterval, ...] | None]
 """The admission an owned row continues, and the parts of the row it
 contributed in order, ``None`` where it contributed the whole row."""
-
-type SourceScope = RetainedObservation | VersionedObjectStateKey | ObjectKey
-"""The protected state a source's authority reaches: the shared observation of
-a temporal source, whose writes settle against what this attempt's completed
-writes left of it; a versioned Non-Temporal row's exact state; or an
-unversioned Non-Temporal row's object, whose shared lock covers every state it
-is in."""
-
-
-class SourceRefusal(Enum):
-    """Why a source's evidence reaches no protected state.
-
-    ``STALE`` evidence was published from rows a read acquired before a
-    completed write of this attempt changed them. ``ENDED`` evidence's object a
-    completed keyed deletion of this attempt removed after its read, or, for a
-    temporal source, its completed writes left nothing of the state it observed
-    at its Valid-Time pin.
-    """
-
-    STALE = "stale"
-    ENDED = "ended"
-
-
-class _ReadRegistration(weakref.ref[ReadEvidence]):
-    """The exact weak reference one Non-Temporal Read Evidence published
-    after a completed change of this attempt is registered by.
-
-    ``key`` is the evidence's identity, which the registration is indexed by
-    and still names once the evidence is gone. ``read_at`` is the change count
-    its read captured, which places the read before or after each later
-    destruction of its object, and ``None`` for evidence its publication judged
-    stale.
-    """
-
-    __slots__ = ("key", "read_at")
-
-    key: int
-    read_at: int | None
-
-    def __new__(
-        cls,
-        evidence: ReadEvidence,
-        callback: Callable[[_ReadRegistration], object],
-        read_at: int | None,
-    ) -> _ReadRegistration:
-        registration = super().__new__(cls, evidence, callback)
-        registration.key = id(evidence)
-        registration.read_at = read_at
-        return registration
-
-    def __init__(
-        self,
-        evidence: ReadEvidence,
-        callback: Callable[[_ReadRegistration], object],
-        read_at: int | None,
-    ) -> None:
-        # The reference is made whole by __new__.
-        del evidence, callback, read_at
-
-    @property
-    def fresh_at_publication(self) -> bool:
-        """The judgment made once, when the evidence was published: whether no
-        completed write of the attempt had changed what its read acquired."""
-        return self.read_at is not None
 
 
 class _Contribution:
@@ -376,27 +308,24 @@ class _HeldCurrentRows:
 
 
 class _Release:
-    """The one callback every weak reference of an ownership shares, holding
-    its owner weakly, so neither a reference nor what it refers to keeps the
-    attempt's ownership alive."""
+    """The one callback every origin of an ownership shares, holding its
+    owner weakly, so neither an origin nor its observation keeps the attempt's
+    ownership alive."""
 
     __slots__ = ("_owner",)
 
     def __init__(self, owner: WriteOwnership) -> None:
         self._owner = weakref.ref(owner)
 
-    def __call__(self, reference: _ReadRegistration | _Origin) -> None:
+    def __call__(self, origin: _Origin) -> None:
         owner = self._owner()
-        if owner is None:
-            return
-        if isinstance(reference, _Origin):
-            owner._prune_origin(reference)  # pyright: ignore[reportPrivateUsage] - the reference's own owner
-        else:
-            owner._release_read_evidence(reference)  # pyright: ignore[reportPrivateUsage] - the reference's own owner
+        if owner is not None:
+            owner._prune_origin(origin)  # pyright: ignore[reportPrivateUsage] - the origin's own owner
 
 
 class WriteOwnership:
-    """The attempt's write-owned facts about the objects it writes.
+    """The attempt's write-owned facts about the objects it writes, which its
+    source authority keeps behind it.
 
     Each target's admitted insertion, which only this owner's named
     transitions open, compose, plan, store, and retire, and every current
@@ -408,30 +337,20 @@ class WriteOwnership:
     successor of coverage no admission opened is not. Reads add no row to it,
     so its rows follow what the attempt wrote rather than what it read.
 
-    It also answers what this attempt's completed writes did to the states its
-    sources reach, deriving every judgment from those writes rather than from
-    the reads that published the sources:
+    It also answers what this attempt's completed writes left of the
+    temporal states its sources reach, deriving every judgment from those
+    writes rather than from the reads that published the sources. A temporal
+    source's demand is the observation it shares with every other source of
+    the same state, which the authority indexes as ``observations`` while
+    some value or pending or planned write keeps it alive. Only a completed
+    write changing an observed state a live observation describes, or a row
+    descending from one, records what survives of that state — the parts of
+    current rows it contributed — and the complete state of those rows its
+    execution captured. Both are released when that observation is collected,
+    however its sources were judged.
 
-    * Each versioned Non-Temporal object a completed update advanced keeps the
-      version its first such update advanced from and the version the latest
-      produced, and each object a completed keyed deletion removed keeps when
-      that happened. Non-Temporal evidence a read published after a completed
-      change is registered by a weak identity reference with what its
-      publication judged, and its registration goes with the last value or
-      pending or planned write reaching it.
-    * A temporal source's demand is the observation it shares with every other
-      source of the same state, which the unit of work indexes as
-      ``observations`` while some value or pending or planned write keeps it
-      alive. Only a completed write changing an observed state a live
-      observation describes, or a row descending from one, records what
-      survives of that state — the parts of current rows it contributed — and
-      the complete state of those rows its execution captured. Both are
-      released when that observation is collected, however its sources were
-      judged.
-
-    A source holds nothing of its ownership. ``version_after`` answers the
-    version a row of an Entity holds once a completed update advanced it from a
-    version, or, from none, the version an insert stores.
+    A source holds nothing of its ownership. ``version_after`` answers, from
+    no version, the version an insert stores.
     """
 
     __slots__ = (
@@ -439,13 +358,10 @@ class WriteOwnership:
         "_addresses",
         "_contributions",
         "_current_rows",
-        "_current_versions",
-        "_destroyed",
         "_observations",
         "_origins",
         "_owned",
         "_pending_prunes",
-        "_read_registrations",
         "_records",
         "_release",
         "_tags",
@@ -464,14 +380,6 @@ class WriteOwnership:
         self._temporal_facet = temporal_read.view(meta)
         self._version_after = version_after
         self._observations = observations
-        # Every registered Non-Temporal source by its evidence's identity; each
-        # versioned object's protected versions, from the one its first
-        # completed update advanced from to the one its latest produced; and
-        # the change count at which a completed deletion last removed each
-        # object.
-        self._read_registrations: dict[int, _ReadRegistration] = {}
-        self._current_versions: dict[ObjectKey, tuple[int, int]] = {}
-        self._destroyed: dict[ObjectKey, int] = {}
         # Every changed observed state by its observation's identity; each
         # current row's contributions, the reverse view of the same facts; and
         # each object's captured current rows. An origin collected while a
@@ -528,113 +436,13 @@ class WriteOwnership:
         rows = self._current_rows.get(_address(target)) if self._current_rows else None
         return () if rows is None else rows.overlapping(valid_time_window)
 
-    def register_read_evidence(
-        self,
-        evidence: ReadEvidence,
-        *,
-        read_at: int,
-        current: Callable[[ObjectKey | ObjectStateKey, int], bool],
-    ) -> None:
-        """Register ``evidence`` a read capturing change count ``read_at``
-        published, judged by whether what it observed is still ``current``.
-
-        A Non-Temporal source published fresh, of an object no completed
-        deletion removed, was read before any deletion that completes later,
-        which is what unregistered evidence answers, so only the rest are
-        registered. A temporal source registers nothing: its shared
-        observation, which the unit of work indexes or refuses as stale, is
-        what any later judgment of it reads."""
-        observation = evidence.observation
-        state: VersionedObjectStateKey | ObjectKey
-        if observation is None:
-            target = state = evidence.object_key
-        elif isinstance(observation.key, VersionedObjectStateKey):
-            state = observation.key
-            target = state.object
-        else:
-            return
-        fresh = current(state, read_at)
-        if fresh and target not in self._destroyed:
-            return
-        self._read_registrations[id(evidence)] = _ReadRegistration(
-            evidence, self._release, read_at if fresh else None
-        )
-
-    def resolve_source(self, evidence: ReadEvidence) -> SourceScope | SourceRefusal:
-        """The protected state ``evidence``'s authority reaches, or why it
-        reaches none.
-
-        A temporal source reaches the state it observed while no completed
-        write changed it, and what those writes left of it while some part
-        holds its Valid-Time pin. A Non-Temporal source reaches the state it
-        observed, or the version this attempt's completed updates produced from
-        it; unregistered Non-Temporal evidence was published fresh, before any
-        completed deletion of its object, so it was read before every one of
-        them.
-        """
-        observation = evidence.observation
-        if observation is not None and isinstance(observation.key, TemporalObjectStateKey):
-            if not observation.invalidated:
-                return observation
-            reach = self.continues(observation, _finite_valid_time(evidence))
-            if reach is None:
-                return SourceRefusal.STALE
-            return observation if reach else SourceRefusal.ENDED
-        registration = self._read_registrations.get(id(evidence))
-        read_at = 0
-        if registration is not None and registration() is evidence:
-            if not registration.fresh_at_publication:
-                return SourceRefusal.STALE
-            read_at = cast("int", registration.read_at)
-        target = evidence.object_key
-        destroyed = self._destroyed.get(target) if self._destroyed else None
-        if destroyed is not None and destroyed > read_at:
-            return SourceRefusal.ENDED
-        if observation is None:
-            return target
-        observed = observation.key
-        assert isinstance(observed, VersionedObjectStateKey)  # a Non-Temporal observation
-        versions = self._current_versions.get(target)
-        if versions is None or not versions[0] <= observed.version < versions[1]:
-            return observed
-        return VersionedObjectStateKey(target, versions[1])
-
-    def continue_sources(
-        self,
-        advanced: Iterable[VersionedObjectStateKey],
-        destroyed: Iterable[ObjectKey],
-        *,
-        at: int,
-    ) -> None:
-        """Publish what one successful settled write, completing at change
-        count ``at``, did to the protected states Non-Temporal sources reach:
-        each versioned state it ``advanced`` from now stands at the version it
-        produced, and each object it ``destroyed`` ends every source read before
-        it, so no later state of the object, a reinserted one's included,
-        revives them. A versioned row this attempt inserted stands at the
-        version produced, which a write its insertion authorizes claims from
-        then on."""
-        versions = self._current_versions
-        records = self._records
-        for state in advanced:
-            target = state.object
-            produced = self._version_after(target.entity, state.version)
-            assert produced is not None  # only a versioned row advances
-            held = versions.get(target)
-            first = held[0] if held is not None and held[1] == state.version else state.version
-            versions[target] = (first, produced)
-            record = records.get(target) if records else None
-            if record is not None:
-                record.produced_version = produced
-        for target in destroyed:
-            self._destroyed[target] = at
-            versions.pop(target, None)
-
-    def _release_read_evidence(self, registration: _ReadRegistration) -> None:
-        """Forget a registration whose evidence is gone."""
-        key = registration.key
-        if self._read_registrations.get(key) is registration:
-            del self._read_registrations[key]
+    def advance_insertion_version(self, target: ObjectKey, produced: int) -> None:
+        """Record that a completed update left the versioned row of ``target``
+        at ``produced``, which a write a standing insertion of it authorizes
+        claims from then on."""
+        record = self._records.get(target) if self._records else None
+        if record is not None:
+            record.produced_version = produced
 
     def has_admitted_insertion(self, target: ObjectKey) -> bool:
         """Whether this attempt admitted an insertion of ``target`` at all,
@@ -1119,9 +927,6 @@ class WriteOwnership:
         self._addresses.clear()
         self._owned.clear()
         self._tags.clear()
-        self._read_registrations.clear()
-        self._current_versions.clear()
-        self._destroyed.clear()
         self._origins.clear()
         self._contributions.clear()
         self._current_rows.clear()
@@ -1180,14 +985,6 @@ def _repeated_insert(insert: KeyedInsert, advice: KeyedWriteRefusalAdvice) -> Ke
         ),
         identity=entity,
     )
-
-
-def _finite_valid_time(evidence: ReadEvidence) -> dt.datetime | None:
-    """The finite Valid-Time instant ``evidence``'s read was pinned at, or
-    ``None`` where it named none."""
-    pin = evidence.pin
-    valid_time = None if pin is None else pin.valid_time
-    return valid_time if isinstance(valid_time, dt.datetime) else None
 
 
 def _joined(

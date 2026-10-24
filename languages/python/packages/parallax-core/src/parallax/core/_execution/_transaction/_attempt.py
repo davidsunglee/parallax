@@ -519,7 +519,9 @@ class TxnAttempt(_TxnAttemptBase):
             actor_identity=actor,
             evidence_policy_for=write.evidence_policy_for,
         )
-        self._inputs = ReadInputs(connection, self._uow.settings.concurrency, self._uow)
+        self._inputs = ReadInputs(
+            connection, self._uow.settings.concurrency, self._uow.source_authority
+        )
 
     @property
     def uow(self) -> UnitOfWork:

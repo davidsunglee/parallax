@@ -99,7 +99,8 @@ publishes the value the row is gone."""
 
 
 class ReadEvidenceContext(Protocol):
-    """The unit of work an observing read files into, satisfied structurally.
+    """What a writable attempt's observing read files into, satisfied
+    structurally.
 
     A read needs exactly four things from a transaction — the participation
     its reads stamp, the freshness its rows were acquired at, the chance to
@@ -335,7 +336,8 @@ def defer_read_evidence(
     a temporal row carries it instead, where it answers whether the value may be
     written at all rather than which state a write settles against.
 
-    ``evidence_context`` is the participating unit of work. It supplies the
+    ``evidence_context`` is what the participating attempt files evidence
+    into. It supplies the
     participation each hint carries and answers evidence it already holds for a
     state this read saw again.
 
