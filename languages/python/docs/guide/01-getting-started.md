@@ -6,21 +6,26 @@ read. Along the way you meet the three objects every Parallax program uses: a mo
 
 ## Install
 
-Parallax needs Python 3.13 or later and a PostgreSQL server. It is not published to a
-package index yet, so build its distributions from a clone of this repository:
+Parallax needs Python 3.13 or later, [uv](https://docs.astral.sh/uv/) to build it, and a
+PostgreSQL server. It is not published to a package index yet, so clone the repository
+and build its distributions:
 
 ```bash
-cd languages/python
+git clone https://github.com/davidsunglee/parallax.git
+cd parallax/languages/python
 uv build --all-packages -o dist
 pip install --find-links dist parallax-snapshot parallax-postgres parallax-evolution
 ```
 
-`parallax-snapshot` is the API you program against, `parallax-postgres` is the
+Run the `pip install` in your application's environment. `parallax-snapshot` is the API
+you program against; it takes its name from the snapshots its reads return, the
+immutable values that `find` hands you inside a `Snapshot`. `parallax-postgres` is the
 PostgreSQL adapter, and `parallax-evolution` generates schema changes from your model.
 They bring `parallax-core` and Pydantic with them. Add `parallax-aws` if you
 authenticate to Amazon RDS with IAM.
 
-The examples in this chapter use these imports:
+Each chapter of this guide opens with the imports for every name it uses. This
+chapter's are:
 
 <!-- example: getting-started-imports -->
 ```python
@@ -31,9 +36,10 @@ from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, at
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
+from parallax.core.execution import ExecutionFailure, TxnOptions
 from parallax.evolution import ABSENT, evolve, schema_delta
 from parallax.postgres import PostgresAdapter
-from parallax.snapshot import connect
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 ```
 <!-- /example -->
 
@@ -63,9 +69,12 @@ class Order(Entity, table="orders", indices=(index("orders_customer", "customer_
 ```
 <!-- /example -->
 
-A customer has many orders, so `Customer.orders` is a relationship to `Order`. The
-`version` attribute lets Parallax detect when two transactions change the same order.
-[Modeling](02-modeling.md) explains both, along with the other building blocks.
+A customer has many orders, so `Customer.orders` is a relationship to `Order`.
+`version`, declared with `optimistic_locking=True`, lets Parallax detect when two
+transactions change the same order. You never pass it: Parallax sets it. You can also
+leave out a nullable attribute such as `email` when you construct an instance, and it is
+then `None`. [Modeling](02-modeling.md) explains all of these, along with the other
+building blocks.
 
 ## Create the tables
 
@@ -83,11 +92,18 @@ def table_statements(model: DomainModel) -> tuple[str, ...]:
 ```
 <!-- /example -->
 
-`evolve(ABSENT, ...)` describes the change from no model to this one, and
-`schema_delta` turns that change into PostgreSQL statements. When your model changes
-later, `evolve` compares the old model with the new one in the same way; the
-[model evolution](../../../../core/spec/m-model-evolution.md) reference explains which of
-those changes `schema_delta` can carry.
+`model_of(model)` takes the checked, language-neutral form of the model out of the
+`DomainModel`, which is the form `evolve` compares. `evolve(ABSENT, ...)` describes the
+change from no model to this one, and `schema_delta` turns that change into PostgreSQL
+statements. For a first try, run them in `psql` or any SQL client connected to an empty
+database. They name no schema, so the tables land in the connection's current schema,
+usually `public`.
+
+When your model changes later, `evolve` compares the model you deployed before with the
+new one, so keep a copy of each model you deploy. Exporting it as a descriptor with
+`parallax.descriptor.export_yaml`, from the `parallax-descriptor` distribution, is one
+way. The [model evolution](../../../../core/spec/m-model-evolution.md) reference explains
+which changes `schema_delta` can carry.
 
 ## Write, then read
 
@@ -116,17 +132,26 @@ The rest of this chapter walks through it.
 ### Connect
 
 `PostgresAdapter` is configuration. The connection string says where the database is,
-and `credentials` says how to log in. Keeping the password out of the connection string
-is deliberate: a string that contains one is refused. Building an adapter opens nothing,
-so you can create it once at startup and share it.
+in libpq's own syntax: `host=... dbname=...` keyword pairs, a `postgresql://` URI or a
+`service=` name. `credentials` says how to log in. Keeping the password out of the
+connection string is deliberate: building an adapter from a string that contains one
+raises `ValueError`. Building an adapter opens nothing, so you can create it once at
+startup and share it.
 
 `connect` opens the runtime, including its connection pool, and returns a `Database`
 root that owns it. Close the root when your application stops, either by calling
-`close()` or, as here, by leaving its `with` block.
+`close()` or, as here, by leaving its `with` block. `connect` also takes
+`options=TxnOptions(...)`, the defaults every transaction of the root starts from: how
+many times to retry, the isolation level and the concurrency preference.
+[Transactions](05-transactions.md) covers them.
 
-The [PostgreSQL connection lifecycle](../postgresql-lifecycle.md) guide covers what to
-decide for production: pooled or on-demand connections, credentials that refresh (such
-as RDS IAM tokens), timeouts, observing the pool, and reuse of read plans.
+One root serves the whole process. Every thread can share it and the scopes derived from
+it, while each transaction belongs to the thread that runs it. The API is synchronous;
+an `asyncio` application runs each complete operation in a worker thread, as the
+[PostgreSQL connection lifecycle](../postgresql-lifecycle.md#process-and-application-lifetime)
+guide shows. That guide also covers what to decide for production: pooled or on-demand
+connections, credentials that refresh (such as RDS IAM tokens), timeouts, observing the
+pool, and reuse of read plans.
 
 ### Choose who the work runs as
 
@@ -135,19 +160,35 @@ work runs under, which gives you a `ScopedDatabase`: an Execution Scope.
 `using_database_login()` runs everything as the login the adapter authenticated with.
 That is the usual choice for a service with its own database account.
 
-When each request should run as an application user instead, `using_principal(...)`
-derives a scope for that user. The
-[execution binding](../../spec/execution.md#models-roots-and-scopes) describes it.
+When each request should run as an application user instead, `using_principal(principal)`
+derives a scope for that user. The principal names the user, which audit records carry,
+and the database role the work runs under, which the PostgreSQL adapter switches to with
+`SET ROLE`. The
+[lifecycle guide](../postgresql-lifecycle.md#execution-authority-and-session-affinity)
+covers the PostgreSQL side, and the
+[execution binding](../../spec/execution.md#models-roots-and-scopes) describes the
+method.
 
 You can derive as many scopes from one root as you need. They share its connections.
 
 ### Write in a transaction
 
 `db.transact(callback)` runs the callback inside a transaction and commits when it
-returns. Every write happens through the `tx` argument, here `tx.insert(...)`. If the
-callback raises, nothing is committed. If the transaction fails for a reason a second
-attempt can fix, Parallax runs the callback again, which is why a transaction is a
-callback rather than a block. [Transactions](05-transactions.md) shows this.
+returns. The callback receives a `TxnContext`, here `tx`, and every write happens
+through it, here `tx.insert(...)`. Once the transaction has committed, `transact`
+returns whatever the callback returned.
+
+If the callback raises, nothing is committed, and the exception reaches you as the
+`cause` of an `ExecutionFailure`. A standalone read that fails reaches you the same way.
+
+If the transaction fails for a reason a second attempt can fix, such as a deadlock,
+Parallax rolls it back and runs the callback again. Each run is an attempt. By default
+Parallax makes up to ten more attempts, and if the last one fails too, its failure
+arrives inside an `ExecutionFailure`. That is why a transaction is a callback rather
+than a block, and why anything the callback does outside the database must be safe to
+repeat. A `db.transact` call made inside a callback joins the transaction that is
+already running rather than starting another. [Transactions](05-transactions.md) covers
+retries and nesting.
 
 ### Read
 

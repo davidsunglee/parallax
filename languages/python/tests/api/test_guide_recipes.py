@@ -11,14 +11,16 @@ import ast
 import builtins
 import contextlib
 import datetime as dt
+import io
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import guide_recipes
+from parallax.conformance import case_format, guide_models, guide_recipes
 from parallax.conformance.guide_models import (
     SHOP_MODEL,
     Address,
@@ -41,7 +43,11 @@ from parallax.conformance.guide_recipes import (
     amend_after_reading_it_again,
     cancel_an_order,
     cancel_reviewed_orders,
+    cancel_unless_changed,
+    card_payments_ending_in,
+    card_payments_over,
     change_a_credit_limit,
+    change_a_limit_shown_earlier,
     change_a_price_from,
     change_a_reviewed_limit,
     change_a_reviewed_total,
@@ -53,18 +59,26 @@ from parallax.conformance.guide_recipes import (
     credit_limit_on_record,
     current_credit_limit,
     customer_as_json,
+    customer_for_page_and_api,
     customer_with_email,
+    customer_with_their_orders,
     customers_and_orders_from_one_snapshot,
     customers_and_orders_one_read_at_a_time,
+    customers_named,
+    customers_with_a_large_recent_order,
+    customers_with_a_recent_order_and_a_large_one,
     customers_with_an_order_over,
     customers_with_an_order_over_as_wire,
     delete_the_shipments_of,
     discontinue_a_tea,
+    export_customers,
     forget_an_email_address,
     grant_a_credit_limit,
+    largest_orders_since,
     list_a_seasonal_tea,
     list_a_tea,
     look_up_a_customer,
+    orders_of,
     orders_placed_on,
     orders_with_their_customer,
     payments_for,
@@ -78,19 +92,26 @@ from parallax.conformance.guide_recipes import (
     rename_a_customer_through_wire,
     replace_contact_details,
     reprice_a_tea_for,
+    reprice_from_a_review,
     run_a_summer_sale,
     shipments_to,
     table_statements,
+    total_of_every_order,
+    who_placed,
     withdraw_a_credit_limit,
 )
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.usage_guide import snippet_sources
-from parallax.core import TX_TIME, VALID_TIME, DomainModel
+from parallax.core import LATEST, TX_TIME, VALID_TIME, DomainModel
 from parallax.core.base import INFINITY
 from parallax.core.db_port import Bind, Committed, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import model_of
-from parallax.core.execution import ExecutionFailure, TransactionTimePinReadOnlyError
+from parallax.core.execution import (
+    ExecutionFailure,
+    TransactionAccessModeError,
+    TransactionTimePinReadOnlyError,
+)
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -109,6 +130,7 @@ from parallax.postgres import PostgresAdapter
 from parallax.snapshot import (
     Database,
     NoResultFound,
+    ReadOnlyTxnContext,
     ScopedDatabase,
     TooManyResultsFound,
     TxnContext,
@@ -546,37 +568,40 @@ def test_a_transaction_time_history_lists_every_limit_held(profile_run: Any) -> 
     assert credit_limit_history(db, 1) == [(_JAN, Decimal("1000.00")), (_MAR, Decimal("2500.00"))]
 
 
-def _seed_a_price_and_a_summer_sale(profile_run: Any) -> ScopedDatabase:
-    # The price is recorded in January; the sale is recorded in May.
-    db = _shop(profile_run, clock=ScriptedClock([_JAN, _MAY]))
-    db.transact(lambda tx: tx.insert(Price(sku="TEA-1", amount=Decimal("10.00")), valid_from=_JAN))
+def _seed_the_first_three_price_transactions(profile_run: Any) -> ScopedDatabase:
+    # The worked example's first three transactions: the listing, the April rise
+    # and the summer sale, recorded on the dates Reading's timeline names.
+    db = _shop(profile_run, clock=ScriptedClock([_T1, _T3, _T4]))
+    list_a_tea(db, "TEA-1", Decimal("10.00"), _JAN)
+    change_a_price_from(db, "TEA-1", Decimal("12.00"), _APR)
     run_a_summer_sale(db)
     return db
 
 
 def test_a_bitemporal_read_answers_on_either_axis(profile_run: Any) -> None:
-    db = _seed_a_price_and_a_summer_sale(profile_run)
+    db = _seed_the_first_three_price_transactions(profile_run)
 
     assert price_on(db, "TEA-1", _JUL) == Decimal("8.00")
-    assert price_on(db, "TEA-1", _OCT) == Decimal("10.00")
-    # In March the database had not heard of the sale.
-    assert price_on_as_recorded_at(db, "TEA-1", _JUL, _MAR) == Decimal("10.00")
+    assert price_on(db, "TEA-1", _OCT) == Decimal("12.00")
+    # In March the database knew of the rise but not yet of the sale.
+    assert price_on_as_recorded_at(db, "TEA-1", _JUL, _MAR) == Decimal("12.00")
+    assert price_on_as_recorded_at(db, "TEA-1", _JUL, _JAN) == Decimal("10.00")
     assert price_on_as_recorded_at(db, "TEA-1", _JUL, _JUN) == Decimal("8.00")
 
 
 def test_a_valid_time_range_returns_each_price_in_effect(profile_run: Any) -> None:
-    db = _seed_a_price_and_a_summer_sale(profile_run)
+    db = _seed_the_first_three_price_transactions(profile_run)
 
     assert prices_during(db, "TEA-1", _MAY, _JUL) == [
-        (_JAN, Decimal("10.00")),
+        (_APR, Decimal("12.00")),
         (_JUN, Decimal("8.00")),
     ]
     # The range is half-open: one ending where September starts leaves it out.
     assert prices_during(db, "TEA-1", _JUL, _SEP) == [(_JUN, Decimal("8.00"))]
     assert prices_during(db, "TEA-1", _MAY, _OCT) == [
-        (_JAN, Decimal("10.00")),
+        (_APR, Decimal("12.00")),
         (_JUN, Decimal("8.00")),
-        (_SEP, Decimal("10.00")),
+        (_SEP, Decimal("12.00")),
     ]
 
 
@@ -655,7 +680,7 @@ _DEC = dt.datetime(2024, 12, 1, tzinfo=dt.UTC)
 
 
 def test_transaction_time_only_writes_append_milestones(profile_run: Any) -> None:
-    db = _shop(profile_run, clock=ScriptedClock([_T1, _T2, _T3]))
+    db = _shop(profile_run, clock=ScriptedClock([_T1, _T2, _T3, _T4]))
 
     grant_a_credit_limit(db, 1, Decimal("1000.00"))
     change_a_credit_limit(db, 1, Decimal("2500.00"))
@@ -685,6 +710,17 @@ def test_transaction_time_only_writes_append_milestones(profile_run: Any) -> Non
         for limit in db.find(query.history(TX_TIME)).results()
     ] == [(Decimal("1000.00"), _T1, _T2), (Decimal("2500.00"), _T2, _T3)]
 
+    # The same customer can be granted a limit again; it opens after the old ones.
+    grant_a_credit_limit(db, 1, Decimal("500.00"))
+    assert [
+        (limit.amount, limit.tx_start, limit.tx_end)
+        for limit in db.find(query.history(TX_TIME)).results()
+    ] == [
+        (Decimal("1000.00"), _T1, _T2),
+        (Decimal("2500.00"), _T2, _T3),
+        (Decimal("500.00"), _T4, INFINITY),
+    ]
+
 
 type _Milestone = tuple[Decimal, dt.datetime, object, dt.datetime, object]
 
@@ -709,6 +745,13 @@ def test_the_bitemporal_worked_example_stores_the_rows_its_timelines_draw(
 
     list_a_seasonal_tea(db, "TEA-2", Decimal("6.00"), _JUN, _SEP)
     assert _price_milestones(db, "TEA-2") == {(Decimal("6.00"), _JUN, _SEP, _T2, INFINITY)}
+    # No window of the summer blend stays open, so the latest Valid Time finds nothing.
+    latest = Price.where(Price.sku == "TEA-2").as_of(valid_time=LATEST)
+    assert db.find(latest).result_or_none() is None
+    # A Bitemporal insert must say where it starts.
+    with pytest.raises(ExecutionFailure) as refused:
+        db.transact(lambda tx: tx.insert(Price(sku="TEA-3", amount=Decimal("5.00"))))
+    assert isinstance(refused.value.cause, WriteInstructionError)
 
     change_a_price_from(db, "TEA-1", twelve, _APR)
     first_year = {
@@ -914,6 +957,193 @@ def test_wire_writes_insert_from_json_and_amend_a_node_read_in_the_transaction(
     assert (customer.name, customer.email) == ("Edsger Dijkstra", None)
 
 
+def test_a_read_only_call_inside_a_read_only_callback_joins_its_snapshot(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+    peer = own_root(connect(profile_run.port, SHOP_MODEL)).using_database_login()
+    observer = _PeerCommitsAfterTheFirstRead(
+        lambda: peer.transact(
+            lambda tx: tx.insert(
+                Order(id=13, customer_id=1, placed_on=dt.date(2024, 4, 5), total=Decimal("9.00"))
+            )
+        )
+    )
+    db = own_root(
+        connect(profile_run.port, SHOP_MODEL, lifecycle_provider=observer)
+    ).using_database_login()
+
+    customer, orders = customer_with_their_orders(db, 1)
+
+    # The peer committed after the customer was read; the joined read still sees
+    # the transaction's snapshot, while a later read of its own sees the new order.
+    assert customer.id == 1
+    assert sorted(order.id for order in orders) == [10, 11]
+    assert sorted(order.id for order in orders_of(db, 1)) == [10, 11, 13]
+
+
+def test_a_writable_call_inside_a_read_only_callback_is_refused_and_leaves_it_usable(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    def read(rtx: ReadOnlyTxnContext) -> str:
+        with pytest.raises(TransactionAccessModeError):
+            db.transact(lambda tx: None)
+        return rtx.find(Customer.where(Customer.id == 1)).result().name
+
+    assert db.read_only(read) == "Ada"
+
+
+def test_filters_sort_keys_and_a_limit_shape_a_query(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+    db.transact(
+        lambda tx: (
+            tx.insert(Customer(id=3, name="Alan", email=None)),
+            tx.insert(
+                Order(id=14, customer_id=3, placed_on=dt.date(2024, 4, 5), total=Decimal("40.00"))
+            ),
+        )
+    )
+
+    # Orders 12 and 14 tie on their total; the second sort key orders them.
+    assert [order.id for order in largest_orders_since(db, dt.date(2024, 4, 2), 2)] == [12, 14]
+    assert [order.id for order in largest_orders_since(db, dt.date(2024, 4, 2), 5)] == [
+        12,
+        14,
+        11,
+    ]
+    assert [customer.name for customer in customers_named(db, "A")] == ["Ada"]
+
+
+def test_one_quantifier_needs_one_order_to_satisfy_both_conditions(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+    since, minimum = dt.date(2024, 4, 5), Decimal("100.00")
+
+    # Ada's recent order is small and her large order is old.
+    assert customers_with_a_large_recent_order(db, since, minimum) == []
+    assert [
+        customer.name
+        for customer in customers_with_a_recent_order_and_a_large_one(db, since, minimum)
+    ] == ["Ada"]
+    assert [
+        customer.name
+        for customer in customers_with_a_large_recent_order(db, dt.date(2024, 4, 1), minimum)
+    ] == ["Ada"]
+
+
+def test_a_family_query_narrows_to_card_payments(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    db.transact(
+        lambda tx: (
+            tx.insert(
+                CardPayment(id=1, order_id=10, amount=Decimal("100.00"), card_last_four="4242")
+            ),
+            tx.insert(BankTransfer(id=2, order_id=10, amount=Decimal("50.00"), reference="INV-10")),
+            tx.insert(
+                CardPayment(id=3, order_id=11, amount=Decimal("20.00"), card_last_four="1111")
+            ),
+        )
+    )
+
+    (card,) = card_payments_ending_in(db, "4242")
+    assert (type(card), card.id) == (CardPayment, 1)
+    assert [payment.id for payment in card_payments_over(db, Decimal("30.00"))] == [1]
+    over_ten = card_payments_over(db, Decimal("10.00"))
+    assert sorted((payment.id, payment.card_last_four) for payment in over_ten) == [
+        (1, "4242"),
+        (3, "1111"),
+    ]
+
+
+def test_an_unloaded_customer_is_told_apart_from_a_missing_one(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+    db.transact(
+        lambda tx: tx.insert(
+            Order(id=15, customer_id=99, placed_on=dt.date(2024, 4, 6), total=Decimal("5.00"))
+        )
+    )
+    included = Order.where(Order.id.in_([10, 15])).include(Order.customer).order_by(Order.id.asc())
+
+    assert [who_placed(order) for order in db.find(included).results()] == ["Ada", "no customer"]
+    assert who_placed(db.find(Order.where(Order.id == 10)).result()) == "not loaded"
+
+
+@pytest.mark.parametrize("page", [1, 2, 100])
+def test_a_stream_adds_up_every_order(profile_run: Any, page: int) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    assert total_of_every_order(db, page) == Decimal("210.00")
+
+
+def test_a_wire_stream_exports_one_json_line_per_customer(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+    out = io.StringIO()
+
+    assert export_customers(db, out, 1) == 2
+
+    exported = {line["id"]: line for line in map(json.loads, out.getvalue().splitlines())}
+    assert sorted(exported) == [1, 2]
+    assert sorted(order["id"] for order in exported[1]["orders"]) == [10, 11]
+    assert exported[2]["email"] is None
+
+
+def test_a_typed_result_projects_to_the_same_graph_as_wire_data(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    customer, payload = customer_for_page_and_api(db, 1)
+
+    assert (customer.id, payload["id"], payload["name"]) == (1, 1, "Ada")
+    orders = cast("Sequence[WireEntity]", payload["orders"])
+    assert sorted(cast("int", order["id"]) for order in orders) == sorted(
+        order.id for order in customer.orders
+    )
+
+
+def test_a_bitemporal_target_write_states_the_milestone_its_review_read(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run, clock=ScriptedClock([_T1, _T3, _T4]))
+    list_a_tea(db, "TEA-1", Decimal("10.00"), _JAN)
+    reviewed = db.find(Price.where(Price.sku == "TEA-1").as_of(valid_time=_APR)).result()
+
+    reprice_from_a_review(db, reviewed, Decimal("12.00"), _APR)
+
+    assert _price_milestones(db, "TEA-1") == {
+        (Decimal("10.00"), _JAN, INFINITY, _T1, _T3),
+        (Decimal("10.00"), _JAN, _APR, _T3, INFINITY),
+        (Decimal("12.00"), _APR, INFINITY, _T3, INFINITY),
+    }
+    with pytest.raises(ExecutionFailure) as refused:
+        reprice_from_a_review(db, reviewed, Decimal("13.00"), _APR)
+    assert isinstance(refused.value.cause, WritePreconditionError)
+    assert refused.value.cause.expected == _T1
+
+
+def test_a_wire_target_write_states_the_milestone_an_earlier_wire_read_showed(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run, clock=ScriptedClock([_T1, _T2, _T3]))
+    grant_a_credit_limit(db, 1, Decimal("1000.00"))
+    shown = db.wire.find(CreditLimit.where(CreditLimit.customer_id == 1)).result()
+
+    change_a_limit_shown_earlier(db, shown, "1500.00")
+
+    assert current_credit_limit(db, 1) == Decimal("1500.00")
+    with pytest.raises(ExecutionFailure) as refused:
+        change_a_limit_shown_earlier(db, shown, "2000.00")
+    assert isinstance(refused.value.cause, WritePreconditionError)
+    assert current_credit_limit(db, 1) == Decimal("1500.00")
+
+
 # --------------------------------------------------------------------------- #
 # Database-free run-through of every recipe body.                              #
 # --------------------------------------------------------------------------- #
@@ -974,6 +1204,7 @@ _PRODUCT_ROW: Mapping[str, object] = {
     "payload": {"name": "Green tea", "description": None},
 }
 _DAMAGED_PRODUCT_ROW: Mapping[str, object] = {"sku": "TEA-2", "payload": {"description": "Oolong"}}
+_NO_ROWS: Sequence[Mapping[str, object]] = ()
 
 
 def test_the_first_program_runs_through_the_shipped_surface() -> None:
@@ -1157,6 +1388,56 @@ def _rename_customer_one_through_wire(db: ScopedDatabase) -> None:
     rename_a_customer_through_wire(db, 1, "Ada King")
 
 
+def _customer_one_with_their_orders(db: ScopedDatabase) -> object:
+    return customer_with_their_orders(db, 1)
+
+
+def _largest_orders_since_april(db: ScopedDatabase) -> list[Order]:
+    return largest_orders_since(db, dt.date(2024, 4, 1), 2)
+
+
+def _customers_named_a(db: ScopedDatabase) -> list[Customer]:
+    return customers_named(db, "A")
+
+
+def _customers_with_a_large_recent_order(db: ScopedDatabase) -> list[Customer]:
+    return customers_with_a_large_recent_order(db, dt.date(2024, 4, 1), Decimal("100.00"))
+
+
+def _customers_with_a_recent_order_and_a_large_one(db: ScopedDatabase) -> list[Customer]:
+    return customers_with_a_recent_order_and_a_large_one(db, dt.date(2024, 4, 1), Decimal("100.00"))
+
+
+def _card_payments_ending_in_4242(db: ScopedDatabase) -> list[Payment]:
+    return card_payments_ending_in(db, "4242")
+
+
+def _card_payments_over_ten(db: ScopedDatabase) -> list[CardPayment]:
+    return card_payments_over(db, Decimal("10.00"))
+
+
+def _total_of_every_order(db: ScopedDatabase) -> Decimal:
+    return total_of_every_order(db, 10)
+
+
+def _export_customers(db: ScopedDatabase) -> int:
+    return export_customers(db, io.StringIO(), 10)
+
+
+def _customer_one_for_page_and_api(db: ScopedDatabase) -> object:
+    return customer_for_page_and_api(db, 1)
+
+
+def _reprice_a_reviewed_tea(db: ScopedDatabase) -> None:
+    reviewed = db.find(Price.where(Price.sku == "TEA-1").as_of(valid_time=_APR)).result()
+    reprice_from_a_review(db, reviewed, Decimal("12.00"), _APR)
+
+
+def _change_a_limit_shown_earlier(db: ScopedDatabase) -> None:
+    shown = db.wire.find(CreditLimit.where(CreditLimit.customer_id == 1)).result()
+    change_a_limit_shown_earlier(db, shown, "1500.00")
+
+
 @pytest.mark.parametrize(
     ("recipe", "reads"),
     [
@@ -1237,12 +1518,55 @@ def _rename_customer_one_through_wire(db: ScopedDatabase) -> None:
         pytest.param(_delete_order_tens_shipments, (), id="predicate-delete"),
         pytest.param(_add_edsger_from_json, (), id="wire-insert"),
         pytest.param(_rename_customer_one_through_wire, ([_CUSTOMER_ROW],), id="wire-amend"),
+        pytest.param(
+            _customer_one_with_their_orders, ([_CUSTOMER_ROW], [_ORDER_ROW]), id="read-only-join"
+        ),
+        pytest.param(_largest_orders_since_april, ([_ORDER_ROW],), id="sort-and-limit"),
+        pytest.param(_customers_named_a, ([_CUSTOMER_ROW],), id="combined-predicates"),
+        pytest.param(_customers_with_a_large_recent_order, ([_CUSTOMER_ROW],), id="one-quantifier"),
+        pytest.param(
+            _customers_with_a_recent_order_and_a_large_one, ([_CUSTOMER_ROW],), id="two-quantifiers"
+        ),
+        pytest.param(_card_payments_ending_in_4242, (), id="is-a-narrowing"),
+        pytest.param(_card_payments_over_ten, (), id="narrow-clause"),
+        pytest.param(_total_of_every_order, ([_ORDER_ROW],), id="typed-stream"),
+        pytest.param(_export_customers, ([_CUSTOMER_ROW], [_ORDER_ROW]), id="wire-stream"),
+        pytest.param(
+            _customer_one_for_page_and_api, ([_CUSTOMER_ROW], [_ORDER_ROW]), id="wire-projection"
+        ),
+        pytest.param(
+            _reprice_a_reviewed_tea, ([_PRICE_ROW], [_PRICE_ROW]), id="bitemporal-target-write"
+        ),
+        pytest.param(
+            _change_a_limit_shown_earlier,
+            ([_CREDIT_LIMIT_ROW], [_CREDIT_LIMIT_ROW]),
+            id="wire-target-tx-start",
+        ),
     ],
 )
 def test_every_recipe_runs_through_the_shipped_surface(
     recipe: Callable[[ScopedDatabase], object], reads: tuple[Sequence[Mapping[str, object]], ...]
 ) -> None:
     recipe(own_root(Database.connect(_ScriptedPort(*reads), SHOP_MODEL)).using_database_login())
+
+
+@pytest.mark.parametrize(
+    ("include", "reads", "named"),
+    [
+        pytest.param(False, ([_ORDER_ROW],), "not loaded", id="not-included"),
+        pytest.param(True, ([_ORDER_ROW], [_CUSTOMER_ROW]), "Ada", id="customer"),
+        pytest.param(True, ([_ORDER_ROW], _NO_ROWS), "no customer", id="no-customer"),
+    ],
+)
+def test_naming_who_placed_an_order_runs_through_the_shipped_surface(
+    include: bool, reads: tuple[Sequence[Mapping[str, object]], ...], named: str
+) -> None:
+    db = own_root(Database.connect(_ScriptedPort(*reads), SHOP_MODEL)).using_database_login()
+    query = Order.where(Order.id == 10)
+
+    order = db.find(query.include(Order.customer) if include else query).result()
+
+    assert who_placed(order) == named
 
 
 class _WriteFailsPort(_ScriptedPort):
@@ -1292,7 +1616,11 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             amend_after_reading_it_again,
             cancel_an_order,
             cancel_reviewed_orders,
+            cancel_unless_changed,
+            card_payments_ending_in,
+            card_payments_over,
             change_a_credit_limit,
+            change_a_limit_shown_earlier,
             change_a_price_from,
             change_a_reviewed_limit,
             change_a_reviewed_total,
@@ -1304,18 +1632,26 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             credit_limit_on_record,
             current_credit_limit,
             customer_as_json,
+            customer_for_page_and_api,
             customer_with_email,
+            customer_with_their_orders,
             customers_and_orders_from_one_snapshot,
             customers_and_orders_one_read_at_a_time,
+            customers_named,
+            customers_with_a_large_recent_order,
+            customers_with_a_recent_order_and_a_large_one,
             customers_with_an_order_over,
             customers_with_an_order_over_as_wire,
             delete_the_shipments_of,
             discontinue_a_tea,
+            export_customers,
             forget_an_email_address,
             grant_a_credit_limit,
+            largest_orders_since,
             list_a_seasonal_tea,
             list_a_tea,
             look_up_a_customer,
+            orders_of,
             orders_placed_on,
             orders_with_their_customer,
             payments_for,
@@ -1329,9 +1665,12 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             rename_a_customer_through_wire,
             replace_contact_details,
             reprice_a_tea_for,
+            reprice_from_a_review,
             run_a_summer_sale,
             shipments_to,
             table_statements,
+            total_of_every_order,
+            who_placed,
             withdraw_a_credit_limit,
         )
     )
@@ -1348,26 +1687,50 @@ def _bound_and_loaded(source: str) -> tuple[set[str], set[str]]:
             bound.add(node.name)
         elif isinstance(node, ast.arg):
             bound.add(node.arg)
+        elif isinstance(node, ast.ExceptHandler) and node.name is not None:
+            bound.add(node.name)
         elif isinstance(node, ast.Name):
             (bound if isinstance(node.ctx, ast.Store) else loaded).add(node.id)
     return bound, loaded
 
 
-def test_the_getting_started_imports_bind_every_name_its_snippets_read() -> None:
-    # Getting started is the one page a reader copies whole, so its import block
-    # has to resolve and has to cover every name the snippets after it use.
-    sources = snippet_sources()
-    imports = sources["getting-started-imports"]
-    exec(compile(imports, "getting-started-imports", "exec"), {})
-    shown = "\n\n".join(
-        sources[source_id]
-        for source_id in (
-            "getting-started-imports",
-            "declare-customers-and-orders",
-            "create-tables-from-the-model",
-            "connect-and-run-a-first-transaction",
-        )
-    )
-    bound, loaded = _bound_and_loaded(shown)
+_GUIDE = case_format.find_repo_root() / "languages" / "python" / "docs" / "guide"
+_MARKER = re.compile(r"<!-- example: ([a-z0-9][a-z0-9-]*) -->")
+_EXAMPLE_BLOCK = re.compile(r"<!-- example: .*?<!-- /example -->", re.DOTALL)
+_CODE_SPAN = re.compile(r"`([^`\n]+)`")
+_SHOP_MODEL_NAMES: frozenset[str] = frozenset(guide_models.__all__) - {"SHOP_MODEL"}
+_NOTHING_ASSUMED: frozenset[str] = frozenset()
 
-    assert loaded - bound - set(dir(builtins)) == set()
+
+@pytest.mark.parametrize(
+    ("chapter", "imports_id", "assumed"),
+    [
+        pytest.param("01-getting-started.md", "getting-started-imports", _NOTHING_ASSUMED, id="01"),
+        pytest.param("02-modeling.md", "modeling-imports", _NOTHING_ASSUMED, id="02"),
+        pytest.param("03-reading.md", "reading-imports", _SHOP_MODEL_NAMES, id="03"),
+        pytest.param("04-writing.md", "writing-imports", _SHOP_MODEL_NAMES, id="04"),
+    ],
+)
+def test_each_chapters_imports_bind_what_its_snippets_read_and_only_what_it_names(
+    chapter: str, imports_id: str, assumed: frozenset[str]
+) -> None:
+    # A reader finds every name a chapter uses in its imports block. The block
+    # has to resolve, cover every name the chapter's snippets read beyond the
+    # shop model the later chapters assume, and import nothing the chapter
+    # neither reads in a snippet nor names in its prose.
+    text = (_GUIDE / chapter).read_text(encoding="utf-8")
+    sources = snippet_sources()
+    marked = _MARKER.findall(text)
+    assert imports_id in marked
+    imports = sources[imports_id]
+    exec(compile(imports, imports_id, "exec"), {})
+    bound, loaded = _bound_and_loaded("\n\n".join(sources[source_id] for source_id in marked))
+    imported, _ = _bound_and_loaded(imports)
+    named = {
+        name
+        for span in _CODE_SPAN.findall(_EXAMPLE_BLOCK.sub("", text))
+        for name in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", span)
+    }
+
+    assert loaded - bound - set(dir(builtins)) - assumed == set()
+    assert imported - loaded - named == set()

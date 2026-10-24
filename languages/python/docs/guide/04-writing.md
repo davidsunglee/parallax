@@ -22,7 +22,24 @@ accept them.
 This chapter starts with the simplest temporality profile and adds time one axis at a
 time: Non-Temporal entities, then Transaction-Time-Only, then Bitemporal. After that it
 covers target writes, predicate writes and writing through Wire. The examples use the
-shop model from [Modeling](02-modeling.md).
+shop model from [Modeling](02-modeling.md) and these imports:
+
+<!-- example: writing-imports -->
+```python
+import datetime as dt
+import json
+from decimal import Decimal
+
+from parallax.core import LATEST, Attr, Bitemporal, Edge, TxTemporal, attr
+from parallax.core.execution import ExecutionFailure, TransactionTimePinReadOnlyError
+from parallax.core.unit_work import (
+    InstructionRejectedError,
+    WriteEvidenceError,
+    WritePreconditionError,
+)
+from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of
+```
+<!-- /example -->
 
 ## Non-Temporal entities
 
@@ -87,8 +104,9 @@ or not, so the second function writes `email` too.
 For a value read in the same transaction, the two end in the same stored state, because
 the members you didn't edit already hold their stored values. `replace` matters when the
 state comes from somewhere else. A Wire document or a target write's payload states a
-whole state, and `replace` writes every member it leaves out as empty. Over a window of
-Valid Time, `replace` also fills Valid Time that nothing covered, as
+whole state, and `replace` completes any member it leaves out: a nullable member is
+written as null, a list as empty, and a required member left out is refused. Over a
+window of Valid Time, `replace` also fills Valid Time that nothing covered, as
 [Bitemporal entities](#bitemporal-entities) shows.
 
 When the new value is computed from the old one, you can pass `Attr.set(...)`
@@ -140,12 +158,13 @@ Until then, other transactions can still read the customer but can't change it, 
 row your write applies to is the row you read.
 
 `Order` declares a `version`. Its read takes no lock; it records the version it saw, and
-the write applies only if the order still has that version. Parallax advances the
-version on every write, so after `add_to_an_order` the order's version is 2. If another
-transaction changed the order between your read and your write, the write conflicts, and
-Parallax rolls the transaction back and runs your callback again against fresh reads.
-[Transactions](05-transactions.md) explains that replay, and how a transaction can
-choose to lock versioned entities too.
+the write applies only if the order still has that version. Parallax sets the version
+to 1 on insert and advances it on every write, so after `add_to_an_order` the order's
+version is 2. If another transaction changed the order between your read and your write,
+the write conflicts, and Parallax rolls the transaction back and runs your callback
+again against fresh reads. A transaction can also prefer the locking strategy for
+versioned entities, with `db.transact(callback, concurrency="locking")`.
+[Transactions](05-transactions.md) explains that replay and that choice.
 
 A value read outside the transaction licenses nothing, whichever kind of entity it
 belongs to. [Reading](03-reading.md#youll-write-what-you-read) shows the refusal, and
@@ -157,6 +176,11 @@ A `TxTemporal` entity, such as `CreditLimit`, keeps every state it has held. An 
 opens its first milestone. After that, a write never changes a committed milestone's
 values: it closes the current milestone at the transaction's instant and chains what
 follows it.
+
+The transaction's instant is one timestamp per attempt, taken from the clock of the
+process running Parallax, not the database's, when the attempt first sends a write that
+needs it. Every row the attempt closes or opens uses that instant, and a retry takes a
+fresh one.
 
 <!-- example: change-a-credit-limit -->
 ```python
@@ -181,9 +205,8 @@ def change_a_credit_limit(db: ScopedDatabase, customer_id: int, amount: Decimal)
 ```
 <!-- /example -->
 
-Suppose the limit is granted in a transaction that commits on 15 December 2023 and
-changed in one on 10 January 2024. The table then holds two rows, one for each
-milestone:
+Suppose the limit is granted by a transaction on 15 December 2023 and changed by one on
+10 January 2024. The table then holds two rows, one for each milestone:
 
 ```text
 amount      tx_start      tx_end
@@ -195,7 +218,9 @@ The amendment closed the first milestone by setting its `tx_end`, and chained th
 second, which is current: its `tx_end` is open, shown as ∞. The first milestone's
 values are untouched. `replace` chains the same way, with a successor that states the
 whole writable state. No write ever edits a closed milestone, which is what makes a read
-of the past stable.
+of the past stable. Two amendments of one limit in the same transaction still add only
+one milestone: the second revises the milestone the first opened, which no other
+transaction has seen.
 
 `terminate` closes the current milestone and chains nothing after it:
 
@@ -221,7 +246,8 @@ amount      tx_start      tx_end
 ```
 
 A read of the latest state now finds no limit, while a read as of 1 February still
-answers 2500.00, and history still lists both milestones. `tx.delete` is refused for a
+answers 2500.00, and history still lists both milestones. Inserting a limit for the same
+customer later opens a new current milestone after them. `tx.delete` is refused for a
 temporal entity, because it would remove rows; the error names `terminate` instead.
 
 ## Bitemporal entities
@@ -239,8 +265,9 @@ for `--->`, and its `tx_start` and `tx_end`. A row whose `tx_end` is ∞ is curr
 
 ### Insert from a date
 
-A Bitemporal insert takes `valid_from`, where the price starts to apply. With `until`
-as well, it applies up to that instant and not after:
+A Bitemporal insert requires `valid_from`, where the price starts to apply; an insert
+without one is refused. With `until` as well, it applies up to that instant and not
+after:
 
 <!-- example: list-a-price -->
 ```python
@@ -296,7 +323,10 @@ def change_a_price_from(db: ScopedDatabase, sku: str, amount: Decimal, start: dt
 <!-- /example -->
 
 Raising `TEA-1` to 12.00 from April closes the January row in Transaction Time and opens
-two in its place, the old price up to April and the new one after it:
+two in its place, the old price up to April and the new one after it. Without `until`,
+an amendment reaches every row from its start onwards, including any later window
+already stored, and each of them takes the new values while keeping the members the
+write doesn't assign. Here there is only the one row:
 
 ```text
             Jan         Apr     Jun         Sep         Dec         tx_start      tx_end
@@ -496,7 +526,8 @@ earlier instant never changes.
 
 ## Target writes
 
-A value from a standalone or read-only read can't license `amend`, as
+A value from a standalone or read-only read can't license `amend`: amending it raises
+`WriteEvidenceError`, as
 [You'll write what you read](03-reading.md#youll-write-what-you-read) showed. One way to
 write it is to read it again inside `transact`. The other is a target write: `amend_if`,
 `replace_if`, `delete_if` or `terminate_if`. A target write names the object by its
@@ -532,19 +563,41 @@ def change_a_reviewed_limit(db: ScopedDatabase, reviewed: CreditLimit, amount: D
 <!-- /example -->
 
 The stated revision is the write's condition. If the object has moved on since the
-review, the write fails with `WritePreconditionError`, raised at the call or when the
-transaction flushes, depending on the concurrency strategy. That failure is never
-retried, because running the callback again would state the same revision again. A
-revision the transaction observed through its own read is different: when that one
-moves, Parallax can read again and retry. [Transactions](05-transactions.md) explains
-which failures are retried.
+review, the write fails with `WritePreconditionError`. Under the default optimistic
+strategy it is raised when the transaction flushes, typically at commit; when the
+transaction prefers locking, it is raised at the call. That failure is never retried,
+because running the callback again would state the same revision again. A revision the
+transaction observed through its own read is different: when that one moves, Parallax
+can read again and retry. [Transactions](05-transactions.md) explains which failures are
+retried.
 
-`Customer` has no version, so a target write can't name a revision for it, and Parallax
-refuses one. Read a customer inside the transaction instead; its shared lock protects
-the write. On a Bitemporal entity, a target write also states `valid_from`, and
-optionally `until`, and its `tx_start` describes the row at `valid_from`. `replace_if`
-takes a whole instance, which can be an edited copy of the reviewed value, and states
-that instance's writable state.
+`key=` takes the object's primary-key value; an entity's primary key is always one
+attribute. `Customer` has no version, so a target write can't name a revision for it,
+and Parallax refuses one. Read a customer inside the transaction instead; its shared
+lock protects the write. `replace_if` takes a whole instance, which can be an edited copy
+of the reviewed value, and states that instance's writable state.
+
+On a Bitemporal entity, a target write also states `valid_from`, where it starts, and
+optionally `until`. Its `tx_start` describes the row at `valid_from`, so a reviewed value
+read at that Valid Time carries the right one:
+
+<!-- example: amend-a-reviewed-price -->
+```python
+def reprice_from_a_review(
+    db: ScopedDatabase, reviewed: Price, amount: Decimal, start: dt.datetime
+) -> None:
+    """``reviewed`` was read at ``start``: state its milestone's start in Transaction Time."""
+    db.transact(
+        lambda tx: tx.amend_if(
+            Price,
+            Price.amount.set(amount),
+            key=reviewed.sku,
+            valid_from=start,
+            tx_start=reviewed.tx_start,
+        )
+    )
+```
+<!-- /example -->
 
 A failed precondition is the caller's to handle. This function cancels each order a user
 reviewed, unless it has changed since:
@@ -552,25 +605,24 @@ reviewed, unless it has changed since:
 <!-- example: cancel-reviewed-orders -->
 ```python
 def cancel_reviewed_orders(db: ScopedDatabase, reviewed: list[Order]) -> list[int]:
-    """Cancel each order unless it changed since its review; return the ones that changed."""
-    changed: list[int] = []
-    for order in reviewed:
+    """Cancel each order in a transaction of its own; return the ones that changed."""
+    return [order.id for order in reviewed if not cancel_unless_changed(db, order)]
 
-        def cancel(tx: TxnContext, order: Order = order) -> None:
-            tx.delete_if(Order, key=order.id, version=order.version)
 
-        try:
-            db.transact(cancel)
-        except ExecutionFailure as failure:
-            if not isinstance(failure.cause, WritePreconditionError):
-                raise
-            changed.append(order.id)
-    return changed
+def cancel_unless_changed(db: ScopedDatabase, order: Order) -> bool:
+    """Cancel ``order`` unless it changed since it was read; answer whether it was cancelled."""
+    try:
+        db.transact(lambda tx: tx.delete_if(Order, key=order.id, version=order.version))
+    except ExecutionFailure as failure:
+        if not isinstance(failure.cause, WritePreconditionError):
+            raise
+        return False
+    return True
 ```
 <!-- /example -->
 
-Each order is cancelled in its own transaction, so one that changed doesn't stop the
-others, and the function reports it instead. Any other failure passes through.
+Each order is cancelled in a transaction of its own, so one that changed doesn't stop
+the others, and the function reports it instead. Any other failure passes through.
 
 ## Predicate writes
 
@@ -605,6 +657,11 @@ predicate write accepts only an entity with no version and no history, such as
 `InstructionRejectedError` before anything runs. Read those objects and write each one,
 or state each revision in a target write.
 
+Values this transaction read before a predicate write keep the values they were read
+with: the predicate write doesn't refresh them, and doesn't take away their licence.
+An `amend` of one still writes only the members you edit. Read again to see what the
+predicate write left.
+
 ## Wire writes
 
 The transaction's `wire` has the same verbs as the transaction, and takes plain mappings
@@ -632,45 +689,28 @@ def rename_a_customer_through_wire(db: ScopedDatabase, customer_id: int, name: s
 insertion's licence just as an inserted instance does. `tx.wire.amend` takes a node a
 Wire read of this transaction returned and a document naming the members to change;
 `tx.wire.replace` takes a node and the whole new state. The target verbs take an entity
-name and a document holding the key, and the predicate verbs take a Typed query or a
-selection document. `tx.wire.editable_data(node)` copies a node's key and writable
-members into plain mutable mappings, ready to edit and pass back.
+name and a document holding the key. The predicate verbs take a Typed query or a
+selection document, which names the entity and a predicate in canonical form, such as
+`{"entity": "Customer", "predicate": {"eq": {"path": "Customer.email", "value": email}}}`.
+`tx.wire.editable_data(node)` copies a node's key and writable members into plain
+mutable mappings, ready to edit and pass back.
 
 A Wire read outside the transaction licenses no write either, but it tells you which
 milestone a temporal node stands on. `edge_of(node)` returns that milestone's `Edge`,
-and its `tx_time` is the revision a target write can state. This example comes from
-Parallax's conformance suite, whose `Balance` is a Transaction-Time-Only entity in the
-`parallax.compatibility` namespace:
+which says where the milestone starts on each time axis its entity keeps: `tx_time`,
+and for a Bitemporal entity `valid_time` as well. Its `tx_time` is the revision a target
+write can state. Here a page showed a credit limit from an earlier Wire read, and the
+user confirmed a new amount:
 
-<!-- example: condition-wire-write-on-read-milestone -->
+<!-- example: condition-a-wire-write-on-a-milestone -->
 ```python
-class Balance(
-    TxTemporal,
-    table="balance",
-    namespace=_NS,
-    indices=(index("balance_acct", "acct_num"),),
-):
-    id: Attr[int] = attr(primary_key=True, column="bal_id")
-    acct_num: Attr[str] = attr(max_length=32)
-    value: Attr[Decimal] = attr(column="val", precision=18, scale=2)
-
-
-def condition_a_wire_write_on_the_milestone_it_read(
-    db: ScopedDatabase, balance_id: int, value: str
-) -> None:
-    """State the milestone a Wire node stands on as a later write's condition.
-
-    The read's pin is where it looked; edge_of answers where the node's own
-    milestone starts. The read grants no write authority: the amendment applies
-    only while that milestone is still current.
-    """
-    node = db.wire.find(Balance.where(Balance.id == balance_id)).result()
-    milestone = edge_of(node)
+def change_a_limit_shown_earlier(db: ScopedDatabase, shown: WireEntity, amount: str) -> None:
+    """``shown`` came from an earlier Wire read: state where its milestone starts."""
     db.transact(
         lambda tx: tx.wire.amend_if(
-            "parallax.compatibility.Balance",
-            {"id": balance_id, "value": value},
-            tx_start=milestone.tx_time,
+            "CreditLimit",
+            {"customerId": shown["customerId"], "amount": amount},
+            tx_start=edge_of(shown).tx_time,
         )
     )
 ```
