@@ -127,18 +127,17 @@ from parallax.core.unit_work import (
     buffered_write,
     object_key,
 )
+from parallax.core.wire import WireValue, decode_wire
 from parallax.core.write_plan import (
     ObjectKey,
     ObjectStateKey,
     StateObservation,
     TemporalObservation,
-    VersionObservation,
     WritePlanningError,
     object_state_key_from_observation,
 )
 from parallax.core.write_plan.steps import KeyTarget
 from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity
-from parallax.snapshot._publication._wire import read_evidence_of
 
 __all__ = [
     "INERT_CLOCK_INSTANT",
@@ -427,23 +426,6 @@ def write_entries(raw_write: object) -> Sequence[Mapping[str, object]]:
     LIST — callers check :func:`is_predicate_write_step` FIRST; this is never
     reached for a structured predicate-write instruction."""
     return cast("Sequence[Mapping[str, object]]", raw_write)
-
-
-def _durable_rows(
-    model: AcceptedMetamodel,
-    entity_name: str,
-    mutation: str,
-    raw_rows: Sequence[Mapping[str, object]],
-) -> list[tuple[dict[str, object], VersionObservation | None]]:
-    submissions = read_submissions(
-        model, [{"entity": entity_name, "mutation": mutation, "rows": raw_rows}]
-    )
-    result: list[tuple[dict[str, object], VersionObservation | None]] = []
-    for submission in submissions:
-        instruction = submission.instruction
-        assert isinstance(instruction, KeyedWriteInstruction)
-        result.append((dict(instruction.rows[0]), submission.declared_observation))
-    return result
 
 
 def _binds_row_observations(
@@ -2370,71 +2352,22 @@ def _conflict_mutation(when: Mapping[str, object]) -> Literal["amend", "delete"]
     return "delete" if when.get("mutation") == "delete" else "amend"
 
 
-@dataclass(frozen=True, slots=True)
-class _ConflictWrite:
-    """One row of a NON-TEMPORAL conflict attempt's ``write``, resolved once for
-    the real execution: the durable row, the single-row instruction a unit of
-    work buffers for it, that instruction's coalescing identity, and the Version
-    Observation the row's reserved ``observedVersion`` described.
-
-    The observation is a DECLARED FACT the case states, never the evidence the
-    write settles against: the real execution reads its own source and settles
-    against what that read observed (:func:`_conflict_source_nodes`), and this
-    value is what that observation is cross-checked against
-    (:func:`_refuse_unobserved_conflict_version`).
-    """
-
-    row: dict[str, object]
-    instruction: PreparedWrite
-    key: ObjectKey | None
-    observation: VersionObservation | None
-
-
-def _resolve_conflict_writes(
-    model: AcceptedMetamodel,
-    target: str,
-    mutation: Literal["amend", "delete"],
-    write_rows: Sequence[Mapping[str, object]],
-) -> tuple[_ConflictWrite, ...]:
-    """Resolve a NON-TEMPORAL conflict attempt's ``write`` rows: strip each row's
-    reserved ``observedVersion`` into a Version Observation (`m-opt-lock`;
-    ADR 0013) and validate the durable instruction it leaves. ``mutation`` is the
-    case's own ``when.mutation`` verb — a keyed UPDATE or DELETE, the two
-    non-temporal shapes whose gate the target Entity's Effective Concurrency
-    Strategy decides uniformly.
-
-    A conflict attempt authors its rows in the SAME ``writeRow`` vocabulary a
-    writeSequence entry does, so they become durable rows through the SAME
-    :func:`read_submissions` seam: an unversioned conflict target — a supported
-    surface (``m-unit-work-013`` / ``-014``, ``m-batch-write-008``) — has no
-    version to observe, and wrapping its rows anyway would exclude them from the
-    collapse this lane exists to exercise.
-
-    Every row becomes its OWN single-row instruction, exactly as a unit of work
-    buffers it. Which of them end up sharing a statement is the planner's
-    decision alone, so the MULTI-KEY ``write`` array reaches the collapse rule
-    rather than a pre-merged instruction this function invented.
-    """
-    resolved: list[_ConflictWrite] = []
-    for clean_row, observation in _durable_rows(model, target, mutation, write_rows):
-        instruction = instructions.deserialize(
-            {"mutation": mutation, "entity": target, "rows": [clean_row]}
-        )
-        assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
-        prepared = _case_ingress.prepare_case_write(instruction, model)
-        resolved.append(
-            _ConflictWrite(clean_row, prepared, object_key(prepared, model), observation)
-        )
-    return tuple(resolved)
-
-
-def _landed_conflict_rows(resolved: Sequence[_ConflictWrite]) -> int:
-    """The aggregate row count a conflict attempt affects when its write LANDS:
-    one per DISTINCT addressed key, since same-key rows coalesce into a single
-    addressed row before any target is built. A row whose identity does not
-    resolve coalesces with nothing and stands for itself."""
-    keyed = {write.key for write in resolved if write.key is not None}
-    return len(keyed) + sum(1 for write in resolved if write.key is None)
+def _landed_conflict_rows(
+    model: AcceptedMetamodel, target: str, submissions: Sequence[Submission]
+) -> int:
+    """Count distinct addressed keys independently of the production write plan."""
+    declaring = family_declarer(model, case_entity(model, target))
+    keys = [
+        attr for attr in declaring.declared_attributes if isinstance(attr.primary_key, PrimaryKey)
+    ]
+    rows = (
+        cast("KeyedWriteInstruction", submission.instruction).rows[0] for submission in submissions
+    )
+    addressed = {
+        tuple(decode_wire(attr.type, cast("WireValue", row[attr.identity.name])) for attr in keys)
+        for row in rows
+    }
+    return len(addressed)
 
 
 def _implied_shortfall_error(
@@ -2512,112 +2445,6 @@ def _conflict_attempt_affected(
         return exc.actual
 
 
-def _conflict_key_predicate(
-    model: AcceptedMetamodel, target: str, resolved: Sequence[_ConflictWrite]
-) -> dict[str, object]:
-    """A predicate selecting exactly the rows one conflict attempt addresses.
-
-    Membership over the family-declared primary key, whatever the attempt's row
-    count, so one read resolves the whole attempt and a single-key attempt takes
-    no different path from a multi-key one. The key is family-declared for the
-    reason every write-side key resolution is: a concrete subtype inherits it.
-    """
-    declaring = family_declarer(model, case_entity(model, target))
-    keys = [
-        attr for attr in declaring.declared_attributes if isinstance(attr.primary_key, PrimaryKey)
-    ]
-    if len(keys) != 1:  # pragma: no cover - no witnessed conflict target is composite-keyed
-        raise EngineError(
-            f"{target!r}: a conflict attempt's source read selects by a single-attribute "
-            f"primary key, and this Entity declares {len(keys)}"
-        )
-    name = keys[0].identity.name
-    return {
-        "in": {
-            "path": f"{declaring.identity.canonical}.{name}",
-            "values": [write.row[name] for write in resolved],
-        }
-    }
-
-
-def _conflict_source_nodes(
-    tx: TxnContext,
-    model: AcceptedMetamodel,
-    target: str,
-    resolved: Sequence[_ConflictWrite],
-    observed: LifecycleObservation,
-) -> dict[ObjectKey, WireEntity]:
-    """The published rows one NON-TEMPORAL conflict attempt's keyed writes are
-    addressed and licensed by, read through a real ``tx.wire.find`` inside the
-    attempt whose writes they license — the only read a source write can be
-    licensed by (`m-unit-work` *Current-attempt source admission*).
-
-    A row the read does not answer is absent from the mapping; the write that
-    wanted it is refused where its diagnosis can name the key
-    (:func:`_conflict_source_node`).
-
-    The read is charged to the observation's resolving reads: a case counts it in
-    `then.databaseCalls` and authors no golden for it, so it names no statement
-    index (`m-case-format` "Resolving reads a write owes").
-    """
-    nodes: dict[ObjectKey, WireEntity] = {}
-    with observed.resolving_reads():
-        snapshot = tx.wire.find(
-            {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
-        )
-        for root in snapshot.results():
-            hint = read_evidence_of(root)
-            assert hint is not None  # a Wire read files a hint on every published Entity node
-            nodes[hint.object_key] = root
-    return nodes
-
-
-def _conflict_source_node(
-    target: str, write: _ConflictWrite, nodes: Mapping[ObjectKey, WireEntity]
-) -> WireEntity:
-    """The published node ``write`` settles against, or the authoring refusal.
-
-    A conflict case describes a write a caller could actually issue, so the row
-    it addresses has to be one the case's own state holds when the source read
-    runs. A key the read answered nothing for describes a write no verb can
-    author — the state the evidence model exists to make unreachable — and is
-    refused here rather than executed as a blind statement.
-    """
-    node = None if write.key is None else nodes.get(write.key)
-    if node is None:
-        raise EngineError(
-            f"{target!r}: a conflict attempt writes {write.row!r}, which its own source read "
-            "found no row for — the attempt is stated against the value that read published, "
-            "so a case whose target is already gone describes a write no verb can author "
-            "(m-case-format 'Conflict cases')"
-        )
-    return node
-
-
-def _refuse_unobserved_conflict_version(
-    target: str, write: _ConflictWrite, node: WireEntity
-) -> None:
-    """Refuse an attempt whose declared ``observedVersion`` is not the version its
-    own source read observed.
-
-    The declared fact and the real observation are two spellings of one state,
-    and the case's golden gate bind is derived from the declared one while the
-    write settles against the observed one. Letting them differ would grade a
-    statement against a version no read of this lane ever saw.
-    """
-    declared = None if write.observation is None else write.observation.observed_version
-    hint = read_evidence_of(node)
-    assert hint is not None  # the node came from :func:`_conflict_source_nodes`
-    retained = None if hint.observation is None else hint.observation.evidence
-    observed = retained.observed_version if isinstance(retained, VersionObservation) else None
-    if declared != observed:
-        raise EngineError(
-            f"{target!r}: a conflict attempt declares `observedVersion: {declared!r}` and its "
-            f"own source read observed {observed!r} — the gate this case grades binds the "
-            "declared version, so the two must name one state"
-        )
-
-
 def _run_conflict_attempts(
     port: CaseDatabase,
     serving: ServingModel,
@@ -2640,8 +2467,8 @@ def _run_conflict_attempts(
     ``concurrency`` is the planning value the implied shortfall is classified
     under.
 
-    Inside each attempt the callback reads its sources
-    (:func:`_conflict_source_nodes`), lets ``interfere`` commit whatever
+    Inside each attempt the submitter reads its sources and checks declared
+    versions, then lets ``interfere`` commit whatever
     concurrent writer the case stages between that read and the write it
     invalidates, and then writes every row through the PUBLIC keyed Wire verb its
     mutation names, against the node the read published for its key. A MULTI-KEY
@@ -2664,8 +2491,9 @@ def _run_conflict_attempts(
     metadata projects native execution carriers into one canonical Wire
     observation; the final affected-row count; and the Database Calls.
     """
-    resolved_attempts = [
-        _resolve_conflict_writes(model, target, mutation, rows) for rows in attempts
+    parsed_attempts = [
+        read_submissions(model, {"entity": target, "mutation": mutation, "rows": rows})
+        for rows in attempts
     ]
     _refuse_a_locking_conflict_target(model, target, concurrency)
     instant = normalize_instant(dt.datetime.fromisoformat(INERT_CLOCK_INSTANT))
@@ -2681,34 +2509,33 @@ def _run_conflict_attempts(
         database = _root_database.using_database_login()
 
         def body(tx: TxnContext) -> int:
-            if len(starts) == len(resolved_attempts):
+            if len(starts) == len(parsed_attempts):
                 raise EngineError(
                     f"{target!r}: production replayed the conflict case's last authored attempt "
                     f"again — attempt {len(starts) + 1} of a case authoring "
-                    f"{len(resolved_attempts)}; a case whose final attempt fails states the "
+                    f"{len(parsed_attempts)}; a case whose final attempt fails states the "
                     "bound that leaves it unreplayed (m-case-format 'Conflict cases')"
                 )
             starts.append(observed.database_calls)
-            resolved = resolved_attempts[len(starts) - 1]
-            nodes = _conflict_source_nodes(tx, model, target, resolved, observed)
-            sources = [_conflict_source_node(target, write, nodes) for write in resolved]
-            for write, node in zip(resolved, sources, strict=True):
-                _refuse_unobserved_conflict_version(target, write, node)
-            interfere()
-            for write, node in zip(resolved, sources, strict=True):
-                if mutation == "delete":
-                    tx.wire.delete(node)
-                else:
-                    tx.wire.amend(node, _conflict_changes(model, write))
-            return _landed_conflict_rows(resolved)  # the expectation machinery verified it
+            submissions = parsed_attempts[len(starts) - 1]
+            submitter = WireSubmitter(tx, model)
+            with contextlib.ExitStack() as resolving:
+                resolving.enter_context(observed.resolving_reads())
+
+                def before_writes() -> None:
+                    resolving.close()
+                    interfere()
+
+                submitter.submit_unit(submissions, before_writes=before_writes)
+            return _landed_conflict_rows(model, target, submissions)
 
         observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
         implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
         affected = _conflict_attempt_affected(database, requests, implied, body)
-    if len(starts) != len(resolved_attempts):
+    if len(starts) != len(parsed_attempts):
         raise EngineError(
             f"{target!r}: production ended the conflict case's invocation after {len(starts)} "
-            f"attempt(s), and the case authors {len(resolved_attempts)} (m-case-format "
+            f"attempt(s), and the case authors {len(parsed_attempts)} (m-case-format "
             "'Conflict cases')"
         )
     calls = observed.calls
@@ -2761,20 +2588,6 @@ def _refuse_a_snapshot_level_under_a_staged_writer(case: case_format.Case) -> No
         "fixes the snapshot the write then conflicts with — only Read Committed leaves the "
         "zero-row shortfall the case grades (m-case-format 'Conflict cases')"
     )
-
-
-def _conflict_changes(model: AcceptedMetamodel, write: _ConflictWrite) -> dict[str, object]:
-    """One conflict attempt row's authored assignments — its durable row less the
-    identity the source node already carries, in authored order.
-
-    The mapping preserves authored assignment order through the public call;
-    Entity Layout remains the owner of emitted SET order.
-    """
-    instruction = write.instruction
-    assert isinstance(instruction, PreparedKeyedWrite)
-    identity = dict(write.key.primary_key) if write.key is not None else {}
-    managed = {name: value for name, value in instruction.rows[0].items() if name not in identity}
-    return ActualWireProjection(model).entity_values(instruction.target, managed)
 
 
 def _conflict_write_rows(attempt: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:

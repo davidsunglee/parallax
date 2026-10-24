@@ -389,6 +389,45 @@ def test_submit_unit_reads_every_source_before_its_hook_and_any_write() -> None:
     assert port.writes[0][0].startswith("delete")
 
 
+def test_a_unit_submits_the_same_flat_node_its_resolving_snapshot_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port = FakeWritePort(find_rows=[dict(_ACCOUNT)])
+    published: list[object] = []
+    submitted: list[object] = []
+
+    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
+        view_type = type(tx.wire)
+        find, amend = view_type.find, view_type.amend
+
+        def observed_find(view: Any, *args: Any, **kwargs: Any) -> Any:
+            snapshot = find(view, *args, **kwargs)
+            published.append(snapshot.results()[0])
+            return snapshot
+
+        def observed_amend(view: Any, node: Any, changes: Any) -> Any:
+            submitted.append(node)
+            return amend(view, node, changes)
+
+        monkeypatch.setattr(view_type, "find", observed_find)
+        monkeypatch.setattr(view_type, "amend", observed_amend)
+
+        def before_writes() -> None:
+            assert len(published) == 1 and submitted == [] and port.writes == []
+
+        assert submitter.submit_unit(
+            read_submissions(
+                model, [_entry("amend", {"id": 1, "owner": "Grace", "observedVersion": 1})]
+            ),
+            before_writes=before_writes,
+        ) == (Buffered(),)
+
+    _run("account", port, body)
+    assert len(submitted) == 1 and submitted[0] is published[0]
+    assert len(port.reads) == len(port.writes) == 1
+    assert port.writes[0][1] == ["Grace", 2, 1, 1]
+
+
 def test_a_retried_attempt_gets_fresh_submitter_and_source() -> None:
     port = FakeWritePort(
         read_script=[[dict(_ACCOUNT)], [dict(_ACCOUNT) | {"version": 2}]], affected_script=[0, 1]
