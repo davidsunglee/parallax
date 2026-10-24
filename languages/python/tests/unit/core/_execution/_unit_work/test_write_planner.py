@@ -892,17 +892,23 @@ def test_a_plural_temporal_update_of_key_only_rows_is_refused_rather_than_elimin
         _plan([update], _BALANCE)
 
 
-def test_a_temporal_update_naming_only_its_key_is_still_eliminated() -> None:
+@pytest.mark.parametrize("repeats", [1, 2])
+@pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
+def test_a_temporal_update_naming_only_its_key_is_still_eliminated(
+    concurrency: Concurrency, repeats: int
+) -> None:
     # A temporal update assigning nothing opens no successor worth chaining, so
-    # stage 2 removes it exactly as it removes a non-temporal one.
+    # stage 2 removes it exactly as it removes a non-temporal one, however
+    # often it repeats.
     update = KeyedWriteInstruction("amend", "Balance", ({"id": 1},))
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
     plan = _plan(
-        [update],
+        [update] * repeats,
         _BALANCE,
         observations={corpus_object_key("Balance", ("id", 1)): observation},
+        concurrency=concurrency,
     )
-    assert len(plan_steps(plan)) == 0
+    assert plan == WritePlan()
 
 
 def test_empty_plan_from_empty_buffer() -> None:

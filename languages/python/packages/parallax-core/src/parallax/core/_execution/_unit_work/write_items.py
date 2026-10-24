@@ -42,6 +42,7 @@ __all__ = [
     "ComposedTemporalWrite",
     "ComposedWrite",
     "InsertBatch",
+    "InsertionAuthorizedIntent",
     "InsertionAuthorizedWrite",
     "KeyedInsert",
     "MutationPhase",
@@ -50,16 +51,18 @@ __all__ = [
     "OrderedWrite",
     "PostRemovalInsert",
     "ReadAuthorizedWrite",
+    "StateObservedIntent",
     "StateObservedWrite",
+    "TargetIntent",
     "TargetWrite",
-    "TemporalContribution",
-    "TemporalKeyedWrite",
+    "TemporalCoverageWrite",
+    "TemporalIntent",
     "WritePhase",
     "admitted_write",
+    "compact_observed_run",
     "compose_temporal_write",
-    "singleton_transform",
     "target_write",
-    "temporal_contribution",
+    "temporal_intent",
 ]
 
 
@@ -206,6 +209,18 @@ class StateObservedWrite:
     def target(self) -> EntityMetadata:
         return self.instruction.target
 
+    @property
+    def intents(self) -> tuple[TemporalIntent, ...]:
+        """This write of a temporal object alone, as the one intent a
+        composition of it keeps, built when asked."""
+        return _alone_intents(self)
+
+    @property
+    def transform(self) -> CoverageTransform:
+        """What this write of a temporal object alone does to its existing
+        coverage, built when asked."""
+        return _alone_transform(self)
+
 
 @dataclass(frozen=True, slots=True)
 class ObjectLockedWrite:
@@ -318,6 +333,18 @@ class InsertionAuthorizedWrite:
     def source_evidence(self) -> tuple[ReadEvidence, ...]:
         return ()
 
+    @property
+    def intents(self) -> tuple[TemporalIntent, ...]:
+        """This write of a temporal object alone, as the one intent a
+        composition of it keeps, built when asked."""
+        return _alone_intents(self)
+
+    @property
+    def transform(self) -> CoverageTransform:
+        """What this write of a temporal object alone does to its existing
+        coverage, built when asked."""
+        return _alone_transform(self)
+
 
 @dataclass(frozen=True, slots=True)
 class TargetWrite:
@@ -358,6 +385,18 @@ class TargetWrite:
     @property
     def target(self) -> EntityMetadata:
         return self.instruction.target
+
+    @property
+    def intents(self) -> tuple[TemporalIntent, ...]:
+        """This write of a temporal object alone, as the one intent a
+        composition of it keeps, built when asked."""
+        return _alone_intents(self)
+
+    @property
+    def transform(self) -> CoverageTransform:
+        """What this write of a temporal object alone does to its existing
+        coverage, built when asked."""
+        return _alone_transform(self)
 
 
 def target_write(
@@ -442,51 +481,62 @@ def admitted_write(
 
 
 @dataclass(frozen=True, slots=True)
-class TemporalContribution:
-    """What one admitted write of a temporal object keeps once it is composed:
-    its source condition and requested window, not its values.
+class StateObservedIntent:
+    """What one observed write of a temporal object keeps once composed: the
+    window and kind it states, the observation it settles against, and, by
+    identity, the Read Evidence of every source whose write it is, which keeps
+    their demand alive while the write is pending or planned and which only
+    binding reads, for their pins. Its values live in the composed transform,
+    where a later write may overwrite them; the observation stays required
+    whatever happens to them."""
 
-    ``retained_observation`` is the evidence an observed write settles
-    against, and ``source_evidence`` the Read Evidence of every source whose
-    write it is, by identity, which keeps their demand alive while the write is
-    pending or planned and which only binding reads, for their pins. A
-    target write has neither, and ``condition`` is the Transaction-Time
-    start its caller requires of the coverage at its window's start. A write
-    an admitted insertion authorized has none of them: its condition is the
-    coverage at its window's start, the insertion's own anchor, which execution
-    requires. Values the write assigned live in the composed transform, where a
-    later write may overwrite them; the condition stays required whatever
-    happens to them. ``retained`` is the starting row a target
-    write's Locking admission read whole: data its range may reuse, not part
-    of what the write is.
-    """
+    intent: WriteIntent
+    retained_observation: RetainedObservation
+    source_evidence: tuple[ReadEvidence, ...] = field(compare=False)
 
-    kind: Literal["assignment", "destructive"]
-    valid_time_window: TimeInterval | None
-    retained_observation: RetainedObservation | None
-    condition: ExpectedTxStart | None = None
+
+@dataclass(frozen=True, slots=True)
+class InsertionAuthorizedIntent:
+    """What one write an admitted insertion authorized keeps once composed: its
+    window's start is that insertion's anchor, where execution requires
+    current coverage."""
+
+    intent: WriteIntent
+
+
+@dataclass(frozen=True, slots=True)
+class TargetIntent:
+    """What one target write of a temporal object keeps once composed: the
+    Transaction-Time start its caller requires of the coverage at its window's
+    start. ``retained`` is the starting row the write's Locking admission read
+    whole: data its range may reuse, not part of what the write is."""
+
+    intent: WriteIntent
+    expected: ExpectedTxStart
     retained: RetainedTargetState | None = field(default=None, compare=False)
-    source_evidence: tuple[ReadEvidence, ...] = field(default=(), compare=False)
 
-    @property
-    def observation(self) -> StateObservation | None:
-        retained = self.retained_observation
-        return None if retained is None else retained.evidence
+
+type TemporalIntent = StateObservedIntent | InsertionAuthorizedIntent | TargetIntent
+"""One composed temporal write's intent and the authority it was admitted
+under."""
 
 
 @dataclass(frozen=True, slots=True)
 class ComposedTemporalWrite:
-    """Every pending observed write of one temporal object, composed in
-    authored order at the position of the first.
+    """Every pending write of one temporal object against its existing
+    coverage once a second arrives, composed in authored order at the position
+    of the first; a first write stays alone until then and answers its intents
+    and transform when asked.
 
-    ``contributions`` keeps each admitted write's original condition and
-    window, overwritten ones included; ``transform`` holds only the
+    ``intents`` keeps each admitted write's authority and window, overwritten
+    ones included, except that an initial run of observed writes of one
+    observation over one window keeps one intent; ``transform`` holds only the
     assignments that still survive.
     """
 
     target: EntityMetadata
     object_key: ObjectKey
-    contributions: tuple[TemporalContribution, ...]
+    intents: tuple[TemporalIntent, ...]
     transform: CoverageTransform
 
     @property
@@ -499,76 +549,115 @@ class ComposedTemporalWrite:
     def source_evidence(self) -> tuple[ReadEvidence, ...]:
         """The distinct Read Evidence of every source whose write the
         composition holds, by identity, in authored order."""
-        distinct: list[ReadEvidence] = []
-        for contribution in self.contributions:
-            for evidence in contribution.source_evidence:
-                if all(evidence is not held for held in distinct):
-                    distinct.append(evidence)
-        return tuple(distinct)
+        distinct: tuple[ReadEvidence, ...] = ()
+        for intent in self.intents:
+            if isinstance(intent, StateObservedIntent):
+                distinct = _with_distinct(distinct, intent.source_evidence)
+        return distinct
 
 
-type TemporalKeyedWrite = StateObservedWrite | InsertionAuthorizedWrite | TargetWrite
-"""One keyed write of a temporal object that composes with that object's other
-pending writes: an observed one, one an admitted insertion authorized, or a
-target write."""
+type TemporalCoverageWrite = (
+    StateObservedWrite | InsertionAuthorizedWrite | TargetWrite | ComposedTemporalWrite
+)
+"""One temporal object's pending writes against its existing coverage: an
+admitted write still alone, or the composition of several. Either answers its
+target, object key, intents, and transform."""
 
 
-def temporal_contribution(item: TemporalKeyedWrite) -> TemporalContribution:
-    """``item``'s lasting part once composed."""
-    observed = isinstance(item, StateObservedWrite)
-    targeted = isinstance(item, TargetWrite)
-    expectation = item.expectation if targeted else None
-    return TemporalContribution(
-        kind="assignment" if item.instruction.mutation in ASSIGNMENT_MUTATIONS else "destructive",
-        valid_time_window=item.instruction.valid_time_window,
-        retained_observation=item.retained_observation if observed else None,
-        condition=expectation if isinstance(expectation, ExpectedTxStart) else None,
-        retained=item.retained if targeted else None,
-        source_evidence=item.source_evidence if observed else (),
-    )
+def temporal_intent(
+    write: StateObservedWrite | InsertionAuthorizedWrite | TargetWrite, intent: WriteIntent
+) -> TemporalIntent:
+    """What ``write``, stating ``intent``, keeps once composed."""
+    if isinstance(write, StateObservedWrite):
+        return StateObservedIntent(intent, write.retained_observation, write.source_evidence)
+    if isinstance(write, InsertionAuthorizedWrite):
+        return InsertionAuthorizedIntent(intent)
+    expected = write.expectation
+    assert isinstance(expected, ExpectedTxStart)  # preparation states a temporal target's start
+    return TargetIntent(intent, expected, write.retained)
 
 
 def compose_temporal_write(
-    held: TemporalKeyedWrite | ComposedTemporalWrite, arriving: TemporalKeyedWrite, key_name: str
+    held: TemporalCoverageWrite,
+    arriving: StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
+    intent: TemporalIntent,
+    key_name: str,
 ) -> ComposedTemporalWrite:
-    """``held`` followed by ``arriving``, one temporal object's writes composed
-    in authored order.
+    """``held`` followed by ``arriving``, which keeps ``intent``: one temporal
+    object's writes composed in authored order.
 
     The arriving write's values replace earlier ones per member inside its own
     window and destroy coverage there if it is destructive; every earlier
-    condition stays. A caller's condition already held over the same window
-    adds nothing to keep.
+    intent stays. A caller's condition already held over the same window adds
+    nothing to keep.
     """
-    if not isinstance(held, ComposedTemporalWrite):
-        held = _composed(held, key_name)
-    contribution = temporal_contribution(arriving)
-    contributions = held.contributions
-    if contribution.condition is None or contribution not in contributions:
-        contributions = (*contributions, contribution)
+    instruction = arriving.instruction
+    intents = held.intents
+    if not isinstance(intent, TargetIntent) or intent not in intents:
+        intents = (*intents, intent)
     return ComposedTemporalWrite(
         target=held.target,
         object_key=held.object_key,
-        contributions=contributions,
-        transform=_contributed(held.transform, arriving.instruction, key_name),
+        intents=intents,
+        transform=_transformed(held.transform, instruction, key_name),
     )
 
 
-def _composed(item: TemporalKeyedWrite, key_name: str) -> ComposedTemporalWrite:
+def compact_observed_run(
+    held: TemporalCoverageWrite,
+    arriving: StateObservedWrite,
+    intent: StateObservedIntent,
+    key_name: str,
+) -> ComposedTemporalWrite:
+    """``held``, one observed intent, with ``arriving`` composed into it as
+    that same intent: an observed write of the identical observation over the
+    same window, which the claim algebra coalesces, supersedes, or
+    deduplicates.
+
+    The one intent states the arriving write's kind, which only a superseding
+    destruction changes, and keeps every source's Read Evidence by identity,
+    first authored first; the transform takes the arriving write as usual.
+    """
+    (only,) = held.intents
+    assert isinstance(only, StateObservedIntent)  # only an observed run compacts
+    evidence = _with_distinct(only.source_evidence, intent.source_evidence)
+    if evidence is not only.source_evidence or only.intent != intent.intent:
+        only = StateObservedIntent(intent.intent, only.retained_observation, evidence)
     return ComposedTemporalWrite(
-        target=item.instruction.target,
-        object_key=item.object_key,
-        contributions=(temporal_contribution(item),),
-        transform=singleton_transform(item, key_name),
+        target=held.target,
+        object_key=held.object_key,
+        intents=(only,),
+        transform=_transformed(held.transform, arriving.instruction, key_name),
     )
 
 
-def singleton_transform(item: TemporalKeyedWrite, key_name: str) -> CoverageTransform:
-    """What ``item`` alone does to its object's existing coverage, built from
-    the write itself rather than from a composition of one write."""
-    return _contributed(NO_TRANSFORM, item.instruction, key_name)
+def _alone_intents(
+    write: StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
+) -> tuple[TemporalIntent, ...]:
+    intent = keyed_intent(write.instruction)
+    assert intent is not None  # a write against existing coverage is no insert
+    return (temporal_intent(write, intent),)
 
 
-def _contributed(
+def _alone_transform(
+    write: StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
+) -> CoverageTransform:
+    ((key_name, _),) = write.object_key.primary_key
+    return _transformed(NO_TRANSFORM, write.instruction, key_name)
+
+
+def _with_distinct(
+    held: tuple[ReadEvidence, ...], arriving: tuple[ReadEvidence, ...]
+) -> tuple[ReadEvidence, ...]:
+    """``held`` followed by each of ``arriving`` it does not already hold, by
+    identity — ``held`` itself where it holds them all."""
+    for evidence in arriving:
+        if all(evidence is not kept for kept in held):
+            held = (*held, evidence)
+    return held
+
+
+def _transformed(
     transform: CoverageTransform, instruction: PreparedKeyedInstruction, key_name: str
 ) -> CoverageTransform:
     """``transform`` followed by one prepared keyed write over its prepared

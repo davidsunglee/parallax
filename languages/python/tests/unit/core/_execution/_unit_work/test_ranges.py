@@ -12,7 +12,6 @@ import contextlib
 import datetime as dt
 from collections.abc import Iterable, Sequence
 from types import FrameType
-from typing import Any
 
 import pytest
 
@@ -34,9 +33,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
-    ComposedTemporalWrite,
     StateObservedWrite,
-    TemporalContribution,
     target_write,
 )
 from parallax.core.base import INFINITY
@@ -405,35 +402,15 @@ def test_an_overlapped_observation_is_retired_by_whoever_owns_its_row(
 
 
 # --------------------------------------------------------------------------- #
-# A lone keyed write enters range settlement as the admitted write it was     #
-# buffered as: no composition of one write is built for it.                   #
+# A temporal object's first write stays alone and settles from the intent and  #
+# transform it answers itself.                                                 #
 # --------------------------------------------------------------------------- #
-class _Compositions:
-    """Counts the compositions and contributions built from now on."""
-
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.built = 0
-        for composing in (ComposedTemporalWrite, TemporalContribution):
-            original = composing.__init__
-
-            def counting(
-                composed: object, *args: object, _original: Any = original, **kwargs: object
-            ) -> None:
-                self.built += 1
-                _original(composed, *args, **kwargs)
-
-            monkeypatch.setattr(composing, "__init__", counting)
-
-
-def test_a_lone_observed_write_inside_its_predecessor_binds_at_once_from_its_own_write(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_lone_observed_write_inside_its_predecessor_binds_at_once() -> None:
     head = _retained(_HEAD)
-    built = _Compositions(monkeypatch)
-    (buffered,) = admitted_writes(_SPANS, [_update(head, _MAR, _APR)])
-    assert isinstance(buffered, StateObservedWrite)
-    plan = _plan(buffered)
-    assert built.built == 0
+    update = _update(head, _MAR, _APR)
+    (buffered,) = admitted_writes(_SPANS, [update])
+    assert buffered is update
+    plan = _plan(update)
     (write,) = settled_writes(plan)
     assert write.deferred is None
     assert [type(step) for step in plan_steps(plan)] == [
@@ -450,13 +427,9 @@ def test_a_lone_observed_write_inside_its_predecessor_binds_at_once_from_its_own
     assert tuple(write.changed) == (head.key,)
 
 
-def test_a_lone_write_reaching_past_what_it_observed_reads_only_the_rest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_lone_write_reaching_past_what_it_observed_reads_only_the_rest() -> None:
     head = _retained(_HEAD)
-    built = _Compositions(monkeypatch)
     _settled, acquisition = _deferred(_plan(_update(head, _MAR, _SEP)))
-    assert built.built == 0
     assert acquisition.terms[0].valid_time_windows == (temporal_read.TimeInterval(_JUN, _SEP),)
 
 

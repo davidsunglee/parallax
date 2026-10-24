@@ -22,7 +22,6 @@ from parallax.core._execution._unit_work.effects import (
     MissingTargetError,
     WritePreconditionError,
 )
-from parallax.core._execution._unit_work.instructions import ExpectedTxStart
 from parallax.core._execution._unit_work.retain import (
     ReadEvidence,
     RetainedObservation,
@@ -31,11 +30,11 @@ from parallax.core._execution._unit_work.retain import (
 from parallax.core._execution._unit_work.strategy import AuditDecoration
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
-    ComposedTemporalWrite,
-    InsertionAuthorizedWrite,
-    TargetWrite,
-    TemporalKeyedWrite,
-    singleton_transform,
+    InsertionAuthorizedIntent,
+    StateObservedIntent,
+    TargetIntent,
+    TemporalCoverageWrite,
+    TemporalIntent,
 )
 from parallax.core.base import ManagedValue
 from parallax.core.inheritance import InheritanceEntityView
@@ -96,7 +95,7 @@ class _RangePredecessor:
 
 @dataclass(frozen=True, slots=True)
 class _ObservedSource:
-    """The observation one contribution of a range was admitted through, and
+    """The observation one observed intent of a range was admitted through, and
     the Valid-Time pins its sources were read at — ``None`` for a read that
     named no finite one — which judge whether the attempt's completed writes
     left anything of the observed state for them."""
@@ -127,14 +126,15 @@ def _finite_valid_time(evidence: ReadEvidence) -> dt.datetime | None:
 
 
 def _known_predecessors(
-    composed: ComposedTemporalWrite,
+    intents: tuple[TemporalIntent, ...],
+    window: TimeInterval | None,
     facts: TemporalFacts,
     target: ObjectKey,
     ownership: TemporalWriteOwnership,
 ) -> tuple[tuple[_RangePredecessor, ...], tuple[_RangePredecessor, ...]]:
-    """The predecessors a composed range already knows, as the ones the
-    transform binds — disjoint, ordered by start — beside the ones it only
-    validates.
+    """The predecessors a range of ``intents`` over ``window`` already knows,
+    as the ones its transform binds — disjoint, ordered by start — beside the
+    ones it only validates.
 
     Each distinct observed state the attempt's completed writes did not change
     is one predecessor, in authored order. A source whose observed state they
@@ -148,11 +148,11 @@ def _known_predecessors(
     """
     distinct: list[_RangePredecessor] = []
     continuing = False
-    for contribution in composed.contributions:
-        retained = contribution.retained_observation
-        if retained is None:  # an insertion or a caller authorized it, and it observed nothing
+    for intent in intents:
+        if not isinstance(intent, StateObservedIntent):
             continue
-        if _continues(ownership, _observed_source(retained, contribution.source_evidence)):
+        retained = intent.retained_observation
+        if _continues(ownership, _observed_source(retained, intent.source_evidence)):
             continuing = True
             continue
         observation = retained.evidence
@@ -165,7 +165,7 @@ def _known_predecessors(
             facts,
             target,
             ownership,
-            composed.transform.valid_time_window,
+            window,
             excluding={observed.state for observed in distinct},
         )
         if continuing
@@ -210,13 +210,13 @@ _EXISTENCE: Final = object()
 of: the current row itself, wherever it lies on an axis that has no Valid Time."""
 
 
-def _anchor(composed: ComposedTemporalWrite) -> object:
-    """Where a composed range requires current coverage because an insertion
+def _anchor(intents: tuple[TemporalIntent, ...]) -> object:
+    """Where a range requires current coverage because an insertion
     authorized one of its writes: that insertion's own start, which every such
     write states as its window's start."""
-    for contribution in composed.contributions:
-        if contribution.observation is None and contribution.condition is None:
-            return _anchored_at(contribution.valid_time_window)
+    for intent in intents:
+        if isinstance(intent, InsertionAuthorizedIntent):
+            return _anchored_at(intent.intent.valid_time_window)
     return _UNANCHORED
 
 
@@ -224,34 +224,32 @@ def _anchored_at(window: TimeInterval | None) -> object:
     return _EXISTENCE if window is None else window.start
 
 
-@dataclass(frozen=True, slots=True)
-class _TargetCondition:
-    """A caller's literal condition on a composed range: the coverage at the
-    start of the caller's prepared ``valid_time_window`` — the current row,
-    where it is ``None`` on a Transaction-Time-Only object — stands at
-    Transaction-Time start ``expected``. The window is also what the caller
-    asked to revise whatever it reaches over."""
+def _conditions(intents: tuple[TemporalIntent, ...]) -> tuple[TargetIntent, ...]:
+    """The distinct target conditions the callers of a range's addressed
+    writes state, in authored order, each as the first target intent
+    stating it: the coverage at the start of its prepared window — the current
+    row, where it is ``None`` on a Transaction-Time-Only object — stands at its
+    expected Transaction-Time start, whether the write assigns or destroys.
 
-    valid_time_window: TimeInterval | None
-    expected: dt.datetime
-
-
-def _conditions(composed: ComposedTemporalWrite) -> tuple[_TargetCondition, ...]:
-    """The distinct target conditions the callers of a composed range's
-    addressed writes state, in authored order: one per exact-window operation,
-    where admission let in only writes that agree on it, and another for each
-    operation over a disjoint window. Admission lets no two addressed windows
-    share a start unless they are equal, so the distinct conditions keep every
-    distinct addressed window."""
-    conditions: list[_TargetCondition] = []
-    for contribution in composed.contributions:
-        condition = contribution.condition
-        if condition is None:
-            continue
-        stated = _TargetCondition(contribution.valid_time_window, condition.instant)
-        if stated not in conditions:
-            conditions.append(stated)
+    One condition serves each exact-window operation, where admission let in
+    only writes that agree on it, and another each operation over a disjoint
+    window. Admission lets no two addressed windows share a start unless they
+    are equal, so the distinct conditions keep every distinct addressed window.
+    """
+    conditions: list[TargetIntent] = []
+    for intent in intents:
+        if isinstance(intent, TargetIntent) and all(
+            not _states_condition(held, intent) for held in conditions
+        ):
+            conditions.append(intent)
     return tuple(conditions)
+
+
+def _states_condition(held: TargetIntent, arriving: TargetIntent) -> bool:
+    return (
+        held.intent.valid_time_window == arriving.intent.valid_time_window
+        and held.expected == arriving.expected
+    )
 
 
 def _object_key(
@@ -390,7 +388,7 @@ class _RangeMeaning:
     key_attribute: AttributeIdentity
     key_value: object
     anchor: object = _UNANCHORED
-    conditions: tuple[_TargetCondition, ...] = ()
+    conditions: tuple[TargetIntent, ...] = ()
     guards: bool = False
     opening: _OpeningSeed | None = None
 
@@ -488,11 +486,9 @@ class _TemporalRangeBinder:
             return ()
         starts: list[_RangePredecessor] = []
         for condition in conditions:
-            start = next(
-                (row for row in predecessors if _holds_start(condition.valid_time_window, row)),
-                None,
-            )
-            if start is None or self._tx_start(start) != condition.expected:
+            window = condition.intent.valid_time_window
+            start = next((row for row in predecessors if _holds_start(window, row)), None)
+            if start is None or self._tx_start(start) != condition.expected.instant:
                 raise self._failed(condition)
             if all(start is not held for held in starts):
                 starts.append(start)
@@ -502,11 +498,11 @@ class _TemporalRangeBinder:
         tx_start = self.meaning.facts.shape.transaction_time.start_attribute
         return predecessor.predecessor.cell(tx_start)
 
-    def _failed(self, condition: _TargetCondition) -> WritePreconditionError:
+    def _failed(self, condition: TargetIntent) -> WritePreconditionError:
         return WritePreconditionError(
             self.meaning.facts.entity.identity,
             {self.meaning.key_attribute.name: self.meaning.key_value},
-            condition.expected,
+            condition.expected.instant,
         )
 
     def acquired(
@@ -546,7 +542,8 @@ class _TemporalRangeBinder:
 
     def _require_one_start(self, current: Sequence[_RangePredecessor]) -> None:
         for condition in self.meaning.conditions:
-            starting = sum(1 for row in current if _holds_start(condition.valid_time_window, row))
+            window = condition.intent.valid_time_window
+            starting = sum(1 for row in current if _holds_start(window, row))
             if starting > 1:
                 raise CardinalityCorruptionError(
                     self.meaning.facts.entity.identity, self._key_target(), 1, starting
@@ -577,7 +574,8 @@ class DeferredTemporalRange(DeferredRange):
 
 
 def settle_range(
-    item: ComposedTemporalWrite | TemporalKeyedWrite,
+    item: TemporalCoverageWrite,
+    intents: tuple[TemporalIntent, ...],
     *,
     view: InheritanceEntityView,
     shape: TransactionTimeOnly | Bitemporal,
@@ -592,9 +590,9 @@ def settle_range(
     coverage: bound now where planning knows that coverage, or else the
     deferred description of what binding needs once it is read.
 
-    A lone write reaches here as the admitted write it was buffered as, and
-    its transform is built once, here, from that write; a composition brings the
-    transform its buffering composed.
+    ``intents`` are the ones ``item`` answers, which its caller has already
+    read. A composition brings them and the transform its admission composed;
+    a write alone answers both from itself.
 
     Every distinct observed state the attempt's completed writes did not
     change is a predecessor: each is validated by its own guarded effect
@@ -619,10 +617,10 @@ def settle_range(
     key_attribute = view.primary_key.identity
     target = item.object_key
     ((_, key_value),) = target.primary_key
-    transform = _transform_of(item, key_attribute)
-    facts = TemporalFacts(entity=item.target, view=view, shape=shape, instant=instant)
-    predecessors, validations, anchor, conditions, retained = _known(item, facts, target, ownership)
+    transform = item.transform
     window = transform.valid_time_window
+    facts = TemporalFacts(entity=item.target, view=view, shape=shape, instant=instant)
+    predecessors, validations = _known_predecessors(intents, window, facts, target, ownership)
     meaning = _RangeMeaning(
         facts=facts,
         transform=transform,
@@ -630,10 +628,11 @@ def settle_range(
         gated=gated,
         key_attribute=key_attribute,
         key_value=key_value,
-        anchor=anchor,
-        conditions=conditions,
+        anchor=_anchor(intents),
+        conditions=_conditions(intents),
         guards=guards,
     )
+    retained = _retained(intents)
     if window is not None:
         reached = window.first_uncovered(_valid_time_coverages(predecessors)) is not None
     else:
@@ -714,60 +713,14 @@ def _with_opening(
     return sorted((seed.window, *coverage), key=_START)
 
 
-def _transform_of(
-    item: ComposedTemporalWrite | TemporalKeyedWrite, key_attribute: AttributeIdentity
-) -> CoverageTransform:
-    if isinstance(item, ComposedTemporalWrite):
-        return item.transform
-    return singleton_transform(item, key_attribute.name)
-
-
-def _retained(composed: ComposedTemporalWrite) -> tuple[RetainedTargetState, ...]:
+def _retained(intents: tuple[TemporalIntent, ...]) -> tuple[RetainedTargetState, ...]:
+    """The starting row every target intent's Locking admission read whole,
+    whichever condition it states, in authored order."""
     return tuple(
-        contribution.retained
-        for contribution in composed.contributions
-        if contribution.retained is not None
+        intent.retained
+        for intent in intents
+        if isinstance(intent, TargetIntent) and intent.retained is not None
     )
-
-
-def _known(
-    item: ComposedTemporalWrite | TemporalKeyedWrite,
-    facts: TemporalFacts,
-    target: ObjectKey,
-    ownership: TemporalWriteOwnership,
-) -> tuple[
-    tuple[_RangePredecessor, ...],
-    tuple[_RangePredecessor, ...],
-    object,
-    tuple[_TargetCondition, ...],
-    tuple[RetainedTargetState, ...],
-]:
-    """What planning knows of ``item``'s range: the predecessors it binds and
-    validates, its insertion anchor, its callers' target conditions, and the
-    starting rows their admissions retained."""
-    if isinstance(item, ComposedTemporalWrite):
-        predecessors, validations = _known_predecessors(item, facts, target, ownership)
-        return predecessors, validations, _anchor(item), _conditions(item), _retained(item)
-    window = item.instruction.valid_time_window
-    if isinstance(item, InsertionAuthorizedWrite):
-        return (), (), _anchored_at(window), (), ()
-    if isinstance(item, TargetWrite):
-        expectation = item.expectation
-        conditions = (
-            (_TargetCondition(window, expectation.instant),)
-            if isinstance(expectation, ExpectedTxStart)
-            else ()
-        )
-        retained = () if item.retained is None else (item.retained,)
-        return (), (), _UNANCHORED, conditions, retained
-    observed = item.retained_observation
-    if _continues(ownership, _observed_source(observed, item.source_evidence)):
-        current = _held(facts, target, ownership, window)
-        return tuple(current), (), _UNANCHORED, (), ()
-    observation = observed.evidence
-    assert isinstance(observation, TemporalObservation)  # settlement refuses any other
-    predecessor = _predecessor(facts, target, observation.predecessor, observed.key)
-    return (predecessor,), (), _UNANCHORED, (), ()
 
 
 def _retained_completion(

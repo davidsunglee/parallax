@@ -33,11 +33,16 @@ from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
+    InsertionAuthorizedIntent,
     InsertionAuthorizedWrite,
     KeyedInsert,
     ObjectLockedWrite,
     PostRemovalInsert,
+    StateObservedIntent,
+    StateObservedWrite,
+    TargetIntent,
     TargetWrite,
+    TemporalCoverageWrite,
     target_write,
 )
 from parallax.core.base import INFINITY
@@ -83,6 +88,7 @@ from tests.unit.core._execution._unit_work._temporal_targets_support import (
     JAN,
     JUL,
     JUN,
+    LATER,
     MAR,
     MAY,
     OBJECT,
@@ -239,6 +245,9 @@ def test_the_write_confirmation_answers_is_the_one_composed() -> None:
     (composed,) = admission.composed_writes()
     assert isinstance(composed, TargetWrite)
     assert composed.retained is held
+    (intent,) = composed.intents
+    assert isinstance(intent, TargetIntent)
+    assert intent.retained is held
 
 
 # --------------------------------------------------------------------------- #
@@ -438,9 +447,9 @@ def test_a_restated_caller_condition_is_kept_once_however_often_it_is_overwritte
         )
     (composed,) = admission.composed_writes()
     assert isinstance(composed, ComposedTemporalWrite)
-    assert [contribution.condition for contribution in composed.contributions] == [
-        ExpectedTxStart(T0)
-    ]
+    assert composed.intents == (
+        TargetIntent(WriteIntent("assignment", TimeInterval(MAR, SEP)), ExpectedTxStart(T0)),
+    )
     (segment,) = composed.transform.segments
     assert segment.replaces
     assert dict(segment.assigned or {}) == {"acctNum": "Z", "value": Decimal("3.00")}
@@ -710,3 +719,274 @@ def test_a_target_beside_writes_of_other_states_of_its_object_is_refused() -> No
     other = _admitted(_account_target(1, 3), meta=_ACCOUNT)
     _refused(other, _account_observed(1, 4))
     _refused(other, _account_target(1, 4))
+
+
+# --------------------------------------------------------------------------- #
+# A temporal object's writes compose from the first; an initial observed run   #
+# of one observation over one window keeps one intent.                         #
+# --------------------------------------------------------------------------- #
+def _sourced(
+    mutation: KeyedMutation,
+    evidence: RetainedObservation,
+    source: ReadEvidence,
+    *,
+    valid_from: dt.datetime = MAR,
+    until: dt.datetime | None = SEP,
+    **members: object,
+) -> AdmittedWrite:
+    write = observed_write(mutation, evidence, valid_from=valid_from, until=until, **members)
+    return admitted_write(write.instruction, evidence, write.object_key, source=source)
+
+
+_PARTICIPATION = ParticipationToken()
+
+
+def _evidence(observation: RetainedObservation) -> ReadEvidence:
+    return ReadEvidence(ENTITY, OBJECT, _PARTICIPATION, observation)
+
+
+def _composition(admission: WriteAdmission) -> TemporalCoverageWrite:
+    """Position 1's pending writes against its stored coverage: one alone, or
+    their composition."""
+    (pending,) = (
+        write
+        for write in admission.composed_writes()
+        if isinstance(
+            write,
+            StateObservedWrite | InsertionAuthorizedWrite | TargetWrite | ComposedTemporalWrite,
+        )
+        and write.object_key == OBJECT
+    )
+    return pending
+
+
+def _observed_intents(composed: TemporalCoverageWrite) -> list[StateObservedIntent]:
+    intents = [intent for intent in composed.intents if isinstance(intent, StateObservedIntent)]
+    assert len(intents) == len(composed.intents)
+    return intents
+
+
+def test_a_first_observed_write_stays_alone_and_answers_its_one_intent() -> None:
+    source = _evidence(START)
+    write = _sourced("amendUntil", START, source, value="150.00")
+    admission = _admitted(write)
+    composed = _composition(admission)
+    assert composed is write
+    assert composed.object_key == OBJECT
+    (intent,) = _observed_intents(composed)
+    assert intent.intent == WriteIntent("assignment", TimeInterval(MAR, SEP))
+    assert intent.retained_observation is START
+    assert len(intent.source_evidence) == 1 and intent.source_evidence[0] is source
+    (segment,) = composed.transform.segments
+    assert dict(segment.assigned or {}) == {"value": Decimal("150.00")}
+
+
+def test_a_first_target_write_stays_alone_and_answers_its_caller_condition() -> None:
+    composed = _composition(_admitted(addressed_write(until=None, value="150.00")))
+    assert isinstance(composed, TargetWrite)
+    assert composed.intents == (
+        TargetIntent(WriteIntent("assignment", TimeInterval(MAR, INFINITY)), ExpectedTxStart(T0)),
+    )
+    assert composed.source_evidence == ()
+
+
+def test_a_first_write_a_flushed_insertion_authorized_stays_alone_with_its_anchor() -> None:
+    admission = _admitted(
+        admitted_write(_position("insert", FEB, None, acctNum="A", value="100.00"), None, OBJECT)
+    )
+    admission.drain_planned()
+    admission.complete(
+        WriteEffects(
+            opened=Openings(continued=(TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS),))
+        ),
+        (),
+        at=1,
+    )
+    identity = admission.insertion_identity(OBJECT)
+    assert identity is not None
+    _admit(
+        admission,
+        admitted_write(
+            _position("amendUntil", FEB, JUN, value="150.00"), None, OBJECT, authority=identity
+        ),
+    )
+    composed = _composition(admission)
+    assert isinstance(composed, InsertionAuthorizedWrite)
+    assert composed.intents == (
+        InsertionAuthorizedIntent(WriteIntent("assignment", TimeInterval(FEB, JUN))),
+    )
+    assert composed.source_evidence == ()
+
+
+@pytest.mark.parametrize("kind", ["observed-amendment", "observed-termination", "target"])
+def test_a_lone_write_answers_what_its_one_intent_composition_holds(kind: str) -> None:
+    # A repeat of the same write composes the two into one intent, which a
+    # write still alone answers identically.
+    source = _evidence(START)
+
+    def write() -> AdmittedWrite:
+        if kind == "target":
+            return addressed_write(value="150.00")
+        if kind == "observed-amendment":
+            return _sourced("amendUntil", START, source, value="150.00")
+        return _sourced("terminateUntil", START, source)
+
+    alone = _composition(_admitted(write()))
+    composed = _composition(_admitted(write(), write()))
+    assert not isinstance(alone, ComposedTemporalWrite)
+    assert isinstance(composed, ComposedTemporalWrite)
+    assert alone.intents == composed.intents
+    assert alone.transform == composed.transform
+    assert (alone.target, alone.object_key, alone.phase) == (
+        composed.target,
+        composed.object_key,
+        composed.phase,
+    )
+    assert [id(evidence) for evidence in alone.source_evidence] == [
+        id(evidence) for evidence in composed.source_evidence
+    ]
+
+
+def test_a_second_write_composes_in_the_first_writes_place_keeping_its_authority() -> None:
+    state = START.key
+    assert isinstance(state, TemporalObjectStateKey)
+    held = RetainedTargetState(state, 0, (), None)
+
+    def retaining(item: TargetWrite) -> TargetWrite:
+        return dataclasses.replace(item, retained=held)
+
+    source = _evidence(LATER)
+    admission = WriteAdmission(POSITION, inserted_version=_unversioned, observations={})
+    admission.admit(addressed_write(until=JUN, value="150.00"), confirm_target=retaining)
+    _admit(
+        admission,
+        _account_observed(7, 1),
+        _sourced("amendUntil", LATER, source, valid_from=JUN, until=SEP, value="175.00"),
+    )
+    composed, other = admission.composed_writes()
+    assert isinstance(composed, ComposedTemporalWrite)
+    assert isinstance(other, StateObservedWrite)
+    targeted, observed = composed.intents
+    assert isinstance(targeted, TargetIntent) and targeted.retained is held
+    assert isinstance(observed, StateObservedIntent) and observed.retained_observation is LATER
+    assert len(composed.source_evidence) == 1 and composed.source_evidence[0] is source
+
+
+def test_repeated_assignments_of_one_observation_and_window_keep_one_intent_in_place() -> None:
+    source = _evidence(START)
+    admission = _admitted(
+        _sourced("amendUntil", START, source, value="150.00"),
+        _account_observed(7, 1),
+        _sourced("amendUntil", START, source, value="175.00"),
+        _sourced("amendUntil", START, source, acctNum="B"),
+    )
+    composed, other = admission.composed_writes()
+    assert isinstance(composed, ComposedTemporalWrite)
+    assert isinstance(other, StateObservedWrite)
+    (intent,) = _observed_intents(composed)
+    assert intent.intent == WriteIntent("assignment", TimeInterval(MAR, SEP))
+    assert len(intent.source_evidence) == 1 and intent.source_evidence[0] is source
+    (segment,) = composed.transform.segments
+    assert dict(segment.assigned or {}) == {"value": Decimal("175.00"), "acctNum": "B"}
+
+
+def test_a_destruction_superseding_an_observed_run_moves_it_after_intervening_writes() -> None:
+    earlier, later = _evidence(START), _evidence(START)
+    assert earlier == later and earlier is not later
+    admission = _admitted(
+        _sourced("amendUntil", START, earlier, value="150.00"),
+        _account_observed(7, 1),
+        _sourced("terminateUntil", START, later),
+    )
+    other, composed = admission.composed_writes()
+    assert isinstance(other, StateObservedWrite)
+    assert isinstance(composed, ComposedTemporalWrite)
+    assert composed.phase == "delete"
+    (intent,) = _observed_intents(composed)
+    assert intent.intent == WriteIntent("destructive", TimeInterval(MAR, SEP))
+    # Every source survives by identity, first authored first.
+    assert [id(evidence) for evidence in composed.source_evidence] == [id(earlier), id(later)]
+    # A later write of the object meets the moved composition.
+    _refused(admission, _sourced("amendUntil", START, later, value="1.00"))
+
+
+def test_a_repeated_destruction_of_an_observed_run_stays_where_it_is() -> None:
+    first, again = _evidence(START), _evidence(START)
+    admission = _admitted(
+        _sourced("terminateUntil", START, first),
+        _account_observed(7, 1),
+        _sourced("terminateUntil", START, again),
+    )
+    composed, other = admission.composed_writes()
+    assert isinstance(composed, ComposedTemporalWrite)
+    assert isinstance(other, StateObservedWrite)
+    (intent,) = _observed_intents(composed)
+    assert intent.intent.kind == "destructive"
+    assert [id(evidence) for evidence in intent.source_evidence] == [id(first), id(again)]
+
+
+def test_an_assignment_after_an_observed_runs_destruction_is_refused() -> None:
+    source = _evidence(START)
+    admission = _admitted(_sourced("terminateUntil", START, source))
+    _refused(admission, _sourced("amendUntil", START, source, value="1.00"))
+    (intent,) = _observed_intents(_composition(admission))
+    assert intent.intent.kind == "destructive"
+
+
+@pytest.mark.parametrize(
+    ("observation", "valid_from", "until"),
+    [
+        (retained(rectangle(JAN, JUN, "100.00")), MAR, SEP),
+        (START, MAR, JUN),
+    ],
+    ids=["equal-but-distinct-observation", "other-window"],
+)
+def test_an_observed_write_of_another_observation_or_window_composes_beside_the_run(
+    observation: RetainedObservation, valid_from: dt.datetime, until: dt.datetime
+) -> None:
+    source = _evidence(START)
+    admission = _admitted(
+        _sourced("amendUntil", START, source, value="150.00"),
+        _sourced(
+            "amendUntil", observation, source, valid_from=valid_from, until=until, value="175.00"
+        ),
+    )
+    held, arriving = _observed_intents(_composition(admission))
+    assert held.retained_observation is START
+    assert arriving.retained_observation is observation
+    assert arriving.intent.valid_time_window == TimeInterval(valid_from, until)
+
+
+def test_a_general_composition_keeps_every_later_observed_intent() -> None:
+    source = _evidence(START)
+    admission = _admitted(
+        _sourced("amendUntil", START, source, value="150.00"),
+        _sourced("amendUntil", LATER, _evidence(LATER), valid_from=JUN, until=SEP, value="2.00"),
+        _sourced("amendUntil", START, source, value="175.00"),
+    )
+    intents = _observed_intents(_composition(admission))
+    assert [intent.retained_observation for intent in intents] == [START, LATER, START]
+
+
+@pytest.mark.parametrize(
+    ("valid_from", "until", "admitted"),
+    [(MAR, SEP, False), (JAN, FEB, True)],
+    ids=["same-window", "disjoint-window"],
+)
+def test_a_write_holding_no_temporal_observation_states_no_start_beside_a_target(
+    valid_from: dt.datetime, until: dt.datetime, admitted: bool
+) -> None:
+    # Planning refuses such a write; admission only finds that it states no
+    # start a caller's condition could agree with, and no rectangle to
+    # disagree with one over another window.
+    write = observed_write("amendUntil", START, valid_from=valid_from, until=until, value="1.00")
+    unobserved = RetainedObservation(
+        VersionedObjectStateKey(OBJECT, 1), VersionObservation(observed_version=1), None
+    )
+    unclosable = admitted_write(write.instruction, unobserved, OBJECT)
+    admission = _admitted(addressed_write(value="150.00"))
+    if not admitted:
+        _refused(admission, unclosable)
+        return
+    _admit(admission, unclosable)
+    assert len(_composition(admission).intents) == 2

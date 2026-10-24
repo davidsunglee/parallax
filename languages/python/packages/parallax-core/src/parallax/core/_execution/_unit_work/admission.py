@@ -4,7 +4,7 @@ import datetime as dt
 from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from enum import Enum
-from typing import Final, Literal, cast, final
+from typing import Final, Literal, final
 
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work._write_ownership import (
@@ -26,6 +26,7 @@ from parallax.core._execution._unit_work.instructions import (
     ASSIGNMENT_MUTATIONS,
     DESTRUCTIVE_MUTATIONS,
     REPLACE_MUTATIONS,
+    ExpectedTxStart,
     PreparedKeyedInstruction,
     derive_keyed_instruction,
 )
@@ -40,17 +41,21 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
     ComposedWrite,
+    InsertionAuthorizedIntent,
     InsertionAuthorizedWrite,
     KeyedInsert,
     ObjectLockedWrite,
     PostRemovalInsert,
     ReadAuthorizedWrite,
+    StateObservedIntent,
     StateObservedWrite,
+    TargetIntent,
     TargetWrite,
-    TemporalContribution,
-    TemporalKeyedWrite,
+    TemporalCoverageWrite,
+    TemporalIntent,
+    compact_observed_run,
     compose_temporal_write,
-    temporal_contribution,
+    temporal_intent,
 )
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
@@ -166,11 +171,11 @@ NO_INSERTION_AUTHORITY: Final = NoInsertionAuthority()
 
 type _PendingItem = AdmittedWrite | ComposedTemporalWrite | ComposedBitemporalOpening | None
 
-type _PendingTemporal = TemporalKeyedWrite | ComposedTemporalWrite
-"""What a temporal object's pending writes against its existing coverage are:
-one write still alone, or several composed."""
-
 type _Claimed = ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
+
+type _TemporalArrival = StateObservedWrite | InsertionAuthorizedWrite | TargetWrite
+"""A write of a temporal object against its existing coverage, which composes
+by object rather than by claimed scope."""
 
 _CLAIMED: Final = (StateObservedWrite, ObjectLockedWrite, InsertionAuthorizedWrite, TargetWrite)
 
@@ -206,12 +211,14 @@ class WriteAdmission:
       destruction;
     * a temporal object's writes against its existing coverage — observed ones,
       those an admitted insertion authorized, and target writes
-      alike — compose into one
+      alike — compose, once a second arrives, into one
       :class:`~parallax.core._execution._unit_work.write_items.ComposedTemporalWrite`,
       whose transform keeps only surviving values while every write's
-      condition stays. Two writes of one observed state over one window simply
-      coalesce, as a non-temporal pair does. Writes of the object over disjoint
-      windows stay separate operations inside it, each with its own condition.
+      condition stays. An initial run of writes of one observed state over one
+      window keeps one intent, as a non-temporal pair coalesces, and a
+      destruction superseding that run moves the composition to the buffer's
+      tail. Writes of the object over disjoint windows stay separate
+      operations inside it, each with its own condition.
 
     Planning borrows :meth:`composed_writes` and :attr:`ownership` without
     changing either; only a successfully planned buffer is drained
@@ -335,25 +342,57 @@ class WriteAdmission:
         record: InsertionRecord | None = None
         if isinstance(item, InsertionAuthorizedWrite):
             item, record = self._authorized(item)
+        if isinstance(item, StateObservedWrite | InsertionAuthorizedWrite) and self._is_temporal(
+            item.target
+        ):
+            return self._admit_temporal(item, record)
+        verdict = self._check_keyed_claim(item)
+        folded = self._folded(item, record)
+        if folded is not None:
+            return folded
+        # Only a write folding into its object's pending insert claims nothing.
+        assert verdict is not None
         key = item.object_key
-        temporal = self._is_temporal(item)
-        verdict: ClaimVerdict | None = None
-        if temporal:
-            self._check_temporal_claims(
-                cast("StateObservedWrite | InsertionAuthorizedWrite", item), key
-            )
-        else:
-            verdict = self._check_keyed_claim(item)
-        instruction = item.instruction
-        if record is None:
-            record = self._ownership.insertion_record(key)
-        if record is not None and self._foldable(record):
-            if not self._is_bitemporal(instruction.target):
-                return self._fold_non_bitemporal_opening(instruction, record)
-            if isinstance(item, InsertionAuthorizedWrite):
-                return self._fold_bitemporal_opening(item, record)
-        self._add_existing(item, instruction, key, verdict=verdict, temporal=temporal)
+        self._note_removal(item.instruction, key)
+        self._combine_claimed(item, key, verdict)
         return BufferOutcome.BUFFERED
+
+    def _admit_temporal(
+        self, item: StateObservedWrite | InsertionAuthorizedWrite, record: InsertionRecord | None
+    ) -> BufferOutcome:
+        """Admit a keyed write of a temporal object, refused where it cannot
+        compose with that object's pending writes, judged over every one of
+        them. A write folding into its object's still-pending insert is judged
+        against the object's other compositions too."""
+        key = item.object_key
+        instruction = item.instruction
+        intent = keyed_intent(instruction)
+        assert intent is not None  # a write against existing coverage is no insert
+        if not self._admits_temporal(item, key, intent):
+            raise _already_claimed(instruction.target, key)
+        folded = self._folded(item, record)
+        if folded is not None:
+            return folded
+        self._note_removal(instruction, key)
+        self._add_temporal(item, intent, key)
+        return BufferOutcome.BUFFERED
+
+    def _folded(
+        self, item: ReadAuthorizedWrite | InsertionAuthorizedWrite, record: InsertionRecord | None
+    ) -> BufferOutcome | None:
+        """What folding ``item`` into its object's still-pending insert did, or
+        ``None`` where it writes existing state instead: a Bitemporal opening
+        takes only a write its own insertion authorized."""
+        if record is None:
+            record = self._ownership.insertion_record(item.object_key)
+        if record is None or not self._foldable(record):
+            return None
+        instruction = item.instruction
+        if not self._is_bitemporal(instruction.target):
+            return self._fold_non_bitemporal_opening(instruction, record)
+        if isinstance(item, InsertionAuthorizedWrite):
+            return self._fold_bitemporal_opening(item, record)
+        return None
 
     def composed_writes(self) -> tuple[ComposedWrite, ...]:
         """The buffer's composed writes, in authored order, with every
@@ -502,23 +541,24 @@ class WriteAdmission:
                 ),
                 object_key=key,
             )
-        verdict: ClaimVerdict | None = None
-        temporal = self._is_temporal(item)
-        if temporal:
-            admitted = self._admits_temporal(item, key)
-            proven = self._states_window(key, instruction.valid_time_window)
-        else:
-            intent = keyed_intent(instruction)
-            assert intent is not None  # a target write is no insert
-            held = self._objects().get(key)
-            verdict = admits(self._held_intent(scope), intent)
-            admitted = (held is None or held == scope) and verdict != "incompatible"
-            proven = scope in self._claims
-        if not admitted:
+        intent = keyed_intent(instruction)
+        assert intent is not None  # a target write is no insert
+        if self._is_temporal(target):
+            if not self._admits_temporal(item, key, intent):
+                raise _already_claimed(target, key)
+            if not self._states_window(key, instruction.valid_time_window):
+                item = confirm_target(item)
+            self._note_removal(instruction, key)
+            self._add_temporal(item, intent, key)
+            return
+        held = self._objects().get(key)
+        verdict = admits(self._held_intent(scope), intent)
+        if (held is not None and held != scope) or verdict == "incompatible":
             raise _already_claimed(target, key)
-        if not proven:
+        if scope not in self._claims:
             item = confirm_target(item)
-        self._add_existing(item, instruction, key, verdict=verdict, temporal=temporal)
+        self._note_removal(instruction, key)
+        self._combine_claimed(item, key, verdict)
 
     def _authorized(
         self, item: InsertionAuthorizedWrite
@@ -537,7 +577,7 @@ class WriteAdmission:
             if not self._opening_admits(record, instruction):
                 raise _already_claimed(instruction.target, item.identity.object_key)
             return item, record
-        if self._is_temporal(item):
+        if self._is_temporal(instruction.target):
             return item, record
         key = item.object_key
         version = self._inserted_version(instruction.target.identity, record.advanced_from)
@@ -571,20 +611,6 @@ class WriteAdmission:
             ),
             object_key=claimed,
         )
-
-    def _check_temporal_claims(
-        self, item: StateObservedWrite | InsertionAuthorizedWrite, key: ObjectKey
-    ) -> None:
-        """Refuse a temporal object's write against existing coverage that
-        cannot compose with the object's pending writes, judged over every one
-        of them.
-
-        A write an insertion authorized of an object whose insert is still
-        pending composes with that opening instead, as already judged; its
-        object's other compositions still bound it.
-        """
-        if not self._admits_temporal(item, key):
-            raise _already_claimed(item.instruction.target, key)
 
     def _claim(self, scope: ClaimScope, position: int, key: ObjectKey) -> None:
         self._claims[scope] = position
@@ -724,29 +750,15 @@ class WriteAdmission:
             self._after_removal.discard(position)
         return BufferOutcome.CANCELLED_PENDING_INSERT
 
-    def _add_existing(
-        self,
-        item: _Claimed,
-        instruction: PreparedKeyedInstruction,
-        key: ObjectKey,
-        *,
-        verdict: ClaimVerdict | None,
-        temporal: bool,
-    ) -> None:
-        """Compose an admitted write against existing state into the
-        buffer."""
+    def _note_removal(self, instruction: PreparedKeyedInstruction, key: ObjectKey) -> None:
+        """Record that a destruction of a Non-Temporal or Transaction-Time-Only
+        object removes it whole."""
         if instruction.mutation in DESTRUCTIVE_MUTATIONS and not self._is_bitemporal(
             instruction.target
         ):
             if self._removals is None:
                 self._removals = set()
             self._removals.add(key)
-        if temporal:
-            assert isinstance(item, StateObservedWrite | InsertionAuthorizedWrite | TargetWrite)
-            self._add_temporal(item, key)
-        else:
-            assert verdict is not None  # admission judged the claimed scope
-            self._combine_claimed(item, key, verdict)
 
     def _combine_claimed(self, item: _Claimed, key: ObjectKey, verdict: ClaimVerdict) -> None:
         """Combine ``item`` with the write pending at its own scope, or open
@@ -789,7 +801,18 @@ class WriteAdmission:
         writes.append(item)
         self._claim(scope, len(writes) - 1, key)
 
-    def _add_temporal(self, item: TemporalKeyedWrite, key: ObjectKey) -> None:
+    def _add_temporal(self, item: _TemporalArrival, intent: WriteIntent, key: ObjectKey) -> None:
+        """Compose ``item``, stating ``intent``, with its object's pending
+        writes, or buffer it alone as the object's first.
+
+        A first write stays the admitted write it is until a second arrives,
+        which composes the two. While the pending writes keep one observed
+        intent, an arriving write of the identical observation over the same
+        window takes the claim algebra's verdict instead of another intent: a
+        destruction superseding the run's assignments moves the composition to
+        the buffer's tail, after everything authored before it, and the run
+        otherwise keeps its position.
+        """
         writes = self._writes
         index = self._temporal.get(key)
         held = None if index is None else writes[index]
@@ -797,34 +820,25 @@ class WriteAdmission:
             writes.append(item)
             self._temporal[key] = len(writes) - 1
             return
-        assert isinstance(held, _TEMPORAL)
-        if (
-            isinstance(held, StateObservedWrite)
-            and isinstance(item, StateObservedWrite)
-            and held.retained_observation is item.retained_observation
-        ):
-            held_intent = keyed_intent(held.instruction)
-            intent = keyed_intent(item.instruction)
-            assert held_intent is not None and intent is not None  # neither is an insert
-            if held_intent.valid_time_window == intent.valid_time_window:
-                verdict = admits(held_intent, intent)
-                if verdict == "coalesce":
-                    writes[index] = _merged_claimed(held, item)
-                    return
-                if verdict == "deduplicate":
-                    writes[index] = _with_composed_authority(held, item, held.instruction)
-                    return
-                if verdict == "supersede":
-                    writes[index] = None
-                    writes.append(_with_composed_authority(item, held, item.instruction))
-                    self._temporal[key] = len(writes) - 1
-                    return
-        writes[index] = compose_temporal_write(held, item, self._key_name(item.target))
+        assert isinstance(held, _TEMPORAL)  # an object's temporal slot holds its writes
+        key_name = self._key_name(item.target)
+        arriving = temporal_intent(item, intent)
+        if isinstance(item, StateObservedWrite) and isinstance(arriving, StateObservedIntent):
+            verdict = _observed_run_verdict(held, arriving)
+            if verdict == "supersede":
+                writes[index] = None
+                writes.append(compact_observed_run(held, item, arriving, key_name))
+                self._temporal[key] = len(writes) - 1
+                return
+            if verdict is not None:
+                writes[index] = compact_observed_run(held, item, arriving, key_name)
+                return
+        writes[index] = compose_temporal_write(held, item, arriving, key_name)
 
-    def _admits_temporal(self, item: TemporalKeyedWrite, key: ObjectKey) -> bool:
+    def _admits_temporal(self, item: _TemporalArrival, key: ObjectKey, intent: WriteIntent) -> bool:
         """Whether ``item``, a write of temporal object ``key`` against its
-        existing coverage, composes with that object's pending writes — every
-        one of them, overwritten ones included.
+        existing coverage stating ``intent``, composes with that object's
+        pending writes — every one of them, overwritten ones included.
 
         Observed writes and those an insertion authorized compose with each
         other by the window algebra
@@ -843,106 +857,114 @@ class WriteAdmission:
         completed writes left is judged by the current row the attempt holds
         there, not by the rectangle its source observed.
         """
-        compositions = self._compositions(key)
-        if not compositions:
+        held = self._composition(key)
+        if held is None:
             return True
-        intent = keyed_intent(item.instruction)
-        assert intent is not None  # a write against existing coverage is no insert
+        intents = held.intents
+        targeted = isinstance(item, TargetWrite)
         scope = item.retained_observation.key if isinstance(item, StateObservedWrite) else None
-        if not isinstance(item, TargetWrite) and not any(_targeted(held) for held in compositions):
-            return (
-                admits_composed(
-                    (pair for held in compositions for pair in _composed_intents(held)),
-                    scope,
-                    intent,
-                )
-                != "incompatible"
-            )
-        entity = item.instruction.target
-        arriving = temporal_contribution(item)
-        start = self._starting_revision(entity, key, arriving)
+        if not targeted and not any(isinstance(prior, TargetIntent) for prior in intents):
+            return admits_composed(_scoped(intents), scope, intent) != "incompatible"
+        start = self._starting_revision(item.target, key, item, intent.valid_time_window)
         untargeted: list[tuple[ObjectStateKey | None, WriteIntent]] = []
-        for held in compositions:
-            for contribution in _contributions(held):
-                if arriving.condition is None and contribution.condition is None:
-                    untargeted.append((_scope(contribution), _intent(contribution)))
-                elif not self._separable(entity, key, contribution, arriving, start):
-                    return False
+        for prior in intents:
+            if not targeted and not isinstance(prior, TargetIntent):
+                untargeted.append((_scope(prior), prior.intent))
+            elif not self._separable(key, prior, item, intent, start):
+                return False
         return admits_composed(untargeted, scope, intent) != "incompatible"
 
     def _separable(
         self,
-        entity: EntityMetadata,
         key: ObjectKey,
-        held: TemporalContribution,
-        arriving: TemporalContribution,
+        prior: TemporalIntent,
+        item: _TemporalArrival,
+        intent: WriteIntent,
         start: object | None,
     ) -> bool:
-        """Whether two writes of one temporal object, at least one a caller
-        addressed, can stand together: as one exact-window operation, or as
-        separate ones over disjoint windows (:meth:`_admits_temporal`)."""
-        held_window = held.valid_time_window
-        arriving_window = arriving.valid_time_window
-        if held_window == arriving_window:
+        """Whether ``item``, stating ``intent`` from Transaction-Time
+        ``start``, can stand beside the pending write that keeps ``prior`` —
+        two writes of one temporal object, at least one a caller addressed —
+        as one exact-window operation, or as separate ones over disjoint
+        windows (:meth:`_admits_temporal`)."""
+        entity = item.target
+        prior_window = prior.intent.valid_time_window
+        window = intent.valid_time_window
+        if prior_window == window:
             return (
-                not (held.kind == "destructive" and arriving.kind == "assignment")
+                not (prior.intent.kind == "destructive" and intent.kind == "assignment")
                 and start is not None
-                and self._starting_revision(entity, key, held) == start
+                and self._starting_revision(entity, key, prior, prior_window) == start
             )
         # Writes without Valid Time span the whole axis, so every two of an
         # object's are equal and only Valid-Time windows differ.
-        assert held_window is not None and arriving_window is not None
-        if held_window.overlaps(arriving_window):
+        assert prior_window is not None and window is not None
+        if prior_window.overlaps(window):
             return False
-        return self._rectangle_admits(entity, key, held, arriving) and self._rectangle_admits(
-            entity, key, arriving, held
+        if isinstance(prior, TargetIntent) and not self._rectangle_admits(
+            entity, key, prior.expected, prior_window, _arriving_observation(item)
+        ):
+            return False
+        return not isinstance(item, TargetWrite) or self._rectangle_admits(
+            entity, key, _stated_start(item), window, _observation(prior)
         )
 
     def _rectangle_admits(
         self,
         entity: EntityMetadata,
         key: ObjectKey,
-        addressed: TemporalContribution,
-        observed: TemporalContribution,
+        expected: ExpectedTxStart,
+        window: TimeInterval,
+        observed: RetainedObservation | None,
     ) -> bool:
         """Whether ``observed``'s rectangle — or, where its source continues,
-        the current row the attempt holds — where it holds ``addressed``'s
-        start, stands at the Transaction-Time start that caller stated."""
-        condition = addressed.condition
-        observation = observed.observation
-        if condition is None or not isinstance(observation, TemporalObservation):
+        the current row the attempt holds — where it holds ``window``'s start,
+        stands at the Transaction-Time start ``expected`` a caller stated. A
+        write that observed nothing holds no rectangle to disagree."""
+        if observed is None:
+            return True
+        observation = observed.evidence
+        if not isinstance(observation, TemporalObservation):
             return True
         shape = self._temporal_facet.shape(entity.identity)
         assert isinstance(shape, temporal_read.Bitemporal)  # disjoint windows are Valid Time's
-        window = addressed.valid_time_window
-        assert window is not None  # a Bitemporal write states its window
-        if _continuing(observed):
+        if observed.invalidated:
             held = self._held_at(key, shape, window.start)
-            return held is None or milestone_edge(shape, held, None).tx_time == condition.instant
+            return held is None or milestone_edge(shape, held, None).tx_time == expected.instant
         predecessor = observation.predecessor
         coverage = valid_time_coverage(shape, predecessor, None)
         assert coverage is not None  # a Bitemporal observation lies on Valid Time
         if not coverage.contains(window.start):
             return True
-        return milestone_edge(shape, predecessor, None).tx_time == condition.instant
+        return milestone_edge(shape, predecessor, None).tx_time == expected.instant
 
     def _starting_revision(
-        self, entity: EntityMetadata, key: ObjectKey, contribution: TemporalContribution
+        self,
+        entity: EntityMetadata,
+        key: ObjectKey,
+        write: TemporalIntent | _TemporalArrival,
+        window: TimeInterval | None,
     ) -> object | None:
-        """The Transaction-Time start ``contribution`` requires of the coverage
-        at its window's start: its caller's, the observed rectangle's own, or,
-        where its source continues, that of the current row the attempt holds
-        there. An insertion's write states none, and neither does a continuing
-        one whose row there the attempt does not hold."""
-        if contribution.condition is not None:
-            return contribution.condition.instant
-        observation = contribution.observation
+        """The Transaction-Time start ``write``, a pending or arriving write of
+        temporal object ``key`` over ``window``, requires of the coverage at
+        the window's start: its caller's, the observed rectangle's own, or,
+        where its source continues through what the attempt's completed
+        writes left, that of the current row the attempt holds there. An
+        insertion's write states none, and neither does a continuing one whose
+        row there the attempt does not hold."""
+        if isinstance(write, TargetIntent):
+            return write.expected.instant
+        if isinstance(write, TargetWrite):
+            return _stated_start(write).instant
+        if isinstance(write, InsertionAuthorizedIntent | InsertionAuthorizedWrite):
+            return None
+        observed = write.retained_observation
+        observation = observed.evidence
         if not isinstance(observation, TemporalObservation):
             return None
         shape = self._temporal_facet.shape(entity.identity)
         assert isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
-        if _continuing(contribution):
-            window = contribution.valid_time_window
+        if observed.invalidated:
             held = self._held_at(key, shape, None if window is None else window.start)
             return None if held is None else milestone_edge(shape, held, None).tx_time
         return milestone_edge(shape, observation.predecessor, None).tx_time
@@ -965,10 +987,9 @@ class WriteAdmission:
     def _states_window(self, key: ObjectKey, window: TimeInterval | None) -> bool:
         """Whether a pending write of temporal object ``key`` states exactly
         ``window`` as its own."""
-        return any(
-            contribution.valid_time_window == window
-            for held in self._compositions(key)
-            for contribution in _contributions(held)
+        held = self._composition(key)
+        return held is not None and any(
+            prior.intent.valid_time_window == window for prior in held.intents
         )
 
     def _removed_whole(self, key: ObjectKey, record: InsertionRecord) -> bool:
@@ -1002,27 +1023,25 @@ class WriteAdmission:
     def _destroyed_coverage(self, key: ObjectKey) -> Iterator[TimeInterval]:
         """The Valid-Time intervals the pending writes of Bitemporal object
         ``key`` destroy, ordered by start: its composition's destroyed
-        segments, or a lone destructive write's prepared window. The view
-        reads the buffer as it stands, so it is consumed before the buffer
-        changes.
+        segments. The view reads the buffer as it stands, so it is consumed
+        before the buffer changes.
         """
-        return (interval for held in self._compositions(key) for interval in _destroyed(held))
+        held = self._composition(key)
+        return iter(()) if held is None else _destroyed(held)
 
-    def _compositions(self, key: ObjectKey) -> tuple[_PendingTemporal, ...]:
-        """The pending composition of temporal object ``key``, or none."""
+    def _composition(self, key: ObjectKey) -> TemporalCoverageWrite | None:
+        """The pending writes of temporal object ``key`` against its existing
+        coverage — one alone, or their composition — if any."""
         index = self._temporal.get(key)
         held = None if index is None else self._writes[index]
         assert held is None or isinstance(held, _TEMPORAL)
-        return () if held is None else (held,)
+        return held
 
-    def _is_temporal(self, item: AdmittedWrite) -> bool:
-        """Whether ``item`` is a write of a temporal object against its existing
-        coverage, the writes that compose by object rather than by claimed
-        scope."""
+    def _is_temporal(self, entity: EntityMetadata) -> bool:
+        """Whether ``entity`` is temporal, so a write of its existing coverage
+        composes by object rather than by claimed scope."""
         return isinstance(
-            item, StateObservedWrite | InsertionAuthorizedWrite | TargetWrite
-        ) and isinstance(
-            self._temporal_facet.shape(item.instruction.target.identity),
+            self._temporal_facet.shape(entity.identity),
             temporal_read.TransactionTimeOnly | temporal_read.Bitemporal,
         )
 
@@ -1090,65 +1109,64 @@ def _note_scope(objects: dict[ObjectKey, Hashable], key: ObjectKey, scope: Claim
         objects[key] = _SEVERAL
 
 
-def _composed_intents(
-    held: _PendingTemporal,
-) -> tuple[tuple[ObjectStateKey | None, WriteIntent], ...]:
-    """Each write ``held`` composes, as the scope it claims and the intent it
-    states over its window."""
-    if not isinstance(held, ComposedTemporalWrite):
-        intent = keyed_intent(held.instruction)
-        assert intent is not None  # a write against existing coverage is no insert
-        scope = held.retained_observation.key if isinstance(held, StateObservedWrite) else None
-        return ((scope, intent),)
-    return tuple(
-        (_scope(contribution), _intent(contribution)) for contribution in held.contributions
-    )
+def _scoped(
+    intents: tuple[TemporalIntent, ...],
+) -> Iterator[tuple[ObjectStateKey | None, WriteIntent]]:
+    """Each of ``intents`` as the scope it claims and the intent it states
+    over its window."""
+    return ((_scope(prior), prior.intent) for prior in intents)
 
 
-def _continuing(contribution: TemporalContribution) -> bool:
-    """Whether ``contribution``'s sources continue through what the attempt's
-    completed writes left of the state they observed: admission refused every
-    source published stale, so a pending one invalidated is one they changed."""
-    retained = contribution.retained_observation
-    return retained is not None and retained.invalidated
+def _observed_run_verdict(
+    held: TemporalCoverageWrite, arriving: StateObservedIntent
+) -> ClaimVerdict | None:
+    """What the claim algebra makes of ``arriving`` against ``held``'s initial
+    observed run — ``held`` keeping one observed intent of the identical
+    observation over the same window — or ``None`` where ``held`` is no such
+    run."""
+    intents = held.intents
+    if len(intents) != 1:
+        return None
+    (only,) = intents
+    if (
+        not isinstance(only, StateObservedIntent)
+        or only.retained_observation is not arriving.retained_observation
+        or only.intent.valid_time_window != arriving.intent.valid_time_window
+    ):
+        return None
+    verdict = admits(only.intent, arriving.intent)
+    # Admission refused an assignment after the run's destruction before it
+    # composed anything.
+    assert verdict != "incompatible"
+    return verdict
 
 
-def _scope(contribution: TemporalContribution) -> ObjectStateKey | None:
-    retained = contribution.retained_observation
-    return None if retained is None else retained.key
+def _scope(prior: TemporalIntent) -> ObjectStateKey | None:
+    return prior.retained_observation.key if isinstance(prior, StateObservedIntent) else None
 
 
-def _intent(contribution: TemporalContribution) -> WriteIntent:
-    return WriteIntent(kind=contribution.kind, valid_time_window=contribution.valid_time_window)
+def _observation(prior: TemporalIntent) -> RetainedObservation | None:
+    return prior.retained_observation if isinstance(prior, StateObservedIntent) else None
 
 
-def _destroyed(held: _PendingTemporal) -> Iterator[TimeInterval]:
+def _arriving_observation(item: _TemporalArrival) -> RetainedObservation | None:
+    return item.retained_observation if isinstance(item, StateObservedWrite) else None
+
+
+def _stated_start(item: TargetWrite) -> ExpectedTxStart:
+    """The Transaction-Time start a temporal target write's caller states."""
+    expectation = item.expectation
+    assert isinstance(expectation, ExpectedTxStart)  # preparation states a temporal target's start
+    return expectation
+
+
+def _destroyed(held: TemporalCoverageWrite) -> Iterator[TimeInterval]:
     """The Valid-Time intervals ``held`` destroys, ordered by start."""
-    if isinstance(held, ComposedTemporalWrite):
-        for segment in held.transform.segments:
-            if segment.assigned is None:
-                window = segment.valid_time_window
-                assert window is not None  # only a Bitemporal object's coverage is asked for
-                yield window
-        return
-    instruction = held.instruction
-    if instruction.mutation not in ASSIGNMENT_MUTATIONS:
-        window = instruction.valid_time_window
-        assert window is not None  # only a Bitemporal object's coverage is asked for
-        yield window
-
-
-def _targeted(held: _PendingTemporal) -> bool:
-    """Whether a target write is among ``held``."""
-    if isinstance(held, ComposedTemporalWrite):
-        return any(contribution.condition is not None for contribution in held.contributions)
-    return isinstance(held, TargetWrite)
-
-
-def _contributions(held: _PendingTemporal) -> tuple[TemporalContribution, ...]:
-    if isinstance(held, ComposedTemporalWrite):
-        return held.contributions
-    return (temporal_contribution(held),)
+    for segment in held.transform.segments:
+        if segment.assigned is None:
+            window = segment.valid_time_window
+            assert window is not None  # only a Bitemporal object's coverage is asked for
+            yield window
 
 
 def _merge_assignment_into_insert(

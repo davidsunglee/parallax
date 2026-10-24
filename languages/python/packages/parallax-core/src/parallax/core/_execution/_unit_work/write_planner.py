@@ -39,6 +39,7 @@ from parallax.core._execution._unit_work.write_items import (
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.write_plan.keys import ObjectKey
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
@@ -438,9 +439,12 @@ def _without_noop_rows(
     ahead of batching and of the Transaction Instant, where the normative stage
     order puts it. An admitted write is single-row by construction, so it is
     either eliminated whole or passed through untouched, and is never rebuilt
-    around a narrower instruction.
+    around a narrower instruction. A temporal composition is eliminated where
+    every write it composed was such an amendment.
     """
-    if isinstance(item, ComposedTemporalWrite | ComposedBitemporalOpening | PostRemovalInsert):
+    if isinstance(item, ComposedTemporalWrite):
+        return None if _amends_nothing(item.transform) else item
+    if isinstance(item, ComposedBitemporalOpening | PostRemovalInsert):
         return item
     if isinstance(item, TargetWrite) and isinstance(item.expectation, ExpectedVersion):
         # A caller-conditioned write of a versioned row still advances its
@@ -452,6 +456,13 @@ def _without_noop_rows(
     key_name = _key_name(families, instruction.target)
     (row,) = instruction.rows
     return None if all(name == key_name for name in row) else item
+
+
+def _amends_nothing(transform: CoverageTransform) -> bool:
+    return all(
+        segment.assigned is not None and not segment.assigned and not segment.replaces
+        for segment in transform.segments
+    )
 
 
 def _settled_attributes(

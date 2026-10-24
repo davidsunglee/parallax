@@ -19,6 +19,7 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.retain import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
+    StateObservedIntent,
     StateObservedWrite,
     TargetWrite,
 )
@@ -50,7 +51,15 @@ from parallax.core.write_plan.keys import (
     VersionedObjectStateKey,
     object_state_key_from_observation,
 )
-from parallax.core.write_plan.plan import WritePlan
+from parallax.core.write_plan.plan import (
+    Openings,
+    SettledWrite,
+    TemporalRowCoordinates,
+    WriteEffects,
+    WriteGroup,
+    WritePlan,
+)
+from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import PlannedStep
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
@@ -195,7 +204,11 @@ def test_a_repeated_termination_of_one_observation_adds_nothing() -> None:
     (write,) = admitted_writes(
         _BALANCE, [_write("terminate", current), _write("terminate", current)]
     )
-    assert isinstance(write, StateObservedWrite)
+    assert isinstance(write, ComposedTemporalWrite)
+    (intent,) = write.intents
+    assert isinstance(intent, StateObservedIntent)
+    assert intent.intent.kind == "destructive"
+    assert intent.retained_observation is current
 
 
 def test_an_assignment_after_a_destruction_over_its_coverage_is_refused() -> None:
@@ -260,7 +273,7 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
                 actor_identity=TEST_ACTOR_IDENTITY,
                 transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
                 concurrency="optimistic",
-                composed_writes=(write,),
+                composed_writes=admitted_writes(model, [write]),
             )
         )
 
@@ -415,3 +428,127 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
 
 def _unconditioned(item: TargetWrite) -> TargetWrite:
     raise AssertionError(f"no target write is admitted, but {item!r} was")
+
+
+# --------------------------------------------------------------------------- #
+# A destruction superseding an observed run executes where it was authored.    #
+# --------------------------------------------------------------------------- #
+def _balance_key(balance_id: int) -> ObjectKey:
+    return ObjectKey(_ENTITY, (("id", balance_id),))
+
+
+def _balance_observation(balance_id: int) -> RetainedObservation:
+    row = PredecessorRow(
+        members={
+            "id": balance_id,
+            "acctNum": "A",
+            "value": Decimal("120.00"),
+            "txStart": _MAR,
+            "txEnd": INFINITY,
+        }
+    )
+    shape = temporal_read.view(_BALANCE).shape(_ENTITY)
+    assert shape is not None
+    state = TemporalObjectStateKey(
+        _balance_key(balance_id), temporal_read.milestone_edge(shape, row, None)
+    )
+    return RetainedObservation(state, TemporalObservation(predecessor=row), None)
+
+
+def _balance(
+    mutation: KeyedMutation, balance_id: int, **members: object
+) -> PreparedKeyedInstruction:
+    prepared = prepare_wire_write(
+        KeyedWriteInstruction(mutation, "Balance", ({"id": balance_id, **members},)), _BALANCE
+    )
+    assert isinstance(prepared, PreparedKeyedInstruction)
+    return prepared
+
+
+def _observed_balance(
+    mutation: KeyedMutation, observation: RetainedObservation, **members: object
+) -> AdmittedWrite:
+    ((_, balance_id),) = observation.key.object.primary_key
+    assert isinstance(balance_id, int)
+    return admitted_write(
+        _balance(mutation, balance_id, **members), observation, observation.key.object
+    )
+
+
+def _closed(plan: WritePlan) -> list[tuple[object, ...]]:
+    """The key of each row ``plan`` closes at planning, in execution order."""
+    return [step.target.key_values for step in plan_steps(plan) if isinstance(step, PlannedClose)]
+
+
+def _unconfirmed(item: TargetWrite) -> TargetWrite:
+    return item
+
+
+def _unversioned(entity: EntityIdentity, advanced_from: int | None) -> int | None:
+    del entity, advanced_from
+    return None
+
+
+def _admission() -> WriteAdmission:
+    return WriteAdmission(_BALANCE, inserted_version=_unversioned, observations={})
+
+
+def _admitted_plan(admission: WriteAdmission) -> WritePlan:
+    return build_write_planner(_BALANCE).finalize(
+        WritePlanningRequest(
+            actor_identity=TEST_ACTOR_IDENTITY,
+            transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+            concurrency="optimistic",
+            composed_writes=admission.composed_writes(),
+            ownership=admission.ownership,
+        )
+    )
+
+
+def test_a_superseding_destruction_follows_a_same_rank_destruction_authored_before_it() -> None:
+    first, other = _balance_observation(1), _balance_observation(3)
+    admission = _admission()
+    for write in (
+        _observed_balance("amend", first, value="150.00"),
+        _observed_balance("terminate", other),
+        _observed_balance("terminate", first),
+    ):
+        admission.admit(write, confirm_target=_unconfirmed)
+    # Ordering keeps authored order among same-rank deletions, and the run's
+    # destruction was authored last.
+    assert _closed(_admitted_plan(admission)) == [(3,), (1,)]
+
+
+def test_a_superseding_destruction_after_a_reinsertion_executes_after_that_reinsertion() -> None:
+    admission = _admission()
+    stored = _balance_key(2)
+    admission.admit(
+        admitted_write(_balance("insert", 2, acctNum="A", value="1.00"), None, stored),
+        confirm_target=_unconfirmed,
+    )
+    admission.drain_planned()
+    admission.complete(
+        WriteEffects(
+            opened=Openings(continued=(TemporalRowCoordinates(_ENTITY, (2,), (OPEN_END,)),))
+        ),
+        (),
+        at=1,
+    )
+    identity = admission.insertion_identity(stored)
+    assert identity is not None
+    observed = _balance_observation(1)
+    for write in (
+        _observed_balance("amend", observed, value="150.00"),
+        admitted_write(_balance("terminate", 2), None, stored, authority=identity),
+        admitted_write(_balance("insert", 2, acctNum="B", value="2.00"), None, stored),
+        _observed_balance("terminate", observed),
+    ):
+        admission.admit(write, confirm_target=_unconfirmed)
+    removal, reinsertion, termination = _admitted_plan(admission).entries
+    assert isinstance(removal, SettledWrite) and removal.deferred is not None
+    assert isinstance(reinsertion, WriteGroup)
+    assert [type(step) for step in reinsertion.steps] == [PlannedInsert]
+    assert isinstance(termination, WriteGroup)
+    assert [
+        step.target.key_values for step in termination.steps if isinstance(step, PlannedClose)
+    ] == [(1,)]
