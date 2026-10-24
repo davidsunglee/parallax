@@ -13,7 +13,7 @@ replacement, while the `edit` case shape observes the copy verb itself and its
 portable state-carry witnesses through the native API. This database lane keeps
 the composed write and presence round trip explicit. The host-language refusal
 closure and absence of Value Object provenance remain supplemental obligations
-(`docs/architecture/supplemental-interface-obligations.md`, SIO-015 and
+(`docs/research/supplemental-interface-obligations.md`, SIO-015 and
 SIO-021), graded by `tests/unit/test_value_object_edit.py`; nothing here
 restates those internal seams.
 """

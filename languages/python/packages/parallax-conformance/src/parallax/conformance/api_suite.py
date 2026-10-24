@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Final
 
@@ -12,6 +12,7 @@ from parallax.conformance import (
     edit_runner,
     execution_authority_stories,
     execution_lifecycle_stories,
+    guide_recipes,
     read_only_stories,
     snapshot_recipes,
     source_admission_stories,
@@ -19,6 +20,18 @@ from parallax.conformance import (
 )
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
+from parallax.conformance.guide_models import (
+    Address,
+    BankTransfer,
+    CardPayment,
+    CreditLimit,
+    Customer,
+    Order,
+    Payment,
+    Price,
+    Product,
+    Shipment,
+)
 from parallax.conformance.read_models import Balance
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
 from parallax.conformance.stories import WRITE_STORIES, story_snippet
@@ -38,7 +51,6 @@ __all__ = [
     "build_skips",
     "compute_partition",
     "partition_report",
-    "render_usage_guide",
     "stale_skip_reasons",
 ]
 
@@ -54,12 +66,22 @@ class Example:
 
 @dataclass(frozen=True, slots=True)
 class Recipe:
+    """A task-shaped public-API example executed by the snapshot recipe tests."""
+
+    recipe_id: str
     title: str
     snippet: str
 
 
+def _sources(*declarations: type | Callable[..., object]) -> str:
+    return "\n\n\n".join(
+        inspect.getsource(declaration).rstrip("\n") for declaration in declarations
+    )
+
+
 RECIPES: Final[list[Recipe]] = [
     Recipe(
+        recipe_id="read-optional-relationships",
         title="Read optional relationships",
         snippet=(
             inspect.getsource(OrderStatus)
@@ -68,6 +90,7 @@ RECIPES: Final[list[Recipe]] = [
         ),
     ),
     Recipe(
+        recipe_id="publish-typed-result-as-wire",
         title="Publish a Typed result as Wire data",
         snippet=(
             inspect.getsource(Account)
@@ -76,6 +99,7 @@ RECIPES: Final[list[Recipe]] = [
         ),
     ),
     Recipe(
+        recipe_id="condition-wire-write-on-read-milestone",
         title="Condition a Wire write on the milestone a read returned",
         snippet=(
             inspect.getsource(Balance)
@@ -84,8 +108,372 @@ RECIPES: Final[list[Recipe]] = [
         ),
     ),
     Recipe(
+        recipe_id="stream-results",
         title="Stream results",
         snippet=inspect.getsource(snapshot_recipes.stream_a_result_one_root_at_a_time),
+    ),
+    Recipe(
+        recipe_id="getting-started-imports",
+        title="Import what Getting started uses",
+        snippet=(
+            "import datetime as dt\n"
+            "from decimal import Decimal\n"
+            "\n"
+            "from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, attr, "
+            "index, rel\n"
+            "from parallax.core.db_port import Password\n"
+            "from parallax.core.dialect import POSTGRES\n"
+            "from parallax.core.entity import model_of\n"
+            "from parallax.core.execution import ExecutionFailure, TxnOptions\n"
+            "from parallax.evolution import ABSENT, evolve, schema_delta\n"
+            "from parallax.postgres import PostgresAdapter\n"
+            "from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="modeling-imports",
+        title="Import what Modeling uses",
+        snippet=(
+            "import datetime as dt\n"
+            "from decimal import Decimal\n"
+            "\n"
+            "from parallax.core import (\n"
+            "    MANY_TO_ONE,\n"
+            "    MAX,\n"
+            "    ONE_TO_MANY,\n"
+            "    ONE_TO_ONE,\n"
+            "    READ_ONLY,\n"
+            "    TABLE_PER_CONCRETE_SUBTYPE,\n"
+            "    AbstractRoot,\n"
+            "    AbstractSubtype,\n"
+            "    Attr,\n"
+            "    Bitemporal,\n"
+            "    ConcreteSubtype,\n"
+            "    Document,\n"
+            "    DomainModel,\n"
+            "    Entity,\n"
+            "    Int32,\n"
+            "    Rel,\n"
+            "    Sequence,\n"
+            "    TablePerHierarchy,\n"
+            "    TxTemporal,\n"
+            "    ValueObject,\n"
+            "    attr,\n"
+            "    desc,\n"
+            "    index,\n"
+            "    rel,\n"
+            ")\n"
+            "from parallax.core.entity import UnloadedRelationshipError\n"
+            "from parallax.core.model_formation import MetamodelValidationError\n"
+            "from parallax.snapshot import ScopedDatabase, TxnContext\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="reading-imports",
+        title="Import what Reading and querying uses",
+        snippet=(
+            "import datetime as dt\n"
+            "import json\n"
+            "from decimal import Decimal\n"
+            "from typing import TextIO\n"
+            "\n"
+            "from parallax.core import LATEST, TX_TIME, VALID_TIME, Attr, QueryDefinitionError, "
+            "TxTemporal, attr\n"
+            "from parallax.core.entity import UnloadedRelationshipError\n"
+            "from parallax.core.execution import ExecutionFailure, TransactionAccessModeError\n"
+            "from parallax.core.read_delivery import InvalidData, InvalidDataError, "
+            "StreamStateError\n"
+            "from parallax.core.unit_work import WriteEvidenceError\n"
+            "from parallax.snapshot import (\n"
+            "    NoResultFound,\n"
+            "    ReadOnlyTxnContext,\n"
+            "    ScopedDatabase,\n"
+            "    Snapshot,\n"
+            "    TooManyResultsFound,\n"
+            "    TxnContext,\n"
+            "    WireEntity,\n"
+            "    is_view_loaded,\n"
+            ")\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="writing-imports",
+        title="Import what Writing uses",
+        snippet=(
+            "import datetime as dt\n"
+            "import json\n"
+            "from decimal import Decimal\n"
+            "\n"
+            "from parallax.core import LATEST, Attr, Bitemporal, Edge, TxTemporal, attr\n"
+            "from parallax.core.execution import ExecutionFailure, "
+            "TransactionTimePinReadOnlyError\n"
+            "from parallax.core.unit_work import (\n"
+            "    InstructionRejectedError,\n"
+            "    WriteEvidenceError,\n"
+            "    WritePreconditionError,\n"
+            ")\n"
+            "from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="declare-customers-and-orders",
+        title="Declare customers and their orders",
+        snippet=_sources(Customer, Order),
+    ),
+    Recipe(
+        recipe_id="create-tables-from-the-model",
+        title="Create tables from the model",
+        snippet=_sources(guide_recipes.table_statements),
+    ),
+    Recipe(
+        recipe_id="connect-and-run-a-first-transaction",
+        title="Connect and run a first transaction",
+        snippet=_sources(
+            guide_recipes.configure_the_database, guide_recipes.add_and_find_a_customer
+        ),
+    ),
+    Recipe(
+        recipe_id="filter-on-a-relationship",
+        title="Filter on a relationship and load it",
+        snippet=_sources(guide_recipes.customers_with_an_order_over),
+    ),
+    Recipe(
+        recipe_id="read-through-wire",
+        title="Run the same read through Wire",
+        snippet=_sources(guide_recipes.customers_with_an_order_over_as_wire),
+    ),
+    Recipe(
+        recipe_id="insert-and-amend-in-one-transaction",
+        title="Insert and amend in one transaction",
+        snippet=_sources(guide_recipes.place_an_order),
+    ),
+    Recipe(
+        recipe_id="read-as-of-a-past-instant",
+        title="Read what the database recorded at a past instant",
+        snippet=_sources(CreditLimit, guide_recipes.credit_limit_on_record),
+    ),
+    Recipe(
+        recipe_id="amend-a-valid-time-window",
+        title="Amend a Bitemporal value for a window of Valid Time",
+        snippet=_sources(Price, guide_recipes.run_a_summer_sale),
+    ),
+    Recipe(
+        recipe_id="query-a-value-object",
+        title="Store and query a value object",
+        snippet=_sources(Address, Shipment, guide_recipes.shipments_to),
+    ),
+    Recipe(
+        recipe_id="read-an-inheritance-family",
+        title="Read an inheritance family",
+        snippet=_sources(Payment, CardPayment, BankTransfer, guide_recipes.payments_for),
+    ),
+    Recipe(
+        recipe_id="query-a-document-layout-entity",
+        title="Query an entity stored in Relational Document Layout",
+        snippet=_sources(Product, guide_recipes.products_named),
+    ),
+    Recipe(
+        recipe_id="look-up-a-customer",
+        title="Look up one value with a standalone read",
+        snippet=_sources(guide_recipes.look_up_a_customer),
+    ),
+    Recipe(
+        recipe_id="reads-that-agree",
+        title="Read twice standalone, then twice from one read-only snapshot",
+        snippet=_sources(
+            guide_recipes.customers_and_orders_one_read_at_a_time,
+            guide_recipes.customers_and_orders_from_one_snapshot,
+        ),
+    ),
+    Recipe(
+        recipe_id="re-read-before-amending",
+        title="Re-read a value inside the transaction that amends it",
+        snippet=_sources(
+            guide_recipes.amend_a_value_read_earlier, guide_recipes.amend_after_reading_it_again
+        ),
+    ),
+    Recipe(
+        recipe_id="load-orders-with-their-customer",
+        title="Load a two-hop include path",
+        snippet=_sources(guide_recipes.orders_with_their_customer),
+    ),
+    Recipe(
+        recipe_id="choose-a-result-shape",
+        title="Take an optional result or a list of results",
+        snippet=_sources(guide_recipes.customer_with_email, guide_recipes.orders_placed_on),
+    ),
+    Recipe(
+        recipe_id="read-rows-that-break-the-model",
+        title="Read invalid stored data in band with checked()",
+        snippet=_sources(guide_recipes.products_and_unreadable_rows),
+    ),
+    Recipe(
+        recipe_id="stream-and-amend-in-a-transaction",
+        title="Stream and amend every row inside one transaction",
+        snippet=_sources(guide_recipes.add_a_surcharge_to_every_order),
+    ),
+    Recipe(
+        recipe_id="read-the-latest-state",
+        title="Read the latest state of a Transaction-Time-Only entity",
+        snippet=_sources(guide_recipes.current_credit_limit),
+    ),
+    Recipe(
+        recipe_id="read-transaction-time-history",
+        title="Read every state a Transaction-Time-Only entity has held",
+        snippet=_sources(guide_recipes.credit_limit_history),
+    ),
+    Recipe(
+        recipe_id="read-a-price-on-both-axes",
+        title="Read a Bitemporal value at a Valid Time, and as recorded at a Transaction Time",
+        snippet=_sources(guide_recipes.price_on, guide_recipes.price_on_as_recorded_at),
+    ),
+    Recipe(
+        recipe_id="read-prices-over-a-valid-time-range",
+        title="Read every Bitemporal milestone in a Valid-Time range",
+        snippet=_sources(guide_recipes.prices_during),
+    ),
+    Recipe(
+        recipe_id="query-with-a-wire-document",
+        title="Query with a Wire document and serialize the result",
+        snippet=_sources(guide_recipes.customer_as_json),
+    ),
+    Recipe(
+        recipe_id="insert-and-read-your-own-write",
+        title="Insert a value and read it back in the same transaction",
+        snippet=_sources(guide_recipes.register_a_customer),
+    ),
+    Recipe(
+        recipe_id="amend-or-replace-an-edited-value",
+        title="Amend or replace an edited copy of a value read in the transaction",
+        snippet=_sources(guide_recipes.change_an_email, guide_recipes.replace_contact_details),
+    ),
+    Recipe(
+        recipe_id="amend-with-an-assignment",
+        title="Amend a value read in the transaction with an explicit assignment",
+        snippet=_sources(guide_recipes.add_to_an_order),
+    ),
+    Recipe(
+        recipe_id="delete-a-value-you-read",
+        title="Delete a value read in the transaction",
+        snippet=_sources(guide_recipes.cancel_an_order),
+    ),
+    Recipe(
+        recipe_id="change-a-credit-limit",
+        title="Insert and amend a Transaction-Time-Only entity",
+        snippet=_sources(
+            CreditLimit, guide_recipes.grant_a_credit_limit, guide_recipes.change_a_credit_limit
+        ),
+    ),
+    Recipe(
+        recipe_id="withdraw-a-credit-limit",
+        title="Terminate a Transaction-Time-Only entity",
+        snippet=_sources(guide_recipes.withdraw_a_credit_limit),
+    ),
+    Recipe(
+        recipe_id="list-a-price",
+        title="Insert a Bitemporal value from a Valid-Time start, with or without an end",
+        snippet=_sources(Price, guide_recipes.list_a_tea, guide_recipes.list_a_seasonal_tea),
+    ),
+    Recipe(
+        recipe_id="amend-a-price-from-a-date",
+        title="Amend a Bitemporal value from a Valid-Time instant onwards",
+        snippet=_sources(guide_recipes.change_a_price_from),
+    ),
+    Recipe(
+        recipe_id="replace-a-price-over-a-window",
+        title="Replace a Bitemporal value over a window of Valid Time",
+        snippet=_sources(guide_recipes.reprice_a_tea_for),
+    ),
+    Recipe(
+        recipe_id="terminate-a-price",
+        title="Terminate a Bitemporal value from a Valid-Time instant onwards",
+        snippet=_sources(guide_recipes.discontinue_a_tea),
+    ),
+    Recipe(
+        recipe_id="correct-a-past-price",
+        title="Correct past Valid Time under the latest Transaction Time",
+        snippet=_sources(
+            guide_recipes.correct_a_past_price, guide_recipes.correct_a_price_as_recorded_then
+        ),
+    ),
+    Recipe(
+        recipe_id="amend-what-a-review-showed",
+        title="Amend a value read earlier under the revision it showed",
+        snippet=_sources(
+            guide_recipes.change_a_reviewed_total, guide_recipes.change_a_reviewed_limit
+        ),
+    ),
+    Recipe(
+        recipe_id="cancel-reviewed-orders",
+        title="Delete values read earlier unless they changed since",
+        snippet=_sources(guide_recipes.cancel_reviewed_orders, guide_recipes.cancel_unless_changed),
+    ),
+    Recipe(
+        recipe_id="amend-and-delete-where",
+        title="Amend and delete every row a predicate selects",
+        snippet=_sources(
+            guide_recipes.forget_an_email_address, guide_recipes.delete_the_shipments_of
+        ),
+    ),
+    Recipe(
+        recipe_id="write-through-wire",
+        title="Insert and amend through Wire",
+        snippet=_sources(
+            guide_recipes.add_a_customer_from_json, guide_recipes.rename_a_customer_through_wire
+        ),
+    ),
+    Recipe(
+        recipe_id="amend-a-reviewed-price",
+        title="Amend a Bitemporal value read earlier under the milestone it showed",
+        snippet=_sources(guide_recipes.reprice_from_a_review),
+    ),
+    Recipe(
+        recipe_id="condition-a-wire-write-on-a-milestone",
+        title="Amend a value a Wire read showed earlier under its milestone",
+        snippet=_sources(guide_recipes.change_a_limit_shown_earlier),
+    ),
+    Recipe(
+        recipe_id="join-a-read-only-transaction",
+        title="Join a read-only transaction from a helper that reads",
+        snippet=_sources(guide_recipes.orders_of, guide_recipes.customer_with_their_orders),
+    ),
+    Recipe(
+        recipe_id="filter-sort-and-limit",
+        title="Filter, sort and limit a query",
+        snippet=_sources(guide_recipes.largest_orders_since, guide_recipes.customers_named),
+    ),
+    Recipe(
+        recipe_id="quantify-over-a-relationship",
+        title="Filter on a to-many relationship with one quantifier or two",
+        snippet=_sources(
+            guide_recipes.customers_with_a_large_recent_order,
+            guide_recipes.customers_with_a_recent_order_and_a_large_one,
+        ),
+    ),
+    Recipe(
+        recipe_id="narrow-a-family-to-a-subtype",
+        title="Narrow an inheritance family to one subtype",
+        snippet=_sources(guide_recipes.card_payments_ending_in, guide_recipes.card_payments_over),
+    ),
+    Recipe(
+        recipe_id="tell-unloaded-from-empty",
+        title="Tell an unloaded relationship from an empty one",
+        snippet=_sources(guide_recipes.who_placed),
+    ),
+    Recipe(
+        recipe_id="stream-a-large-result",
+        title="Stream a result too large to hold",
+        snippet=_sources(guide_recipes.total_of_every_order),
+    ),
+    Recipe(
+        recipe_id="export-customers-as-json-lines",
+        title="Stream Wire values out as JSON lines",
+        snippet=_sources(guide_recipes.export_customers),
+    ),
+    Recipe(
+        recipe_id="project-a-typed-result-as-wire",
+        title="Project a Typed result as Wire data without another read",
+        snippet=_sources(guide_recipes.customer_for_page_and_api),
     ),
 ]
 
@@ -2162,55 +2550,3 @@ def partition_report(
         partition.skipped,
         (*partition.errors, *stale),
     )
-
-
-_GUIDE_HEADER: Final[str] = (
-    "<!-- GENERATED by `gen-usage-guide` from the API Conformance Suite. "
-    "Do not edit by hand; run `uv run gen-usage-guide`. -->"
-)
-
-
-def render_usage_guide(examples: list[Example], recipes: list[Recipe] | None = None) -> str:
-    """Render the Usage Guide markdown from the registered examples, plus the
-    spec-recipe section (:data:`RECIPES`) when supplied."""
-    lines: list[str] = [
-        _GUIDE_HEADER,
-        "",
-        "# Parallax Python — Usage Guide",
-        "",
-        "Selected examples from the executable API Conformance Suite. The suite",
-        "covers additional cases and variants; this guide focuses on common tasks.",
-        "See the [Python binding](../spec/python.md) for API contracts and the",
-        "[PostgreSQL lifecycle guide](postgresql-lifecycle.md) for application setup.",
-        "",
-    ]
-    if not examples:
-        lines.append(
-            "_No idiomatic examples yet — each is added with the capability it demonstrates._"
-        )
-        lines.append("")
-    else:
-        for example in examples:
-            lines.append(f"## {example.title}")
-            lines.append("")
-            lines.append(f"Corpus case: `{example.case_id}`")
-            lines.append("")
-            lines.append("```python")
-            lines.append(example.snippet)
-            lines.append("```")
-            lines.append("")
-    if recipes:
-        lines.append("## Recipes")
-        lines.append("")
-        lines.append("These examples combine several operations into one application task.")
-        lines.append("")
-        for recipe in recipes:
-            lines.append(f"### {recipe.title}")
-            lines.append("")
-            lines.append("```python")
-            lines.append(recipe.snippet.rstrip("\n"))
-            lines.append("```")
-            lines.append("")
-    # Collapse the trailing separator blank(s) into a single terminating newline
-    # so the generated Markdown satisfies markdownlint MD012 (no multiple blanks).
-    return "\n".join(lines).rstrip("\n") + "\n"

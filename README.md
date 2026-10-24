@@ -1,124 +1,184 @@
 # Parallax
 
-Parallax is an object-relational mapper for applications that need rich domain
-models, explicit transactions, and a reliable history of how their data changes.
-It combines typed queries and immutable object graphs with batched writes,
-optimistic concurrency, and first-class temporal data.
+Parallax is an object-relational mapper for applications whose data must stay correct
+under concurrent writes and whose history matters. You declare your domain as typed
+entity classes. Parallax reads complete, immutable object graphs, writes only inside
+explicit transactions, and can keep a full record of how your data changed: when the
+database learned each fact, and when each fact is true in the world. It ships today for
+**Python with PostgreSQL**.
 
-The current implementation is **Python with PostgreSQL**. You declare
-Pydantic-based entity classes, query through their attributes and relationships,
-and receive frozen instances of your own types. Reads return complete snapshots
-of the requested object graph; accessing a relationship never silently triggers
-another database query.
+## Why Parallax
 
-Start with the [Python Usage Guide](languages/python/docs/usage-guide.md) for
-executable examples, or the
-[PostgreSQL lifecycle guide](languages/python/docs/postgresql-lifecycle.md) for
-connection and application setup.
+- **Reads return complete, immutable values.** A read gives you frozen instances of your
+  own classes, with the relationships you asked for already loaded. Following a
+  relationship never runs a hidden query, so there is no lazy loading and no N+1
+  surprise. See [Reading and querying](languages/python/docs/guide/03-reading.md).
+- **Transactions are explicit, and blind writes are refused.** Every write runs inside
+  `db.transact(...)`, and Parallax refuses a blind write, one that changes a row by key
+  without knowing what it holds. Changing an existing row by key needs a licence: a read
+  of it in the same transaction, the transaction's own insert of it, or the revision you
+  read it at, stated with the write. Only an entity with no version and no history also
+  accepts predicate writes, which change the rows a query selects without reading them.
+  See [Writing](languages/python/docs/guide/04-writing.md).
+- **Conflicts are retried for you, within a bound.** When a deadlock, or a change to a
+  row the transaction read, ends an attempt, Parallax runs your whole callback again
+  against fresh reads, up to ten more times by default. See
+  [Transactions](languages/python/docs/guide/05-transactions.md).
+- **History is part of the model.** Declare an entity `TxTemporal` to keep every state the
+  database held, or `Bitemporal` to also record when each fact is true. The tour below
+  reads the past and corrects a window of time.
+- **Storage layout is invisible to callers.** Store an entity in ordinary columns or as
+  one JSON document per row. For the same stored data, your queries, results and writes
+  are the same. What changes is who guards that data: the database's column
+  constraints, or Parallax checking each document as it reads it. See
+  [Modeling](languages/python/docs/guide/02-modeling.md#choosing-a-storage-layout).
+- **Typed and Wire are peers.** One query returns instances of your classes or, through
+  the Wire API, immutable mappings of JSON-ready values, and both work inside the same
+  transaction. The tour ends with the same read both ways.
+- **Models evolve without a restart.** A running process can adopt a new edition of its
+  model, a changed model you publish while it runs, and each transaction uses exactly
+  one edition. See [model evolution](core/spec/m-model-evolution.md).
+- **One specification, proven against real PostgreSQL.** A language-neutral
+  specification and a compatibility corpus define the behaviour, and the Python
+  implementation is tested against them on a real database. See
+  [Implementing Parallax](IMPLEMENTING.md).
 
-## Model Your Domain
+## A 60-second tour
 
-Use entity classes to describe scalar attributes, primary keys, and to-one or
-to-many relationships. Nested, immutable value objects let you model structured
-data without turning every component into a separate entity. They can be stored
-in JSON-backed columns and queried through their declared fields.
+The snippets below leave out imports and the setup that gives you `db`.
+[Getting started](languages/python/docs/guide/01-getting-started.md) shows both, and each
+chapter of the guide lists the imports its examples use.
 
-Parallax also supports generated primary keys, read-only entities, document
-storage, and closed inheritance families. Inheritance can use a shared table or
-a table per concrete subtype, while queries can narrow a family to particular
-subtypes and their attributes.
+Declare your entities as Pydantic classes. Annotations name each attribute and
+relationship, and an attribute declared with `optimistic_locking=True`, here `version`,
+turns on optimistic locking.
 
-## Query Objects and Relationships
-
-Build typed expressions from your entity classes: compose filters, test whether
-related objects exist, order and limit results, and explicitly include the
-relationships you want to load. Query construction itself performs no I/O.
-
-For example, with application entities already declared:
-
+<!-- example: declare-customers-and-orders -->
 ```python
-# Orders with at least one qualifying item.
-query = Order.where(Order.items.any(OrderItem.quantity >= 4))
+class Customer(Entity, table="customer"):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=100)
+    email: Attr[str | None] = attr(max_length=200)
+    orders: Rel[tuple["Order", ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "customer_id"))
 
-# A bounded, ordered result.
-query = Order.where(Order.active.is_(True)).order_by(Order.qty.desc()).limit(20)
+
+class Order(Entity, table="orders", indices=(index("orders_customer", "customer_id"),)):
+    id: Attr[int] = attr(primary_key=True)
+    customer_id: Attr[int]
+    placed_on: Attr[dt.date]
+    total: Attr[Decimal] = attr(precision=12, scale=2)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    customer: Rel[Customer | None] = rel(reverse_of="orders")
 ```
+<!-- /example -->
 
-Included relationships are fetched eagerly. Shared objects and cycles preserve
-identity within the returned graph, and unloaded relationships are explicit
-rather than lazy database calls. The `Snapshot[T]` result envelope provides
-accessors for exactly one, optional one, or multiple roots. Context-managed
-streams support paged delivery when you do not want to materialize the entire
-result at once.
+Build queries from class attributes. This one filters customers by their orders and
+loads those orders in the same read.
 
-Applications that need a data-oriented boundary can use the Wire API with
-canonical query documents and immutable mapping results. Typed and Wire access
-share the same execution semantics; an existing typed snapshot can also be
-projected to Wire data without another database call.
-
-## Treat History as Part of the Model
-
-Parallax supports both transaction-time audit histories and full bitemporal
-models:
-
-- **Transaction time** records when a fact was stored in the database, letting
-  you ask what the system knew at a past instant.
-- **Valid time** records when a fact applies in the domain, independently of
-  when the change was recorded.
-
-Read the latest state, query as of a particular instant, or inspect histories
-and time ranges. Temporal coordinates carry through the requested object graph
-so related data is read at the same temporal perspective.
-
+<!-- example: filter-on-a-relationship -->
 ```python
-from datetime import UTC, datetime
-
-query = Balance.where(Balance.all).as_of(
-    tx_time=datetime(2024, 4, 1, tzinfo=UTC)
-)
+def customers_with_an_order_over(db: ScopedDatabase, total: Decimal) -> list[Customer]:
+    """Each matching customer arrives with all of its orders already loaded."""
+    query = Customer.where(Customer.orders.any(Order.total > total)).include(Customer.orders)
+    return db.find(query).results()
 ```
+<!-- /example -->
 
-Temporal writes preserve history rather than overwriting it. Bitemporal
-operations support valid-time changes and bounded corrections: change a
-value for a particular interval while preserving the portions before and after
-it. The [usage guide's temporal example](languages/python/docs/usage-guide.md#bitemporal-amend-until-splits-headmiddletail)
-shows an amendment restricted to a date range.
+Values are frozen. To change one, edit a copy and hand it to a transaction. The read in
+the same transaction is what allows the amendment.
 
-## Make Changes Through Explicit Transactions
+<!-- example: insert-and-amend-in-one-transaction -->
+```python
+def place_an_order(db: ScopedDatabase) -> None:
+    """Insert an order and update its customer: both commit, or neither does."""
 
-Returned objects are immutable. Insert new values, use `edit(...)` and an
-explicit amendment to persist changes, or delete an entity through the transaction.
-Writes are explicit rather than inferred from mutation of a live object graph.
+    def place(tx: TxnContext) -> None:
+        customer = tx.find(Customer.where(Customer.id == 1)).result()
+        tx.insert(
+            Order(
+                id=7,
+                customer_id=customer.id,
+                placed_on=dt.date(2024, 5, 2),
+                total=Decimal("80.00"),
+            )
+        )
+        tx.amend(customer.edit(email="ada@example.org"))
 
-Transactions buffer changes in a unit of work, coalesce or cancel compatible
-operations, batch database writes, and order them around dependencies. Reads
-inside the transaction flush pending work when needed to observe your own
-changes. Set-based operations support changes selected by a query as well as
-changes to individually loaded entities.
+    db.transact(place)
+```
+<!-- /example -->
 
-Concurrency controls include optimistic conflict detection, locking reads, and
-configurable isolation. Transactions run through callbacks so retryable failures
-can replay the transaction body within a configured bound. Nested calls join an
-eligible active transaction; a failed joined body cannot be caught and then
-accidentally committed by its caller.
+A `TxTemporal` entity keeps every state the database held. Ask what it held at any
+past instant.
 
-## Integrate with Your Application
+<!-- example: read-as-of-a-past-instant -->
+```python
+class CreditLimit(TxTemporal, table="credit_limit"):
+    customer_id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=12, scale=2)
 
-The PostgreSQL adapter uses psycopg and supports pooled and on-demand connection
-retention. A `Database` root owns its runtime; explicit scopes select execution
-authority and transaction options. Credential sources can refresh credentials
-when establishing connections, and the optional AWS integration supplies RDS IAM
-authentication.
 
-Lifecycle observation hooks expose execution activity without attaching a log
-to every returned object. Read-plan reuse avoids rebuilding eligible plans,
-while explicit connection and stream lifetimes make resource ownership visible
-to the application.
+def credit_limit_on_record(db: ScopedDatabase, customer_id: int, when: dt.datetime) -> Decimal:
+    """The limit the database held at ``when``, even if it has changed since."""
+    query = CreditLimit.where(CreditLimit.customer_id == customer_id).as_of(tx_time=when)
+    return db.find(query).result().amount
+```
+<!-- /example -->
 
-See the [PostgreSQL lifecycle guide](languages/python/docs/postgresql-lifecycle.md)
-for deployment choices, connection budgeting, timeouts, and pool observation.
-The [Python binding](languages/python/spec/python.md) records the precise
-Python-specific contracts behind the API.
+A `Bitemporal` entity also records when each fact is true. An amendment starts at the
+time its read asked for, June here, and `until` ends it, so it changes only that window.
+The price before and after the window is untouched, and the previous prices stay
+readable as history.
+
+<!-- example: amend-a-valid-time-window -->
+```python
+class Price(Bitemporal, table="price"):
+    sku: Attr[str] = attr(primary_key=True, max_length=20)
+    amount: Attr[Decimal] = attr(precision=12, scale=2)
+
+
+def run_a_summer_sale(db: ScopedDatabase) -> None:
+    """Lower a price from June to September; the rest of the year keeps the old price."""
+    june = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    september = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+    def discount(tx: TxnContext) -> None:
+        price = tx.find(Price.where(Price.sku == "TEA-1").as_of(valid_time=june)).result()
+        tx.amend(price.edit(amount=Decimal("8.00")), until=september)
+
+    db.transact(discount)
+```
+<!-- /example -->
+
+The same query runs through Wire, which delivers immutable mappings ready to serialize.
+Their names and values take Parallax's language-neutral canonical form, such as
+`customerId` for `customer_id` and a decimal as a string.
+
+<!-- example: read-through-wire -->
+```python
+def customers_with_an_order_over_as_wire(db: ScopedDatabase, total: Decimal) -> list[WireEntity]:
+    """The same read, delivered as immutable mappings ready to serialize."""
+    query = Customer.where(Customer.orders.any(Order.total > total)).include(Customer.orders)
+    return db.wire.find(query).results()
+```
+<!-- /example -->
+
+Every snippet on this page runs against a real PostgreSQL database in the test suite.
+
+## Where to go next
+
+- **Learn the API**: the [Python Guide](languages/python/docs/guide/README.md), starting
+  with [Getting started](languages/python/docs/guide/01-getting-started.md).
+- **Run it in production**: the
+  [PostgreSQL connection lifecycle](languages/python/docs/postgresql-lifecycle.md) covers
+  pooling, credentials, timeouts and observability.
+- **Understand how it works**: the [concepts](docs/concepts/README.md) explain each
+  feature family in domain terms, and the
+  [Python architecture](languages/python/docs/architecture/README.md) maps how the
+  implementation is built.
+- **Look up exact behaviour**: the [Python binding](languages/python/spec/python.md) and
+  the [core specification](core/spec/00-overview.md).
+- **Build or extend an implementation**: [Implementing Parallax](IMPLEMENTING.md).
 
 ## Developing Parallax
 
@@ -144,43 +204,6 @@ docker context inspect --format '{{ .Endpoints.docker.Host }}'
 Set that endpoint as `docker.host` in your per-machine, untracked
 `~/.testcontainers.properties`, for example
 `docker.host=unix:///Users/you/.orbstack/run/docker.sock`.
-
-## A Shared Specification, Tested Against Real Databases
-
-Behind the ORM is a language-neutral behavioral specification and an executable
-compatibility corpus. They make the difficult parts—temporal corrections,
-transaction boundaries, SQL generation, and object materialization—explicit and
-testable. Parallax is informed by the bitemporal ORM
-[Reladomo](https://github.com/goldmansachs/reladomo); adopted semantics are
-expressed independently of Java or any other host language.
-
-The Python implementation proves the
-[`slice-snapshot-1`](core/spec/slices.md#snapshot-conformance-slice) capability
-set against PostgreSQL. Shared cases check emitted SQL, returned graphs, final
-table state, errors, and concurrency observations. A separate API suite drives
-the idiomatic Python interface and generates the usage guide from selected
-executable examples. The reference harness validates the corpus against real
-databases; it is not the ORM implementation.
-
-This foundation also allows other language implementations to offer their own
-idiomatic APIs while sharing behavioral contracts. It does not imply that every
-language or database described by the core has a shipped ORM adapter.
-
-For contributors exploring that foundation:
-
-- [Core overview](core/spec/00-overview.md), [module catalog](core/spec/modules.md),
-  and [slice catalog](core/spec/slices.md) describe the behavior and capability
-  boundaries.
-- [Schemas](core/schemas/) and [compatibility cases](core/compatibility/) hold
-  serialized forms and concrete expected observations.
-- [Implementing Parallax](IMPLEMENTING.md) explains contract ownership and how
-  to build or extend a language implementation.
-
-Inspect the Python capability set with:
-
-```bash
-just core-show-slice slice-snapshot-1
-```
 
 ## License
 

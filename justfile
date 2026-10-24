@@ -101,7 +101,7 @@ check-gates:
     cd {{harness}} && uv run python -m reference_harness.check_gates ..
 
 [metadata("runtime:fast")]
-[doc("Markdown lint across core/spec, languages/**/spec, and root.")]
+[doc("Markdown lint over the globs .markdownlint-cli2.jsonc declares.")]
 lint-markdown:
     pnpm exec markdownlint-cli2
 
