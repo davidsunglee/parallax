@@ -11,9 +11,13 @@ shape a position to select from. An abstract ``Root`` declares an inherited
 Value Object; its concrete ``Left`` and ``Right`` each declare a distinct
 ``home`` occurrence of the same storage spelling, except under table-per-hierarchy
 ``Columns`` layout, where the shared Table refuses the collision and ``Right``'s
-occurrence takes its own Column. Concrete ``Plain`` declares one Attribute and no
-Value Object, so under ``Document`` layout it alone keeps a document-resident
-Attribute. A standalone ``Holder`` includes every ``Root``.
+occurrence takes its own Column. Concrete ``Plain`` declares a scalar Attribute
+and a scalar collection and no Value Object, so under ``Document`` layout it
+alone keeps document-resident Attributes. Under ``Columns`` layout ``Root`` also
+declares an inherited Bytes Attribute, which every concrete stores in a Column of
+its own; under ``Document`` layout it would be document-resident and make every
+read project the Structured Column. A standalone ``Holder`` includes every
+``Root``.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
@@ -137,6 +141,7 @@ def _matrix_family(strategy: Strategy, layout: Layout) -> Mapping[str, Any]:
             "__annotations__": {
                 "id": Attr[int],
                 "holder_id": Attr[int | None],
+                **({"digest": Attr[bytes | None]} if layout == "columns" else {}),
                 "origin": Attr[Spot | None],
             },
             "id": attr(primary_key=True),
@@ -154,7 +159,7 @@ def _matrix_family(strategy: Strategy, layout: Layout) -> Mapping[str, Any]:
             {"home": Attr[Spot | None]},
             {"home": attr(column="right_home")} if hierarchy and layout == "columns" else {},
         ),
-        "Plain": ({"note": Attr[str | None]}, {}),
+        "Plain": ({"note": Attr[str | None], "tags": Attr[tuple[str, ...]]}, {}),
     }
     classes: dict[str, Any] = {"Root": root}
     for name, (annotations, members) in declared.items():
