@@ -33,11 +33,22 @@ from parallax.conformance.guide_models import (
     Shipment,
 )
 from parallax.conformance.guide_recipes import (
+    add_a_customer_from_json,
     add_a_surcharge_to_every_order,
     add_and_find_a_customer,
+    add_to_an_order,
     amend_a_value_read_earlier,
     amend_after_reading_it_again,
+    cancel_an_order,
+    cancel_reviewed_orders,
+    change_a_credit_limit,
+    change_a_price_from,
+    change_a_reviewed_limit,
+    change_a_reviewed_total,
+    change_an_email,
     configure_the_database,
+    correct_a_past_price,
+    correct_a_price_as_recorded_then,
     credit_limit_history,
     credit_limit_on_record,
     current_credit_limit,
@@ -47,6 +58,12 @@ from parallax.conformance.guide_recipes import (
     customers_and_orders_one_read_at_a_time,
     customers_with_an_order_over,
     customers_with_an_order_over_as_wire,
+    delete_the_shipments_of,
+    discontinue_a_tea,
+    forget_an_email_address,
+    grant_a_credit_limit,
+    list_a_seasonal_tea,
+    list_a_tea,
     look_up_a_customer,
     orders_placed_on,
     orders_with_their_customer,
@@ -57,18 +74,23 @@ from parallax.conformance.guide_recipes import (
     prices_during,
     products_and_unreadable_rows,
     products_named,
+    register_a_customer,
+    rename_a_customer_through_wire,
+    replace_contact_details,
+    reprice_a_tea_for,
     run_a_summer_sale,
     shipments_to,
     table_statements,
+    withdraw_a_credit_limit,
 )
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.usage_guide import snippet_sources
-from parallax.core import DomainModel
+from parallax.core import TX_TIME, VALID_TIME, DomainModel
 from parallax.core.base import INFINITY
 from parallax.core.db_port import Bind, Committed, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import model_of
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, TransactionTimePinReadOnlyError
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -77,7 +99,12 @@ from parallax.core.execution_lifecycle import (
     RootExecution,
 )
 from parallax.core.read_delivery import InvalidDataError
-from parallax.core.unit_work import WriteEvidenceError
+from parallax.core.unit_work import (
+    InstructionRejectedError,
+    WriteEvidenceError,
+    WriteInstructionError,
+    WritePreconditionError,
+)
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import (
     Database,
@@ -567,17 +594,338 @@ def test_a_wire_document_reads_a_customer_ready_to_serialize(profile_run: Any) -
     ]
 
 
+def test_a_read_in_the_inserting_transaction_sees_the_pending_insert(profile_run: Any) -> None:
+    db = _shop(profile_run)
+
+    registered = register_a_customer(db, 5, "Barbara")
+
+    assert (registered.id, registered.name, registered.email) == (5, "Barbara", None)
+    assert look_up_a_customer(db, 5) == registered
+
+
+def test_an_amendment_writes_the_edited_member_and_a_replacement_writes_them_all(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    change_an_email(db, 1, "ada@example.org")
+
+    assert (look_up_a_customer(db, 1).name, look_up_a_customer(db, 1).email) == (
+        "Ada",
+        "ada@example.org",
+    )
+
+    replace_contact_details(db, 1, "Ada King")
+
+    assert (look_up_a_customer(db, 1).name, look_up_a_customer(db, 1).email) == (
+        "Ada King",
+        "ada@example.org",
+    )
+
+
+def test_an_assignment_amends_an_order_and_advances_its_version(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    add_to_an_order(db, 10, Decimal("7.50"))
+
+    order = db.find(Order.where(Order.id == 10)).result()
+    assert (order.total, order.version) == (Decimal("157.50"), 2)
+
+
+def test_a_delete_removes_the_order_its_transaction_read(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    cancel_an_order(db, 11)
+
+    assert sorted(order.id for order in db.find(Order.where(Order.all)).results()) == [10, 12]
+
+
+_T1 = dt.datetime(2023, 12, 15, tzinfo=dt.UTC)
+_T2 = dt.datetime(2024, 1, 10, tzinfo=dt.UTC)
+_T3 = dt.datetime(2024, 2, 15, tzinfo=dt.UTC)
+_T4 = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
+_T5 = dt.datetime(2024, 6, 20, tzinfo=dt.UTC)
+_T6 = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
+_T7 = dt.datetime(2024, 11, 15, tzinfo=dt.UTC)
+_APR = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+_DEC = dt.datetime(2024, 12, 1, tzinfo=dt.UTC)
+
+
+def test_transaction_time_only_writes_append_milestones(profile_run: Any) -> None:
+    db = _shop(profile_run, clock=ScriptedClock([_T1, _T2, _T3]))
+
+    grant_a_credit_limit(db, 1, Decimal("1000.00"))
+    change_a_credit_limit(db, 1, Decimal("2500.00"))
+
+    query = CreditLimit.where(CreditLimit.customer_id == 1)
+    assert [
+        (limit.amount, limit.tx_start, limit.tx_end)
+        for limit in db.find(query.history(TX_TIME)).results()
+    ] == [(Decimal("1000.00"), _T1, _T2), (Decimal("2500.00"), _T2, INFINITY)]
+
+    def delete_the_limit(tx: TxnContext) -> None:
+        tx.delete(tx.find(CreditLimit.where(CreditLimit.customer_id == 1)).result())
+
+    with pytest.raises(ExecutionFailure) as refused:
+        db.transact(delete_the_limit)
+    assert isinstance(refused.value.cause, WriteInstructionError)
+    assert "terminate" in str(refused.value.cause)
+
+    withdraw_a_credit_limit(db, 1)
+
+    assert db.find(query).result_or_none() is None
+    assert credit_limit_on_record(db, 1, dt.datetime(2024, 2, 1, tzinfo=dt.UTC)) == Decimal(
+        "2500.00"
+    )
+    assert [
+        (limit.amount, limit.tx_start, limit.tx_end)
+        for limit in db.find(query.history(TX_TIME)).results()
+    ] == [(Decimal("1000.00"), _T1, _T2), (Decimal("2500.00"), _T2, _T3)]
+
+
+type _Milestone = tuple[Decimal, dt.datetime, object, dt.datetime, object]
+
+
+def _price_milestones(db: ScopedDatabase, sku: str) -> set[_Milestone]:
+    """Every stored row of ``sku``: its amount, Valid-Time extent and Transaction-Time extent."""
+    query = Price.where(Price.sku == sku).history(TX_TIME).history(VALID_TIME)
+    return {
+        (price.amount, price.valid_start, price.valid_end, price.tx_start, price.tx_end)
+        for price in db.find(query).results()
+    }
+
+
+def test_the_bitemporal_worked_example_stores_the_rows_its_timelines_draw(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run, clock=ScriptedClock([_T1, _T2, _T3, _T4, _T5, _T6, _T7]))
+    ten, twelve = Decimal("10.00"), Decimal("12.00")
+
+    list_a_tea(db, "TEA-1", ten, _JAN)
+    assert _price_milestones(db, "TEA-1") == {(ten, _JAN, INFINITY, _T1, INFINITY)}
+
+    list_a_seasonal_tea(db, "TEA-2", Decimal("6.00"), _JUN, _SEP)
+    assert _price_milestones(db, "TEA-2") == {(Decimal("6.00"), _JUN, _SEP, _T2, INFINITY)}
+
+    change_a_price_from(db, "TEA-1", twelve, _APR)
+    first_year = {
+        (ten, _JAN, INFINITY, _T1, _T3),
+        (ten, _JAN, _APR, _T3, INFINITY),
+    }
+    assert _price_milestones(db, "TEA-1") == first_year | {(twelve, _APR, INFINITY, _T3, INFINITY)}
+    assert (
+        price_on_as_recorded_at(db, "TEA-1", _MAY, dt.datetime(2024, 1, 20, tzinfo=dt.UTC)) == ten
+    )
+
+    run_a_summer_sale(db)
+    summer = {
+        (twelve, _APR, INFINITY, _T3, _T4),
+        (twelve, _APR, _JUN, _T4, INFINITY),
+        (Decimal("8.00"), _JUN, _SEP, _T4, INFINITY),
+    }
+    assert _price_milestones(db, "TEA-1") == first_year | summer | {
+        (twelve, _SEP, INFINITY, _T4, INFINITY)
+    }
+
+    reprice_a_tea_for(db, "TEA-2", Decimal("7.00"), _JUL, _OCT)
+    # The replacement's window reaches past September, where nothing was stored,
+    # and its state there merges with the repriced piece into one row.
+    assert _price_milestones(db, "TEA-2") == {
+        (Decimal("6.00"), _JUN, _SEP, _T2, _T5),
+        (Decimal("6.00"), _JUN, _JUL, _T5, INFINITY),
+        (Decimal("7.00"), _JUL, _OCT, _T5, INFINITY),
+    }
+
+    discontinue_a_tea(db, "TEA-1", _DEC)
+    autumn = {
+        (twelve, _SEP, INFINITY, _T4, _T6),
+        (twelve, _SEP, _DEC, _T6, INFINITY),
+    }
+    assert _price_milestones(db, "TEA-1") == first_year | summer | autumn
+    assert (
+        db.find(Price.where(Price.sku == "TEA-1").as_of(valid_time=_DEC)).result_or_none() is None
+    )
+
+    correct_a_past_price(db, "TEA-1", Decimal("9.50"), _JAN, _APR)
+    assert (
+        _price_milestones(db, "TEA-1")
+        == {
+            (ten, _JAN, INFINITY, _T1, _T3),
+            (ten, _JAN, _APR, _T3, _T7),
+            (Decimal("9.50"), _JAN, _APR, _T7, INFINITY),
+        }
+        | summer
+        | autumn
+    )
+
+    february = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+    assert price_on(db, "TEA-1", february) == Decimal("9.50")
+    assert price_on_as_recorded_at(db, "TEA-1", february, _T6) == ten
+
+
+def test_a_value_read_at_a_past_transaction_time_cannot_be_corrected(profile_run: Any) -> None:
+    db = _shop(profile_run, clock=ScriptedClock([_T1, _T3]))
+    list_a_tea(db, "TEA-1", Decimal("10.00"), _JAN)
+    change_a_price_from(db, "TEA-1", Decimal("12.00"), _APR)
+    stored = _price_milestones(db, "TEA-1")
+
+    with pytest.raises(ExecutionFailure) as refused:
+        correct_a_price_as_recorded_then(db, "TEA-1", Decimal("9.50"), _JAN, _APR, _T2)
+
+    assert isinstance(refused.value.cause, TransactionTimePinReadOnlyError)
+    assert refused.value.cause.code == "transaction-time-pin-read-only"
+    assert _price_milestones(db, "TEA-1") == stored
+
+
+def test_an_amendment_over_a_window_leaves_uncovered_valid_time_uncovered(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run, clock=ScriptedClock([_T2, _T5]))
+    list_a_seasonal_tea(db, "TEA-2", Decimal("6.00"), _JUN, _SEP)
+
+    correct_a_past_price(db, "TEA-2", Decimal("7.00"), _JUL, _OCT)
+
+    assert _price_milestones(db, "TEA-2") == {
+        (Decimal("6.00"), _JUN, _SEP, _T2, _T5),
+        (Decimal("6.00"), _JUN, _JUL, _T5, INFINITY),
+        (Decimal("7.00"), _JUL, _SEP, _T5, INFINITY),
+    }
+
+
+def test_a_target_write_applies_only_at_the_revision_its_caller_states(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+    reviewed = db.find(Order.where(Order.id == 10)).result()
+
+    change_a_reviewed_total(db, reviewed, Decimal("140.00"))
+
+    order = db.find(Order.where(Order.id == 10)).result()
+    assert (order.total, order.version) == (Decimal("140.00"), 2)
+    # The same review, stated again, no longer matches the stored version.
+    with pytest.raises(ExecutionFailure) as refused:
+        change_a_reviewed_total(db, reviewed, Decimal("130.00"))
+    assert isinstance(refused.value.cause, WritePreconditionError)
+    assert refused.value.cause.expected == 1
+    assert db.find(Order.where(Order.id == 10)).result().total == Decimal("140.00")
+
+
+def test_a_temporal_target_write_states_the_milestone_start_it_saw(profile_run: Any) -> None:
+    db = _shop(profile_run, clock=ScriptedClock([_T1, _T2, _T3]))
+    grant_a_credit_limit(db, 1, Decimal("1000.00"))
+    reviewed = db.find(CreditLimit.where(CreditLimit.customer_id == 1)).result()
+
+    change_a_reviewed_limit(db, reviewed, Decimal("1500.00"))
+
+    assert current_credit_limit(db, 1) == Decimal("1500.00")
+    with pytest.raises(ExecutionFailure) as refused:
+        change_a_reviewed_limit(db, reviewed, Decimal("2000.00"))
+    assert isinstance(refused.value.cause, WritePreconditionError)
+    assert refused.value.cause.expected == _T1
+    assert current_credit_limit(db, 1) == Decimal("1500.00")
+
+
+def test_reviewed_orders_are_cancelled_unless_they_changed_since(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+    reviewed = db.find(Order.where(Order.all).order_by(Order.id.asc())).results()
+    add_to_an_order(db, 11, Decimal("1.00"))
+
+    changed = cancel_reviewed_orders(db, reviewed)
+
+    assert changed == [11]
+    assert [order.id for order in db.find(Order.where(Order.all)).results()] == [11]
+
+
+def test_a_target_write_to_an_unversioned_entity_is_refused(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    with pytest.raises(ExecutionFailure) as refused:
+        db.transact(
+            lambda tx: tx.amend_if(
+                Customer, Customer.email.set("ada@example.org"), key=1, version=1
+            )
+        )
+
+    assert isinstance(refused.value.cause, WriteInstructionError)
+
+
+def test_predicate_writes_run_at_the_call_and_answer_their_row_count(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+    db.transact(
+        lambda tx: (
+            tx.insert(Customer(id=3, name="Ada", email="ada@example.com")),
+            tx.insert(
+                Shipment(
+                    id=1,
+                    order_id=10,
+                    ship_to=Address(street="1 Fjord Vei", city="Bergen", postcode="5003"),
+                    tracking_number=None,
+                )
+            ),
+            tx.insert(
+                Shipment(
+                    id=2,
+                    order_id=10,
+                    ship_to=Address(street="1 Fjord Vei", city="Bergen", postcode="5003"),
+                    tracking_number="TRK-2",
+                )
+            ),
+        )
+    )
+
+    assert forget_an_email_address(db, "ada@example.com") == 2
+    assert forget_an_email_address(db, "nobody@example.com") == 0
+    assert [customer.email for customer in db.find(Customer.where(Customer.all)).results()] == [
+        None,
+        None,
+        None,
+    ]
+    assert delete_the_shipments_of(db, 10) == 2
+    assert db.find(Shipment.where(Shipment.all)).results() == []
+
+
+def test_a_predicate_write_to_a_versioned_entity_is_refused(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    with pytest.raises(ExecutionFailure) as refused:
+        db.transact(
+            lambda tx: tx.amend_where(Order.where(Order.all), Order.total.set(Decimal("0.00")))
+        )
+
+    assert isinstance(refused.value.cause, InstructionRejectedError)
+    assert refused.value.cause.rule == "set-based-write-target-unsupported"
+
+
+def test_wire_writes_insert_from_json_and_amend_a_node_read_in_the_transaction(
+    profile_run: Any,
+) -> None:
+    db = _shop(profile_run)
+
+    add_a_customer_from_json(db, '{"id": 4, "name": "Edsger", "email": null}')
+    rename_a_customer_through_wire(db, 4, "Edsger Dijkstra")
+
+    customer = look_up_a_customer(db, 4)
+    assert (customer.name, customer.email) == ("Edsger Dijkstra", None)
+
+
 # --------------------------------------------------------------------------- #
 # Database-free run-through of every recipe body.                              #
 # --------------------------------------------------------------------------- #
 class _ScriptedPort(ConnectsAsItself):
     """A fake `m-db-port` answering successive reads with scripted rows, then
-    none, every write with one affected row, and every boundary by committing."""
+    none, every write with ``affected`` rows, and every boundary by committing."""
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, *reads: Sequence[Mapping[str, object]]) -> None:
+    def __init__(self, *reads: Sequence[Mapping[str, object]], affected: int = 1) -> None:
         self.reads = list(reads)
+        self.affected = affected
 
     def execute(
         self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
@@ -586,7 +934,7 @@ class _ScriptedPort(ConnectsAsItself):
         return [projected_row(sql, row, document_reads) for row in answered]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
-        return 1
+        return self.affected
 
     def transaction[T](
         self,
@@ -722,6 +1070,93 @@ def _customer_one_as_json(db: ScopedDatabase) -> str:
     return customer_as_json(db, 1)
 
 
+def _register_customer_five(db: ScopedDatabase) -> Customer:
+    return register_a_customer(db, 5, "Barbara")
+
+
+def _change_customer_ones_email(db: ScopedDatabase) -> None:
+    change_an_email(db, 1, "ada@example.org")
+
+
+def _replace_customer_ones_details(db: ScopedDatabase) -> None:
+    replace_contact_details(db, 1, "Ada King")
+
+
+def _add_to_order_ten(db: ScopedDatabase) -> None:
+    add_to_an_order(db, 10, Decimal("7.50"))
+
+
+def _cancel_order_ten(db: ScopedDatabase) -> None:
+    cancel_an_order(db, 10)
+
+
+def _grant_customer_one_a_limit(db: ScopedDatabase) -> None:
+    grant_a_credit_limit(db, 1, Decimal("1000.00"))
+
+
+def _change_customer_ones_limit(db: ScopedDatabase) -> None:
+    change_a_credit_limit(db, 1, Decimal("2500.00"))
+
+
+def _withdraw_customer_ones_limit(db: ScopedDatabase) -> None:
+    withdraw_a_credit_limit(db, 1)
+
+
+def _list_tea_from_january(db: ScopedDatabase) -> None:
+    list_a_tea(db, "TEA-1", Decimal("10.00"), _JAN)
+
+
+def _list_a_summer_tea(db: ScopedDatabase) -> None:
+    list_a_seasonal_tea(db, "TEA-2", Decimal("6.00"), _JUN, _SEP)
+
+
+def _change_tea_from_april(db: ScopedDatabase) -> None:
+    change_a_price_from(db, "TEA-1", Decimal("12.00"), _APR)
+
+
+def _reprice_tea_from_july_to_october(db: ScopedDatabase) -> None:
+    reprice_a_tea_for(db, "TEA-1", Decimal("7.00"), _JUL, _OCT)
+
+
+def _discontinue_tea_in_december(db: ScopedDatabase) -> None:
+    discontinue_a_tea(db, "TEA-1", _DEC)
+
+
+def _correct_tea_from_january_to_april(db: ScopedDatabase) -> None:
+    correct_a_past_price(db, "TEA-1", Decimal("9.50"), _JAN, _APR)
+
+
+def _correct_tea_as_recorded_in_january(db: ScopedDatabase) -> None:
+    with pytest.raises(ExecutionFailure):
+        correct_a_price_as_recorded_then(db, "TEA-1", Decimal("9.50"), _JAN, _APR, _T2)
+
+
+def _change_a_reviewed_order(db: ScopedDatabase) -> None:
+    reviewed = db.find(Order.where(Order.id == 10)).result()
+    change_a_reviewed_total(db, reviewed, Decimal("140.00"))
+
+
+def _change_a_reviewed_credit_limit(db: ScopedDatabase) -> None:
+    reviewed = db.find(CreditLimit.where(CreditLimit.customer_id == 1)).result()
+    change_a_reviewed_limit(db, reviewed, Decimal("1500.00"))
+
+
+def _forget_adas_email(db: ScopedDatabase) -> int:
+    return forget_an_email_address(db, "ada@example.com")
+
+
+def _delete_order_tens_shipments(db: ScopedDatabase) -> int:
+    return delete_the_shipments_of(db, 10)
+
+
+def _add_edsger_from_json(db: ScopedDatabase) -> None:
+    add_a_customer_from_json(db, '{"id": 4, "name": "Edsger", "email": null}')
+
+
+def _rename_customer_one_through_wire(db: ScopedDatabase) -> None:
+    rename_a_customer_through_wire(db, 1, "Ada King")
+
+
 @pytest.mark.parametrize(
     ("recipe", "reads"),
     [
@@ -763,6 +1198,45 @@ def _customer_one_as_json(db: ScopedDatabase) -> str:
         pytest.param(_tea_price_in_july_as_recorded_in_march, ([_PRICE_ROW],), id="both-axes"),
         pytest.param(_tea_prices_from_may_to_july, ([_PRICE_ROW],), id="valid-time-range"),
         pytest.param(_customer_one_as_json, ([_CUSTOMER_ROW], [_ORDER_ROW]), id="wire-document"),
+        pytest.param(_register_customer_five, ([_CUSTOMER_ROW],), id="insert-and-read"),
+        pytest.param(_change_customer_ones_email, ([_CUSTOMER_ROW],), id="amend-an-edit"),
+        pytest.param(_replace_customer_ones_details, ([_CUSTOMER_ROW],), id="replace-an-edit"),
+        pytest.param(_add_to_order_ten, ([_ORDER_ROW],), id="amend-an-assignment"),
+        pytest.param(_cancel_order_ten, ([_ORDER_ROW],), id="delete"),
+        pytest.param(_grant_customer_one_a_limit, (), id="transaction-time-insert"),
+        pytest.param(
+            _change_customer_ones_limit, ([_CREDIT_LIMIT_ROW],), id="transaction-time-amend"
+        ),
+        pytest.param(
+            _withdraw_customer_ones_limit, ([_CREDIT_LIMIT_ROW],), id="transaction-time-terminate"
+        ),
+        pytest.param(_list_tea_from_january, (), id="bitemporal-insert"),
+        pytest.param(_list_a_summer_tea, (), id="bitemporal-bounded-insert"),
+        pytest.param(_change_tea_from_april, ([_PRICE_ROW], [_PRICE_ROW]), id="bitemporal-amend"),
+        pytest.param(
+            _reprice_tea_from_july_to_october, ([_PRICE_ROW], [_PRICE_ROW]), id="bitemporal-replace"
+        ),
+        pytest.param(
+            _discontinue_tea_in_december, ([_PRICE_ROW], [_PRICE_ROW]), id="bitemporal-terminate"
+        ),
+        pytest.param(
+            _correct_tea_from_january_to_april,
+            ([_PRICE_ROW], [_PRICE_ROW]),
+            id="bitemporal-correction",
+        ),
+        pytest.param(
+            _correct_tea_as_recorded_in_january, ([_PRICE_ROW],), id="pinned-correction-refused"
+        ),
+        pytest.param(_change_a_reviewed_order, ([_ORDER_ROW],), id="target-version"),
+        pytest.param(
+            _change_a_reviewed_credit_limit,
+            ([_CREDIT_LIMIT_ROW], [_CREDIT_LIMIT_ROW]),
+            id="target-tx-start",
+        ),
+        pytest.param(_forget_adas_email, (), id="predicate-amend"),
+        pytest.param(_delete_order_tens_shipments, (), id="predicate-delete"),
+        pytest.param(_add_edsger_from_json, (), id="wire-insert"),
+        pytest.param(_rename_customer_one_through_wire, ([_CUSTOMER_ROW],), id="wire-amend"),
     ],
 )
 def test_every_recipe_runs_through_the_shipped_surface(
@@ -771,15 +1245,61 @@ def test_every_recipe_runs_through_the_shipped_surface(
     recipe(own_root(Database.connect(_ScriptedPort(*reads), SHOP_MODEL)).using_database_login())
 
 
+class _WriteFailsPort(_ScriptedPort):
+    """A scripted port whose every write fails as the database refusing it."""
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        raise RuntimeError("the database refused the write")
+
+
+@pytest.mark.parametrize(
+    ("port", "changed"),
+    [
+        pytest.param(_ScriptedPort([_ORDER_ROW]), [], id="unchanged"),
+        pytest.param(_ScriptedPort([_ORDER_ROW], affected=0), [10], id="changed-since-review"),
+    ],
+)
+def test_cancelling_reviewed_orders_runs_through_the_shipped_surface(
+    port: _ScriptedPort, changed: list[int]
+) -> None:
+    db = own_root(Database.connect(port, SHOP_MODEL)).using_database_login()
+    reviewed = db.find(Order.where(Order.id == 10)).results()
+
+    assert cancel_reviewed_orders(db, reviewed) == changed
+
+
+def test_cancelling_reviewed_orders_lets_any_other_failure_through() -> None:
+    db = own_root(
+        Database.connect(_WriteFailsPort([_ORDER_ROW]), SHOP_MODEL)
+    ).using_database_login()
+    reviewed = db.find(Order.where(Order.id == 10)).results()
+
+    with pytest.raises(ExecutionFailure) as failed:
+        cancel_reviewed_orders(db, reviewed)
+
+    assert not isinstance(failed.value.cause, WritePreconditionError)
+
+
 def test_every_recipe_the_module_exports_has_a_driver() -> None:
     assert sorted(guide_recipes.__all__) == sorted(
         recipe.__name__
         for recipe in (
+            add_a_customer_from_json,
             add_a_surcharge_to_every_order,
             add_and_find_a_customer,
+            add_to_an_order,
             amend_a_value_read_earlier,
             amend_after_reading_it_again,
+            cancel_an_order,
+            cancel_reviewed_orders,
+            change_a_credit_limit,
+            change_a_price_from,
+            change_a_reviewed_limit,
+            change_a_reviewed_total,
+            change_an_email,
             configure_the_database,
+            correct_a_past_price,
+            correct_a_price_as_recorded_then,
             credit_limit_history,
             credit_limit_on_record,
             current_credit_limit,
@@ -789,6 +1309,12 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             customers_and_orders_one_read_at_a_time,
             customers_with_an_order_over,
             customers_with_an_order_over_as_wire,
+            delete_the_shipments_of,
+            discontinue_a_tea,
+            forget_an_email_address,
+            grant_a_credit_limit,
+            list_a_seasonal_tea,
+            list_a_tea,
             look_up_a_customer,
             orders_placed_on,
             orders_with_their_customer,
@@ -799,9 +1325,14 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             prices_during,
             products_and_unreadable_rows,
             products_named,
+            register_a_customer,
+            rename_a_customer_through_wire,
+            replace_contact_details,
+            reprice_a_tea_for,
             run_a_summer_sale,
             shipments_to,
             table_statements,
+            withdraw_a_credit_limit,
         )
     )
 

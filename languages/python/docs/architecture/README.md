@@ -10,3 +10,6 @@ terms.
 - [Read flow](read-flow.md): from `db.find`, `db.stream`, `db.read_only` or `db.transact`
   through the shared gate, planning, SQL and Page assembly to Typed or Wire values, and
   where eager and streamed delivery part ways.
+- [Write flow](write-flow.md): from a Typed or Wire verb through preparation,
+  admission and composition in the unit of work to the Write Planner, settlement and
+  the Write Groups a flush executes.
