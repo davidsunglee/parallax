@@ -190,7 +190,7 @@ def test_a_repeated_insert_is_refused_with_its_openers_advice_before_anything_bu
         assert refusal.value.code == "write-value-already-stored"
         assert refusal.value.message.endswith("repeated")
         assert refusal.value.identity == _ACCOUNT
-        assert tx.uow.insertion_authority(opened.authority) is None
+        assert tx.uow.source_authority.insertion_authority(opened.authority) is None
 
     # Only the opening insert executes.
     scope(ScriptedAdapter(Transact(Write()))).transact(fn, itself)

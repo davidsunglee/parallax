@@ -10,11 +10,14 @@ from contextlib import contextmanager
 from decimal import Decimal
 from typing import Any, Final
 
+import pytest
+
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import opt_lock
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
+from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._write_lowering import lowered, stream_physical
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import INFINITY as OPEN
@@ -270,7 +273,7 @@ def run_plan(
         return executor.execute(steps, allocates=allocates, flush=flush, **capture)
 
     planner = build_write_planner(meta)
-    uow = (UnitOfWork if completed is None else _recording(port, completed))(
+    uow = UnitOfWork(
         settings=TransactionSettings(),
         lifetime=TxnAttemptLifetime(),
         clock=FixedClock(T1),
@@ -284,24 +287,25 @@ def run_plan(
     )
     if units is not None:
         units.append(uow)
-    ownership = uow._admission.ownership  # pyright: ignore[reportPrivateUsage] - the live ownership a requesting flush walks under
-    uow._run_write_plan(plan, ownership=ownership, captures=True)  # pyright: ignore[reportPrivateUsage] - the flush's walk over a plan built here
+    ownership = uow.source_authority.planning_ownership(concluding=False)
+    if completed is None:
+        uow._run_write_plan(plan, ownership=ownership, captures=True)  # pyright: ignore[reportPrivateUsage] - the flush's walk over a plan built here
+        return
+    complete = SourceAuthority.complete_write
 
+    def recording(
+        authority: SourceAuthority,
+        effects: WriteEffects,
+        allocated_keys: tuple[object, ...],
+        *,
+        captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
+    ) -> None:
+        completed.append(len(port.calls))
+        complete(authority, effects, allocated_keys, captured=captured)
 
-def _recording(port: ScriptedAdapter, completed: list[int]) -> type[UnitOfWork]:
-    class _Recording(UnitOfWork):
-        __slots__ = ()
-
-        def _complete_write(
-            self,
-            effects: WriteEffects,
-            allocated: tuple[object, ...],
-            captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
-        ) -> None:
-            completed.append(len(port.calls))
-            super()._complete_write(effects, allocated, captured)
-
-    return _Recording
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(SourceAuthority, "complete_write", recording)
+        uow._run_write_plan(plan, ownership=ownership, captures=True)  # pyright: ignore[reportPrivateUsage] - the flush's walk over a plan built here
 
 
 def statement(step: PlannedStep) -> LoweredStatement:

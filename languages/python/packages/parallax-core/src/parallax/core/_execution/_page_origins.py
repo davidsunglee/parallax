@@ -19,7 +19,7 @@ class ReadEvidenceCollector(RecordedProjections):
 
     Conversion reports each projection to it while the row is live, and the
     reader asks it for the sealed Page's origins once. ``evidence_context`` is
-    the participating unit of work the evidence is filed with.
+    what the participating attempt files the evidence into.
     """
 
     __slots__ = ("_evidence_context", "_meta")

@@ -402,9 +402,7 @@ def test_a_participating_read_opens_inside_the_flush_as_its_activitys_ordered_si
     ]
 
 
-def test_a_participating_body_is_handed_the_attempts_connection_preference_and_unit_of_work() -> (
-    None
-):
+def test_a_participating_body_is_handed_the_attempts_connection_preference_and_authority() -> None:
     # Every participating read runs on the one connection the attempt acquired
     # for its whole life, so an eager body and a page body are handed the same
     # one, and no read acquires another.
@@ -417,7 +415,8 @@ def test_a_participating_body_is_handed_the_attempts_connection_preference_and_u
         with attempt.open_stream(_TARGET, "typed", 5) as stream:
             attempt.paged(stream.batch(), paged)
         for handed in (eager.only.inputs, paged.only.inputs):
-            assert (handed.preference, handed.evidence_context) == ("locking", attempt.uow)
+            assert handed.preference == "locking"
+            assert handed.evidence_context is attempt.uow.source_authority
         assert eager.only.inputs.connection is paged.only.inputs.connection
 
     _participating(run, adapter, concurrency="locking")

@@ -641,8 +641,8 @@ class _SimulatedUnit:
     here, detached from any participation, so this unit's completions never
     invalidate what a real read retained; a write with no observation, of an
     object this unit's own insertion opened, is authorized by the identity
-    buffering that insertion issued, while the unit of work answers it as
-    standing; and an
+    buffering that insertion issued, while the unit of work's source
+    authority answers it as standing; and an
     observation-free write of an unversioned row carries Read Evidence of its
     own, stamped with a participation no unit of work issued. A write against
     existing state that none of these licenses is refused when it is
@@ -717,7 +717,7 @@ class _SimulatedUnit:
         return answer
 
     def _retained(self, key: ObjectStateKey, evidence: StateObservation) -> RetainedObservation:
-        return self._uow.retain(RetainedObservation(key, evidence, None))
+        return self._uow.source_authority.retain(RetainedObservation(key, evidence, None))
 
     def _insert(self, instruction: PreparedKeyedInstruction, key: ObjectKey | None) -> None:
         identity = self._uow.buffer_insert(
@@ -728,7 +728,7 @@ class _SimulatedUnit:
 
     def _authorized(self, instruction: PreparedKeyedInstruction, key: ObjectKey | None) -> None:
         handle = None if key is None else self._handles.get(key)
-        if handle is None or not _stands(self._uow.insertion_authority(handle)):
+        if handle is None or not _stands(self._uow.source_authority.insertion_authority(handle)):
             self._admit_with_evidence(instruction, key, None)
             return
         with _composition_refusal():

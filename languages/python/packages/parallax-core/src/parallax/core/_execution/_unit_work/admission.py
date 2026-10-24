@@ -1,19 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterator, Mapping
 from dataclasses import replace
 from enum import Enum
-from typing import Final, final
+from typing import Final
 
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work._errors import WriteEvidenceError
-from parallax.core._execution._unit_work._write_ownership import (
-    InsertionComposition,
-    SourceRefusal,
-    SourceScope,
-    WriteOwnership,
-)
+from parallax.core._execution._unit_work._write_ownership import InsertionComposition
 from parallax.core._execution._unit_work.claims import (
     ClaimScope,
     ClaimVerdict,
@@ -33,10 +28,9 @@ from parallax.core._execution._unit_work.instructions import (
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
-    NoInsertionAuthority,
-    ReadEvidence,
     RetainedObservation,
 )
+from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     ComposedBitemporalOpening,
@@ -58,19 +52,11 @@ from parallax.core._execution._unit_work.write_items import (
     compose_temporal_write,
     temporal_intent,
 )
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
 from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
-from parallax.core.write_plan.plan import (
-    AllocatedOpening,
-    CurrentRowOutput,
-    Openings,
-    TemporalRowCoordinates,
-    TemporalWriteOwnership,
-    WriteEffects,
-)
 
 __all__ = [
     "BufferOutcome",
@@ -121,7 +107,7 @@ class WriteAdmission:
     :meth:`admit` accepts a write under the authority it carries, and
     :meth:`admit_insert` an insert, or either refuses it, with nothing pending
     changed. The lifecycle of each insertion — whether it still stands, what
-    it left stored, and when it retires — is the ownership's, which this asks
+    it left stored, and when it retires — is ``authority``'s, which this asks
     through its named transitions. Composition follows authored order:
 
     * an amendment or replacement of an object whose insert is still pending
@@ -145,22 +131,17 @@ class WriteAdmission:
       tail. Writes of the object over disjoint windows stay separate
       operations inside it, each with its own condition.
 
-    Planning borrows :meth:`composed_writes` and :attr:`ownership` without
-    changing either; only a successfully planned buffer is drained
-    (:meth:`drain_planned`). The insertions, the temporal rows the attempt's
-    successful settled writes opened, and what they did to the states its
-    sources reach outlive every buffer. ``observations`` is the attempt's index
-    of live observed states, which tells ownership which sources a completed
-    write's changes may still serve.
+    Planning borrows :meth:`composed_writes` without changing it; only a
+    successfully planned buffer is drained (:meth:`drain_planned`).
     """
 
     __slots__ = (
         "_after_removal",
+        "_authority",
         "_claimed_objects",
         "_claims",
         "_conditioned",
         "_families",
-        "_ownership",
         "_pending_insert_positions",
         "_removals",
         "_temporal",
@@ -168,18 +149,10 @@ class WriteAdmission:
         "_writes",
     )
 
-    def __init__(
-        self,
-        meta: Metamodel,
-        *,
-        inserted_version: Callable[[EntityIdentity, int | None], int | None],
-        observations: Mapping[ObjectStateKey, RetainedObservation],
-    ) -> None:
+    def __init__(self, meta: Metamodel, *, authority: SourceAuthority) -> None:
         self._families = inheritance.view(meta)
         self._temporal_facet = temporal_read.view(meta)
-        self._ownership = WriteOwnership(
-            meta, version_after=inserted_version, observations=observations
-        )
+        self._authority = authority
         self._writes: list[_PendingItem] = []
         # Every claim the buffer holds, by its scope: the position of the write
         # that holds it. A temporal object's writes against its coverage are
@@ -205,19 +178,6 @@ class WriteAdmission:
         """Whether the buffer has anything for a flush to process —
         composed writes, or writes composition left nothing of."""
         return bool(self._writes)
-
-    @property
-    def ownership(self) -> TemporalWriteOwnership:
-        """The attempt's live ownership, which a requesting flush's planning
-        and deferred binding read as its earlier Write Groups left it."""
-        return self._ownership
-
-    def concluding_ownership(self) -> TemporalWriteOwnership:
-        """The live ownership as the pre-commit flush plans and binds its
-        deferred writes under it: no later submission follows that flush, and
-        no write of it continues from what another of its writes leaves, so
-        nothing its writes leave is demanded."""
-        return _ConcludingOwnership(self._ownership)
 
     def admit(
         self,
@@ -251,7 +211,7 @@ class WriteAdmission:
         """Accept ``insert`` into the buffer, answering the identity of the
         insertion it opens — or refuse a repeat of an insertion still standing,
         with nothing pending changed
-        (:meth:`~parallax.core._execution._unit_work._write_ownership.WriteOwnership.open_insertion`).
+        (:meth:`~parallax.core._execution._unit_work.source_authority.SourceAuthority.open_insertion`).
 
         ``insertion_advice`` is kept for a repeat of this insertion. Where an
         earlier insertion of the object is stored and a pending write removes
@@ -264,7 +224,7 @@ class WriteAdmission:
             writes.append(insert)
             return None
         held = self._composition(key)
-        identity, follows_removal = self._ownership.open_insertion(
+        identity, follows_removal = self._authority.open_insertion(
             insert,
             pending_removal=None if held is None else held.transform,
             removes_object=self._removals is not None and key in self._removals,
@@ -367,66 +327,15 @@ class WriteAdmission:
         removals = self._removals
         positions = self._pending_insert_positions
         if removals is not None or positions is not None:
-            self._ownership.finish_insertion_planning(
+            self._authority.finish_insertion_planning(
                 pending_keys=() if positions is None else positions,
                 removed_objects=() if removals is None else removals,
             )
         self._clear_buffer()
 
-    def register_read_evidence(
-        self,
-        evidence: ReadEvidence,
-        *,
-        read_at: int,
-        current: Callable[[ObjectKey | ObjectStateKey, int], bool],
-    ) -> None:
-        """Register a published source's exact ``evidence``
-        (:meth:`~parallax.core._execution._unit_work._write_ownership.WriteOwnership.register_read_evidence`)."""
-        self._ownership.register_read_evidence(evidence, read_at=read_at, current=current)
-
-    def resolve_source(self, evidence: ReadEvidence) -> SourceScope | SourceRefusal:
-        """The protected current state a source's authority reaches, or why it
-        reaches none
-        (:meth:`~parallax.core._execution._unit_work._write_ownership.WriteOwnership.resolve_source`)."""
-        return self._ownership.resolve_source(evidence)
-
-    def complete(
-        self,
-        effects: WriteEffects,
-        allocated_keys: tuple[object, ...],
-        *,
-        at: int,
-        captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
-    ) -> None:
-        """Publish one successful write's ``effects`` at change count
-        ``at``: each versioned row it advanced, which a write a standing
-        insertion of it authorizes claims from then on, and the source authority
-        it continues or ends; the owned rows it removed, retired before the rows
-        it opened — those whose keys the database allocated named by
-        ``allocated_keys`` — are registered, with what it derived from its
-        predecessors and the rows its execution ``captured``."""
-        self._ownership.continue_sources(effects.advanced, effects.destroyed, at=at)
-        opened = effects.opened
-        self._ownership.complete(
-            effects.removed,
-            _resolve_allocated_openings(opened, allocated_keys) if allocated_keys else opened,
-            effects.derived,
-            captured,
-        )
-
     def discard(self) -> None:
-        """Drop the buffer and its claims, and every insertion, owned row, and
-        source registration of the attempt."""
+        """Drop the buffer and its claims."""
         self._clear_buffer()
-        self._ownership.clear()
-
-    def insertion_authority(
-        self, identity: InsertionIdentity
-    ) -> TimeInterval | NoInsertionAuthority | None:
-        """The Valid-Time window the insertion ``identity`` names was admitted
-        with while its authority stands
-        (:meth:`~parallax.core._execution._unit_work._write_ownership.WriteOwnership.insertion_authority`)."""
-        return self._ownership.insertion_authority(identity)
 
     def _admit_target(
         self,
@@ -437,7 +346,7 @@ class WriteAdmission:
         target = instruction.target
         scope = item.claim_scope
         key = item.object_key
-        if self._ownership.has_admitted_insertion(key):
+        if self._authority.has_admitted_insertion(key):
             raise WriteEvidenceError(
                 code="write-evidence-inserted",
                 message=(
@@ -474,7 +383,7 @@ class WriteAdmission:
         The authority is asked again here, after preparation, because
         preparation runs caller-owned code that can retire or supersede it.
         """
-        item = self._ownership.resolve_insertion_authorized_write(item)
+        item = self._authority.resolve_insertion_authorized_write(item)
         positions = self._pending_insert_positions
         position = None if positions is None else positions.get(item.object_key)
         if position is not None and not self._opening_admits(position, item.instruction):
@@ -565,7 +474,7 @@ class WriteAdmission:
             base = ComposedBitemporalOpening(insert=base, transform=NO_TRANSFORM, intents=())
         instruction = write.instruction
         opening = base.followed_by(instruction, self._key_name(instruction.target))
-        composition = self._ownership.apply_insertion_composition(
+        composition = self._authority.apply_insertion_composition(
             key, arriving=write, proposed_opening=opening
         )
         if composition is InsertionComposition.CANCELLED:
@@ -580,7 +489,7 @@ class WriteAdmission:
         Transaction-Time-Only insert at ``position``, which takes an
         amendment's values in place and is cancelled by any destruction, which
         removes all of it."""
-        composition = self._ownership.apply_insertion_composition(
+        composition = self._authority.apply_insertion_composition(
             key, arriving=item, proposed_opening=None
         )
         if composition is InsertionComposition.CANCELLED:
@@ -838,7 +747,7 @@ class WriteAdmission:
         """The current row of ``key`` holding Valid-Time ``instant`` — its one
         current row without Valid Time — among those the attempt's completed
         writes produced and hold, if any."""
-        for row in self._ownership.current_rows(key, None):
+        for row in self._authority.planning_ownership(concluding=False).current_rows(key, None):
             coverage = valid_time_coverage(shape, row, None)
             if instant is None or coverage is None or coverage.contains(instant):
                 return row
@@ -886,42 +795,6 @@ class WriteAdmission:
         self._pending_insert_positions = None
         self._conditioned = None
         self._claimed_objects = None
-
-
-@final
-class _ConcludingOwnership:
-    """``ownership`` answering every question as it does, except that no
-    predecessor is demanded."""
-
-    __slots__ = ("_ownership",)
-
-    def __init__(self, ownership: TemporalWriteOwnership) -> None:
-        self._ownership = ownership
-
-    def owns(self, coordinates: TemporalRowCoordinates, /) -> bool:
-        return self._ownership.owns(coordinates)
-
-    def continues_insertion(self, coordinates: TemporalRowCoordinates, /) -> bool:
-        return self._ownership.continues_insertion(coordinates)
-
-    def insertion_coverage(
-        self, coordinates: TemporalRowCoordinates, valid_time_coverage: TimeInterval | None, /
-    ) -> tuple[TimeInterval | None, ...]:
-        return self._ownership.insertion_coverage(coordinates, valid_time_coverage)
-
-    def demanded(
-        self, predecessor: ObjectStateKey, coordinates: TemporalRowCoordinates | None, /
-    ) -> bool:
-        del predecessor, coordinates
-        return False
-
-    def continues(self, observation: Hashable, pin: dt.datetime | None, /) -> bool | None:
-        return self._ownership.continues(observation, pin)
-
-    def current_rows(
-        self, target: ObjectKey, valid_time_window: TimeInterval | None, /
-    ) -> Sequence[PredecessorRow]:
-        return self._ownership.current_rows(target, valid_time_window)
 
 
 def _note_scope(objects: dict[ObjectKey, Hashable], key: ObjectKey, scope: ClaimScope) -> None:
@@ -1070,18 +943,6 @@ def _coalesced(
     return derive_keyed_instruction(
         base, (merged,), mutation="replaceUntil" if bounded else "replace", assigns=assigns
     )
-
-
-def _resolve_allocated_openings(opened: Openings, allocated: tuple[object, ...]) -> Openings:
-    named = tuple(
-        _allocated_coordinates(opening, key)
-        for opening, key in zip(opened.allocated, allocated, strict=True)
-    )
-    return Openings(fresh=(*opened.fresh, *named), continued=opened.continued, shared=opened.shared)
-
-
-def _allocated_coordinates(opening: AllocatedOpening, key: object) -> TemporalRowCoordinates:
-    return TemporalRowCoordinates(opening.entity, (key,), opening.ends)
 
 
 def _already_claimed(target: EntityMetadata, key: ObjectKey) -> WriteEvidenceError:

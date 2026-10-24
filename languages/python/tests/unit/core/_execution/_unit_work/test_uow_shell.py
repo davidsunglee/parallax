@@ -385,9 +385,9 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
     retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
 
     def body(tx: UnitOfWork) -> None:
-        tx.retain(retained)
+        tx.source_authority.retain(retained)
         reread = RetainedObservation(state, VersionObservation(observed_version=7), None)
-        resolved = tx.retain(reread)
+        resolved = tx.source_authority.retain(reread)
         assert resolved is retained
         tx.buffer(
             StateObservedWrite(
@@ -502,13 +502,13 @@ def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused(
         # repeat issues its own identity, which supersedes the first.
         standing = tx.buffer_insert(_account_insert(1), insertion_advice=None)
         assert standing is not None and standing is not superseded
-        assert tx.insertion_authority(stranger) is NO_INSERTION_AUTHORITY
-        assert tx.insertion_authority(superseded) is NO_INSERTION_AUTHORITY
+        assert tx.source_authority.insertion_authority(stranger) is NO_INSERTION_AUTHORITY
+        assert tx.source_authority.insertion_authority(superseded) is NO_INSERTION_AUTHORITY
         with pytest.raises(UnitOfWorkError, match="no longer stands"):
             tx.buffer(admitted_write(update, None, superseded.object_key, authority=superseded))
         # A standing insertion of an object without Valid Time has no window,
         # which is not the absence of its authority.
-        assert tx.insertion_authority(standing) is None
+        assert tx.source_authority.insertion_authority(standing) is None
         raise _Abandoned
 
     with pytest.raises(_Abandoned):
@@ -523,9 +523,11 @@ def test_evidence_of_this_attempt_carrying_no_observation_licenses_no_gated_writ
     key = corpus_object_key("Account", ("id", 1))
 
     def body(tx: UnitOfWork) -> None:
-        evidence = ReadEvidence(account.identity, key, tx.participation, None)
+        evidence = ReadEvidence(account.identity, key, tx.source_authority.participation, None)
         with pytest.raises(WriteEvidenceError) as refusal:
-            tx.resolve_read_evidence(account, evidence, mutation="amend", object_key=key)
+            tx.source_authority.resolve_read_evidence(
+                account, evidence, mutation="amend", object_key=key
+            )
         assert refusal.value.code == "write-evidence-unavailable"
 
     _run(body)
@@ -687,7 +689,7 @@ def test_escaped_reference_raises_on_every_use() -> None:
     with pytest.raises(EscapedTransactionError):
         tx.buffer_insert(_account_insert(1), insertion_advice=None)
     with pytest.raises(EscapedTransactionError):
-        tx.retain(
+        tx.source_authority.retain(
             RetainedObservation(
                 VersionedObjectStateKey(corpus_object_key("Account", ("id", 1)), 1),
                 VersionObservation(observed_version=1),
@@ -921,7 +923,10 @@ def test_a_destructive_write_of_a_pending_insert_reports_the_cancellation() -> N
         first = uow.buffer_insert(_account_insert(9), insertion_advice=None)
         assert uow.buffer(_account_write("delete", 8, 1)) is BufferOutcome.BUFFERED
         assert uow.buffer(_account_delete(first, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
-        assert first is not None and uow.insertion_authority(first) is NO_INSERTION_AUTHORITY
+        assert (
+            first is not None
+            and uow.source_authority.insertion_authority(first) is NO_INSERTION_AUTHORITY
+        )
         again = uow.buffer_insert(_account_insert(9), insertion_advice=None)
         assert uow.buffer(_account_delete(again, 9)) is BufferOutcome.CANCELLED_PENDING_INSERT
         assert uow.buffer(_account_write("delete", 9, 1)) is BufferOutcome.BUFFERED
@@ -1068,7 +1073,7 @@ def test_each_settled_write_publishes_its_change_before_the_next_group_executes(
 
     def body(uow: UnitOfWork) -> None:
         for observation in retained:
-            assert uow.retain(observation) is observation
+            assert uow.source_authority.retain(observation) is observation
         for write in writes:
             uow.buffer(write)
 
@@ -1091,7 +1096,7 @@ def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
 
     def body(uow: UnitOfWork) -> None:
         for account_id, claim in enumerate(claims, start=1):
-            uow.buffer(_account_amend(account_id, uow.retain(claim)))
+            uow.buffer(_account_amend(account_id, uow.source_authority.retain(claim)))
         uow.read(lambda: None)
 
     _run(
@@ -1109,7 +1114,7 @@ def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
 
     def failed(uow: UnitOfWork) -> None:
         for account_id, claim in enumerate(failing, start=1):
-            uow.buffer(_account_amend(account_id, uow.retain(claim)))
+            uow.buffer(_account_amend(account_id, uow.source_authority.retain(claim)))
         with pytest.raises(RuntimeError, match="the second group failed"):
             uow.read(lambda: None)
 
@@ -1169,19 +1174,19 @@ def test_evidence_built_from_a_read_that_predates_an_own_change_is_invalidated()
         )
 
     def body(uow: UnitOfWork) -> None:
-        read_at = uow.freshness
-        unsubmitted = uow.retain(fresh_observation(1))
-        unaffected = uow.retain(fresh_observation(2))
+        read_at = uow.source_authority.freshness
+        unsubmitted = uow.source_authority.retain(fresh_observation(1))
+        unaffected = uow.source_authority.retain(fresh_observation(2))
         uow.buffer(_balance_update(1))
         assert not unsubmitted.invalidated
         uow.read(lambda: None)
         assert unsubmitted.invalidated
         assert not unaffected.invalidated
-        late = uow.retain(fresh_observation(1), read_at=read_at)
+        late = uow.source_authority.retain(fresh_observation(1), read_at=read_at)
         assert late.invalidated
-        fresh = uow.retain(fresh_observation(1))
+        fresh = uow.source_authority.retain(fresh_observation(1))
         assert not fresh.invalidated
-        assert uow.retain(fresh_observation(1)) is fresh
+        assert uow.source_authority.retain(fresh_observation(1)) is fresh
 
     _run(body, meta=_BALANCE)
 
@@ -1228,8 +1233,8 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
             insertion_advice=None,
         )
         uow.read(lambda: None)
-        read_at = uow.freshness
-        claim = uow.retain(RetainedObservation(state, observation, None))
+        read_at = uow.source_authority.freshness
+        claim = uow.source_authority.retain(RetainedObservation(state, observation, None))
         uow.buffer(
             admitted_write(
                 _prepared_keyed(
@@ -1242,7 +1247,9 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
         )
         uow.read(lambda: None)
         assert not claim.invalidated
-        late = uow.retain(RetainedObservation(state, observation, None), read_at=read_at)
+        late = uow.source_authority.retain(
+            RetainedObservation(state, observation, None), read_at=read_at
+        )
         assert not late.invalidated
 
     _run(body, meta=_POSITION, steps=simulated, rows=coverage)
@@ -1270,8 +1277,8 @@ def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool)
     simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
-        read_at = uow.freshness
-        claim = uow.retain(RetainedObservation(state, observation, None))
+        read_at = uow.source_authority.freshness
+        claim = uow.source_authority.retain(RetainedObservation(state, observation, None))
         uow.buffer(
             admitted_write(
                 _prepared_keyed(
@@ -1288,7 +1295,9 @@ def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool)
         assert claim.invalidated is not kept
         # Evidence an earlier read of the same rows builds now is still evidence
         # of the stored state exactly when the settled write left that state as it was.
-        late = uow.retain(RetainedObservation(state, observation, None), read_at=read_at)
+        late = uow.source_authority.retain(
+            RetainedObservation(state, observation, None), read_at=read_at
+        )
         assert late.invalidated is not kept
 
     _run(
@@ -1344,10 +1353,10 @@ def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_publis
 
     def body(uow: UnitOfWork) -> None:
         for account_id, version in ((1, 7), (2, 3)):
-            claim = uow.retain(_account_claim(account_id, version))
+            claim = uow.source_authority.retain(_account_claim(account_id, version))
             claims.append(claim)
             uow.buffer(_account_amend(account_id, claim))
-        deleted = uow.retain(_account_claim(3, 1))
+        deleted = uow.source_authority.retain(_account_claim(3, 1))
         claims.append(deleted)
         uow.buffer(
             admitted_write(
@@ -1378,7 +1387,9 @@ def test_a_settled_write_with_no_step_changes_nothing() -> None:
     simulated = _simulated(_BALANCE)
 
     def body(uow: UnitOfWork) -> None:
-        claim = uow.retain(RetainedObservation(state, observation, uow.participation))
+        claim = uow.source_authority.retain(
+            RetainedObservation(state, observation, uow.source_authority.participation)
+        )
         uow.buffer(
             admitted_write(
                 _prepared_keyed(
@@ -1491,7 +1502,9 @@ def test_a_target_after_a_predicate_write_judges_its_condition_on_what_the_earli
     simulated = _simulated(_PREDICATED)
 
     def body(uow: UnitOfWork) -> None:
-        claim = uow.retain(RetainedObservation(state, original, uow.participation))
+        claim = uow.source_authority.retain(
+            RetainedObservation(state, original, uow.source_authority.participation)
+        )
         held.append(claim)
         uow.buffer(_observed_amendment(claim))
         uow.execute_predicate(_shell_predicate_write())
@@ -1520,7 +1533,9 @@ def test_writes_of_one_source_predicate_writes_flush_each_continue_from_what_the
     simulated = _simulated(_PREDICATED)
 
     def body(uow: UnitOfWork) -> None:
-        claim = uow.retain(RetainedObservation(state, original, uow.participation))
+        claim = uow.source_authority.retain(
+            RetainedObservation(state, original, uow.source_authority.participation)
+        )
         uow.buffer(_observed_amendment(claim))
         for window in ((_JUN, _AUG), (_SEP, _OCT)):
             uow.execute_predicate(_shell_predicate_write())

@@ -5,7 +5,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from types import TracebackType
 from typing import Literal, Protocol, cast
-from weakref import WeakValueDictionary
 
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work._errors import (
@@ -14,14 +13,12 @@ from parallax.core._execution._unit_work._errors import (
     WriteEvidenceError,
     WriteEvidenceErrorCode,
 )
-from parallax.core._execution._unit_work._write_ownership import SourceRefusal
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     TargetReadRequest,
     consume_target,
 )
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
-from parallax.core._execution._unit_work.claims import SettledEvidence
 from parallax.core._execution._unit_work.clock import Clock, TransactionInstant
 from parallax.core._execution._unit_work.effects import (
     CardinalityCorruptionError,
@@ -31,20 +28,17 @@ from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     ASSIGNMENT_MUTATIONS,
     ExpectedTxStart,
-    KeyedMutation,
     PreparedPredicateInstruction,
     PreparedTargetInstruction,
 )
+from parallax.core._execution._unit_work.lifetime import AttemptLifetime
 from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
-    NoInsertionAuthority,
-    ParticipationToken,
-    ReadEvidence,
-    RetainedObservation,
     RetainedTargetState,
 )
+from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,
@@ -70,15 +64,10 @@ from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.temporal_read import (
     Bitemporal,
     Edge,
-    TimeInterval,
     TransactionTimeOnly,
     milestone_edge,
 )
-from parallax.core.write_plan.keys import (
-    ObjectKey,
-    ObjectStateKey,
-    TemporalObjectStateKey,
-)
+from parallax.core.write_plan.keys import ObjectKey, TemporalObjectStateKey
 from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.plan import (
     CurrentRowOutput,
@@ -159,19 +148,6 @@ class OpenFlush(Protocol):
     def __call__(self, trigger: FlushTrigger, /) -> FlushScope: ...
 
 
-class AttemptLifetime(Protocol):
-    """The lifetime of the transaction attempt a unit of work coordinates.
-
-    The attempt owns it; the unit of work only asks it to admit work, which it
-    refuses once the attempt ended or became rollback-only, and dooms it when a
-    flush fails while executing.
-    """
-
-    def ensure_open(self) -> None: ...
-
-    def doom(self, cause: BaseException, /) -> None: ...
-
-
 @dataclass(frozen=True, slots=True)
 class StoredTarget:
     """What a target acquisition found of the stored state a target
@@ -221,10 +197,10 @@ class UnitOfWork:
     lifetime, and hands this the lifetime to consult and doom rather than a
     state of its own. The attempt drives it with :meth:`buffer`,
     :meth:`buffer_insert`, :meth:`buffer_target`, :meth:`execute_predicate`,
-    :meth:`retain`, and
-    :meth:`read`, asking :meth:`resolve_read_evidence` what a keyed write's
+    and :meth:`read`, asking its :attr:`source_authority` what a keyed write's
     source licenses here, flushes it once more before commit, and has it
-    :meth:`discard` its state when the attempt does not commit.
+    :meth:`discard` its state when the attempt does not commit. Its reads
+    file their evidence into that same authority.
 
     Every row a write reads — a target's starting state, a
     deferred range's coverage — is read through ``acquire_rows`` and consumed
@@ -234,12 +210,8 @@ class UnitOfWork:
     __slots__ = (
         "_actor_identity",
         "_admission",
-        "_changed",
         "_evidence_policy_for",
-        "_freshness",
         "_lifetime",
-        "_observations",
-        "_participation",
         "_planner",
         "_transaction_instant",
         "acquire_rows",
@@ -249,6 +221,7 @@ class UnitOfWork:
         "flush_opening",
         "meta",
         "settings",
+        "source_authority",
     )
 
     def __init__(
@@ -288,50 +261,26 @@ class UnitOfWork:
         # The connected model's write-evidence policy, bound once per accepted
         # model by model preparation, which alone may reach `m-opt-lock`.
         self._evidence_policy_for = evidence_policy_for
-        # This index is not an owner: a retained observation lives as
-        # long as some source value or buffered or planned write reaches it, and
-        # this entry disappears with the last of them (`m-unit-work` "Observation
-        # lifetime"). What the index is for is recognizing a state this
-        # transaction has already seen, so a reread of one state answers the
-        # evidence the earlier read's values already carry rather than a second
-        # copy of it — and telling ownership which observed states a completed
-        # write's changes may still serve a source of.
-        self._observations: WeakValueDictionary[ObjectStateKey, RetainedObservation] = (
-            WeakValueDictionary()
+        # The attempt's one authority over what its sources and insertions
+        # still authorize, which its reads, keyed ingress, buffering, and
+        # completion all consult. It holds nothing of this shell.
+        self.source_authority = SourceAuthority(
+            meta,
+            lifetime=lifetime,
+            concurrency=settings.concurrency,
+            evidence_policy_for=evidence_policy_for,
+            version_after=planner.inserted_version,
         )
         # The accepted writes, composed as each is admitted, each carrying the
         # claims its verbs resolved for it and the evidence of the sources it
         # was admitted through — the strong reference that keeps that evidence
-        # alive after its source value is released — beside this attempt's
-        # admitted insertions, the current temporal rows it opened, and what
-        # its completed writes did to the states its sources reach.
-        self._admission = WriteAdmission(
-            meta, inserted_version=planner.inserted_version, observations=self._observations
-        )
-        # How many settled writes have changed a state so far, and the count at
-        # which each changed state — an observed state, or an unversioned
-        # object — last changed. A read captures the count when it runs, so
-        # evidence it builds later, from rows it already holds, is known to
-        # predate any change completed in between. The counts outlive every
-        # source's demand: a page acquired before a change stays older than it.
-        self._freshness = 0
-        self._changed: dict[ObjectKey | ObjectStateKey, int] = {}
-        # This scope's participation identity: what a read of THIS unit of work
-        # stamps on the values it produces, and what a keyed write tests its
-        # source against.
-        self._participation = ParticipationToken()
+        # alive after its source value is released.
+        self._admission = WriteAdmission(meta, authority=self.source_authority)
         # One attempt, one lazy instant: constructing it reads no clock, and
         # every flush this scope plans carries the SAME holder, so all
         # timestamp-requiring work in the attempt shares one captured value
         # while work that needs none never captures at all.
         self._transaction_instant = TransactionInstant(clock)
-
-    @property
-    def participation(self) -> ParticipationToken:
-        """This scope's participation identity — what its own reads stamp on the
-        values they produce, and what a keyed write proves its source against."""
-        self._ensure_open()
-        return self._participation
 
     def buffer(
         self, item: ReadAuthorizedWrite | InsertionAuthorizedWrite | TargetWrite
@@ -497,7 +446,7 @@ class UnitOfWork:
         key = item.object_key
         if isinstance(expectation, ExpectedTxStart):
             return self._confirm_temporal_target(item, key, expectation)
-        if not self._participates(scope):
+        if isinstance(scope, ObjectKey) or not self.source_authority.has_live_observation(scope):
             stored, _row, _document = self._stored_target(target, key, None)
             if stored is None or stored.version != expectation.version:
                 raise WritePreconditionError(
@@ -518,12 +467,13 @@ class UnitOfWork:
         """
         window = item.instruction.valid_time_window
         valid_from = None if window is None else window.start
-        if self._participates(
+        authority = self.source_authority
+        if authority.has_live_observation(
             TemporalObjectStateKey(key, Edge(tx_time=expectation.instant, valid_time=valid_from))
         ):
             return item
         target = item.instruction.target
-        read_at = self._freshness
+        read_at = authority.freshness
         stored, row, document = self._stored_target(target, key, valid_from, retains=True)
         if stored is None or stored.tx_start != expectation.instant:
             raise WritePreconditionError(
@@ -580,176 +530,6 @@ class UnitOfWork:
         if view is None:  # pragma: no cover - the facet covers every accepted Entity
             raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
         return view
-
-    def _participates(self, scope: ObjectStateKey | ObjectKey) -> bool:
-        """Whether a live read of exactly ``scope`` this attempt holds — under
-        its shared lock, and still describing the stored state — already
-        proves it."""
-        if isinstance(scope, ObjectKey):
-            return False
-        held = self._observations.get(scope)
-        return (
-            held is not None and held.participation is self._participation and not held.invalidated
-        )
-
-    def insertion_authority(
-        self, identity: InsertionIdentity
-    ) -> TimeInterval | NoInsertionAuthority | None:
-        """The Valid-Time window the insertion ``identity`` names was admitted
-        with — whose start is where a write it authorizes starts — while its
-        authority stands in this unit of work, ``None`` for a standing insertion
-        of an object without Valid Time, or
-        :data:`~parallax.core._execution._unit_work.retain.NO_INSERTION_AUTHORITY`
-        once it does not stand: never issued here, retired by the complete
-        removal of what it opened, or superseded by a later insertion of the
-        same object."""
-        self._ensure_open()
-        return self._admission.insertion_authority(identity)
-
-    def resolve_read_evidence(
-        self,
-        target: EntityMetadata,
-        read_evidence: ReadEvidence | None,
-        *,
-        mutation: KeyedMutation,
-        object_key: ObjectKey,
-    ) -> SettledEvidence | None:
-        """What a keyed write of ``target`` against existing state settles
-        against, read off its source's ``read_evidence``, or :class:`WriteEvidenceError`
-        where this unit of work cannot use it.
-
-        One resolution serves the address, the gate, the version advance, and
-        the claim, so they cannot disagree. Under either Effective Concurrency
-        Strategy (`m-opt-lock`) the source must have been read in THIS unit of
-        work: a standalone read, a read-only transaction's read, and an earlier
-        attempt's read participated in nothing this attempt can stand on,
-        whatever key or revision they share with it. The strategy then decides
-        what that participating read proves:
-
-        * **Locking** — the license is the shared row lock the read holds. That
-          holds for unversioned Non-Temporal targets too: the lock is the whole
-          of their evidence, and unconditional intent has its own
-          predicate-selected spelling.
-        * **Optimistic** — the license is the database gate, so the read must
-          also have retained the observation the gate binds.
-
-        A source's authority continues through this attempt's own completed
-        writes while its observation stays what it read: a versioned
-        Non-Temporal source settles against the version they produced, an
-        unversioned one against its object, and a temporal one against what
-        they left of the state it observed. Under BOTH strategies a source
-        published from rows a read acquired before a completed write changed
-        them is refused, and so is one those writes ended — of an object a
-        completed keyed deletion removed, or a temporal source whose observed
-        state they left nothing of at its Valid-Time pin: a held lock does not
-        restore a state the attempt itself replaced.
-        """
-        self._ensure_open()
-        identity = target.identity.canonical
-        if read_evidence is None or read_evidence.participation is not self._participation:
-            raise WriteEvidenceError(
-                code="write-evidence-unavailable",
-                message=(
-                    f"{identity}: a keyed write is licensed only by a read of THIS transaction "
-                    "attempt, and the value handed to the verb came from no such read — a "
-                    "standalone read, a read-only transaction, and an earlier attempt license "
-                    "nothing here; read the row through this transaction and write what that "
-                    "read returned, or state the revision you observed through the `*_if` verb"
-                ),
-                object_key=object_key,
-            )
-        policy = self._evidence_policy_for(target.identity)
-        observation = read_evidence.observation
-        settled = policy.settled_evidence(mutation, object_key=object_key, observation=observation)
-        if policy.effective_strategy(self.settings.concurrency) == "optimistic" and (
-            observation is None
-        ):
-            raise WriteEvidenceError(
-                code="write-evidence-unavailable",
-                message=(
-                    f"{identity}: the Optimistic strategy gates this write on the state its "
-                    "source observed, and the value handed to the verb carries no retained "
-                    "observation; read the row through a `find` and write what it returned"
-                ),
-                object_key=object_key,
-            )
-        if settled is None:
-            return None
-        resolved = self._admission.resolve_source(read_evidence)
-        if resolved is SourceRefusal.STALE:
-            raise _stale_source(identity, object_key)
-        if resolved is SourceRefusal.ENDED:
-            raise WriteEvidenceError(
-                code="write-evidence-consumed",
-                message=(
-                    f"{identity}: a write this transaction completed left nothing of what this "
-                    "value's source read — a deletion of its object, or the coverage at the "
-                    "Valid-Time instant it was read at — so the source authorizes no further "
-                    "write, whatever was inserted there since; read the row again and write "
-                    "what that read returns"
-                ),
-                object_key=object_key,
-            )
-        return resolved
-
-    def register_read_evidence(self, evidence: ReadEvidence, /, *, read_at: int) -> None:
-        """Register the exact ``evidence`` a read of this unit of work published,
-        judging once whether its read, which captured :attr:`freshness`
-        ``read_at``, predates a completed change of what it observed.
-
-        Before any change completed, every read precedes every later change
-        and nothing is judged
-        (:meth:`~parallax.core._execution._unit_work._write_ownership.WriteOwnership.register_read_evidence`).
-        """
-        if not self._freshness:
-            return
-        self._admission.register_read_evidence(evidence, read_at=read_at, current=self._current)
-
-    @property
-    def freshness(self) -> int:
-        """What a read captures when it runs, so that evidence it builds later
-        from the rows it holds is judged against the state those rows had
-        (:meth:`retain`)."""
-        self._ensure_open()
-        return self._freshness
-
-    def retain(
-        self, observation: RetainedObservation, /, *, read_at: int | None = None
-    ) -> RetainedObservation:
-        """Index ``observation`` under the state it observed, answering the
-        evidence this unit of work already holds for that state where it holds
-        any.
-
-        A reread that resolves to a state some live value already observed
-        answers THAT value's evidence, so one observed state has one claim
-        within a transaction however many reads reach it — the same rule
-        graph aliases already follow. A state an own change replaced is not
-        reused: a fresh read of the state the row is in now is fresh evidence.
-
-        ``read_at`` is the :attr:`freshness` the producing read captured, by
-        default now. Evidence built from a read that ran before a later
-        successful change of the same state is answered invalidated and never
-        indexed: its rows describe a state this attempt has since replaced.
-        """
-        self._ensure_open()
-        key = observation.key
-        if not self._current(key, self._freshness if read_at is None else read_at):
-            observation.invalidate()
-            return observation
-        held = self._observations.get(key)
-        if held is not None and not held.invalidated:
-            return held
-        self._observations[key] = observation
-        return observation
-
-    def _current(self, state: ObjectKey | ObjectStateKey, read_at: int) -> bool:
-        """Whether no settled write that completed after a read capturing
-        :attr:`freshness` ``read_at`` changed ``state``: what that read found
-        of ``state`` is still what the attempt stores, whatever else changed.
-        An unchanged milestone a guard proved is no change."""
-        log = self._changed
-        changed = log.get(state) if log else None
-        return changed is None or changed <= read_at
 
     def read[T](self, read_fn: Callable[[], T]) -> T:
         """Serve a call-time read, force-flushing pending writes first.
@@ -816,7 +596,7 @@ class UnitOfWork:
         # buffer drains, what a plan's deferred settled write took over is
         # released as it executes rather than held until the flush ends.
         concluding = trigger == "pre_commit"
-        ownership = admission.concluding_ownership() if concluding else admission.ownership
+        ownership = self.source_authority.planning_ownership(concluding=concluding)
         plan = self._planner.finalize(
             WritePlanningRequest(
                 actor_identity=self._actor_identity,
@@ -898,7 +678,7 @@ class UnitOfWork:
             start=start,
             stop=stop,
             acquire_rows=self.acquire_rows,
-            current=self._current,
+            current=self.source_authority.is_unchanged_since,
             ownership=ownership,
             audit=audit,
             payloads=self._planner.payloads,
@@ -940,48 +720,15 @@ class UnitOfWork:
                 stop = first + len(write.opened.allocated)
                 if capture is not None:
                     captured = capture.take_rows(write.current_outputs)
-                self._complete_write(write, allocated[first:stop], captured)
+                self.source_authority.complete_write(
+                    write, allocated[first:stop], captured=captured
+                )
                 captured = ()
                 first = stop
         finally:
             if capture is not None:
                 capture.release()
             del group, writes, steps, write, captured
-
-    def _complete_write(
-        self,
-        effects: WriteEffects,
-        allocated: tuple[object, ...],
-        captured: tuple[tuple[CurrentRowOutput, object | None], ...] = (),
-    ) -> None:
-        """Publish one successful write's ``effects``: a settled write's own,
-        or those of the range its deferred coverage bound.
-
-        Live evidence of every observed state it changed is invalidated and
-        every change recorded, so a read that ran before it cannot later
-        publish eligible evidence of that state or object; the Non-Temporal
-        sources whose state it advanced continue from the version it produced,
-        and those of every object it deleted end; the owned rows it removed are
-        retired before the rows it opened, completed by the keys the database
-        ``allocated``, are registered; and what it left of each observed
-        temporal state a live source shares is recorded, with the rows its
-        execution ``captured`` for them.
-        """
-        stamp = self._freshness + 1
-        changed_any = False
-        for key in effects.changed:
-            changed_any = True
-            self._invalidate(key, stamp)
-        if changed_any:
-            self._freshness = stamp
-        self._admission.complete(effects, allocated, at=self._freshness, captured=captured)
-
-    def _invalidate(self, key: ObjectKey | ObjectStateKey, stamp: int) -> None:
-        if not isinstance(key, ObjectKey):
-            held = self._observations.get(key)
-            if held is not None:
-                held.invalidate()
-        self._changed[key] = stamp
 
     def _ensure_open(self) -> None:
         self._lifetime.ensure_open()
@@ -996,17 +743,4 @@ class UnitOfWork:
         stored state.
         """
         self._admission.discard()
-        self._observations.clear()
-        self._changed.clear()
-
-
-def _stale_source(identity: str, object_key: ObjectKey) -> WriteEvidenceError:
-    return WriteEvidenceError(
-        code="write-evidence-consumed",
-        message=(
-            f"{identity}: this transaction has since changed the state this value observed, so "
-            "its evidence no longer describes the stored row; read the row again and write what "
-            "that read returns"
-        ),
-        object_key=object_key,
-    )
+        self.source_authority.clear()

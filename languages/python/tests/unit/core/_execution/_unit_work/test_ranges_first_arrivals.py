@@ -57,11 +57,13 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.plan import (
+    NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
     BoundRange,
     Openings,
     SettledWrite,
     TemporalRowCoordinates,
+    TemporalWriteOwnership,
     WriteEffects,
     WriteGroup,
 )
@@ -75,7 +77,14 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import instant_at
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admit, plan_steps, settled_writes
+from tests._support.planner_probes import (
+    TEST_ACTOR_IDENTITY,
+    admit,
+    plan_steps,
+    settled_writes,
+    source_authority,
+    write_admission,
+)
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
     alone,
@@ -111,28 +120,33 @@ def _instant() -> TransactionInstant:
     return instant_at(_AT)
 
 
-def _admission(meta: Metamodel) -> WriteAdmission:
-    return WriteAdmission(meta, inserted_version=lambda _entity, _from: None, observations={})
+def _no_version(entity: EntityIdentity, advanced_from: int | None) -> int | None:
+    del entity, advanced_from
+    return None
 
 
 def _unconfirmed(item: TargetWrite) -> TargetWrite:
     return item
 
 
-def _plan(admission: WriteAdmission, meta: Metamodel) -> WritePlan:
+def _plan(
+    admission: WriteAdmission,
+    meta: Metamodel,
+    ownership: TemporalWriteOwnership = NO_TEMPORAL_WRITE_OWNERSHIP,
+) -> WritePlan:
     return build_write_planner(meta).finalize(
         WritePlanningRequest(
             actor_identity=TEST_ACTOR_IDENTITY,
             transaction_instant=_instant(),
             concurrency="optimistic",
             composed_writes=admission.composed_writes(),
-            ownership=admission.ownership,
+            ownership=ownership,
         )
     )
 
 
 def _planned(meta: Metamodel, *writes: AdmittedWrite) -> WritePlan:
-    admission = _admission(meta)
+    admission = write_admission(meta, inserted_version=_no_version)
     for write in writes:
         admit(admission, write)
     return _plan(admission, meta)
@@ -380,15 +394,17 @@ def _stored_insertion(
     insert: PreparedKeyedInstruction,
     key: ObjectKey,
     opened: TemporalRowCoordinates,
-) -> tuple[WriteAdmission, InsertionIdentity]:
+) -> tuple[WriteAdmission, TemporalWriteOwnership, InsertionIdentity]:
     """An admission whose insertion of ``key`` flushed and opened ``opened``,
-    and the identity buffering that insertion issued."""
-    admission = _admission(meta)
+    the ownership that left, and the identity buffering that insertion
+    issued."""
+    authority = source_authority(meta, inserted_version=_no_version)
+    admission = WriteAdmission(meta, authority=authority)
     identity = admission.admit_insert(admitted_write(insert, None, key), insertion_advice=None)
     assert identity is not None
     admission.drain_planned()
-    admission.complete(WriteEffects(opened=Openings(continued=(opened,))), (), at=1)
-    return admission, identity
+    authority.complete_write(WriteEffects(opened=Openings(continued=(opened,))), ())
+    return admission, authority.planning_ownership(concluding=False), identity
 
 
 def _authorized(
@@ -408,14 +424,14 @@ _BALANCE_OPENED = TemporalRowCoordinates(_BALANCE_ENTITY, (1,), (OPEN_END,))
 def test_a_bitemporal_write_a_flushed_insertion_authorized_revises_its_row_from_the_anchor() -> (
     None
 ):
-    admission, identity = _stored_insertion(
+    admission, ownership, identity = _stored_insertion(
         POSITION,
         _position("insert", FEB, None, acctNum="A", value="100.00"),
         OBJECT,
         _POSITION_OPENED,
     )
     _authorized(admission, identity, _position("amendUntil", FEB, JUN, value="150.00"))
-    (write,) = settled_writes(_plan(admission, POSITION))
+    (write,) = settled_writes(_plan(admission, POSITION, ownership))
     assert write.deferred is not None
     assert write.source_evidence == ()
     (term,) = coverage_read(POSITION, alone(write), transaction_instant=_instant()).terms
@@ -426,7 +442,7 @@ def test_a_bitemporal_write_a_flushed_insertion_authorized_revises_its_row_from_
         alone(write),
         [owned],
         transaction_instant=_instant(),
-        ownership=admission.ownership,
+        ownership=ownership,
     )
     assert not any(isinstance(step, PlannedClose) for step in bound.steps)
     (revision,) = (step for step in bound.steps if isinstance(step, PlannedTemporalRevision))
@@ -435,21 +451,21 @@ def test_a_bitemporal_write_a_flushed_insertion_authorized_revises_its_row_from_
 
 
 def test_a_bitemporal_write_whose_insertion_anchor_has_no_row_fails_its_target() -> None:
-    admission, identity = _stored_insertion(
+    admission, ownership, identity = _stored_insertion(
         POSITION,
         _position("insert", FEB, None, acctNum="A", value="100.00"),
         OBJECT,
         _POSITION_OPENED,
     )
     _authorized(admission, identity, _position("amendUntil", FEB, JUN, value="150.00"))
-    (write,) = settled_writes(_plan(admission, POSITION))
+    (write,) = settled_writes(_plan(admission, POSITION, ownership))
     with pytest.raises(MissingTargetError):
         bind_held(
             POSITION,
             alone(write),
             [rectangle(MAR, INFINITY, "100.00", tx_start=_INSTANT)],
             transaction_instant=_instant(),
-            ownership=admission.ownership,
+            ownership=ownership,
         )
 
 
@@ -464,14 +480,14 @@ def test_a_bitemporal_write_whose_insertion_anchor_has_no_row_fails_its_target()
 def test_a_transaction_time_write_a_flushed_insertion_authorized_revises_its_own_row(
     mutation: KeyedMutation, members: dict[str, object], step: type[PlannedStep]
 ) -> None:
-    admission, identity = _stored_insertion(
+    admission, ownership, identity = _stored_insertion(
         _BALANCE,
         _balance("insert", acctNum="A", value="100.00"),
         _BALANCE_OBJECT,
         _BALANCE_OPENED,
     )
     _authorized(admission, identity, _balance(mutation, **members))
-    (write,) = settled_writes(_plan(admission, _BALANCE))
+    (write,) = settled_writes(_plan(admission, _BALANCE, ownership))
     assert write.deferred is not None
     assert write.source_evidence == ()
     bound = bind_held(
@@ -479,7 +495,7 @@ def test_a_transaction_time_write_a_flushed_insertion_authorized_revises_its_own
         alone(write),
         [_balance_row("100.00", _INSTANT)],
         transaction_instant=_instant(),
-        ownership=admission.ownership,
+        ownership=ownership,
     )
     # The row is the attempt's own, so it is revised or removed in place and
     # nothing opens beside it.
@@ -490,7 +506,7 @@ def test_a_transaction_time_write_a_flushed_insertion_authorized_revises_its_own
 # A reinsertion executes after the removal of everything it replaces.         #
 # --------------------------------------------------------------------------- #
 def test_a_reinsertion_follows_the_removal_of_its_earlier_insertion() -> None:
-    admission, identity = _stored_insertion(
+    admission, ownership, identity = _stored_insertion(
         POSITION,
         _position("insert", FEB, None, acctNum="A", value="100.00"),
         OBJECT,
@@ -501,7 +517,7 @@ def test_a_reinsertion_follows_the_removal_of_its_earlier_insertion() -> None:
         admitted_write(_position("insert", FEB, None, acctNum="B", value="300.00"), None, OBJECT),
         insertion_advice=None,
     )
-    plan = _plan(admission, POSITION)
+    plan = _plan(admission, POSITION, ownership)
     removal, reinsertion = plan.entries
     # An insert ordinarily runs ahead of every removal; this one follows it.
     assert isinstance(removal, SettledWrite) and removal.deferred is not None

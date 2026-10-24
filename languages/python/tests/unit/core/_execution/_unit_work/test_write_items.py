@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Final, cast
 import pytest
 
 from parallax.core import inheritance
-from parallax.core._execution._unit_work.admission import WriteAdmission
 from parallax.core._execution._unit_work.claims import WriteIntent, WriteIntentKind
 from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
@@ -60,7 +59,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
 from parallax.core.write_plan.keys import VersionedObjectStateKey
-from tests._support.planner_probes import admitted_writes, object_source
+from tests._support.planner_probes import admitted_writes, object_source, write_admission
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     JAN,
@@ -361,7 +360,7 @@ def _position_opening() -> ComposedBitemporalOpening:
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     assert isinstance(amendment, PreparedKeyedInstruction)
-    admission = WriteAdmission(POSITION, inserted_version=_no_version, observations={})
+    admission = write_admission(POSITION, inserted_version=_no_version)
     identity = admission.admit_insert(
         admitted_write(insertion, None, OBJECT), insertion_advice=None
     )

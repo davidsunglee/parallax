@@ -116,9 +116,9 @@ def validate_provenance(
     so that interface's spelling is its repair.
 
     On the amendment and replacement side this overlaps
-    :meth:`~parallax.core.unit_work.UnitOfWork.resolve_read_evidence`: a value no
-    managed source published, and a value another source published, both carry no
-    hint and so no usable evidence either. Provenance is asked first because it
+    :meth:`~parallax.core._execution._unit_work.source_authority.SourceAuthority.resolve_read_evidence`:
+    a value no managed source published, and a value another source published,
+    both carry no hint and so no usable evidence either. Provenance is asked first because it
     is the more specific diagnosis — it names the verb that DOES accept the
     value, where the evidence refusal could only report that there was none.
 
@@ -451,7 +451,7 @@ def keyed_write(
     between its answers belongs here.
 
     A source no read published is licensed by the insertion authority it
-    carries, while the unit of work answers that authority as standing: that
+    carries, while the attempt's source authority answers it as standing: that
     lifts the provenance refusal, supplies the write's start, and replaces the
     evidence question, because the insertion — not a read — is what authorized
     writes of the object it opened. A key equal to an inserted object's lends a
@@ -483,7 +483,7 @@ def keyed_write(
     anchor = (
         NO_INSERTION_AUTHORITY
         if authoring is None or resolved.read_evidence is not None
-        else uow.insertion_authority(authoring)
+        else uow.source_authority.insertion_authority(authoring)
     )
     authorized = anchor is not NO_INSERTION_AUTHORITY
     validate_provenance(
@@ -504,7 +504,7 @@ def keyed_write(
         addressed = object_key(prepared, meta) if read is None else read.object_key
         # An identity row always states its object's key.
         assert addressed is not None
-        evidence = uow.resolve_read_evidence(
+        evidence = uow.source_authority.resolve_read_evidence(
             resolved.entity,
             read,
             mutation=mutation,

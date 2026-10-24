@@ -157,7 +157,9 @@ class _Session:
         """A fresh retained observation of the row WherePosition 1 was seeded
         with from January."""
         observation = TemporalObservation(predecessor=PredecessorRow(members=self.seeded[0]))
-        return self.uow.retain(retained_observation(_write(_JAN), _META, observation))
+        return self.uow.source_authority.retain(
+            retained_observation(_write(_JAN), _META, observation)
+        )
 
     def flush(self, *writes: tuple[PreparedKeyedInstruction, RetainedObservation]) -> None:
         for prepared, observation in writes:
@@ -167,8 +169,8 @@ class _Session:
 
     @property
     def ownership(self) -> WriteOwnership:
-        ownership = self.uow._admission.ownership  # pyright: ignore[reportPrivateUsage] - what the attempt holds
-        assert isinstance(ownership, WriteOwnership)
+        ownership = self.uow.source_authority.planning_ownership(concluding=False)
+        assert isinstance(ownership, WriteOwnership)  # the authority's own live helper
         return ownership
 
     def held(self) -> list[_Stored]:

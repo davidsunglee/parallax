@@ -123,7 +123,7 @@ class RetainedObservation:
 
         An invalidated observation no longer describes the stored state; what
         its sources may still write is what the attempt's own completed writes
-        left of that state, which the unit of work answers.
+        left of that state, which the attempt's source authority answers.
         """
         return self._invalidated
 
@@ -139,7 +139,7 @@ class RetainedTargetState:
     pending, its raw Structured Column beside them.
 
     ``state`` is the exact milestone the row is, by its own coordinates, and
-    ``read_at`` the unit of work's change count when the read ran, which
+    ``read_at`` the attempt's change count when the read ran, which
     together decide whether the row is still current when the range binds. It
     grants no authority: the caller's condition proved at admission stays the
     write's own.

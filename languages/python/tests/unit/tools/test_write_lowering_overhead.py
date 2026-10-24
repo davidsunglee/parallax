@@ -16,7 +16,7 @@ from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract, derive_memory_gates
 from parallax.conformance.cost_envelope import validate
 from parallax.core._execution._unit_work.ranges import RangeBindings
-from parallax.core._execution._unit_work.uow import UnitOfWork
+from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import INFINITY, detach_json_container
@@ -1208,7 +1208,7 @@ def _observed_flush(
     execute = port_type.execute
     execute_write = port_type.execute_write
     ordered_writes = port_type._ordered_writes  # pyright: ignore[reportPrivateUsage] - observing the transport
-    complete = UnitOfWork._complete_write  # pyright: ignore[reportPrivateUsage] - observing completion
+    complete = SourceAuthority.complete_write
 
     def reading(
         port: lowering_support.OrderedAcceptingPort,
@@ -1231,14 +1231,14 @@ def _observed_flush(
         events.append("ordered")
         return ordered_writes(port, statements)
 
-    def completing(owner: UnitOfWork, *args: Any) -> None:
+    def completing(owner: SourceAuthority, *args: Any, **kwargs: Any) -> None:
         events.append("complete")
-        complete(owner, *args)
+        complete(owner, *args, **kwargs)
 
     monkeypatch.setattr(port_type, "execute", reading)
     monkeypatch.setattr(port_type, "execute_write", writing)
     monkeypatch.setattr(port_type, "_ordered_writes", ordering)
-    monkeypatch.setattr(UnitOfWork, "_complete_write", completing)
+    monkeypatch.setattr(SourceAuthority, "complete_write", completing)
     port = lowering_support.flush_port(case)
     regions = lowering_support.FlushRegions(
         planning=lambda: events.append("planning"),
@@ -1373,16 +1373,18 @@ def test_a_requesting_deferred_flush_hands_each_write_the_rows_its_source_contin
     # head before the read instant and an amended piece after it: the two
     # rows a later submission of the source may continue from. A concluding
     # pre-commit flush demands and captures none.
-    complete = UnitOfWork._complete_write  # pyright: ignore[reportPrivateUsage] - observing completion
+    complete = SourceAuthority.complete_write
     handed: list[int] = []
 
-    def completing(owner: UnitOfWork, effects: Any, allocated: Any, rows: Any = ()) -> None:
-        handed.append(len(rows))
-        complete(owner, effects, allocated, rows)
+    def completing(
+        owner: SourceAuthority, effects: Any, allocated: Any, *, captured: Any = ()
+    ) -> None:
+        handed.append(len(captured))
+        complete(owner, effects, allocated, captured=captured)
 
     captured: dict[str, int] = {}
     with pytest.MonkeyPatch.context() as patched:
-        patched.setattr(UnitOfWork, "_complete_write", completing)
+        patched.setattr(SourceAuthority, "complete_write", completing)
         for case in lowering_support.DEFERRED_CASES:
             handed.clear()
             with lowering_support.flush_database(case) as handle:
