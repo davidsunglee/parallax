@@ -135,10 +135,13 @@ target write's admission read whole, which its range may reuse
 settles against, the `SettledEvidence`, and `admitted_write` picks the leaf from its
 shape: a `RetainedObservation` or a `VersionedObjectStateKey` makes a
 `StateObservedWrite`, and an `ObjectKey` makes an `ObjectLockedWrite`. Evidence from
-another participation is refused as `write-evidence-unavailable`, and evidence whose
-state this attempt's own completed writes replaced or ended is refused as
-`write-evidence-consumed`. The Effective Concurrency Strategy decides only what the
-participating read must also prove: under Optimistic it must have retained an
+another participation is refused as `write-evidence-unavailable`. A source continues
+through this attempt's own completed writes and settles against what they left of the
+state it observed; `write-evidence-consumed` refuses only evidence published from rows a
+read acquired before such a write changed them, and a source those writes ended: one
+whose object a keyed deletion removed, or a temporal source whose observed state they
+left nothing of at its Valid-Time pin. The Effective Concurrency Strategy decides only
+what the participating read must also prove: under Optimistic it must have retained an
 observation.
 
 ### Symbols

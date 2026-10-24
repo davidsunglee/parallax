@@ -6,9 +6,10 @@ read. Along the way you meet the three objects every Parallax program uses: a mo
 
 ## Install
 
-Parallax needs Python 3.13 or later, [uv](https://docs.astral.sh/uv/) to build it, and a
-PostgreSQL server. It is not published to a package index yet, so clone the repository
-and build its distributions:
+Parallax needs the Python version its
+[package metadata](../../packages/parallax-snapshot/pyproject.toml) requires,
+[uv](https://docs.astral.sh/uv/) to build it, and a PostgreSQL server. It is not
+published to a package index yet, so clone the repository and build its distributions:
 
 ```bash
 git clone https://github.com/davidsunglee/parallax.git
@@ -21,8 +22,8 @@ Run the `pip install` in your application's environment. `parallax-snapshot` is 
 you program against; it takes its name from the snapshots its reads return, the
 immutable values that `find` hands you inside a `Snapshot`. `parallax-postgres` is the
 PostgreSQL adapter, and `parallax-evolution` generates schema changes from your model.
-They bring `parallax-core` and Pydantic with them. Add `parallax-aws` if you
-authenticate to Amazon RDS with IAM.
+`pip` installs what they depend on from the same `dist` directory. Add `parallax-aws`
+if you authenticate to Amazon RDS with IAM.
 
 Each chapter of this guide opens with the imports for every name it uses. This
 chapter's are:
