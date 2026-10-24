@@ -2579,6 +2579,43 @@ def test_run_conflict_case_single_attempt() -> None:
     assert table_state is not None and "account" in table_state
 
 
+@pytest.mark.parametrize(
+    ("case_id", "mutation", "attempt"),
+    [
+        ("m-opt-lock-006", "amend", None),
+        ("m-opt-lock-006", "delete", None),
+        ("m-opt-lock-009", "amend", 1),
+    ],
+    ids=["amend", "delete", "later-retry"],
+)
+def test_a_versioned_conflict_attempt_requires_its_declared_version(
+    case_id: str, mutation: str, attempt: int | None
+) -> None:
+    case = _own_copy(_load_case(case_id))
+    when = cast("dict[str, Any]", case.document["when"])
+    when["mutation"] = mutation
+    row = when["write"] if attempt is None else when["attempts"][attempt]["write"]
+    del row["observedVersion"]
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    with pytest.raises(EngineError, match=r"every versioned conflict write.*`observedVersion`"):
+        scenario.run_conflict_case(case, port)
+    assert port.reads == port.writes == []
+
+
+@pytest.mark.parametrize("mutation", ["amend", "delete"])
+def test_every_row_of_a_versioned_conflict_attempt_requires_its_declared_version(
+    mutation: str,
+) -> None:
+    case = _own_copy(_load_case("m-opt-lock-006"))
+    when = cast("dict[str, Any]", case.document["when"])
+    when["mutation"] = mutation
+    when["write"] = [when["write"], {"id": 3, "balance": "20.00"}]
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2])
+    with pytest.raises(EngineError, match=r"every versioned conflict write.*`observedVersion`"):
+        scenario.run_conflict_case(case, port)
+    assert port.reads == port.writes == []
+
+
 def test_conflict_submissions_never_prepare_or_simulate_a_peer_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2912,7 +2949,9 @@ def test_a_conflict_case_whose_bound_admits_fewer_attempts_than_it_authors_is_re
 
 
 def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
-    case = _synthetic_write("conflict", {"when": {"write": {"id": 2, "bogus": True}}})
+    case = _synthetic_write(
+        "conflict", {"when": {"write": {"id": 2, "bogus": True, "observedVersion": 1}}}
+    )
     with pytest.raises(EngineError, match="undeclared member"):
         scenario.run_conflict_case(case, FakeWritePort(find_rows=[_ACCOUNT_ROW_2]))
 

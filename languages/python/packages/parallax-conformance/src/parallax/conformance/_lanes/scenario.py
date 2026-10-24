@@ -2496,6 +2496,16 @@ def _run_conflict_attempts(
         for rows in attempts
     ]
     _refuse_a_locking_conflict_target(model, target, concurrency)
+    observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
+    if observation_requiring and any(
+        submission.declared_observation is None
+        for attempt in parsed_attempts
+        for submission in attempt
+    ):
+        raise EngineError(
+            f"{target!r}: every versioned conflict write against an existing row declares "
+            "`observedVersion` (m-case-format 'Conflict cases')"
+        )
     instant = normalize_instant(dt.datetime.fromisoformat(INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
     starts: list[int] = []
@@ -2529,7 +2539,6 @@ def _run_conflict_attempts(
                 submitter.submit_unit(submissions, before_writes=before_writes)
             return _landed_conflict_rows(model, target, submissions)
 
-        observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
         implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
         affected = _conflict_attempt_affected(database, requests, implied, body)
     if len(starts) != len(parsed_attempts):
