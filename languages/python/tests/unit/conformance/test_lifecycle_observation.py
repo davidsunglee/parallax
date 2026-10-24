@@ -19,7 +19,7 @@ from uuid import uuid4
 import pytest
 
 from parallax import conformance
-from parallax.conformance._lanes.scenario import GroupState, group_writes
+from parallax.conformance._lanes.scenario import GroupReport, group_writes
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     LifecycleRun,
@@ -719,7 +719,7 @@ def test_a_held_groups_delivered_writes_are_reported_under_the_steps_that_buffer
     delivery order itself, and every call's index names its own statement."""
     observation = LifecycleObservation()
     handler = _Handler(observation)
-    state = GroupState()
+    state = GroupReport()
     handler.deliver(_call("read", "select 1"))
     state.buffered.append((1, len(observation.writes)))
     handler.deliver(_call("write", "insert 1"), _call("read", "select 2"))
@@ -749,12 +749,12 @@ def test_a_held_groups_delivered_writes_are_reported_under_the_steps_that_buffer
 def test_a_write_delivered_before_any_step_buffered_one_is_an_adapter_defect() -> None:
     observation = LifecycleObservation()
     _Handler(observation).deliver(_call("write", "insert 1"))
-    state = GroupState()
+    state = GroupReport()
     state.buffered.append((0, len(observation.writes)))
     with pytest.raises(EngineError, match="before any write step had buffered one"):
         group_writes(state, observation.writes, "a group")
     with pytest.raises(EngineError, match="delivered 1 write"):
-        group_writes(GroupState(), observation.writes, "a group")
+        group_writes(GroupReport(), observation.writes, "a group")
 
 
 # --- the run collects what its several handles each observed -------------------

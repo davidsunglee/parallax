@@ -28,12 +28,10 @@ from parallax.conformance._lifecycle_observation import (
 )
 from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.conformance._mechanism.transaction_control import transact, write_adapter
 from parallax.conformance.simulated_temporal_store import (
     SimulatedStoreError,
     SimulatedTemporalStore,
 )
-from parallax.core import predicate
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedWrite,
@@ -55,7 +53,6 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import (
-    KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
     TxnOptions,
 )
@@ -85,7 +82,6 @@ from parallax.core.write_plan import (
     VersionObservation,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
-from parallax.snapshot import TxnContext
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.sweep_goldens import write_golden_statements
@@ -1089,44 +1085,6 @@ def test_a_settled_write_refuses_a_find_that_observed_several_rows_of_its_key() 
     # resolves to both names nothing a write could have been handed.
     with pytest.raises(EngineError, match="settles against observed 2 rows"):
         _settled((_policy_node(_JAN, _JUN, "head"), _policy_node(_JUN, INFINITY, "tail")))
-
-
-def test_a_write_step_naming_no_find_has_no_explicit_source_nodes() -> None:
-    assert (
-        scenario._source_find_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            {"write": []}, 2, {}
-        )
-        is None
-    )
-
-
-def test_a_source_find_reference_names_one_index() -> None:
-    with pytest.raises(EngineError, match="settles against ONE find step"):
-        scenario._source_find_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            {"write": [], "on": [0, 1]}, 2, {}
-        )
-
-
-def test_a_source_find_reference_answers_what_that_find_published() -> None:
-    # A find of the same group that published no row still answers, with an empty
-    # record: the reference resolved, and it is the WRITE's own source resolution
-    # that then finds no value to be addressed by.
-    assert (
-        scenario._source_find_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            {"write": [], "on": 1}, 2, {1: ()}
-        )
-        == ()
-    )
-
-
-def test_a_source_find_reference_names_a_find_of_its_own_group() -> None:
-    # A reference the group's own recorded finds cannot satisfy names a step
-    # outside the group, one that is not a find, or one that has not run yet —
-    # refused rather than resolved to "the find observed nothing".
-    with pytest.raises(EngineError, match="not an EARLIER find step"):
-        scenario._source_find_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-            {"write": [], "on": 0}, 2, {}
-        )
 
 
 def _account_node(version: int) -> Any:
@@ -2438,7 +2396,8 @@ def test_predicate_shaped_scenario_write_lowers_readless_not_a_keyerror() -> Non
     assert emissions[0].binds == (decimal.Decimal("200.00"),)
 
 
-def test_predicate_shaped_write_sequence_entry_refuses_loudly() -> None:
+@pytest.mark.parametrize("lane", ["compile", "run"])
+def test_predicate_shaped_write_sequence_entry_refuses_loudly(lane: str) -> None:
     # Defensive coverage for the writeSequence path: the writeSequence entry
     # vocabulary is keyed-only (`m-case-format`) — a structured predicate
     # instruction is scenario-write-only, so `_build_instructions` refuses it
@@ -2463,7 +2422,10 @@ def test_predicate_shaped_write_sequence_entry_refuses_loudly() -> None:
         },
     )
     with pytest.raises(EngineError, match=r"scenario-write-only"):
-        scenario.compile_write_sequence_case(case, "postgres")
+        if lane == "compile":
+            scenario.compile_write_sequence_case(case, "postgres")
+        else:
+            scenario.run_write_sequence_case(case, FakeWritePort())
 
 
 def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
@@ -2913,17 +2875,6 @@ def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
     case = _synthetic_write("conflict", {"when": {"write": {"id": 1, "bogus": True}}})
     with pytest.raises(EngineError, match="undeclared member"):
         scenario.run_conflict_case(case, FakeWritePort())
-
-
-def test_predicate_writes_require_no_keyed_unit_source_read_or_framework_classification() -> None:
-    model = models.load_models()["wallet"]
-    instruction = instructions.PredicateWriteInstruction(
-        "amend",
-        instructions.PredicateSelection("parallax.compatibility.Wallet", predicate.TrueNode()),
-        (instructions.WriteAssignment("parallax.compatibility.Wallet.owner", "Ada"),),
-    )
-    assert scenario._unit_source_reads(model, (instruction,)) == []  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
-    assert scenario._is_framework_write(instruction, model) is False  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
 
 
 def test_a_projected_row_rejects_an_ambiguous_member() -> None:
@@ -3537,25 +3488,6 @@ def test_store_free_composition_refuses_actual_row_acquisition() -> None:
         )
 
 
-@pytest.mark.parametrize("document", [{"increment": 1}, {"computed": "maxPlusOne"}])
-def test_marker_shaped_value_object_is_not_a_framework_instruction(
-    document: dict[str, object],
-) -> None:
-    model = models.load_models()["customer"]
-    translated = scenario._case_write_instructions(  # pyright: ignore[reportPrivateUsage] - inspect unprepared routing
-        [
-            {
-                "mutation": "insert",
-                "entity": "Customer",
-                "rows": [{"id": 1, "name": "Ada", "address": document}],
-            }
-        ],
-        model,
-    )
-
-    assert not scenario._framework_unit(translated, model)  # pyright: ignore[reportPrivateUsage] - inspect marker routing
-
-
 @pytest.mark.parametrize("kind", ["mixed", "multiple", "grouped", "multiple-rows"])
 def test_marker_composition_is_refused_before_resolution_or_execution(
     monkeypatch: pytest.MonkeyPatch, kind: str
@@ -4142,32 +4074,6 @@ def test_a_bounded_temporal_target_step_reads_its_coverage_then_writes_its_windo
     assert port.writes[2][0].count("), (") == 2
 
 
-@pytest.mark.parametrize(
-    "case_id", ["m-unit-work-001", "m-temporal-write-010", "m-opt-lock-029", "m-storage-layout-024"]
-)
-def test_ordinary_runs_never_prepare_or_simulate_a_peer_write(
-    case_id: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def refuse(*args: object, **kwargs: object) -> Any:
-        raise AssertionError("ordinary run entered compile machinery")
-
-    monkeypatch.setattr(SimulatedTemporalStore, "__init__", refuse)
-    monkeypatch.setattr(scenario, "_resolve_entries", refuse)
-    monkeypatch.setattr(scenario, "_simulated_unit", refuse)
-    monkeypatch.setattr(_case_ingress, "prepare_case_write", refuse)
-    case = _load_case(case_id)
-    rows: list[MappingRow] = (
-        [_ACCOUNT_ROW_2] if case_id == "m-opt-lock-029" else [_VOYAGE_MILESTONE]
-    )
-    port = FakeWritePort(find_rows=rows)
-    if case.shape == "writeSequence":
-        emissions, _state, calls = scenario.run_write_sequence_case(case, port)
-    else:
-        run = scenario.run_scenario_case(case, port)
-        emissions, calls = run.emissions, run.database_calls
-    assert emissions and calls > 0
-
-
 @pytest.mark.parametrize("state_graded", [False, True])
 def test_a_replayed_contiguous_group_replaces_sources_and_reports(
     state_graded: bool,
@@ -4611,57 +4517,3 @@ def test_a_named_bitemporal_insertion_composes_without_a_read_pin(state_graded: 
     assert all(sql.endswith("from position") for sql, _ in port.reads)
     assert port.writes[0][1][:4] == [9, "D", decimal.Decimal("150.00"), _instant(start)]
     assert port.commits == 1 and port.rollbacks == 0
-
-
-@pytest.mark.parametrize("state_graded", [False, True])
-def test_a_refused_insert_never_opens_a_pointer_to_an_earlier_insertion(state_graded: bool) -> None:
-    case = _synthetic_write("scenario", {})
-    serving = model_facts.case_serving_model(case)
-    model = models.accepted_model_of(serving.current().model)
-    context = scenario.CaseContext(serving, model, "optimistic", {}, TxnOptions())
-    lifecycle = LifecycleRun()
-    observation = lifecycle.observation()
-    port = FakeWritePort()
-    session = scenario.GroupSession(
-        write_adapter(port, rollback=False),
-        context,
-        _instant(scenario.INERT_CLOCK_INSTANT),
-        observation,
-    )
-    assert session.dialect is port.dialect
-
-    def body(tx: TxnContext) -> None:
-        state = scenario.GroupState()
-        submitted = scenario._Submitted()  # pyright: ignore[reportPrivateUsage]
-
-        def submit(entry: dict[str, object], index: int) -> None:
-            if state_graded:
-                scenario._submit(  # pyright: ignore[reportPrivateUsage]
-                    tx, model, state, submitted, entry, f"/scenario/{index}/write/0", index
-                )
-            else:
-                scenario.run_group_step(
-                    tx, context, state, {"uow": "g", "write": [entry]}, index, observation
-                )
-
-        submit(_account_insert(90), 0)
-        with pytest.raises(KeyedWriteValueError, match="write-value-already-stored"):
-            submit(_account_insert(90), 1)
-        submit(
-            {
-                "mutation": "amend",
-                "entity": "Account",
-                "rows": [{"id": 90, "owner": "Ada"}],
-                "on": "/scenario/1/write/0",
-            },
-            2,
-        )
-
-    try:
-        with pytest.raises(EngineError, match="opened no value"):
-            transact(session.database, body)
-    finally:
-        session.close()
-
-    assert port.writes == [] and port.reads == []
-    assert port.rollbacks == 1 and port.commits == 0

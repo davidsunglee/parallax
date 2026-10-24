@@ -538,8 +538,11 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.conformance._mechanism.model_facts",
         "parallax.core._execution._preflight",
     ): frozenset({"preflight"}),
-    ("parallax.conformance._lanes.scenario", "parallax.snapshot._publication._wire"): frozenset(
+    ("parallax.conformance._wire_submission", "parallax.snapshot._publication._wire"): frozenset(
         {"authoring_of", "read_evidence_of"}
+    ),
+    ("parallax.conformance._lanes.scenario", "parallax.snapshot._publication._wire"): frozenset(
+        {"read_evidence_of"}
     ),
     # The conformance-only runtime names the scenario and snapshot lanes drive the
     # production planner and source-pin check through, read from the modules that
@@ -557,7 +560,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.conformance._simulated_write_steps",
         "parallax.core._execution._write_lowering",
     ): frozenset({"stream_physical"}),
-    ("parallax.conformance._lanes.scenario", "parallax.core._execution._keyed_writes"): frozenset(
+    ("parallax.conformance._wire_submission", "parallax.core._execution._keyed_writes"): frozenset(
         {"validate_source_pin"}
     ),
     ("parallax.conformance._lanes.snapshot", "parallax.core._execution._keyed_writes"): frozenset(
@@ -574,6 +577,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         (lane, "parallax.core._execution._unit_work"): frozenset({"instructions"})
         for lane in (
             "parallax.conformance._case_ingress",
+            "parallax.conformance._wire_submission",
             "parallax.conformance._lanes.rejected",
             "parallax.conformance._lanes.scenario",
             "parallax.conformance._lanes.snapshot",

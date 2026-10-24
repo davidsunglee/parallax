@@ -639,14 +639,14 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   `find` over that token and publishes the sealed `Page` it returns through
   Snapshot's own `publish_roots`, `RootView`, and `require_publishable`, so the
   delivery and stored-data refusal it grades are production's. The scenario and
-  snapshot lanes drive the production write planner and source-pin check
-  through the conformance-only `build_write_planner` and `validate_source_pin`,
+  snapshot lanes drive the production write planner through `build_write_planner`;
+  Wire submission and the snapshot lane check source pins through `validate_source_pin`,
   read from the execution modules that define them, and the snapshot lane
   spells a Wire family variant with `FAMILY_VARIANT_KEY` from the Wire
   publication module. The scenario lane runs each simulated transaction through
   an ordinary unit of work over the attempt's own lifetime implementation,
   `parallax.core._execution._transaction._lifetime.TxnAttemptLifetime`, rather
-  than a second lifetime of its own. The scenario lane reads each published Wire value's Read Evidence
+  than a second lifetime of its own. Wire submission reads each published Wire value's Read Evidence
   through `parallax.snapshot._publication._wire.read_evidence_of`, and the
   insertion authority a Wire insert's node carries through `authoring_of`, the
   readers the Wire write verbs use, so the claims and keys it settles are the
