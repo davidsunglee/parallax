@@ -45,6 +45,7 @@ from parallax.core import (
 )
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import INFINITY, SQL_NULL, PresentDocument
+from parallax.core.db_port import Row
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import GraphConstructionError, IncludePath
 from parallax.core.entity._expressions import IncludeTraversal
@@ -56,18 +57,21 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.object_query import IncludeSegment
-from parallax.core.read_delivery import StoredDataDecodingError
+from parallax.core.read_delivery import InvalidData, StoredDataDecodingError
 from parallax.core.read_delivery._page import (
     ABSENT,
+    ROOT_LEVEL,
     InvalidRootInput,
     Page,
     PageBuilder,
     StoredDataIssueInput,
+    ViewSchema,
     exact_stored_equal,
     page_rows,
     stored_order_key,
 )
 from parallax.core.read_delivery._page_reader import FlatPageResult
+from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.read_delivery._row_lane import (
     _published_rows,  # pyright: ignore[reportPrivateUsage]
 )
@@ -297,6 +301,39 @@ def test_flat_publication_preserves_a_classified_result_position() -> None:
     (published,) = _published_rows(stage, meta, CONCURRENCY, prepared.row_publisher())
 
     assert invalid_record(published).data is None
+
+
+def test_one_converter_publishes_each_page_it_converts_as_a_fresh_converter_would() -> None:
+    # One bound converter serves every Page its read delivers, and keeps one
+    # publisher across them: values, order and in-band refusals still match a
+    # converter that publishes nothing but that Page.
+    converter = encoded_identity_read()
+    publisher = converter.row_publisher()
+    for rows in (
+        ((KEY_TEXT, None, SQL_NULL), (None, None, SQL_NULL)),
+        ((None, None, SQL_NULL), (OTHER_KEY_TEXT, None, PresentDocument({"street": "Main"}))),
+    ):
+        published = _published_page(converter, rows)
+
+        assert converter.row_publisher() is publisher
+        assert published == _published_page(encoded_identity_read(), rows)
+        assert [kind for kind, _ in published] == [
+            "invalid" if row[0] is None else "row" for row in rows
+        ]
+
+
+def _published_page(converter: ReadRowConverter, rows: tuple[Row, ...]) -> list[tuple[str, object]]:
+    builder = PageBuilder(ViewSchema.of())
+    roots = tuple(converter.convert_row(row, builder, source=ROOT_LEVEL)[0] for row in rows)
+    stage = FlatPageResult((None,) * len(rows), (None,) * len(rows), builder.finish(roots, Pin()))
+    published: list[tuple[str, object]] = []
+    for row in _published_rows(stage, ENCODED_IDENTITY, CONCURRENCY, converter.row_publisher()):
+        if isinstance(row, InvalidData):
+            record = invalid_record(row)
+            published.append(("invalid", (record.issues, record.ordinal, record.data)))
+        else:
+            published.append(("row", list(row.items())))
+    return published
 
 
 def test_a_keyless_root_with_rejected_structured_evidence_dedupes_in_band() -> None:
