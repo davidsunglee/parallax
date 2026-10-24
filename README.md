@@ -14,11 +14,12 @@ database learned each fact, and when each fact is true in the world. It ships to
   relationship never runs a hidden query, so there is no lazy loading and no N+1
   surprise. See [Reading and querying](languages/python/docs/guide/03-reading.md).
 - **Transactions are explicit, and blind writes are refused.** Every write runs inside
-  `db.transact(...)`, and Parallax refuses a blind write, one that changes a row without
-  knowing what it holds. Changing an existing row needs a licence: a read of it in the
-  same transaction, the transaction's own insert of it, or the revision you read it at,
-  stated with the write. See
-  [Writing](languages/python/docs/guide/04-writing.md).
+  `db.transact(...)`, and Parallax refuses a blind write, one that changes a row by key
+  without knowing what it holds. Changing an existing row by key needs a licence: a read
+  of it in the same transaction, the transaction's own insert of it, or the revision you
+  read it at, stated with the write. Only an entity with no version and no history also
+  accepts predicate writes, which change the rows a query selects without reading them.
+  See [Writing](languages/python/docs/guide/04-writing.md).
 - **Conflicts are retried for you, within a bound.** When a deadlock, or a change to a
   row the transaction read, ends an attempt, Parallax runs your whole callback again
   against fresh reads, up to ten more times by default. See

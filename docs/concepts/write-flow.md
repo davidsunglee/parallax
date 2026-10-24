@@ -1,11 +1,13 @@
 # The write flow
 
 A write in Parallax is a request to change one object, or the rows a predicate
-selects, inside a read-write transaction. Nothing reaches the database when you call
-the verb. The write is judged, licensed and buffered; later, at a flush, every buffered
-write is combined, ordered and turned into a fixed sequence of statements. This page
+selects, inside a read-write transaction. A keyed write sends no statement when you
+call the verb: it is judged, licensed and buffered, and later, at a flush, every
+buffered write is combined, ordered and turned into a fixed sequence of statements. Two
+writes reach the database at the call instead: a predicate-selected write runs there,
+and a target write under Locking may first read and lock the row it states. This page
 follows a write through those stages, names what licenses each kind of write, and
-explains why a write that cannot show what it overwrites is refused.
+explains why a keyed write that cannot show what it overwrites is refused.
 
 Each stage names the specification that owns it. This page explains and links; when
 it and a specification seem to disagree, the specification is right.
