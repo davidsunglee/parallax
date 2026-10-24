@@ -501,7 +501,8 @@ def correct_a_price_as_recorded_then(
 <!-- /example -->
 
 The first function closes the January to April row and opens the corrected one. Its
-Transaction Time is still the moment the correction commits:
+Transaction Time is still the transaction's instant, taken when the correction first
+writes:
 
 ```text
             Jan         Apr     Jun         Sep         Dec         tx_start      tx_end
