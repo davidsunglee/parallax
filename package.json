@@ -10,7 +10,7 @@
   "description": "Dev-tooling only for the parallax polyglot monorepo. No runtime code lives here.",
   "scripts": {
     "prepare": "husky",
-    "markdownlint": "markdownlint-cli2 \"core/spec/**/*.md\" \"*.md\"",
+    "markdownlint": "markdownlint-cli2",
     "commitlint": "commitlint"
   },
   "devDependencies": {

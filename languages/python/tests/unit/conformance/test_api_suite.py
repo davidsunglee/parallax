@@ -1,4 +1,4 @@
-"""API Conformance Suite machinery + Usage Guide generator unit tests."""
+"""API Conformance Suite machinery unit tests."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import psycopg
 import pytest
 
-from parallax.conformance import api_suite, case_format, usage_guide
+from parallax.conformance import api_suite, case_format
 from parallax.conformance.api_suite import Example, Skip
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
@@ -240,40 +240,6 @@ def test_compute_partition_flags_uncovered_case() -> None:
     assert any("covered by neither" in error for error in report.errors)
 
 
-def test_render_usage_guide_empty() -> None:
-    text = api_suite.render_usage_guide([])
-    assert "No idiomatic examples yet" in text
-    assert text.startswith("<!-- GENERATED")
-
-
-def test_render_usage_guide_with_examples() -> None:
-    text = api_suite.render_usage_guide(
-        [Example("m-predicate-002", "Point read", "Order.where(Order.all)")]
-    )
-    assert "## Point read" in text
-    assert "`m-predicate-002`" in text
-    assert "Order.where(Order.all)" in text
-
-
-@pytest.mark.parametrize(
-    "examples",
-    [
-        pytest.param([], id="empty"),
-        pytest.param(
-            [Example("m-predicate-002", "Point read", "Order.where(Order.all)")], id="populated"
-        ),
-    ],
-)
-def test_render_usage_guide_is_markdownlint_clean(examples: list[Example]) -> None:
-    # Guards the MD012 (no consecutive blank lines) and single-trailing-newline
-    # invariants the committed guide is linted against, so drift is caught in
-    # the database-free test class and not only by the pre-commit markdownlint hook.
-    text = api_suite.render_usage_guide(examples)
-    assert text.endswith("\n")
-    assert not text.endswith("\n\n")
-    assert "\n\n\n" not in text
-
-
 def test_read_and_graph_story_snippets_render_no_private_name() -> None:
     # Regression guard: a read/graph
     # story's rendered Usage Guide source is the SAME public surface the suite
@@ -309,48 +275,6 @@ def test_read_story_snippet_single_sources_the_concurrency_mode() -> None:
     assert plain.concurrency is None
     assert read_story_snippet(plain) == plain.snippet
     assert "db.transact(" not in read_story_snippet(plain)
-
-
-def test_generated_guide_selects_executed_examples_without_copying_the_full_suite() -> None:
-    guide = usage_guide.generate()
-    registered = {example.case_id: example for example in api_suite.EXAMPLES}
-    selected = re.findall(r"Corpus case: `([^`]+)`", guide)
-    assert selected
-    assert len(selected) == len(set(selected))
-    assert set(selected) < registered.keys()
-    for case_id in selected:
-        assert registered[case_id].snippet in guide
-    for recipe in api_suite.RECIPES:
-        assert recipe.snippet.rstrip("\n") in guide
-    assert "## Recipes" in guide
-    assert "## Recipes" not in api_suite.render_usage_guide(api_suite.EXAMPLES)
-
-
-def test_guide_path_points_at_docs() -> None:
-    assert usage_guide.guide_path().name == "usage-guide.md"
-    assert usage_guide.guide_path().parent.name == "docs"
-
-
-def test_usage_guide_main_write_then_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    target = tmp_path / "docs" / "usage-guide.md"
-    monkeypatch.setattr(usage_guide, "guide_path", lambda: target)
-
-    assert usage_guide.main([]) == 0
-    assert target.read_text(encoding="utf-8") == usage_guide.generate()
-    assert usage_guide.main(["--check"]) == 0
-
-
-def test_usage_guide_main_check_detects_drift(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    target = tmp_path / "docs" / "usage-guide.md"
-    monkeypatch.setattr(usage_guide, "guide_path", lambda: target)
-    # Missing file is drift.
-    assert usage_guide.main(["--check"]) == 1
-    # A stale file is drift too.
-    target.parent.mkdir(parents=True)
-    target.write_text("stale content", encoding="utf-8")
-    assert usage_guide.main(["--check"]) == 1
 
 
 def test_dropping_a_write_example_fails_the_partition() -> None:
