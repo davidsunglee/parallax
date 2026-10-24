@@ -9,6 +9,7 @@
  "tests/unit/core/_execution/_unit_work/test_source_continuation_cost.py::test_writing_a_few_of_many_temporal_sources_keeps_state_for_those_alone": 13.2,
  "tests/unit/core/_execution/_unit_work/test_write_planning_allocation_shape.py::test_a_flush_allocates_nothing_per_entity": 1.6,
  "tests/unit/core/_execution/_unit_work/test_write_planning_allocation_shape.py::test_a_key_derivation_costs_the_same_whatever_else_the_model_declares": 1.5,
+ "tests/unit/core/_execution/_unit_work/test_write_planning_allocation_shape.py::test_a_live_source_free_plan_keeps_its_settled_writes_and_nothing_it_was_handed": 3.7,
  "tests/unit/core/_execution/_unit_work/test_write_planning_allocation_shape.py::test_a_model_scoped_planner_keeps_nothing_per_entity": 1.1,
  "tests/unit/core/_execution/test_write_step_executor.py::test_a_grouped_run_keeps_no_builder_alive_once_it_ran_or_its_failure_is_released": 0.8,
  "tests/unit/core/_execution/test_write_step_executor_ordered.py::test_an_observed_run_leaves_neither_its_invocation_nor_its_observation_alive": 1.0,

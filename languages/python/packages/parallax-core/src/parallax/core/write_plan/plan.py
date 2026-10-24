@@ -294,9 +294,14 @@ class SettledWrite(WriteEffects):
     A settled write with a ``deferred`` range is a plan entry of its own and
     has no planned step: its steps and effects come from binding that range,
     and the group it executes in is formed only once it is bound.
+
+    ``source_evidence`` holds, by identity, the Read Evidence of every source
+    whose write it settled, so those sources stay published for as long as the
+    plan holding it is reachable. Nothing interprets it.
     """
 
     deferred: DeferredRange | None = None
+    source_evidence: tuple[object, ...] = ()
 
 
 type _Member = tuple[WriteEffects, tuple[PlannedStep, ...]]

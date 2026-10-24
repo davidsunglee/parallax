@@ -23,7 +23,6 @@ from parallax.core._execution._unit_work.write_items import (
     StateObservedWrite,
     TargetWrite,
 )
-from parallax.core._execution._unit_work.write_settlement import SettledWriteWithSource
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.unit_work import (
@@ -170,7 +169,6 @@ def test_two_observations_of_one_transaction_time_row_validate_the_earlier() -> 
         Decimal("175.00")
     )
     (write,) = settled_writes(plan)
-    assert isinstance(write, SettledWriteWithSource)
     assert [id(evidence) for evidence in write.source_evidence] == [id(stale), id(current)]
 
 
@@ -243,7 +241,6 @@ def test_every_equal_but_distinct_source_of_one_observation_survives_its_writes_
             else _write(second, current, source=later),
         )
     )
-    assert isinstance(write, SettledWriteWithSource)
     assert sorted(map(id, write.source_evidence)) == sorted((id(earlier), id(later)))
 
 
@@ -421,8 +418,7 @@ def test_a_read_corrects_its_stored_period_beside_an_independent_pending_opening
     assert isinstance(close, PlannedClose)
     assert close.cause is SUPERSEDED
     assert tuple(correction.changed) == (START.key,)
-    assert not isinstance(opening, SettledWriteWithSource)
-    assert isinstance(correction, SettledWriteWithSource)
+    assert opening.source_evidence == ()
     assert tuple(map(id, correction.source_evidence)) == (id(source),)
 
 
