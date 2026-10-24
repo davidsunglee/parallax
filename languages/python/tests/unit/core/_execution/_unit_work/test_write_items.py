@@ -11,7 +11,9 @@ import pytest
 
 from parallax.core import inheritance
 from parallax.core._execution._unit_work.admission import WriteAdmission
+from parallax.core._execution._unit_work.claims import WriteIntent, WriteIntentKind
 from parallax.core._execution._unit_work.instructions import (
+    ExpectedTxStart,
     PreparedKeyedInstruction,
     derive_keyed_instruction,
     prepare_typed_write,
@@ -21,6 +23,7 @@ from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     ParticipationToken,
     ReadEvidence,
+    RetainedTargetState,
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
@@ -28,18 +31,25 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     ComposedWrite,
     InsertBatch,
+    InsertionAuthorizedIntent,
     InsertionAuthorizedWrite,
     KeyedInsert,
     ObjectLockedBatch,
     ObjectLockedWrite,
     OrderedWrite,
     PostRemovalInsert,
+    StateObservedIntent,
     StateObservedWrite,
+    TargetIntent,
     TargetWrite,
+    TemporalCoverageWrite,
+    TemporalIntent,
     WritePhase,
     target_write,
 )
 from parallax.core.metamodel import EntityMetadata
+from parallax.core.temporal_read import TimeInterval
+from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWriteInstruction,
@@ -59,6 +69,7 @@ from tests.unit.core._execution._unit_work._temporal_targets_support import (
     OBJECT,
     POSITION,
     SEP,
+    T0,
     observed_write,
     rectangle,
     retained,
@@ -144,6 +155,7 @@ class _Row:
     source_evidence: object
     phase: WritePhase
     target: EntityMetadata
+    intents: object = _ABSENT
 
     def answered(self) -> dict[str, object]:
         cells = {
@@ -153,6 +165,7 @@ class _Row:
             "source_evidence": self.source_evidence,
             "phase": self.phase,
             "target": self.target,
+            "intents": self.intents,
         }
         return {name: value for name, value in cells.items() if value is not _ABSENT}
 
@@ -266,6 +279,7 @@ def _composed_temporal(*, assigns: bool) -> _Row:
     (write,) = admitted_writes(POSITION, [first, second])
     assert isinstance(write, ComposedTemporalWrite)
     evidence = (*first.source_evidence, *second.source_evidence)
+    kind: WriteIntentKind = "assignment" if assigns else "destructive"
     return _Row(
         write,
         _ABSENT,
@@ -273,8 +287,65 @@ def _composed_temporal(*, assigns: bool) -> _Row:
         _ABSENT,
         evidence,
         "update" if assigns else "delete",
-        write.target,
+        _position_metadata(),
+        (
+            StateObservedIntent(WriteIntent(kind, TimeInterval(MAR, JUN)), earlier, ()),
+            StateObservedIntent(WriteIntent(kind, TimeInterval(JUN, SEP)), later, ()),
+        ),
     )
+
+
+def _lone_observed() -> _Row:
+    observed = retained(rectangle(JAN, JUN, "1.00"))
+    source = ReadEvidence(OBJECT.entity, OBJECT, ParticipationToken(), observed)
+    first = observed_write("terminateUntil", observed, valid_from=MAR, until=JUN)
+    (write,) = admitted_writes(
+        POSITION,
+        [admitted_write(first.instruction, observed, OBJECT, source=source)],
+    )
+    assert isinstance(write, StateObservedWrite)
+    return _Row(
+        write,
+        write.instruction,
+        OBJECT,
+        observed.key,
+        (source,),
+        "delete",
+        _position_metadata(),
+        (StateObservedIntent(WriteIntent("destructive", TimeInterval(MAR, JUN)), observed, ()),),
+    )
+
+
+def _lone_target() -> _Row:
+    prepared = prepare_wire_write(
+        TargetWriteInstruction(
+            "amendUntil",
+            "Position",
+            {"id": 1, "value": "2.00"},
+            if_tx_start=T0,
+            valid_from=MAR,
+            until=JUN,
+        ),
+        POSITION,
+    )
+    (write,) = admitted_writes(POSITION, [target_write(prepared, inheritance.view(POSITION))])
+    assert isinstance(write, TargetWrite)
+    return _Row(
+        write,
+        write.instruction,
+        OBJECT,
+        OBJECT,
+        (),
+        "update",
+        _position_metadata(),
+        (TargetIntent(WriteIntent("assignment", TimeInterval(MAR, JUN)), ExpectedTxStart(T0)),),
+    )
+
+
+def _position_metadata() -> EntityMetadata:
+    entity = POSITION.entity(OBJECT.entity)
+    assert entity is not None
+    return entity
 
 
 def _position_opening() -> ComposedBitemporalOpening:
@@ -304,7 +375,16 @@ def _position_opening() -> ComposedBitemporalOpening:
 
 def _opening() -> _Row:
     write = _position_opening()
-    return _Row(write, _ABSENT, OBJECT, _ABSENT, (), "insert", write.insert.instruction.target)
+    return _Row(
+        write,
+        _ABSENT,
+        OBJECT,
+        _ABSENT,
+        (),
+        "insert",
+        write.insert.instruction.target,
+        (WriteIntent("assignment", TimeInterval(JAN, MAR)),),
+    )
 
 
 def _post_removal_insert() -> _Row:
@@ -336,6 +416,8 @@ _MATRIX: Final[Mapping[str, Callable[[], _Row]]] = {
     "target": _target_write,
     "insert-batch": _insert_batch,
     "object-locked-batch": _object_locked_batch,
+    "lone-temporal-observed": _lone_observed,
+    "lone-temporal-target": _lone_target,
     "composed-temporal-assigning": lambda: _composed_temporal(assigns=True),
     "composed-temporal-destroying": lambda: _composed_temporal(assigns=False),
     "composed-bitemporal-opening": _opening,
@@ -402,6 +484,11 @@ if TYPE_CHECKING:
         admitted: AdmittedWrite,
         composed_write: ComposedWrite,
         ordered: OrderedWrite,
+        observed_intent: StateObservedIntent,
+        authorized_intent: InsertionAuthorizedIntent,
+        target_intent: TargetIntent,
+        intent: TemporalIntent,
+        coverage: TemporalCoverageWrite,
     ) -> None:
         instruction: PreparedKeyedInstruction = admitted.instruction
         key: ObjectKey | None = admitted.object_key
@@ -420,6 +507,34 @@ if TYPE_CHECKING:
         )
         del instruction, key, keys, locked_keys, composed_key, opening_key, evidence
         del phase, target, scope
+        intents: tuple[TemporalIntent, ...] = composed.intents
+        opening_intents: tuple[WriteIntent, ...] = opening.intents
+        stated: WriteIntent = intent.intent
+        observation: RetainedObservation = observed_intent.retained_observation
+        observed_evidence: tuple[ReadEvidence, ...] = observed_intent.source_evidence
+        expected: ExpectedTxStart = target_intent.expected
+        retained_row: RetainedTargetState | None = target_intent.retained
+        del intents, opening_intents, stated, observation, observed_evidence, expected
+        del retained_row
+        pending_intents: tuple[TemporalIntent, ...] = coverage.intents
+        pending_transform: CoverageTransform = coverage.transform
+        pending_key: ObjectKey = coverage.object_key
+        pending_target: EntityMetadata = coverage.target
+        del pending_intents, pending_transform, pending_key, pending_target
+        _ = coverage.instruction  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a composition holds no one instruction
+        _ = locked.intents  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an object-locked row is no temporal write
+        _ = admitted.intents  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insert composes nothing
+        _ = composed_write.intents  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - inserts and markers keep none
+        _ = observed_intent.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read states no caller's start
+        _ = observed_intent.retained  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a read retains no starting row
+        _ = authorized_intent.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion observed nothing
+        _ = authorized_intent.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - insertion authority is no Read Evidence
+        _ = authorized_intent.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insertion states no caller's start
+        _ = target_intent.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a caller's condition observed nothing
+        _ = target_intent.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a caller's condition is no Read Evidence
+        _ = intent.retained_observation  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only an observed intent observed
+        _ = intent.source_evidence  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only an observed intent holds evidence
+        _ = intent.expected  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - only a target intent states a start
         _ = insert.claim_scope  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - an insert claims nothing
         _ = insert_batch.object_key  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a batch names several objects
         _ = insert_batch.claim_scope  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType] - a batch claims nothing

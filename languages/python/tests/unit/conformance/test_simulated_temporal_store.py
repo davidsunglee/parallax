@@ -96,7 +96,7 @@ from parallax.core.write_plan.steps import (
     Versioned,
     WriteRow,
 )
-from tests._support.planner_probes import plan_steps
+from tests._support.planner_probes import admitted_writes, plan_steps
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 
 POSITION = models.load_models()["position"]
@@ -280,7 +280,7 @@ def test_a_milestone_no_planned_step_closes_stays_stored_as_it_was(value: str, k
                     FixedClock(dt.datetime(2024, 9, 1, tzinfo=dt.UTC))
                 ),
                 concurrency="locking",
-                composed_writes=[_observed_write(prepared, observed)],
+                composed_writes=admitted_writes(POSITION, [_observed_write(prepared, observed)]),
             )
         )
     )

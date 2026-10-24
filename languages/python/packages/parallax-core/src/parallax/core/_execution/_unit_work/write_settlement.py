@@ -40,8 +40,10 @@ from parallax.core._execution._unit_work.write_items import (
     ObjectLockedBatch,
     ObjectLockedWrite,
     OrderedWrite,
+    StateObservedIntent,
     StateObservedWrite,
     TargetWrite,
+    TemporalCoverageWrite,
 )
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
@@ -447,7 +449,7 @@ class WritePlanCompiler:
 
     def _range(
         self,
-        item: ComposedTemporalWrite | StateObservedWrite | InsertionAuthorizedWrite | TargetWrite,
+        item: TemporalCoverageWrite,
         shape: TransactionTimeOnly | Bitemporal,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
@@ -460,20 +462,24 @@ class WritePlanCompiler:
         settled write with the steps it binds now, or the settled write
         carrying the deferred range execution binds, with no step.
 
-        A lone observed write enters as the write it was buffered as, so one
-        that lies inside the predecessor it observed binds that predecessor at
-        once and one reaching beyond it reads the rest at execution. Its
-        observation must be the Temporal Observation every close addresses,
-        gates on, and carries state forward from, which is refused before the
-        attempt captures its instant.
+        A range, one write alone or a composition, observed inside the
+        predecessors it holds binds them at once, and one reaching beyond them
+        reads the rest at execution. Every observation it holds must be the
+        Temporal Observation every close addresses, gates on, and carries
+        state forward from, which is refused before the attempt captures its
+        instant.
         """
         entity = item.target
-        if isinstance(item, StateObservedWrite) and not isinstance(
-            item.observation, TemporalObservation
+        intents = item.intents
+        if any(
+            isinstance(intent, StateObservedIntent)
+            and not isinstance(intent.retained_observation.evidence, TemporalObservation)
+            for intent in intents
         ):
-            raise _unobserved_close(entity, item.instruction.mutation)
+            raise _unobserved_close(entity)
         ranged = settle_range(
             item,
+            intents,
             view=entity_view(self._families, entity),
             shape=shape,
             gated=self._concurrency.gates(concurrency, self._model, entity.identity),
@@ -803,9 +809,9 @@ def _close_group(
     held.clear()
 
 
-def _unobserved_close(entity: EntityMetadata, mutation: str) -> WritePlanningError:
+def _unobserved_close(entity: EntityMetadata) -> WritePlanningError:
     return WritePlanningError(
-        f"{entity.identity.name!r}: a temporal {mutation!r} closes the "
+        f"{entity.identity.name!r}: a temporal write of existing coverage closes the "
         "current milestone, and every close requires the Temporal Observation it "
         "addresses, gates on, and carries state forward from (m-unit-work; m-opt-lock)"
     )
