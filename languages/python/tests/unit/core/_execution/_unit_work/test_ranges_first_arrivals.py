@@ -27,7 +27,6 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
     target_write,
 )
-from parallax.core._execution._unit_work.write_settlement import SettledWriteWithSource
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import TimeInterval
@@ -223,7 +222,6 @@ def test_an_observed_bitemporal_write_inside_its_rectangle_binds_at_planning() -
         (MAY, JUN, Decimal("100.00")),
     ]
     assert tuple(write.changed) == (START.key,)
-    assert isinstance(write, SettledWriteWithSource)
     assert tuple(map(id, write.source_evidence)) == (id(source),)
 
 
@@ -237,7 +235,6 @@ def test_an_observed_bitemporal_write_past_its_rectangle_reads_the_rest_at_execu
     )
     (write,) = settled_writes(plan)
     assert write.deferred is not None
-    assert isinstance(write, SettledWriteWithSource)
     assert tuple(map(id, write.source_evidence)) == (id(source),)
     (term,) = coverage_read(POSITION, alone(write), transaction_instant=_instant()).terms
     assert term.valid_time_windows == (TimeInterval(JUN, SEP),)
@@ -287,7 +284,6 @@ def test_an_observed_transaction_time_write_closes_its_observed_row_at_planning(
     )
     assert _opened(planned) == opened
     assert tuple(write.changed) == (observed.key,)
-    assert isinstance(write, SettledWriteWithSource)
     assert tuple(map(id, write.source_evidence)) == (id(source),)
 
 
@@ -307,7 +303,7 @@ def _balance_target(tx_start: dt.datetime, **members: object) -> TargetWrite:
 def test_a_transaction_time_target_binds_the_row_its_caller_named() -> None:
     (write,) = settled_writes(_planned(_BALANCE, _balance_target(T0, value="175.00")))
     assert write.deferred is not None
-    assert not isinstance(write, SettledWriteWithSource)
+    assert write.source_evidence == ()
     bound = _bound(_BALANCE, write, [_balance_row("100.00")])
     close, opened = bound.steps
     assert isinstance(close, PlannedClose)
@@ -416,7 +412,7 @@ def test_a_bitemporal_write_a_flushed_insertion_authorized_revises_its_row_from_
     _authorized(admission, _position("amendUntil", FEB, JUN, value="150.00"), OBJECT)
     (write,) = settled_writes(_plan(admission, POSITION))
     assert write.deferred is not None
-    assert not isinstance(write, SettledWriteWithSource)
+    assert write.source_evidence == ()
     (term,) = coverage_read(POSITION, alone(write), transaction_instant=_instant()).terms
     assert term.valid_time_windows == (TimeInterval(FEB, JUN),)
     owned = rectangle(FEB, INFINITY, "100.00", tx_start=_INSTANT)
@@ -472,7 +468,7 @@ def test_a_transaction_time_write_a_flushed_insertion_authorized_revises_its_own
     _authorized(admission, _balance(mutation, **members), _BALANCE_OBJECT)
     (write,) = settled_writes(_plan(admission, _BALANCE))
     assert write.deferred is not None
-    assert not isinstance(write, SettledWriteWithSource)
+    assert write.source_evidence == ()
     bound = bind_held(
         _BALANCE,
         alone(write),

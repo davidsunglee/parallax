@@ -27,6 +27,11 @@ index or a dependency graph would be built per call. And what a model-scoped
 planner KEEPS when it is built, which is where either would be held instead.
 Dependency ordering reads the referential rank the relationship module compiled
 with the model, so a flush builds no rank map either.
+
+One reading of the write count, over one fixed model: what a finalized plan
+keeps while it is alive, for writes that hold no source. Each settled write it
+plans shares the one empty evidence tuple, and nothing of the writes the plan
+was handed survives beside it.
 """
 
 from __future__ import annotations
@@ -34,13 +39,15 @@ from __future__ import annotations
 import sys
 import tracemalloc
 from collections.abc import Callable, Sequence
+from itertools import pairwise
 from typing import Final
 
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
+    PreparedKeyedInstruction,
     prepare_typed_write,
 )
-from parallax.core._execution._unit_work.write_items import ComposedWrite
+from parallax.core._execution._unit_work.write_items import ComposedWrite, KeyedInsert
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (
     Metamodel,
@@ -51,8 +58,10 @@ from parallax.core.unit_work import (
     WritePlanningRequest,
     object_key,
 )
-from tests._support.clock_probes import inert_instant
-from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer
+from parallax.core.write_plan.plan import SettledWrite
+from tests._support.clock_probes import inert_instant, instant_at
+from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, settled_writes
+from tests.unit._corpus_model_support import formed, records
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 from tests.unit.memory_instruments import (
     REPEATS,
@@ -61,6 +70,8 @@ from tests.unit.memory_instruments import (
     in_a_child_interpreter,
     retained,
     serve_one_measurement,
+    survivors,
+    warmed,
 )
 
 FEW: Final = 8
@@ -74,12 +85,24 @@ against two of eight, which is tens of thousands of bytes against hundreds — n
 threshold is needed to tell the two readings apart, and none is used.
 """
 
+SOURCE_FREE_ARMS: Final = (0, 8, 128)
+"""Write counts of the source-free readings: empty, small, and larger, over
+:data:`SOURCE_FREE_MODEL` alone."""
+
 INSTANT: Final = inert_instant()
 """One unresolved holder for every request below.
 
 Non-temporal settlement never reads the instant, so the holder is shared rather
 than re-created per seam, which would put its own allocation inside the window.
 """
+
+
+SOURCE_FREE_INSTANT: Final = instant_at("2024-01-01T00:00:00+00:00")
+"""The instant every source-free temporal insert opens at, shared like
+:data:`INSTANT`; the first plan captures it, outside every window."""
+
+SOURCE_FREE_MODEL: Final = formed(records("balance"))
+"""The one Transaction-Time-Only model every source-free reading plans against."""
 
 
 def _model(entities: int) -> Metamodel:
@@ -151,6 +174,67 @@ def _key_derivation_over(entities: int, *, prepared: bool) -> Seam:
     def run(sample: Callable[[], None]) -> None:
         object_key(instruction, model)
         sample()
+
+    return run
+
+
+def _source_free_inserts(writes: int) -> WritePlanningRequest:
+    """A Planning Request buffering ``writes`` Transaction-Time-Only inserts of
+    distinct objects of one fixed model.
+
+    An insert holds no source, and a temporal insert neither batches nor shares
+    a settled write, so each settles into a settled write of its own that keeps
+    no Read Evidence.
+    """
+    return WritePlanningRequest(
+        actor_identity=TEST_ACTOR_IDENTITY,
+        transaction_instant=SOURCE_FREE_INSTANT,
+        concurrency="optimistic",
+        composed_writes=tuple(
+            observed_buffer(
+                [
+                    KeyedWriteInstruction(
+                        "insert", "Balance", ({"id": row + 1, "acctNum": "A", "value": row},)
+                    )
+                    for row in range(writes)
+                ],
+                SOURCE_FREE_MODEL,
+                None,
+            )
+        ),
+    )
+
+
+def _source_free_plan_kept(writes: int) -> Seam:
+    """One ``finalize`` over ``writes`` source-free inserts, sampled while the
+    plan it answered is still alive.
+
+    The request is built before the window, as :func:`_flush_of`'s is, so what
+    the sample reaches is what the plan keeps of its own.
+    """
+    planner = build_write_planner(SOURCE_FREE_MODEL)
+    request = _source_free_inserts(writes)
+
+    def run(sample: Callable[[], None]) -> None:
+        plan = planner.finalize(request)
+        sample()
+        del plan
+
+    return run
+
+
+def _source_free_plan_handed(writes: int) -> Seam:
+    """:func:`_source_free_plan_kept` with the request built inside the window
+    and dropped before the sample, so what survives of it is what the plan
+    keeps of what it was handed."""
+    planner = build_write_planner(SOURCE_FREE_MODEL)
+
+    def run(sample: Callable[[], None]) -> None:
+        request = _source_free_inserts(writes)
+        plan = planner.finalize(request)
+        del request
+        sample()
+        del plan
 
     return run
 
@@ -242,6 +326,33 @@ def test_a_flush_allocates_nothing_per_entity() -> None:
     assert settled_many[1] == settled_few[1]
     assert settled_few[0] < REPEATS
     assert settled_many[0] < REPEATS
+
+
+@in_a_child_interpreter
+def test_a_live_source_free_plan_keeps_its_settled_writes_and_nothing_it_was_handed() -> None:
+    # Every source-free write settles into a settled write of its own, which
+    # shares the one empty evidence tuple rather than holding a collection of
+    # its own; what the live plan keeps grows with those writes, and neither
+    # an admitted write nor its prepared instruction survives beside them.
+    planner = build_write_planner(SOURCE_FREE_MODEL)
+    planned = {
+        writes: settled_writes(planner.finalize(_source_free_inserts(writes)))
+        for writes in SOURCE_FREE_ARMS
+    }
+    tracemalloc.start()
+    try:
+        kept = [retained(_source_free_plan_kept(writes)) for writes in SOURCE_FREE_ARMS]
+        handed = survivors(warmed(_source_free_plan_handed(max(SOURCE_FREE_ARMS))))
+    finally:
+        tracemalloc.stop()
+    shared: tuple[()] = ()
+    for writes, settled in planned.items():
+        assert len({id(write) for write in settled}) == writes
+        assert all(write.source_evidence is shared for write in settled)
+    assert kept[0] > 0, "an empty plan is free, or nothing is being measured"
+    assert all(fewer < more for fewer, more in pairwise(kept))
+    assert sum(isinstance(held, SettledWrite) for held in handed) == max(SOURCE_FREE_ARMS)
+    assert not any(isinstance(held, KeyedInsert | PreparedKeyedInstruction) for held in handed)
 
 
 if __name__ == "__main__":
