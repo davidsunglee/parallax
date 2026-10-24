@@ -33,7 +33,6 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     ComposedTemporalWrite,
     InsertionAuthorizedWrite,
-    StateObservedWrite,
     TargetWrite,
     TemporalKeyedWrite,
     singleton_transform,
@@ -73,7 +72,6 @@ from parallax.core.write_plan.steps import KeyTarget, PlannedStep, PlannedValue
 __all__ = [
     "DeferredTemporalRange",
     "RangeBindings",
-    "range_source_evidence",
     "settle_opening",
     "settle_range",
 ]
@@ -105,23 +103,6 @@ class _ObservedSource:
 
     observation: RetainedObservation
     pins: tuple[dt.datetime | None, ...]
-
-
-def range_source_evidence(
-    item: ComposedTemporalWrite | TemporalKeyedWrite,
-) -> tuple[ReadEvidence, ...]:
-    """The distinct Read Evidence of every source whose write a range composes,
-    by identity, in authored order."""
-    if isinstance(item, StateObservedWrite):
-        return item.source_evidence
-    if not isinstance(item, ComposedTemporalWrite):
-        return ()
-    distinct: list[ReadEvidence] = []
-    for contribution in item.contributions:
-        for evidence in contribution.source_evidence:
-            if all(evidence is not held for held in distinct):
-                distinct.append(evidence)
-    return tuple(distinct)
 
 
 def _continues(ownership: TemporalWriteOwnership, source: _ObservedSource) -> bool:
@@ -636,11 +617,11 @@ def settle_range(
     deferred range retains as a value.
     """
     key_attribute = view.primary_key.identity
-    entity, key_value, transform = _range_of(item, key_attribute)
-    facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=instant)
-    predecessors, validations, anchor, conditions, retained = _known(
-        item, facts, _object_key(facts, key_attribute, key_value), ownership
-    )
+    target = item.object_key
+    ((_, key_value),) = target.primary_key
+    transform = _transform_of(item, key_attribute)
+    facts = TemporalFacts(entity=item.target, view=view, shape=shape, instant=instant)
+    predecessors, validations, anchor, conditions, retained = _known(item, facts, target, ownership)
     window = transform.valid_time_window
     meaning = _RangeMeaning(
         facts=facts,
@@ -733,18 +714,12 @@ def _with_opening(
     return sorted((seed.window, *coverage), key=_START)
 
 
-def _range_of(
+def _transform_of(
     item: ComposedTemporalWrite | TemporalKeyedWrite, key_attribute: AttributeIdentity
-) -> tuple[EntityMetadata, object, CoverageTransform]:
-    """The object ``item`` writes, its key value, and its transform."""
+) -> CoverageTransform:
     if isinstance(item, ComposedTemporalWrite):
-        return item.target, item.key[key_attribute.name], item.transform
-    instruction = item.instruction
-    return (
-        instruction.target,
-        instruction.rows[0][key_attribute.name],
-        singleton_transform(item, key_attribute.name),
-    )
+        return item.transform
+    return singleton_transform(item, key_attribute.name)
 
 
 def _retained(composed: ComposedTemporalWrite) -> tuple[RetainedTargetState, ...]:

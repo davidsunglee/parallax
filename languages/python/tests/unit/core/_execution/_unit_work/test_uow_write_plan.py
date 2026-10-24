@@ -73,6 +73,7 @@ from parallax.core.unit_work import (
     WritePlanner,
     WritePlanningRequest,
     admitted_write,
+    object_key,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -296,7 +297,7 @@ def _span_insert() -> AdmittedWrite:
         _SPANS,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return admitted_write(prepared, None)
+    return admitted_write(prepared, None, object_key(prepared, _SPANS))
 
 
 def _span_amend(key: int) -> AdmittedWrite:
@@ -319,7 +320,7 @@ def _span_amend(key: int) -> AdmittedWrite:
         _SPANS,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return admitted_write(prepared, RetainedObservation(state, observation, None))
+    return admitted_write(prepared, RetainedObservation(state, observation, None), state.object)
 
 
 def test_the_rows_a_settled_write_opens_are_owned_under_the_keys_its_steps_answered() -> None:
@@ -418,7 +419,7 @@ def _observed_amend(key: int, claim: RetainedObservation) -> AdmittedWrite:
         TARGET_POSITION,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return admitted_write(prepared, claim)
+    return admitted_write(prepared, claim, claim.key.object)
 
 
 def _retained_row(key: int) -> RetainedObservation:
@@ -730,13 +731,13 @@ def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_l
     assert isinstance(later, PreparedKeyedInstruction)
     observed = uow.retain(retained_observation(amendment, _PREDICATED, observation))
     with store.transaction(rollback=False):
-        uow.buffer(admitted_write(amendment, observed))
+        uow.buffer(admitted_write(amendment, observed, observed.key.object))
         # The predicate write executes the earlier amendment in its own flush.
         uow.execute_predicate(_tag_predicate_write())
         executed = len(simulated.statements)
         # A later write of the same source continues through what the earlier
         # write left of the state they observed.
-        uow.buffer(admitted_write(later, observed))
+        uow.buffer(admitted_write(later, observed, observed.key.object))
         uow.flush(trigger="pre_commit")
     hundred, changed = Decimal("100.00"), Decimal("175.00")
     # The later write reads nothing: the attempt holds the row the earlier

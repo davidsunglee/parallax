@@ -180,7 +180,8 @@ def frag(entity: type[Bitemporal], key: int, parts: int) -> list[AdmittedWrite]:
             MODEL,
         )
         assert isinstance(prepared, PreparedKeyedInstruction)
-        writes.append(admitted_write(prepared, observation(entity, rows[2 * pair])))
+        observed = observation(entity, rows[2 * pair])
+        writes.append(admitted_write(prepared, observed, observed.key.object))
     return writes
 
 

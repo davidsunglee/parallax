@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from operator import itemgetter
 
@@ -8,14 +8,12 @@ from parallax.core import inheritance, relationship, temporal_read
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
-    ASSIGNMENT_MUTATIONS,
-    DESTRUCTIVE_MUTATIONS,
-    INSERT_MUTATIONS,
     ExpectedVersion,
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
     derive_keyed_instruction,
 )
+from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,
@@ -30,14 +28,12 @@ from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,
     ComposedWrite,
     InsertBatch,
-    InsertionAuthorizedWrite,
     KeyedInsert,
     MutationPhase,
     ObjectLockedBatch,
     ObjectLockedWrite,
     OrderedWrite,
     PostRemovalInsert,
-    StateObservedWrite,
     TargetWrite,
 )
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
@@ -246,8 +242,10 @@ class WritePlanner:
         arithmetic = self._concurrency.version_arithmetic()
         return arithmetic.initial if advanced_from is None else arithmetic.advance(advanced_from)
 
-    def _form_batches(self, buffer: Sequence[ComposedWrite]) -> list[ComposedWrite]:
-        result: list[ComposedWrite] = []
+    def _form_batches(
+        self, buffer: Sequence[ComposedWrite]
+    ) -> list[OrderedWrite | PostRemovalInsert]:
+        result: list[OrderedWrite | PostRemovalInsert] = []
         candidates: list[KeyedInsert | ObjectLockedWrite] = []
         batch: object = None
 
@@ -257,13 +255,12 @@ class WritePlanner:
         def close_batch() -> None:
             if not candidates:
                 return
-            instructions = [w.instruction for w in candidates]
-            first = instructions[0]
-            rows = [row for w in instructions for row in w.rows]
+            first = candidates[0].instruction
+            rows = [row for w in candidates for row in w.instruction.rows]
             if len(candidates) == 1:
                 result.extend(candidates)
             elif self._batching.collapses(self._model, first.target, first.mutation, rows):
-                result.append(_merged_batch(candidates, _merge_rows(instructions)))
+                result.append(_merged_batch(candidates, rows))
             else:
                 result.extend(candidates)
             candidates.clear()
@@ -282,21 +279,22 @@ class WritePlanner:
         # that does not batch reaches the `else` branch below as its own
         # singleton. An admitted write is single-row by construction, so the
         # batch this skips is the only way its row could have joined a
-        # multi-row statement.
+        # multi-row statement. An insert that must follow a removal is a
+        # barrier no batch spans.
         for item in buffer:
-            if isinstance(item, KeyedInsert | ObjectLockedWrite):
+            if isinstance(item, PostRemovalInsert):
+                close_batch()
+                result.append(item)
+            elif isinstance(item, KeyedInsert | ObjectLockedWrite):
                 instruction = item.instruction
                 item_batch = batch_key(instruction)
-                if candidates:
-                    last = candidates[-1].instruction
-                    if (
-                        last.target == instruction.target
-                        and last.mutation == instruction.mutation
-                        and last.valid_time_window == instruction.valid_time_window
-                        and item_batch == batch
-                    ):
-                        candidates.append(item)
-                        continue
+                if (
+                    candidates
+                    and item_batch == batch
+                    and _shares_statement(candidates[-1].instruction, instruction)
+                ):
+                    candidates.append(item)
+                    continue
                 close_batch()
                 candidates.append(item)
                 batch = item_batch
@@ -306,7 +304,7 @@ class WritePlanner:
         close_batch()
         return result
 
-    def _order(self, items: Sequence[ComposedWrite]) -> list[MutationPhase]:
+    def _order(self, items: Sequence[OrderedWrite | PostRemovalInsert]) -> list[MutationPhase]:
         """``items`` as mutation phases in flush order: within each region the
         inserts in ascending referential rank, then the updates in authored
         order, then the deletes in descending rank are a phase each, an empty
@@ -325,24 +323,15 @@ class WritePlanner:
                 # authored after it orders with it as usual.
                 _close_region(phases, inserts, updates, deletes)
                 item = item.insert
-            if isinstance(item, ComposedTemporalWrite):
-                if item.assigns:
-                    updates.append(item)
-                else:
-                    deletes.append((self._ranked(item.target), item))
-                continue
-            instruction = _ordered_instruction(item)
-            if instruction.mutation in ASSIGNMENT_MUTATIONS:
+            phase = item.phase
+            if phase == "update":
                 updates.append(item)
-            elif instruction.mutation in INSERT_MUTATIONS:
-                inserts.append((self._rank(instruction), item))
-            elif instruction.mutation in DESTRUCTIVE_MUTATIONS:
-                deletes.append((self._rank(instruction), item))
+            elif phase == "insert":
+                inserts.append((self._ranked(item.target), item))
+            else:
+                deletes.append((self._ranked(item.target), item))
         _close_region(phases, inserts, updates, deletes)
         return phases
-
-    def _rank(self, instruction: PreparedKeyedInstruction) -> int:
-        return self._ranked(instruction.target)
 
     def _ranked(self, entity: EntityMetadata) -> int:
         rank = self._relationships.referential_rank(entity.identity)
@@ -398,32 +387,43 @@ def _key_name(families: inheritance.InheritanceFacet, entity: EntityMetadata) ->
     return position.primary_key.identity.name
 
 
+def _shares_statement(last: PreparedKeyedInstruction, arriving: PreparedKeyedInstruction) -> bool:
+    return (
+        last.target == arriving.target
+        and last.mutation == arriving.mutation
+        and last.valid_time_window == arriving.valid_time_window
+    )
+
+
 def _merged_batch(
-    run: Sequence[KeyedInsert | ObjectLockedWrite], merged: PreparedKeyedInstruction
+    run: Sequence[KeyedInsert | ObjectLockedWrite], rows: Sequence[Mapping[str, object]]
 ) -> InsertBatch | ObjectLockedBatch:
-    """``merged``, the one instruction ``run`` collapsed into: a run of inserts,
-    or one of object-locked writes with every distinct source evidence they
-    retained. A run shares one mutation, so it never mixes the two."""
-    if merged.mutation in INSERT_MUTATIONS:
-        return InsertBatch(instruction=merged)
-    retained = {
-        id(held): held
-        for item in run
-        if isinstance(item, ObjectLockedWrite)
-        for held in item.source_evidence
-    }
-    return ObjectLockedBatch(instruction=merged, source_evidence=tuple(retained.values()))
-
-
-def _merge_rows(run: Sequence[PreparedKeyedInstruction]) -> PreparedKeyedInstruction:
-    """One multi-row :class:`PreparedKeyedInstruction` carrying every row of ``run``'s
-    single-row instructions, in run (buffer) order — the same
-    entity/mutation/Valid-Time window every member of the run already shares."""
-    first = run[0]
-    return derive_keyed_instruction(
-        first,
-        tuple(row for w in run for row in w.rows),
-        assigns=any(w.assigns for w in run),
+    """``run`` collapsed into one multi-row instruction over ``rows``, every
+    row of its single-row instructions in run (buffer) order, with the same
+    entity, mutation, and Valid-Time window its members already share: a run
+    of inserts, or one of object-locked writes, each keeping the object every
+    row names and, for object-locked writes, every distinct source evidence
+    they retained. A run shares one mutation, so it never mixes the two."""
+    inserts: list[KeyedInsert] = []
+    locked: list[ObjectLockedWrite] = []
+    retained: dict[int, ReadEvidence] = {}
+    for item in run:
+        if isinstance(item, KeyedInsert):
+            inserts.append(item)
+            continue
+        locked.append(item)
+        for held in item.source_evidence:
+            retained.setdefault(id(held), held)
+    merged = derive_keyed_instruction(
+        run[0].instruction, tuple(rows), assigns=any(w.instruction.assigns for w in run)
+    )
+    if not locked:
+        return InsertBatch(instruction=merged, object_keys=tuple(w.object_key for w in inserts))
+    assert not inserts  # a run shares one mutation
+    return ObjectLockedBatch(
+        instruction=merged,
+        object_keys=tuple(w.object_key for w in locked),
+        source_evidence=tuple(retained.values()),
     )
 
 
@@ -440,14 +440,7 @@ def _without_noop_rows(
     either eliminated whole or passed through untouched, and is never rebuilt
     around a narrower instruction.
     """
-    if isinstance(
-        item,
-        ComposedTemporalWrite
-        | ComposedBitemporalOpening
-        | PostRemovalInsert
-        | InsertBatch
-        | ObjectLockedBatch,
-    ):
+    if isinstance(item, ComposedTemporalWrite | ComposedBitemporalOpening | PostRemovalInsert):
         return item
     if isinstance(item, TargetWrite) and isinstance(item.expectation, ExpectedVersion):
         # A caller-conditioned write of a versioned row still advances its
@@ -489,20 +482,3 @@ def _settled_attributes(
         for axis in axes:
             settled.update((axis.start_attribute, axis.end_attribute))
     return frozenset(settled)
-
-
-def _ordered_instruction(
-    item: KeyedInsert
-    | InsertBatch
-    | StateObservedWrite
-    | ObjectLockedWrite
-    | ObjectLockedBatch
-    | InsertionAuthorizedWrite
-    | TargetWrite
-    | ComposedBitemporalOpening,
-) -> PreparedKeyedInstruction:
-    """The instruction ordering ranks ``item`` by: a pending opening's own
-    insert."""
-    if isinstance(item, ComposedBitemporalOpening):
-        return item.insert.instruction
-    return item.instruction

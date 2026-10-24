@@ -386,7 +386,7 @@ def test_an_insert_whose_key_the_database_decides_stands_alone(
         ),
         _ALLOCATED,
     )
-    insert = admitted_write(computed, None)
+    insert = admitted_write(computed, None, object_key(computed, _ALLOCATED))
     plan = _finalize([insert, insert], _ALLOCATED, instant=instant_at("2024-01-10T00:00:00Z"))
     assert _sizes(plan) == [1, 1]
     assert all(bool(group.writes[0].opened.allocated) is allocates for group in _groups(plan))
@@ -417,7 +417,8 @@ def _inside(key: int) -> AdmittedWrite:
         ),
         SHARED_MODEL,
     )
-    return admitted_write(prepared, observation(ShareCols, observed))
+    held = observation(ShareCols, observed)
+    return admitted_write(prepared, held, held.key.object)
 
 
 def _terminated(key: int) -> AdmittedWrite:
@@ -429,7 +430,8 @@ def _terminated(key: int) -> AdmittedWrite:
         ),
         SHARED_MODEL,
     )
-    return admitted_write(prepared, observation(ShareCols, observed))
+    held = observation(ShareCols, observed)
+    return admitted_write(prepared, held, held.key.object)
 
 
 def test_a_plan_with_no_deferred_write_records_no_span() -> None:
@@ -525,10 +527,7 @@ def test_a_deferred_write_joins_the_open_span_only_where_it_reads_alike_another_
     assert [(span.start, span.stop) for span in recorded] == spans
 
 
-@pytest.mark.parametrize(
-    "key", [None, {"computed": "maxPlusOne"}], ids=["absent", "database-allocated"]
-)
-def test_a_deferred_write_naming_no_complete_key_reads_alone(key: object) -> None:
+def test_a_deferred_write_naming_no_complete_key_reads_alone() -> None:
     # Two parts' writes compose into one write naming the object's key.
     (item,) = admitted_writes(SHARED_MODEL, frag(ShareCols, 1, 2))
     assert isinstance(item, ComposedTemporalWrite)
@@ -537,7 +536,9 @@ def test_a_deferred_write_naming_no_complete_key_reads_alone(key: object) -> Non
     candidate = settlement._acquisition_candidate  # pyright: ignore[reportPrivateUsage] - what a span compares
     families = inheritance.view(SHARED_MODEL)
     assert candidate(write, item, families) is not None
-    unkeyed = dataclasses.replace(item, key={} if key is None else {"id": key})
+    unkeyed = dataclasses.replace(
+        item, object_key=ObjectKey(item.object_key.entity, (("id", None),))
+    )
     assert candidate(write, unkeyed, families) is None
     # A settled write with no deferred range shares nothing either.
     assert candidate(SettledWrite(), item, families) is None

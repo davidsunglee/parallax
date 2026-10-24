@@ -161,7 +161,7 @@ class _Session:
 
     def flush(self, *writes: tuple[PreparedKeyedInstruction, RetainedObservation]) -> None:
         for prepared, observation in writes:
-            self.uow.buffer(admitted_write(prepared, observation))
+            self.uow.buffer(admitted_write(prepared, observation, observation.key.object))
         with self.store.transaction(rollback=False):
             self.uow.flush(trigger="read_dependency")
 
@@ -280,8 +280,10 @@ def test_a_composed_range_binds_the_rows_held_for_its_source_without_comparing_t
         return overlapping(*predecessors)
 
     monkeypatch.setattr(ranges, "_overlapping", counted)
-    session.uow.buffer(admitted_write(_write(_FEB, acctNum="Z"), source))
-    session.uow.buffer(admitted_write(_write(_FEB, _MAR, value="150.00"), source))
+    session.uow.buffer(admitted_write(_write(_FEB, acctNum="Z"), source, source.key.object))
+    session.uow.buffer(
+        admitted_write(_write(_FEB, _MAR, value="150.00"), source, source.key.object)
+    )
     _flush_buffered(session)
     assert session.requests == []
     assert compared <= held
@@ -297,7 +299,9 @@ def test_a_pre_commit_flush_which_no_submission_follows_records_nothing_for_cont
     session.flush((_write(_FEB, _APR, acctNum="O"), source))
     contributions = session.ownership._contributions  # pyright: ignore[reportPrivateUsage] - what lineage records
     recorded = set(contributions)
-    session.uow.buffer(admitted_write(_write(_FEB, _MAR, value="150.00"), source))
+    session.uow.buffer(
+        admitted_write(_write(_FEB, _MAR, value="150.00"), source, source.key.object)
+    )
     with session.store.transaction(rollback=False):
         session.uow.flush(trigger="pre_commit")
     # The pre-commit write bound to the rows the earlier flush left, reading
@@ -315,7 +319,7 @@ def test_a_deferred_range_records_for_continuation_only_where_a_submission_follo
     # stored row past it, so its range binds at execution.
     session = _Session(ends=(_SEP, INFINITY))
     source = session.observed()
-    session.uow.buffer(admitted_write(_write(_FEB, acctNum="O"), source))
+    session.uow.buffer(admitted_write(_write(_FEB, acctNum="O"), source, source.key.object))
     with session.store.transaction(rollback=False):
         session.uow.flush(trigger=trigger)
     assert [type(request) for request in session.requests] == [CoverageReadRequest]
@@ -449,7 +453,9 @@ def test_a_caller_beside_a_continuing_source_states_the_start_of_the_row_held_th
     session = _Session()
     source = session.observed()
     session.flush((_write(_FEB, _APR, acctNum="O"), source))
-    session.uow.buffer(admitted_write(_write(_FEB, _MAR, value="150.00"), source))
+    session.uow.buffer(
+        admitted_write(_write(_FEB, _MAR, value="150.00"), source, source.key.object)
+    )
     with pytest.raises(WriteEvidenceError) as refused:
         session.uow.buffer_target(_target(_JUN, _AUG, _T0, value="175.00"))
     assert refused.value.code == "write-evidence-already-claimed"
@@ -469,7 +475,9 @@ def test_a_caller_of_a_continuing_sources_window_is_one_operation_from_the_row_h
     session = _Session()
     source = session.observed()
     session.flush((_write(_FEB, _APR, acctNum="O"), source))
-    session.uow.buffer(admitted_write(_write(_JUN, _AUG, value="175.00"), source))
+    session.uow.buffer(
+        admitted_write(_write(_JUN, _AUG, value="175.00"), source, source.key.object)
+    )
     session.uow.buffer_target(_target(_JUN, _AUG, _NOW, acctNum="T"))
     _flush_buffered(session)
     assert (_JUN, _AUG, _NOW, "T", Decimal("175.00")) in session.stored()
@@ -481,7 +489,9 @@ def test_a_caller_beside_a_continuing_source_past_the_rows_held_states_the_store
     session = _Session(ends=(_SEP, INFINITY))
     source = session.observed()
     session.flush((_write(_FEB, _APR, acctNum="O"), source))
-    session.uow.buffer(admitted_write(_write(_FEB, _MAR, value="150.00"), source))
+    session.uow.buffer(
+        admitted_write(_write(_FEB, _MAR, value="150.00"), source, source.key.object)
+    )
     session.uow.buffer_target(_target(_OCT, _NOV, _T0, value="175.00"))
     _flush_buffered(session)
     assert session.stored()[-3:] == [

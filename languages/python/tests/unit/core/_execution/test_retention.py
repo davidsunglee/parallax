@@ -613,10 +613,7 @@ def _balance_update(model: AcceptedMetamodel, hint: ReadEvidence) -> AdmittedWri
         KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("6.00")},)), model
     )
     assert hint.observation is not None
-    return admitted_write(
-        instruction,
-        hint.observation,
-    )
+    return admitted_write(instruction, hint.observation, hint.object_key)
 
 
 def test_evidence_resolved_after_an_own_change_to_its_state_is_invalidated() -> None:

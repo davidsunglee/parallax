@@ -110,7 +110,7 @@ def observed_write(
         ),
         meta,
     )
-    return admitted_write(prepared, evidence)
+    return admitted_write(prepared, evidence, evidence.key.object)
 
 
 def planned(

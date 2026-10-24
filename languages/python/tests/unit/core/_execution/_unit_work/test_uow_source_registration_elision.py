@@ -43,6 +43,7 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     admitted_write,
+    object_key,
 )
 from parallax.core.write_plan import ObjectKey, VersionObservation
 from parallax.core.write_plan.keys import ObjectStateKey, VersionedObjectStateKey
@@ -139,14 +140,14 @@ class _Run:
         )
         assert isinstance(instruction, PreparedKeyedInstruction)
         settled = self.uow.resolve_read_evidence(entity, source, mutation=mutation, object_key=key)
-        self.uow.buffer(admitted_write(instruction, settled, source=source))
+        self.uow.buffer(admitted_write(instruction, settled, key, source=source))
 
     def insert(self, entity: str, **members: object) -> None:
         instruction = prepare_typed_write(
             KeyedWriteInstruction("insert", entity, (members,)), self.meta
         )
         assert isinstance(instruction, PreparedKeyedInstruction)
-        self.uow.buffer(admitted_write(instruction, None))
+        self.uow.buffer(admitted_write(instruction, None, object_key(instruction, self.meta)))
 
     def flush(self) -> None:
         self.uow.read(lambda: None)

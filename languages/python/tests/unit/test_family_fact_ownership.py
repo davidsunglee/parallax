@@ -39,7 +39,7 @@ from parallax.core import (
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
-from parallax.core._execution._unit_work.write_items import OrderedWrite
+from parallax.core._execution._unit_work.write_items import ComposedWrite
 from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
@@ -167,7 +167,7 @@ def _trace_declarations(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> li
     return callers
 
 
-def _prepared_writes() -> list[OrderedWrite]:
+def _prepared_writes() -> list[ComposedWrite]:
     """Every non-temporal arm version settlement forks on: a versioned insert,
     observed updates and deletes of a standalone Entity and of an inherited
     position, and a collapsing unversioned run."""
@@ -253,7 +253,7 @@ _BITEMPORAL: Final[Mapping[str, object]] = {
 _VALID_FROM: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 
 
-def _temporal_writes() -> list[OrderedWrite]:
+def _temporal_writes() -> list[ComposedWrite]:
     """Observed updates of an inherited position in a Transaction-Time-Only and
     a Bitemporal family, and an observed standalone terminate."""
     quote_update = KeyedWriteInstruction(

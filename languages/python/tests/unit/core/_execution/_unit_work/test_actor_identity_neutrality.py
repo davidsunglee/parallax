@@ -14,7 +14,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.strategy import ActorIdentity
-from parallax.core._execution._unit_work.write_items import OrderedWrite
+from parallax.core._execution._unit_work.write_items import ComposedWrite
 from parallax.core._execution._write_lowering import lowered
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
@@ -56,7 +56,7 @@ _LOGIN = DatabaseLoginActor("runtime-login")
 
 def _plan_under(
     actor: ActorIdentity,
-    buffered: Sequence[OrderedWrite],
+    buffered: Sequence[ComposedWrite],
     model: Metamodel,
     *,
     concurrency: Concurrency,

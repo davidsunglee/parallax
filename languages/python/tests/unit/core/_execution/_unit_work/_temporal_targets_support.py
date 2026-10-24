@@ -107,7 +107,7 @@ def observed_write(
         KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
         POSITION,
     )
-    item = admitted_write(prepared, evidence)
+    item = admitted_write(prepared, evidence, evidence.key.object)
     assert isinstance(item, StateObservedWrite)
     return item
 

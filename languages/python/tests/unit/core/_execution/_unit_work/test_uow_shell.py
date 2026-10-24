@@ -208,12 +208,14 @@ def _account_insert(account_id: int) -> AdmittedWrite:
             _ACCOUNT,
         ),
         None,
+        corpus_object_key("Account", ("id", account_id)),
     )
 
 
 def _inserted(meta: Metamodel, write: KeyedWriteInstruction) -> AdmittedWrite:
     """``write`` admitted as the unit of work admits an insert."""
-    return admitted_write(_prepared_keyed(write, meta), None)
+    prepared = _prepared_keyed(write, meta)
+    return admitted_write(prepared, None, object_key(prepared, meta))
 
 
 def _insertion_write(
@@ -226,7 +228,7 @@ def _insertion_write(
     assert key is not None
     identity = uow.insertion_identity(key)
     assert identity is not None
-    return admitted_write(prepared, None, authority=identity)
+    return admitted_write(prepared, None, key, authority=identity)
 
 
 def _unclosable(meta: Metamodel, write: KeyedWriteInstruction) -> AdmittedWrite:
@@ -241,6 +243,7 @@ def _unclosable(meta: Metamodel, write: KeyedWriteInstruction) -> AdmittedWrite:
         RetainedObservation(
             VersionedObjectStateKey(key, 1), VersionObservation(observed_version=1), None
         ),
+        key,
     )
 
 
@@ -390,6 +393,7 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
                     ),
                     _ACCOUNT,
                 ),
+                object_key=state.object,
                 retained_observation=resolved,
             )
         )
@@ -418,6 +422,7 @@ def test_an_insert_refuses_to_carry_a_write_observation() -> None:
                 ),
                 _ACCOUNT,
             ),
+            object_key=corpus_object_key("Account", ("id", 1)),
             retained_observation=RetainedObservation(
                 _account_state(1, 1), VersionObservation(observed_version=1), None
             ),
@@ -442,6 +447,7 @@ def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> Non
                 _ACCOUNT,
             ),
             RetainedObservation(_account_state(1, 7), VersionObservation(observed_version=7), None),
+            corpus_object_key("Account", ("id", 1)),
         )
 
 
@@ -451,7 +457,11 @@ def test_an_insertion_authority_licenses_no_insert_and_no_multi_row_write() -> N
     # rows names no single object at all.
     authority = InsertionIdentity(corpus_object_key("Account", ("id", 1)))
     with pytest.raises(ValueError, match="admitted by its own verb"):
-        InsertionAuthorizedWrite(instruction=_account_insert(1).instruction, identity=authority)
+        InsertionAuthorizedWrite(
+            instruction=_account_insert(1).instruction,
+            object_key=authority.object_key,
+            identity=authority,
+        )
     with pytest.raises(ValueError, match="the one object it opened"):
         admitted_write(
             _prepared_keyed(
@@ -463,6 +473,7 @@ def test_an_insertion_authority_licenses_no_insert_and_no_multi_row_write() -> N
                 _ACCOUNT,
             ),
             None,
+            authority.object_key,
             authority=authority,
         )
 
@@ -480,7 +491,7 @@ def test_a_write_carrying_an_authority_no_standing_insertion_granted_is_refused(
     def body(tx: UnitOfWork) -> None:
         stranger = InsertionIdentity(corpus_object_key("Account", ("id", 1)))
         with pytest.raises(UnitOfWorkError, match="no longer stands"):
-            tx.buffer(admitted_write(update, None, authority=stranger))
+            tx.buffer(admitted_write(update, None, stranger.object_key, authority=stranger))
         tx.buffer(_account_insert(1))
         standing = tx.insertion_identity(corpus_object_key("Account", ("id", 1)))
         assert standing is not None
@@ -522,6 +533,7 @@ def test_two_writes_of_one_claim_merge_and_advance_it_once() -> None:
                 _ACCOUNT,
             ),
             retained,
+            state.object,
         )
         for balance in (Decimal("125.00"), Decimal("150.00"))
     ]
@@ -713,6 +725,7 @@ def _account_write(mutation: KeyedMutation, account_id: int, version: int) -> Ad
     return admitted_write(
         _prepared_keyed(KeyedWriteInstruction(mutation, "Account", (row,)), _ACCOUNT),
         RetainedObservation(_account_state(account_id, version), evidence, None),
+        corpus_object_key("Account", ("id", account_id)),
     )
 
 
@@ -724,6 +737,7 @@ def _balance_update(key: int) -> AdmittedWrite:
             _BALANCE,
         ),
         RetainedObservation(_balance_state(key), observation, None),
+        corpus_object_key("Balance", ("id", key)),
     )
 
 
@@ -750,7 +764,9 @@ def _person_write(
         row["name"] = "Grace"
     prepared = _prepared_keyed(KeyedWriteInstruction(mutation, "Person", (row,)), _PERSON_META)
     key = corpus_object_key("Person", ("id", person_id))
-    return admitted_write(prepared, key, source=object_source(key) if source is None else source)
+    return admitted_write(
+        prepared, key, key, source=object_source(key) if source is None else source
+    )
 
 
 def test_a_retained_observation_claims_its_state_and_compatible_intents_combine() -> None:
@@ -858,6 +874,7 @@ def test_a_refused_admitted_write_or_claim_leaves_claims_and_pending_inserts_as_
                     RetainedObservation(
                         _account_state(1, 7), VersionObservation(observed_version=7), None
                     ),
+                    corpus_object_key("Account", ("id", 1)),
                 )
             )
         _refused_as_claimed(uow, _account_write("amend", 1, 7))
@@ -954,6 +971,7 @@ def _balance_update_from(key: int, tx_start: object) -> AdmittedWrite:
             _BALANCE,
         ),
         RetainedObservation(state, observation, None),
+        state.object,
     )
 
 
@@ -984,6 +1002,7 @@ def _balance_terminate_from(key: int, tx_start: object) -> AdmittedWrite:
     return admitted_write(
         _prepared_keyed(KeyedWriteInstruction("terminate", "Balance", ({"id": key},)), _BALANCE),
         RetainedObservation(state, observation, None),
+        state.object,
     )
 
 
@@ -1200,6 +1219,7 @@ def test_a_write_that_changes_nothing_leaves_its_source_and_its_state_as_they_we
                     _POSITION,
                 ),
                 claim,
+                claim.key.object,
             )
         )
         uow.read(lambda: None)
@@ -1243,6 +1263,7 @@ def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool)
                     _BALANCE,
                 ),
                 claim,
+                claim.key.object,
             )
         )
         uow.read(lambda: None)
@@ -1263,9 +1284,8 @@ def test_a_guarded_write_leaves_an_unchanged_state_fresh(value: str, kept: bool)
 
 def _account_amend(account_id: int, claim: RetainedObservation) -> AdmittedWrite:
     row = {"id": account_id, "balance": Decimal("1.00")}
-    return admitted_write(
-        _prepared_keyed(KeyedWriteInstruction("amend", "Account", (row,)), _ACCOUNT), claim
-    )
+    prepared = _prepared_keyed(KeyedWriteInstruction("amend", "Account", (row,)), _ACCOUNT)
+    return admitted_write(prepared, claim, claim.key.object)
 
 
 def _account_claim(account_id: int, version: int) -> RetainedObservation:
@@ -1315,6 +1335,7 @@ def test_a_failed_group_publishes_nothing_while_the_group_before_it_stays_publis
             admitted_write(
                 _prepared_keyed(KeyedWriteInstruction("delete", "Account", ({"id": 3},)), _ACCOUNT),
                 deleted,
+                deleted.key.object,
             )
         )
         with pytest.raises(RuntimeError, match="the group failed"):
@@ -1349,6 +1370,7 @@ def test_a_settled_write_with_no_step_changes_nothing() -> None:
                     _BALANCE,
                 ),
                 claim,
+                claim.key.object,
             )
         )
         uow.read(lambda: None)
@@ -1435,7 +1457,7 @@ def _observed_amendment(claim: RetainedObservation) -> AdmittedWrite:
         _PREDICATED,
     )
     assert isinstance(observed, PreparedKeyedInstruction)
-    return admitted_write(observed, claim)
+    return admitted_write(observed, claim, claim.key.object)
 
 
 def test_a_target_after_a_predicate_write_judges_its_condition_on_what_the_earlier_write_left() -> (
@@ -1509,7 +1531,7 @@ def _observed_value(
         _PREDICATED,
     )
     assert isinstance(observed, PreparedKeyedInstruction)
-    return admitted_write(observed, claim)
+    return admitted_write(observed, claim, claim.key.object)
 
 
 def _account_target(version: int) -> PreparedTargetInstruction:

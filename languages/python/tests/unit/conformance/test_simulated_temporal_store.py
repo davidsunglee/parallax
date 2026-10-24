@@ -60,6 +60,7 @@ from parallax.core.unit_work import (
     TransactionInstant,
     WritePlanningRequest,
     admitted_write,
+    object_key,
 )
 from parallax.core.write_plan import (
     ObjectKey,
@@ -226,7 +227,7 @@ def _planned(
                 actor_identity=SubjectActor("unattributed"),
                 transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
                 concurrency="locking",
-                composed_writes=[admitted_write(prepared, None)],
+                composed_writes=[admitted_write(prepared, None, object_key(prepared, POSITION))],
             )
         )
     )
@@ -248,7 +249,7 @@ def _observed_write(
     retained = RetainedObservation(
         object_state_key_from_observation(key, observation, shape), observation, None
     )
-    return StateObservedWrite(prepared, retained)
+    return StateObservedWrite(prepared, key, retained)
 
 
 @pytest.mark.parametrize(
@@ -340,7 +341,7 @@ def test_an_applied_non_temporal_insert_stores_nothing() -> None:
                 FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
             ),
             concurrency="locking",
-            composed_writes=[admitted_write(prepared, None)],
+            composed_writes=[admitted_write(prepared, None, object_key(prepared, account))],
         )
     )
     _apply_all(store, account, plan_steps(plan))
@@ -375,7 +376,8 @@ def _rectangles(
             document["until"] = until
         instruction = instructions.deserialize(document)
         assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
-        entries.append(admitted_write(instructions.prepare_wire_write(instruction, POSITION), None))
+        prepared = instructions.prepare_wire_write(instruction, POSITION)
+        entries.append(admitted_write(prepared, None, object_key(prepared, POSITION)))
     return plan_steps(
         build_write_planner(POSITION).finalize(
             WritePlanningRequest(

@@ -134,7 +134,7 @@ def _write(
     )
     assert isinstance(instruction, PreparedKeyedInstruction)
     settled = uow.resolve_read_evidence(entity, source, mutation=mutation, object_key=key)
-    uow.buffer(admitted_write(instruction, settled, source=source))
+    uow.buffer(admitted_write(instruction, settled, key, source=source))
 
 
 def _refusal(write: Callable[[], None]) -> str:
@@ -190,7 +190,7 @@ def test_an_old_and_a_fresh_source_of_one_produced_version_share_one_claim() -> 
     composed = uow._admission.composed_writes()  # pyright: ignore[reportPrivateUsage] - the buffer the two writes coalesced into
     (merged,) = composed
     assert isinstance(merged, StateObservedWrite)
-    assert merged.scope == VersionedObjectStateKey(_account(1), 2)
+    assert merged.claim_scope == VersionedObjectStateKey(_account(1), 2)
     assert merged.retained_observation is not fresh.observation
     assert merged.source_evidence == (old, fresh)
     # A destruction through either source now refuses the other's assignment.
@@ -233,7 +233,7 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
         KeyedWriteInstruction("insert", "Person", ({"id": 5, "name": "New"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    uow.buffer(admitted_write(insertion, None))
+    uow.buffer(admitted_write(insertion, None, _person(5)))
     _flush(uow)
     identity = uow.insertion_identity(_person(5))
     assert identity is not None
@@ -242,7 +242,7 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
             KeyedWriteInstruction("amend", "Person", ({"id": 5, "name": name},)), _PERSON
         )
         assert isinstance(amendment, PreparedKeyedInstruction)
-        uow.buffer(admitted_write(amendment, None, authority=identity))
+        uow.buffer(admitted_write(amendment, None, _person(5), authority=identity))
     uow.flush(trigger="pre_commit")
     assert [statement.binds for statement in simulated.statements][1:] == [("Second", 5)]
 
@@ -281,7 +281,7 @@ def test_a_page_read_before_a_deletion_stays_stale_after_its_demand_and_a_reinse
         KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "New"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    uow.buffer(admitted_write(insertion, None))
+    uow.buffer(admitted_write(insertion, None, _person(1)))
     _flush(uow)
     delayed = _published(uow, _person(1), read_at=read_at)
     assert _refusal(lambda: _write(uow, _PERSON, delayed, "amend", name="Bo")) == (
@@ -355,7 +355,7 @@ def _reinserted(uow: UnitOfWork, key: int) -> None:
         KeyedWriteInstruction("insert", "Person", ({"id": key, "name": "Again"},)), _PERSON
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
-    uow.buffer(admitted_write(insertion, None))
+    uow.buffer(admitted_write(insertion, None, _person(key)))
     _flush(uow)
 
 

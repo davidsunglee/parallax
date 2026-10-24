@@ -138,7 +138,8 @@ def test_a_literal_keyed_write_overlays_every_member_it_assigns(
         _BALANCE,
     )
     observation = TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
-    literal = admitted_write(prepared, retained_observation(prepared, _BALANCE, observation))
+    held = retained_observation(prepared, _BALANCE, observation)
+    literal = admitted_write(prepared, held, held.key.object)
     (_close, successor) = plan_steps(_plan([literal], _BALANCE))
     # The successor overlays every member the row assigns, whatever it equals.
     assert _insert_rows(successor)[0]["acctNum"] == "B"
@@ -197,7 +198,7 @@ def test_a_restated_occurrence_is_assigned_whole_and_keeps_no_key_its_value_omit
         model,
     )
     observed = retained_observation(prepared, model, TemporalObservation(predecessor))
-    plan = _plan([admitted_write(prepared, observed)], model)
+    plan = _plan([admitted_write(prepared, observed, observed.key.object)], model)
 
     (changed,) = (
         step

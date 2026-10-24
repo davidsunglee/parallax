@@ -326,7 +326,8 @@ def _reaching_past(observed: PredecessorRow, *, replaces: bool) -> AdmittedWrite
         ),
         MODEL,
     )
-    return admitted_write(prepared, observation(ShareCols, observed))
+    held = observation(ShareCols, observed)
+    return admitted_write(prepared, held, held.key.object)
 
 
 def _window(step: PlannedStep) -> tuple[object, object]:
@@ -745,4 +746,5 @@ def _inside_write() -> AdmittedWrite:
         ),
         MODEL,
     )
-    return admitted_write(prepared, observation(ShareCols, observed))
+    held = observation(ShareCols, observed)
+    return admitted_write(prepared, held, held.key.object)

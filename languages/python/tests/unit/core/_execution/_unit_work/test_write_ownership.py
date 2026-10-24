@@ -96,7 +96,7 @@ def _insert(start: dt.datetime, until: dt.datetime | None = None) -> AdmittedWri
         _POSITION,
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return admitted_write(prepared, None)
+    return admitted_write(prepared, None, _KEY)
 
 
 def _stored(
@@ -244,7 +244,9 @@ def _cancel_reinsertion(admission: WriteAdmission, start: dt.datetime) -> None:
         KeyedWriteInstruction("terminate", "WherePosition", ({"id": 1},), start), _POSITION
     )
     assert isinstance(termination, PreparedKeyedInstruction)
-    admission.admit(InsertionAuthorizedWrite(termination, identity), confirm_target=_confirmed)
+    admission.admit(
+        InsertionAuthorizedWrite(termination, _KEY, identity), confirm_target=_confirmed
+    )
 
 
 def test_a_row_named_again_after_its_insertion_ended_is_no_longer_tagged() -> None:
