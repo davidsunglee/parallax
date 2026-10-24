@@ -3,10 +3,50 @@
 Your model is a set of Python classes. Each entity class maps to a table, and a
 `DomainModel` composes the classes your application uses and checks them as a whole.
 There is no global registry: a class takes part only when you pass it to `DomainModel`.
+A model that breaks a rule, such as a join that names an attribute its entity doesn't
+have, makes `DomainModel(...)` raise `MetamodelValidationError`, a `ValueError` that
+lists every problem found, before anything touches the database.
 
 This chapter starts with a plain entity and adds one idea per section: relationships,
 value objects, inheritance, history, optimistic locking and storage layout. Every
-example belongs to one small shop domain.
+example belongs to one small shop domain. The chapter uses these imports:
+
+<!-- example: modeling-imports -->
+```python
+import datetime as dt
+from decimal import Decimal
+
+from parallax.core import (
+    MANY_TO_ONE,
+    MAX,
+    ONE_TO_MANY,
+    ONE_TO_ONE,
+    READ_ONLY,
+    TABLE_PER_CONCRETE_SUBTYPE,
+    AbstractRoot,
+    AbstractSubtype,
+    Attr,
+    Bitemporal,
+    ConcreteSubtype,
+    Document,
+    DomainModel,
+    Entity,
+    Int32,
+    Rel,
+    Sequence,
+    TablePerHierarchy,
+    TxTemporal,
+    ValueObject,
+    attr,
+    desc,
+    index,
+    rel,
+)
+from parallax.core.entity import UnloadedRelationshipError
+from parallax.core.model_formation import MetamodelValidationError
+from parallax.snapshot import ScopedDatabase, TxnContext
+```
+<!-- /example -->
 
 ## Entities and keys
 
@@ -36,14 +76,27 @@ type: `int` is a 64-bit integer, and `type=Int32` narrows it; a `Decimal` states
 `precision` and `scale`; a `str` usually states a `max_length`. An attribute is nullable
 only when its annotation says `| None`; there is no separate `nullable` option.
 
+An entity is a frozen Pydantic model. Validators you declare run when you construct an
+instance, though not when Parallax builds one from a stored row, and `model_dump` works
+as usual. An attribute takes no default value: its slot holds `attr(...)` or nothing.
+The constructor needs every attribute except a nullable one, which is then `None`, and
+one Parallax sets, such as `version`. To change a value, `edit(...)` returns a modified
+copy; `model_copy` is refused.
+
 `primary_key=True` makes `id` the key, with values your application assigns. To let
 Parallax generate keys instead, use `primary_key=MAX` or `primary_key=Sequence(...)`.
 The [primary key generation](../../../../core/spec/m-pk-gen.md) contract describes both.
 
 Python names become canonical names by dropping each underscore and capitalizing the
-next letter, so `customer_id` is `customerId` wherever names are serialized, as in
-Wire. Use `column=` to store an attribute under a column name of your choosing, and a
-`persistence=READ_ONLY` header for an entity your application only reads.
+next letter, so `customer_id` is `customerId` wherever names are serialized. Wire, the
+API that reads and writes plain mappings instead of your classes, is one such place;
+[Reading](03-reading.md#the-wire-api) covers it. The default column name comes back from
+the canonical name, so `customer_id` is stored in a `customer_id` column. Use `column=`
+to choose another, and a `persistence=READ_ONLY` header for an entity your application
+only reads.
+
+The strings in `index(...)`, `join=`, `reverse_of=` and `order_by=` name Python
+attributes, never columns or canonical names.
 
 ## Relationships
 
@@ -51,6 +104,12 @@ A relationship connects two entities through their attributes. `Customer.orders`
 defining side: it states the cardinality and the join, from the customer's `id` to the
 order's `customer_id`. `Order.customer` is the reverse side and only names the
 relationship it mirrors.
+
+The cardinality is `ONE_TO_MANY`, `MANY_TO_ONE` or `ONE_TO_ONE`, so a to-one
+relationship can be the defining side too: declared on `Order`,
+`rel(cardinality=MANY_TO_ONE, join=("customer_id", "id"))` would define the same link
+from the order's end. There is no many-to-many relationship. Model one with an entity of
+its own, such as an order line, related to each side.
 
 The annotation states what a loaded relationship holds. `Rel[tuple[Order, ...]]` is a
 to-many relationship and is never `None`; `Rel[Customer | None]` is a to-one
@@ -70,8 +129,11 @@ def customers_with_an_order_over(db: ScopedDatabase, total: Decimal) -> list[Cus
 A read loads only the relationships it asks for with `include`. Touching one it didn't
 load raises `UnloadedRelationshipError` instead of quietly running another query, so an
 unloaded relationship is never mistaken for an empty one. A to-many relationship can
-also declare the order its targets load in, with `order_by=`.
-[Reading and querying](03-reading.md) covers loading graphs.
+also declare the order its targets load in, such as `order_by=(desc("placed_on"),)`; a
+bare name sorts ascending. [Reading and querying](03-reading.md) covers loading graphs.
+
+A relationship is not a database constraint. Parallax creates no foreign keys and
+doesn't cascade a delete, so deleting a customer leaves its orders in place.
 
 ## Value objects
 
@@ -108,8 +170,9 @@ the thing has its own identity, is shared between owners, or is read on its own.
 ## Inheritance families
 
 When several kinds of a thing share attributes, declare them as one inheritance
-family. A family is a closed tree: one abstract root, optional abstract subtypes, and
-the concrete subtypes you actually store.
+family. A family is a closed tree: one abstract root, the concrete subtypes you actually
+store, and optionally abstract subtypes between them that group concrete subtypes and
+are never stored themselves.
 
 <!-- example: read-an-inheritance-family -->
 ```python
@@ -143,11 +206,15 @@ its own attributes and none of its siblings'.
 
 The root chooses how the family is stored. `TablePerHierarchy` keeps every concrete
 subtype in one table, with a tag column naming each row's subtype; each concrete
-subtype supplies its `tag_value`. `TABLE_PER_CONCRETE_SUBTYPE` gives each concrete
-subtype a table of its own, which each subtype names with `table=`. Either way, queries
-can narrow a family to particular subtypes and filter on their attributes, as
-[Reading and querying](03-reading.md) shows. Decisions that apply to the whole family,
-such as its history and its locking, are made once at the root.
+subtype supplies its `tag_value`. `AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)` instead
+gives each concrete subtype a table of its own, which each subtype names with `table=`
+while the root names none.
+An abstract subtype declares `inheritance=AbstractSubtype` and is subclassed in turn by
+concrete subtypes. Either way, queries can narrow a family to particular subtypes and
+filter on their attributes, as
+[Reading and querying](03-reading.md#predicates-ordering-and-limits) shows. Decisions
+that apply to the whole family, such as its history and its locking, are made once at
+the root.
 
 ## Choosing a temporality profile
 
@@ -180,7 +247,8 @@ def credit_limit_on_record(db: ScopedDatabase, customer_id: int, when: dt.dateti
 Valid Time records when a fact is true in the domain, independently of when anyone
 recorded it. A Bitemporal entity tracks both, so you can enter a change ahead of time or
 correct the past while keeping what you previously believed. Here a price changes for
-a summer window only:
+a summer window only. The `discount` callback receives the `TxnContext` that
+[Getting started](01-getting-started.md#write-in-a-transaction) introduced:
 
 <!-- example: amend-a-valid-time-window -->
 ```python
@@ -220,18 +288,26 @@ rather than with `delete`.
 
 ## Optimistic-lock versions
 
-`Order` declares `version` with `optimistic_locking=True`. Parallax sets the version on
-insert and advances it on every write; you never assign it. When a transaction writes an
-order it read, the write checks that the version is still the one it read. If another
-transaction changed the order in between, the write conflicts, and Parallax re-runs your
-transaction against a fresh read. [Transactions](05-transactions.md) shows that replay.
+Parallax protects a write to a row a transaction read in one of two ways, its two
+concurrency strategies. The optimistic strategy checks, when the write runs, that the
+row still holds the state the read saw. The locking strategy takes a shared lock on the
+row when it is read, so nobody else can change it until the transaction ends. Which
+one applies depends on the entity and on what the transaction prefers.
 
-`Customer` has no version. Parallax protects a write to it differently: a read inside a
-writable transaction takes a shared lock on the customer's row, and the lock holds until
-the transaction ends.
+`Order` declares `version` with `optimistic_locking=True`. Parallax sets the version to
+1 on insert and advances it on every write; you never assign it. When a transaction
+writes an order it read, the write checks that the version is still the one it read. If
+another transaction changed the order in between, the write conflicts, and Parallax
+re-runs your transaction against a fresh read. [Transactions](05-transactions.md) shows
+that replay, and how a transaction can prefer the locking strategy for every entity.
 
-A temporal entity doesn't declare a `version`. The Transaction-Time start of the state a
-transaction read already identifies that state, and Parallax checks it instead.
+`Customer` has no version, so nothing in its row shows that it changed. Parallax always
+uses the locking strategy for it: a read inside a writable transaction takes a shared
+lock on the customer's row, and the lock holds until the transaction ends.
+
+A temporal entity can't declare a `version`; `DomainModel` refuses one. The
+Transaction-Time start of the state a transaction read already identifies that state,
+and the optimistic strategy checks it instead.
 
 ## Choosing a storage layout
 
@@ -258,11 +334,17 @@ The `product` table has two columns, `sku` and `payload`. Columns that give a ro
 structure stay real columns, such as the primary key, relationship join columns,
 temporal bounds, the version of a Non-Temporal entity, and a family's tag column.
 
-Nothing above the storage changes. The query, the values it returns and the writes you
-make are the same under either layout, so you can choose per entity without changing
-code that uses it. The Document layout can suit an entity with many optional or
-nested attributes that you rarely filter on. Moving an existing entity from one layout
-to the other is a schema and data migration that you run yourself.
+For data that fits the model, nothing above the storage changes. The query, the values
+it returns and the writes you make are the same under either layout, so you can choose
+per entity without changing code that uses it. What differs is who guards the stored
+data. Under Columns, each attribute's column type and constraints guard it inside the
+database. A document can hold data that breaks the model, such as a missing `name`, so
+Parallax checks each document as it reads it; [Reading](03-reading.md#result-shapes)
+shows what a read does with a row that fails.
+
+The Document layout can suit an entity with many optional or nested attributes that you
+rarely filter on. Moving an existing entity from one layout to the other is a schema and
+data migration that you run yourself.
 
 ## How it works →
 

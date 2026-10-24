@@ -114,7 +114,7 @@ RECIPES: Final[list[Recipe]] = [
     ),
     Recipe(
         recipe_id="getting-started-imports",
-        title="Import what a first program uses",
+        title="Import what Getting started uses",
         snippet=(
             "import datetime as dt\n"
             "from decimal import Decimal\n"
@@ -124,9 +124,95 @@ RECIPES: Final[list[Recipe]] = [
             "from parallax.core.db_port import Password\n"
             "from parallax.core.dialect import POSTGRES\n"
             "from parallax.core.entity import model_of\n"
+            "from parallax.core.execution import ExecutionFailure, TxnOptions\n"
             "from parallax.evolution import ABSENT, evolve, schema_delta\n"
             "from parallax.postgres import PostgresAdapter\n"
-            "from parallax.snapshot import connect\n"
+            "from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="modeling-imports",
+        title="Import what Modeling uses",
+        snippet=(
+            "import datetime as dt\n"
+            "from decimal import Decimal\n"
+            "\n"
+            "from parallax.core import (\n"
+            "    MANY_TO_ONE,\n"
+            "    MAX,\n"
+            "    ONE_TO_MANY,\n"
+            "    ONE_TO_ONE,\n"
+            "    READ_ONLY,\n"
+            "    TABLE_PER_CONCRETE_SUBTYPE,\n"
+            "    AbstractRoot,\n"
+            "    AbstractSubtype,\n"
+            "    Attr,\n"
+            "    Bitemporal,\n"
+            "    ConcreteSubtype,\n"
+            "    Document,\n"
+            "    DomainModel,\n"
+            "    Entity,\n"
+            "    Int32,\n"
+            "    Rel,\n"
+            "    Sequence,\n"
+            "    TablePerHierarchy,\n"
+            "    TxTemporal,\n"
+            "    ValueObject,\n"
+            "    attr,\n"
+            "    desc,\n"
+            "    index,\n"
+            "    rel,\n"
+            ")\n"
+            "from parallax.core.entity import UnloadedRelationshipError\n"
+            "from parallax.core.model_formation import MetamodelValidationError\n"
+            "from parallax.snapshot import ScopedDatabase, TxnContext\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="reading-imports",
+        title="Import what Reading and querying uses",
+        snippet=(
+            "import datetime as dt\n"
+            "import json\n"
+            "from decimal import Decimal\n"
+            "from typing import TextIO\n"
+            "\n"
+            "from parallax.core import LATEST, TX_TIME, VALID_TIME, Attr, QueryDefinitionError, "
+            "TxTemporal, attr\n"
+            "from parallax.core.entity import UnloadedRelationshipError\n"
+            "from parallax.core.execution import ExecutionFailure, TransactionAccessModeError\n"
+            "from parallax.core.read_delivery import InvalidData, InvalidDataError, "
+            "StreamStateError\n"
+            "from parallax.core.unit_work import WriteEvidenceError\n"
+            "from parallax.snapshot import (\n"
+            "    NoResultFound,\n"
+            "    ReadOnlyTxnContext,\n"
+            "    ScopedDatabase,\n"
+            "    Snapshot,\n"
+            "    TooManyResultsFound,\n"
+            "    TxnContext,\n"
+            "    WireEntity,\n"
+            "    is_view_loaded,\n"
+            ")\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="writing-imports",
+        title="Import what Writing uses",
+        snippet=(
+            "import datetime as dt\n"
+            "import json\n"
+            "from decimal import Decimal\n"
+            "\n"
+            "from parallax.core import LATEST, Attr, Bitemporal, Edge, TxTemporal, attr\n"
+            "from parallax.core.execution import ExecutionFailure, "
+            "TransactionTimePinReadOnlyError\n"
+            "from parallax.core.unit_work import (\n"
+            "    InstructionRejectedError,\n"
+            "    WriteEvidenceError,\n"
+            "    WritePreconditionError,\n"
+            ")\n"
+            "from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of\n"
         ),
     ),
     Recipe(
@@ -320,7 +406,7 @@ RECIPES: Final[list[Recipe]] = [
     Recipe(
         recipe_id="cancel-reviewed-orders",
         title="Delete values read earlier unless they changed since",
-        snippet=_sources(guide_recipes.cancel_reviewed_orders),
+        snippet=_sources(guide_recipes.cancel_reviewed_orders, guide_recipes.cancel_unless_changed),
     ),
     Recipe(
         recipe_id="amend-and-delete-where",
@@ -335,6 +421,59 @@ RECIPES: Final[list[Recipe]] = [
         snippet=_sources(
             guide_recipes.add_a_customer_from_json, guide_recipes.rename_a_customer_through_wire
         ),
+    ),
+    Recipe(
+        recipe_id="amend-a-reviewed-price",
+        title="Amend a Bitemporal value read earlier under the milestone it showed",
+        snippet=_sources(guide_recipes.reprice_from_a_review),
+    ),
+    Recipe(
+        recipe_id="condition-a-wire-write-on-a-milestone",
+        title="Amend a value a Wire read showed earlier under its milestone",
+        snippet=_sources(guide_recipes.change_a_limit_shown_earlier),
+    ),
+    Recipe(
+        recipe_id="join-a-read-only-transaction",
+        title="Join a read-only transaction from a helper that reads",
+        snippet=_sources(guide_recipes.orders_of, guide_recipes.customer_with_their_orders),
+    ),
+    Recipe(
+        recipe_id="filter-sort-and-limit",
+        title="Filter, sort and limit a query",
+        snippet=_sources(guide_recipes.largest_orders_since, guide_recipes.customers_named),
+    ),
+    Recipe(
+        recipe_id="quantify-over-a-relationship",
+        title="Filter on a to-many relationship with one quantifier or two",
+        snippet=_sources(
+            guide_recipes.customers_with_a_large_recent_order,
+            guide_recipes.customers_with_a_recent_order_and_a_large_one,
+        ),
+    ),
+    Recipe(
+        recipe_id="narrow-a-family-to-a-subtype",
+        title="Narrow an inheritance family to one subtype",
+        snippet=_sources(guide_recipes.card_payments_ending_in, guide_recipes.card_payments_over),
+    ),
+    Recipe(
+        recipe_id="tell-unloaded-from-empty",
+        title="Tell an unloaded relationship from an empty one",
+        snippet=_sources(guide_recipes.who_placed),
+    ),
+    Recipe(
+        recipe_id="stream-a-large-result",
+        title="Stream a result too large to hold",
+        snippet=_sources(guide_recipes.total_of_every_order),
+    ),
+    Recipe(
+        recipe_id="export-customers-as-json-lines",
+        title="Stream Wire values out as JSON lines",
+        snippet=_sources(guide_recipes.export_customers),
+    ),
+    Recipe(
+        recipe_id="project-a-typed-result-as-wire",
+        title="Project a Typed result as Wire data without another read",
+        snippet=_sources(guide_recipes.customer_for_page_and_api),
     ),
 ]
 

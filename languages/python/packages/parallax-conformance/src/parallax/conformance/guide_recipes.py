@@ -3,8 +3,10 @@ from __future__ import annotations
 import datetime as dt
 import json
 from decimal import Decimal
+from typing import TextIO
 
 from parallax.conformance.guide_models import (
+    CardPayment,
     CreditLimit,
     Customer,
     Order,
@@ -28,6 +30,8 @@ from parallax.snapshot import (
     TxnContext,
     WireEntity,
     connect,
+    edge_of,
+    is_view_loaded,
 )
 
 __all__ = [
@@ -39,7 +43,11 @@ __all__ = [
     "amend_after_reading_it_again",
     "cancel_an_order",
     "cancel_reviewed_orders",
+    "cancel_unless_changed",
+    "card_payments_ending_in",
+    "card_payments_over",
     "change_a_credit_limit",
+    "change_a_limit_shown_earlier",
     "change_a_price_from",
     "change_a_reviewed_limit",
     "change_a_reviewed_total",
@@ -51,18 +59,26 @@ __all__ = [
     "credit_limit_on_record",
     "current_credit_limit",
     "customer_as_json",
+    "customer_for_page_and_api",
     "customer_with_email",
+    "customer_with_their_orders",
     "customers_and_orders_from_one_snapshot",
     "customers_and_orders_one_read_at_a_time",
+    "customers_named",
+    "customers_with_a_large_recent_order",
+    "customers_with_a_recent_order_and_a_large_one",
     "customers_with_an_order_over",
     "customers_with_an_order_over_as_wire",
     "delete_the_shipments_of",
     "discontinue_a_tea",
+    "export_customers",
     "forget_an_email_address",
     "grant_a_credit_limit",
+    "largest_orders_since",
     "list_a_seasonal_tea",
     "list_a_tea",
     "look_up_a_customer",
+    "orders_of",
     "orders_placed_on",
     "orders_with_their_customer",
     "payments_for",
@@ -76,9 +92,12 @@ __all__ = [
     "rename_a_customer_through_wire",
     "replace_contact_details",
     "reprice_a_tea_for",
+    "reprice_from_a_review",
     "run_a_summer_sale",
     "shipments_to",
     "table_statements",
+    "total_of_every_order",
+    "who_placed",
     "withdraw_a_credit_limit",
 ]
 
@@ -471,21 +490,35 @@ def change_a_reviewed_limit(db: ScopedDatabase, reviewed: CreditLimit, amount: D
     )
 
 
+def reprice_from_a_review(
+    db: ScopedDatabase, reviewed: Price, amount: Decimal, start: dt.datetime
+) -> None:
+    """``reviewed`` was read at ``start``: state its milestone's start in Transaction Time."""
+    db.transact(
+        lambda tx: tx.amend_if(
+            Price,
+            Price.amount.set(amount),
+            key=reviewed.sku,
+            valid_from=start,
+            tx_start=reviewed.tx_start,
+        )
+    )
+
+
 def cancel_reviewed_orders(db: ScopedDatabase, reviewed: list[Order]) -> list[int]:
-    """Cancel each order unless it changed since its review; return the ones that changed."""
-    changed: list[int] = []
-    for order in reviewed:
+    """Cancel each order in a transaction of its own; return the ones that changed."""
+    return [order.id for order in reviewed if not cancel_unless_changed(db, order)]
 
-        def cancel(tx: TxnContext, order: Order = order) -> None:
-            tx.delete_if(Order, key=order.id, version=order.version)
 
-        try:
-            db.transact(cancel)
-        except ExecutionFailure as failure:
-            if not isinstance(failure.cause, WritePreconditionError):
-                raise
-            changed.append(order.id)
-    return changed
+def cancel_unless_changed(db: ScopedDatabase, order: Order) -> bool:
+    """Cancel ``order`` unless it changed since it was read; answer whether it was cancelled."""
+    try:
+        db.transact(lambda tx: tx.delete_if(Order, key=order.id, version=order.version))
+    except ExecutionFailure as failure:
+        if not isinstance(failure.cause, WritePreconditionError):
+            raise
+        return False
+    return True
 
 
 def forget_an_email_address(db: ScopedDatabase, email: str) -> int:
@@ -513,3 +546,116 @@ def rename_a_customer_through_wire(db: ScopedDatabase, customer_id: int, name: s
         tx.wire.amend(customer, {"name": name})
 
     db.transact(rename)
+
+
+def change_a_limit_shown_earlier(db: ScopedDatabase, shown: WireEntity, amount: str) -> None:
+    """``shown`` came from an earlier Wire read: state where its milestone starts."""
+    db.transact(
+        lambda tx: tx.wire.amend_if(
+            "CreditLimit",
+            {"customerId": shown["customerId"], "amount": amount},
+            tx_start=edge_of(shown).tx_time,
+        )
+    )
+
+
+def orders_of(db: ScopedDatabase, customer_id: int) -> list[Order]:
+    """Read in a read-only transaction of its own, or in the caller's when it has one."""
+    return db.read_only(
+        lambda rtx: rtx.find(Order.where(Order.customer_id == customer_id)).results()
+    )
+
+
+def customer_with_their_orders(
+    db: ScopedDatabase, customer_id: int
+) -> tuple[Customer, list[Order]]:
+    """Both reads see one snapshot, because ``orders_of`` joins this transaction."""
+
+    def read(rtx: ReadOnlyTxnContext) -> tuple[Customer, list[Order]]:
+        customer = rtx.find(Customer.where(Customer.id == customer_id)).result()
+        return customer, orders_of(db, customer_id)
+
+    return db.read_only(read, isolation="repeatable_read")
+
+
+def largest_orders_since(db: ScopedDatabase, since: dt.date, count: int) -> list[Order]:
+    """The ``count`` largest orders placed on or after ``since``, largest first."""
+    query = (
+        Order.where(Order.placed_on >= since)
+        .order_by(Order.total.desc(), Order.id.asc())
+        .limit(count)
+    )
+    return db.find(query).results()
+
+
+def customers_named(db: ScopedDatabase, prefix: str) -> list[Customer]:
+    """Customers whose name starts with ``prefix`` and who have an email address."""
+    query = Customer.where(Customer.name.starts_with(prefix) & Customer.email.is_not_null())
+    return db.find(query).results()
+
+
+def customers_with_a_large_recent_order(
+    db: ScopedDatabase, since: dt.date, minimum: Decimal
+) -> list[Customer]:
+    """One order must be both recent and large: the quantifier tests each order alone."""
+    query = Customer.where(
+        Customer.orders.any((Order.placed_on >= since) & (Order.total >= minimum))
+    )
+    return db.find(query).results()
+
+
+def customers_with_a_recent_order_and_a_large_one(
+    db: ScopedDatabase, since: dt.date, minimum: Decimal
+) -> list[Customer]:
+    """Two quantifiers: the recent order and the large one can be different orders."""
+    query = Customer.where(
+        Customer.orders.any(Order.placed_on >= since),
+        Customer.orders.any(Order.total >= minimum),
+    )
+    return db.find(query).results()
+
+
+def card_payments_ending_in(db: ScopedDatabase, last_four: str) -> list[Payment]:
+    """Only card payments match, so the filter can use a card payment's own attribute."""
+    query = Payment.where(Payment.is_a(CardPayment, where=CardPayment.card_last_four == last_four))
+    return db.find(query).results()
+
+
+def card_payments_over(db: ScopedDatabase, amount: Decimal) -> list[CardPayment]:
+    """``narrow`` keeps card payments only and types the result as ``CardPayment``."""
+    return db.find(Payment.where(Payment.amount > amount).narrow(CardPayment)).results()
+
+
+def who_placed(order: Order) -> str:
+    """Name an order's customer without risking ``UnloadedRelationshipError``."""
+    if not is_view_loaded(order, Order.customer):
+        return "not loaded"
+    if order.customer is None:
+        return "no customer"
+    return order.customer.name
+
+
+def total_of_every_order(db: ScopedDatabase, page: int) -> Decimal:
+    """Add up every order while holding only one page of them at a time."""
+    total = Decimal("0.00")
+    with db.stream(Order.where(Order.all), batch_size=page) as orders:
+        for order in orders:
+            total += order.total
+    return total
+
+
+def export_customers(db: ScopedDatabase, out: TextIO, page: int) -> int:
+    """Write each customer, with its orders, as one line of JSON; answer how many."""
+    written = 0
+    query = Customer.where(Customer.all).include(Customer.orders)
+    with db.wire.stream(query, batch_size=page) as customers:
+        for customer in customers:
+            out.write(json.dumps(customer) + "\n")
+            written += 1
+    return written
+
+
+def customer_for_page_and_api(db: ScopedDatabase, customer_id: int) -> tuple[Customer, WireEntity]:
+    """One read: a Typed value to render, and the same graph as Wire data to send."""
+    snapshot = db.find(Customer.where(Customer.id == customer_id).include(Customer.orders))
+    return snapshot.result(), snapshot.wire().result()
