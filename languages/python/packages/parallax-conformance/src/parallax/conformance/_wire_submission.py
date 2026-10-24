@@ -48,7 +48,6 @@ class Submission:
     declared_observation: VersionObservation | None = None
     is_framework_marker: bool = False
     step: int | None = None
-    predicate_target: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,7 +129,6 @@ def read_submissions(
                     observations[index] if observations else None,
                     _is_framework_write(one, model),
                     step,
-                    cast("Mapping[str, object] | None", entry.get("target")),
                 )
             )
     return tuple(submissions)
@@ -163,15 +161,17 @@ class WireSubmitter:
         try:
             instruction = submission.instruction
             if isinstance(instruction, PredicateWriteInstruction):
-                return Executed(
-                    _execute_wire_predicate_write(
-                        self._tx, instruction, submission.predicate_target
-                    )
-                )
+                return Executed(_execute_wire_predicate_write(self._tx, instruction))
             named = _source_nodes({"on": submission.on}, submission.step, self._held)
-            _buffer_wire_write(
-                self._tx, self._model, self._held, instruction, named, pointer=submission.pointer
-            )
+            if isinstance(instruction, TargetWriteInstruction):
+                _buffer_wire_target(self._tx, self._model, instruction)
+            elif instruction.mutation in INSERT_MUTATIONS:
+                _buffer_wire_insert(
+                    self._tx, self._model, self._held, instruction, submission.pointer
+                )
+            else:
+                node = self._source_node(submission, named)
+                _buffer_wire_keyed(self._tx, self._model, instruction, node)
         except WriteEvidenceError as exc:
             if exc.code != submission.expect_error:
                 raise
@@ -185,11 +185,50 @@ class WireSubmitter:
             raise EngineError(
                 "a DB-computed write marker is framework bookkeeping, not a Wire submission"
             )
-        for query in _unit_source_reads(self._model, tuple(s.instruction for s in submissions)):
+        translated = tuple(s.instruction for s in submissions)
+        for query in _unit_source_reads(self._model, translated):
             self._held.published.extend(_published_nodes(self._tx.wire.find(query)))
+        pending_keys = _insertion_keys(self._model, translated)
+        pending_pointers = {
+            s.pointer
+            for s in submissions
+            if isinstance(s.instruction, KeyedWriteInstruction)
+            and s.instruction.mutation in INSERT_MUTATIONS
+        }
+        for submission in submissions:
+            instruction = submission.instruction
+            if (
+                not isinstance(instruction, KeyedWriteInstruction)
+                or submission.declared_observation is None
+            ):
+                continue
+            # An insertion publishes its value only when its verb has accepted it.
+            if (
+                submission.on is None and _instruction_key(instruction, self._model) in pending_keys
+            ) or (isinstance(submission.on, str) and submission.on in pending_pointers):
+                continue
+            named = _source_nodes({"on": submission.on}, submission.step, self._held)
+            self._source_node(submission, named)
         if before_writes is not None:
             before_writes()
         return tuple(self.submit(s) for s in submissions)
+
+    def _source_node(
+        self, submission: Submission, named: Sequence[WireEntity] | None
+    ) -> WireEntity:
+        instruction = submission.instruction
+        assert isinstance(instruction, KeyedWriteInstruction)
+        entity = case_entity(self._model, instruction.entity).identity.canonical
+        node = _group_source_node(
+            entity,
+            _instruction_key(instruction, self._model),
+            self._held,
+            named,
+            instruction.valid_from,
+        )
+        if (declared := submission.declared_observation) is not None:
+            _refuse_unobserved_version(entity, declared, node)
+        return node
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,6 +396,21 @@ def _unit_source_query(
     return query
 
 
+def _insertion_keys(
+    model: AcceptedMetamodel, translated: Sequence[WriteInstruction]
+) -> set[ObjectKey]:
+    opened: set[ObjectKey] = set()
+    for instruction in translated:
+        if (
+            isinstance(instruction, KeyedWriteInstruction)
+            and instruction.mutation in INSERT_MUTATIONS
+        ):
+            key = _instruction_key(instruction, model)
+            if key is not None:
+                opened.add(key)
+    return opened
+
+
 def _unit_source_reads(
     model: AcceptedMetamodel, translated: Sequence[WriteInstruction]
 ) -> list[dict[str, object]]:
@@ -379,14 +433,7 @@ def _unit_source_reads(
     (`m-case-format`), so two entries spelling one target differently owe one
     read between them rather than one each.
     """
-    opened: set[ObjectKey] = set()
-    for instruction in translated:
-        if not isinstance(instruction, KeyedWriteInstruction):
-            continue
-        if instruction.mutation in INSERT_MUTATIONS:
-            key = _instruction_key(instruction, model)
-            if key is not None:
-                opened.add(key)
+    opened = _insertion_keys(model, translated)
     needed: dict[tuple[str, dt.datetime | None], dict[ObjectKey, None]] = {}
     for instruction in translated:
         if not isinstance(instruction, KeyedWriteInstruction):
@@ -581,34 +628,17 @@ def _source_nodes(
     return _source_find_nodes(entry, index, state.finds)
 
 
-def _buffer_wire_write(
-    tx: TxnContext,
-    model: AcceptedMetamodel,
-    state: _HeldValues,
-    instruction: WriteInstruction,
-    named: Sequence[WireEntity] | None,
-    *,
-    pointer: str | None = None,
-) -> None:
-    if isinstance(instruction, TargetWriteInstruction):
-        _buffer_wire_target(tx, model, instruction)
-        return
-    assert isinstance(instruction, KeyedWriteInstruction)
-    if instruction.mutation in INSERT_MUTATIONS:
-        _buffer_wire_insert(tx, model, state, instruction, pointer)
-        return
-    _buffer_wire_keyed(
-        tx,
-        model,
-        instruction,
-        _group_source_node(
-            case_entity(model, instruction.entity).identity.canonical,
-            _instruction_key(instruction, model),
-            state,
-            named,
-            instruction.valid_from,
-        ),
-    )
+def _refuse_unobserved_version(entity: str, declared: VersionObservation, node: WireEntity) -> None:
+    hint = read_evidence_of(node)
+    retained = None if hint is None or hint.observation is None else hint.observation.evidence
+    observed = retained.observed_version if isinstance(retained, VersionObservation) else None
+    if declared.observed_version != observed:
+        raise EngineError(
+            f"{entity!r}: a keyed submission declares "
+            f"`observedVersion: {declared.observed_version!r}` "
+            f"and its resolved source observed {observed!r} — the declared version and source "
+            "must name one state"
+        )
 
 
 def _instruction_key(
@@ -718,10 +748,8 @@ def _required(instant: dt.datetime | None) -> dt.datetime:
     return instant
 
 
-def _execute_wire_predicate_write(
-    tx: TxnContext, authored: PredicateWriteInstruction, target: Mapping[str, object] | None
-) -> int:
-    assert target is not None
+def _execute_wire_predicate_write(tx: TxnContext, authored: PredicateWriteInstruction) -> int:
+    target = cast("Mapping[str, object]", instructions.serialize(authored)["target"])
     match authored.mutation:
         case "amend":
             return tx.wire.amend_where(

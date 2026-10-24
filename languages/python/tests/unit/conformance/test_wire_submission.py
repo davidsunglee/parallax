@@ -73,16 +73,22 @@ def _one(model: AcceptedMetamodel, entry: Mapping[str, object], *, step: int = 1
 
 
 @pytest.mark.parametrize("mutation", ["amend", "replace", "delete"])
-def test_keyed_verbs_submit_against_the_units_own_read(mutation: str) -> None:
+@pytest.mark.parametrize("declared", [None, 1, 2])
+def test_keyed_verbs_submit_against_the_units_own_read(mutation: str, declared: int | None) -> None:
     port = FakeWritePort(find_rows=[dict(_ACCOUNT)])
     row = {"id": 1} if mutation == "delete" else {"id": 1, "owner": "Grace", "balance": "105.00"}
-    outcome = _run(
-        "account",
-        port,
-        lambda submitter, tx, model: submitter.submit_unit(
-            read_submissions(model, [_entry(mutation, row)])
-        ),
-    )
+    if declared is not None:
+        row["observedVersion"] = declared
+
+    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> object:
+        return submitter.submit_unit(read_submissions(model, [_entry(mutation, row)]))
+
+    if declared == 2:
+        with pytest.raises(EngineError, match=r"observedVersion: 2.*source observed 1"):
+            _run("account", port, body)
+        assert len(port.reads) == 1 and port.writes == []
+        return
+    outcome = _run("account", port, body)
     assert outcome == (Buffered(),)
     assert len(port.reads) == len(port.writes) == 1
     assert port.writes[0][0].startswith("delete" if mutation == "delete" else "update")
@@ -169,8 +175,9 @@ def test_temporal_verbs_keep_their_bounds(mutation: str) -> None:
 
 
 @pytest.mark.parametrize("on,expected", [(None, 2), (0, 1), (1, 2)])
+@pytest.mark.parametrize("declared", [None, 1, 2])
 def test_named_find_and_latest_read_keep_distinct_generations(
-    on: int | None, expected: int
+    on: int | None, expected: int, declared: int | None
 ) -> None:
     port = ScriptedPort(read_rows=[[dict(_ACCOUNT)], [dict(_ACCOUNT) | {"version": 2}]])
 
@@ -181,11 +188,27 @@ def test_named_find_and_latest_read_keep_distinct_generations(
         )
         assert (
             submitter.submit(
-                _one(model, _entry("amend", {"id": 1, "owner": "Grace"}, on=on), step=2)
+                _one(
+                    model,
+                    _entry(
+                        "amend",
+                        {"id": 1, "owner": "Grace"}
+                        | ({} if declared is None else {"observedVersion": declared}),
+                        on=on,
+                    ),
+                    step=2,
+                )
             )
             == Buffered()
         )
 
+    if declared is not None and declared != expected:
+        with pytest.raises(
+            EngineError, match=rf"observedVersion: {declared}.*source observed {expected}"
+        ):
+            _run("account", port, body)
+        assert port.writes == []
+        return
     _run("account", port, body)
     assert port.writes[0][1][-1] == expected
 
@@ -382,6 +405,170 @@ def test_a_retried_attempt_gets_fresh_submitter_and_source() -> None:
     assert len(attempts) == 2 and attempts[0] is not attempts[1]
     assert [binds[-1] for _, binds in port.writes] == [1, 2]
     assert port.rollbacks == port.commits == 1
+
+
+def test_a_later_declared_mismatch_prevents_the_hook_and_every_verb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from parallax.snapshot import WireTransactionView
+
+    port = FakeWritePort(find_rows=[dict(_ACCOUNT), dict(_ACCOUNT) | {"id": 2, "version": 3}])
+    invoked: list[str] = []
+    amend = WireTransactionView.amend
+
+    def record_amend(self: WireTransactionView, *args: Any, **kwargs: Any) -> Any:
+        invoked.append("amend")
+        return amend(self, *args, **kwargs)
+
+    monkeypatch.setattr(WireTransactionView, "amend", record_amend)
+
+    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
+        submitter.submit_unit(
+            read_submissions(
+                model,
+                [
+                    _entry("amend", {"id": 1, "owner": "Grace", "observedVersion": 1}),
+                    _entry("amend", {"id": 2, "owner": "Grace", "observedVersion": 2}),
+                ],
+            ),
+            before_writes=lambda: invoked.append("hook"),
+        )
+
+    with pytest.raises(EngineError, match=r"observedVersion: 2.*source observed 3"):
+        _run("account", port, body)
+    assert invoked == [] and port.writes == [] and len(port.reads) == 1
+
+
+@pytest.mark.parametrize("named", [False, True])
+@pytest.mark.parametrize("declared", [None, 1])
+def test_unit_insertions_publish_in_order_before_a_dependent_submission(
+    named: bool, declared: int | None
+) -> None:
+    port = FakeWritePort(find_rows=[dict(_ACCOUNT)])
+    hooks: list[int] = []
+
+    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
+        insert = {
+            "mutation": "insert",
+            "entity": "Account",
+            "rows": [
+                {"id": 90, "owner": "Ada", "balance": "10.00"},
+                {"id": 91, "owner": "Ada", "balance": "10.00"},
+            ],
+        }
+        dependent = _entry(
+            "amend",
+            {"id": 91, "owner": "Grace"}
+            | ({} if declared is None else {"observedVersion": declared}),
+            **({"on": "/scenario/2/write/0"} if named else {}),
+        )
+        submitter.submit_unit(
+            read_submissions(
+                model,
+                [insert, dependent, _entry("amend", {"id": 1, "observedVersion": 1})],
+                step=2,
+            ),
+            before_writes=lambda: hooks.append(len(port.reads)),
+        )
+
+    if declared is not None:
+        with pytest.raises(EngineError, match=r"observedVersion: 1.*source observed None"):
+            _run("account", port, body)
+        assert port.writes == []
+    else:
+        _run("account", port, body)
+        assert port.writes and any("Grace" in binds for _, binds in port.writes)
+    assert len(port.reads) == 1 and hooks == [1]
+
+
+@pytest.mark.parametrize("declared", [1, 2])
+def test_declared_versions_are_checked_against_each_retried_attempts_source(declared: int) -> None:
+    port = FakeWritePort(
+        read_script=[[dict(_ACCOUNT)], [dict(_ACCOUNT) | {"version": 2}]], affected_script=[0, 1]
+    )
+    attempts: list[WireSubmitter] = []
+    hooks: list[int] = []
+
+    def body(submitter: WireSubmitter, tx: TxnContext, model: AcceptedMetamodel) -> None:
+        attempts.append(submitter)
+        submitter.submit_unit(
+            read_submissions(
+                model,
+                [
+                    _entry(
+                        "amend",
+                        {
+                            "id": 1,
+                            "owner": "Grace",
+                            "observedVersion": len(attempts) if declared == 2 else 1,
+                        },
+                    )
+                ],
+            ),
+            before_writes=lambda: hooks.append(len(attempts)),
+        )
+
+    if declared == 1:
+        with pytest.raises(EngineError, match=r"observedVersion: 1.*source observed 2"):
+            _run("account", port, body, max_retries=1)
+        assert len(port.writes) == 1 and hooks == [1]
+    else:
+        _run("account", port, body, max_retries=1)
+        assert [binds[-1] for _, binds in port.writes] == [1, 2] and hooks == [1, 2]
+    assert len(attempts) == 2 and attempts[0] is not attempts[1]
+
+
+@pytest.mark.parametrize("mutation", ["amend", "replace", "delete"])
+def test_predicate_verbs_forward_the_canonical_subtype_selection(
+    mutation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from parallax.snapshot import WireTransactionView
+
+    port = FakeWritePort(affected_script=[3])
+    seen: list[Mapping[str, object]] = []
+    verb = getattr(WireTransactionView, f"{mutation}_where")
+
+    def record_target(
+        self: WireTransactionView, target: Mapping[str, object], *args: Any, **kwargs: Any
+    ) -> int:
+        seen.append(target)
+        return cast("int", verb(self, target, *args, **kwargs))
+
+    monkeypatch.setattr(WireTransactionView, f"{mutation}_where", record_target)
+    entry: dict[str, object] = {
+        "mutation": mutation,
+        "target": {
+            "entity": "Person",
+            "predicate": {
+                "any": {
+                    "path": "Person.animals",
+                    "where": {"narrow": {"to": ["Dog", "Cat"], "operand": {"true": {}}}},
+                }
+            },
+        },
+    }
+    if mutation == "amend":
+        entry["assignments"] = [{"attr": "Person.name", "value": "Grace"}]
+    elif mutation == "replace":
+        entry["row"] = {"name": "Grace"}
+    outcome = _run(
+        "animal",
+        port,
+        lambda submitter, tx, model: submitter.submit_unit(read_submissions(model, entry)),
+    )
+    assert outcome == (Executed(3),) and port.reads == []
+    assert seen == [
+        {
+            "entity": "Person",
+            "predicate": {
+                "any": {
+                    "path": "Person.animals",
+                    "where": {"narrow": {"to": ["Cat", "Dog"], "operand": {"true": {}}}},
+                }
+            },
+        }
+    ]
+    assert "exists" in port.writes[0][0]
 
 
 def test_ordinary_submissions_never_prepare_or_simulate_a_peer_write(
