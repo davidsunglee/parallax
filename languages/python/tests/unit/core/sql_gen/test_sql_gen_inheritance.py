@@ -23,9 +23,10 @@ from parallax.core.base import PresentDocument
 from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeMetadata, EntityIdentity
+from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
 from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.predicate import ModelRejectedError
+from parallax.core.read_delivery._page import MISSING_STORED_VALUE
 from parallax.core.read_delivery._row_decoding import (
     member_classifier,
     publication_keys,
@@ -42,8 +43,10 @@ from parallax.core.sql_gen._inheritance import (
 from parallax.core.sql_gen._predicate import render_predicate
 from tests._support.sql import compile_projected_read, compile_read
 from tests.unit import _family_predecessor_support as family
+from tests.unit import _read_projection_support as support
 from tests.unit._corpus_model_support import formed, model, target
 from tests.unit._prepared_read_support import result_row
+from tests.unit.core.sql_gen._delivery_support import deliver
 from tests.unit.core.sql_gen._plan_reuse_support import record_plan_reuse
 
 PAYMENT = model("payment")
@@ -555,6 +558,238 @@ def test_tph_document_partition_locks_base_rows_through_one_outer_read() -> None
         Decimal("10.0"),
         1,
     )
+
+
+def _ticket_family() -> Metamodel:
+    """A table-per-hierarchy ``Document``-layout family whose concretes declare
+    one Document Path at incompatible types, so a predicate on it partitions by
+    variant: a resident scalar collection on the root, and a resident Value
+    Object only ``CardTicket`` declares."""
+    from parallax.descriptor._records import (
+        Attribute,
+        DocumentLayout,
+        Entity,
+        Inheritance,
+        ValueObject,
+        ValueObjectAttribute,
+    )
+    from parallax.descriptor._records import Metamodel as Records
+
+    return formed(
+        Records(
+            entities=(
+                Entity(
+                    name="Ticket",
+                    table="ticket",
+                    layout=DocumentLayout(column="payload"),
+                    inheritance=Inheritance(
+                        role="root", strategy="table-per-hierarchy", tag_column="kind"
+                    ),
+                    attributes=(
+                        Attribute(name="id", type="int64", column="id", primary_key=True),
+                        Attribute(
+                            name="labels", type="string", column="labels", multiplicity="many"
+                        ),
+                    ),
+                ),
+                Entity(
+                    name="CardTicket",
+                    inheritance=Inheritance(
+                        role="concrete-subtype", parent="Ticket", tag_value="card"
+                    ),
+                    attributes=(Attribute(name="detail", type="string", column="detail"),),
+                    value_objects=(
+                        ValueObject(
+                            name="stamp",
+                            nullable=True,
+                            attributes=(ValueObjectAttribute(name="mark", type="string"),),
+                        ),
+                    ),
+                ),
+                Entity(
+                    name="CashTicket",
+                    inheritance=Inheritance(
+                        role="concrete-subtype", parent="Ticket", tag_value="cash"
+                    ),
+                    attributes=(Attribute(name="detail", type="decimal(18,2)", column="detail"),),
+                ),
+            )
+        )
+    )
+
+
+TICKETS = _ticket_family()
+_TICKET_PREDICATE = oa.Or(
+    operands=(
+        oa.Narrow(
+            to=("CardTicket",),
+            operand=oa.Comparison(
+                op="eq", subject=oa.FieldSubject("CardTicket.detail"), value="visa"
+            ),
+        ),
+        oa.Narrow(
+            to=("CashTicket",),
+            operand=oa.Comparison(op="greaterThan", subject=oa.FieldSubject("Ticket.id"), value=0),
+        ),
+    )
+)
+_CARD_BRANCH = (
+    "(select * from ticket {table} where {table}.kind = ? offset 0) p1 "
+    "where jsonb_extract_path_text(p1.payload, ?) = ? or 1 = 0"
+)
+_CASH_BRANCH = (
+    "(select * from ticket {table} where {table}.kind = ? offset 0) p2 where 1 = 0 or p2.id > ?"
+)
+_TICKET_SQL = {
+    "bare": (
+        "select p1.id, p1.kind, not p1.payload is null, p1.payload from "
+        + _CARD_BRANCH.format(table="t0")
+        + " union all select p2.id, p2.kind, not p2.payload is null, p2.payload from "
+        + _CASH_BRANCH.format(table="t0")
+    ),
+    "wrapped": (
+        "select u.id, u.kind, not u.payload is null, u.payload from ("
+        "select p1.id, p1.kind, p1.payload from "
+        + _CARD_BRANCH.format(table="t0")
+        + " union all select p2.id, p2.kind, p2.payload from "
+        + _CASH_BRANCH.format(table="t0")
+        + ") u order by u.id asc limit ?"
+    ),
+    "locking": (
+        "select t0.id, t0.kind, not t0.payload is null, t0.payload from ticket t0 join ("
+        "select p1.id from "
+        + _CARD_BRANCH.format(table="t1")
+        + " union all select p2.id from "
+        + _CASH_BRANCH.format(table="t2")
+        + ") u on u.id = t0.id limit ? for share of t0"
+    ),
+}
+# Stored rows: a full card, a card whose collection and occurrence hold JSON
+# null, a cash row lacking every optional key, and cash rows whose required
+# `detail` is JSON null, a missing key, or missing because the whole Structured
+# Column is SQL NULL.
+_TICKET_ROWS: tuple[dict[str, object], ...] = (
+    {
+        "id": 1,
+        "kind": "card",
+        "payload": {"detail": "visa", "labels": ["a"], "stamp": {"mark": "m"}},
+    },
+    {"id": 2, "kind": "card", "payload": {"detail": "visa", "labels": None, "stamp": None}},
+    {"id": 3, "kind": "cash", "payload": {"detail": "12.50"}},
+    {"id": 4, "kind": "cash", "payload": {"detail": None, "labels": ["b", "c"]}},
+    {"id": 5, "kind": "cash", "payload": {"labels": []}},
+    {"id": 6, "kind": "cash", "payload": None},
+)
+
+
+def _ticket_delivery(form: Literal["row", "instance"]) -> list[tuple[object, ...]]:
+    stamped = form == "instance"
+    card_document = {"detail": "visa", "labels": ["a"], "stamp": {"mark": "m"}}
+    null_document = {"detail": "visa", "labels": None, "stamp": None}
+    # A row-form read pads a sibling's fetched keys, which keeps a rejected
+    # `detail` visible as null; an instance-form read narrows to owned members.
+    rejected = (("detail", None),) if form == "row" else ()
+    return [
+        (
+            "CardTicket",
+            {
+                "id": 1,
+                "labels": ("a",),
+                "detail": "visa",
+                **({"stamp": {"mark": "m"}} if stamped else {}),
+            },
+            (),
+            (
+                ("id", 1),
+                ("labels", ("a",)),
+                ("detail", "visa"),
+                *((("stamp", {"mark": "m"}),) if stamped else ()),
+                ("familyVariant", "CardTicket"),
+            ),
+            card_document,
+        ),
+        (
+            "CardTicket",
+            {"id": 2, "labels": (), "detail": "visa", **({"stamp": None} if stamped else {})},
+            (),
+            (
+                ("id", 2),
+                ("labels", ()),
+                ("detail", "visa"),
+                *((("stamp", None),) if stamped else ()),
+                ("familyVariant", "CardTicket"),
+            ),
+            null_document,
+        ),
+        (
+            "CashTicket",
+            {"id": 3, "labels": (), "detail": Decimal("12.50")},
+            (),
+            (
+                ("id", 3),
+                ("labels", ()),
+                ("detail", Decimal("12.50")),
+                ("familyVariant", "CashTicket"),
+            ),
+            {"detail": "12.50"},
+        ),
+        (
+            "CashTicket",
+            {"id": 4, "labels": ("b", "c")},
+            (("stored-data-attribute-null", None),),
+            (("id", 4), ("labels", ("b", "c")), *rejected, ("familyVariant", "CashTicket")),
+            {"detail": None, "labels": ["b", "c"]},
+        ),
+        (
+            "CashTicket",
+            {"id": 5, "labels": ()},
+            (("stored-data-attribute-null", MISSING_STORED_VALUE),),
+            (("id", 5), ("labels", ()), *rejected, ("familyVariant", "CashTicket")),
+            {"labels": []},
+        ),
+        (
+            "CashTicket",
+            {"id": 6, "labels": ()},
+            (("stored-data-attribute-null", MISSING_STORED_VALUE),),
+            (("id", 6), ("labels", ()), *rejected, ("familyVariant", "CashTicket")),
+            None,
+        ),
+    ]
+
+
+@pytest.mark.parametrize("form", ["row", "instance"])
+@pytest.mark.parametrize("shape", ["bare", "wrapped", "locking"])
+def test_every_partitioned_tph_statement_delivers_the_same_rows(
+    shape: Literal["bare", "wrapped", "locking"], form: Literal["row", "instance"]
+) -> None:
+    # The three statement shapes a variant-partitioned read takes carry one
+    # result: each outermost select list is folded, converted, judged, and
+    # published identically, whether the document pair is selected from a
+    # branch, through the derived union, or off the locked base row.
+    options: dict[str, Any] = {
+        "bare": {},
+        "wrapped": {"order_by": (oq.OrderKey(attr="Ticket.id", direction="asc"),), "limit": 5},
+        "locking": {"limit": 5, "preference": "locking"},
+    }[shape]
+    compiled = compile_read(
+        _TICKET_PREDICATE, TICKETS, POSTGRES, target(TICKETS, "Ticket"), result_form=form, **options
+    )
+
+    assert compiled.statement.sql == _TICKET_SQL[shape]
+    assert compiled.statement.binds == (
+        "card",
+        "detail",
+        "visa",
+        "cash",
+        0,
+        *((5,) if shape != "bare" else ()),
+    )
+    assert compiled.document_reads == ((2, 3),)
+    delivered = deliver(TICKETS, compiled, _TICKET_ROWS)
+    assert [
+        (row.entity, row.members, row.issues, row.published, row.document) for row in delivered
+    ] == _ticket_delivery(form)
+    assert all(row.variant == row.entity for row in delivered)
 
 
 def test_tph_document_classification_uses_only_the_tagged_variant_shape() -> None:
@@ -1853,6 +2088,170 @@ def test_tpcs_union_orders_a_document_resident_key_through_the_union_alias() -> 
     )
     assert compiled.statement.binds == ("title", 2)
     assert compiled.document_reads == ((1, 2),)
+
+
+_WRAPPED_TPCS_ROWS: dict[str, tuple[dict[str, object], ...]] = {
+    # Spelled by the union's result aliases; the outer select reads each through.
+    "columns": (
+        {
+            "id": 1,
+            "holder_id": 10,
+            "digest": "0a0b",
+            "origin": {"city": "Rome"},
+            "parallax_attr_0": {"city": "Lyon"},
+            "family_variant": "Left",
+        },
+        {
+            "id": 2,
+            "holder_id": None,
+            "digest": None,
+            "note": "memo",
+            "tags": ["a"],
+            "origin": PresentDocument(None),
+            "family_variant": "Plain",
+        },
+        {
+            "id": 3,
+            "holder_id": 30,
+            "digest": "ff",
+            "parallax_attr_1": None,
+            "family_variant": "Right",
+        },
+    ),
+    "document": (
+        {
+            "id": 1,
+            "holder_id": 10,
+            "payload": {"origin": {"city": "Rome"}, "home": {"city": "Lyon"}},
+            "family_variant": "Left",
+        },
+        {
+            "id": 2,
+            "holder_id": None,
+            "payload": {"note": "memo", "tags": ["a"], "origin": None},
+            "family_variant": "Plain",
+        },
+        {"id": 3, "holder_id": 30, "payload": None, "family_variant": "Right"},
+    ),
+}
+
+
+def _wrapped_tpcs_delivery(
+    layout: support.Layout, form: Literal["row", "instance"]
+) -> list[tuple[str, dict[str, object], tuple[tuple[str, object], ...]]]:
+    """Each delivered row as (Entity, members, published items). A row-form read
+    pads its siblings' fields; an instance-form one fetches every occurrence and
+    narrows to the fields its branch owns. An encoded Column publishes under its
+    encoded key after the row's own members."""
+    instance = form == "instance"
+    columns = layout == "columns"
+    left_occurrences = {"origin": {"city": "Rome"}, "home": {"city": "Lyon"}} if instance else {}
+    plain_occurrences = {"origin": None} if instance else {}
+    right_occurrences = {"origin": None, "home": None} if instance else {}
+    padding = () if instance else (("note", None), ("tags", None))
+
+    def digest(value: bytes | None) -> dict[str, object]:
+        return {"digest": value} if columns else {}
+
+    def encoded(value: str | None) -> tuple[tuple[str, object], ...]:
+        return (("digest_hex", value),) if columns else ()
+
+    return [
+        (
+            "Left",
+            {"id": 1, "holderId": 10, **digest(b"\x0a\x0b"), **left_occurrences},
+            (
+                ("id", 1),
+                ("holder_id", 10),
+                *left_occurrences.items(),
+                *encoded("0a0b"),
+                *padding,
+                ("familyVariant", "Left"),
+            ),
+        ),
+        (
+            "Plain",
+            {
+                "id": 2,
+                "holderId": None,
+                **digest(None),
+                "note": "memo",
+                "tags": ("a",),
+                **plain_occurrences,
+            },
+            (
+                ("id", 2),
+                ("holder_id", None),
+                ("note", "memo"),
+                ("tags", ("a",)),
+                *plain_occurrences.items(),
+                *encoded(None),
+                ("familyVariant", "Plain"),
+            ),
+        ),
+        (
+            "Right",
+            {"id": 3, "holderId": 30, **digest(b"\xff"), **right_occurrences},
+            (
+                ("id", 3),
+                ("holder_id", 30),
+                *right_occurrences.items(),
+                *encoded("ff"),
+                *padding,
+                ("familyVariant", "Right"),
+            ),
+        ),
+    ]
+
+
+@pytest.mark.parametrize("form", ["row", "instance"])
+@pytest.mark.parametrize("layout", support.LAYOUTS)
+def test_a_wrapped_tpcs_union_delivers_through_its_outer_select(
+    layout: support.Layout, form: Literal["row", "instance"]
+) -> None:
+    # An ordered, limited union selects every result alias through the derived
+    # table and expands each document pair there, so the encoded Bytes cell, the
+    # collision-safe sibling aliases, and the variant literal all reach delivery
+    # through `u`.
+    namespace = f"read.projection.matrix.tpcs.{layout}"
+    compiled = compile_read(
+        oa.TrueNode(),
+        support.MATRIX_META,
+        POSTGRES,
+        support.matrix_entity("tpcs", layout, "Root"),
+        order_by=(oq.OrderKey(attr=f"{namespace}.Root.holderId", direction="desc"),),
+        limit=3,
+        result_form=form,
+    )
+    outer = {
+        ("columns", "row"): "u.id, u.holder_id, u.digest, u.note, not u.tags is null, u.tags",
+        ("columns", "instance"): (
+            "u.id, u.holder_id, u.digest, u.note, not u.tags is null, u.tags, "
+            "not u.origin is null, u.origin, not u.parallax_attr_0 is null, u.parallax_attr_0, "
+            "not u.parallax_attr_1 is null, u.parallax_attr_1"
+        ),
+        ("document", "row"): "u.id, u.holder_id, not u.payload is null, u.payload",
+        ("document", "instance"): "u.id, u.holder_id, not u.payload is null, u.payload",
+    }[layout, form]
+    assert compiled.statement.sql.startswith(f"select {outer}, u.family_variant from (select ")
+    assert compiled.statement.sql.endswith(") u order by u.holder_id desc nulls last limit ?")
+    rows = [
+        {key: value for key, value in row.items() if f"u.{key}" in compiled.statement.sql}
+        for row in _WRAPPED_TPCS_ROWS[layout]
+    ]
+
+    delivered = deliver(support.MATRIX_META, compiled, rows)
+
+    assert [(row.entity, row.members, row.published) for row in delivered] == (
+        _wrapped_tpcs_delivery(layout, form)
+    )
+    assert all(row.variant == row.entity and row.issues == () for row in delivered)
+    if layout == "document":
+        assert [row.document for row in delivered] == [
+            {"origin": {"city": "Rome"}, "home": {"city": "Lyon"}},
+            {"note": "memo", "tags": ["a"], "origin": None},
+            None,
+        ]
 
 
 def test_tpcs_document_branches_omit_the_presence_cell_under_a_wrapped_union() -> None:

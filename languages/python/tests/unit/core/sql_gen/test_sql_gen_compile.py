@@ -72,7 +72,7 @@ from parallax.core.temporal_read import _compile as temporal_read_compile
 from tests._support import fake_metamodel
 from tests._support.binary32 import narrowed
 from tests._support.sql import compile_read, read_position, resolved_as_stated
-from tests.unit._corpus_model_support import model, target
+from tests.unit._corpus_model_support import formed, model, target
 from tests.unit.core.sql_gen._plan_reuse_support import (
     assert_planned_once,
     reaches_compilation_state,
@@ -449,6 +449,45 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
         temporal_end=False,
         encoded=True,
     ) in dict(compiled.result_contract.attribute_reads).get(entity.identity, ())
+
+
+@pytest.mark.parametrize("hierarchy", [False, True], ids=["standalone", "table-per-hierarchy"])
+def test_an_encoded_result_key_an_authored_column_also_spells_refuses_the_read(
+    hierarchy: bool,
+) -> None:
+    # `blob` encodes under `blob_hex`, which `blobHex` stores as its own Column:
+    # one statement would answer both under one name, so the read is refused
+    # when compiled rather than delivering either member from the other's cell.
+    from parallax.descriptor._records import Attribute, Entity, Inheritance
+    from parallax.descriptor._records import Metamodel as Records
+
+    attributes = (
+        Attribute(name="id", type="int64", column="id", primary_key=True),
+        Attribute(name="blob", type="bytes", column="blob", nullable=True),
+        Attribute(name="blobHex", type="string", column="blob_hex", nullable=True),
+    )
+    entities = (
+        (
+            Entity(
+                name="Item",
+                table="item",
+                inheritance=Inheritance(
+                    role="root", strategy="table-per-hierarchy", tag_column="kind"
+                ),
+                attributes=attributes,
+            ),
+            Entity(
+                name="Part",
+                inheritance=Inheritance(role="concrete-subtype", parent="Item", tag_value="p"),
+            ),
+        )
+        if hierarchy
+        else (Entity(name="Item", table="item", attributes=attributes),)
+    )
+    meta = formed(Records(entities=entities))
+
+    with pytest.raises(ValueError, match="blob_hex"):
+        compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "Item"))
 
 
 _MARIADB = dataclasses.replace(POSTGRES, name="mariadb")
