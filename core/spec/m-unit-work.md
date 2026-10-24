@@ -1356,7 +1356,13 @@ pending insert.
   requested extent*). Every other composed edit reaches past the opening's window
   only as far as such a replacement does, the stored coverage there included. The
   opening's window counts as coverage, so nothing an earlier composed destruction
-  removed from it reopens.
+  removed from it reopens. Only a write the opening's own insertion authorized is
+  an edit of it. A write that a read of the object's stored coverage authorized
+  never composes with a pending opening of the same object: it changes the
+  coverage that read observed, under that read's observation and evidence, as
+  *Observed-State Coalescing* composes it, and the opening keeps its own
+  coverage and edits. Nothing reconciles such a write with an opening whose
+  coverage it reaches.
 - **Insert-then-delete cancels.** A row inserted and then deleted in the same unit of
   work **cancels**: the two buffered writes annihilate and the flush emits **no** DML
   for that object — the net-zero effective-change-set elision, extended across two

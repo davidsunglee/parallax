@@ -384,6 +384,34 @@ def test_insertion_and_observed_assignments_compose_over_unequal_windows_after_a
 
 @pytest.mark.parametrize("concurrency", _CONCURRENCIES)
 @pytest.mark.parametrize("representation", _REPRESENTATIONS)
+@pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan])
+def test_a_read_corrects_its_stored_period_beside_a_pending_insertion_of_another(
+    profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
+) -> None:
+    # The object is stored over [January, June). The attempt reads it at March,
+    # then inserts an independent [August, December) and, with that insertion
+    # still pending, corrects March to May through the read and August to
+    # September through the insertion: the correction revises only the stored
+    # period, and the insertion opens its own period with its own edit.
+    db = _db(profile_run, _EARLIER, _ATTEMPT)
+    db.transact(lambda tx: _insert_span(tx, entity, representation, valid_from=_JAN, until=_JUN))
+
+    def edit(tx: TxnContext) -> None:
+        observed = _read_span(tx, entity, representation, _MAR)
+        inserted = _insert_span(tx, entity, representation, valid_from=_AUG, until=_DEC, amount=300)
+        observed.update(until=_MAY, amount=150)
+        inserted.update(until=_SEP, amount=350)
+
+    db.transact(edit, concurrency=concurrency)
+    assert _span_rows(profile_run, entity) == [
+        (_EARLIER, _ATTEMPT, _JAN, _JUN, 100, _SPEC_DOCUMENT),
+        *_current((_JAN, _MAR, 100), (_MAR, _MAY, 150), (_MAY, _JUN, 100)),
+        *_current((_AUG, _SEP, 350), (_SEP, _DEC, 300)),
+    ]
+
+
+@pytest.mark.parametrize("concurrency", _CONCURRENCIES)
+@pytest.mark.parametrize("representation", _REPRESENTATIONS)
 @pytest.mark.parametrize("entity", [ColumnsLog, DocumentLog])
 def test_an_insertion_source_revises_its_transaction_time_row_across_helper_reads(
     profile_run: Any, entity: type[Any], representation: _Representation, concurrency: _Concurrency
