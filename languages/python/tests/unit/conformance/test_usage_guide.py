@@ -42,6 +42,15 @@ def test_expand_is_a_fixed_point_and_leaves_marker_free_text_alone() -> None:
     assert usage_guide.expand(plain, _SOURCES, origin="page.md") == plain
 
 
+def test_expand_recognizes_crlf_markers_and_writes_the_block_with_their_line_ending() -> None:
+    text = "Intro.\r\n<!-- example: a-recipe -->\r\nstale\r\n<!-- /example -->\r\nOutro.\n"
+
+    assert usage_guide.expand(text, _SOURCES, origin="page.md") == (
+        "Intro.\r\n<!-- example: a-recipe -->\r\n"
+        "```python\r\nsecond()\r\nthird()\r\n```\r\n<!-- /example -->\r\nOutro.\n"
+    )
+
+
 @pytest.mark.parametrize(
     ("text", "message"),
     [
@@ -160,6 +169,20 @@ def test_main_rewrites_stale_blocks_and_check_then_passes(tmp_path: Path) -> Non
     assert readme.startswith("Tour.\n\n<!-- example: stream-results -->\n```python\n")
     assert stream_results.snippet.rstrip("\n") in readme
     assert (tmp_path / _GUIDE / "01-page.md").read_text(encoding="utf-8") == "# Page\n"
+
+
+def test_main_preserves_the_line_endings_of_a_crlf_file(tmp_path: Path) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_bytes(b"Tour.\r\n\r\n<!-- example: stream-results -->\r\n<!-- /example -->\r\n")
+    _repo(tmp_path, {f"{_GUIDE}/01-page.md": "# Page\n"})
+
+    assert usage_guide.main([], root=tmp_path) == 0
+    assert usage_guide.main(["--check"], root=tmp_path) == 0
+
+    written = readme.read_bytes()
+    assert written.startswith(b"Tour.\r\n\r\n<!-- example: stream-results -->\r\n```python\r\n")
+    assert written.endswith(b"```\r\n<!-- /example -->\r\n")
+    assert b"\n" not in written.replace(b"\r\n", b"")
 
 
 def test_check_names_every_stale_file_and_writes_nothing(
