@@ -45,8 +45,9 @@ def expand(text: str, sources: Mapping[str, str], *, origin: str) -> str:
     expanded: list[str] = []
     open_id: str | None = None
     open_line = 0
+    newline = "\n"
     for number, line in enumerate(text.splitlines(keepends=True), start=1):
-        content = line.rstrip("\n")
+        content = line.rstrip("\r\n")
         if not _MARKER_LIKE.match(content):
             if open_id is None:
                 expanded.append(line)
@@ -58,13 +59,15 @@ def expand(text: str, sources: Mapping[str, str], *, origin: str) -> str:
                     f"{open_line}"
                 )
             open_id, open_line = opening["source_id"], number
+            newline = line[len(content) :]
             if open_id not in sources:
                 raise GuideError(f"{origin}:{number}: unknown snippet source ID: {open_id}")
             expanded.append(line)
         elif content == _CLOSE:
             if open_id is None:
                 raise GuideError(f"{origin}:{number}: closing example marker without an opening")
-            expanded.append(f"```python\n{sources[open_id]}\n```\n")
+            body = sources[open_id].replace("\n", newline)
+            expanded.append(f"```python{newline}{body}{newline}```{newline}")
             expanded.append(line)
             open_id = None
         else:
@@ -84,7 +87,11 @@ def generate(root: Path) -> dict[Path, str]:
     """Each managed file's expanded text, keyed by path."""
     sources = snippet_sources()
     return {
-        path: expand(path.read_text(encoding="utf-8"), sources, origin=str(path.relative_to(root)))
+        path: expand(
+            path.read_text(encoding="utf-8", newline=""),
+            sources,
+            origin=str(path.relative_to(root)),
+        )
         for path in managed_paths(root)
     }
 
@@ -105,7 +112,11 @@ def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
     except GuideError as error:
         print(f"gen-usage-guide: {error}", file=sys.stderr)
         return 1
-    stale = [path for path, text in rendered.items() if path.read_text(encoding="utf-8") != text]
+    stale = [
+        path
+        for path, text in rendered.items()
+        if path.read_text(encoding="utf-8", newline="") != text
+    ]
 
     if args.check:
         for path in stale:
@@ -120,6 +131,6 @@ def main(argv: list[str] | None = None, *, root: Path | None = None) -> int:
         return 0
 
     for path in stale:
-        path.write_text(rendered[path], encoding="utf-8")
+        path.write_text(rendered[path], encoding="utf-8", newline="")
         print(f"gen-usage-guide: wrote {path.relative_to(repo)}")
     return 0
