@@ -186,6 +186,71 @@ RECIPES: Final[list[Recipe]] = [
         title="Query an entity stored in Relational Document Layout",
         snippet=_sources(Product, guide_recipes.products_named),
     ),
+    Recipe(
+        recipe_id="look-up-a-customer",
+        title="Look up one value with a standalone read",
+        snippet=_sources(guide_recipes.look_up_a_customer),
+    ),
+    Recipe(
+        recipe_id="reads-that-agree",
+        title="Read twice standalone, then twice from one read-only snapshot",
+        snippet=_sources(
+            guide_recipes.customers_and_orders_one_read_at_a_time,
+            guide_recipes.customers_and_orders_from_one_snapshot,
+        ),
+    ),
+    Recipe(
+        recipe_id="re-read-before-amending",
+        title="Re-read a value inside the transaction that amends it",
+        snippet=_sources(
+            guide_recipes.amend_a_value_read_earlier, guide_recipes.amend_after_reading_it_again
+        ),
+    ),
+    Recipe(
+        recipe_id="load-orders-with-their-customer",
+        title="Load a two-hop include path",
+        snippet=_sources(guide_recipes.orders_with_their_customer),
+    ),
+    Recipe(
+        recipe_id="choose-a-result-shape",
+        title="Take an optional result or a list of results",
+        snippet=_sources(guide_recipes.customer_with_email, guide_recipes.orders_placed_on),
+    ),
+    Recipe(
+        recipe_id="read-rows-that-break-the-model",
+        title="Read invalid stored data in band with checked()",
+        snippet=_sources(guide_recipes.products_and_unreadable_rows),
+    ),
+    Recipe(
+        recipe_id="stream-and-amend-in-a-transaction",
+        title="Stream and amend every row inside one transaction",
+        snippet=_sources(guide_recipes.add_a_surcharge_to_every_order),
+    ),
+    Recipe(
+        recipe_id="read-the-latest-state",
+        title="Read the latest state of a Transaction-Time-Only entity",
+        snippet=_sources(guide_recipes.current_credit_limit),
+    ),
+    Recipe(
+        recipe_id="read-transaction-time-history",
+        title="Read every state a Transaction-Time-Only entity has held",
+        snippet=_sources(guide_recipes.credit_limit_history),
+    ),
+    Recipe(
+        recipe_id="read-a-price-on-both-axes",
+        title="Read a Bitemporal value at a Valid Time, and as recorded at a Transaction Time",
+        snippet=_sources(guide_recipes.price_on, guide_recipes.price_on_as_recorded_at),
+    ),
+    Recipe(
+        recipe_id="read-prices-over-a-valid-time-range",
+        title="Read every Bitemporal milestone in a Valid-Time range",
+        snippet=_sources(guide_recipes.prices_during),
+    ),
+    Recipe(
+        recipe_id="query-with-a-wire-document",
+        title="Query with a Wire document and serialize the result",
+        snippet=_sources(guide_recipes.customer_as_json),
+    ),
 ]
 
 
