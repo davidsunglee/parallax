@@ -44,7 +44,6 @@ from parallax.core._execution._unit_work.write_items import (
     PostRemovalInsert,
     StateObservedWrite,
 )
-from parallax.core._execution._unit_work.write_settlement import SettledWriteWithSource
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import (
@@ -447,8 +446,9 @@ def test_object_locked_writes_of_two_rows_still_collapse_into_one_batch() -> Non
     assert isinstance(step.target, KeyTarget)
     assert step.target.key_values == ((1,), (2,))
     (write,) = settled_writes(plan)
-    assert isinstance(write, SettledWriteWithSource)
-    assert write.source_evidence == (*first.source_evidence, *second.source_evidence)
+    assert tuple(map(id, write.source_evidence)) == tuple(
+        map(id, (*first.source_evidence, *second.source_evidence))
+    )
     keys = tuple(corpus_object_key("Wallet", ("id", key)) for key in (1, 2))
     assert (tuple(write.changed), write.destroyed, write.advanced) == (keys, keys, ())
 
@@ -482,7 +482,6 @@ def test_an_object_locked_batch_keeps_each_rows_object_and_distinct_evidence_in_
     assert isinstance(step, PlannedDelete)
     assert _key_values(step) == ((3,), (1,), (2,))
     (write,) = settled_writes(plan)
-    assert isinstance(write, SettledWriteWithSource)
     assert write.destroyed == tuple(keys)
     assert len(write.source_evidence) == 4
     assert all(
@@ -1149,9 +1148,10 @@ def test_inserts_and_object_locked_writes_batch_apart_and_only_the_latter_keep_s
     assert isinstance(updated, PlannedUpdate)
     assert _key_values(updated) == ((3,), (4,))
     insert_batch, update_batch = settled_writes(plan)
-    assert not isinstance(insert_batch, SettledWriteWithSource)
-    assert isinstance(update_batch, SettledWriteWithSource)
+    assert type(insert_batch) is type(update_batch)
+    assert insert_batch.source_evidence == ()
     three, four = update_batch.source_evidence
+    assert isinstance(three, ReadEvidence) and isinstance(four, ReadEvidence)
     assert (three.object_key, four.object_key) == (
         corpus_object_key("Wallet", ("id", 3)),
         corpus_object_key("Wallet", ("id", 4)),
@@ -1887,8 +1887,8 @@ def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None
     )
     assert [_step_mutation(step) for step in plan_steps(finalized)] == ["update", "delete"]
     update, delete = settled_writes(finalized)
-    assert isinstance(update, SettledWriteWithSource)
-    assert isinstance(delete, SettledWriteWithSource)
+    assert update.source_evidence[0] is sources[1]
+    assert delete.source_evidence[0] is sources[0]
     assert (update.source_evidence, delete.source_evidence) == ((sources[1],), (sources[0],))
     assert [
         (tuple(write.changed), write.advanced, write.destroyed) for write in (update, delete)

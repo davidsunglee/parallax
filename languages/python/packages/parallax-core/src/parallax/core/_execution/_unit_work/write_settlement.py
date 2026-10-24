@@ -22,7 +22,6 @@ from parallax.core._execution._unit_work.ranges import (
     settle_opening,
     settle_range,
 )
-from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,
@@ -98,21 +97,7 @@ from parallax.core.write_plan.steps import (
     shortfall_classification,
 )
 
-__all__ = ["SettledWriteWithSource", "WritePlanCompiler"]
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class SettledWriteWithSource(SettledWrite):
-    """A settled write that keeps alive the exact Read Evidence of every
-    source whose write it settled, by identity.
-
-    ``source_evidence`` is an inert lifetime edge: while the plan holding the
-    write stays reachable its sources stay registered and their observations
-    live, and nothing reads it — completion publishes from the write's own
-    completion.
-    """
-
-    source_evidence: tuple[ReadEvidence, ...]
+__all__ = ["WritePlanCompiler"]
 
 
 _GROUP_WRITES: Final = 64
@@ -216,10 +201,10 @@ class WritePlanCompiler:
         """Every mutation phase, in flush order, as one Write Plan.
 
         Each settled write carries the exact Read Evidence of every source it
-        settled (:class:`SettledWriteWithSource`). An item the planner's
-        earlier stages retired — folded into a pending insert, cancelled against
-        one, or eliminated as a known no-op — never reaches this loop, and
-        therefore no settled write carries the evidence it was holding.
+        settled. An item the planner's earlier stages retired — folded into a
+        pending insert, cancelled against one, or eliminated as a known no-op —
+        never reaches this loop, and therefore no settled write carries the
+        evidence it was holding.
 
         Audit reaches every write as it settles: each row a write produces —
         an opening, or a successor carried or changed — is finalized once, and
@@ -316,24 +301,14 @@ class WritePlanCompiler:
             )
         assert not isinstance(item, ComposedTemporalWrite)  # only temporal objects compose
         settled = self._settle_keyed(item, concurrency, transaction_instant, shape, audit)
-        evidence = item.source_evidence
-        if not evidence:
-            write = SettledWrite(
-                changed=settled.changed,
-                advanced=settled.advanced,
-                destroyed=settled.destroyed,
-                removed=settled.removed,
-                opened=settled.opened,
-            )
-        else:
-            write = SettledWriteWithSource(
-                source_evidence=evidence,
-                changed=settled.changed,
-                advanced=settled.advanced,
-                destroyed=settled.destroyed,
-                removed=settled.removed,
-                opened=settled.opened,
-            )
+        write = SettledWrite(
+            source_evidence=item.source_evidence,
+            changed=settled.changed,
+            advanced=settled.advanced,
+            destroyed=settled.destroyed,
+            removed=settled.removed,
+            opened=settled.opened,
+        )
         return write, settled.steps
 
     def _settle_keyed(
@@ -493,26 +468,15 @@ class WritePlanCompiler:
         )
         evidence = item.source_evidence
         if isinstance(ranged, DeferredTemporalRange):
-            if not evidence:
-                return SettledWrite(deferred=ranged), ()
-            return SettledWriteWithSource(source_evidence=evidence, deferred=ranged), ()
-        if not evidence:
-            write = SettledWrite(
-                changed=ranged.changed,
-                removed=ranged.removed,
-                opened=ranged.opened,
-                derived=ranged.derived,
-                current_outputs=ranged.current_outputs,
-            )
-        else:
-            write = SettledWriteWithSource(
-                source_evidence=evidence,
-                changed=ranged.changed,
-                removed=ranged.removed,
-                opened=ranged.opened,
-                derived=ranged.derived,
-                current_outputs=ranged.current_outputs,
-            )
+            return SettledWrite(source_evidence=evidence, deferred=ranged), ()
+        write = SettledWrite(
+            source_evidence=evidence,
+            changed=ranged.changed,
+            removed=ranged.removed,
+            opened=ranged.opened,
+            derived=ranged.derived,
+            current_outputs=ranged.current_outputs,
+        )
         return write, ranged.steps
 
     def _settle_insert(
@@ -662,9 +626,11 @@ class WritePlanCompiler:
             payloads=self._payloads,
             guards=guards,
         )
+        evidence = opening.source_evidence
         if isinstance(ranged, DeferredTemporalRange):
-            return SettledWrite(deferred=ranged), ()
+            return SettledWrite(source_evidence=evidence, deferred=ranged), ()
         write = SettledWrite(
+            source_evidence=evidence,
             changed=ranged.changed,
             removed=ranged.removed,
             opened=ranged.opened,
