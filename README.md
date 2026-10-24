@@ -11,7 +11,7 @@ and receive frozen instances of your own types. Reads return complete snapshots
 of the requested object graph; accessing a relationship never silently triggers
 another database query.
 
-Start with the [Python Usage Guide](languages/python/docs/usage-guide.md) for
+Start with the [Python Guide](languages/python/docs/guide/README.md) for
 executable examples, or the
 [PostgreSQL lifecycle guide](languages/python/docs/postgresql-lifecycle.md) for
 connection and application setup.
@@ -81,7 +81,7 @@ query = Balance.where(Balance.all).as_of(
 Temporal writes preserve history rather than overwriting it. Bitemporal
 operations support valid-time changes and bounded corrections: change a
 value for a particular interval while preserving the portions before and after
-it. The [usage guide's temporal example](languages/python/docs/usage-guide.md#bitemporal-amend-until-splits-headmiddletail)
+it. The [guide's temporal example](languages/python/docs/guide/04-writing.md#bitemporal-amend-until-splits-headmiddletail)
 shows an amendment restricted to a date range.
 
 ## Make Changes Through Explicit Transactions
@@ -158,7 +158,7 @@ The Python implementation proves the
 [`slice-snapshot-1`](core/spec/slices.md#snapshot-conformance-slice) capability
 set against PostgreSQL. Shared cases check emitted SQL, returned graphs, final
 table state, errors, and concurrency observations. A separate API suite drives
-the idiomatic Python interface and generates the usage guide from selected
+the idiomatic Python interface and supplies the guide's
 executable examples. The reference harness validates the corpus against real
 databases; it is not the ORM implementation.
 

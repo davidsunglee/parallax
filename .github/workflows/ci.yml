@@ -67,7 +67,7 @@ jobs:
       - name: just core-check
         run: just core-check
 
-  # Markdown lint across core/spec, languages/**/spec, and root.
+  # Markdown lint over the globs .markdownlint-cli2.jsonc declares.
   lint-markdown:
     runs-on: ubuntu-latest
     steps:
