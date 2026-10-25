@@ -34,7 +34,6 @@ from parallax.core.sql_gen._inheritance import (
 
 __all__ = [
     "member_classifiers",
-    "resolved_variants",
     "row_coordinates",
     "row_identity",
 ]
@@ -68,25 +67,6 @@ def row_identity(
     if shared is None:
         return entity, variant, unknown, None
     return entity, variant, unknown, unwrap_document_read(_document_read(row[shared]))
-
-
-def resolved_variants(
-    contract: ReadResultContract,
-) -> tuple[tuple[EntityIdentity, str | None], ...]:
-    """Every `(Entity, familyVariant)` pair :func:`row_identity` can answer for
-    a row of this read, including the family root a tag no composed concrete
-    claims resolves to."""
-    match contract.row_identity:
-        case FixedRowIdentity(entity=entity):
-            return ((entity, None),)
-        case TaggedRowIdentity(root=root, tag_pairs=pairs):
-            return tuple(
-                dict.fromkeys(
-                    ((root, None), *((identity, spelling) for _, identity, spelling in pairs))
-                )
-            )
-        case LiteralRowIdentity(variants=variants):
-            return tuple(dict.fromkeys((identity, spelling) for spelling, identity in variants))
 
 
 def member_classifiers(

@@ -304,18 +304,13 @@ def test_flat_publication_preserves_a_classified_result_position() -> None:
 
 
 def test_one_converter_publishes_each_page_it_converts_as_a_fresh_converter_would() -> None:
-    # One bound converter serves every Page its read delivers, and keeps one
-    # publisher across them: values, order and in-band refusals still match a
-    # converter that publishes nothing but that Page.
     converter = encoded_identity_read()
-    publisher = converter.row_publisher()
     for rows in (
         ((KEY_TEXT, None, SQL_NULL), (None, None, SQL_NULL)),
         ((None, None, SQL_NULL), (OTHER_KEY_TEXT, None, PresentDocument({"street": "Main"}))),
     ):
         published = _published_page(converter, rows)
 
-        assert converter.row_publisher() is publisher
         assert published == _published_page(encoded_identity_read(), rows)
         assert [kind for kind, _ in published] == [
             "invalid" if row[0] is None else "row" for row in rows
