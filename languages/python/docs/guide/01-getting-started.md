@@ -103,8 +103,8 @@ usually `public`.
 When your model changes later, `evolve` compares the model you deployed before with the
 new one, so keep a copy of each model you deploy. Exporting it as a descriptor with
 `parallax.descriptor.export_yaml`, from the `parallax-descriptor` distribution, is one
-way. The [model evolution](../../../../core/spec/m-model-evolution.md) reference explains
-which changes `schema_delta` can carry.
+way. [Model evolution](07-model-evolution.md#describing-a-change) explains which changes
+`schema_delta` can carry.
 
 ## Write, then read
 

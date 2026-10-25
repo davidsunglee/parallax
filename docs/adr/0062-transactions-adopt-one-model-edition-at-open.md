@@ -130,7 +130,7 @@ uses replaceable generated-Finder portal slots without an adoption guard for
 in-flight transactions. Its replacement mechanism is not adopted here.
 
 This decision extends the existing contracts. The
-[Python surface](../../languages/python/spec/python.md#model-preparation-and-the-serving-model)
+[Python surface](../../languages/python/spec/execution.md#models-roots-and-scopes)
 records the concrete interface. The coordinated migration of the active core
 specifications, lifecycle schemas, and compatibility corpus it required landed
 under COR-123: preparation, publication, adoption by all three execution shapes,

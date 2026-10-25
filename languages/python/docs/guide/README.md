@@ -12,3 +12,6 @@ running Parallax in production.
 4. [Writing](04-writing.md)
 5. [Transactions](05-transactions.md)
 6. [Execution authority](06-execution-authority.md)
+7. [Model and schema evolution](07-model-evolution.md)
+8. [Errors](08-errors.md)
+9. [Operations](09-operations.md)

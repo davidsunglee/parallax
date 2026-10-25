@@ -22,3 +22,6 @@ page links the part it explains. Each page ends with links into the
 - [Execution authority and audit](execution-authority-and-audit.md): who a database
   operation runs as, why that is chosen once per scope, how it reaches the database, and
   what audit provenance is reserved to record.
+- [Model evolution](model-evolution.md): Model Editions and how every execution adopts
+  one, how a change between two models is described and classified, why the application
+  applies migrations, and what two editions serving one database must agree on.

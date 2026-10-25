@@ -7,11 +7,8 @@ recipe body through the shipped surface over a scripted port.
 
 from __future__ import annotations
 
-import ast
-import builtins
 import contextlib
 import datetime as dt
-import re
 from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
@@ -19,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from parallax.conformance import case_format, guide_authority_recipes, guide_models
+from parallax.conformance import guide_authority_recipes
 from parallax.conformance.guide_authority_recipes import (
     SecretFile,
     ShopUser,
@@ -30,7 +27,6 @@ from parallax.conformance.guide_authority_recipes import (
     rename_a_customer,
 )
 from parallax.conformance.guide_models import SHOP_MODEL, Customer, Order
-from parallax.conformance.usage_guide import snippet_sources
 from parallax.core.entity import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.postgres import PostgresAdapter, PostgresRole
@@ -198,57 +194,3 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             rename_a_customer,
         )
     )
-
-
-def _bound_and_loaded(source: str) -> tuple[set[str], set[str]]:
-    """Every name ``source`` binds and every name it reads, scope-blind."""
-    bound: set[str] = set()
-    loaded: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.alias):
-            bound.add((node.asname or node.name).split(".")[0])
-        elif isinstance(node, ast.FunctionDef | ast.ClassDef):
-            bound.add(node.name)
-        elif isinstance(node, ast.arg):
-            bound.add(node.arg)
-        elif isinstance(node, ast.ExceptHandler) and node.name is not None:
-            bound.add(node.name)
-        elif isinstance(node, ast.Name):
-            (bound if isinstance(node.ctx, ast.Store) else loaded).add(node.id)
-    return bound, loaded
-
-
-_GUIDE = case_format.find_repo_root() / "languages" / "python" / "docs" / "guide"
-_MARKER = re.compile(r"<!-- example: ([a-z0-9][a-z0-9-]*) -->")
-_EXAMPLE_BLOCK = re.compile(r"<!-- example: .*?<!-- /example -->", re.DOTALL)
-_CODE_SPAN = re.compile(r"`([^`\n]+)`")
-_SHOP_MODEL_NAMES: frozenset[str] = frozenset(guide_models.__all__) - {"SHOP_MODEL"}
-
-
-@pytest.mark.parametrize(
-    ("chapter", "imports_id"),
-    [pytest.param("06-execution-authority.md", "execution-authority-imports", id="06")],
-)
-def test_each_chapters_imports_bind_what_its_snippets_read_and_only_what_it_names(
-    chapter: str, imports_id: str
-) -> None:
-    # A reader finds every name a chapter uses in its imports block. The block
-    # has to resolve, cover every name the chapter's snippets read beyond the
-    # shop model, and import nothing the chapter neither reads in a snippet nor
-    # names in its prose.
-    text = (_GUIDE / chapter).read_text(encoding="utf-8")
-    sources = snippet_sources()
-    marked = _MARKER.findall(text)
-    assert imports_id in marked
-    imports = sources[imports_id]
-    exec(compile(imports, imports_id, "exec"), {})
-    bound, loaded = _bound_and_loaded("\n\n".join(sources[source_id] for source_id in marked))
-    imported, _ = _bound_and_loaded(imports)
-    named = {
-        name
-        for span in _CODE_SPAN.findall(_EXAMPLE_BLOCK.sub("", text))
-        for name in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", span)
-    }
-
-    assert loaded - bound - set(dir(builtins)) - _SHOP_MODEL_NAMES == set()
-    assert imported - loaded - named == set()

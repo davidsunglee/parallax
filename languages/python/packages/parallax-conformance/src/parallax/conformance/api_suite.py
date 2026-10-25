@@ -13,6 +13,8 @@ from parallax.conformance import (
     execution_authority_stories,
     execution_lifecycle_stories,
     guide_authority_recipes,
+    guide_error_recipes,
+    guide_evolution_recipes,
     guide_recipes,
     read_only_stories,
     snapshot_recipes,
@@ -592,6 +594,119 @@ RECIPES: Final[list[Recipe]] = [
             guide_authority_recipes.rename_a_customer,
             guide_authority_recipes.another_user_can_join,
         ),
+    ),
+    Recipe(
+        recipe_id="model-evolution-imports",
+        title="Import what Model evolution uses",
+        snippet=(
+            "from collections.abc import Callable\n"
+            "\n"
+            "from parallax.core import Attr, ConcreteSubtype, DomainModel, attr\n"
+            "from parallax.core.dialect import POSTGRES\n"
+            "from parallax.core.entity import model_of\n"
+            "from parallax.core.execution import PublicationConflictError, ServingModel, "
+            "prepare_model\n"
+            "from parallax.core.read_delivery import InvalidData, InvalidDataError\n"
+            "from parallax.descriptor import domain_model_from_yaml, export_yaml\n"
+            "from parallax.evolution import (\n"
+            "    CoordinatedEvolution,\n"
+            "    Evolution,\n"
+            "    UnilateralEvolution,\n"
+            "    evolve,\n"
+            "    schema_delta,\n"
+            ")\n"
+            "from parallax.postgres import PostgresAdapter, PostgresRole\n"
+            "from parallax.snapshot import Database, ScopedDatabase, connect\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="serve-a-model-edition",
+        title="Serve a Model Edition that can be replaced while the process runs",
+        snippet=_sources(
+            guide_evolution_recipes.connect_serving,
+            guide_evolution_recipes.edition_of_a_transaction,
+        ),
+    ),
+    Recipe(
+        recipe_id="describe-a-model-change",
+        title="Describe the change from the deployed model to the next release",
+        snippet=_sources(
+            guide_evolution_recipes.GiftCardPayment, guide_evolution_recipes.changes_since
+        ),
+    ),
+    Recipe(
+        recipe_id="generate-the-migration",
+        title="Generate a release's migration, refusing a change that needs coordination",
+        snippet=_sources(
+            guide_evolution_recipes.CoordinationRequiredError,
+            guide_evolution_recipes.migration_for,
+        ),
+    ),
+    Recipe(
+        recipe_id="roll-out-a-release",
+        title="Migrate the database once, then publish the release in every process",
+        snippet=_sources(guide_evolution_recipes.migrate, guide_evolution_recipes.adopt),
+    ),
+    Recipe(
+        recipe_id="read-through-the-overlap-window",
+        title="Set aside rows a later edition wrote that this edition cannot read",
+        snippet=_sources(guide_evolution_recipes.payments_this_edition_can_read),
+    ),
+    Recipe(
+        recipe_id="errors-imports",
+        title="Import what Errors uses",
+        snippet=(
+            "from collections.abc import Mapping\n"
+            "\n"
+            "from parallax.core import EditError, EntityDefinitionError, QueryDefinitionError\n"
+            "from parallax.core.db_port import ConnectionAcquisitionError\n"
+            "from parallax.core.execution import (\n"
+            "    ExecutionFailure,\n"
+            "    KeyedWriteValueError,\n"
+            "    QueryTargetError,\n"
+            "    TransactionRollbackError,\n"
+            "    TransactionTimePinReadOnlyError,\n"
+            ")\n"
+            "from parallax.core.metamodel import MetamodelIssue\n"
+            "from parallax.core.read_delivery import InvalidData, InvalidDataError\n"
+            "from parallax.core.unit_work import (\n"
+            "    InstructionRejectedError,\n"
+            "    OptimisticLockConflictError,\n"
+            "    RollbackOnlyError,\n"
+            "    WriteEvidenceError,\n"
+            "    WritePreconditionError,\n"
+            ")\n"
+            "from parallax.snapshot import ScopedDatabase, TxnContext\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="report-every-refused-field",
+        title="Report every field of a form the model refuses",
+        snippet=_sources(guide_error_recipes.change_a_customer_from_a_form),
+    ),
+    Recipe(
+        recipe_id="add-a-customer-unless-the-id-is-taken",
+        title="Tell a duplicate key from other database errors",
+        snippet=_sources(guide_error_recipes.add_a_customer_unless_the_id_is_taken),
+    ),
+    Recipe(
+        recipe_id="operations-imports",
+        title="Import what Operations uses",
+        snippet=(
+            "import logging\n"
+            "\n"
+            "from parallax.core import DomainModel\n"
+            "from parallax.core.db_port import CredentialSource\n"
+            "from parallax.core.execution_lifecycle import LoggingLifecycleProvider\n"
+            "from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, "
+            "PostgresRole\n"
+            "from parallax.snapshot import Database, connect\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="open-one-root-per-process",
+        title="Open the process's one root with its operational settings",
+        snippet=_sources(guide_error_recipes.open_the_shop_database),
     ),
 ]
 
