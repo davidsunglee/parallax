@@ -50,9 +50,13 @@ tests and the frontend's reserved-name checks.
 
 `TxTemporal` supplies `tx_start` / `tx_end`, stored in `in_z` / `out_z`;
 `Bitemporal` also supplies `valid_start` / `valid_end`, stored in
-`from_z` / `thru_z`. They use ordinary member-name conversion and are
-framework-owned: direct construction and edits cannot author them. There is no
-public temporal-axis declaration or column override. Valid Time and Transaction
+`from_z` / `thru_z`. Each start is an `Attr[datetime]`; each end is an
+`Attr[datetime | TemporalBound]`, whose open value is `TemporalBound.INFINITY`,
+the [temporal infinity](../../../core/spec/m-core.md#temporal-infinity) that is
+distinct from every finite instant and from `None`. They use ordinary
+member-name conversion and are framework-owned: direct construction and edits
+cannot author them. There is no public temporal-axis declaration or column
+override. Valid Time and Transaction
 Time are the only accepted vocabulary; no business/processing aliases exist.
 
 ## Attributes and relationships

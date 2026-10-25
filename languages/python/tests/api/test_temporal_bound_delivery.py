@@ -12,13 +12,21 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, assert_type
 
 import pytest
 
 from parallax.conformance.scripted_clock import ScriptedClock
-from parallax.core import LATEST, Attr, Bitemporal, DomainModel, Float32, TxTemporal, attr
-from parallax.core.base import INFINITY, TemporalBound
+from parallax.core import (
+    LATEST,
+    Attr,
+    Bitemporal,
+    DomainModel,
+    Float32,
+    TemporalBound,
+    TxTemporal,
+    attr,
+)
 from parallax.core.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.binary32 import narrowed, shortest_spelling
@@ -71,20 +79,24 @@ class _Milestone(NamedTuple):
 
 
 def _wire_instant(bound: Bound) -> str:
-    return "infinity" if bound is INFINITY else f"{bound:%Y-%m-%dT%H:%M:%S.%fZ}"
+    return "infinity" if bound is TemporalBound.INFINITY else f"{bound:%Y-%m-%dT%H:%M:%S.%fZ}"
 
 
 # (valid pin, transaction pin) → the one milestone that read selects.
 _LEDGER_READS: dict[tuple[Pin | None, Pin], _Milestone] = {
-    (None, "latest"): _Milestone(_NEW, (_UPDATED, INFINITY)),
+    (None, "latest"): _Milestone(_NEW, (_UPDATED, TemporalBound.INFINITY)),
     (None, _INSERTED): _Milestone(_OLD, (_INSERTED, _UPDATED)),
 }
 _POSITION_READS: dict[tuple[Pin | None, Pin], _Milestone] = {
-    ("latest", "latest"): _Milestone(_NEW, (_UPDATED, INFINITY), (_CORRECTED_FROM, INFINITY)),
-    (_BEFORE_CORRECTION, "latest"): _Milestone(
-        _OLD, (_UPDATED, INFINITY), (_VALID_FROM, _CORRECTED_FROM)
+    ("latest", "latest"): _Milestone(
+        _NEW, (_UPDATED, TemporalBound.INFINITY), (_CORRECTED_FROM, TemporalBound.INFINITY)
     ),
-    ("latest", _INSERTED): _Milestone(_OLD, (_INSERTED, _UPDATED), (_VALID_FROM, INFINITY)),
+    (_BEFORE_CORRECTION, "latest"): _Milestone(
+        _OLD, (_UPDATED, TemporalBound.INFINITY), (_VALID_FROM, _CORRECTED_FROM)
+    ),
+    ("latest", _INSERTED): _Milestone(
+        _OLD, (_INSERTED, _UPDATED), (_VALID_FROM, TemporalBound.INFINITY)
+    ),
 }
 
 
@@ -137,9 +149,32 @@ def _write(representation: Representation, entity: type[Any]) -> Callable[[TxnCo
     return write
 
 
-def _typed_bounds(row: Any, entity: type[Any]) -> tuple[object, ...]:
-    valid = (row.valid_start, row.valid_end) if entity is Position else ()
-    return (*_carried(row.amount), row.tx_start, row.tx_end, *valid)
+def _typed_bounds(row: Any) -> tuple[object, ...]:
+    if isinstance(row, Position):
+        return (*_carried(row.amount), *_tx_interval(row), *_valid_interval(row))
+    assert isinstance(row, Ledger)
+    return (*_carried(row.amount), *_tx_interval(row))
+
+
+def _tx_interval(row: Ledger | Position) -> tuple[dt.datetime, Bound]:
+    start, end = row.tx_start, row.tx_end
+    assert_type(start, dt.datetime)
+    assert_type(end, dt.datetime | TemporalBound)
+    return _interval(start, end)
+
+
+def _valid_interval(row: Position) -> tuple[dt.datetime, Bound]:
+    start, end = row.valid_start, row.valid_end
+    assert_type(start, dt.datetime)
+    assert_type(end, dt.datetime | TemporalBound)
+    return _interval(start, end)
+
+
+def _interval(start: dt.datetime, end: dt.datetime | TemporalBound) -> tuple[dt.datetime, Bound]:
+    if end is not TemporalBound.INFINITY:
+        assert_type(end, dt.datetime)
+        assert end - start > dt.timedelta(0)
+    return start, end
 
 
 def _wire_bounds(node: Any, entity: type[Any]) -> tuple[object, ...]:
@@ -165,7 +200,7 @@ def _reads(
         _streamed(db.wire.stream(wire, batch_size=1)),
     ]
     return {
-        "typed": [_typed_bounds(row, entity) for rows in typed_rows for row in rows],
+        "typed": [_typed_bounds(row) for rows in typed_rows for row in rows],
         "wire": [_wire_bounds(node, entity) for rows in wire_rows for node in rows],
     }
 

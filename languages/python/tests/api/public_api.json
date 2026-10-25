@@ -21,6 +21,7 @@
     "MAX",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
+    "MetamodelValidationError",
     "ModelRejectedError",
     "ONE_TO_MANY",
     "ONE_TO_ONE",
@@ -36,6 +37,7 @@
     "TABLE_PER_CONCRETE_SUBTYPE",
     "TX_TIME",
     "TablePerHierarchy",
+    "TemporalBound",
     "TemporalReadError",
     "TxTemporal",
     "UndeclaredAxisError",
@@ -226,6 +228,11 @@
     "isolation_level",
     "report_resource_issues",
     "report_unregistration_failure"
+  ],
+  "parallax.core.db_error": [
+    "Category",
+    "DatabaseError",
+    "PhysicalIndexName"
   ],
   "parallax.core.entity": [
     "AbstractRoot",

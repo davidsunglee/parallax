@@ -146,6 +146,15 @@ the stream edition, while stream-state misuse remains
 unstamped. Interpreter control-flow exceptions keep their
 ordinary behavior.
 
+A failed statement's `cause` is a `parallax.core.db_error.DatabaseError`. Its
+`category` is a `Category`, the closed set
+[Database Error Classification](../../../core/spec/m-db-error.md) owns, or
+`None` when the failure is uncategorized. Its `violated_index` is a
+`PhysicalIndexName`, or `None` whenever the failure names no index, a unique
+violation included. Handlers narrow with `isinstance(failure.cause,
+DatabaseError)`; a handler meant for one constraint compares `violated_index`
+with that index's name rather than treating every `uniqueViolation` as its own.
+
 Failed rollback after an ordinary trigger raises `TransactionRollbackError`,
 exposing both `triggering_error` and `rollback_error` and chaining the rollback
 failure. Successful rollback preserves the original error. A fatal trigger

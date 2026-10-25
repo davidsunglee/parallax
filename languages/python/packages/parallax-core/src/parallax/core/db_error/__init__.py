@@ -7,8 +7,7 @@ from parallax.core.dialect import Dialect, PhysicalIndexName
 __all__ = [
     "Category",
     "DatabaseError",
-    "as_category",
-    "classify_error",
+    "PhysicalIndexName",
 ]
 
 # The closed neutral category set. `connectionDead` is reserved: it is a member of
