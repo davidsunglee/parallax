@@ -15,7 +15,12 @@ import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
 
-from parallax.core.db_port import Password
+from parallax.core.db_port import (
+    DRIVER_MANAGED,
+    ConnectionAcquisitionError,
+    CredentialSource,
+    Password,
+)
 from parallax.core.execution import InvalidPrincipalError, TransactionAuthorityError
 from parallax.postgres import PostgresAdapter, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
@@ -112,7 +117,8 @@ connection exists, and a role is chosen on the connection afterwards.
 
 `credentials=` takes `Password(...)` for a constant secret, `DRIVER_MANAGED` to leave
 authentication to libpq, or a credential source: any object whose `resolve()` method
-returns a `Password`. Parallax asks the source each time it opens a physical connection,
+returns a `Password`. That type is `CredentialSource`, and a `Password` is one too,
+returning itself. Parallax asks the source each time it opens a physical connection,
 whether the pool is filling, growing or replacing one, and never when it reuses a
 connection it already holds. So a source that reads a mounted secret file picks up a
 rotated password for every connection opened after the rotation:
@@ -137,7 +143,9 @@ def configure_with_a_secret_file(conninfo: str, path: Path) -> PostgresAdapter:
 
 A connection that's already open stays open when the secret that opened it changes or
 expires. `resolve()` can run on one of the pool's threads or on yours, so it must bound
-its own I/O.
+its own I/O. If it raises, no connection is made: once the pool is running, the work
+that needed the connection fails with `ConnectionAcquisitionError`, whose `reason` is
+`"credentials_refused"`, and at startup `connect` fails instead.
 
 For Amazon RDS and Aurora, `parallax-aws` supplies `RdsIamCredentials`, a source that
 signs a fresh IAM token for each new connection, and `rds_postgres`, which builds the
@@ -146,7 +154,7 @@ whole adapter. The lifecycle guide covers
 [the three credential forms](../postgresql-lifecycle.md#where-the-password-lives) and what
 you get when a source fails.
 
-## Who the work is recorded as
+## One actor per transaction
 
 The authority a scope carries is its Execution Actor: either a user's subject together
 with their database authorization, or the login. A transaction captures its scope's actor
@@ -194,10 +202,11 @@ refusal escape the callback rolls the whole transaction back. To act for someone
 start a new transaction after this one ends.
 
 On the database side, the role a subject scope sets is the session's `current_user`
-while the work runs, and the login stays its `session_user`. Parallax itself doesn't
-write the actor into your rows: the core specification reserves it as the
-[Actor Identity](../../../../core/spec/m-unit-work.md#actor-identity) that audit
-provenance would record, and this binding records no audit provenance.
+while the work runs, and the login stays its `session_user`, so your own triggers and
+policies can read either. Parallax itself records no audit provenance today: it doesn't
+write the actor into your rows or anywhere else.
+[Execution authority and audit](../../../../docs/concepts/execution-authority-and-audit.md#audit-provenance)
+describes the audit design.
 
 ## How it works →
 

@@ -9,11 +9,16 @@ dependencies. It sends them when a read needs them, when a predicate write runs,
 the transaction commits, and they all commit together or not at all.
 
 Parallax refuses blind writes. A write to an object that already exists needs a licence,
-something that shows what the write applies to:
+something that shows what the write applies to. There are four:
 
-- a read of that object in the same transaction attempt;
-- the attempt's own insertion of it; or
+- the version or Transaction-Time start a read of the object in the same transaction
+  attempt saw, which the write then checks;
+- the shared lock such a read takes when the entity uses the locking strategy, as one
+  with no version always does;
+- the attempt's own insertion of the object; or
 - a revision you state yourself, in a [target write](#target-writes).
+
+[Transactions](05-transactions.md#no-blind-writes) explains how the four relate.
 
 [Predicate writes](#predicate-writes) are the one exception. They change every row a
 query selects without reading it first, and only entities with no version and no history
@@ -35,9 +40,16 @@ from parallax.core.execution import ExecutionFailure, TransactionTimePinReadOnly
 from parallax.core.unit_work import (
     InstructionRejectedError,
     WriteEvidenceError,
+    WriteInstructionError,
     WritePreconditionError,
 )
-from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of
+from parallax.snapshot import (
+    NoResultFound,
+    ScopedDatabase,
+    TxnContext,
+    WireEntity,
+    edge_of,
+)
 ```
 <!-- /example -->
 
@@ -45,7 +57,7 @@ from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of
 
 ### Insert, then read your own write
 
-`tx.insert` takes a new instance:
+`tx.insert` takes a new instance and returns `None`:
 
 <!-- example: insert-and-read-your-own-write -->
 ```python
@@ -96,6 +108,9 @@ def replace_contact_details(db: ScopedDatabase, customer_id: int, name: str) -> 
 ```
 <!-- /example -->
 
+An entity's members are its attributes and relationships, and its writable members are
+the attributes a write may assign: every attribute except the key, which addresses the
+row, attributes declared `read_only=True`, and those Parallax sets, such as `version`.
 `edit(...)` returns a copy with the members you name changed, and leaves the value you
 read as it was. `amend` writes the members the copy's edits touched, and every other
 member keeps its stored value. `replace` writes the copy's whole writable state, edited
@@ -165,6 +180,12 @@ the write conflicts, and Parallax rolls the transaction back and runs your callb
 again against fresh reads. A transaction can also prefer the locking strategy for
 versioned entities, with `db.transact(callback, concurrency="locking")`.
 [Transactions](05-transactions.md#optimistic-and-locking-concurrency) explains that replay and that choice.
+
+The same check catches a row deleted in between. If another transaction deletes the
+order after your read, your amendment finds no row at the version it read, which is a
+conflict, so Parallax runs the callback again. This time `find` finds no order, and
+`.result()` raises `NoResultFound`, which reaches you as the `cause` of the
+`ExecutionFailure`.
 
 A value read outside the transaction licenses nothing, whichever kind of entity it
 belongs to. [Reading](03-reading.md#youll-write-what-you-read) shows the refusal, and
@@ -248,7 +269,8 @@ amount      tx_start      tx_end
 A read of the latest state now finds no limit, while a read as of 1 February still
 answers 2500.00, and history still lists both milestones. Inserting a limit for the same
 customer later opens a new current milestone after them. `tx.delete` is refused for a
-temporal entity, because it would remove rows; the error names `terminate` instead.
+temporal entity, because it would remove rows: it raises `WriteInstructionError`, whose
+message names `terminate` instead.
 
 ## Bitemporal entities
 
@@ -426,6 +448,11 @@ only what is already covered, so it would leave September without a price:
 A replacement still needs a licence, here the read at July. It can't create a product
 that has no row where it starts, so it is never an insert in disguise.
 
+To price a product again after a gap, insert it. Pricing `TEA-2` again from November is
+an ordinary `tx.insert` with `valid_from` set to November, even though the key has rows
+earlier in Valid Time. An insert reads none of the key's stored coverage, so it is yours
+to place where the key has none.
+
 ### Terminate
 
 `terminate` ends a price from the Valid Time its source was read at:
@@ -574,7 +601,7 @@ retried.
 
 `key=` takes the object's primary-key value; an entity's primary key is always one
 attribute. `Customer` has no version, so a target write can't name a revision for it,
-and Parallax refuses one. Read a customer inside the transaction instead; its shared
+and Parallax refuses one with `WriteInstructionError`. Read a customer inside the transaction instead; its shared
 lock protects the write. `replace_if` takes a whole instance, which can be an edited copy
 of the reviewed value, and states that instance's writable state.
 
@@ -660,8 +687,9 @@ or state each revision in a target write.
 
 Values this transaction read before a predicate write keep the values they were read
 with: the predicate write doesn't refresh them, and doesn't take away their licence.
-An `amend` of one still writes only the members you edit. Read again to see what the
-predicate write left.
+An `amend` of one still writes only the members you edit. A `replace` of one writes its
+whole writable state, so it overwrites what the predicate write set. Read again to see
+what the predicate write left.
 
 ## Wire writes
 
@@ -686,11 +714,13 @@ def rename_a_customer_through_wire(db: ScopedDatabase, customer_id: int, name: s
 ```
 <!-- /example -->
 
-`tx.wire.insert` names the entity and returns the node it opened, which carries the
-insertion's licence just as an inserted instance does. `tx.wire.amend` takes a node a
-Wire read of this transaction returned and a document naming the members to change;
-`tx.wire.replace` takes a node and the whole new state. The target verbs take an entity
-name and a document holding the key. The predicate verbs take a Typed query or a
+A node is one of the `WireEntity` mappings Wire publishes. `tx.wire.insert` names the
+entity and returns the node it opened, which carries the insertion's licence just as an
+inserted instance does. `tx.wire.amend` takes a node a Wire read of this transaction
+returned and a document naming the members to change; `tx.wire.replace` takes a node and
+the whole new state. The target verbs take an entity name and a document holding the
+key, and state the revision with the same keywords as the Typed ones: `version=` for a
+versioned entity, `tx_start=` for a temporal one. The predicate verbs take a Typed query or a
 selection document, which names the entity and a predicate in canonical form, such as
 `{"entity": "Customer", "predicate": {"eq": {"path": "Customer.email", "value": email}}}`.
 `tx.wire.editable_data(node)` copies a node's key and writable members into plain
@@ -700,8 +730,9 @@ A Wire read outside the transaction licenses no write either, but it tells you w
 milestone a temporal node stands on. `edge_of(node)` returns that milestone's `Edge`,
 which says where the milestone starts on each time axis its entity keeps: `tx_time`,
 and for a Bitemporal entity `valid_time` as well. Its `tx_time` is the revision a target
-write can state. Here a page showed a credit limit from an earlier Wire read, and the
-user confirmed a new amount:
+write can state. The node also holds `txStart`, but as Wire text; `edge_of` gives the
+start as the `datetime` that `tx_start=` takes. Here a page showed a credit limit from
+an earlier Wire read, and the user confirmed a new amount:
 
 <!-- example: condition-a-wire-write-on-a-milestone -->
 ```python

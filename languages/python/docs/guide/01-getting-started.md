@@ -15,15 +15,24 @@ published to a package index yet, so clone the repository and build its distribu
 git clone https://github.com/davidsunglee/parallax.git
 cd parallax/languages/python
 uv build --all-packages -o dist
-pip install --find-links dist parallax-snapshot parallax-postgres parallax-evolution
+pip install --find-links dist parallax-snapshot parallax-postgres parallax-evolution parallax-descriptor
 ```
 
-Run the `pip install` in your application's environment. `parallax-snapshot` is the API
-you program against; it takes its name from the snapshots its reads return, the
-immutable values that `find` hands you inside a `Snapshot`. `parallax-postgres` is the
-PostgreSQL adapter, and `parallax-evolution` generates schema changes from your model.
-`pip` installs what they depend on from the same `dist` directory. Add `parallax-aws`
-if you authenticate to Amazon RDS with IAM.
+Run the `pip install` in your application's environment. It installs the distributions
+this guide imports from:
+
+- `parallax-snapshot`, the API you program against. It takes its name from the snapshots
+  its reads return, the immutable values that `find` hands you inside a `Snapshot`.
+- `parallax-postgres`, the PostgreSQL adapter. It drives PostgreSQL through the psycopg
+  driver, whose binary build it installs, so you need no system libpq; the lifecycle
+  guide's [driver build](../postgresql-lifecycle.md#driver-build) section explains.
+- `parallax-evolution`, which generates schema changes from your model.
+- `parallax-descriptor`, which saves a model as a YAML descriptor and reads one back.
+- `parallax-core`, which provides the `parallax.core` modules every chapter imports.
+  `pip` takes it from the same `dist` directory, because the others depend on it.
+
+Third-party dependencies, such as Pydantic and psycopg, come from PyPI as usual. Add
+`parallax-aws` if you authenticate to Amazon RDS with IAM.
 
 Each chapter of this guide opens with the imports for every name it uses. This
 chapter's are:
@@ -40,7 +49,14 @@ from parallax.core.entity import model_of
 from parallax.core.execution import ExecutionFailure, TxnOptions
 from parallax.evolution import ABSENT, evolve, schema_delta
 from parallax.postgres import PostgresAdapter
-from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
+from parallax.snapshot import (
+    Database,
+    NoResultFound,
+    ScopedDatabase,
+    TooManyResultsFound,
+    TxnContext,
+    connect,
+)
 ```
 <!-- /example -->
 
@@ -70,11 +86,20 @@ class Order(Entity, table="orders", indices=(index("orders_customer", "customer_
 ```
 <!-- /example -->
 
-A customer has many orders, so `Customer.orders` is a relationship to `Order`.
-`version`, declared with `optimistic_locking=True`, lets Parallax detect when two
-transactions change the same order. You never pass it: Parallax sets it. You can also
-leave out a nullable attribute such as `email` when you construct an instance, and it is
-then `None`. [Modeling](02-modeling.md) explains all of these, along with the other
+A customer has many orders, so `Customer.orders` is a relationship to `Order`, joined
+from the customer's `id` to the order's `customer_id`. `Order.customer` is the same
+relationship seen from the order: `reverse_of` names the side it mirrors. It is
+`Customer | None` because Parallax creates no foreign key, so an order's `customer_id`
+might match no customer. `index(...)` in the class header declares a database index on
+`orders.customer_id`, which serves that join.
+
+`version`, declared with `optimistic_locking=True` and stored as a 32-bit integer
+(`Int32`), lets Parallax detect when two transactions change the same order. You never
+pass it: Parallax sets it. You can also leave out a nullable attribute such as `email`
+when you construct an instance, and it is then `None`.
+
+`DomainModel(Customer, Order)` composes the classes into one checked model, which every
+later step takes. [Modeling](02-modeling.md) explains all of these, along with the other
 building blocks.
 
 ## Create the tables
@@ -93,18 +118,21 @@ def table_statements(model: DomainModel) -> tuple[str, ...]:
 ```
 <!-- /example -->
 
-`model_of(model)` takes the checked, language-neutral form of the model out of the
-`DomainModel`, which is the form `evolve` compares. `evolve(ABSENT, ...)` describes the
-change from no model to this one, and `schema_delta` turns that change into PostgreSQL
-statements. For a first try, run them in `psql` or any SQL client connected to an empty
-database. They name no schema, so the tables land in the connection's current schema,
-usually `public`.
+`model_of(model)` takes out of the `DomainModel` its language-neutral form: the same
+entities, attributes and relationships as the core specification defines them, without
+your Python classes. A YAML descriptor holds a model in that form too, so `evolve` can
+compare a model rebuilt from a descriptor with one built from classes. `ABSENT` stands
+for no model at all, as in an empty database, so `evolve(ABSENT, ...)` describes
+creating everything this model needs. That change is always one `schema_delta` accepts,
+and its type says so. `schema_delta` turns the change into PostgreSQL statements. For a
+first try, run them in `psql` or any SQL client connected to an empty database. They
+name no schema, so the tables land in the connection's current schema, usually `public`.
 
 When your model changes later, `evolve` compares the model you deployed before with the
 new one, so keep a copy of each model you deploy. Exporting it as a descriptor with
 `parallax.descriptor.export_yaml`, from the `parallax-descriptor` distribution, is one
-way. [Model evolution](07-model-evolution.md#describing-a-change) explains which changes
-`schema_delta` can carry.
+way. [Model evolution](07-model-evolution.md#describing-a-change) explains how `evolve`
+tells you whether `schema_delta` can carry a change.
 
 ## Write, then read
 
@@ -128,7 +156,10 @@ def add_and_find_a_customer(adapter: PostgresAdapter) -> Customer:
 ```
 <!-- /example -->
 
-The rest of this chapter walks through it.
+To run it, create the tables first, as the previous section shows, then call
+`add_and_find_a_customer(configure_the_database(conninfo, password))` with a connection
+string such as `host=localhost dbname=shop user=shop`. It returns the customer it read
+back. The rest of this chapter walks through it.
 
 ### Connect
 
@@ -177,8 +208,12 @@ returns. The callback receives a `TxnContext`, here `tx`, and every write happen
 through it, here `tx.insert(...)`. Once the transaction has committed, `transact`
 returns whatever the callback returned.
 
-If the callback raises, nothing is committed, and the exception reaches you as the
-`cause` of an `ExecutionFailure`. A standalone read that fails reaches you the same way.
+If the callback raises, nothing is committed, and you get an `ExecutionFailure`: the
+error Parallax raises when work it ran fails. It carries the original exception as its
+`cause` attribute, which is also its `__cause__`. A standalone read that fails while it
+runs against the database reaches you the same way. A mistake Parallax refuses before
+any work runs, such as a query naming an entity the model lacks, is raised as itself.
+[Errors](08-errors.md#where-an-error-reaches-you) sets out both rules.
 
 If the transaction fails for a reason a second attempt can fix, such as a deadlock,
 Parallax rolls it back and runs the callback again. Each run is an attempt. By default
@@ -192,9 +227,11 @@ retries and nesting.
 ### Read
 
 `Customer.where(...)` builds a query and runs nothing. `db.find(query)` runs it and
-returns a `Snapshot`. `.result()` takes its single result and raises if there are none
-or several. Use `.result_or_none()` when the result may be missing, and `.results()`
-for a list.
+returns a `Snapshot`. `.result()` takes its single result and raises `NoResultFound` if
+there is none or `TooManyResultsFound` if there are several. Use `.result_or_none()`
+when the result may be missing, and `.results()` for a list. These accessors raise after
+`find` has returned, so their errors reach you as themselves; inside a callback, one
+you let escape becomes the `cause` of the `ExecutionFailure`.
 
 What you get back is a `Customer`, an instance of your own class, and it is frozen. To
 change a customer, you read it inside a transaction, call `edit(...)` for a modified

@@ -273,11 +273,12 @@ def add_to_an_order(db: ScopedDatabase, order_id: int, amount: Decimal) -> None:
 ```
 <!-- /example -->
 
-Suppose order 10 holds 150.00 at version 1, and another transaction adds 5.00 to it
-between this one's read and its write. The write checks for version 1, finds version 2,
-and changes no row: an optimistic lock conflict. Parallax rolls back and runs the
-callback again. The re-run reads 155.00 at version 2 and writes 175.00, so both additions
-survive and the order ends at version 3. You wrote no retry code.
+Suppose order 10 holds 150.00 at version 1, this call adds 20.00, and another
+transaction adds 5.00 between this one's read and its write. The write checks for
+version 1, finds version 2, and changes no row: an optimistic lock conflict. Parallax
+rolls back and runs the callback again. The re-run reads 155.00 at version 2 and writes
+175.00, so both additions survive and the order ends at version 3. You wrote no retry
+code.
 
 The locking strategy prevents the conflict instead of detecting it. Pass
 `concurrency="locking"` to prefer it for one transaction:
@@ -311,8 +312,8 @@ moment, and a check costs nothing until they are.
 A keyed write to an object that already exists needs a licence: something that shows the
 write knows what it is overwriting. There are four:
 
-- the **State Observation** a read in this attempt took, the version or Transaction-Time
-  start it saw, which the write then checks;
+- a **State Observation**: the version or Transaction-Time start that a read in this
+  attempt saw, which the write then checks is still there;
 - the **shared lock** such a read holds, for an entity whose strategy is locking;
 - this attempt's own **insertion** of the object;
 - a **revision you state** yourself, in a target write.
@@ -350,7 +351,10 @@ Which failures are retried is fixed:
 
 Anything else includes your own exceptions, a lock that couldn't be had in time, and a
 constraint violation such as a duplicate key. Each reaches you as the `cause` of an
-`ExecutionFailure`.
+`ExecutionFailure`. How long a statement waits for a lock is PostgreSQL's `lock_timeout`
+setting, which you set on the login or in the connection string; the lifecycle guide's
+[session settings](../postgresql-lifecycle.md#session-settings) explain which settings
+Parallax leaves to you.
 
 ### Observed and stated revisions
 
@@ -394,13 +398,20 @@ A deadlock that ends a transaction holding a target write plays out the same way
 re-run states the same revision, and if the row moved in the meantime, the precondition
 fails and isn't retried.
 
+At the default Read Committed, the same race ends sooner. Nothing raises a serialization
+failure, so the write is checked against the version you stated and fails its
+precondition on the first attempt. The attempt's own read of the order doesn't license
+the target write: only the stated version counts.
+
 ### How many times
 
 `max_retries` counts re-runs, not attempts. The default is 10, so a transaction makes up
 to 11 attempts. If every one of them fails with something retryable, the last attempt's
 failure reaches you as the `cause` of an `ExecutionFailure`, with a note naming the
-count, such as `bounded retry exhausted after 11 attempts (retries=10)`. `max_retries=0`
-turns retries off, and the callback runs once:
+count, such as `bounded retry exhausted after 11 attempts (retries=10)`. For a deadlock
+or a serialization failure, that cause is the database's error, whose `category` is
+`"deadlock"`; [Errors](08-errors.md#failures-the-database-reports) describes it.
+`max_retries=0` turns retries off, and the callback runs once:
 
 <!-- example: make-a-single-attempt -->
 ```python
@@ -447,10 +458,14 @@ def a_scope_for_reports(db: ScopedDatabase) -> ScopedDatabase:
 ```
 <!-- /example -->
 
-A transaction through the reports scope runs with `max_retries=3`,
-`concurrency="locking"` and `isolation="repeatable_read"`, and a call through it that
-passes `max_retries=0` changes only that. Only leaving a keyword out inherits; passing
-`None` is refused. `tx.options` holds the resolved `TxnOptions`, the same for every
+`connect_with_transaction_defaults` returns a root, a `Database[PostgresRole]`: the
+type parameter is what its subject scopes take as a database authorization, a
+`PostgresRole` on PostgreSQL, as [Execution authority](06-execution-authority.md#subject-scope)
+explains. Pass `a_scope_for_reports` a scope of that root, such as
+`root.using_database_login()`. A transaction through the reports scope then runs with
+`max_retries=3`, `concurrency="locking"` and `isolation="repeatable_read"`, and a call
+through it that passes `max_retries=0` changes only that. Only leaving a keyword out
+inherits; passing `None` raises `ValueError` before anything runs. `tx.options` holds the resolved `TxnOptions`, the same for every
 attempt and every joined call. In a read-only transaction, `rtx.options` holds a
 `ReadOnlyTxnOptions`, which has no concurrency preference.
 

@@ -59,7 +59,15 @@ can read but has no write verbs. `db.transact(callback)` opens a read-write one 
 its callback the `TxnContext`, `tx`, from
 [Getting started](01-getting-started.md#write-in-a-transaction). Both contexts have
 `find` and `stream`, which read inside the transaction. Which of the three you choose
-decides what a read sees, what it locks, and whether you can write what it returned:
+decides what a read sees, what it locks, and whether you can write what it returned.
+
+In short: a standalone read is the simplest and locks nothing. A read-only transaction
+lets several reads see one consistent state. A read inside `transact` is the one whose
+values you can write back. A read-write transaction also holds its pending writes, the
+writes you have made through `tx` that it hasn't sent to the database yet, and it sends
+them before each read, so the read sees them. The table spells out the details, some of
+which later chapters explain: [Writing](04-writing.md) covers pending writes and target
+writes, and [Transactions](05-transactions.md) covers isolation and locking.
 
 |  | Standalone: `db.find`, `db.stream` | Read-only: `db.read_only(...)` | Read-write: `db.transact(...)` |
 | -- | -- | -- | -- |
@@ -67,8 +75,8 @@ decides what a read sees, what it locks, and whether you can write what it retur
 | Do several reads agree? | No. Each read sees the database as it is when that read runs | Only at Repeatable Read or Serializable: on PostgreSQL, every read in the transaction then sees one snapshot of the database. At the default, Read Committed, each read sees the latest commits | As for read-only. A read also sees the transaction's own writes |
 | Do a stream's pages agree? | No. Each page is consistent only within itself | At Repeatable Read or Serializable, a row already delivered can't change value, and on PostgreSQL every page reads the transaction's one snapshot, so no new rows appear either. At Read Committed, each page is consistent only within itself | As for read-only |
 | Row locks | None | None | A shared lock on each row read from an entity that uses the locking strategy: always a Non-Temporal entity without a version, such as `Customer`, and every entity when the transaction prefers locking |
-| Sees this transaction's pending writes | No. It reads outside every transaction | Nothing to see: a read-only transaction writes nothing | Yes. The read first sends the writes the transaction has buffered |
-| Can the value license a later write? | No. Amending it raises `WriteEvidenceError`; state the revision it carries in a target write instead | No, as for a standalone read | Yes, within the same attempt. History and range reads can't, and a value read at a past Transaction Time is read-only |
+| Sees this transaction's pending writes | No. It reads outside every transaction | Nothing to see: a read-only transaction writes nothing | Yes. The read first sends the pending writes |
+| Can the value license a later write? | No. Amending it raises `WriteEvidenceError`; a [target write](04-writing.md#target-writes), which states the version the value showed, can write it instead | No, as for a standalone read | Yes, within the same attempt. History and range reads can't, and a value read at a past Transaction Time is read-only |
 | Stream lifetime | Can stay open across pages, holding no connection between them | Ends with the attempt | Ends with the attempt |
 
 Both kinds of transaction run at Read Committed unless you pass `isolation=`, as
@@ -162,7 +170,8 @@ first read ran.
 A read-only transaction offers reads and no writes. Its reads take no row locks and force
 no flush, so it gets this agreement without making any writer wait. A `db.read_only` call
 made inside its callback joins the same transaction instead of opening another, so a
-helper that reads through `db.read_only` works on its own and inside a larger read:
+helper that reads through `db.read_only` works on its own and inside a larger read-only
+transaction:
 
 <!-- example: join-a-read-only-transaction -->
 ```python
@@ -190,8 +199,10 @@ Called alone, `orders_of` opens its own read-only transaction. Called from
 `customer_with_their_orders`, it joins that transaction and reads the same snapshot as
 the customer. A `db.transact` call made inside a read-only callback is refused with
 `TransactionAccessModeError` before its callback runs, and catching that refusal leaves
-the read-only transaction usable. [Transactions](05-transactions.md#running-a-transaction) covers nesting in
-full, including what happens when a joined callback fails.
+the read-only transaction usable. The reverse holds too: called from inside a
+`db.transact` callback, `orders_of` raises `TransactionAccessModeError`, so a helper that both kinds of
+caller use takes the context to read through as a parameter instead. [Transactions](05-transactions.md#running-a-transaction) covers
+nesting in full, including what happens when a joined callback fails.
 
 ### Cost and contention
 
@@ -241,7 +252,10 @@ def customers_named(db: ScopedDatabase, prefix: str) -> list[Customer]:
 
 Besides `==`, `!=`, `<`, `<=`, `>` and `>=`, an attribute offers `between`, `in_` and
 `not_in`, and a string attribute `starts_with`, `ends_with`, `contains`, `like` and
-`not_like`, each of which takes `case_insensitive=True`. A boolean attribute is tested
+`not_like`, each of which takes `case_insensitive=True`. `like` and `not_like` take a
+SQL pattern, in which `%` matches any run of characters and `_` any one character, with
+no escaping; `starts_with`, `ends_with` and `contains` match their text literally, `%`
+and `_` included. A boolean attribute is tested
 with `.is_(True)` or `.is_(False)`. A nullable one is tested with `.is_null()` or
 `.is_not_null()`; comparing with `None` raises `QueryDefinitionError` as you build the
 query. The [Predicate](../../../../core/spec/m-predicate.md#predicate-set) contract
@@ -249,7 +263,9 @@ defines each operation.
 
 Rows sort exactly as you ask, with nulls last unless a key says otherwise, as
 `Customer.email.asc().nulls_first()` does; nothing is added to break ties. Without
-`order_by`, `limit` returns some of the matching rows, but which ones is unspecified.
+`order_by`, `find` returns its results in no particular order, and `limit` returns some
+of the matching rows, but which ones is unspecified. A stream and a history read are the
+exceptions: they follow the primary key, as later sections show.
 Parallax has no offset, so a limit is a cap rather than a way to page. To show results a
 screen at a time, filter past the last key you showed, as in
 `Order.where(Order.id > last_id).order_by(Order.id.asc()).limit(20)`. To work through a
@@ -334,9 +350,10 @@ not only those over the total. Parallax loads a graph with one statement per rel
 level, however many rows each level holds, so an include never turns into one query per
 row.
 
-An include path can run at most two relationships deep, and it loads every relationship
-along the way, so `include(Order.customer.orders)` loads each order's customer as well
-as that customer's orders:
+`include` takes any number of paths, and calling it again adds more. An include path can run at most two relationships deep, and a
+longer one raises `QueryDefinitionError` as you build the query. A path loads every
+relationship along the way, so `include(Order.customer.orders)` loads each order's
+customer as well as that customer's orders:
 
 <!-- example: load-orders-with-their-customer -->
 ```python
@@ -404,7 +421,8 @@ reads from one. `find` itself doesn't raise for a row that breaks the model. The
 accessor you call does: `.result()`, `.result_or_none()` and `.results()` raise
 `InvalidDataError` when a result they would return breaks it. When you would rather
 handle such rows yourself, `checked()` hands them back as `InvalidData` records, in their
-place among the results:
+place among the results. A stream offers `checked()` too, and iterating what it returns
+yields the same records in place:
 
 <!-- example: read-rows-that-break-the-model -->
 ```python
@@ -451,7 +469,10 @@ def total_of_every_order(db: ScopedDatabase, page: int) -> Decimal:
 
 A stream is a context manager, and you consume it inside its `with` block, once, in
 order. It has no `.results()`. Keeping every value it hands you would rebuild the whole
-result in memory; this loop keeps only a running total. `batch_size` sets how many
+result in memory; this loop keeps only a running total. It adds the totals up itself
+because a query always returns whole entities: Parallax has no aggregates, grouping or
+projections, and no way to run SQL you write. For a sum the database should compute, run
+your own SQL on a connection of your own. `batch_size` sets how many
 results each page reads, 1024 by default. It counts results, not their included
 relationships, and it changes how many statements a stream issues, never which results
 arrive or in what order.
@@ -464,7 +485,10 @@ connection. A stream inside a transaction uses the transaction's connection inst
 A stream ends when its results run out or when you leave the `with` block, whichever
 comes first. Using it after that, entering it twice or iterating it twice raises
 `StreamStateError`. If a page fails partway through, the results already delivered stay
-delivered, and the failure is raised in place of the next one.
+delivered, and the failure is raised in place of the next one. A standalone stream
+raises it as an `ExecutionFailure`, as a failing standalone read does. Inside a
+transaction it is the page's own error, which `transact` wraps if you let it escape the
+callback.
 
 A stream inside a transaction can't outlive the transaction attempt. Each page of a
 read-write stream flushes your pending writes before it reads, so a loop can stream rows
@@ -573,7 +597,10 @@ returns only the milestones the database held at some point in that range. Neith
 history nor a range read can license a write.
 
 A temporal read carries its instant through the whole graph it loads: a temporal entity
-reached through an include is read at the same instant as the root.
+reached through an include is read at the same instant as the root. An entity reached
+from one that doesn't keep a time axis is read at `LATEST` on that axis. So a Bitemporal
+entity included from a Non-Temporal root is read at the latest Valid Time and the latest
+Transaction Time, and needs no `as_of`.
 
 ## Bitemporal reads
 
@@ -620,9 +647,11 @@ yet of the sale; asked as recorded in January, it answers 10.00.
 Valid Time has no default because "the latest Valid Time" is a claim about your business,
 not about the database: it picks the fact whose window is still open, which may not be
 the one in effect on the day you care about. You can still ask for that milestone
-explicitly with `as_of(valid_time=LATEST)`. When no window is open, as for a price that
-ends in September, nothing matches: `.result()` raises `NoResultFound` and
-`.result_or_none()` returns `None`.
+explicitly with `as_of(valid_time=LATEST)`. For `TEA-1` that answers 12.00, the price
+whose window opens in September and has no end. When no window is open, as for a price
+listed only until September, such as the summer blend that
+[Writing](04-writing.md#insert-from-a-date) lists, nothing matches: `.result()` raises
+`NoResultFound` and `.result_or_none()` returns `None`.
 
 A range returns every milestone in effect at some point within it:
 
@@ -666,9 +695,9 @@ def customers_with_an_order_over_as_wire(db: ScopedDatabase, total: Decimal) -> 
 ```
 <!-- /example -->
 
-It also accepts a query document: the canonical form of an Object Query, as a plain
-mapping. Code that receives queries from outside Python, or builds them as data, uses
-this form:
+It also accepts a query document: the query a `where(...)` chain builds, an Object Query,
+written as a plain mapping in Parallax's language-neutral form. Code that receives
+queries from outside Python, or builds them as data, uses this form:
 
 <!-- example: query-with-a-wire-document -->
 ```python
@@ -690,9 +719,13 @@ class that declares `namespace=` adds it in front: `namespace="shop"` would make
 customer `shop.Customer`. Values take their canonical form too: a `Decimal` total
 arrives as the string `"150.00"` and a date as `"2024-04-01"`. A `WireEntity` is an
 immutable mapping that `json.dumps` accepts as it is, with included relationships nested
-inside it. The [Object Query](../../../../core/spec/m-object-query.md) contract defines
-the document's clauses, and [predicates](../../../../core/spec/m-predicate.md) its
-filters.
+inside it. `target` names the entity, `predicate` the filter, and `includes` lists the
+include paths: each path is a list of `segments`, one per relationship hop, and each
+segment names its relationship under `rel`. So on a query whose target is `Order`, the
+document form of `include(Order.customer.orders)` is
+`{"segments": [{"rel": "Order.customer"}, {"rel": "Customer.orders"}]}`. The
+[Object Query](../../../../core/spec/m-object-query.md) contract defines every clause,
+and [predicates](../../../../core/spec/m-predicate.md) the filters.
 
 `db.wire.stream` streams mappings, which suits an export that writes each value out as it
 arrives:

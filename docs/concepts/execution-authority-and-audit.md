@@ -205,4 +205,4 @@ A write that is cancelled or nets to nothing receives no stamp.
 - [Database-login scope](../../languages/python/docs/guide/06-execution-authority.md#database-login-scope)
 - [Subject scope](../../languages/python/docs/guide/06-execution-authority.md#subject-scope)
 - [Credentials](../../languages/python/docs/guide/06-execution-authority.md#credentials)
-- [Who the work is recorded as](../../languages/python/docs/guide/06-execution-authority.md#who-the-work-is-recorded-as)
+- [One actor per transaction](../../languages/python/docs/guide/06-execution-authority.md#one-actor-per-transaction)

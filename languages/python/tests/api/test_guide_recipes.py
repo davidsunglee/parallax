@@ -32,6 +32,11 @@ from parallax.conformance.guide_models import (
     Shipment,
 )
 from parallax.conformance.guide_recipes import (
+    CarrierDelivery,
+    CourierDelivery,
+    Delivery,
+    PostalDelivery,
+    StorePickup,
     a_scope_for_reports,
     add_a_customer_from_json,
     add_a_surcharge_to_every_order,
@@ -41,6 +46,7 @@ from parallax.conformance.guide_recipes import (
     add_to_an_order_under_a_lock,
     amend_a_value_read_earlier,
     amend_after_reading_it_again,
+    arrange_a_pickup,
     cancel_an_order,
     cancel_reviewed_orders,
     cancel_unless_changed,
@@ -72,6 +78,7 @@ from parallax.conformance.guide_recipes import (
     customers_with_an_order_over,
     customers_with_an_order_over_as_wire,
     delete_the_shipments_of,
+    deliveries_for,
     discontinue_a_tea,
     export_customers,
     forget_an_email_address,
@@ -106,6 +113,7 @@ from parallax.conformance.guide_recipes import (
     shipments_to,
     table_statements,
     total_of_every_order,
+    tracked_deliveries_for,
     who_placed,
     withdraw_a_credit_limit,
 )
@@ -346,6 +354,45 @@ def test_a_family_read_materializes_each_concrete_class(profile_run: Any) -> Non
     assert type(by_id[2]) is BankTransfer
     assert by_id[1].card_last_four == "4242"
     assert by_id[2].reference == "INV-10"
+
+
+_DELIVERIES = DomainModel(Delivery, CarrierDelivery, CourierDelivery, PostalDelivery, StorePickup)
+
+
+def test_each_concrete_subtype_is_stored_and_read_through_a_table_of_its_own(
+    profile_run: Any,
+) -> None:
+    assert [statement.split(" (")[0] for statement in table_statements(_DELIVERIES)] == [
+        "create table courier_delivery",
+        "create table postal_delivery",
+        "create table store_pickup",
+    ]
+    profile_run.reset(model_of(_DELIVERIES), {})
+    db = own_root(connect(profile_run.port, _DELIVERIES)).using_database_login()
+    db.transact(
+        lambda tx: (
+            tx.insert(CourierDelivery(id=1, order_id=10, tracking_number="C-1", courier="Bud")),
+            tx.insert(PostalDelivery(id=2, order_id=10, tracking_number="P-2", service="first")),
+            tx.insert(CourierDelivery(id=4, order_id=11, tracking_number="C-4", courier="Ann")),
+        )
+    )
+
+    arrange_a_pickup(db, 3, 10, "Bergen")
+
+    with contextlib.closing(profile_run.control()) as control:
+        pickups = control.execute("select id, order_id, store from store_pickup", ())
+    assert [tuple(row) for row in pickups] == [(3, 10, "Bergen")]
+    by_id = {delivery.id: delivery for delivery in deliveries_for(db, 10)}
+    assert {key: type(value) for key, value in by_id.items()} == {
+        1: CourierDelivery,
+        2: PostalDelivery,
+        3: StorePickup,
+    }
+    tracked = sorted(tracked_deliveries_for(db, 10), key=lambda delivery: delivery.id)
+    assert [(type(delivery), delivery.tracking_number) for delivery in tracked] == [
+        (CourierDelivery, "C-1"),
+        (PostalDelivery, "P-2"),
+    ]
 
 
 def test_a_document_layout_entity_reads_like_a_column_one(profile_run: Any) -> None:
@@ -1956,6 +2003,15 @@ def test_a_join_naming_another_level_runs_through_the_shipped_surface() -> None:
     assert isinstance(refused.value.cause, TransactionOptionConflictError)
 
 
+def test_a_family_stored_per_subtype_runs_through_the_shipped_surface() -> None:
+    db = own_root(Database.connect(_ScriptedPort(), _DELIVERIES)).using_database_login()
+
+    arrange_a_pickup(db, 3, 10, "Bergen")
+
+    assert deliveries_for(db, 10) == []
+    assert tracked_deliveries_for(db, 10) == []
+
+
 def test_transaction_defaults_run_through_the_shipped_surface() -> None:
     database = own_root(
         connect_with_transaction_defaults(cast("PostgresAdapter", _ScriptedPort()), SHOP_MODEL)
@@ -1972,6 +2028,11 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
     assert sorted(guide_recipes.__all__) == sorted(
         recipe.__name__
         for recipe in (
+            CarrierDelivery,
+            CourierDelivery,
+            Delivery,
+            PostalDelivery,
+            StorePickup,
             a_scope_for_reports,
             add_a_customer_from_json,
             add_a_surcharge_to_every_order,
@@ -1981,6 +2042,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             add_to_an_order_under_a_lock,
             amend_a_value_read_earlier,
             amend_after_reading_it_again,
+            arrange_a_pickup,
             cancel_an_order,
             cancel_reviewed_orders,
             cancel_unless_changed,
@@ -2012,6 +2074,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             customers_with_an_order_over,
             customers_with_an_order_over_as_wire,
             delete_the_shipments_of,
+            deliveries_for,
             discontinue_a_tea,
             export_customers,
             forget_an_email_address,
@@ -2046,6 +2109,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             shipments_to,
             table_statements,
             total_of_every_order,
+            tracked_deliveries_for,
             who_placed,
             withdraw_a_credit_limit,
         )
