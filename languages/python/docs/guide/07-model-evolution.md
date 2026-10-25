@@ -265,10 +265,11 @@ preventing it.
 
 Both editions work against the migrated schema, because the evolution was unilateral.
 Release 1 never selects `card_number`, and its inserts leave the column empty.
-Behavioral Impacts can still make the editions behave differently. For example, a
-unique index created for a later release can refuse a write an earlier-edition process
-makes; the database error names the index, which you can find in `created_indices`, and
-Parallax doesn't retry it.
+Behavioral Impacts can still make the editions behave differently. For example, a unique
+index created for a later release can refuse a write an earlier-edition process makes.
+The `DatabaseError` names the index in its `violated_index`, which you can find in
+`created_indices`, and Parallax doesn't retry it.
+[Errors](08-errors.md#failures-the-database-reports) shows a handler for one such index.
 
 An overlap-visible change goes further: release 2 can store a row release 1 can't read.
 Here, a release-1 read through `Payment` that reaches a gift-card row finds a tag naming

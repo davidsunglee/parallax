@@ -52,7 +52,11 @@ start and end are framework-owned members, `txStart` and `txEnd`, plus `validSta
 
 A milestone is **current** on an axis when its end is **infinity**. Infinity is a real
 value rather than a missing one, so a current milestone compares and sorts like any
-other ([temporal infinity](../../core/spec/m-core.md#temporal-infinity)). On a
+other ([temporal infinity](../../core/spec/m-core.md#temporal-infinity)). A read
+returns both bounds of every milestone it selects, and an end it returns is either a
+finite instant or infinity, never an absent value. Each binding gives infinity a value
+of its own, such as Python's `TemporalBound.INFINITY`
+([reading an end](../../languages/python/docs/guide/03-reading.md#bitemporal-reads)). On a
 Bitemporal Entity a milestone is a rectangle in Valid Time × Transaction Time, and an
 object's **current coverage** is the set of its milestones that are current on
 Transaction Time.

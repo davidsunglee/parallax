@@ -57,7 +57,11 @@ class Address(ValueObject):
     postcode: Attr[str]
 
 
-class Shipment(Entity, table="shipment"):
+class Shipment(
+    Entity,
+    table="shipment",
+    indices=(index("shipment_tracking_number", "tracking_number", unique=True),),
+):
     id: Attr[int] = attr(primary_key=True)
     order_id: Attr[int]
     ship_to: Attr[Address]

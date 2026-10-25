@@ -14,6 +14,7 @@ Python-specific spelling and public semantics live in the
 | Object Query | The typed query built from entity expressions | [Queries and results](spec/queries-and-results.md) |
 | Snapshot | The typed result envelope over published entity values | [Queries and results](spec/queries-and-results.md) |
 | Wire | Canonical serialized input or output at an explicit boundary | [Queries and results](spec/queries-and-results.md) |
+| Temporal infinity | The core [temporal infinity](../../core/spec/m-core.md#temporal-infinity), spelled `TemporalBound.INFINITY` in an end member | [Declarations](spec/declarations.md) |
 | Database / Scoped Database | Snapshot's facades over a Database Root and an authority-selected Execution Scope ([m-execution](../../core/spec/m-execution.md)) | [Execution](spec/execution.md) |
 | Writable / Read-Only Transaction Context | The callback's capability-specific surface within one transaction attempt | [Execution](spec/execution.md) |
 | Edit | A copy-based write input derived from an entity value | [Execution](spec/execution.md) |

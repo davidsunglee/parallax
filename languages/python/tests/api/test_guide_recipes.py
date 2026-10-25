@@ -80,6 +80,7 @@ from parallax.conformance.guide_recipes import (
     delete_the_shipments_of,
     deliveries_for,
     discontinue_a_tea,
+    every_stored_price,
     export_customers,
     forget_an_email_address,
     grant_a_credit_limit,
@@ -98,6 +99,7 @@ from parallax.conformance.guide_recipes import (
     place_two_orders,
     place_two_orders_together,
     place_two_orders_together_serializably,
+    price_holds_until,
     price_on,
     price_on_as_recorded_at,
     prices_during,
@@ -118,8 +120,7 @@ from parallax.conformance.guide_recipes import (
     withdraw_a_credit_limit,
 )
 from parallax.conformance.scripted_clock import ScriptedClock
-from parallax.core import LATEST, TX_TIME, VALID_TIME, DomainModel
-from parallax.core.base import INFINITY
+from parallax.core import LATEST, TX_TIME, DomainModel, TemporalBound
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, Committed, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
@@ -167,7 +168,9 @@ from tests._support.db_port import ConnectsAsItself, projected_row
 from tests._support.root_ownership import own_root
 from tests.api._peer_commit import commit_as_a_peer
 
+_OPEN = TemporalBound.INFINITY
 _JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_FEB = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _MAR = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 _MAY = dt.datetime(2024, 5, 1, tzinfo=dt.UTC)
 _JUN = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -654,6 +657,14 @@ def test_a_bitemporal_read_answers_on_either_axis(profile_run: Any) -> None:
     assert price_on_as_recorded_at(db, "TEA-1", _JUL, _JUN) == Decimal("8.00")
 
 
+def test_a_price_ends_where_the_next_begins_or_has_no_end(profile_run: Any) -> None:
+    db = _seed_the_first_three_price_transactions(profile_run)
+
+    assert price_holds_until(db, "TEA-1", _JUL) == _SEP
+    assert price_holds_until(db, "TEA-1", _OCT) is None
+    assert price_holds_until(db, "TEA-1", _FEB) == _APR
+
+
 def test_a_valid_time_range_returns_each_price_in_effect(profile_run: Any) -> None:
     db = _seed_the_first_three_price_transactions(profile_run)
 
@@ -691,6 +702,19 @@ def test_a_read_in_the_inserting_transaction_sees_the_pending_insert(profile_run
 
     assert (registered.id, registered.name, registered.email) == (5, "Barbara", None)
     assert look_up_a_customer(db, 5) == registered
+
+
+def test_registering_a_taken_id_fails_as_a_unique_violation(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    register_a_customer(db, 5, "Barbara")
+
+    with pytest.raises(ExecutionFailure) as failed:
+        register_a_customer(db, 5, "Grace")
+
+    cause = failed.value.cause
+    assert isinstance(cause, DatabaseError)
+    assert cause.category == "uniqueViolation"
+    assert look_up_a_customer(db, 5).name == "Barbara"
 
 
 def test_an_amendment_writes_the_edited_member_and_a_replacement_writes_them_all(
@@ -754,7 +778,7 @@ def test_transaction_time_only_writes_append_milestones(profile_run: Any) -> Non
     assert [
         (limit.amount, limit.tx_start, limit.tx_end)
         for limit in db.find(query.history(TX_TIME)).results()
-    ] == [(Decimal("1000.00"), _T1, _T2), (Decimal("2500.00"), _T2, INFINITY)]
+    ] == [(Decimal("1000.00"), _T1, _T2), (Decimal("2500.00"), _T2, _OPEN)]
 
     def delete_the_limit(tx: TxnContext) -> None:
         tx.delete(tx.find(CreditLimit.where(CreditLimit.customer_id == 1)).result())
@@ -783,19 +807,19 @@ def test_transaction_time_only_writes_append_milestones(profile_run: Any) -> Non
     ] == [
         (Decimal("1000.00"), _T1, _T2),
         (Decimal("2500.00"), _T2, _T3),
-        (Decimal("500.00"), _T4, INFINITY),
+        (Decimal("500.00"), _T4, _OPEN),
     ]
 
 
-type _Milestone = tuple[Decimal, dt.datetime, object, dt.datetime, object]
+type _End = dt.datetime | TemporalBound
+type _Milestone = tuple[Decimal, dt.datetime, _End, dt.datetime, _End]
 
 
 def _price_milestones(db: ScopedDatabase, sku: str) -> set[_Milestone]:
     """Every stored row of ``sku``: its amount, Valid-Time extent and Transaction-Time extent."""
-    query = Price.where(Price.sku == sku).history(TX_TIME).history(VALID_TIME)
     return {
         (price.amount, price.valid_start, price.valid_end, price.tx_start, price.tx_end)
-        for price in db.find(query).results()
+        for price in every_stored_price(db, sku)
     }
 
 
@@ -806,10 +830,10 @@ def test_the_bitemporal_worked_example_stores_the_rows_its_timelines_draw(
     ten, twelve = Decimal("10.00"), Decimal("12.00")
 
     list_a_tea(db, "TEA-1", ten, _JAN)
-    assert _price_milestones(db, "TEA-1") == {(ten, _JAN, INFINITY, _T1, INFINITY)}
+    assert _price_milestones(db, "TEA-1") == {(ten, _JAN, _OPEN, _T1, _OPEN)}
 
     list_a_seasonal_tea(db, "TEA-2", Decimal("6.00"), _JUN, _SEP)
-    assert _price_milestones(db, "TEA-2") == {(Decimal("6.00"), _JUN, _SEP, _T2, INFINITY)}
+    assert _price_milestones(db, "TEA-2") == {(Decimal("6.00"), _JUN, _SEP, _T2, _OPEN)}
     # No window of the summer blend stays open, so the latest Valid Time finds nothing.
     latest = Price.where(Price.sku == "TEA-2").as_of(valid_time=LATEST)
     assert db.find(latest).result_or_none() is None
@@ -820,22 +844,22 @@ def test_the_bitemporal_worked_example_stores_the_rows_its_timelines_draw(
 
     change_a_price_from(db, "TEA-1", twelve, _APR)
     first_year = {
-        (ten, _JAN, INFINITY, _T1, _T3),
-        (ten, _JAN, _APR, _T3, INFINITY),
+        (ten, _JAN, _OPEN, _T1, _T3),
+        (ten, _JAN, _APR, _T3, _OPEN),
     }
-    assert _price_milestones(db, "TEA-1") == first_year | {(twelve, _APR, INFINITY, _T3, INFINITY)}
+    assert _price_milestones(db, "TEA-1") == first_year | {(twelve, _APR, _OPEN, _T3, _OPEN)}
     assert (
         price_on_as_recorded_at(db, "TEA-1", _MAY, dt.datetime(2024, 1, 20, tzinfo=dt.UTC)) == ten
     )
 
     run_a_summer_sale(db)
     summer = {
-        (twelve, _APR, INFINITY, _T3, _T4),
-        (twelve, _APR, _JUN, _T4, INFINITY),
-        (Decimal("8.00"), _JUN, _SEP, _T4, INFINITY),
+        (twelve, _APR, _OPEN, _T3, _T4),
+        (twelve, _APR, _JUN, _T4, _OPEN),
+        (Decimal("8.00"), _JUN, _SEP, _T4, _OPEN),
     }
     assert _price_milestones(db, "TEA-1") == first_year | summer | {
-        (twelve, _SEP, INFINITY, _T4, INFINITY)
+        (twelve, _SEP, _OPEN, _T4, _OPEN)
     }
 
     reprice_a_tea_for(db, "TEA-2", Decimal("7.00"), _JUL, _OCT)
@@ -843,14 +867,14 @@ def test_the_bitemporal_worked_example_stores_the_rows_its_timelines_draw(
     # and its state there merges with the repriced piece into one row.
     assert _price_milestones(db, "TEA-2") == {
         (Decimal("6.00"), _JUN, _SEP, _T2, _T5),
-        (Decimal("6.00"), _JUN, _JUL, _T5, INFINITY),
-        (Decimal("7.00"), _JUL, _OCT, _T5, INFINITY),
+        (Decimal("6.00"), _JUN, _JUL, _T5, _OPEN),
+        (Decimal("7.00"), _JUL, _OCT, _T5, _OPEN),
     }
 
     discontinue_a_tea(db, "TEA-1", _DEC)
     autumn = {
-        (twelve, _SEP, INFINITY, _T4, _T6),
-        (twelve, _SEP, _DEC, _T6, INFINITY),
+        (twelve, _SEP, _OPEN, _T4, _T6),
+        (twelve, _SEP, _DEC, _T6, _OPEN),
     }
     assert _price_milestones(db, "TEA-1") == first_year | summer | autumn
     assert (
@@ -861,9 +885,9 @@ def test_the_bitemporal_worked_example_stores_the_rows_its_timelines_draw(
     assert (
         _price_milestones(db, "TEA-1")
         == {
-            (ten, _JAN, INFINITY, _T1, _T3),
+            (ten, _JAN, _OPEN, _T1, _T3),
             (ten, _JAN, _APR, _T3, _T7),
-            (Decimal("9.50"), _JAN, _APR, _T7, INFINITY),
+            (Decimal("9.50"), _JAN, _APR, _T7, _OPEN),
         }
         | summer
         | autumn
@@ -898,8 +922,8 @@ def test_an_amendment_over_a_window_leaves_uncovered_valid_time_uncovered(
 
     assert _price_milestones(db, "TEA-2") == {
         (Decimal("6.00"), _JUN, _SEP, _T2, _T5),
-        (Decimal("6.00"), _JUN, _JUL, _T5, INFINITY),
-        (Decimal("7.00"), _JUL, _SEP, _T5, INFINITY),
+        (Decimal("6.00"), _JUN, _JUL, _T5, _OPEN),
+        (Decimal("7.00"), _JUL, _SEP, _T5, _OPEN),
     }
 
 
@@ -1183,9 +1207,9 @@ def test_a_bitemporal_target_write_states_the_milestone_its_review_read(
     reprice_from_a_review(db, reviewed, Decimal("12.00"), _APR)
 
     assert _price_milestones(db, "TEA-1") == {
-        (Decimal("10.00"), _JAN, INFINITY, _T1, _T3),
-        (Decimal("10.00"), _JAN, _APR, _T3, INFINITY),
-        (Decimal("12.00"), _APR, INFINITY, _T3, INFINITY),
+        (Decimal("10.00"), _JAN, _OPEN, _T1, _T3),
+        (Decimal("10.00"), _JAN, _APR, _T3, _OPEN),
+        (Decimal("12.00"), _APR, _OPEN, _T3, _OPEN),
     }
     with pytest.raises(ExecutionFailure) as refused:
         reprice_from_a_review(db, reviewed, Decimal("13.00"), _APR)
@@ -1497,16 +1521,17 @@ _CREDIT_LIMIT_ROW: Mapping[str, object] = {
     "customer_id": 1,
     "amount": Decimal("1000.00"),
     "in_z": _JAN,
-    "out_z": INFINITY,
+    "out_z": _OPEN,
 }
 _PRICE_ROW: Mapping[str, object] = {
     "sku": "TEA-1",
     "amount": Decimal("10.00"),
     "from_z": _JAN,
-    "thru_z": INFINITY,
+    "thru_z": _OPEN,
     "in_z": _JAN,
-    "out_z": INFINITY,
+    "out_z": _OPEN,
 }
+_SALE_PRICE_ROW: Mapping[str, object] = {**_PRICE_ROW, "from_z": _JUN, "thru_z": _SEP}
 
 _PRODUCT_ROW: Mapping[str, object] = {
     "sku": "TEA-1",
@@ -1600,6 +1625,14 @@ def _tea_price_in_july(db: ScopedDatabase) -> Decimal:
 
 def _tea_price_in_july_as_recorded_in_march(db: ScopedDatabase) -> Decimal:
     return price_on_as_recorded_at(db, "TEA-1", _JUL, _MAR)
+
+
+def _where_the_tea_price_in_july_ends(db: ScopedDatabase) -> object:
+    return price_holds_until(db, "TEA-1", _JUL)
+
+
+def _every_stored_tea_price(db: ScopedDatabase) -> object:
+    return every_stored_price(db, "TEA-1")
 
 
 def _tea_prices_from_may_to_july(db: ScopedDatabase) -> object:
@@ -1832,6 +1865,11 @@ def _place_two_orders_together_serializably(db: ScopedDatabase) -> tuple[bool, b
         pytest.param(_tea_price_in_july, ([_PRICE_ROW],), id="valid-time"),
         pytest.param(_tea_price_in_july_as_recorded_in_march, ([_PRICE_ROW],), id="both-axes"),
         pytest.param(_tea_prices_from_may_to_july, ([_PRICE_ROW],), id="valid-time-range"),
+        pytest.param(_where_the_tea_price_in_july_ends, ([_PRICE_ROW],), id="open-valid-end"),
+        pytest.param(
+            _where_the_tea_price_in_july_ends, ([_SALE_PRICE_ROW],), id="finite-valid-end"
+        ),
+        pytest.param(_every_stored_tea_price, ([_PRICE_ROW],), id="every-stored-row"),
         pytest.param(_customer_one_as_json, ([_CUSTOMER_ROW], [_ORDER_ROW]), id="wire-document"),
         pytest.param(_register_customer_five, ([_CUSTOMER_ROW],), id="insert-and-read"),
         pytest.param(_change_customer_ones_email, ([_CUSTOMER_ROW],), id="amend-an-edit"),
@@ -2076,6 +2114,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             delete_the_shipments_of,
             deliveries_for,
             discontinue_a_tea,
+            every_stored_price,
             export_customers,
             forget_an_email_address,
             grant_a_credit_limit,
@@ -2094,6 +2133,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             place_two_orders,
             place_two_orders_together,
             place_two_orders_together_serializably,
+            price_holds_until,
             price_on,
             price_on_as_recorded_at,
             prices_during,

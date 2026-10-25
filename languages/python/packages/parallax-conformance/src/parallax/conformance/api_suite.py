@@ -163,6 +163,7 @@ RECIPES: Final[list[Recipe]] = [
             "    Entity,\n"
             "    EntityDefinitionError,\n"
             "    Int32,\n"
+            "    MetamodelValidationError,\n"
             "    Rel,\n"
             "    TablePerHierarchy,\n"
             "    TxTemporal,\n"
@@ -185,8 +186,16 @@ RECIPES: Final[list[Recipe]] = [
             "from decimal import Decimal\n"
             "from typing import TextIO\n"
             "\n"
-            "from parallax.core import LATEST, TX_TIME, VALID_TIME, Attr, QueryDefinitionError, "
-            "TxTemporal, attr\n"
+            "from parallax.core import (\n"
+            "    LATEST,\n"
+            "    TX_TIME,\n"
+            "    VALID_TIME,\n"
+            "    Attr,\n"
+            "    QueryDefinitionError,\n"
+            "    TemporalBound,\n"
+            "    TxTemporal,\n"
+            "    attr,\n"
+            ")\n"
             "from parallax.core.entity import UnloadedRelationshipError\n"
             "from parallax.core.execution import ExecutionFailure, TransactionAccessModeError\n"
             "from parallax.core.read_delivery import InvalidData, InvalidDataError, "
@@ -212,7 +221,17 @@ RECIPES: Final[list[Recipe]] = [
             "import json\n"
             "from decimal import Decimal\n"
             "\n"
-            "from parallax.core import LATEST, Attr, Bitemporal, Edge, TxTemporal, attr\n"
+            "from parallax.core import (\n"
+            "    LATEST,\n"
+            "    TX_TIME,\n"
+            "    VALID_TIME,\n"
+            "    Attr,\n"
+            "    Bitemporal,\n"
+            "    Edge,\n"
+            "    TemporalBound,\n"
+            "    TxTemporal,\n"
+            "    attr,\n"
+            ")\n"
             "from parallax.core.execution import ExecutionFailure, "
             "TransactionTimePinReadOnlyError\n"
             "from parallax.core.unit_work import (\n"
@@ -357,6 +376,11 @@ RECIPES: Final[list[Recipe]] = [
         snippet=_sources(guide_recipes.price_on, guide_recipes.price_on_as_recorded_at),
     ),
     Recipe(
+        recipe_id="read-where-a-price-ends",
+        title="Read where a Bitemporal value ends in Valid Time, open or finite",
+        snippet=_sources(guide_recipes.price_holds_until),
+    ),
+    Recipe(
         recipe_id="read-prices-over-a-valid-time-range",
         title="Read every Bitemporal milestone in a Valid-Time range",
         snippet=_sources(guide_recipes.prices_during),
@@ -397,6 +421,11 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="withdraw-a-credit-limit",
         title="Terminate a Transaction-Time-Only entity",
         snippet=_sources(guide_recipes.withdraw_a_credit_limit),
+    ),
+    Recipe(
+        recipe_id="read-every-stored-price",
+        title="Read every row stored for a Bitemporal value, on both axes",
+        snippet=_sources(guide_recipes.every_stored_price),
     ),
     Recipe(
         recipe_id="list-a-price",
@@ -698,7 +727,15 @@ RECIPES: Final[list[Recipe]] = [
             "\n"
             "from pydantic import ValidationError\n"
             "\n"
-            "from parallax.core import EditError, EntityDefinitionError, QueryDefinitionError\n"
+            "from parallax.core import (\n"
+            "    DomainModel,\n"
+            "    EditError,\n"
+            "    Entity,\n"
+            "    EntityDefinitionError,\n"
+            "    MetamodelValidationError,\n"
+            "    QueryDefinitionError,\n"
+            ")\n"
+            "from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName\n"
             "from parallax.core.db_port import ConnectionAcquisitionError\n"
             "from parallax.core.entity import UnloadedRelationshipError\n"
             "from parallax.core.execution import (\n"
@@ -724,6 +761,7 @@ RECIPES: Final[list[Recipe]] = [
             "    WriteInstructionError,\n"
             "    WritePreconditionError,\n"
             ")\n"
+            "from parallax.evolution import SchemaDelta\n"
             "from parallax.snapshot import (\n"
             "    NoResultFound,\n"
             "    ScopedDatabase,\n"
@@ -734,6 +772,11 @@ RECIPES: Final[list[Recipe]] = [
         ),
     ),
     Recipe(
+        recipe_id="list-a-models-problems",
+        title="List every problem a rejected model reports",
+        snippet=_sources(guide_error_recipes.problems_in_a_model),
+    ),
+    Recipe(
         recipe_id="report-every-refused-field",
         title="Report every field of a form the model refuses",
         snippet=_sources(guide_error_recipes.change_a_customer_from_a_form),
@@ -742,6 +785,14 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="add-a-customer-unless-the-id-is-taken",
         title="Tell a duplicate key from other database errors",
         snippet=_sources(guide_error_recipes.add_a_customer_unless_the_id_is_taken),
+    ),
+    Recipe(
+        recipe_id="add-a-shipment-unless-its-tracking-number-is-taken",
+        title="Tell a violation of one unique index from every other database error",
+        snippet=_sources(
+            guide_error_recipes.created_index_name,
+            guide_error_recipes.add_a_shipment_unless_its_tracking_number_is_taken,
+        ),
     ),
     Recipe(
         recipe_id="operations-imports",

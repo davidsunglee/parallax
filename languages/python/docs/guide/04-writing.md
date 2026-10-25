@@ -35,7 +35,17 @@ import datetime as dt
 import json
 from decimal import Decimal
 
-from parallax.core import LATEST, Attr, Bitemporal, Edge, TxTemporal, attr
+from parallax.core import (
+    LATEST,
+    TX_TIME,
+    VALID_TIME,
+    Attr,
+    Bitemporal,
+    Edge,
+    TemporalBound,
+    TxTemporal,
+    attr,
+)
 from parallax.core.execution import ExecutionFailure, TransactionTimePinReadOnlyError
 from parallax.core.unit_work import (
     InstructionRejectedError,
@@ -76,6 +86,12 @@ The insert waits in the transaction's buffer. The `find` after it needs the new 
 so the transaction flushes the insert first, and the read sees it. A flushed write is
 still inside the transaction: if the callback raises, or the commit fails, the insert is
 discarded like everything else the transaction did.
+
+If another customer already has the id, the database refuses the insert when the
+transaction sends it, here at the `find`. The refusal reaches you as the `cause` of an
+`ExecutionFailure`: a `DatabaseError` whose `category` is `"uniqueViolation"`.
+[Errors](08-errors.md#failures-the-database-reports) shows how to tell it from other
+failures.
 
 The instance you inserted carries a licence of its own for the rest of the attempt. You
 can amend or delete it, or an edited copy of it, without reading it back.
@@ -236,12 +252,13 @@ amount      tx_start      tx_end
 ```
 
 The amendment closed the first milestone by setting its `tx_end`, and chained the
-second, which is current: its `tx_end` is open, shown as ∞. The first milestone's
-values are untouched. `replace` chains the same way, with a successor that states the
-whole writable state. No write ever edits a closed milestone, which is what makes a read
-of the past stable. Two amendments of one limit in the same transaction still add only
-one milestone: the second revises the milestone the first opened, which no other
-transaction has seen.
+second, which is current: its `tx_end` is `TemporalBound.INFINITY`, drawn as ∞. A
+`history(TX_TIME)` read returns both rows with exactly these values. The first
+milestone's values are untouched. `replace` chains the same way, with a successor that
+states the whole writable state. No write ever edits a closed milestone, which is what
+makes a read of the past stable. Two amendments of one limit in the same transaction
+still add only one milestone: the second revises the milestone the first opened, which
+no other transaction has seen.
 
 `terminate` closes the current milestone and chains nothing after it:
 
@@ -281,9 +298,21 @@ Time, and the Valid Time the write didn't reach keeps its price.
 
 This section follows one price list through a year, using `Price` from
 [Modeling](02-modeling.md#choosing-a-temporality-profile). Suppose its transactions
-commit on the dates the `tx_start` column shows. Each picture lists every stored row of
-one product: its amount, the Valid Time it covers, from `|` up to the next `|` or onwards
-for `--->`, and its `tx_start` and `tx_end`. A row whose `tx_end` is ∞ is current.
+commit on the dates the `tx_start` column shows. Each picture draws what this function
+returns for one product, every row stored for it:
+
+<!-- example: read-every-stored-price -->
+```python
+def every_stored_price(db: ScopedDatabase, sku: str) -> list[Price]:
+    """Every row stored for ``sku``, closed or current, on both axes."""
+    return db.find(Price.where(Price.sku == sku).history(TX_TIME).history(VALID_TIME)).results()
+```
+<!-- /example -->
+
+Each value it returns is one row of the picture: its `amount`; the Valid Time it covers,
+from `valid_start` at `|` up to `valid_end` at the next `|`, or onwards, drawn `--->`,
+where `valid_end` is `TemporalBound.INFINITY`; and its `tx_start` and `tx_end`. A row
+whose `tx_end` is `TemporalBound.INFINITY`, drawn ∞, is current.
 
 ### Insert from a date
 
