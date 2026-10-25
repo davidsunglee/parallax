@@ -12,5 +12,8 @@ The usage guide is now the [Parallax Python Guide](guide/README.md). Its chapter
   transactions and Wire publication.
 - [Writing](guide/04-writing.md): inserts, keyed amendments and deletes, unversioned
   writes, Bitemporal `amend ... until`, target writes, predicate writes and Wire writes.
-- [Transactions](guide/05-transactions.md): replay of overtaken writes and per-call
-  option overrides.
+- [Transactions](guide/05-transactions.md): running and joining transactions, isolation
+  levels, optimistic and locking concurrency, retries, and option defaults.
+- [Execution authority](guide/06-execution-authority.md): running work as the service
+  login or as an application user under a database role, credentials that refresh per
+  connection, and which actor a transaction keeps.

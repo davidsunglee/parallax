@@ -294,7 +294,7 @@ one applies depends on the entity and on what the transaction prefers.
 1 on insert and advances it on every write; you never assign it. When a transaction
 writes an order it read, the write checks that the version is still the one it read. If
 another transaction changed the order in between, the write conflicts, and Parallax
-re-runs your transaction against a fresh read. [Transactions](05-transactions.md) shows
+re-runs your transaction against a fresh read. [Transactions](05-transactions.md#optimistic-and-locking-concurrency) shows
 that replay, and how a transaction can prefer the locking strategy for every entity.
 
 `Customer` has no version, so nothing in its row shows that it changed. Parallax always

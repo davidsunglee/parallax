@@ -12,6 +12,7 @@ from parallax.conformance import (
     edit_runner,
     execution_authority_stories,
     execution_lifecycle_stories,
+    guide_authority_recipes,
     guide_recipes,
     read_only_stories,
     snapshot_recipes,
@@ -431,6 +432,82 @@ RECIPES: Final[list[Recipe]] = [
         snippet=_sources(guide_recipes.change_a_limit_shown_earlier),
     ),
     Recipe(
+        recipe_id="transactions-imports",
+        title="Import what Transactions uses",
+        snippet=(
+            "from decimal import Decimal\n"
+            "\n"
+            "from parallax.core import DomainModel\n"
+            "from parallax.core.execution import (\n"
+            "    ExecutionFailure,\n"
+            "    ReadOnlyTxnOptions,\n"
+            "    TransactionAccessModeError,\n"
+            "    TransactionOptionConflictError,\n"
+            "    TxnOptions,\n"
+            ")\n"
+            "from parallax.core.unit_work import (\n"
+            "    OptimisticLockConflictError,\n"
+            "    RollbackOnlyError,\n"
+            "    WriteEvidenceError,\n"
+            "    WritePreconditionError,\n"
+            ")\n"
+            "from parallax.postgres import PostgresAdapter, PostgresRole\n"
+            "from parallax.snapshot import (\n"
+            "    Database,\n"
+            "    ReadOnlyTxnContext,\n"
+            "    ScopedDatabase,\n"
+            "    TxnContext,\n"
+            "    connect,\n"
+            ")\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="join-the-callers-transaction",
+        title="Write through a helper that joins its caller's transaction",
+        snippet=_sources(guide_recipes.record_an_order, guide_recipes.open_an_account),
+    ),
+    Recipe(
+        recipe_id="a-caught-joined-failure-still-rolls-back",
+        title="Catching a joined call's failure cannot save the transaction",
+        snippet=_sources(guide_recipes.open_an_account_even_if_the_order_fails),
+    ),
+    Recipe(
+        recipe_id="place-an-order-within-a-credit-limit",
+        title="Check a limit and write in one Serializable transaction",
+        snippet=_sources(guide_recipes.place_an_order_within_the_limit),
+    ),
+    Recipe(
+        recipe_id="amend-an-order-under-a-lock",
+        title="Prefer locking for one transaction",
+        snippet=_sources(guide_recipes.add_to_an_order_under_a_lock),
+    ),
+    Recipe(
+        recipe_id="change-a-reviewed-total-within-the-limit",
+        title="A retried transaction states its target revision again",
+        snippet=_sources(guide_recipes.change_a_reviewed_total_within_the_limit),
+    ),
+    Recipe(
+        recipe_id="make-a-single-attempt",
+        title="Turn retries off for one call",
+        snippet=_sources(guide_recipes.add_to_an_order_once),
+    ),
+    Recipe(
+        recipe_id="set-transaction-defaults",
+        title="Set transaction defaults on a root and a scope",
+        snippet=_sources(
+            guide_recipes.connect_with_transaction_defaults, guide_recipes.a_scope_for_reports
+        ),
+    ),
+    Recipe(
+        recipe_id="join-with-matching-options",
+        title="A joining call that names an option must match the transaction's",
+        snippet=_sources(
+            guide_recipes.place_two_orders,
+            guide_recipes.place_two_orders_together,
+            guide_recipes.place_two_orders_together_serializably,
+        ),
+    ),
+    Recipe(
         recipe_id="join-a-read-only-transaction",
         title="Join a read-only transaction from a helper that reads",
         snippet=_sources(guide_recipes.orders_of, guide_recipes.customer_with_their_orders),
@@ -472,6 +549,49 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="project-a-typed-result-as-wire",
         title="Project a Typed result as Wire data without another read",
         snippet=_sources(guide_recipes.customer_for_page_and_api),
+    ),
+    Recipe(
+        recipe_id="execution-authority-imports",
+        title="Import what Execution authority uses",
+        snippet=(
+            "import datetime as dt\n"
+            "from dataclasses import dataclass\n"
+            "from pathlib import Path\n"
+            "\n"
+            "from parallax.core.db_port import Password\n"
+            "from parallax.core.execution import InvalidPrincipalError, "
+            "TransactionAuthorityError\n"
+            "from parallax.postgres import PostgresAdapter, PostgresRole\n"
+            "from parallax.snapshot import Database, ScopedDatabase, TxnContext\n"
+        ),
+    ),
+    Recipe(
+        recipe_id="run-scheduled-work-as-the-login",
+        title="Run scheduled work as the service's own login",
+        snippet=_sources(guide_authority_recipes.orders_for_the_nightly_report),
+    ),
+    Recipe(
+        recipe_id="run-a-request-as-its-user",
+        title="Run a request as the application user who made it",
+        snippet=_sources(
+            guide_authority_recipes.ShopUser, guide_authority_recipes.change_an_email_for
+        ),
+    ),
+    Recipe(
+        recipe_id="resolve-a-password-per-connection",
+        title="Read a rotating password whenever a connection is made",
+        snippet=_sources(
+            guide_authority_recipes.SecretFile,
+            guide_authority_recipes.configure_with_a_secret_file,
+        ),
+    ),
+    Recipe(
+        recipe_id="keep-one-actor-per-transaction",
+        title="A transaction keeps the actor it began with",
+        snippet=_sources(
+            guide_authority_recipes.rename_a_customer,
+            guide_authority_recipes.another_user_can_join,
+        ),
     ),
 ]
 

@@ -35,10 +35,13 @@ from parallax.conformance.guide_models import (
     Shipment,
 )
 from parallax.conformance.guide_recipes import (
+    a_scope_for_reports,
     add_a_customer_from_json,
     add_a_surcharge_to_every_order,
     add_and_find_a_customer,
     add_to_an_order,
+    add_to_an_order_once,
+    add_to_an_order_under_a_lock,
     amend_a_value_read_earlier,
     amend_after_reading_it_again,
     cancel_an_order,
@@ -51,8 +54,10 @@ from parallax.conformance.guide_recipes import (
     change_a_price_from,
     change_a_reviewed_limit,
     change_a_reviewed_total,
+    change_a_reviewed_total_within_the_limit,
     change_an_email,
     configure_the_database,
+    connect_with_transaction_defaults,
     correct_a_past_price,
     correct_a_price_as_recorded_then,
     credit_limit_history,
@@ -78,16 +83,23 @@ from parallax.conformance.guide_recipes import (
     list_a_seasonal_tea,
     list_a_tea,
     look_up_a_customer,
+    open_an_account,
+    open_an_account_even_if_the_order_fails,
     orders_of,
     orders_placed_on,
     orders_with_their_customer,
     payments_for,
     place_an_order,
+    place_an_order_within_the_limit,
+    place_two_orders,
+    place_two_orders_together,
+    place_two_orders_together_serializably,
     price_on,
     price_on_as_recorded_at,
     prices_during,
     products_and_unreadable_rows,
     products_named,
+    record_an_order,
     register_a_customer,
     rename_a_customer_through_wire,
     replace_contact_details,
@@ -104,24 +116,34 @@ from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.usage_guide import snippet_sources
 from parallax.core import LATEST, TX_TIME, VALID_TIME, DomainModel
 from parallax.core.base import INFINITY
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, Committed, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import model_of
 from parallax.core.execution import (
     ExecutionFailure,
     TransactionAccessModeError,
+    TransactionOptionConflictError,
     TransactionTimePinReadOnlyError,
+    TxnOptions,
 )
 from parallax.core.execution_lifecycle import (
+    AttemptCommitted,
+    AttemptRolledBack,
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
     ReadFinished,
     RootExecution,
+    TransactionAttemptFinished,
+    TransactionAttemptOutcome,
+    TransactionAttemptStarted,
 )
 from parallax.core.read_delivery import InvalidDataError
 from parallax.core.unit_work import (
     InstructionRejectedError,
+    OptimisticLockConflictError,
+    RollbackOnlyError,
     WriteEvidenceError,
     WriteInstructionError,
     WritePreconditionError,
@@ -1144,6 +1166,250 @@ def test_a_wire_target_write_states_the_milestone_an_earlier_wire_read_showed(
     assert current_credit_limit(db, 1) == Decimal("1500.00")
 
 
+class _PeerCommitsDuringAttempts:
+    """A lifecycle provider that lets another session commit ``work`` right after
+    the first read of the first attempt, or of every attempt, and records how
+    each attempt of the transactions it observes ended."""
+
+    def __init__(self, work: Callable[[], object], *, every_attempt: bool = False) -> None:
+        self._work = work
+        self._every_attempt = every_attempt
+        self._armed = False
+        self._fired = False
+        self.attempts: list[str] = []
+
+    def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler:
+        return self
+
+    def handle(self, event: ExecutionEvent, /) -> None:
+        if isinstance(event, TransactionAttemptStarted):
+            self._armed = self._every_attempt or not self._fired
+        elif isinstance(event, ReadFinished) and self._armed:
+            self._armed, self._fired = False, True
+            commit_as_a_peer(self._work)
+        elif isinstance(event, TransactionAttemptFinished):
+            self.attempts.append(_how_the_attempt_ended(event.outcome))
+
+    def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
+        raise AssertionError(error)
+
+
+def _how_the_attempt_ended(outcome: TransactionAttemptOutcome) -> str:
+    if isinstance(outcome, AttemptCommitted):
+        return "committed"
+    assert isinstance(outcome, AttemptRolledBack)
+    failed = outcome.failure
+    verdict = "retried" if failed.retry_eligible else "not retried"
+    return f"{failed.failure.diagnostic.qualified_type.rsplit('.', 1)[-1]}, {verdict}"
+
+
+def _observed(
+    profile_run: Any, work: Callable[[ScopedDatabase], object], *, every_attempt: bool = False
+) -> tuple[ScopedDatabase, _PeerCommitsDuringAttempts]:
+    """A scope whose transaction attempts let ``work`` commit, through a peer root,
+    right after their first read."""
+    peer = own_root(connect(profile_run.port, SHOP_MODEL)).using_database_login()
+    observer = _PeerCommitsDuringAttempts(lambda: work(peer), every_attempt=every_attempt)
+    db = own_root(
+        connect(profile_run.port, SHOP_MODEL, lifecycle_provider=observer)
+    ).using_database_login()
+    return db, observer
+
+
+def _order(order_id: int, customer_id: int, total: str) -> Order:
+    return Order(
+        id=order_id, customer_id=customer_id, placed_on=dt.date(2024, 5, 1), total=Decimal(total)
+    )
+
+
+def _seed_customers_and_a_limit(profile_run: Any) -> ScopedDatabase:
+    db = _shop(profile_run)
+    _seed_customers(db)
+    grant_a_credit_limit(db, 1, Decimal("250.00"))
+    return db
+
+
+def test_a_helper_joins_its_callers_transaction_and_commits_with_it(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    opened = open_an_account(db, Customer(id=3, name="Edsger", email=None), _order(13, 3, "9.00"))
+
+    assert (opened.id, opened.name) == (3, "Edsger")
+    assert [order.id for order in orders_of(db, 3)] == [13]
+
+    # Order 10 exists already, so the joined insert fails, and the customer the
+    # outer callback inserted is rolled back with it.
+    with pytest.raises(ExecutionFailure):
+        open_an_account(db, Customer(id=4, name="Barbara", email=None), _order(10, 4, "9.00"))
+    assert db.find(Customer.where(Customer.id == 4)).result_or_none() is None
+
+
+def test_a_caught_joined_failure_still_rolls_the_transaction_back(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    _seed_customers(db)
+
+    assert open_an_account_even_if_the_order_fails(
+        db, Customer(id=3, name="Edsger", email=None), _order(13, 3, "9.00")
+    )
+    assert look_up_a_customer(db, 3).name == "Edsger"
+
+    with pytest.raises(ExecutionFailure) as refused:
+        open_an_account_even_if_the_order_fails(
+            db, Customer(id=4, name="Barbara", email=None), _order(14, 4, "0.00")
+        )
+
+    assert isinstance(refused.value.cause, RollbackOnlyError)
+    assert isinstance(refused.value.cause.__cause__, ValueError)
+    assert db.find(Customer.where(Customer.id == 4)).result_or_none() is None
+
+
+def test_serializable_keeps_two_concurrent_orders_within_the_limit(profile_run: Any) -> None:
+    _seed_customers_and_a_limit(profile_run)
+    peer_placed: list[bool] = []
+    db, observer = _observed(
+        profile_run,
+        lambda peer: peer_placed.append(
+            place_an_order_within_the_limit(peer, _order(20, 1, "50.00"))
+        ),
+    )
+
+    # Orders 10 and 11 total 170.00 against a limit of 250.00, so either new
+    # order fits alone but not both. The peer commits between this
+    # transaction's reads and its insert, so its first attempt fails to
+    # serialize; the retry sees the peer's order and declines.
+    placed = place_an_order_within_the_limit(db, _order(21, 1, "60.00"))
+
+    assert peer_placed == [True]
+    assert placed is False
+    assert observer.attempts == ["DatabaseError, retried", "committed"]
+    assert sorted(order.id for order in orders_of(db, 1)) == [10, 11, 20]
+
+
+def test_a_write_another_writer_overtook_is_replayed_from_a_fresh_read(profile_run: Any) -> None:
+    _seed_customers(_shop(profile_run))
+    db, observer = _observed(profile_run, lambda peer: add_to_an_order(peer, 10, Decimal("5.00")))
+
+    add_to_an_order(db, 10, Decimal("20.00"))
+
+    assert observer.attempts == ["OptimisticLockConflictError, retried", "committed"]
+    order = db.find(Order.where(Order.id == 10)).result()
+    assert (order.total, order.version) == (Decimal("175.00"), 3)
+
+
+def test_a_conflict_on_every_attempt_exhausts_ten_retries(profile_run: Any) -> None:
+    _seed_customers(_shop(profile_run))
+    db, observer = _observed(
+        profile_run, lambda peer: add_to_an_order(peer, 10, Decimal("1.00")), every_attempt=True
+    )
+
+    with pytest.raises(ExecutionFailure) as exhausted:
+        add_to_an_order(db, 10, Decimal("20.00"))
+
+    assert isinstance(exhausted.value.cause, OptimisticLockConflictError)
+    assert exhausted.value.cause.__notes__ == [
+        "bounded retry exhausted after 11 attempts (retries=10)"
+    ]
+    assert observer.attempts == ["OptimisticLockConflictError, retried"] * 11
+    assert db.find(Order.where(Order.id == 10)).result().total == Decimal("161.00")
+
+
+def test_a_locking_transaction_holds_its_read_lock_until_it_ends(profile_run: Any) -> None:
+    _seed_customers(_shop(profile_run))
+    refused: list[DatabaseError] = []
+
+    def write_the_order_elsewhere(_: ScopedDatabase) -> None:
+        with contextlib.closing(profile_run.control()) as control:
+            control.execute_write("set lock_timeout = '200ms'", ())
+            try:
+                control.execute_write("update orders set total = total where id = 10", ())
+            except DatabaseError as timed_out:
+                refused.append(timed_out)
+
+    db, observer = _observed(profile_run, write_the_order_elsewhere)
+
+    add_to_an_order_under_a_lock(db, 10, Decimal("20.00"))
+
+    assert [error.category for error in refused] == ["lockWaitTimeout"]
+    assert observer.attempts == ["committed"]
+    order = db.find(Order.where(Order.id == 10)).result()
+    assert (order.total, order.version) == (Decimal("170.00"), 2)
+
+
+def test_a_retried_target_write_fails_the_precondition_it_states_again(profile_run: Any) -> None:
+    reviewed = _seed_customers_and_a_limit(profile_run).find(Order.where(Order.id == 10)).result()
+    db, observer = _observed(profile_run, lambda peer: add_to_an_order(peer, 10, Decimal("5.00")))
+
+    # The first attempt's write meets a row the peer changed after its
+    # Serializable snapshot, which fails to serialize and is retried; the retry
+    # states the same version, which no longer holds, and is not retried.
+    with pytest.raises(ExecutionFailure) as refused:
+        change_a_reviewed_total_within_the_limit(db, reviewed, Decimal("160.00"))
+
+    assert isinstance(refused.value.cause, WritePreconditionError)
+    assert observer.attempts == ["DatabaseError, retried", "WritePreconditionError, not retried"]
+    assert db.find(Order.where(Order.id == 10)).result().total == Decimal("155.00")
+    assert change_a_reviewed_total_within_the_limit(db, reviewed, Decimal("300.00")) is False
+
+
+def test_a_single_attempt_surfaces_the_conflict_unretried(profile_run: Any) -> None:
+    _seed_customers(_shop(profile_run))
+    db, observer = _observed(profile_run, lambda peer: add_to_an_order(peer, 10, Decimal("5.00")))
+
+    with pytest.raises(ExecutionFailure) as conflicted:
+        add_to_an_order_once(db, 10, Decimal("20.00"))
+
+    assert isinstance(conflicted.value.cause, OptimisticLockConflictError)
+    assert conflicted.value.cause.__notes__ == [
+        "bounded retry exhausted after 1 attempts (retries=0)"
+    ]
+    assert observer.attempts == ["OptimisticLockConflictError, retried"]
+    assert db.find(Order.where(Order.id == 10)).result().total == Decimal("155.00")
+
+
+def test_root_and_scope_defaults_resolve_each_transactions_options(profile_run: Any) -> None:
+    profile_run.reset(model_of(SHOP_MODEL), {})
+    database = own_root(
+        connect_with_transaction_defaults(cast("PostgresAdapter", profile_run.port), SHOP_MODEL)
+    )
+    db = database.using_database_login()
+    reports = a_scope_for_reports(db)
+
+    assert db.transact(lambda tx: tx.options) == TxnOptions(
+        max_retries=3, concurrency="locking", isolation="read_committed"
+    )
+    assert reports.transact(lambda tx: tx.options) == TxnOptions(
+        max_retries=3, concurrency="locking", isolation="repeatable_read"
+    )
+    assert reports.transact(lambda tx: tx.options, max_retries=0) == TxnOptions(
+        max_retries=0, concurrency="locking", isolation="repeatable_read"
+    )
+    assert reports.read_only(lambda rtx: rtx.options.isolation) == "repeatable_read"
+
+
+def test_a_join_must_name_the_options_its_transaction_resolved(profile_run: Any) -> None:
+    db = _seed_customers_and_a_limit(profile_run)
+
+    with pytest.raises(ExecutionFailure) as refused:
+        place_two_orders_together(db, _order(20, 1, "50.00"), _order(21, 1, "60.00"))
+
+    assert isinstance(refused.value.cause, TransactionOptionConflictError)
+    assert sorted(order.id for order in orders_of(db, 1)) == [10, 11]
+
+    # The second check sees the first order, pending in the same transaction,
+    # and declines.
+    placed = place_two_orders_together_serializably(
+        db, _order(20, 1, "50.00"), _order(21, 1, "60.00")
+    )
+
+    assert placed == (True, False)
+    assert sorted(order.id for order in orders_of(db, 1)) == [10, 11, 20]
+
+    # Outside a transaction, each check runs and commits in a transaction of its own.
+    assert place_two_orders(db, _order(22, 1, "20.00"), _order(23, 1, "20.00")) == (True, False)
+    assert sorted(order.id for order in orders_of(db, 1)) == [10, 11, 20, 22]
+
+
 # --------------------------------------------------------------------------- #
 # Database-free run-through of every recipe body.                              #
 # --------------------------------------------------------------------------- #
@@ -1438,6 +1704,51 @@ def _change_a_limit_shown_earlier(db: ScopedDatabase) -> None:
     change_a_limit_shown_earlier(db, shown, "1500.00")
 
 
+_ANOTHER_ORDER_ROW: Mapping[str, object] = {**_ORDER_ROW, "id": 11, "total": Decimal("20.00")}
+
+
+def _open_an_account_for_edsger(db: ScopedDatabase) -> Customer:
+    return open_an_account(db, Customer(id=3, name="Edsger", email=None), _order(13, 3, "9.00"))
+
+
+def _open_an_account_whatever_the_order(db: ScopedDatabase) -> bool:
+    return open_an_account_even_if_the_order_fails(
+        db, Customer(id=3, name="Edsger", email=None), _order(13, 3, "9.00")
+    )
+
+
+def _place_an_order_that_fits(db: ScopedDatabase) -> bool:
+    return place_an_order_within_the_limit(db, _order(13, 1, "80.00"))
+
+
+def _place_an_order_past_the_limit(db: ScopedDatabase) -> bool:
+    return place_an_order_within_the_limit(db, _order(13, 1, "900.00"))
+
+
+def _add_to_order_ten_under_a_lock(db: ScopedDatabase) -> None:
+    add_to_an_order_under_a_lock(db, 10, Decimal("20.00"))
+
+
+def _change_a_reviewed_total_within_the_limit(db: ScopedDatabase) -> bool:
+    reviewed = db.find(Order.where(Order.id == 10)).result()
+    return change_a_reviewed_total_within_the_limit(db, reviewed, Decimal("160.00"))
+
+
+def _change_a_reviewed_total_past_the_limit(db: ScopedDatabase) -> bool:
+    reviewed = db.find(Order.where(Order.id == 10)).result()
+    return change_a_reviewed_total_within_the_limit(db, reviewed, Decimal("990.00"))
+
+
+def _add_to_order_ten_once(db: ScopedDatabase) -> None:
+    add_to_an_order_once(db, 10, Decimal("20.00"))
+
+
+def _place_two_orders_together_serializably(db: ScopedDatabase) -> tuple[bool, bool]:
+    return place_two_orders_together_serializably(
+        db, _order(13, 1, "50.00"), _order(14, 1, "60.00")
+    )
+
+
 @pytest.mark.parametrize(
     ("recipe", "reads"),
     [
@@ -1542,6 +1853,31 @@ def _change_a_limit_shown_earlier(db: ScopedDatabase) -> None:
             ([_CREDIT_LIMIT_ROW], [_CREDIT_LIMIT_ROW]),
             id="wire-target-tx-start",
         ),
+        pytest.param(_open_an_account_for_edsger, ([_CUSTOMER_ROW],), id="joined-insert"),
+        pytest.param(_open_an_account_whatever_the_order, (), id="caught-join-unneeded"),
+        pytest.param(
+            _place_an_order_that_fits, ([_CREDIT_LIMIT_ROW], [_ORDER_ROW]), id="limit-fits"
+        ),
+        pytest.param(
+            _place_an_order_past_the_limit, ([_CREDIT_LIMIT_ROW], [_ORDER_ROW]), id="limit-passed"
+        ),
+        pytest.param(_add_to_order_ten_under_a_lock, ([_ORDER_ROW],), id="locking-preference"),
+        pytest.param(
+            _change_a_reviewed_total_within_the_limit,
+            ([_ORDER_ROW], [_CREDIT_LIMIT_ROW], [_ORDER_ROW, _ANOTHER_ORDER_ROW]),
+            id="limited-target-write",
+        ),
+        pytest.param(
+            _change_a_reviewed_total_past_the_limit,
+            ([_ORDER_ROW], [_CREDIT_LIMIT_ROW], [_ORDER_ROW, _ANOTHER_ORDER_ROW]),
+            id="limited-target-write-declined",
+        ),
+        pytest.param(_add_to_order_ten_once, ([_ORDER_ROW],), id="single-attempt"),
+        pytest.param(
+            _place_two_orders_together_serializably,
+            ([_CREDIT_LIMIT_ROW], [_ORDER_ROW], [_CREDIT_LIMIT_ROW], [_ORDER_ROW]),
+            id="matching-join",
+        ),
     ],
 )
 def test_every_recipe_runs_through_the_shipped_surface(
@@ -1604,14 +1940,49 @@ def test_cancelling_reviewed_orders_lets_any_other_failure_through() -> None:
     assert not isinstance(failed.value.cause, WritePreconditionError)
 
 
+def test_a_caught_joined_failure_runs_through_the_shipped_surface() -> None:
+    db = own_root(Database.connect(_ScriptedPort(), SHOP_MODEL)).using_database_login()
+
+    with pytest.raises(ExecutionFailure) as refused:
+        open_an_account_even_if_the_order_fails(
+            db, Customer(id=3, name="Edsger", email=None), _order(13, 3, "0.00")
+        )
+
+    assert isinstance(refused.value.cause, RollbackOnlyError)
+
+
+def test_a_join_naming_another_level_runs_through_the_shipped_surface() -> None:
+    db = own_root(Database.connect(_ScriptedPort(), SHOP_MODEL)).using_database_login()
+
+    with pytest.raises(ExecutionFailure) as refused:
+        place_two_orders_together(db, _order(13, 1, "50.00"), _order(14, 1, "60.00"))
+
+    assert isinstance(refused.value.cause, TransactionOptionConflictError)
+
+
+def test_transaction_defaults_run_through_the_shipped_surface() -> None:
+    database = own_root(
+        connect_with_transaction_defaults(cast("PostgresAdapter", _ScriptedPort()), SHOP_MODEL)
+    )
+
+    reports = a_scope_for_reports(database.using_database_login())
+
+    assert reports.transact(lambda tx: tx.options) == TxnOptions(
+        max_retries=3, concurrency="locking", isolation="repeatable_read"
+    )
+
+
 def test_every_recipe_the_module_exports_has_a_driver() -> None:
     assert sorted(guide_recipes.__all__) == sorted(
         recipe.__name__
         for recipe in (
+            a_scope_for_reports,
             add_a_customer_from_json,
             add_a_surcharge_to_every_order,
             add_and_find_a_customer,
             add_to_an_order,
+            add_to_an_order_once,
+            add_to_an_order_under_a_lock,
             amend_a_value_read_earlier,
             amend_after_reading_it_again,
             cancel_an_order,
@@ -1624,8 +1995,10 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             change_a_price_from,
             change_a_reviewed_limit,
             change_a_reviewed_total,
+            change_a_reviewed_total_within_the_limit,
             change_an_email,
             configure_the_database,
+            connect_with_transaction_defaults,
             correct_a_past_price,
             correct_a_price_as_recorded_then,
             credit_limit_history,
@@ -1651,16 +2024,23 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             list_a_seasonal_tea,
             list_a_tea,
             look_up_a_customer,
+            open_an_account,
+            open_an_account_even_if_the_order_fails,
             orders_of,
             orders_placed_on,
             orders_with_their_customer,
             payments_for,
             place_an_order,
+            place_an_order_within_the_limit,
+            place_two_orders,
+            place_two_orders_together,
+            place_two_orders_together_serializably,
             price_on,
             price_on_as_recorded_at,
             prices_during,
             products_and_unreadable_rows,
             products_named,
+            record_an_order,
             register_a_customer,
             rename_a_customer_through_wire,
             replace_contact_details,
@@ -1709,6 +2089,7 @@ _NOTHING_ASSUMED: frozenset[str] = frozenset()
         pytest.param("02-modeling.md", "modeling-imports", _NOTHING_ASSUMED, id="02"),
         pytest.param("03-reading.md", "reading-imports", _SHOP_MODEL_NAMES, id="03"),
         pytest.param("04-writing.md", "writing-imports", _SHOP_MODEL_NAMES, id="04"),
+        pytest.param("05-transactions.md", "transactions-imports", _SHOP_MODEL_NAMES, id="05"),
     ],
 )
 def test_each_chapters_imports_bind_what_its_snippets_read_and_only_what_it_names(

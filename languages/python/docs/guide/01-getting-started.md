@@ -144,7 +144,7 @@ root that owns it. Close the root when your application stops, either by calling
 `close()` or, as here, by leaving its `with` block. `connect` also takes
 `options=TxnOptions(...)`, the defaults every transaction of the root starts from: how
 many times to retry, the isolation level and the concurrency preference.
-[Transactions](05-transactions.md) covers them.
+[Transactions](05-transactions.md#options-and-root-defaults) covers them.
 
 One root serves the whole process. Every thread can share it and the scopes derived from
 it, while each transaction belongs to the thread that runs it. The API is synchronous;
@@ -162,13 +162,11 @@ work runs under, which gives you a `ScopedDatabase`: an Execution Scope.
 That is the usual choice for a service with its own database account.
 
 When each request should run as an application user instead, `using_principal(principal)`
-derives a scope for that user. The principal names the user, which audit records carry,
-and the database role the work runs under, which the PostgreSQL adapter switches to with
-`SET ROLE`. The
+derives a scope for that user. The principal names the user and the database role the
+work runs under, which the PostgreSQL adapter switches to with `SET ROLE`. The
 [lifecycle guide](../postgresql-lifecycle.md#execution-authority-and-session-affinity)
-covers the PostgreSQL side, and the
-[execution binding](../../spec/execution.md#models-roots-and-scopes) describes the
-method.
+covers the PostgreSQL side, and [Execution authority](06-execution-authority.md) shows
+both kinds of scope in use.
 
 You can derive as many scopes from one root as you need. They share its connections.
 

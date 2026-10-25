@@ -11,3 +11,4 @@ running Parallax in production.
 3. [Reading and querying](03-reading.md)
 4. [Writing](04-writing.md)
 5. [Transactions](05-transactions.md)
+6. [Execution authority](06-execution-authority.md)

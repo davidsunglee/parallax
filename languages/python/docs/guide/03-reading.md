@@ -74,7 +74,7 @@ decides what a read sees, what it locks, and whether you can write what it retur
 Both kinds of transaction run at Read Committed unless you pass `isolation=`, as
 `"read_committed"`, `"repeatable_read"` or `"serializable"`, or give the root another
 default. [Modeling](02-modeling.md#optimistic-lock-versions) explains the two concurrency
-strategies, and [Transactions](05-transactions.md) explains the isolation levels.
+strategies, and [Transactions](05-transactions.md#isolation-levels) explains the isolation levels.
 
 A read through `db` never joins a transaction: `db.find` and `db.stream` make a
 standalone read on their own connection wherever you call them, even inside a callback.
@@ -190,7 +190,7 @@ Called alone, `orders_of` opens its own read-only transaction. Called from
 `customer_with_their_orders`, it joins that transaction and reads the same snapshot as
 the customer. A `db.transact` call made inside a read-only callback is refused with
 `TransactionAccessModeError` before its callback runs, and catching that refusal leaves
-the read-only transaction usable. [Transactions](05-transactions.md) covers nesting in
+the read-only transaction usable. [Transactions](05-transactions.md#running-a-transaction) covers nesting in
 full, including what happens when a joined callback fails.
 
 ### Cost and contention

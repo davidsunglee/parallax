@@ -164,7 +164,7 @@ version is 2. If another transaction changed the order between your read and you
 the write conflicts, and Parallax rolls the transaction back and runs your callback
 again against fresh reads. A transaction can also prefer the locking strategy for
 versioned entities, with `db.transact(callback, concurrency="locking")`.
-[Transactions](05-transactions.md) explains that replay and that choice.
+[Transactions](05-transactions.md#optimistic-and-locking-concurrency) explains that replay and that choice.
 
 A value read outside the transaction licenses nothing, whichever kind of entity it
 belongs to. [Reading](03-reading.md#youll-write-what-you-read) shows the refusal, and
@@ -569,7 +569,7 @@ strategy it is raised when the transaction flushes, typically at commit; when th
 transaction prefers locking, it is raised at the call. That failure is never retried,
 because running the callback again would state the same revision again. A revision the
 transaction observed through its own read is different: when that one moves, Parallax
-can read again and retry. [Transactions](05-transactions.md) explains which failures are
+can read again and retry. [Transactions](05-transactions.md#retries) explains which failures are
 retried.
 
 `key=` takes the object's primary-key value; an entity's primary key is always one
