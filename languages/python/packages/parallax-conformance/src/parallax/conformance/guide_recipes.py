@@ -844,5 +844,5 @@ def place_two_orders_together(db: ScopedDatabase, first: Order, second: Order) -
 def place_two_orders_together_serializably(
     db: ScopedDatabase, first: Order, second: Order
 ) -> tuple[bool, bool]:
-    """Both checks join this Serializable transaction, so both orders commit or neither does."""
+    """Both checks join this Serializable transaction, so the orders they accept commit together."""
     return db.transact(lambda tx: place_two_orders(db, first, second), isolation="serializable")
