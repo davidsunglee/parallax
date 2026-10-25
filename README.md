@@ -37,7 +37,7 @@ database learned each fact, and when each fact is true in the world. It ships to
   transaction. The tour ends with the same read both ways.
 - **Models evolve without a restart.** A running process can adopt a new edition of its
   model, a changed model you publish while it runs, and each transaction uses exactly
-  one edition. See [model evolution](core/spec/m-model-evolution.md).
+  one edition. See [Model evolution](languages/python/docs/guide/07-model-evolution.md).
 - **One specification, proven against real PostgreSQL.** A language-neutral
   specification and a compatibility corpus define the behaviour, and the Python
   implementation is tested against them on a real database. See
@@ -169,7 +169,8 @@ Every snippet on this page runs against a real PostgreSQL database in the test s
 
 - **Learn the API**: the [Python Guide](languages/python/docs/guide/README.md), starting
   with [Getting started](languages/python/docs/guide/01-getting-started.md).
-- **Run it in production**: the
+- **Run it in production**: [Operations](languages/python/docs/guide/09-operations.md)
+  shows where a root's pool, read plans and observation are set, and the
   [PostgreSQL connection lifecycle](languages/python/docs/postgresql-lifecycle.md) covers
   pooling, credentials, timeouts and observability.
 - **Understand how it works**: the [concepts](docs/concepts/README.md) explain each
