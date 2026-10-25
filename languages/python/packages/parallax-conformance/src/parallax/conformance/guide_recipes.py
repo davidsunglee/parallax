@@ -19,12 +19,13 @@ from parallax.core import TX_TIME, DomainModel
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, TxnOptions
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import WritePreconditionError
 from parallax.evolution import ABSENT, evolve, schema_delta
-from parallax.postgres import PostgresAdapter
+from parallax.postgres import PostgresAdapter, PostgresRole
 from parallax.snapshot import (
+    Database,
     ReadOnlyTxnContext,
     ScopedDatabase,
     TxnContext,
@@ -35,10 +36,13 @@ from parallax.snapshot import (
 )
 
 __all__ = [
+    "a_scope_for_reports",
     "add_a_customer_from_json",
     "add_a_surcharge_to_every_order",
     "add_and_find_a_customer",
     "add_to_an_order",
+    "add_to_an_order_once",
+    "add_to_an_order_under_a_lock",
     "amend_a_value_read_earlier",
     "amend_after_reading_it_again",
     "cancel_an_order",
@@ -51,8 +55,10 @@ __all__ = [
     "change_a_price_from",
     "change_a_reviewed_limit",
     "change_a_reviewed_total",
+    "change_a_reviewed_total_within_the_limit",
     "change_an_email",
     "configure_the_database",
+    "connect_with_transaction_defaults",
     "correct_a_past_price",
     "correct_a_price_as_recorded_then",
     "credit_limit_history",
@@ -78,16 +84,23 @@ __all__ = [
     "list_a_seasonal_tea",
     "list_a_tea",
     "look_up_a_customer",
+    "open_an_account",
+    "open_an_account_even_if_the_order_fails",
     "orders_of",
     "orders_placed_on",
     "orders_with_their_customer",
     "payments_for",
     "place_an_order",
+    "place_an_order_within_the_limit",
+    "place_two_orders",
+    "place_two_orders_together",
+    "place_two_orders_together_serializably",
     "price_on",
     "price_on_as_recorded_at",
     "prices_during",
     "products_and_unreadable_rows",
     "products_named",
+    "record_an_order",
     "register_a_customer",
     "rename_a_customer_through_wire",
     "replace_contact_details",
@@ -659,3 +672,122 @@ def customer_for_page_and_api(db: ScopedDatabase, customer_id: int) -> tuple[Cus
     """One read: a Typed value to render, and the same graph as Wire data to send."""
     snapshot = db.find(Customer.where(Customer.id == customer_id).include(Customer.orders))
     return snapshot.result(), snapshot.wire().result()
+
+
+def record_an_order(db: ScopedDatabase, order: Order) -> None:
+    """Insert ``order`` in a transaction of its own, or in the caller's when it has one."""
+
+    def record(tx: TxnContext) -> None:
+        if order.total <= 0:
+            raise ValueError(f"order {order.id} has no total")
+        tx.insert(order)
+
+    db.transact(record)
+
+
+def open_an_account(db: ScopedDatabase, customer: Customer, first_order: Order) -> Customer:
+    """The customer and the first order commit together, because ``record_an_order`` joins."""
+
+    def open_account(tx: TxnContext) -> Customer:
+        tx.insert(customer)
+        record_an_order(db, first_order)
+        return tx.find(Customer.where(Customer.id == customer.id)).result()
+
+    return db.transact(open_account)
+
+
+def open_an_account_even_if_the_order_fails(
+    db: ScopedDatabase, customer: Customer, first_order: Order
+) -> bool:
+    """Doesn't work: once the joined call has failed, the transaction can only roll back."""
+
+    def open_account(tx: TxnContext) -> bool:
+        tx.insert(customer)
+        try:
+            record_an_order(db, first_order)
+        except ValueError:
+            return False
+        return True
+
+    return db.transact(open_account)
+
+
+def place_an_order_within_the_limit(db: ScopedDatabase, order: Order) -> bool:
+    """Insert ``order`` unless it takes its customer's orders past their credit limit."""
+
+    def place(tx: TxnContext) -> bool:
+        limit = tx.find(CreditLimit.where(CreditLimit.customer_id == order.customer_id)).result()
+        placed = tx.find(Order.where(Order.customer_id == order.customer_id)).results()
+        if sum((each.total for each in placed), order.total) > limit.amount:
+            return False
+        tx.insert(order)
+        return True
+
+    return db.transact(place, isolation="serializable")
+
+
+def add_to_an_order_under_a_lock(db: ScopedDatabase, order_id: int, amount: Decimal) -> None:
+    """Lock the order as it is read, so no other transaction changes it before this one ends."""
+
+    def add(tx: TxnContext) -> None:
+        order = tx.find(Order.where(Order.id == order_id)).result()
+        tx.amend(order, Order.total.set(order.total + amount))
+
+    db.transact(add, concurrency="locking")
+
+
+def change_a_reviewed_total_within_the_limit(
+    db: ScopedDatabase, reviewed: Order, total: Decimal
+) -> bool:
+    """Change the total a review showed, unless the customer's orders would pass their limit."""
+
+    def change(tx: TxnContext) -> bool:
+        limit = tx.find(CreditLimit.where(CreditLimit.customer_id == reviewed.customer_id)).result()
+        placed = tx.find(Order.where(Order.customer_id == reviewed.customer_id)).results()
+        others = sum(each.total for each in placed if each.id != reviewed.id)
+        if others + total > limit.amount:
+            return False
+        tx.amend_if(Order, Order.total.set(total), key=reviewed.id, version=reviewed.version)
+        return True
+
+    return db.transact(change, isolation="serializable")
+
+
+def add_to_an_order_once(db: ScopedDatabase, order_id: int, amount: Decimal) -> None:
+    """Make a single attempt: the job queue that runs this redelivers a job that fails."""
+
+    def add(tx: TxnContext) -> None:
+        order = tx.find(Order.where(Order.id == order_id)).result()
+        tx.amend(order, Order.total.set(order.total + amount))
+
+    db.transact(add, max_retries=0)
+
+
+def connect_with_transaction_defaults(
+    adapter: PostgresAdapter, model: DomainModel
+) -> Database[PostgresRole]:
+    """Every transaction of this root makes at most four attempts and prefers locking."""
+    return connect(adapter, model, options=TxnOptions(max_retries=3, concurrency="locking"))
+
+
+def a_scope_for_reports(db: ScopedDatabase) -> ScopedDatabase:
+    """Transactions through this scope run at Repeatable Read, with the root's other defaults."""
+    return db.with_options(isolation="repeatable_read")
+
+
+def place_two_orders(db: ScopedDatabase, first: Order, second: Order) -> tuple[bool, bool]:
+    """Check and place each order in turn; each check joins the caller's transaction."""
+    return place_an_order_within_the_limit(db, first), place_an_order_within_the_limit(db, second)
+
+
+def place_two_orders_together(db: ScopedDatabase, first: Order, second: Order) -> tuple[bool, bool]:
+    """Refused with ``TransactionOptionConflictError``: each check names Serializable, and
+    this transaction runs at the scope's default level."""
+    return db.transact(lambda tx: place_two_orders(db, first, second))
+
+
+def place_two_orders_together_serializably(
+    db: ScopedDatabase, first: Order, second: Order
+) -> tuple[bool, bool]:
+    """Both checks join this Serializable transaction, so both orders commit or neither does."""
+    return db.transact(lambda tx: place_two_orders(db, first, second), isolation="serializable")

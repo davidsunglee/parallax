@@ -15,3 +15,10 @@ page links the part it explains. Each page ends with links into the
   cannot show what it overwrites is refused.
 - [The temporal model](temporal-model.md): Transaction Time and Valid Time, the
   milestones that record history, and how a temporal write composes over coverage.
+- [Transactions, concurrency and retry](transactions.md): invocations and attempts,
+  why a keyed write needs a licence, how one preference becomes a strategy per Entity,
+  what each isolation level promises, which failures are retried, and what joining a
+  transaction means.
+- [Execution authority and audit](execution-authority-and-audit.md): who a database
+  operation runs as, why that is chosen once per scope, how it reaches the database, and
+  what audit provenance is reserved to record.
