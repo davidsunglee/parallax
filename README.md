@@ -15,10 +15,13 @@ database learned each fact, and when each fact is true in the world. It ships to
   surprise. See [Reading and querying](languages/python/docs/guide/03-reading.md).
 - **Transactions are explicit, and blind writes are refused.** Every write runs inside
   `db.transact(...)`, and Parallax refuses a blind write, one that changes a row by key
-  without knowing what it holds. Changing an existing row by key needs a licence: a read
-  of it in the same transaction, the transaction's own insert of it, or the revision you
-  read it at, stated with the write. Only an entity with no version and no history also
-  accepts predicate writes, which change the rows a query selects without reading them.
+  without knowing what it holds. A write to an existing row shows that it knows in one of
+  four ways. A read of the row in the same transaction shows it, either through the
+  version the write then checks or, for a row with no version, through the lock the read
+  took. So does the transaction's own insert of the row, or, for a value read earlier,
+  the version it showed, stated with the write. Only an entity with no version and no
+  history also accepts predicate writes, which change the rows a query selects without
+  reading them.
   See [Writing](languages/python/docs/guide/04-writing.md).
 - **Conflicts are retried for you, within a bound.** When a deadlock, or a change to a
   row the transaction read, ends an attempt, Parallax runs your whole callback again
@@ -32,12 +35,14 @@ database learned each fact, and when each fact is true in the world. It ships to
   are the same. What changes is who guards that data: the database's column
   constraints, or Parallax checking each document as it reads it. See
   [Modeling](languages/python/docs/guide/02-modeling.md#choosing-a-storage-layout).
-- **Typed and Wire are peers.** One query returns instances of your classes or, through
-  the Wire API, immutable mappings of JSON-ready values, and both work inside the same
-  transaction. The tour ends with the same read both ways.
-- **Models evolve without a restart.** A running process can adopt a new edition of its
-  model, a changed model you publish while it runs, and each transaction uses exactly
-  one edition. See [Model evolution](languages/python/docs/guide/07-model-evolution.md).
+- **Typed and Wire are peers.** One query returns instances of your classes, through the
+  Typed API, or immutable mappings of JSON-ready values, through the Wire API, and both
+  work inside the same transaction. The tour ends with the same read both ways.
+- **Models evolve without a restart.** Once your migration has run, a running process
+  can switch to a changed model, and each transaction keeps the model it started with.
+  The changed model's classes must already be loaded in the process; a model read from a
+  YAML descriptor needs none and serves the Wire API. See
+  [Model evolution](languages/python/docs/guide/07-model-evolution.md).
 - **One specification, proven against real PostgreSQL.** A language-neutral
   specification and a compatibility corpus define the behaviour, and the Python
   implementation is tested against them on a real database. See
@@ -50,8 +55,8 @@ The snippets below leave out imports and the setup that gives you `db`.
 chapter of the guide lists the imports its examples use.
 
 Declare your entities as Pydantic classes. Annotations name each attribute and
-relationship, and an attribute declared with `optimistic_locking=True`, here `version`,
-turns on optimistic locking.
+relationship, `indices` declares database indexes, and an attribute declared with
+`optimistic_locking=True`, here `version`, turns on optimistic locking.
 
 <!-- example: declare-customers-and-orders -->
 ```python
@@ -170,7 +175,8 @@ Every snippet on this page runs against a real PostgreSQL database in the test s
 - **Learn the API**: the [Python Guide](languages/python/docs/guide/README.md), starting
   with [Getting started](languages/python/docs/guide/01-getting-started.md).
 - **Run it in production**: [Operations](languages/python/docs/guide/09-operations.md)
-  shows where a root's pool, read plans and observation are set, and the
+  shows how to configure a running application's connection pool, query-plan cache and
+  logging, and the
   [PostgreSQL connection lifecycle](languages/python/docs/postgresql-lifecycle.md) covers
   pooling, credentials, timeouts and observability.
 - **Understand how it works**: the [concepts](docs/concepts/README.md) explain each
@@ -186,7 +192,9 @@ Every snippet on this page runs against a real PostgreSQL database in the test s
 The implementation lives in [`languages/python/`](languages/python/).
 [`TESTING.md`](TESTING.md) explains verification;
 [`languages/python/TESTING.md`](languages/python/TESTING.md) covers Python test
-placement and fixtures. Run the repository merge gate from the root:
+placement and fixtures. The repository's commands run through
+[just](https://github.com/casey/just), a command runner. Run the merge gate from the
+root:
 
 ```bash
 just check

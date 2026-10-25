@@ -4,8 +4,9 @@ Your model is a set of Python classes. Each entity class maps to a table, and a
 `DomainModel` composes the classes your application uses and checks them as a whole.
 There is no global registry: a class takes part only when you pass it to `DomainModel`.
 A model that breaks a rule, such as a join that names an attribute its entity doesn't
-have, makes `DomainModel(...)` raise `MetamodelValidationError`, a `ValueError` that
-lists every problem found, before anything touches the database.
+have, makes `DomainModel(...)` raise a `ValueError` whose `issues` list every problem
+found, before anything touches the database. [Errors](08-errors.md#mistakes-in-what-you-wrote)
+describes those issues.
 
 This chapter starts with a plain entity and adds one idea per section: relationships,
 value objects, inheritance, history, optimistic locking and storage layout. Every
@@ -30,6 +31,7 @@ from parallax.core import (
     Document,
     DomainModel,
     Entity,
+    EntityDefinitionError,
     Int32,
     Rel,
     TablePerHierarchy,
@@ -41,7 +43,6 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import UnloadedRelationshipError
-from parallax.core.model_formation import MetamodelValidationError
 from parallax.snapshot import ScopedDatabase, TxnContext
 ```
 <!-- /example -->
@@ -71,17 +72,32 @@ class Order(Entity, table="orders", indices=(index("orders_customer", "customer_
 
 The class header names the table. Each attribute's Python type decides its column
 type: `int` is a 64-bit integer, and `type=Int32` narrows it; a `Decimal` states its
-`precision` and `scale`; a `str` usually states a `max_length`. An attribute is nullable
-only when its annotation says `| None`; there is no separate `nullable` option.
+`precision` and `scale`; a `str` with a `max_length` is a bounded string, and one
+without it, such as `Product.description` below, is unbounded text. The other attribute
+types are `bool`, `float`, `bytes`, `datetime.date`, `datetime.time`,
+`datetime.datetime` and `uuid.UUID`, besides value objects and tuples of one of these
+types. There is no enum type. A `datetime` must be timezone-aware, and Parallax stores
+it as a UTC instant; a `date` or a `time` has no timezone. The
+[declarations binding](../../spec/declarations.md#python-scalar-carriers) lists what each
+type accepts. An attribute is nullable only when its annotation says `| None`; there is
+no separate `nullable` option.
 
-An entity is a frozen Pydantic model. Validators you declare run when you construct an
-instance, though not when Parallax builds one from a stored row, and `model_dump` works
-as usual. An attribute takes no default value: its slot holds `attr(...)` or nothing.
-The constructor needs every attribute except a nullable one, which is then `None`, and
-one Parallax sets, such as `version`. To change a value, `edit(...)` returns a modified
-copy; `model_copy` is refused.
+An entity is a frozen Pydantic model, and `model_dump` works as usual. Validators you
+declare run when you construct an instance and when `edit(...)` changes one, though not
+when Parallax builds one from a stored row: stored data is checked against the model
+itself, as [Choosing a storage layout](#choosing-a-storage-layout) describes. An
+attribute takes no default value: its slot holds `attr(...)` or nothing. The constructor
+needs every attribute except a nullable one, which is then `None`, and one Parallax
+sets, such as `version`. To change a value, `edit(...)` returns a modified copy;
+`model_copy` is refused.
 
-`primary_key=True` makes `id` the key, with values your application assigns.
+`primary_key=True` makes `id` the key, with values your application assigns. A primary
+key is always one attribute, of type `int`, `str` or `uuid.UUID`.
+
+`indices=` in the class header declares database indexes, each written
+`index(name, *attributes)`, and `schema_delta` creates them with the tables. The index on
+`orders.customer_id` serves the join to customers. `index(..., unique=True)` declares a
+unique index instead, so the database refuses a second row with the same values.
 
 Python names become canonical names by dropping each underscore and capitalizing the
 next letter, so `customer_id` is `customerId` wherever names are serialized. Wire, the
@@ -91,8 +107,21 @@ the canonical name, so `customer_id` is stored in a `customer_id` column. Use `c
 to choose another, and a `persistence=READ_ONLY` header for an entity your application
 only reads.
 
+`table=` names the table and nothing more: the class header has no schema option. Neither
+the generated statements nor Parallax's queries name a schema, so PostgreSQL finds the
+tables through the connection's `search_path`; set it on the login or in the connection
+string to keep the tables somewhere other than `public`. `namespace=`, which
+[Reading](03-reading.md#the-wire-api) shows, has nothing to do with it: it qualifies an
+entity's canonical name.
+
 The strings in `index(...)`, `join=`, `reverse_of=` and `order_by=` name Python
 attributes, never columns or canonical names.
+
+A member can't take a name Parallax uses on the class itself, such as `all`, `where`,
+`include` or `edit`, nor one starting with `model_`. Creating such a class raises
+`EntityDefinitionError` with the code `entity-reserved-member-name`. To keep `all` as the
+canonical name, give the attribute another Python name and rename it:
+`all_items: Attr[int] = attr(name="all")`.
 
 ## Relationships
 
@@ -109,7 +138,9 @@ its own, such as an order line, related to each side.
 
 The annotation states what a loaded relationship holds. `Rel[tuple[Order, ...]]` is a
 to-many relationship and is never `None`; `Rel[Customer | None]` is a to-one
-relationship that may load as `None`. The index on `orders.customer_id` serves the join.
+relationship that may load as `None`. `Order.customer` has to say `| None`: Parallax
+creates no foreign key, so the customer an order points at may not exist, and
+`DomainModel` refuses `Rel[Customer]` there.
 
 Queries can filter on a relationship and load it in the same read:
 
@@ -202,15 +233,73 @@ its own attributes and none of its siblings'.
 
 The root chooses how the family is stored. `TablePerHierarchy` keeps every concrete
 subtype in one table, with a tag column naming each row's subtype; each concrete
-subtype supplies its `tag_value`. `AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)` instead
-gives each concrete subtype a table of its own, which each subtype names with `table=`
-while the root names none.
-An abstract subtype declares `inheritance=AbstractSubtype` and is subclassed in turn by
-concrete subtypes. Either way, queries can narrow a family to particular subtypes and
-filter on their attributes, as
-[Reading and querying](03-reading.md#predicates-ordering-and-limits) shows. Decisions
-that apply to the whole family, such as its history and its locking, are made once at
-the root.
+subtype supplies its `tag_value`. Because every subtype's rows share the table, the
+columns of a subtype's own attributes, such as `card_last_four`, are nullable there:
+the other subtypes' rows leave them empty.
+
+`AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)` instead gives each concrete subtype a table of
+its own, which each subtype names with `table=` while the root names none. This family
+of deliveries also has an abstract subtype, `CarrierDelivery`, which groups the two
+deliveries a carrier tracks. It declares `inheritance=AbstractSubtype`, is never stored
+itself, and is subclassed in turn by concrete subtypes:
+
+<!-- example: store-each-subtype-in-its-own-table -->
+```python
+class Delivery(Entity, inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)):
+    id: Attr[int] = attr(primary_key=True)
+    order_id: Attr[int]
+
+
+class CarrierDelivery(Delivery, inheritance=AbstractSubtype):
+    tracking_number: Attr[str] = attr(max_length=40)
+
+
+class CourierDelivery(CarrierDelivery, table="courier_delivery", inheritance=ConcreteSubtype):
+    courier: Attr[str] = attr(max_length=40)
+
+
+class PostalDelivery(CarrierDelivery, table="postal_delivery", inheritance=ConcreteSubtype):
+    service: Attr[str] = attr(max_length=20)
+
+
+class StorePickup(Delivery, table="store_pickup", inheritance=ConcreteSubtype):
+    store: Attr[str] = attr(max_length=40)
+
+
+def arrange_a_pickup(db: ScopedDatabase, delivery_id: int, order_id: int, store: str) -> None:
+    """Insert a concrete subtype: the row goes to ``store_pickup``, its own table."""
+    db.transact(lambda tx: tx.insert(StorePickup(id=delivery_id, order_id=order_id, store=store)))
+
+
+def deliveries_for(db: ScopedDatabase, order_id: int) -> list[Delivery]:
+    """Read the whole family, from every subtype's table, each as its own concrete class."""
+    return db.find(Delivery.where(Delivery.order_id == order_id)).results()
+
+
+def tracked_deliveries_for(db: ScopedDatabase, order_id: int) -> list[CarrierDelivery]:
+    """Narrow to the abstract subtype: courier and postal deliveries, never a pickup."""
+    query = Delivery.where(Delivery.order_id == order_id).narrow(CarrierDelivery)
+    return db.find(query).results()
+```
+<!-- /example -->
+
+The generated statements create three tables, `courier_delivery`, `postal_delivery` and
+`store_pickup`, and none for `Delivery` or `CarrierDelivery`. Inserting a concrete
+subtype, as `arrange_a_pickup` does, writes its own table. Reading the root reads every
+subtype's table, and narrowing to the abstract subtype reads only its concrete
+subtypes'.
+
+The spellings follow one rule. A role or strategy with no required argument can be
+written bare or called, so `AbstractSubtype` and `AbstractSubtype()` mean the same, as do
+`ConcreteSubtype` and `ConcreteSubtype()`. One given an argument is called with it, as
+`TablePerHierarchy(tag_column=...)` and `ConcreteSubtype(tag_value=...)` are.
+`TABLE_PER_CONCRETE_SUBTYPE` is a constant, because that strategy has no settings at all.
+
+Under either strategy, queries can narrow a family to particular subtypes and filter on their
+attributes, as [Reading and querying](03-reading.md#predicates-ordering-and-limits)
+shows. Decisions that apply to the whole family, such as its history and its locking,
+are made once at the root. A `DomainModel` must include a family's root along with the
+subtypes you use; a concrete subtype you leave out is simply not part of that model.
 
 ## Choosing a temporality profile
 
@@ -266,6 +355,11 @@ def run_a_summer_sale(db: ScopedDatabase) -> None:
 ```
 <!-- /example -->
 
+The callback reads the price as of June, and the amendment starts where that read
+looked: Valid Time June. `until=september` ends it there, so the price before June and
+from September onwards keeps its old value. [Writing](04-writing.md#bitemporal-entities)
+builds Bitemporal writes up step by step.
+
 The time-tracking attributes, `tx_start` and `tx_end` and, for a Bitemporal entity,
 `valid_start` and `valid_end`, belong to Parallax. You don't declare or assign them;
 you read them, and you choose the instants you read at.
@@ -298,8 +392,9 @@ re-runs your transaction against a fresh read. [Transactions](05-transactions.md
 that replay, and how a transaction can prefer the locking strategy for every entity.
 
 `Customer` has no version, so nothing in its row shows that it changed. Parallax always
-uses the locking strategy for it: a read inside a writable transaction takes a shared
-lock on the customer's row, and the lock holds until the transaction ends.
+uses the locking strategy for it: a read inside `db.transact`, a read-write transaction,
+takes a shared lock on the customer's row, and the lock holds until the transaction ends.
+Reads outside one take no lock, as [Reading](03-reading.md#where-a-read-runs) explains.
 
 A temporal entity can't declare a `version`; `DomainModel` refuses one. The
 Transaction-Time start of the state a transaction read already identifies that state,
@@ -328,7 +423,8 @@ def products_named(db: ScopedDatabase, name: str) -> list[Product]:
 
 The `product` table has two columns, `sku` and `payload`. Columns that give a row its
 structure stay real columns, such as the primary key, relationship join columns,
-temporal bounds, the version of a Non-Temporal entity, and a family's tag column.
+temporal bounds, an optimistic-lock version, which only a Non-Temporal entity can have,
+and a family's tag column.
 
 For data that fits the model, nothing above the storage changes. The query, the values
 it returns and the writes you make are the same under either layout, so you can choose

@@ -11,32 +11,53 @@ wording of a message.
 This chapter starts with where an error reaches you. It then takes each kind in turn:
 mistakes in what you wrote, stored data that breaks the model, conflicts and failed
 preconditions, and failures the database reports. It ends with what each error asks you
-to do. The examples use the shop model from [Modeling](02-modeling.md) and these
-imports:
+to do.
+
+Parallax has no common base exception, so catch the specific class. Each error is
+exported by the module of the part of Parallax that raises it, so they are spread over
+several modules. The imports below give the path of every error this chapter names, and
+the [Python binding](../../spec/python.md#8-deployable-artifact-topology) lists every
+module's exports. The examples use the shop model from [Modeling](02-modeling.md) and
+these imports:
 
 <!-- example: errors-imports -->
 ```python
 from collections.abc import Mapping
 
+from pydantic import ValidationError
+
 from parallax.core import EditError, EntityDefinitionError, QueryDefinitionError
 from parallax.core.db_port import ConnectionAcquisitionError
+from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.execution import (
     ExecutionFailure,
+    InvalidPrincipalError,
     KeyedWriteValueError,
+    PublicationConflictError,
     QueryTargetError,
+    TransactionAccessModeError,
+    TransactionAuthorityError,
+    TransactionOptionConflictError,
     TransactionRollbackError,
     TransactionTimePinReadOnlyError,
 )
 from parallax.core.metamodel import MetamodelIssue
-from parallax.core.read_delivery import InvalidData, InvalidDataError
+from parallax.core.read_delivery import InvalidData, InvalidDataError, StreamStateError
 from parallax.core.unit_work import (
     InstructionRejectedError,
     OptimisticLockConflictError,
     RollbackOnlyError,
     WriteEvidenceError,
+    WriteInstructionError,
     WritePreconditionError,
 )
-from parallax.snapshot import ScopedDatabase, TxnContext
+from parallax.snapshot import (
+    NoResultFound,
+    ScopedDatabase,
+    TooManyResultsFound,
+    TxnContext,
+    is_view_loaded,
+)
 ```
 <!-- /example -->
 
@@ -74,11 +95,13 @@ tool can report them without parsing messages.
 
 - **A class.** Creating an entity class checks its declaration. An unknown class-header
   option or a reserved member name raises `EntityDefinitionError`, whose `code` names
-  the rule. Constructing an instance validates its values as any Pydantic model does.
+  the rule. Constructing an instance validates its values as any Pydantic model does,
+  and raises Pydantic's own `ValidationError`.
 - **A model.** `DomainModel(...)` checks the classes as a whole. As
   [Modeling](02-modeling.md) explains, a model that breaks a rule raises a `ValueError`
   that lists every problem in its `issues`. Each one is a `MetamodelIssue` with a
-  `code`, a `location` in the model and a `message`.
+  `code`, a `location` in the model and a `message`. Catch it as a `ValueError` and read
+  its `issues`.
 - **A query.** Building a query checks each expression and clause, and
   `QueryDefinitionError` refuses one it can't accept, with a `code` naming the rule.
   `Customer.name == 3` compares text with a number, a `Decimal` with more places than
@@ -89,14 +112,20 @@ tool can report them without parsing messages.
 - **A write.** A write verb checks what it is handed before it buffers anything.
   `WriteEvidenceError` means the value carries no licence this attempt can use (see
   [No blind writes](05-transactions.md#no-blind-writes)). `KeyedWriteValueError` means
-  the verb was handed a value it can't take, and its message names the verb that does.
-  `InstructionRejectedError` means the write breaks a rule, named by its `rule`, such as
-  a [predicate write](04-writing.md#predicate-writes) on a versioned entity.
+  the verb was handed a value it can't take, and its message names the verb that does:
+  `tx.amend` of a value you constructed rather than read names `tx.insert`, and
+  `tx.insert` of a value a read returned names `tx.amend`. `WriteInstructionError` means
+  the write breaks a rule, such as `tx.delete` on a temporal entity, whose message names
+  `terminate`, or a target write on an entity with no revision. Its subtype
+  `InstructionRejectedError` names the rule in its `rule`, such as a
+  [predicate write](04-writing.md#predicate-writes) on a versioned entity.
   `TransactionTimePinReadOnlyError` means the value was read as of a past Transaction
   Time, which [can't be rewritten](04-writing.md#correct-the-past).
 
-An edit shows the accumulation best. `edit(...)` checks every change, and one
-`EditError` reports every rule the changes break. Each of its `violations` has a
+An edit shows the accumulation best. `edit(...)` checks every change against the model,
+and one `EditError` reports every rule the changes break. Only once they all pass do
+validators you declared run, and a validator's refusal raises Pydantic's
+`ValidationError`, as it does on construction. Each of its `violations` has a
 `code`, a `member_name` and a `message`, so a form can show every refused field at once.
 `member_name` is `None` only for a refusal that concerns no single member:
 
@@ -263,13 +292,21 @@ of an `ExecutionFailure`:
 
 | Error | Raised | Retried? | What to do |
 | -- | -- | -- | -- |
-| A refused class, model, query, edit or write, such as `EntityDefinitionError`, `QueryDefinitionError`, `QueryTargetError`, `EditError` or `WriteEvidenceError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
+| A refused class, model, query, edit or write, such as `EntityDefinitionError`, `QueryDefinitionError`, `QueryTargetError`, `EditError`, `WriteEvidenceError`, `KeyedWriteValueError` or `WriteInstructionError`, or a model's `ValueError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
+| `NoResultFound` or `TooManyResultsFound` | by `.result()` or `.result_or_none()`, after the read | No | Use the accessor for the shape you expect, or treat the absence as an answer |
+| `UnloadedRelationshipError` | when you touch a relationship the read didn't include | No | Include it in the read, or test it with `is_view_loaded` |
+| `StreamStateError` | when a stream is used outside its `with` block, entered twice or iterated twice | No | Consume each stream once, inside its `with` block |
 | `InvalidDataError` | by the accessor, after the read | No | Repair the stored data; read with `checked()` to carry on past it |
+| `TransactionAccessModeError`, `TransactionOptionConflictError` or `TransactionAuthorityError` | when a nested call can't join the running transaction, before its callback runs | No | Call the matching kind of transaction, name the same options or none, or run as the same actor |
+| `InvalidPrincipalError` | when you derive a scope from a principal | No | Supply a nonempty subject that doesn't start with `db-login:` |
+| `RollbackOnlyError` | at any read or write after a failure doomed the transaction | On the original failure's terms | Let the original failure escape; the transaction can only roll back |
+| `PublicationConflictError` | when `publish` finds another selection held than the one it expected | No | Read the current selection and decide whether to publish again |
 | `OptimisticLockConflictError`, or a `"deadlock"` category | when the transaction sends its writes, or at the statement | Yes, up to `max_retries` | If retries run out: try later, shorten the transactions, or prefer locking |
 | `WritePreconditionError` | when the transaction sends its writes, or at the call under locking | No | Read the current value and let the user decide again |
 | A `"uniqueViolation"` category | when the insert is sent, usually at commit | No | Choose another key, or treat the object as already there |
 | A `"lockWaitTimeout"` category, or none | at the statement | No | Read `native_code` and `message`; fix the schema or privilege, or try later |
 | `ConnectionAcquisitionError` | before an attempt begins | No | Check the database and the pool |
+| `TransactionRollbackError` | when the rollback after a failure fails too | No | Read `triggering_error` for the failure, and `rollback_error` for the rollback's |
 
 ## How it works →
 

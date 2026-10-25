@@ -1,7 +1,8 @@
 # Model evolution
 
 Your model will change after you deploy it. Parallax can switch a running process to a
-changed model without a restart, and it generates the schema change the new model needs,
+changed model without a restart, provided the process has the new model's classes or
+reads the model from a descriptor. It generates the schema change the new model needs,
 but it never changes your database itself. This chapter starts with editions, the
 successive models a process serves, and how a transaction uses them. It then describes
 a change between two models, generates the migration for it, and rolls the new model out
@@ -16,10 +17,16 @@ from collections.abc import Callable
 from parallax.core import Attr, ConcreteSubtype, DomainModel, attr
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
-from parallax.core.execution import PublicationConflictError, ServingModel, prepare_model
+from parallax.core.execution import (
+    ModelSelection,
+    PublicationConflictError,
+    ServingModel,
+    prepare_model,
+)
 from parallax.core.read_delivery import InvalidData, InvalidDataError
 from parallax.descriptor import domain_model_from_yaml, export_yaml
 from parallax.evolution import (
+    ABSENT,
     CoordinatedEvolution,
     Evolution,
     UnilateralEvolution,
@@ -73,16 +80,20 @@ Every execution adopts the selection held when it starts, and keeps it to the en
 - A standalone `find` adopts when it runs, and a stream adopts when you enter its `with`
   block and keeps that edition for every page.
 
-Results carry the edition they were read under as `edition`, and so does an
-`ExecutionFailure`. Editions are compared only for equality, never ordered, so a later
-release doesn't need a "larger" name, but never give a changed model a name the Serving
-Model has already served.
+A `Snapshot`, an entered stream and an `ExecutionFailure` carry the edition the work ran
+under as `edition`; the entity instances inside a result don't. Editions are compared
+only for equality, never ordered, so a later release doesn't need a "larger" name, but
+never give a changed model a name the Serving Model has already served. Parallax doesn't
+detect a reused name, and `edition` would then no longer tell the two models apart.
 
 ## Describing a change
 
 The shop's second release accepts gift cards. It adds a concrete subtype to the
 [payment family](02-modeling.md#inheritance-families), so its model is
-`DomainModel(Customer, Order, Payment, CardPayment, BankTransfer, GiftCardPayment)`.
+`DomainModel(Customer, Order, Payment, CardPayment, BankTransfer, GiftCardPayment)`. A
+model lists every class it serves, a family's root included, and a concrete subtype it
+leaves out is not part of it, so release 1's model is the same list without
+`GiftCardPayment`.
 `evolve(earlier, later)` describes what changes between two models. It compares the
 checked, language-neutral form of each, which `model_of` takes out of a `DomainModel`.
 The earlier model is the one you deployed last, so keep a copy of it at each deployment.
@@ -101,6 +112,10 @@ def changes_since(deployed: str, release: DomainModel) -> Evolution:
 ```
 <!-- /example -->
 
+`deployed` is the descriptor's YAML text, not a file path. `domain_model_from_yaml`
+builds from it a `DomainModel` with no entity classes, which is all `model_of` and
+`evolve` need.
+
 `evolve` reads only the two models. It never looks at a database, so the description is
 the same wherever you compute it, for example in a release check before you deploy. It
 answers three questions.
@@ -111,7 +126,9 @@ one operation, `ConcreteSubtypeAdded`, naming `GiftCardPayment`. Declarations ar
 by identity, which is their name, so Parallax never guesses a rename: renaming an
 attribute is one removal and one addition.
 
-**Can a live database take it?** The result is one of two types. A
+**Can a live database take it?** The result is one of two types, and the
+[classification](../../../../core/spec/m-model-evolution.md#classification) rules decide
+which for every kind of change. A
 `UnilateralEvolution` keeps every query and write that was valid under the earlier
 model valid under the later one, and needs no destructive change to stored data or to
 the schema, so it can be applied while the earlier edition keeps running. Gift cards
@@ -144,7 +161,10 @@ earlier edition does with such a row.
 `schema_delta(evolution, POSTGRES)` turns a `UnilateralEvolution` into the PostgreSQL
 statements that bring a database from the earlier model to the later one. It accepts
 only a `UnilateralEvolution`, so your type checker refuses a call that might hand it a
-Coordinated one. A release check therefore refuses a coordinated change first:
+Coordinated one. `evolve(ABSENT, ...)` is always unilateral and typed that way, which is
+why [Getting started](01-getting-started.md#create-the-tables) passes it straight in.
+Between two models the type is only known at run time, so a release check refuses a
+coordinated change first:
 
 <!-- example: generate-the-migration -->
 ```python
@@ -179,7 +199,10 @@ requests. Run the statements as given:
   `IF NOT EXISTS`. A delta describes the change from a known edition, so it is deliberately not
   idempotent: a statement that quietly did nothing would leave the later edition served
   over a schema that never received it.
-- Forwards only. Parallax produces no inverse delta.
+- Forwards only. Parallax produces no inverse delta. To back a release out, publish the
+  earlier model again: the migrated schema still serves the earlier edition, as it does
+  during the [overlap window](#the-overlap-window), though that edition can't read rows
+  only the later model admits.
 
 Creating a unique index checks the rows already stored: if any break the new rule, the
 statement fails, and you don't publish the release. The full result of `schema_delta`
@@ -224,6 +247,14 @@ deployment: Parallax coordinates nothing between processes.
 
 Once `adopt` returns, the next transaction adopts the new edition. Transactions already
 running keep theirs, and the process neither restarts nor reconnects.
+
+A process can only prepare a model from classes it has loaded, so the release's code is
+deployed first, still serving release 1: its release-1 model is the list without
+`GiftCardPayment`, although the class is loaded. Once the migration has run, `adopt`
+switches it to release 2. A model built with `domain_model_from_yaml` needs no classes,
+so a process can also publish one it reads at run time. Such a model serves Wire reads
+and writes; a Typed read under it is refused, because there is no class to build values
+of.
 
 ### The overlap window
 

@@ -45,8 +45,10 @@ time. `connect` opens the runtime, and the root it returns is what you share acr
 process and close at the end. Each setting here has a section of its own:
 
 - **The pool.** `PoolOptions` bounds how many connections the root keeps and opens,
-  and how long a caller waits for one. `OnDemandOptions` keeps none between operations.
-  See the lifecycle guide on
+  and how long a caller waits for one; `max_size` is one of its fields, and the
+  lifecycle guide describes the rest. `OnDemandOptions` keeps no connection between
+  operations: pass `pool=OnDemandOptions()` to the adapter instead. See the lifecycle
+  guide on
   [what you build](../postgresql-lifecycle.md#what-you-build-and-what-owns-it),
   [retention](../postgresql-lifecycle.md#retention) and
   [what each operation holds](../postgresql-lifecycle.md#what-each-operation-holds).

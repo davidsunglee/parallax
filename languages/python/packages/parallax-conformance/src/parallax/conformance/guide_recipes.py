@@ -15,7 +15,17 @@ from parallax.conformance.guide_models import (
     Product,
     Shipment,
 )
-from parallax.core import TX_TIME, DomainModel
+from parallax.core import (
+    TABLE_PER_CONCRETE_SUBTYPE,
+    TX_TIME,
+    AbstractRoot,
+    AbstractSubtype,
+    Attr,
+    ConcreteSubtype,
+    DomainModel,
+    Entity,
+    attr,
+)
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
@@ -36,6 +46,11 @@ from parallax.snapshot import (
 )
 
 __all__ = [
+    "CarrierDelivery",
+    "CourierDelivery",
+    "Delivery",
+    "PostalDelivery",
+    "StorePickup",
     "a_scope_for_reports",
     "add_a_customer_from_json",
     "add_a_surcharge_to_every_order",
@@ -45,6 +60,7 @@ __all__ = [
     "add_to_an_order_under_a_lock",
     "amend_a_value_read_earlier",
     "amend_after_reading_it_again",
+    "arrange_a_pickup",
     "cancel_an_order",
     "cancel_reviewed_orders",
     "cancel_unless_changed",
@@ -76,6 +92,7 @@ __all__ = [
     "customers_with_an_order_over",
     "customers_with_an_order_over_as_wire",
     "delete_the_shipments_of",
+    "deliveries_for",
     "discontinue_a_tea",
     "export_customers",
     "forget_an_email_address",
@@ -110,6 +127,7 @@ __all__ = [
     "shipments_to",
     "table_statements",
     "total_of_every_order",
+    "tracked_deliveries_for",
     "who_placed",
     "withdraw_a_credit_limit",
 ]
@@ -193,6 +211,43 @@ def shipments_to(db: ScopedDatabase, city: str) -> list[Shipment]:
 def payments_for(db: ScopedDatabase, order_id: int) -> list[Payment]:
     """Each payment arrives as its own concrete class."""
     return db.find(Payment.where(Payment.order_id == order_id)).results()
+
+
+class Delivery(Entity, inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)):
+    id: Attr[int] = attr(primary_key=True)
+    order_id: Attr[int]
+
+
+class CarrierDelivery(Delivery, inheritance=AbstractSubtype):
+    tracking_number: Attr[str] = attr(max_length=40)
+
+
+class CourierDelivery(CarrierDelivery, table="courier_delivery", inheritance=ConcreteSubtype):
+    courier: Attr[str] = attr(max_length=40)
+
+
+class PostalDelivery(CarrierDelivery, table="postal_delivery", inheritance=ConcreteSubtype):
+    service: Attr[str] = attr(max_length=20)
+
+
+class StorePickup(Delivery, table="store_pickup", inheritance=ConcreteSubtype):
+    store: Attr[str] = attr(max_length=40)
+
+
+def arrange_a_pickup(db: ScopedDatabase, delivery_id: int, order_id: int, store: str) -> None:
+    """Insert a concrete subtype: the row goes to ``store_pickup``, its own table."""
+    db.transact(lambda tx: tx.insert(StorePickup(id=delivery_id, order_id=order_id, store=store)))
+
+
+def deliveries_for(db: ScopedDatabase, order_id: int) -> list[Delivery]:
+    """Read the whole family, from every subtype's table, each as its own concrete class."""
+    return db.find(Delivery.where(Delivery.order_id == order_id)).results()
+
+
+def tracked_deliveries_for(db: ScopedDatabase, order_id: int) -> list[CarrierDelivery]:
+    """Narrow to the abstract subtype: courier and postal deliveries, never a pickup."""
+    query = Delivery.where(Delivery.order_id == order_id).narrow(CarrierDelivery)
+    return db.find(query).results()
 
 
 def products_named(db: ScopedDatabase, name: str) -> list[Product]:

@@ -130,7 +130,14 @@ RECIPES: Final[list[Recipe]] = [
             "from parallax.core.execution import ExecutionFailure, TxnOptions\n"
             "from parallax.evolution import ABSENT, evolve, schema_delta\n"
             "from parallax.postgres import PostgresAdapter\n"
-            "from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect\n"
+            "from parallax.snapshot import (\n"
+            "    Database,\n"
+            "    NoResultFound,\n"
+            "    ScopedDatabase,\n"
+            "    TooManyResultsFound,\n"
+            "    TxnContext,\n"
+            "    connect,\n"
+            ")\n"
         ),
     ),
     Recipe(
@@ -154,6 +161,7 @@ RECIPES: Final[list[Recipe]] = [
             "    Document,\n"
             "    DomainModel,\n"
             "    Entity,\n"
+            "    EntityDefinitionError,\n"
             "    Int32,\n"
             "    Rel,\n"
             "    TablePerHierarchy,\n"
@@ -165,7 +173,6 @@ RECIPES: Final[list[Recipe]] = [
             "    rel,\n"
             ")\n"
             "from parallax.core.entity import UnloadedRelationshipError\n"
-            "from parallax.core.model_formation import MetamodelValidationError\n"
             "from parallax.snapshot import ScopedDatabase, TxnContext\n"
         ),
     ),
@@ -211,9 +218,16 @@ RECIPES: Final[list[Recipe]] = [
             "from parallax.core.unit_work import (\n"
             "    InstructionRejectedError,\n"
             "    WriteEvidenceError,\n"
+            "    WriteInstructionError,\n"
             "    WritePreconditionError,\n"
             ")\n"
-            "from parallax.snapshot import ScopedDatabase, TxnContext, WireEntity, edge_of\n"
+            "from parallax.snapshot import (\n"
+            "    NoResultFound,\n"
+            "    ScopedDatabase,\n"
+            "    TxnContext,\n"
+            "    WireEntity,\n"
+            "    edge_of,\n"
+            ")\n"
         ),
     ),
     Recipe(
@@ -267,6 +281,20 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="read-an-inheritance-family",
         title="Read an inheritance family",
         snippet=_sources(Payment, CardPayment, BankTransfer, guide_recipes.payments_for),
+    ),
+    Recipe(
+        recipe_id="store-each-subtype-in-its-own-table",
+        title="Store each concrete subtype in a table of its own",
+        snippet=_sources(
+            guide_recipes.Delivery,
+            guide_recipes.CarrierDelivery,
+            guide_recipes.CourierDelivery,
+            guide_recipes.PostalDelivery,
+            guide_recipes.StorePickup,
+            guide_recipes.arrange_a_pickup,
+            guide_recipes.deliveries_for,
+            guide_recipes.tracked_deliveries_for,
+        ),
     ),
     Recipe(
         recipe_id="query-a-document-layout-entity",
@@ -560,7 +588,12 @@ RECIPES: Final[list[Recipe]] = [
             "from dataclasses import dataclass\n"
             "from pathlib import Path\n"
             "\n"
-            "from parallax.core.db_port import Password\n"
+            "from parallax.core.db_port import (\n"
+            "    DRIVER_MANAGED,\n"
+            "    ConnectionAcquisitionError,\n"
+            "    CredentialSource,\n"
+            "    Password,\n"
+            ")\n"
             "from parallax.core.execution import InvalidPrincipalError, "
             "TransactionAuthorityError\n"
             "from parallax.postgres import PostgresAdapter, PostgresRole\n"
@@ -604,11 +637,16 @@ RECIPES: Final[list[Recipe]] = [
             "from parallax.core import Attr, ConcreteSubtype, DomainModel, attr\n"
             "from parallax.core.dialect import POSTGRES\n"
             "from parallax.core.entity import model_of\n"
-            "from parallax.core.execution import PublicationConflictError, ServingModel, "
-            "prepare_model\n"
+            "from parallax.core.execution import (\n"
+            "    ModelSelection,\n"
+            "    PublicationConflictError,\n"
+            "    ServingModel,\n"
+            "    prepare_model,\n"
+            ")\n"
             "from parallax.core.read_delivery import InvalidData, InvalidDataError\n"
             "from parallax.descriptor import domain_model_from_yaml, export_yaml\n"
             "from parallax.evolution import (\n"
+            "    ABSENT,\n"
             "    CoordinatedEvolution,\n"
             "    Evolution,\n"
             "    UnilateralEvolution,\n"
@@ -658,25 +696,41 @@ RECIPES: Final[list[Recipe]] = [
         snippet=(
             "from collections.abc import Mapping\n"
             "\n"
+            "from pydantic import ValidationError\n"
+            "\n"
             "from parallax.core import EditError, EntityDefinitionError, QueryDefinitionError\n"
             "from parallax.core.db_port import ConnectionAcquisitionError\n"
+            "from parallax.core.entity import UnloadedRelationshipError\n"
             "from parallax.core.execution import (\n"
             "    ExecutionFailure,\n"
+            "    InvalidPrincipalError,\n"
             "    KeyedWriteValueError,\n"
+            "    PublicationConflictError,\n"
             "    QueryTargetError,\n"
+            "    TransactionAccessModeError,\n"
+            "    TransactionAuthorityError,\n"
+            "    TransactionOptionConflictError,\n"
             "    TransactionRollbackError,\n"
             "    TransactionTimePinReadOnlyError,\n"
             ")\n"
             "from parallax.core.metamodel import MetamodelIssue\n"
-            "from parallax.core.read_delivery import InvalidData, InvalidDataError\n"
+            "from parallax.core.read_delivery import InvalidData, InvalidDataError, "
+            "StreamStateError\n"
             "from parallax.core.unit_work import (\n"
             "    InstructionRejectedError,\n"
             "    OptimisticLockConflictError,\n"
             "    RollbackOnlyError,\n"
             "    WriteEvidenceError,\n"
+            "    WriteInstructionError,\n"
             "    WritePreconditionError,\n"
             ")\n"
-            "from parallax.snapshot import ScopedDatabase, TxnContext\n"
+            "from parallax.snapshot import (\n"
+            "    NoResultFound,\n"
+            "    ScopedDatabase,\n"
+            "    TooManyResultsFound,\n"
+            "    TxnContext,\n"
+            "    is_view_loaded,\n"
+            ")\n"
         ),
     ),
     Recipe(
