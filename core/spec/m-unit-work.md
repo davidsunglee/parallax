@@ -780,7 +780,9 @@ describes one private transformation inside the pipeline below.
 
 ### The planning pipeline
 
-The Write Planner privately owns this stage order:
+The unit of work owns this stage order. Stage 1 is performed as each write's
+intent is admitted to the buffer (*Same-transaction write coalescing*), so the
+Write Planner receives intent already coalesced and privately owns stages 2–9:
 
 ```text
 1. resolve identities and coalesce buffered intent
@@ -826,7 +828,8 @@ Four of those orderings are load-bearing and therefore normative:
   ADR 0037).
 
 Stages are otherwise private. The stage list is an ordering contract, not an
-interface: nothing outside the planner may name, observe, or invoke a stage.
+interface: nothing outside the unit of work's admission (stage 1) and its
+planner (stages 2–9) may name, observe, or invoke a stage.
 
 Stages 1–4 rewrite the buffered sequence: they merge, drop, split, and reorder
 it. Stages 5–9 are **Write Settlement**, and the sequence stops changing shape
