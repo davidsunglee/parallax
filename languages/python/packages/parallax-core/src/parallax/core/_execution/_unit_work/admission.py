@@ -247,7 +247,6 @@ class WriteAdmission:
         return identity
 
     def _pending_insert_position(self, key: ObjectKey) -> int | None:
-        """The position of ``key``'s latest pending insert, if any."""
         positions = self._pending_insert_positions
         if positions is not None:
             return positions.get(key)
