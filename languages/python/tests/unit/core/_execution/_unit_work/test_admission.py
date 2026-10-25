@@ -59,6 +59,7 @@ from parallax.core.unit_work import (
     ReadAuthorizedWrite,
     RetainedObservation,
     TargetWriteInstruction,
+    UnitOfWorkError,
     WriteEvidenceError,
     admitted_write,
 )
@@ -464,12 +465,14 @@ def test_a_repeated_insert_is_refused_with_its_openers_advice_and_changes_nothin
         assert authority.insertion_authority(identity) is not NO_INSERTION_AUTHORITY
 
 
-def _account_delete_through(identity: InsertionIdentity) -> InsertionAuthorizedWrite:
+def _account_delete_through(
+    identity: InsertionIdentity, account_id: int = 9
+) -> InsertionAuthorizedWrite:
     prepared = prepare_wire_write(
-        KeyedWriteInstruction("delete", "Account", ({"id": 9},)), _ACCOUNT
+        KeyedWriteInstruction("delete", "Account", ({"id": account_id},)), _ACCOUNT
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
-    return InsertionAuthorizedWrite(prepared, _account(9), identity)
+    return InsertionAuthorizedWrite(prepared, _account(account_id), identity)
 
 
 def _balance_terminate_through(identity: InsertionIdentity) -> InsertionAuthorizedWrite:
@@ -551,6 +554,101 @@ def test_an_inserted_objects_target_stays_refused_once_its_insertion_retires(
     with pytest.raises(WriteEvidenceError) as refusal:
         admission.admit(_account_target(9, 1), confirm_target=_confirmed)
     assert refusal.value.code == "write-evidence-inserted"
+
+
+# --------------------------------------------------------------------------- #
+# Each pending insert takes only its own object's writes.                     #
+# --------------------------------------------------------------------------- #
+def _inserted_accounts(admission: WriteAdmission, *account_ids: int) -> list[InsertionIdentity]:
+    identities: list[InsertionIdentity] = []
+    for account_id in account_ids:
+        identity = admission.admit_insert(_account_insert(account_id), insertion_advice=None)
+        assert identity is not None
+        identities.append(identity)
+    return identities
+
+
+def _amended_through(identity: InsertionIdentity, account_id: int) -> InsertionAuthorizedWrite:
+    return InsertionAuthorizedWrite(_account_amend(account_id), _account(account_id), identity)
+
+
+def _pending_owners(admission: WriteAdmission) -> list[tuple[object, object]]:
+    owners: list[tuple[object, object]] = []
+    for write in admission.composed_writes():
+        assert isinstance(write, KeyedInsert)
+        row = write.instruction.rows[0]
+        owners.append((row["id"], row["owner"]))
+    return owners
+
+
+@pytest.mark.parametrize(
+    ("inserted", "cancelled"),
+    [((9,), 9), ((9, 1), 9), ((9, 1), 1), ((9, 1, 2), 1)],
+    ids=["alone", "first-of-two", "second-of-two", "middle-of-three"],
+)
+def test_each_pending_insert_folds_and_cancels_only_its_own_objects_writes(
+    inserted: tuple[int, ...], cancelled: int
+) -> None:
+    authority = source_authority(_ACCOUNT, inserted_version=_unversioned)
+    admission = _admitted(meta=_ACCOUNT, authority=authority)
+    identities = dict(zip(inserted, _inserted_accounts(admission, *inserted), strict=True))
+    for account_id, identity in identities.items():
+        _admit(admission, _amended_through(identity, account_id))
+    outcome = admission.admit(
+        _account_delete_through(identities[cancelled], cancelled), confirm_target=_confirmed
+    )
+    assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
+    assert _pending_owners(admission) == [(id_, "Cy") for id_ in inserted if id_ != cancelled]
+    admission.drain_planned()
+    assert {
+        id_: authority.insertion_authority(identity) for id_, identity in identities.items()
+    } == {id_: NO_INSERTION_AUTHORITY if id_ == cancelled else None for id_ in inserted}
+
+
+def test_an_object_inserted_again_after_its_cancellation_takes_only_the_later_writes() -> None:
+    authority = source_authority(_ACCOUNT, inserted_version=_unversioned)
+    admission = _admitted(meta=_ACCOUNT, authority=authority)
+    (cancelled,) = _inserted_accounts(admission, 9)
+    outcome = admission.admit(_account_delete_through(cancelled), confirm_target=_confirmed)
+    assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
+    (other, again) = _inserted_accounts(admission, 1, 9)
+    _admit(admission, _amended_through(again, 9))
+    assert _pending_owners(admission) == [(1, "N"), (9, "Cy")]
+    outcome = admission.admit(_account_delete_through(again), confirm_target=_confirmed)
+    assert outcome is BufferOutcome.CANCELLED_PENDING_INSERT
+    assert _pending_owners(admission) == [(1, "N")]
+    admission.drain_planned()
+    assert authority.insertion_authority(other) is None
+    assert authority.insertion_authority(cancelled) is NO_INSERTION_AUTHORITY
+    assert authority.insertion_authority(again) is NO_INSERTION_AUTHORITY
+
+
+@pytest.mark.parametrize("beside", [(), (1,)], ids=["alone", "beside-another"])
+def test_a_cancelled_pending_insert_takes_no_later_write_of_its_object(
+    beside: tuple[int, ...],
+) -> None:
+    admission = _admitted(meta=_ACCOUNT)
+    *_, cancelled = _inserted_accounts(admission, *beside, 9)
+    admission.admit(_account_delete_through(cancelled), confirm_target=_confirmed)
+    observed = _account_observed(9, 3)
+    assert admission.admit(observed, confirm_target=_confirmed) is BufferOutcome.BUFFERED
+    assert admission.composed_writes()[len(beside) :] == (observed,)
+
+
+@pytest.mark.parametrize("beside", [(), (1,)], ids=["alone", "beside-another"])
+def test_an_unadvised_repeat_of_a_pending_insert_takes_the_writes_after_it(
+    beside: tuple[int, ...],
+) -> None:
+    authority = source_authority(_ACCOUNT, inserted_version=_unversioned)
+    admission = _admitted(meta=_ACCOUNT, authority=authority)
+    _inserted_accounts(admission, *beside)
+    (opener, repeat) = _inserted_accounts(admission, 9, 9)
+    _admit(admission, _amended_through(repeat, 9))
+    assert _pending_owners(admission) == [*((id_, "N") for id_ in beside), (9, "N"), (9, "Cy")]
+    with pytest.raises(UnitOfWorkError, match="no longer stands"):
+        admission.admit(_amended_through(opener, 9), confirm_target=_confirmed)
+    admission.drain_planned()
+    assert authority.insertion_authority(repeat) is None
 
 
 # --------------------------------------------------------------------------- #

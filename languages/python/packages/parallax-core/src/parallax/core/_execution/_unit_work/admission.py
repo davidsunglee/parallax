@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Hashable, Iterator, Mapping
+from collections.abc import Callable, Collection, Hashable, Iterator, Mapping
 from dataclasses import replace
 from enum import Enum
 from typing import Final
@@ -142,6 +142,8 @@ class WriteAdmission:
         "_claims",
         "_conditioned",
         "_families",
+        "_first_insert_key",
+        "_first_insert_position",
         "_pending_insert_positions",
         "_removals",
         "_temporal",
@@ -159,13 +161,18 @@ class WriteAdmission:
         # indexed by object instead (`_temporal`).
         self._claims: dict[ClaimScope, int] = {}
         self._temporal: dict[ObjectKey, int] = {}
-        # Objects a pending write removes whole, the positions of inserts that
-        # must follow a removal of an earlier insertion, and the position of
-        # each object's latest pending insert, a composition its insertion
-        # ended included — each allocated by the first write it records, since
-        # most buffers hold none.
+        # Objects a pending write removes whole, and the positions of inserts
+        # that must follow a removal of an earlier insertion — each allocated by
+        # the first write it records, since most buffers hold none.
         self._removals: set[ObjectKey] | None = None
         self._after_removal: set[int] | None = None
+        # The position of each object's latest pending insert, a composition
+        # its insertion ended included. A lone object's stays in the two
+        # first-insert fields until a second object's moves both into a map:
+        # most buffers holding an insert hold one, and a map retains far more
+        # than two fields.
+        self._first_insert_key: ObjectKey | None = None
+        self._first_insert_position = 0
         self._pending_insert_positions: dict[ObjectKey, int] | None = None
         # The scope of each object's pending caller-conditioned write,
         # allocated by the first such write.
@@ -236,11 +243,42 @@ class WriteAdmission:
             if self._after_removal is None:
                 self._after_removal = set()
             self._after_removal.add(position)
-        positions = self._pending_insert_positions
-        if positions is None:
-            positions = self._pending_insert_positions = {}
-        positions[key] = position
+        self._index_pending_insert(key, position)
         return identity
+
+    def _pending_insert_position(self, key: ObjectKey) -> int | None:
+        """The position of ``key``'s latest pending insert, if any."""
+        positions = self._pending_insert_positions
+        if positions is not None:
+            return positions.get(key)
+        return self._first_insert_position if key == self._first_insert_key else None
+
+    def _index_pending_insert(self, key: ObjectKey, position: int) -> None:
+        positions = self._pending_insert_positions
+        first = self._first_insert_key
+        if positions is not None:
+            positions[key] = position
+        elif first is None or first == key:
+            self._first_insert_key = key
+            self._first_insert_position = position
+        else:
+            self._pending_insert_positions = {first: self._first_insert_position, key: position}
+            self._first_insert_key = None
+
+    def _unindex_pending_insert(self, key: ObjectKey) -> None:
+        positions = self._pending_insert_positions
+        if positions is not None:
+            del positions[key]
+        else:
+            assert key == self._first_insert_key  # a cancelled insert was pending
+            self._first_insert_key = None
+
+    def _pending_insert_keys(self) -> Collection[ObjectKey]:
+        positions = self._pending_insert_positions
+        if positions is not None:
+            return positions
+        first = self._first_insert_key
+        return () if first is None else (first,)
 
     def _admit_keyed(self, item: ReadAuthorizedWrite | InsertionAuthorizedWrite) -> BufferOutcome:
         if isinstance(item, InsertionAuthorizedWrite):
@@ -289,8 +327,7 @@ class WriteAdmission:
         write was already refused.
         """
         key = item.object_key
-        positions = self._pending_insert_positions
-        position = None if positions is None else positions.get(key)
+        position = self._pending_insert_position(key)
         if position is None:
             return None
         if not self._is_bitemporal(item.target):
@@ -325,10 +362,10 @@ class WriteAdmission:
         insertion of an object opened retires that insertion's authority.
         """
         removals = self._removals
-        positions = self._pending_insert_positions
-        if removals is not None or positions is not None:
+        pending_keys = self._pending_insert_keys()
+        if removals is not None or pending_keys:
             self._authority.finish_insertion_planning(
-                pending_keys=() if positions is None else positions,
+                pending_keys=pending_keys,
                 removed_objects=() if removals is None else removals,
             )
         self._clear_buffer()
@@ -384,8 +421,7 @@ class WriteAdmission:
         preparation runs caller-owned code that can retire or supersede it.
         """
         item = self._authority.resolve_insertion_authorized_write(item)
-        positions = self._pending_insert_positions
-        position = None if positions is None else positions.get(item.object_key)
+        position = self._pending_insert_position(item.object_key)
         if position is not None and not self._opening_admits(position, item.instruction):
             raise _already_claimed(item.instruction.target, item.object_key)
         return item
@@ -512,9 +548,7 @@ class WriteAdmission:
         """Drop the pending insert at ``position`` that composition left
         nothing of, with its object's pending insert position."""
         self._writes[position] = None
-        positions = self._pending_insert_positions
-        assert positions is not None  # a cancelled insert was pending
-        del positions[key]
+        self._unindex_pending_insert(key)
         if self._after_removal is not None:
             self._after_removal.discard(position)
         return BufferOutcome.CANCELLED_PENDING_INSERT
@@ -792,6 +826,7 @@ class WriteAdmission:
         self._temporal.clear()
         self._removals = None
         self._after_removal = None
+        self._first_insert_key = None
         self._pending_insert_positions = None
         self._conditioned = None
         self._claimed_objects = None
