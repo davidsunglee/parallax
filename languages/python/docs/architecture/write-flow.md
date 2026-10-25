@@ -270,6 +270,12 @@ before an empty amendment is dropped, so stating nothing never lets an ineligibl
 source through. A target write's empty amendment is dropped before any condition is
 consulted.
 
+This composition is the first stage of the unit of work's
+[planning pipeline](../../../../core/spec/m-unit-work.md#the-planning-pipeline):
+admission resolves each write's object and coalesces it with the pending intent as the
+write arrives, so the buffer only ever holds coalesced intent, and the Write Planner
+owns the later stages.
+
 Admission owns the buffer and its claims, not an insertion's lifecycle. The
 `SourceAuthority` keeps its `WriteOwnership` behind it, and that owner's
 `InsertionRecord` for each object moves only through named transitions: opened at
@@ -418,8 +424,10 @@ of its own.
 Planning is pure: `finalize` performs no I/O and reads no clock, and the
 `TransactionInstant` it threads is captured only when settlement reaches a surviving
 temporal write. `UnitOfWork` hands the planner the buffer as admission composed it, so
-the planner indexes nothing again, and `compile` returns the `WritePlan` that
-`finalize` returns unchanged.
+the planner indexes nothing again and starts at the pipeline's second stage, dropping
+known no-op work in `_without_noop_rows`. `compile` performs Write Settlement, the
+pipeline's last five stages, and returns the `WritePlan` that `finalize` returns
+unchanged.
 
 A deferred settled write is the one entry whose steps are not known at planning:
 its window reaches coverage no planning input held. Its meaning, gates and instant are
