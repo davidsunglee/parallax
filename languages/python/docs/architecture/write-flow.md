@@ -127,12 +127,14 @@ TargetWrite               the caller's stated revision     versioned: the stated
 
 `source_evidence` is a lifetime edge: it keeps the Read Evidence of every source whose
 write composed into this one reachable while the write is pending or planned, and
-nothing reads it for a decision. `retained` is the starting row a Locking temporal
-target write's admission read whole, which its range may reuse
-(`RetainedTargetState`).
+nothing reads it for a decision. Planning carries it onto every `SettledWrite`, so the
+sources stay published while the plan holding the write is reachable. `retained` is the
+starting row a Locking temporal target write's admission read whole, which its range
+may reuse (`RetainedTargetState`).
 
-`UnitOfWork.resolve_read_evidence` turns a source's `ReadEvidence` into what the write
-settles against, the `SettledEvidence`, and `admitted_write` picks the leaf from its
+The unit of work's `SourceAuthority` judges every licence. Its
+`SourceAuthority.resolve_read_evidence` turns a source's `ReadEvidence` into what the
+write settles against, the `SettledEvidence`, and `admitted_write` picks the leaf from its
 shape: a `RetainedObservation` or a `VersionedObjectStateKey` makes a
 `StateObservedWrite`, and an `ObjectKey` makes an `ObjectLockedWrite`. Evidence from
 another participation is refused as `write-evidence-unavailable`. A source continues
@@ -142,7 +144,9 @@ read acquired before such a write changed them, and a source those writes ended:
 whose object a keyed deletion removed, or a temporal source whose observed state they
 left nothing of at its Valid-Time pin. The Effective Concurrency Strategy decides only
 what the participating read must also prove: under Optimistic it must have retained an
-observation.
+observation. An insertion's licence is the `InsertionIdentity` its insert was issued,
+which `SourceAuthority.insertion_authority` answers while that insertion stands: until
+everything it opened is removed, or a later insertion of the object supersedes it.
 
 ### Symbols
 
@@ -163,23 +167,26 @@ observation.
 - `parallax.core._execution._unit_work.retain:RetainedTargetState`
 - `parallax.core._execution._unit_work.retain:InsertionIdentity`
 - `parallax.core._execution._unit_work.claims:SettledEvidence`
+- `parallax.core.write_plan.plan:SettledWrite.source_evidence`
 - `parallax.core._execution._unit_work.instructions:ExpectedVersion`
 - `parallax.core._execution._unit_work.instructions:ExpectedTxStart`
-- `parallax.core._execution._unit_work.uow:UnitOfWork.resolve_read_evidence`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.resolve_read_evidence`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.insertion_authority`
 - `parallax.core.write_plan.keys:ObjectKey`
 - `parallax.core.write_plan.keys:VersionedObjectStateKey`
-- `parallax.core._execution._unit_work.admission:WriteEvidenceError`
+- `parallax.core._execution._unit_work._errors:WriteEvidenceError`
 
 ## From verb to buffer
 
 ```text
  keyed: TxnAttempt.keyed_insert / keyed_write                                  _keyed_writes
    refuse_reentry → source.capture → source.resolve → ResolvedKeyedWriteSource
-   → a standing insertion? UnitOfWork.insertion_authority(authoring)
+   → a standing insertion? SourceAuthority.insertion_authority(authoring)
    → validate_provenance → validate_source_pin → source_start (Bitemporal start)
    → source.prepare: keyed_instruction → KeyedWriteInstruction → prepare_*_write
-     (an insert checks validate_source_pin before validate_provenance, and refuses a
-      repeated insert after preparation)
+     (an insert checks validate_source_pin before validate_provenance; a repeated
+      insert is refused as it is buffered, after preparation)
 
  target: TxnAttempt.target_write                                               _attempt
    refuse_reentry → stated_valid_from → adapter.write_input
@@ -200,12 +207,14 @@ observation.
               window; PreparedInstruction names the keyed and predicate pair
 
  PreparedKeyedInstruction
-   insert  → KeyedInsert(prepared, object_key) → UnitOfWork.buffer
+   insert  → KeyedInsert(prepared, object_key) → UnitOfWork.buffer_insert
+           → WriteAdmission.admit_insert → the issued InsertionIdentity, which
+             the verb binds to the value it answers
    source  → licence: the standing insertion's identity, or
-             UnitOfWork.resolve_read_evidence(...) → SettledEvidence
+             SourceAuthority.resolve_read_evidence(...) → SettledEvidence
            → admitted_write(prepared, evidence, object_key, source= / authority=)
            → an amend assigning nothing stops here, after admission
-           → UnitOfWork.buffer
+           → UnitOfWork.buffer → WriteAdmission.admit
  PreparedTargetInstruction
            → UnitOfWork.buffer_target: an amend assigning nothing stops here
            → target_write: keyed_instruction_from_target + the caller's expectation
@@ -217,14 +226,23 @@ observation.
  ADMITTED   AdmittedWrite = KeyedInsert | StateObservedWrite | ObjectLockedWrite     write_items
               | InsertionAuthorizedWrite | TargetWrite
               │
-              │ WriteAdmission.admit: compose with what is pending, or refuse    admission
-              │   insert                   opens an insertion and issues its
-              │                            InsertionIdentity
+              │ WriteAdmission.admit / admit_insert: compose with what is        admission
+              │   pending, or refuse; an insertion moves only through
+              │   SourceAuthority transitions onto its WriteOwnership
+              │   insert                   open_insertion issues an InsertionIdentity,
+              │                            superseding an earlier insertion's; a repeat
+              │                            of a standing insertion → KeyedWriteValueError
+              │                            (write-value-already-stored)
+              │   insertion-authorized     resolve_insertion_authorized_write: refused
+              │     write                  once that insertion no longer stands; takes
+              │                            the claim scope its stored row has
               │   write of an object whose Non-Temporal or Transaction-Time-Only:
               │     insert is pending      an amendment merges into the KeyedInsert,
               │                            a destruction cancels the pair;
               │                            Bitemporal, insertion-authorized only:
-              │                            → ComposedBitemporalOpening
+              │                            → ComposedBitemporalOpening;
+              │                            apply_insertion_composition says whether
+              │                            the insertion survives, ends or is cancelled
               │   Non-Temporal write       at its claim scope, never by key alone:
               │                            coalesce, supersede or deduplicate (admits);
               │                            the survivor stays a leaf, a TargetWrite
@@ -234,9 +252,10 @@ observation.
               │                            observed run of one observation and window,
               │                            compact_observed_run)
               │   target write             refused for an object this attempt
-              │                            inserted; under Locking, confirm_target reads
-              │                            its starting row unless a pending write or a
-              │                            live read already proves it
+              │                            inserted (has_admitted_insertion); under
+              │                            Locking, confirm_target reads its starting
+              │                            row unless a pending write or a live read
+              │                            (has_live_observation) already proves it
               │   anything else            WriteEvidenceError
               │                            (write-evidence-already-claimed)
               ▼
@@ -246,9 +265,19 @@ observation.
 ```
 
 Every refusal on this path happens at the verb, before anything is buffered, and leaves
-the buffer and its claims as they were. A source's licence is decided before an empty
-amendment is dropped, so stating nothing never lets an ineligible source through. A
-target write's empty amendment is dropped before any condition is consulted.
+the buffer, its claims and every insertion as they were. A source's licence is decided
+before an empty amendment is dropped, so stating nothing never lets an ineligible
+source through. A target write's empty amendment is dropped before any condition is
+consulted.
+
+Admission owns the buffer and its claims, not an insertion's lifecycle. The
+`SourceAuthority` keeps its `WriteOwnership` behind it, and that owner's
+`InsertionRecord` for each object moves only through named transitions: opened at
+`admit_insert`, composed as a write folds into its pending opening, stored once a flush
+has planned the buffer holding it, and retired once everything it opened is removed:
+by a whole removal that buffer held, or as completed writes report the rows they
+removed (next section). A write an insertion authorized is checked against it again
+at admission, because preparation runs caller code that can retire or supersede it.
 
 `PostRemovalInsert` is not something admission builds while composing. It is the marker
 `composed_writes` wraps around an insert, or an opening composed over one, whose
@@ -269,7 +298,7 @@ removed and reinserted this way.
 - `parallax.core._execution._keyed_writes:validate_provenance`
 - `parallax.core._execution._keyed_writes:validate_source_pin`
 - `parallax.core._execution._keyed_writes:source_start`
-- `parallax.core._execution._keyed_writes:refuse_repeated_insert`
+- `parallax.core._execution._keyed_writes:OpenedKeyedWrite`
 - `parallax.core._execution._keyed_writes:keyed_instruction`
 - `parallax.core._execution._keyed_writes:stated_valid_from`
 - `parallax.core.execution_lifecycle._activity:refuse_reentry`
@@ -290,7 +319,8 @@ removed and reinserted this way.
 - `parallax.core._execution._unit_work.instructions:PreparedInstruction`
 - `parallax.core._execution._unit_work.instructions:keyed_instruction_from_target`
 - `parallax.core._execution._unit_work.uow:UnitOfWork`
-- `parallax.core._execution._unit_work.uow:UnitOfWork.insertion_authority`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.insertion_authority`
+- `parallax.core._execution._unit_work.uow:UnitOfWork.buffer_insert`
 - `parallax.core._execution._unit_work.uow:UnitOfWork.buffer`
 - `parallax.core._execution._unit_work.uow:UnitOfWork.buffer_target`
 - `parallax.core._execution._unit_work.uow:UnitOfWork._confirm_target`
@@ -302,6 +332,16 @@ removed and reinserted this way.
 - `parallax.core._execution._unit_work.write_items:ComposedWrite`
 - `parallax.core._execution._unit_work.admission:WriteAdmission`
 - `parallax.core._execution._unit_work.admission:WriteAdmission.admit`
+- `parallax.core._execution._unit_work.admission:WriteAdmission.admit_insert`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.open_insertion`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.resolve_insertion_authorized_write`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.apply_insertion_composition`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.has_admitted_insertion`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.has_live_observation`
+- `parallax.core._execution._unit_work._write_ownership:WriteOwnership`
+- `parallax.core._execution._unit_work._write_ownership:WriteOwnership.open_insertion`
+- `parallax.core._execution._unit_work._write_ownership:InsertionRecord`
+- `parallax.core._execution._unit_work._errors:KeyedWriteValueError`
 - `parallax.core._execution._unit_work.admission:WriteAdmission.composed_writes`
 - `parallax.core._execution._unit_work.claims:admits`
 
@@ -313,6 +353,7 @@ removed and reinserted this way.
               │
               ▼
  UnitOfWork.flush → _flush_buffer                                                   uow
+   SourceAuthority.planning_ownership(concluding: a pre_commit flush) → ownership
    WritePlanner.finalize(WritePlanningRequest(actor_identity, transaction_instant,   write_planner
                          concurrency, composed_writes, ownership, ...))
      _without_noop_rows   drop known no-op work
@@ -327,6 +368,7 @@ removed and reinserted this way.
               | ComposedBitemporalOpening | InsertBatch | ObjectLockedBatch
               │
               │ WritePlanCompiler.compile: settle each write once                 write_settlement
+              │   into a SettledWrite carrying its sources' source_evidence
               │   insert or Non-Temporal write  → its Planned Steps now
               │   temporal write or composition → settle_range                   ranges
               │   pending Bitemporal opening    → settle_opening
@@ -338,6 +380,10 @@ removed and reinserted this way.
               │     are recorded as an AcquisitionSpan of at most 32
               ▼
  WritePlan(entries: WriteGroup | SettledWrite, acquisition_spans)                  write_plan
+              │
+              │ WriteAdmission.drain_planned: the buffer empties, and the          admission
+              │   insertions it held are stored or retired
+              │   (SourceAuthority.finish_insertion_planning)
               │
               │ UnitOfWork._run_write_plan, entry by entry, in order               uow
               │   WriteGroup        → _execute_write_group
@@ -351,7 +397,8 @@ removed and reinserted this way.
               │     per step, at its turn: LayoutPayloadPreparer prepares the payload,
               │     compile_write_step lowers it, the connection executes it,
               │     enforce_affected_rows checks its count
-              │   then _complete_write for each write, in order → WriteAdmission.complete
+              │   then, for each write in order,                                   source_authority
+              │     SourceAuthority.complete_write → WriteOwnership.complete
               ▼
  database
 
@@ -381,12 +428,17 @@ reaches the entry, inside the same Flush. Planned groups and deferred entries
 interleave in plan order, and each group completes before any later group binds or
 executes.
 
-Completion publishes what a write did to later work. It invalidates every
+Completion publishes what a write did to later work, through the same
+`SourceAuthority` that resolved the write's licence. It invalidates every
 `RetainedObservation` of a state the write changed, advances or ends the sources of the
 states it updated or deleted, retires the owned rows it removed before registering the
 rows it opened, and records what it left for the temporal sources that continue through
-it. A failure while executing, binding or completing dooms the attempt; a refusal while
-planning precedes execution and leaves the attempt usable.
+it. A deferred write binds against the same facts: its `RangeBindings` asks
+`SourceAuthority.is_unchanged_since` whether a retained starting row is still current.
+The pre-commit flush plans under a concluding view of the same ownership, which demands
+nothing its writes leave, since no later write follows it. A failure while executing,
+binding or completing dooms the attempt; a refusal while planning precedes execution
+and leaves the attempt usable.
 
 The Storage Layout decides no write's meaning: instructions, admitted writes and
 Planned Steps are Attribute-keyed. It is consulted only for physical work. Batching asks
@@ -405,7 +457,12 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._unit_work.uow:UnitOfWork._flush_buffer`
 - `parallax.core._execution._unit_work.uow:UnitOfWork._run_write_plan`
 - `parallax.core._execution._unit_work.uow:UnitOfWork._execute_write_group`
-- `parallax.core._execution._unit_work.uow:UnitOfWork._complete_write`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.planning_ownership`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.is_unchanged_since`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.complete_write`
+- `parallax.core._execution._unit_work._write_ownership:WriteOwnership.complete`
+- `parallax.core._execution._unit_work.admission:WriteAdmission.drain_planned`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.finish_insertion_planning`
 - `parallax.core._execution._unit_work.write_runner:ExecuteWriteSteps`
 - `parallax.core._execution._unit_work.write_runner:ExecuteCountedStep`
 - `parallax.core._execution._unit_work.acquisition:AcquireRows`
@@ -450,7 +507,6 @@ member in its Column or at its path in the shared Structured Column, and
 - `parallax.core._execution._keyed_sql:collapse_group_key`
 - `parallax.core.sql_gen._write:compile_write_step`
 - `parallax.core._execution._unit_work.effects:enforce_affected_rows`
-- `parallax.core._execution._unit_work.admission:WriteAdmission.complete`
 
 ## The temporal view shared by lone and composed writes
 

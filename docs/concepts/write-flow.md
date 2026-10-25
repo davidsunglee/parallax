@@ -227,7 +227,9 @@ and no flush you call yourself.
 So a read inside a read-write transaction always sees the transaction's own writes: it
 flushes them first, inside the still-open transaction, and a rollback still erases them.
 A value you inserted can be written again without reading it back, because it carries
-its insertion's licence until the attempt ends. A value you read stays usable after your
+its insertion's licence for the rest of the attempt, unless everything the insertion
+opened is removed or a later insertion of the same object takes its place
+([insertion authority](../../core/spec/m-unit-work.md#insertion-authority)). A value you read stays usable after your
 own writes change its row: its licence follows the state your completed writes left,
 until a deletion, or a termination over the instant it was read at, leaves nothing of it
 ([observation ownership and lifetime](../../core/spec/m-unit-work.md#observation-ownership-and-lifetime)).

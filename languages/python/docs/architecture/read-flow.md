@@ -63,7 +63,9 @@ callback still runs a standalone read on its own connection. The three lane obje
 `BegunRead`, which supplies the bracket a read runs inside; everything after the
 capture is the same code for every lane and both representations. Typed and Wire graph
 reads both plan with `result_form="instance"`. The row-form lane is separate: it
-publishes plain rows and no graph, and Wire is not built on it.
+publishes plain rows and no graph, and Wire is not built on it. Its rows are published
+by a `RowPublisher` that `ReadRowConverter.row_publisher` opens for one Page; what it
+derives for each Entity from the contract's publication slots dies with that Page.
 
 ### Symbols
 
@@ -113,6 +115,8 @@ publishes plain rows and no graph, and Wire is not built on it.
 - `parallax.core._execution._read_policy:read_graph`
 - `parallax.core._execution._read_policy:read_rows`
 - `parallax.core.read_delivery._row_lane:find_rows`
+- `parallax.core.read_delivery._row_converter:ReadRowConverter.row_publisher`
+- `parallax.core.read_delivery._row_converter:RowPublisher`
 - `parallax.core.read_delivery._stream:StreamDelivery`
 
 ## From query spelling to a judged Page
@@ -158,6 +162,11 @@ An eager graph read, from the lane's entry point to the sealed Page:
    ├ entity_read_lock(meta, entity, preference) for the root and each query fetch step
    ├ compile_read(root) / compile_template(each query fetch step)        sql_gen._compile
    │     resolve storage layout, inheritance and physical reads; append the lock
+   │     a SelectListBuilder per select list renders each cell           sql_gen._select_list
+   │       (the dialect renders scalar cells) and records what it carries
+   │     → SelectListBuilder.result_contract → one ReadResultContract:
+   │       each Entity's member sources, a publication slot per cell, and the
+   │       ordinals of the row identity, the shared document and each coordinate
    ├ bind(model, result_contract, projection) → a ReadRowConverter per compiled read
    └ ReadPlan: compiled root + fetch work + converters + ViewSchema
    │ rendered for this query: a stream page's cap and seek coordinate are bound
@@ -168,7 +177,8 @@ An eager graph read, from the lane's entry point to the sealed Page:
  driver rows
    ▼
  ReadRowConverter.convert_row → PageBuilder                             _row_converter
-   resolve the concrete Entity and each member's source (Column or document);
+   row_identity: the concrete Entity from the identity cell, the shared document
+   from its cell; each member read at its own cell or at its name in that document;
    register the identity claim; leave payload judgement until it is needed;
    the origin collector observes each projection
    ▼
@@ -187,11 +197,16 @@ acquires no connection and flushes nothing. A stream crosses the same gate once,
 it is entered, through `ExecutionScope.resolved` or the attempt's `resolved`.
 
 A `CompiledRead` carries its statement, the resolved concrete position, the
-`ResolvedReadProjection`, the document-read ordinals and the `ReadResultContract`
-together, and `bind` builds the converter from that same contract and projection. The
-compiler and the converter therefore resolve each member's placement from one storage
-layout facet, which is why nothing above this stage knows whether an Entity is stored
-in Columns or as a document. A position with no concrete subtype compiles to `EmptyRead`
+`ResolvedReadProjection`, the document-read ordinals and one `ReadResultContract`
+together. The `SelectListBuilder` that renders a select list builds the contract from
+the cells it emitted, so where each value sits in a driver row is recorded once, when
+the statement is rendered. It refuses a select list that does not carry what its plan
+requires, union branches or NULL-tail arms whose cells disagree, and two cells one
+Entity would publish under one key. `bind` builds the converter from that same contract
+and projection. Binding, conversion, row identity, Continuation Order coordinates and
+flat-row publication all index the folded row by ordinal, so no column alias is
+reconciled per row, and nothing above this stage knows whether an Entity is stored in
+Columns or as a document. A position with no concrete subtype compiles to `EmptyRead`
 and executes no statement.
 
 `entity_read_lock` returns no lock when there is no Concurrency Preference, which is
@@ -257,10 +272,21 @@ admission stay outside the cache.
 - `parallax.core.sql_gen._compile:compile_template`
 - `parallax.core.sql_gen._compile:CompiledRead`
 - `parallax.core.sql_gen._compile:CompiledTemplate.render`
+- `parallax.core.sql_gen._select_list:SelectListBuilder`
+- `parallax.core.sql_gen._select_list:SelectListBuilder.result_contract`
+- `parallax.core.dialect:Dialect.render_scalar`
 - `parallax.core.sql_gen._inheritance:ReadResultContract`
+- `parallax.core.sql_gen._inheritance:ReadResultContract.entity_sources`
+- `parallax.core.sql_gen._inheritance:ReadResultContract.slots`
+- `parallax.core.sql_gen._inheritance:ReadResultContract.identity_ordinal`
+- `parallax.core.sql_gen._inheritance:ReadResultContract.shared_document_ordinal`
+- `parallax.core.sql_gen._inheritance:ReadResultContract.coordinate_ordinals`
+- `parallax.core.sql_gen._inheritance:EntitySources`
+- `parallax.core.sql_gen._inheritance:DriverRowSlot`
 - `parallax.core.read_delivery._row_converter:bind`
 - `parallax.core.read_delivery._row_converter:ReadRowConverter`
 - `parallax.core.read_delivery._row_converter:ReadRowConverter.convert_row`
+- `parallax.core.read_delivery._row_decoding:row_identity`
 - `parallax.core.read_delivery._read_plan:ReadPlan`
 - `parallax.core.read_delivery._read_plan:ReadPlan.ready_fetches`
 - `parallax.core.read_delivery._read_plan:EmptyRead`
@@ -382,7 +408,8 @@ are already published into Wire form in memory, with no further read.
                          Stream Batch:
                            StreamPageRequest(PagingPlan, At(coordinate, emitted))
                            → PageReader: ContinuationPlan.first / ContinuationPlan.after
-                             → plan → root statement, reading one lookahead root
+                             → plan → root statement, reading one lookahead root;
+                               row_coordinates reads each root's coordinate cells
                            → page_decision: keep a strictly ordered prefix, detect a tie
                            → fetch levels for the kept roots
                            → StreamPageResult(delivered, resume_from, exhausted, tie)
@@ -400,7 +427,8 @@ are already published into Wire form in memory, with no further read.
                               a TxnAttempt flushes pending writes before every read
                               and every page
 
- origins     TxnAttempt, one instant → ReadEvidenceCollector → origins_for(page)
+ origins     TxnAttempt, one instant → ReadEvidenceCollector, filing into the
+                              attempt's SourceAuthority → origins_for(page)
                               → Read Evidence on conforming Typed and Wire nodes
              StandaloneRead / ReadOnlyTxnAttempt (no evidence context),
              or a scanned-axis stream page → EMPTY_PAGE_ORIGIN_COLLECTOR → none
@@ -411,14 +439,17 @@ are already published into Wire form in memory, with no further read.
 The `ReadInputs` a lane passes decide most of this. A standalone read passes its own
 connection, no Concurrency Preference and no evidence context; a read-only attempt
 passes its connection and neither of the others; a writable attempt passes its
-connection, its unit of work's preference and the unit of work itself as the evidence
-context. `_page_origin_collector` in `_read_policy` turns "no evidence context, or a
-scanned axis" into `EMPTY_PAGE_ORIGIN_COLLECTOR`.
+connection, its unit of work's preference and that unit of work's `SourceAuthority` as
+the evidence context. `_page_origin_collector` in `_read_policy` turns "no evidence
+context, or a scanned axis" into `EMPTY_PAGE_ORIGIN_COLLECTOR`.
 
-Read Evidence is not authority. A source write of a value a read returned hands the
-value's evidence to `UnitOfWork.resolve_read_evidence`, which refuses it unless a read
-of this attempt produced it (`write-evidence-unavailable`), before anything is
-buffered; a value this attempt inserted is licensed by the insertion instead. The
+Read Evidence is not authority. The `SourceAuthority` is the attempt's one judge of
+what its sources and insertions still license. A source write of a value a read
+returned hands the value's evidence to `SourceAuthority.resolve_read_evidence`, which
+refuses it unless a read of this attempt produced it (`write-evidence-unavailable`),
+before anything is buffered; a value this attempt inserted is licensed instead by its
+insertion, while `SourceAuthority.insertion_authority` answers that insertion as
+standing. The
 value's pin is checked at the same verb: a value read at a finite Transaction-Time
 instant is refused by `validate_source_pin` with `TransactionTimePinReadOnlyError`,
 even when a writable attempt read it. Publication provenance — the concrete Entity,
@@ -460,13 +491,17 @@ exhausted, failed or stopped early.
 - `parallax.core.read_delivery._paging:PagingPlan`
 - `parallax.core.read_delivery._paging:At`
 - `parallax.core.read_delivery._paging:page_decision`
+- `parallax.core.read_delivery._row_decoding:row_coordinates`
 - `parallax.core._execution._read_policy:read_page`
 - `parallax.core._execution._read_policy:BegunRead.paged`
 - `parallax.core._execution._read_policy:_page_origin_collector`
 - `parallax.core._execution._page_origins:ReadEvidenceCollector`
 - `parallax.core.read_delivery._page_reader:EMPTY_PAGE_ORIGIN_COLLECTOR`
 - `parallax.core._execution._unit_work.retain:ReadEvidence`
-- `parallax.core._execution._unit_work.uow:UnitOfWork.resolve_read_evidence`
+- `parallax.core._execution._retention:ReadEvidenceContext`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.resolve_read_evidence`
+- `parallax.core._execution._unit_work.source_authority:SourceAuthority.insertion_authority`
 - `parallax.core._execution._keyed_writes:validate_source_pin`
 - `parallax.core._execution._keyed_writes:TransactionTimePinReadOnlyError`
 - `parallax.core.read_delivery._row_lane:RowsResult`
