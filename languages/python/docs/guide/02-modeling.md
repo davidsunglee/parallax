@@ -18,7 +18,6 @@ from decimal import Decimal
 
 from parallax.core import (
     MANY_TO_ONE,
-    MAX,
     ONE_TO_MANY,
     ONE_TO_ONE,
     READ_ONLY,
@@ -33,7 +32,6 @@ from parallax.core import (
     Entity,
     Int32,
     Rel,
-    Sequence,
     TablePerHierarchy,
     TxTemporal,
     ValueObject,
@@ -83,9 +81,7 @@ The constructor needs every attribute except a nullable one, which is then `None
 one Parallax sets, such as `version`. To change a value, `edit(...)` returns a modified
 copy; `model_copy` is refused.
 
-`primary_key=True` makes `id` the key, with values your application assigns. To let
-Parallax generate keys instead, use `primary_key=MAX` or `primary_key=Sequence(...)`.
-The [primary key generation](../../../../core/spec/m-pk-gen.md) contract describes both.
+`primary_key=True` makes `id` the key, with values your application assigns.
 
 Python names become canonical names by dropping each underscore and capitalizing the
 next letter, so `customer_id` is `customerId` wherever names are serialized. Wire, the

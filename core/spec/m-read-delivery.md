@@ -163,8 +163,6 @@ classification rules and finding paths rather than a second decoder.
 
 ### Evidence a public issue carries
 
-### Evidence a public issue carries
-
 Every issue names the value that was judged and the place it was found. The
 **rejected stored value** is the provider-normalized logical value the detecting
 module judged, captured where that verdict was formed — before any collapse
