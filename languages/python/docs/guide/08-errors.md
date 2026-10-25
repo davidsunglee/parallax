@@ -26,7 +26,15 @@ from collections.abc import Mapping
 
 from pydantic import ValidationError
 
-from parallax.core import EditError, EntityDefinitionError, QueryDefinitionError
+from parallax.core import (
+    DomainModel,
+    EditError,
+    Entity,
+    EntityDefinitionError,
+    MetamodelValidationError,
+    QueryDefinitionError,
+)
+from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.db_port import ConnectionAcquisitionError
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.execution import (
@@ -51,6 +59,7 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     WritePreconditionError,
 )
+from parallax.evolution import SchemaDelta
 from parallax.snapshot import (
     NoResultFound,
     ScopedDatabase,
@@ -98,10 +107,9 @@ tool can report them without parsing messages.
   the rule. Constructing an instance validates its values as any Pydantic model does,
   and raises Pydantic's own `ValidationError`.
 - **A model.** `DomainModel(...)` checks the classes as a whole. As
-  [Modeling](02-modeling.md) explains, a model that breaks a rule raises a `ValueError`
-  that lists every problem in its `issues`. Each one is a `MetamodelIssue` with a
-  `code`, a `location` in the model and a `message`. Catch it as a `ValueError` and read
-  its `issues`.
+  [Modeling](02-modeling.md) explains, a model that breaks a rule raises
+  `MetamodelValidationError`, which lists every problem in its `issues`. Each one is a
+  `MetamodelIssue` with a `code`, a `location` in the model and a `message`.
 - **A query.** Building a query checks each expression and clause, and
   `QueryDefinitionError` refuses one it can't accept, with a `code` naming the rule.
   `Customer.name == 3` compares text with a number, a `Decimal` with more places than
@@ -122,11 +130,30 @@ tool can report them without parsing messages.
   `TransactionTimePinReadOnlyError` means the value was read as of a past Transaction
   Time, which [can't be rewritten](04-writing.md#correct-the-past).
 
-An edit shows the accumulation best. `edit(...)` checks every change against the model,
-and one `EditError` reports every rule the changes break. Only once they all pass do
-validators you declared run, and a validator's refusal raises Pydantic's
-`ValidationError`, as it does on construction. Each of its `violations` has a
-`code`, a `member_name` and a `message`, so a form can show every refused field at once.
+A release check can report every problem in a model at once:
+
+<!-- example: list-a-models-problems -->
+```python
+def problems_in_a_model(*classes: type[Entity]) -> list[str]:
+    """Each problem ``DomainModel`` finds in ``classes``, by code and message."""
+    try:
+        DomainModel(*classes)
+    except MetamodelValidationError as rejected:
+        return [f"{issue.code}: {issue.message}" for issue in rejected.issues]
+    return []
+```
+<!-- /example -->
+
+`problems_in_a_model(Order)` answers one problem. `Order.customer` mirrors
+`Customer.orders`, and the model has no `Customer`, so the line reads
+`metamodel-unresolved-entity-reference: no declaration resolves to Entity 'Customer'`.
+Given the whole shop model, it answers an empty list.
+
+An edit accumulates its refusals the same way. `edit(...)` checks every change against
+the model, and one `EditError` reports every rule the changes break. Only once they all
+pass do validators you declared run, and a validator's refusal raises Pydantic's
+`ValidationError`, as it does on construction. Each of its `violations` has a `code`, a
+`member_name` and a `message`, so a form can show every refused field at once.
 `member_name` is `None` only for a refusal that concerns no single member:
 
 <!-- example: report-every-refused-field -->
@@ -187,9 +214,9 @@ section covers the ones that reach you.
   in this attempt observed has moved. Parallax retries it, so an
   `OptimisticLockConflictError` reaches you as a `cause` only when retries are off or
   used up.
-- **A deadlock or a serialization failure** is retried the same way. It is a database
-  error, so it reaches you as a cause whose `category` is `"deadlock"`
-  ([below](#failures-the-database-reports)).
+- **A deadlock or a serialization failure** is retried the same way. The database
+  reports it, so it reaches you as a `DatabaseError` cause whose `category` is
+  `"deadlock"` ([below](#failures-the-database-reports)).
 - **Retries run out** when every attempt fails with something retryable. You then get the
   last attempt's failure as the `cause`, with a note naming the count, such as
   `bounded retry exhausted after 11 attempts (retries=10)`.
@@ -232,14 +259,19 @@ writers wait for each other instead of re-running.
 ## Failures the database reports
 
 A failure the database reports, such as a duplicate key, reaches you as the `cause` of
-an `ExecutionFailure`. The cause's type isn't part of the public API, so read its
-attributes rather than testing its class:
+an `ExecutionFailure`, and that cause is a `DatabaseError`. Test it with `isinstance`,
+and then read its attributes:
 
-- `category` says what kind of failure it is, in Parallax's portable vocabulary:
-  `"uniqueViolation"` for a duplicate key, `"deadlock"` for a deadlock or a
-  serialization failure, `"lockWaitTimeout"` for a lock waited on past the database's
-  limit, and `None` for anything else, such as a check or foreign-key constraint, a
-  missing table, or a privilege the role lacks.
+- `category` says what kind of failure it is, in Parallax's portable vocabulary. Its
+  type is `Category`: `"uniqueViolation"` for a duplicate key, `"deadlock"` for a
+  deadlock or a serialization failure, and `"lockWaitTimeout"` for a lock waited on past
+  the database's limit. `Category` also reserves `"connectionDead"`, which no failure
+  reports yet.
+- `category` is `None` for a failure Parallax doesn't categorize, such as a check or
+  foreign-key constraint, a missing table, or a privilege the role lacks.
+- `violated_index` is the `PhysicalIndexName` of the unique index a duplicate key
+  broke, when the database names one, and `None` otherwise. It can be `None` even for a
+  `"uniqueViolation"`, so a handler mustn't depend on it being there.
 - `native_code` is the database's own code, PostgreSQL's SQLSTATE, such as `"23505"`
   for a duplicate key.
 - `message` is the database's message.
@@ -254,7 +286,8 @@ def add_a_customer_unless_the_id_is_taken(db: ScopedDatabase, customer: Customer
     try:
         db.transact(lambda tx: tx.insert(customer))
     except ExecutionFailure as failure:
-        if getattr(failure.cause, "category", None) != "uniqueViolation":
+        cause = failure.cause
+        if not (isinstance(cause, DatabaseError) and cause.category == "uniqueViolation"):
             raise
         return False
     return True
@@ -265,7 +298,54 @@ The insert is buffered and sent when the transaction commits, so the duplicate s
 there, and the transaction rolls back. Any other failure passes through. Reading first
 to check whether the id is free wouldn't make this unnecessary: two calls can both find
 it free and both insert, and only the database's unique index decides which one wins.
-`getattr` reads the category because the cause has no exported type to narrow it to.
+
+The category is enough here because `Customer`'s key is its only uniqueness constraint,
+so a duplicate customer can only mean a taken id. `Shipment` has two: its key, and a
+unique index on `tracking_number`. A handler meant for one of them has to check which
+one broke, and `violated_index` says so, by the name the index has in the database.
+Parallax generates that name when it creates the index, and the `SchemaDelta` that
+created it lists the name in `created_indices`, which
+[Model evolution](07-model-evolution.md#generating-the-schema-change) tells you to keep.
+Look the name up there rather than writing it into your code:
+
+<!-- example: add-a-shipment-unless-its-tracking-number-is-taken -->
+```python
+def created_index_name(rollout: SchemaDelta, entity: str, index: str) -> PhysicalIndexName:
+    """The physical name ``rollout`` gave the index it created as ``index`` on ``entity``."""
+    (name,) = (
+        created.physical_index_name
+        for created in rollout.created_indices
+        if created.logical_index_identity.entity.canonical == entity
+        and created.logical_index_identity.name == index
+    )
+    return name
+
+
+def add_a_shipment_unless_its_tracking_number_is_taken(
+    db: ScopedDatabase, shipment: Shipment, tracking_index: PhysicalIndexName
+) -> bool:
+    """Insert ``shipment``, or answer False when another shipment has its tracking number."""
+    try:
+        db.transact(lambda tx: tx.insert(shipment))
+    except ExecutionFailure as failure:
+        cause = failure.cause
+        if not (
+            isinstance(cause, DatabaseError)
+            and cause.category == "uniqueViolation"
+            and cause.violated_index == tracking_index
+        ):
+            raise
+        return False
+    return True
+```
+<!-- /example -->
+
+`created_index_name(rollout, "Shipment", "shipment_tracking_number")` finds the name in
+the delta that created the index. A release that changes the index gives it a new name,
+which that release's delta lists. The handler answers `False` only when the shipment's
+tracking number is taken. A duplicate shipment id is a `"uniqueViolation"` too, but
+PostgreSQL reports it against the key's own index, `shipment_pkey`, so it passes
+through. So does a `"uniqueViolation"` that names no index, and every other failure.
 
 Of the categories, Parallax retries only `"deadlock"`, so you see one only once retries
 run out. A `"uniqueViolation"` asks you to choose another key or treat the object as
@@ -292,7 +372,7 @@ of an `ExecutionFailure`:
 
 | Error | Raised | Retried? | What to do |
 | -- | -- | -- | -- |
-| A refused class, model, query, edit or write, such as `EntityDefinitionError`, `QueryDefinitionError`, `QueryTargetError`, `EditError`, `WriteEvidenceError`, `KeyedWriteValueError` or `WriteInstructionError`, or a model's `ValueError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
+| A refused class, model, query, edit or write, such as `EntityDefinitionError`, `MetamodelValidationError`, `QueryDefinitionError`, `QueryTargetError`, `EditError`, `WriteEvidenceError`, `KeyedWriteValueError` or `WriteInstructionError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
 | `NoResultFound` or `TooManyResultsFound` | by `.result()` or `.result_or_none()`, after the read | No | Use the accessor for the shape you expect, or treat the absence as an answer |
 | `UnloadedRelationshipError` | when you touch a relationship the read didn't include | No | Include it in the read, or test it with `is_view_loaded` |
 | `StreamStateError` | when a stream is used outside its `with` block, entered twice or iterated twice | No | Consume each stream once, inside its `with` block |
@@ -301,10 +381,10 @@ of an `ExecutionFailure`:
 | `InvalidPrincipalError` | when you derive a scope from a principal | No | Supply a nonempty subject that doesn't start with `db-login:` |
 | `RollbackOnlyError` | at any read or write after a failure doomed the transaction | On the original failure's terms | Let the original failure escape; the transaction can only roll back |
 | `PublicationConflictError` | when `publish` finds another selection held than the one it expected | No | Read the current selection and decide whether to publish again |
-| `OptimisticLockConflictError`, or a `"deadlock"` category | when the transaction sends its writes, or at the statement | Yes, up to `max_retries` | If retries run out: try later, shorten the transactions, or prefer locking |
+| `OptimisticLockConflictError`, or a `DatabaseError` whose `category` is `"deadlock"` | when the transaction sends its writes, or at the statement | Yes, up to `max_retries` | If retries run out: try later, shorten the transactions, or prefer locking |
 | `WritePreconditionError` | when the transaction sends its writes, or at the call under locking | No | Read the current value and let the user decide again |
-| A `"uniqueViolation"` category | when the insert is sent, usually at commit | No | Choose another key, or treat the object as already there |
-| A `"lockWaitTimeout"` category, or none | at the statement | No | Read `native_code` and `message`; fix the schema or privilege, or try later |
+| A `DatabaseError` whose `category` is `"uniqueViolation"` | when the insert is sent, usually at commit | No | Choose another key, or treat the object as already there |
+| A `DatabaseError` whose `category` is `"lockWaitTimeout"` or `None` | at the statement | No | Read `native_code` and `message`; fix the schema or privilege, or try later |
 | `ConnectionAcquisitionError` | before an attempt begins | No | Check the database and the pool |
 | `TransactionRollbackError` | when the rollback after a failure fails too | No | Read `triggering_error` for the failure, and `rollback_error` for the rollback's |
 
@@ -331,7 +411,10 @@ of an `ExecutionFailure`:
   [Automatic retry](../../../../core/spec/m-auto-retry.md) defines which failures are
   retried.
 - [Database error classification](../../../../core/spec/m-db-error.md) defines the
-  categories and how each database's codes map to them, and the
+  categories, how each database's codes map to them, and
+  [the violated index name](../../../../core/spec/m-db-error.md#the-violated-physical-index-name).
+  [Physical Index Names](../../../../core/spec/m-schema-delta.md#physical-index-names)
+  defines how Parallax names the indexes it creates, and the
   [database port](../../../../core/spec/m-db-port.md) defines connection acquisition.
 - The Python binding records the
   [failure boundaries](../../spec/execution.md#transactions-and-failure-boundaries),

@@ -4,8 +4,8 @@ Your model is a set of Python classes. Each entity class maps to a table, and a
 `DomainModel` composes the classes your application uses and checks them as a whole.
 There is no global registry: a class takes part only when you pass it to `DomainModel`.
 A model that breaks a rule, such as a join that names an attribute its entity doesn't
-have, makes `DomainModel(...)` raise a `ValueError` whose `issues` list every problem
-found, before anything touches the database. [Errors](08-errors.md#mistakes-in-what-you-wrote)
+have, makes `DomainModel(...)` raise `MetamodelValidationError`, whose `issues` list
+every problem found, before anything touches the database. [Errors](08-errors.md#mistakes-in-what-you-wrote)
 describes those issues.
 
 This chapter starts with a plain entity and adds one idea per section: relationships,
@@ -33,6 +33,7 @@ from parallax.core import (
     Entity,
     EntityDefinitionError,
     Int32,
+    MetamodelValidationError,
     Rel,
     TablePerHierarchy,
     TxTemporal,
@@ -176,7 +177,11 @@ class Address(ValueObject):
     postcode: Attr[str]
 
 
-class Shipment(Entity, table="shipment"):
+class Shipment(
+    Entity,
+    table="shipment",
+    indices=(index("shipment_tracking_number", "tracking_number", unique=True),),
+):
     id: Attr[int] = attr(primary_key=True)
     order_id: Attr[int]
     ship_to: Attr[Address]
@@ -193,6 +198,9 @@ PostgreSQL, `ship_to` is one JSON column. Queries reach into it with ordinary at
 paths such as `Shipment.ship_to.city`. Declare `Attr[Address | None]` for an optional
 value and `Attr[tuple[Address, ...]]` for a list of them. Choose an entity instead when
 the thing has its own identity, is shared between owners, or is read on its own.
+
+`Shipment` also declares a unique index, so no two shipments can share a tracking number.
+[Errors](08-errors.md#failures-the-database-reports) shows how to handle the refusal.
 
 ## Inheritance families
 

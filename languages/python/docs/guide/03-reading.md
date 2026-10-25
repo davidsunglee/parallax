@@ -18,7 +18,16 @@ import json
 from decimal import Decimal
 from typing import TextIO
 
-from parallax.core import LATEST, TX_TIME, VALID_TIME, Attr, QueryDefinitionError, TxTemporal, attr
+from parallax.core import (
+    LATEST,
+    TX_TIME,
+    VALID_TIME,
+    Attr,
+    QueryDefinitionError,
+    TemporalBound,
+    TxTemporal,
+    attr,
+)
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.execution import ExecutionFailure, TransactionAccessModeError
 from parallax.core.read_delivery import InvalidData, InvalidDataError, StreamStateError
@@ -591,10 +600,11 @@ def credit_limit_history(db: ScopedDatabase, customer_id: int) -> list[tuple[dt.
 <!-- /example -->
 
 Each of those states is a milestone. Its `tx_start` and `tx_end` say when the database
-started and stopped holding it, and the current one has no end yet. History arrives in
-primary-key order and, within one key, oldest first. `as_of_range(tx_time=(start, end))`
-returns only the milestones the database held at some point in that range. Neither
-history nor a range read can license a write.
+started and stopped holding it. The current one has no end yet, so its `tx_end` is
+`TemporalBound.INFINITY` rather than a `datetime`. History arrives in primary-key order
+and, within one key, oldest first. `as_of_range(tx_time=(start, end))` returns only the
+milestones the database held at some point in that range. Neither history nor a range
+read can license a write.
 
 A temporal read carries its instant through the whole graph it loads: a temporal entity
 reached through an include is read at the same instant as the root. An entity reached
@@ -652,6 +662,26 @@ whose window opens in September and has no end. When no window is open, as for a
 listed only until September, such as the summer blend that
 [Writing](04-writing.md#insert-from-a-date) lists, nothing matches: `.result()` raises
 `NoResultFound` and `.result_or_none()` returns `None`.
+
+You can read where a milestone ends, too. `valid_end` and `tx_end` are typed
+`datetime | TemporalBound`: the instant the milestone stops applying, or
+`TemporalBound.INFINITY` while it has no end. Infinity is neither a finite instant nor
+`None`, so test for it with `is` before you use an end as a `datetime`:
+
+<!-- example: read-where-a-price-ends -->
+```python
+def price_holds_until(db: ScopedDatabase, sku: str, day: dt.datetime) -> dt.datetime | None:
+    """Where the price in effect on ``day`` stops applying, or None while it has no end."""
+    price = db.find(Price.where(Price.sku == sku).as_of(valid_time=day)).result()
+    if price.valid_end is TemporalBound.INFINITY:
+        return None
+    return price.valid_end
+```
+<!-- /example -->
+
+For a day in July, `price_holds_until` answers 1 September, where the sale ends. For a
+day in October it answers `None`, because the price from September has no end. The
+starts, `valid_start` and `tx_start`, are always a `datetime`.
 
 A range returns every milestone in effect at some point within it:
 

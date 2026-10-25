@@ -138,7 +138,7 @@ failed, and its caller can't tell which. Committing the rest could save half of 
 helper meant to do. When a step may fail and the rest should commit regardless, check
 before calling it, or run it in a transaction of its own once the first has committed.
 
-A failure while the transaction sends its writes, such as a database error or a
+A failure while the transaction sends its writes, such as a `DatabaseError` or a
 conflict, dooms it in the same way, even when the callback catches it. A refusal a write
 verb raises before anything is sent, such as `WriteEvidenceError`, leaves the transaction
 usable.
@@ -303,9 +303,10 @@ write doesn't check the version, though it still advances it.
 
 Choose locking for rows that many transactions write at once, where a re-run costs more
 than a wait. Its cost is that writers wait for each other, and transactions waiting on
-each other's locks can deadlock; the database then ends one of them, and Parallax
-retries it. Optimistic is the default because most rows are rarely written at the same
-moment, and a check costs nothing until they are.
+each other's locks can deadlock. The database then ends one of them with a
+`DatabaseError` whose `category` is `"deadlock"`, and Parallax retries it. Optimistic is
+the default because most rows are rarely written at the same moment, and a check costs
+nothing until they are.
 
 ## No blind writes
 
@@ -342,7 +343,7 @@ Which failures are retried is fixed:
 
 | Failure | Retried? | Why |
 | -- | -- | -- |
-| A deadlock or a serialization failure | Yes | It is transient: a re-run can succeed |
+| A deadlock or a serialization failure: a `DatabaseError` whose `category` is `"deadlock"` | Yes | It is transient: a re-run can succeed |
 | An optimistic lock conflict: a version or Transaction-Time start a read in this attempt observed has moved | Yes | The re-run reads the newer state and applies the change to it |
 | Either of the above, caught by the callback, after which the transaction refused to continue with `RollbackOnlyError` | Yes, on the original failure's terms | The failure that doomed the attempt is what counts |
 | A target write's failed precondition: the revision you stated no longer matches | No | A re-run would state the same revision again |
@@ -351,10 +352,14 @@ Which failures are retried is fixed:
 
 Anything else includes your own exceptions, a lock that couldn't be had in time, and a
 constraint violation such as a duplicate key. Each reaches you as the `cause` of an
-`ExecutionFailure`. How long a statement waits for a lock is PostgreSQL's `lock_timeout`
-setting, which you set on the login or in the connection string; the lifecycle guide's
-[session settings](../postgresql-lifecycle.md#session-settings) explain which settings
-Parallax leaves to you.
+`ExecutionFailure`. The database reports the last two as a `DatabaseError`: a lock
+waited on too long has the `category` `"lockWaitTimeout"`, a duplicate key
+`"uniqueViolation"`, and another constraint violation none
+([Errors](08-errors.md#failures-the-database-reports)). How long a statement waits for a
+lock is PostgreSQL's `lock_timeout` setting, which you set on the login or in the
+connection string; the lifecycle guide's [session
+settings](../postgresql-lifecycle.md#session-settings) explain which settings Parallax
+leaves to you.
 
 ### Observed and stated revisions
 
@@ -409,7 +414,7 @@ the target write: only the stated version counts.
 to 11 attempts. If every one of them fails with something retryable, the last attempt's
 failure reaches you as the `cause` of an `ExecutionFailure`, with a note naming the
 count, such as `bounded retry exhausted after 11 attempts (retries=10)`. For a deadlock
-or a serialization failure, that cause is the database's error, whose `category` is
+or a serialization failure, that cause is a `DatabaseError` whose `category` is
 `"deadlock"`; [Errors](08-errors.md#failures-the-database-reports) describes it.
 `max_retries=0` turns retries off, and the callback runs once:
 

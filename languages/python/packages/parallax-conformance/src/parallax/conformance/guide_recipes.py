@@ -18,12 +18,14 @@ from parallax.conformance.guide_models import (
 from parallax.core import (
     TABLE_PER_CONCRETE_SUBTYPE,
     TX_TIME,
+    VALID_TIME,
     AbstractRoot,
     AbstractSubtype,
     Attr,
     ConcreteSubtype,
     DomainModel,
     Entity,
+    TemporalBound,
     attr,
 )
 from parallax.core.db_port import Password
@@ -94,6 +96,7 @@ __all__ = [
     "delete_the_shipments_of",
     "deliveries_for",
     "discontinue_a_tea",
+    "every_stored_price",
     "export_customers",
     "forget_an_email_address",
     "grant_a_credit_limit",
@@ -112,6 +115,7 @@ __all__ = [
     "place_two_orders",
     "place_two_orders_together",
     "place_two_orders_together_serializably",
+    "price_holds_until",
     "price_on",
     "price_on_as_recorded_at",
     "prices_during",
@@ -369,6 +373,14 @@ def price_on_as_recorded_at(
     return db.find(query).result().amount
 
 
+def price_holds_until(db: ScopedDatabase, sku: str, day: dt.datetime) -> dt.datetime | None:
+    """Where the price in effect on ``day`` stops applying, or None while it has no end."""
+    price = db.find(Price.where(Price.sku == sku).as_of(valid_time=day)).result()
+    if price.valid_end is TemporalBound.INFINITY:
+        return None
+    return price.valid_end
+
+
 def prices_during(
     db: ScopedDatabase, sku: str, start: dt.datetime, end: dt.datetime
 ) -> list[tuple[dt.datetime, Decimal]]:
@@ -460,6 +472,11 @@ def withdraw_a_credit_limit(db: ScopedDatabase, customer_id: int) -> None:
         tx.terminate(limit)
 
     db.transact(withdraw)
+
+
+def every_stored_price(db: ScopedDatabase, sku: str) -> list[Price]:
+    """Every row stored for ``sku``, closed or current, on both axes."""
+    return db.find(Price.where(Price.sku == sku).history(TX_TIME).history(VALID_TIME)).results()
 
 
 def list_a_tea(db: ScopedDatabase, sku: str, amount: Decimal, start: dt.datetime) -> None:

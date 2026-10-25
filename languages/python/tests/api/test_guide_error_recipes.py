@@ -18,14 +18,31 @@ import pytest
 from parallax.conformance import guide_error_recipes
 from parallax.conformance.guide_error_recipes import (
     add_a_customer_unless_the_id_is_taken,
+    add_a_shipment_unless_its_tracking_number_is_taken,
     change_a_customer_from_a_form,
+    created_index_name,
     open_the_shop_database,
+    problems_in_a_model,
 )
-from parallax.conformance.guide_models import SHOP_MODEL, Customer
+from parallax.conformance.guide_models import (
+    SHOP_MODEL,
+    Address,
+    BankTransfer,
+    CardPayment,
+    CreditLimit,
+    Customer,
+    Order,
+    Payment,
+    Price,
+    Product,
+    Shipment,
+)
 from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.db_port import Password
+from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
 from parallax.core.execution import ExecutionFailure
+from parallax.evolution import ABSENT, SchemaDelta, evolve, schema_delta
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import Database, ScopedDatabase, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
@@ -41,6 +58,46 @@ def _shop(profile_run: Any) -> ScopedDatabase:
 
 def _customer(db: ScopedDatabase, customer_id: int) -> Customer | None:
     return db.find(Customer.where(Customer.id == customer_id)).result_or_none()
+
+
+def _rollout() -> SchemaDelta:
+    """The delta that provisions the shop model, as the database under test was."""
+    return schema_delta(evolve(ABSENT, model_of(SHOP_MODEL)), POSTGRES)
+
+
+def _tracking_index() -> PhysicalIndexName:
+    return created_index_name(_rollout(), "Shipment", "shipment_tracking_number")
+
+
+_HOME = Address(street="1 Main St", city="Leeds", postcode="LS1 1AA")
+
+
+def _shipment(shipment_id: int, tracking_number: str | None) -> Shipment:
+    return Shipment(id=shipment_id, order_id=10, ship_to=_HOME, tracking_number=tracking_number)
+
+
+def _shipped(profile_run: Any) -> ScopedDatabase:
+    db = _shop(profile_run)
+    db.transact(lambda tx: tx.insert(_shipment(1, "TRK-1")))
+    return db
+
+
+def _shipments(db: ScopedDatabase) -> list[Shipment]:
+    return db.find(Shipment.where(Shipment.all).order_by(Shipment.id.asc())).results()
+
+
+def test_a_model_missing_a_relationships_entity_reports_the_reference() -> None:
+    assert problems_in_a_model(Order) == [
+        "metamodel-unresolved-entity-reference: no declaration resolves to Entity 'Customer'"
+    ]
+
+
+def test_the_whole_shop_model_reports_no_problems() -> None:
+    accepted = problems_in_a_model(
+        Customer, Order, Shipment, Payment, CardPayment, BankTransfer, CreditLimit, Price, Product
+    )
+
+    assert accepted == []
 
 
 def test_a_form_reports_every_refused_field_by_member_and_amends_nothing(
@@ -110,6 +167,69 @@ def test_an_uncategorized_database_failure_passes_through(profile_run: Any) -> N
     cause = failed.value.cause
     assert isinstance(cause, DatabaseError)
     assert (cause.category, cause.native_code, cause.violated_index) == (None, "42P01", None)
+
+
+def test_the_rollout_names_the_tracking_number_index_it_created() -> None:
+    (created,) = [index for index in _rollout().created_indices if index.unique]
+
+    assert _tracking_index() == created.physical_index_name
+    assert created.physical_table.name == "shipment"
+
+
+def test_a_taken_tracking_number_answers_false_and_adds_nothing(profile_run: Any) -> None:
+    db = _shipped(profile_run)
+
+    added = add_a_shipment_unless_its_tracking_number_is_taken(
+        db, _shipment(2, "TRK-1"), _tracking_index()
+    )
+
+    assert added is False
+    assert _shipments(db) == [_shipment(1, "TRK-1")]
+
+
+def test_a_free_tracking_number_is_added(profile_run: Any) -> None:
+    db = _shipped(profile_run)
+
+    added = add_a_shipment_unless_its_tracking_number_is_taken(
+        db, _shipment(2, "TRK-2"), _tracking_index()
+    )
+
+    assert added is True
+    assert _shipments(db) == [_shipment(1, "TRK-1"), _shipment(2, "TRK-2")]
+
+
+def test_a_duplicate_shipment_id_passes_through_naming_the_key(profile_run: Any) -> None:
+    db = _shipped(profile_run)
+
+    with pytest.raises(ExecutionFailure) as failed:
+        add_a_shipment_unless_its_tracking_number_is_taken(
+            db, _shipment(1, "TRK-2"), _tracking_index()
+        )
+
+    cause = failed.value.cause
+    assert isinstance(cause, DatabaseError)
+    assert (cause.category, cause.violated_index) == (
+        "uniqueViolation",
+        PhysicalIndexName("shipment_pkey"),
+    )
+    assert _shipments(db) == [_shipment(1, "TRK-1")]
+
+
+def test_an_unrelated_failure_passes_through_the_tracking_number_handler(
+    profile_run: Any,
+) -> None:
+    db = _shipped(profile_run)
+    with contextlib.closing(profile_run.control()) as control:
+        control.execute_write("drop table shipment", ())
+
+    with pytest.raises(ExecutionFailure) as failed:
+        add_a_shipment_unless_its_tracking_number_is_taken(
+            db, _shipment(2, "TRK-2"), _tracking_index()
+        )
+
+    cause = failed.value.cause
+    assert isinstance(cause, DatabaseError)
+    assert (cause.category, cause.native_code) == (None, "42P01")
 
 
 def test_the_shop_root_serves_reads_and_logs_each_operation(
@@ -189,6 +309,54 @@ def test_another_database_failure_passes_through_the_shipped_surface() -> None:
         add_a_customer_unless_the_id_is_taken(_scripted(adapter), _GRACE)
 
 
+def _unique_violation(index: str | None) -> DatabaseError:
+    return DatabaseError(
+        category="uniqueViolation",
+        native_code="23505",
+        message="scripted",
+        violated_index=None if index is None else PhysicalIndexName(index),
+    )
+
+
+@pytest.mark.parametrize(
+    ("script", "added"),
+    [
+        pytest.param(Transact(Write()), True, id="added"),
+        pytest.param(
+            Transact(Write(raises=_unique_violation("pxi_tracking"))), False, id="tracking-taken"
+        ),
+    ],
+)
+def test_adding_a_shipment_runs_through_the_shipped_surface(script: Transact, added: bool) -> None:
+    with ScriptedAdapter(script) as adapter:
+        assert (
+            add_a_shipment_unless_its_tracking_number_is_taken(
+                _scripted(adapter), _shipment(2, "TRK-1"), PhysicalIndexName("pxi_tracking")
+            )
+            is added
+        )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(_unique_violation("shipment_pkey"), id="another-index"),
+        pytest.param(_unique_violation(None), id="no-index-named"),
+        pytest.param(_database_error(None, "42P01"), id="uncategorized"),
+    ],
+)
+def test_any_other_failure_passes_through_the_tracking_number_handler(
+    error: DatabaseError,
+) -> None:
+    with (
+        ScriptedAdapter(Transact(Write(raises=error))) as adapter,
+        pytest.raises(ExecutionFailure),
+    ):
+        add_a_shipment_unless_its_tracking_number_is_taken(
+            _scripted(adapter), _shipment(2, "TRK-1"), PhysicalIndexName("pxi_tracking")
+        )
+
+
 def test_a_unique_violation_naming_no_index_surfaces_without_one() -> None:
     unnamed = _database_error("uniqueViolation", "23505")
     with (
@@ -226,7 +394,10 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
         recipe.__name__
         for recipe in (
             add_a_customer_unless_the_id_is_taken,
+            add_a_shipment_unless_its_tracking_number_is_taken,
             change_a_customer_from_a_form,
+            created_index_name,
             open_the_shop_database,
+            problems_in_a_model,
         )
     )
