@@ -27,3 +27,8 @@ version or milestone gate makes the Entity effectively Optimistic. An accepted
 Execution Lifecycle root reports the resolved preference on its outer
 Transaction Invocation, while Database Call events expose the actual mixed
 locking and gated statements transiently.
+
+*Superseded in part (2026-10, [ADR 0073](0073-internal-optimistic-conflicts-replay-automatically.md)):*
+an optimistic-lock conflict is now retried by default like a transient failure,
+and the opt-in retry policy is gone. The preference default and per-Entity
+resolution stand.

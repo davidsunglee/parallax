@@ -153,12 +153,38 @@ mechanisms authenticate the login. The rationale is recorded in
 
 ## Audit provenance
 
-Execution authority is also what audit provenance would record. A transaction hands its
-captured actor to write planning as an
+> **No implementation records audit provenance today.** This section describes the
+> design the decision records set out, so you can see what execution authority is
+> reserved for. Nothing below is observable in stored rows, and no guide chapter
+> teaches it.
+
+Execution authority is what audit provenance would record. A transaction already hands
+its captured actor to write planning as an
 [Actor Identity](../../core/spec/m-unit-work.md#actor-identity): a subject verbatim, or
 `db-login:` followed by the login. The specification reserves that input so provenance
-can later be added inside planning without changing its interface. Until then, planning
-must ignore it, and no implementation records audit provenance in stored rows.
+can become a planning stage without changing its interface. Until it does, planning
+must ignore it: two plans that differ only in their actor are identical.
+
+The design distinguishes four facts about a stored state, because each answers a
+different question
+([ADR 0033](../adr/0033-audit-provenance-distinguishes-revision-state-change-and-termination.md)):
+
+| Fact | Question it answers | Carried by |
+| -- | -- | -- |
+| Creation | Who created this object, and when? | every audited Entity |
+| Revision | Who formed the stored state you are looking at, and when? | every audited Entity; a temporal Entity's revision instant is its Transaction-Time start |
+| State change | Who decided this fact is true over this stretch of Valid Time, and when? | Bitemporal Entities; head and tail pieces keep their predecessor's values |
+| Termination | Who ended this object's current state? | temporal Entities; set only by an explicit termination, never by an update that supersedes a milestone |
+
+Under that design, provenance is stored in attributes the model declares explicitly
+rather than in hidden columns
+([ADR 0035](../adr/0035-audit-metadata-references-explicit-attributes.md)). Every
+Entity is audited unless its model opts out
+([ADR 0036](../adr/0036-audit-provenance-is-globally-defaulted-and-explicitly-opted-out.md)),
+and stamps are applied to the rows a flush actually writes, after writes are composed
+and before they are lowered to SQL
+([ADR 0071](../adr/0071-audit-finalizes-represented-rows-before-their-realization-is-chosen.md)).
+A write that is cancelled or nets to nothing receives no stamp.
 
 ## Common use cases
 
