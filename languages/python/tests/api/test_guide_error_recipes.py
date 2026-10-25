@@ -22,7 +22,7 @@ from parallax.conformance.guide_error_recipes import (
     open_the_shop_database,
 )
 from parallax.conformance.guide_models import SHOP_MODEL, Customer
-from parallax.core.db_error import DatabaseError
+from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.db_port import Password
 from parallax.core.entity import model_of
 from parallax.core.execution import ExecutionFailure
@@ -72,9 +72,13 @@ def test_a_duplicate_key_surfaces_as_a_unique_violation_through_public_attribute
     with pytest.raises(ExecutionFailure) as failed:
         db.transact(lambda tx: tx.insert(Customer(id=1, name="Grace", email=None)))
 
-    cause: Any = failed.value.cause
-    assert (cause.category, cause.native_code) == ("uniqueViolation", "23505")
-    assert "customer_pkey" in cause.message
+    cause = failed.value.cause
+    assert isinstance(cause, DatabaseError)
+    assert (cause.category, cause.native_code, cause.violated_index) == (
+        "uniqueViolation",
+        "23505",
+        PhysicalIndexName("customer_pkey"),
+    )
 
 
 def test_a_taken_id_answers_false_and_leaves_the_existing_customer(profile_run: Any) -> None:
@@ -95,7 +99,7 @@ def test_a_free_id_is_added(profile_run: Any) -> None:
     assert _customer(db, 3) == Customer(id=3, name="Grace", email=None)
 
 
-def test_a_database_failure_with_another_category_passes_through(profile_run: Any) -> None:
+def test_an_uncategorized_database_failure_passes_through(profile_run: Any) -> None:
     db = _shop(profile_run)
     with contextlib.closing(profile_run.control()) as control:
         control.execute_write("drop table customer", ())
@@ -103,8 +107,9 @@ def test_a_database_failure_with_another_category_passes_through(profile_run: An
     with pytest.raises(ExecutionFailure) as failed:
         add_a_customer_unless_the_id_is_taken(db, Customer(id=3, name="Grace", email=None))
 
-    cause: Any = failed.value.cause
-    assert (cause.category, cause.native_code) == (None, "42P01")
+    cause = failed.value.cause
+    assert isinstance(cause, DatabaseError)
+    assert (cause.category, cause.native_code, cause.violated_index) == (None, "42P01", None)
 
 
 def test_the_shop_root_serves_reads_and_logs_each_operation(
@@ -156,7 +161,7 @@ def test_a_form_runs_through_the_shipped_surface(
         assert set(change_a_customer_from_a_form(_scripted(adapter), 1, form)) == refused
 
 
-def _database_error(category: Any, native_code: str) -> DatabaseError:
+def _database_error(category: Category | None, native_code: str) -> DatabaseError:
     return DatabaseError(category=category, native_code=native_code, message="scripted")
 
 
@@ -182,6 +187,19 @@ def test_another_database_failure_passes_through_the_shipped_surface() -> None:
         pytest.raises(ExecutionFailure),
     ):
         add_a_customer_unless_the_id_is_taken(_scripted(adapter), _GRACE)
+
+
+def test_a_unique_violation_naming_no_index_surfaces_without_one() -> None:
+    unnamed = _database_error("uniqueViolation", "23505")
+    with (
+        ScriptedAdapter(Transact(Write(raises=unnamed))) as adapter,
+        pytest.raises(ExecutionFailure) as failed,
+    ):
+        _scripted(adapter).transact(lambda tx: tx.insert(_GRACE))
+
+    cause = failed.value.cause
+    assert isinstance(cause, DatabaseError)
+    assert (cause.category, cause.violated_index) == ("uniqueViolation", None)
 
 
 def test_the_shop_root_composes_through_the_shipped_surface(

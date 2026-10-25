@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from parallax.core.base import TemporalBound
 from parallax.core.entity import (
     MANY_TO_ONE,
     MAX,
@@ -39,6 +40,7 @@ from parallax.core.entity import (
     index,
     rel,
 )
+from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import LATEST, TX_TIME, VALID_TIME
 from parallax.core.predicate import ModelRejectedError, QueryDefinitionError
 from parallax.core.temporal_read import Edge, Pin, TemporalReadError, UndeclaredAxisError
@@ -72,6 +74,7 @@ __all__ = [
     "Int32",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
+    "MetamodelValidationError",
     "ModelRejectedError",
     "ObjectQuery",
     "Pin",
@@ -81,6 +84,7 @@ __all__ = [
     "Sequence",
     "SortKey",
     "TablePerHierarchy",
+    "TemporalBound",
     "TemporalReadError",
     "TxTemporal",
     "UndeclaredAxisError",

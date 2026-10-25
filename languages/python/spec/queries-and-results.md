@@ -110,7 +110,9 @@ the authored Entity classes; loaded to-many relationships and Many Value Objects
 are tuples. Accessing an unloaded relationship raises `UnloadedRelationshipError`;
 loaded-null is `None`. Inspection uses `is_view_loaded`, `view`, `pin_of`, and
 `edge_of`, including on edited materialized values. Narrowed views are distinct
-from broad relationship fields.
+from broad relationship fields. A temporal node's end members read as
+[declared](declarations.md#classes-and-names): the instant that closed the
+interval, or `TemporalBound.INFINITY` while that axis is current.
 
 `edge_of` derives a temporal node's milestone `Edge` on first inspection, and a
 node shares that answer with every edit of it. Concurrent first inspections

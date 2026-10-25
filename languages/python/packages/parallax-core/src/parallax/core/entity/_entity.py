@@ -67,6 +67,7 @@ if TYPE_CHECKING:
 
     from pydantic import BaseModel
 
+    from parallax.core.base import TemporalBound
     from parallax.core.entity._members import AbstractSubtype, ConcreteSubtype
 
 __all__ = [
@@ -693,7 +694,7 @@ class TxTemporal(Entity, _mint=FRAMEWORK_MINT, _axes=(TemporalDimension.TRANSACT
         # descriptors are installed on each shape owner, invisibly to a type
         # checker. Never executed, so the inert root itself declares nothing.
         tx_start: Attr[_dt.datetime]
-        tx_end: Attr[_dt.datetime]
+        tx_end: Attr[_dt.datetime | TemporalBound]
 
 
 class Bitemporal(
@@ -711,6 +712,6 @@ class Bitemporal(
     if TYPE_CHECKING:
         # The static mirror of the engine-supplied members (see `TxTemporal`).
         valid_start: Attr[_dt.datetime]
-        valid_end: Attr[_dt.datetime]
+        valid_end: Attr[_dt.datetime | TemporalBound]
         tx_start: Attr[_dt.datetime]
-        tx_end: Attr[_dt.datetime]
+        tx_end: Attr[_dt.datetime | TemporalBound]

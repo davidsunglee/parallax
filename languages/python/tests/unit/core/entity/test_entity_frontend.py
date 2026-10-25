@@ -654,10 +654,13 @@ def test_the_type_checking_mirror_matches_the_engine_injection_table() -> None:
         profile: [
             (
                 engine._python_spelling(endpoint.name),  # pyright: ignore[reportPrivateUsage] - reads an engine internal
-                "Attr[_dt.datetime]",
+                annotation,
             )
             for axis in derive_temporal_structure(profile)
-            for endpoint in (axis.start, axis.end)
+            for endpoint, annotation in (
+                (axis.start, "Attr[_dt.datetime]"),
+                (axis.end, "Attr[_dt.datetime | TemporalBound]"),
+            )
         ]
         for profile in ("transaction-time", "bitemporal")
     }
