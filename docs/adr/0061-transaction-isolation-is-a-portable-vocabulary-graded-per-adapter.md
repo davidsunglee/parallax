@@ -24,3 +24,9 @@ cannot express MariaDB's choreography and would spread level knowledge across
 the dialect module and every adapter, and a portable value beside a native
 escape string, which would put two vocabularies through one option with graded
 semantics for only one of them.
+
+*Superseded in part (2026-10, [ADR 0065](0065-boundary-option-defaults-belong-to-the-database-root.md)):*
+omitting the isolation keyword no longer requests nothing. The transaction
+inherits the Isolation Level of its scope's options record, which the Database
+Root defaults to Read Committed. The portable vocabulary and its per-adapter
+grading stand.
