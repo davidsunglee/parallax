@@ -53,7 +53,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any, NamedTuple
+from typing import Any, Final, NamedTuple
 
 import sqlglot
 from sqlglot import exp
@@ -142,6 +142,7 @@ from .write_plan import (
 )
 from .write_validate import (
     WRITE_PERSISTENCE_REJECTED_RULES,
+    target_write_violation,
     undeclared_members,
     validate_subtype_write,
     validate_write,
@@ -685,17 +686,20 @@ def _assert_rejected(case: Case) -> None:
     ``validate_query_inheritance``, resolved against the position the query itself
     names.
 
-    A write is dispatched on the members it carries, never on the rule the case
-    names (`m-case-format` Rejected cases): a ``target`` is a predicate-selected
-    instruction, a ``rows`` array is a whole KEYED instruction judged by
-    ``validate_keyed_write`` against the entity IT names, and anything else is
-    the bare neutral write row, run through ``validate_write`` and Inheritance's
-    ``validate_subtype_write`` against the model's default write root. Both
-    discriminators are RESERVED from a bare row at this position
-    (`compatibility-case.schema.json` ``$defs/bareWriteRow``), so a domain member
-    can never be mistaken for one and this dispatch cannot re-read a row as an
-    instruction. Membership can decide the form only for an OBJECT, so
-    :func:`_rejected_write_input` refuses anything else before dispatch. Inline
+    A write is dispatched on the members it carries, in order, never on the rule
+    the case names (`m-case-format` Rejected cases): a ``target`` is a
+    predicate-selected instruction, whose replacement also carries a ``row``;
+    otherwise a ``rows`` array is a whole KEYED instruction judged by
+    ``validate_keyed_write`` against the entity IT names; otherwise a singular
+    ``row`` is a whole TARGET instruction judged by ``target_write_violation``;
+    and anything else is the bare neutral write row, run through
+    ``validate_write`` and Inheritance's ``validate_subtype_write`` against the
+    model's default write root. All three discriminators are RESERVED from a bare
+    row at this position (`compatibility-case.schema.json` ``$defs/bareWriteRow``),
+    so a domain member can never be mistaken for one and this dispatch cannot
+    re-read a row as an instruction. Membership can decide the form only for an
+    OBJECT carrying one form's carriers, so :func:`_rejected_write_input` refuses
+    anything else before dispatch. Inline
     models run the foundational ``validate_index_identities`` and
     ``validate_temporal_member_names`` before the semantic rule sets — Inheritance's
     ``validate_family`` and Storage Layout’s ``validate_storage_layout``, including
@@ -727,16 +731,21 @@ def _assert_rejected(case: Case) -> None:
                 raise CaseFailure(
                     f"{case.path.name}: keyed instruction did not match its pre-SQL refusal"
                 )
-            # Persistence admission runs first, as it does for both instruction
-            # forms (`m-unit-work` "Writes to a ReadOnly family"). The
+            if "row" in write:
+                _validate_rejected_target_write(case, write)
+                raise CaseFailure(
+                    f"{case.path.name}: target instruction did not match its pre-SQL refusal"
+                )
+            # Persistence admission runs first, as it does for every instruction
+            # form (`m-unit-work` "Writes to a ReadOnly family"). The
             # concrete-subtype payload-shape and target-validity rules run next,
             # unconditionally (`m-inheritance` "A validator checks these
             # payload-shape rules... before the target-validity rule"): a malformed
             # inheritance payload has no well-defined target for the declared-member
             # walk to run against. A no-op on a non-inheritance model.
             #
-            # The default write root is resolved HERE rather than up front: the two
-            # instruction forms above name their own handle, so a model with no
+            # The default write root is resolved HERE rather than up front: the
+            # three instruction forms above name their own handle, so a model with no
             # default is only a defect for the bare row, which names none.
             entity = _rejected_default_root(case)
             validate_write_persistence(entity)
@@ -828,9 +837,10 @@ def _assert_bare_row_members_declared(case: Case, entity: Entity, row: dict[str,
 def _rejected_write_input(case: Case) -> dict[str, Any]:
     """The ONE ``when.write`` document a rejected case puts under test.
 
-    Each of the three rejected write forms is an object whose members name it, so
+    Each of the four rejected write forms is an object whose members name it, so
     a document that is not one reaches :func:`_assert_rejected`'s dispatch with
-    nothing to dispatch ON. The multi-key ARRAY the shared ``when.write``
+    nothing to dispatch ON, and one carrying two forms' carriers would be graded as
+    whichever form the dispatch reached first. The multi-key ARRAY the shared ``when.write``
     vocabulary also admits is the conflict lane's form alone
     (`compatibility-case.schema.json`): it states a collapsed statement's
     aggregate affected-row count, which a pre-SQL rejection asserts nothing about.
@@ -841,12 +851,27 @@ def _rejected_write_input(case: Case) -> dict[str, Any]:
     write = case.when.get("write")
     if not isinstance(write, dict):
         raise CaseFailure(
-            f"{case.path.name}: a rejected `when.write` is a predicate-selected instruction, a "
-            f"keyed instruction, or a bare neutral write row — all objects, and the members "
+            f"{case.path.name}: a rejected `when.write` is a predicate-selected, keyed, or "
+            f"target instruction, or a bare neutral write row — all objects, and the members "
             f"decide which. {type(write).__name__} is the conflict lane's multi-key form, which "
             f"asserts an aggregate affected-row count no rejected case emits SQL to produce."
         )
+    mixed = [pair for pair in _MIXED_WRITE_CARRIERS if pair <= write.keys()]
+    if mixed:
+        first, second = sorted(mixed[0])
+        raise CaseFailure(
+            f"{case.path.name}: a rejected `when.write` carries both `{first}` and `{second}`, "
+            f"which name different instruction forms (m-case-format Rejected cases)."
+        )
     return write
+
+
+# The carrier pairs no one instruction form states together. A predicate
+# replacement's `row` beside its `target` is the one admitted combination.
+_MIXED_WRITE_CARRIERS: Final[tuple[frozenset[str], ...]] = (
+    frozenset({"target", "rows"}),
+    frozenset({"rows", "row"}),
+)
 
 
 def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
@@ -895,6 +920,31 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
             f"attributes or value objects of {entity.name}"
         )
     validate_keyed_write(entity, write)
+
+
+def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
+    """Run the target-instruction judgements against the entity the instruction names.
+
+    Persistence admission precedes them (`m-unit-work` "Writes to a ReadOnly
+    family"). The verb, row, revision, and window are then judged by the one
+    :func:`~reference_harness.write_validate.target_write_violation` static case
+    validation also asks; those judgements carry no rule of the closed vocabulary,
+    so a detail is a case-authoring failure, never a graded refusal.
+    """
+    entity_name = write.get("entity")
+    try:
+        entity = case.model.entity(str(entity_name))
+    except KeyError as exc:
+        raise CaseFailure(
+            f"{case.path.name}: target instruction names entity {entity_name!r}, which the "
+            f"case's model does not declare"
+        ) from exc
+    validate_write_persistence(entity)
+    if not isinstance(write.get("row"), dict):
+        raise CaseFailure(f"{case.path.name}: a target instruction's `row` must be an object")
+    violation = target_write_violation(entity, write)
+    if violation is not None:
+        raise CaseFailure(f"{case.path.name}: {violation}")
 
 
 def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> None:

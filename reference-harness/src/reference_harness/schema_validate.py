@@ -67,7 +67,7 @@ from .storage_layout import validate_storage_layout
 from .temporal_selection_validate import validate_temporal_selections
 from .temporality import derive_temporal_structure, temporal_axes
 from .value_object_resolve import RejectionError
-from .write_validate import assignment_violation, target_row_violation, undeclared_members
+from .write_validate import assignment_violation, target_write_violation, undeclared_members
 
 
 class ValidationFailure(Exception):
@@ -413,7 +413,7 @@ def _valid_keyed_entry_entity(
             f"attributes or value objects of {entity_name}"
         )
         return None
-    condition = _target_refusal(entity, instruction) if isinstance(row, dict) else None
+    condition = target_write_violation(entity, instruction) if isinstance(row, dict) else None
     if condition is not None:
         errors.append(f"{entry_label}: {condition}")
         return None
@@ -423,48 +423,6 @@ def _valid_keyed_entry_entity(
         errors.append(f"{entry_label}: {exc.detail}")
         return None
     return entity
-
-
-def _target_refusal(entity: Entity, instruction: dict[str, Any]) -> str | None:
-    """Why a target submission's verb, row, revision or window does
-    not fit its target, or ``None`` (`m-unit-work` *Target writes*).
-
-    The model decides all four, which the case schema cannot see: a temporal
-    target is deleted by no target write and a Non-Temporal one is
-    terminated by none; the row is judged as
-    :func:`~reference_harness.write_validate.target_row_violation` judges it,
-    and a destructive write's names the key alone; a temporal target states
-    ``ifTxStart`` and a versioned Non-Temporal one ``ifVersion``, while an
-    unversioned one has no revision and takes no target write; a
-    Bitemporal target states ``validFrom``, and a Transaction-Time-Only or
-    Non-Temporal one no window.
-    """
-    mutation = instruction.get("mutation")
-    axes = {axis.dimension for axis in temporal_axes(entity.runtime_facts)}
-    if mutation == ("delete" if axes else "terminate"):
-        return f"a target write of {entity.name} takes no `{mutation}`"
-    replaces = mutation in ("replace", "replaceUntil")
-    violation = target_row_violation(entity, instruction["row"], replaces=replaces)
-    if violation is not None:
-        return f"a target write of {entity.name} — {violation}"
-    keys = {attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")}
-    if mutation in ("delete", "terminate", "terminateUntil") and set(instruction["row"]) - keys:
-        return f"a target write of {entity.name} by `{mutation}` names its key alone"
-    versioned = any(attribute.get("optimisticLocking") for attribute in entity.attributes)
-    revision = "ifTxStart" if axes else "ifVersion" if versioned else None
-    if revision is None:
-        return f"{entity.name} has no revision to state, so it takes no target write"
-    stated = [name for name in ("ifVersion", "ifTxStart") if name in instruction]
-    if stated != [revision]:
-        return (
-            f"a target write of {entity.name} states {stated or 'no revision'}, "
-            f"but its target takes `{revision}`"
-        )
-    bitemporal = "valid-time" in axes
-    if bitemporal != ("validFrom" in instruction) or (not bitemporal and "until" in instruction):
-        takes = "a window from `validFrom`" if bitemporal else "no window"
-        return f"a target write of {entity.name} takes {takes}"
-    return None
 
 
 # --- compile-eligibility backstop (m-case-format / m-conformance-adapter) -----

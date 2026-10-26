@@ -97,15 +97,23 @@ def test_reachable_rejected_population_spans_every_when_kind() -> None:
     assert kinds == {"objectQuery", "model", "write"}, kinds
 
 
+def _write_form(write: dict[str, Any]) -> str:
+    if "target" in write:
+        return "predicate"
+    if "rows" in write:
+        return "keyed"
+    return "target" if "row" in write else "bare"
+
+
 def test_reachable_rejected_population_spans_every_write_form() -> None:
-    # `when.write` is itself three-formed, dispatched on the members the input
-    # carries: `target` is a predicate-selected instruction, `rows` a whole keyed
-    # instruction, anything else the bare neutral write row. Each arm resolves its
-    # target differently, so each needs a reachable witness of its own.
+    # `when.write` is itself four-formed, dispatched in order on the members the
+    # input carries: `target` is a predicate-selected instruction, `rows` a whole
+    # keyed instruction, `row` a whole target instruction, anything else the bare
+    # neutral write row. Each arm reaches preparation differently, so each needs a
+    # reachable witness of its own.
     forms: set[str] = set()
     for case in _REACHABLE_REJECTED:
         write = cast("dict[str, Any]", case_document(case).get("when") or {}).get("write")
-        if not isinstance(write, dict):
-            continue
-        forms.add("predicate" if "target" in write else "keyed" if "rows" in write else "row")
-    assert forms == {"predicate", "keyed", "row"}, forms
+        if isinstance(write, dict):
+            forms.add(_write_form(cast("dict[str, Any]", write)))
+    assert forms == {"predicate", "keyed", "target", "bare"}, forms

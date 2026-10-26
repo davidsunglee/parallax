@@ -33,6 +33,7 @@ __all__ = [
     "PAYMENT_MODEL",
     "PERSON_MODEL",
     "RATE_MODEL",
+    "READ_ONLY_INHERITANCE_MODEL",
     "SCALARS_MODEL",
     "Annotation",
     "Balance",
@@ -46,11 +47,14 @@ __all__ = [
     "Folder",
     "Invoice",
     "LoanRate",
+    "Magazine",
     "Memo",
     "Passport",
     "Payment",
+    "Periodical",
     "Person",
     "Pet",
+    "Publication",
     "Rate",
     "Receipt",
     "ScalarThing",
@@ -231,3 +235,29 @@ class ScalarThing(Entity, table="scalar_thing", namespace=_NS, persistence=READ_
 
 
 SCALARS_MODEL = DomainModel(ScalarThing)
+
+
+class Publication(
+    Entity,
+    table="publication",
+    namespace=_NS,
+    persistence=READ_ONLY,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    """Mirror of ``models/read-only-inheritance.yaml``: a family the application
+    only reads, so every write to any of its positions is refused."""
+
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str] = attr(max_length=64)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
+class Periodical(Publication, namespace=_NS, inheritance=AbstractSubtype):
+    frequency: Attr[str | None] = attr(max_length=16)
+
+
+class Magazine(Periodical, namespace=_NS, inheritance=ConcreteSubtype(tag_value="magazine")):
+    issue: Attr[int | None] = attr(type=Int32)
+
+
+READ_ONLY_INHERITANCE_MODEL = DomainModel(Publication, Periodical, Magazine)

@@ -11729,6 +11729,75 @@
       ]
     }
   },
+  "models/read-only-inheritance.yaml": {
+    "publication": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Magazine"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Publication.id",
+          "declaringOwner": "parallax.compatibility.Publication",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Magazine"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Publication",
+          "declaringOwner": "parallax.compatibility.Publication",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Magazine"
+          ],
+          "column": "title",
+          "contributor": "attribute:parallax.compatibility.Publication.title",
+          "declaringOwner": "parallax.compatibility.Publication",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Magazine"
+          ],
+          "column": "version",
+          "contributor": "attribute:parallax.compatibility.Publication.version",
+          "declaringOwner": "parallax.compatibility.Publication",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Magazine"
+          ],
+          "column": "frequency",
+          "contributor": "attribute:parallax.compatibility.Periodical.frequency",
+          "declaringOwner": "parallax.compatibility.Periodical",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Magazine"
+          ],
+          "column": "issue",
+          "contributor": "attribute:parallax.compatibility.Magazine.issue",
+          "declaringOwner": "parallax.compatibility.Magazine",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/reading.yaml": {
     "reading": {
       "columns": [

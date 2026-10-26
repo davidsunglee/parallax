@@ -1,0 +1,16 @@
+# A target amendment of a ReadOnly family's concrete subtype is refused when it is
+# prepared, before its verb, revision, or row is judged (m-unit-work "Writes to a
+# ReadOnly family"). Magazine declares no Persistence Mode of its own; its root's
+# is the effective one. The target is versioned, so the stated `ifVersion` is the
+# revision it takes and nothing else about the write is inadmissible.
+model: models/read-only-inheritance.yaml
+tags: [m-unit-work, write, rejected, read-only, target-write, inheritance, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    mutation: amend
+    entity: parallax.compatibility.Magazine
+    row: { id: 1, title: Spring issue }
+    ifVersion: 1
+then:
+  rejectedRule: read-only-write-target

@@ -1072,6 +1072,17 @@ EXAMPLES: Final[list[Example]] = [
         ' caused by InstructionRejectedError(rule="read-only-write-target")',
     ),
     Example(
+        "m-unit-work-068",
+        "A target amendment of a ReadOnly family's concrete subtype",
+        "db.transact(\n"
+        "    lambda tx: tx.amend_if(\n"
+        '        Magazine, Magazine.title.set("Spring issue"), key=1, version=1\n'
+        "    )\n"
+        ")\n"
+        "# raises ExecutionFailure"
+        ' caused by InstructionRejectedError(rule="read-only-write-target")',
+    ),
+    Example(
         "m-unit-work-069",
         "A predicate amendment of a ReadOnly Entity",
         "db.transact(\n"
@@ -1079,6 +1090,13 @@ EXAMPLES: Final[list[Example]] = [
         "        ScalarThing.where(ScalarThing.id == 1), ScalarThing.f64.set(3.5)\n"
         "    )\n"
         ")\n"
+        "# raises ExecutionFailure"
+        ' caused by InstructionRejectedError(rule="read-only-write-target")',
+    ),
+    Example(
+        "m-unit-work-070",
+        "A keyed insert at a ReadOnly family's abstract root",
+        'db.transact(lambda tx: tx.insert(Publication(id=2, title="Annual report")))\n'
         "# raises ExecutionFailure"
         ' caused by InstructionRejectedError(rule="read-only-write-target")',
     ),
