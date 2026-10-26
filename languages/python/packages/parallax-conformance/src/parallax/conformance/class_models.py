@@ -21,6 +21,7 @@ from parallax.conformance.read_models import (
     PAYMENT_MODEL,
     PERSON_MODEL,
     RATE_MODEL,
+    SCALARS_MODEL,
 )
 from parallax.conformance.story_models import (
     ACCOUNT_MODEL,
@@ -66,6 +67,7 @@ MODELS: Mapping[str, DomainModel] = MappingProxyType(
         "policy": POLICY_MODEL,
         "position": POSITION_MODEL,
         "rate": RATE_MODEL,
+        "scalars": SCALARS_MODEL,
         "shipment": SHIPMENT_MODEL,
         "supplier": SUPPLIER_MODEL,
         "wallet": WALLET_MODEL,

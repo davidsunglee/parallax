@@ -98,9 +98,10 @@ A model-aware validator therefore **MUST** refuse a predicate-selected write
 whose target is versioned (any Attribute of its family declares
 `optimisticLocking`) or temporal (Transaction-Time-Only or Bitemporal), with the
 pre-SQL rule `set-based-write-target-unsupported` (`m-case-format` *Rejected
-cases*). It is judged once the target Entity resolves and before the write's
-predicate, inheritance family, or payload, because none of them could make
-the write admissible. The refusal is a preparation refusal
+cases*). It is judged once the target Entity resolves and the Unit of Work's
+persistence admission accepts it (`m-unit-work` *Writes to a ReadOnly family*),
+and before the write's predicate, inheritance family, or payload, because none
+of them could make the write admissible. The refusal is a preparation refusal
 (`m-unit-work`): nothing is read, nothing pending is flushed, and the attempt is
 not doomed. An implementation's refusal **SHOULD** name the writes that reach
 such a target: reading its objects and writing each one by key, or a

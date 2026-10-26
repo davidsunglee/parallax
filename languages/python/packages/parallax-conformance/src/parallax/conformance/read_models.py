@@ -1,8 +1,11 @@
+import datetime as dt
+import uuid
 from decimal import Decimal
 
 from parallax.core import (
     ONE_TO_MANY,
     ONE_TO_ONE,
+    READ_ONLY,
     TABLE_PER_CONCRETE_SUBTYPE,
     AbstractRoot,
     AbstractSubtype,
@@ -11,6 +14,7 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
+    Float32,
     Int32,
     Rel,
     TablePerHierarchy,
@@ -29,6 +33,7 @@ __all__ = [
     "PAYMENT_MODEL",
     "PERSON_MODEL",
     "RATE_MODEL",
+    "SCALARS_MODEL",
     "Annotation",
     "Balance",
     "CardPayment",
@@ -48,6 +53,7 @@ __all__ = [
     "Pet",
     "Rate",
     "Receipt",
+    "ScalarThing",
     "WildBoar",
 ]
 
@@ -210,3 +216,18 @@ class Passport(
 
 
 PERSON_MODEL = DomainModel(Person, Passport)
+
+
+class ScalarThing(Entity, table="scalar_thing", namespace=_NS, persistence=READ_ONLY):
+    """Mirror of ``models/scalars.yaml``: an Entity the application only reads,
+    so every write to it is refused."""
+
+    id: Attr[int] = attr(primary_key=True)
+    f32: Attr[float] = attr(type=Float32)
+    f64: Attr[float]
+    payload: Attr[bytes]
+    local_time: Attr[dt.time]
+    external_id: Attr[uuid.UUID]
+
+
+SCALARS_MODEL = DomainModel(ScalarThing)

@@ -21,6 +21,9 @@ inherits (`m-inheritance`), recursively — and this module raises
   whole document** (m-value-object), so a scalar standing where a document is
   declared is a type mismatch rather than an absence.
 
+Ahead of every one of them, :func:`validate_write_persistence` refuses any write
+to an entity whose family is read-only (``read-only-write-target``, m-unit-work).
+
 The bare `when.write` row carries no mutation context, so it is graded as a FULL
 document: every applicable member must be present, save a `many` occurrence, whose
 absence IS its empty collection. Two member kinds are outside the walk because the
@@ -239,6 +242,26 @@ def _violation_detail(
             raise
         return exc.detail
     return None
+
+
+READ_ONLY_WRITE_TARGET = "read-only-write-target"
+
+WRITE_PERSISTENCE_REJECTED_RULES: frozenset[str] = frozenset({READ_ONLY_WRITE_TARGET})
+
+
+def validate_write_persistence(entity: Entity) -> None:
+    """Refuse any write to *entity* when its family's effective Persistence Mode is
+    ``read-only`` (`m-unit-work` "Writes to a ReadOnly family").
+
+    Judged once the write's target resolves and before every shape-specific or
+    row-level check, so no verb, row, or predicate is weighed for a family that
+    accepts no write.
+    """
+    if entity.effective_persistence == "read-only":
+        raise RejectionError(
+            READ_ONLY_WRITE_TARGET,
+            f"{entity.canonical_name}'s family is read-only and accepts no persistence write",
+        )
 
 
 def validate_write(entity: Entity, row: dict[str, Any]) -> None:

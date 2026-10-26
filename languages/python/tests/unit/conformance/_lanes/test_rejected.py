@@ -150,7 +150,7 @@ def test_run_rejected_case_keyed_write_names_its_own_entity_not_the_default_targ
         rejected.run_rejected_case(_synthetic_keyed_rejected(plural_temporal, model))
         == "temporal-keyed-write-multi-row"
     )
-    with pytest.raises(EngineError, match="accepted a keyed write instruction"):
+    with pytest.raises(EngineError, match="accepted a write"):
         rejected.run_rejected_case(_synthetic_keyed_rejected(plural_non_temporal, model))
 
 
@@ -375,3 +375,68 @@ def test_run_rejected_case_predicate_write_dispatch_classifies_the_rule() -> Non
         document=document,
     )
     assert rejected.run_rejected_case(case) == "neutral-literal-type-mismatch"
+
+
+@pytest.mark.parametrize("case_id", ["m-unit-work-066", "m-unit-work-067", "m-unit-work-069"])
+def test_a_write_to_a_read_only_entity_is_classified_by_its_persistence(case_id: str) -> None:
+    assert rejected.run_rejected_case(_load_case(case_id)) == "read-only-write-target"
+
+
+_SCALAR_THING = "parallax.compatibility.ScalarThing"
+
+
+def test_a_keyed_write_sets_its_case_clock_context_aside() -> None:
+    # `at` is harness Clock context, never an instruction field, so it is filtered
+    # before the instruction is built rather than refused as an unexpected key.
+    write: dict[str, object] = {
+        "mutation": "amend",
+        "entity": _SCALAR_THING,
+        "rows": [{"id": 1}],
+        "at": "2024-03-01T00:00:00.000000Z",
+    }
+    assert (
+        rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/scalars.yaml"))
+        == "read-only-write-target"
+    )
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        {"mutation": "amend", "entity": _SCALAR_THING, "rows": [{"id": 1}], "row": {"id": 1}},
+        {
+            "mutation": "amend",
+            "entity": _SCALAR_THING,
+            "rows": [{"id": 1}],
+            "target": {"entity": _SCALAR_THING, "predicate": {"true": {}}},
+        },
+    ],
+    ids=["rows-and-row", "rows-and-target"],
+)
+def test_a_mixture_of_instruction_carriers_is_malformed_rather_than_graded(
+    write: dict[str, object],
+) -> None:
+    # Each would be a persistence refusal if the extra carrier were discarded, so
+    # the mixture must fail the case before any case-only member is set aside.
+    with pytest.raises(EngineError, match=r"row|ambiguous|unexpected"):
+        rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/scalars.yaml"))
+
+
+def test_an_unclassified_instruction_refusal_fails_the_case() -> None:
+    # An undeclared member is a plain refusal carrying no rule, so no rejected case
+    # can grade it, whichever form carries it.
+    write: dict[str, object] = {
+        "mutation": "amend",
+        "entity": "Lease",
+        "rows": [{"id": 1, "notAMember": 1}],
+    }
+    with pytest.raises(EngineError, match="notAMember"):
+        rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/lease.yaml"))
+
+
+def test_a_bare_row_naming_an_observed_milestone_coordinate_is_malformed() -> None:
+    # The schema refuses the coordinate on every row; a caller reaching the lane
+    # without it still hears an authoring failure rather than a graded rule.
+    row: dict[str, object] = {"id": 1, "balance": "10.00", "observedTxStart": "x"}
+    with pytest.raises(EngineError, match="observedTxStart"):
+        rejected.run_rejected_case(_synthetic_bare_row(row, "models/account.yaml"))

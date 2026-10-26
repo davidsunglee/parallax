@@ -638,7 +638,9 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
     the resolved root ``tag`` metadata on its inheritance block, so ``tag_of`` and
     the shared-table DDL see the same shape a pre-migration model authored inline.
     Abstract nodes keep their (tableless) definition with the inherited attribute
-    chain surfaced for introspection.
+    chain surfaced for introspection. Every participant carries the root's
+    Temporality Profile and its effective ``persistence``, ``read-write`` unless
+    the root declares otherwise.
     """
     exact = [d for d in entity_defs if _qualified_name(d) == name]
     local = [d for d in entity_defs if d.get("name") == name]
@@ -670,6 +672,9 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
     root_def = family.defs.get(root_name, {}) if root_name is not None else {}
     if "temporality" not in resolved and "temporality" in root_def:
         resolved["temporality"] = root_def["temporality"]
+    # The Persistence Mode is root-owned in exactly the same way, so every
+    # position of the family carries the root's effective mode.
+    resolved["persistence"] = root_def.get("persistence", "read-write")
 
     if role_of(definition) == ROLE_CONCRETE and family.strategy_of(key) == STRATEGY_TPH:
         _place_in_hierarchy_table(resolved, root_def, family.tag_column_of(key))

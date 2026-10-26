@@ -33,6 +33,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Leaf,
+    PersistenceMode,
     PrimaryKey,
     ValueObjectMetadata,
     WriteAssignmentError,
@@ -184,6 +185,10 @@ REFERENCE_AMBIGUOUS_ENTITY_NAME: Final[str] = "reference-ambiguous-entity-name"
 # target needs an observation: a versioned or temporal Entity, which one
 # readless statement cannot write (`m-batch-write`).
 SET_BASED_WRITE_TARGET_UNSUPPORTED: Final[str] = "set-based-write-target-unsupported"
+
+# The same vocabulary's classification of any write whose target family's
+# effective Persistence Mode is ReadOnly (`m-unit-work`).
+READ_ONLY_WRITE_TARGET: Final[str] = "read-only-write-target"
 
 
 class WriteInstructionError(ValueError):
@@ -1043,11 +1048,25 @@ def _prepare_write(
 ) -> PreparedInstruction | PreparedTargetInstruction:
     """The sole admissibility judgment of a write, each family's target first
     and then its payload, so a call whose verb or window is wrong for its
-    target hears that before any complaint about what it carries."""
+    target hears that before any complaint about what it carries.
+
+    The target's family Persistence Mode is judged before anything else about
+    the write, since no verb, window, revision, predicate, or payload could
+    make a write to a ReadOnly family admissible."""
+    entity = resolve_target(
+        model,
+        instruction.target.entity
+        if isinstance(instruction, PredicateWriteInstruction)
+        else instruction.entity,
+    )
+    position = _inheritance_entity_view(model, entity)
+    _judge_write_persistence(entity, position)
     if isinstance(instruction, TargetWriteInstruction):
         return _prepare_target_write(
             instruction,
             model,
+            entity,
+            position,
             converter=converter,
             source_access=source_access,
             authored_members=authored_members,
@@ -1057,6 +1076,8 @@ def _prepare_write(
         return _prepare_keyed_write(
             instruction,
             model,
+            entity,
+            position,
             converter=converter,
             source_access=source_access,
             authored_members=authored_members,
@@ -1066,13 +1087,28 @@ def _prepare_write(
     # declares no framework-owned member for an authored one to name.
     assert members is None
     return _prepare_predicate_write(
-        instruction, model, converter=converter, source_access=source_access
+        instruction, model, entity, position, converter=converter, source_access=source_access
     )
+
+
+def _judge_write_persistence(
+    entity: EntityMetadata, position: inheritance.InheritanceEntityView
+) -> None:
+    """Refuse any write to an Entity whose family's effective Persistence Mode
+    is ReadOnly (`m-unit-work`)."""
+    if position.persistence is PersistenceMode.READ_ONLY:
+        raise InstructionRejectedError(
+            READ_ONLY_WRITE_TARGET,
+            f"{entity.identity.canonical}: its family's Persistence Mode is ReadOnly, which "
+            "accepts no persistence write of any kind",
+        )
 
 
 def _prepare_keyed_write(
     instruction: KeyedWriteInstruction,
     model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    position: inheritance.InheritanceEntityView,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1081,7 +1117,6 @@ def _prepare_keyed_write(
 ) -> PreparedKeyedInstruction:
     """Judge a keyed write: its verb and window against its target, then its
     row count, then its rows' subtype shape, members, and values."""
-    entity = resolve_target(model, instruction.entity)
     shape = temporal_read.view(model).shape(entity.identity)
     window = _judge_applicability(model, entity, shape, instruction, surface="keyed")
     if _is_temporal(shape):
@@ -1097,7 +1132,7 @@ def _prepare_keyed_write(
         instruction,
         model,
         entity,
-        _family_position(model, entity),
+        position,
         window,
         converter=converter,
         source_access=source_access,
@@ -1108,15 +1143,15 @@ def _prepare_keyed_write(
 def _prepare_predicate_write(
     instruction: PredicateWriteInstruction,
     model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    position: inheritance.InheritanceEntityView,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
 ) -> PreparedPredicateInstruction:
     """Judge a predicate write: whether its target can be written without
     being read at all, then its selecting predicate, family, and payload."""
-    entity = resolve_target(model, instruction.target.entity)
-    position = _family_position(model, entity)
-    _judge_readless_family(model, entity, position, instruction.mutation)
+    _judge_readless_target(model, entity, position, instruction.mutation)
     return _prepare_predicate_payload(
         instruction,
         model,
@@ -1127,7 +1162,7 @@ def _prepare_predicate_write(
     )
 
 
-def _judge_readless_family(
+def _judge_readless_target(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
@@ -1144,11 +1179,11 @@ def _judge_readless_family(
     if _requires_observation(position, shape):
         raise InstructionRejectedError(
             SET_BASED_WRITE_TARGET_UNSUPPORTED,
-            _readless_family_advice(entity, position, shape, mutation),
+            _readless_target_advice(entity, position, shape, mutation),
         )
 
 
-def _readless_family_advice(
+def _readless_target_advice(
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
     shape: temporal_read.TemporalShape | None,
@@ -1292,6 +1327,8 @@ def _judge_window(
 def _prepare_target_write(
     instruction: TargetWriteInstruction,
     model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    position: inheritance.InheritanceEntityView,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1308,11 +1345,9 @@ def _prepare_target_write(
     whose required revision is missing is refused before any member it names
     is weighed.
     """
-    entity = resolve_target(model, instruction.entity)
     shape = temporal_read.view(model).shape(entity.identity)
     window = _judge_applicability(model, entity, shape, instruction, surface="target")
-    position = _family_position(model, entity)
-    expectation = _judge_expectation(position.root, shape, position, instruction)
+    expectation = _judge_target_expectation(position.root, shape, position, instruction)
     if members is not None:
         instruction = replace(instruction, row={**instruction.row, **members()})
     row, assigns = _prepare_target_payload(
@@ -1329,7 +1364,7 @@ def _prepare_target_write(
     )
 
 
-def _judge_expectation(
+def _judge_target_expectation(
     root: EntityIdentity,
     shape: temporal_read.TemporalShape | None,
     position: inheritance.InheritanceEntityView,
@@ -1880,7 +1915,7 @@ def assigned_members(
     silently overwriting the first. The values are judged as assignments when
     the row they form is prepared.
     """
-    position = _family_position(model, entity)
+    position = _inheritance_entity_view(model, entity)
     ancestry = frozenset(position.ancestry)
     key = position.primary_key.identity.name
     row: dict[str, object] = {}
@@ -1929,7 +1964,7 @@ def addressed_members(
     naming another object is refused before anything is buffered.
     """
     stated = {name: addressed for name, addressed in address if name in document}
-    key = _family_position(model, entity).primary_key
+    key = _inheritance_entity_view(model, entity).primary_key
     for name, addressed in stated.items():
         value = _decoded_wire(key.type, document[name], f"{entity.identity.canonical}.{name}")
         if value != addressed:
@@ -1977,7 +2012,7 @@ type _LeafConverter = Callable[[Leaf, object, str], tuple[object, bool]]
 type _DeclaredMember = AttributeMetadata | ValueObjectMetadata
 
 
-def _family_position(
+def _inheritance_entity_view(
     model: AcceptedMetamodel, entity: EntityMetadata
 ) -> inheritance.InheritanceEntityView:
     position = inheritance.view(model).entity(entity.identity)
@@ -1991,11 +2026,11 @@ def _member_selection(
 ) -> inheritance.EntityMemberSelection:
     """``entity``'s family-effective members: the whole inheritance FAMILY's
     applicable members for a participant, its own declarations otherwise."""
-    return _family_position(model, entity).member_selection
+    return _inheritance_entity_view(model, entity).member_selection
 
 
 def _family_root(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityIdentity:
-    return _family_position(model, entity).root
+    return _inheritance_entity_view(model, entity).root
 
 
 def _declared_member(selection: inheritance.EntityMemberSelection, name: str) -> _DeclaredMember:
