@@ -105,8 +105,7 @@ next letter, so `customer_id` is `customerId` wherever names are serialized. Wir
 API that reads and writes plain mappings instead of your classes, is one such place;
 [Reading](03-reading.md#the-wire-api) covers it. The default column name comes back from
 the canonical name, so `customer_id` is stored in a `customer_id` column. Use `column=`
-to choose another, and a `persistence=READ_ONLY` header for an entity your application
-only reads.
+to choose another.
 
 `table=` names the table and nothing more: the class header has no schema option. Neither
 the generated statements nor Parallax's queries name a schema, so PostgreSQL finds the
@@ -123,6 +122,48 @@ A member can't take a name Parallax uses on the class itself, such as `all`, `wh
 `EntityDefinitionError` with the code `entity-reserved-member-name`. To keep `all` as the
 canonical name, give the attribute another Python name and rename it:
 `all_items: Attr[int] = attr(name="all")`.
+
+Some tables belong to another system, and your application only reads them. Declare
+such an entity with `persistence=READ_ONLY` in its class header, and Parallax refuses
+every write to it:
+
+<!-- example: declare-a-read-only-entity -->
+```python
+class Supplier(Entity, table="supplier", persistence=READ_ONLY):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=100)
+
+
+def rename_a_supplier(db: ScopedDatabase, supplier_id: int, name: str) -> None:
+    """Refused with ``InstructionRejectedError``: Parallax writes no ``Supplier``."""
+
+    def rename(tx: TxnContext) -> None:
+        supplier = tx.find(Supplier.where(Supplier.id == supplier_id)).result()
+        tx.amend(supplier.edit(name=name))
+
+    db.transact(rename)
+```
+<!-- /example -->
+
+`rename_a_supplier` reads a supplier as it would read any entity, but `tx.amend` refuses
+to write it. The verb raises `InstructionRejectedError`, whose `rule` is
+`"read-only-write-target"`, before anything is buffered or sent to the database. Every
+write verb refuses a read-only entity the same way, whether it writes your classes or
+Wire mappings: `insert`, `amend`, `replace`, `delete` and `terminate`, and the
+[target](04-writing.md#target-writes) and [predicate](04-writing.md#predicate-writes)
+writes. Here the error escapes the callback, so `db.transact` raises `ExecutionFailure`
+with the refusal as its `cause`, and the supplier keeps its name.
+[Errors](08-errors.md#mistakes-in-what-you-wrote) shows what changes when you catch it
+inside the callback instead.
+
+A read-only entity is not a read-only transaction. `persistence=READ_ONLY` belongs to the
+model and refuses writes to that one entity in every transaction, while a
+[read-only transaction](03-reading.md#where-a-read-runs) writes nothing at all.
+Reads of a read-only entity work as they do for any other. Its table is an ordinary
+table, which `schema_delta` creates with the rest, and the system that owns its rows
+writes them there. In an [inheritance family](#inheritance-families) only the root
+declares `persistence=`, and its choice holds for the whole family: a write to any of its
+subtypes is refused too.
 
 ## Relationships
 

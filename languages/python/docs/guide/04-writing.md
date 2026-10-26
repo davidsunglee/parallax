@@ -24,6 +24,9 @@ something that shows what the write applies to. There are four:
 query selects without reading it first, and only entities with no version and no history
 accept them.
 
+An entity declared `persistence=READ_ONLY` takes no writes at all: every verb in this
+chapter refuses it, as [Modeling](02-modeling.md#entities-and-keys) shows.
+
 This chapter starts with the simplest temporality profile and adds time one axis at a
 time: Non-Temporal entities, then Transaction-Time-Only, then Bitemporal. After that it
 covers target writes, predicate writes and writing through Wire. The examples use the

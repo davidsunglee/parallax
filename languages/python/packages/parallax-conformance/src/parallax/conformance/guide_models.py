@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from parallax.core import (
     ONE_TO_MANY,
+    READ_ONLY,
     AbstractRoot,
     Attr,
     Bitemporal,
@@ -32,6 +33,7 @@ __all__ = [
     "Price",
     "Product",
     "Shipment",
+    "Supplier",
 ]
 
 
@@ -96,6 +98,11 @@ class Price(Bitemporal, table="price"):
     amount: Attr[Decimal] = attr(precision=12, scale=2)
 
 
+class Supplier(Entity, table="supplier", persistence=READ_ONLY):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=100)
+
+
 class Product(Entity, table="product", layout=Document()):
     sku: Attr[str] = attr(primary_key=True, max_length=20)
     name: Attr[str] = attr(max_length=100)
@@ -112,4 +119,5 @@ SHOP_MODEL = DomainModel(
     CreditLimit,
     Price,
     Product,
+    Supplier,
 )

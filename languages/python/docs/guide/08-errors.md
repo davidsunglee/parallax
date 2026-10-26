@@ -126,7 +126,11 @@ tool can report them without parsing messages.
   the write breaks a rule, such as `tx.delete` on a temporal entity, whose message names
   `terminate`, or a target write on an entity with no revision. Its subtype
   `InstructionRejectedError` names the rule in its `rule`, such as a
-  [predicate write](04-writing.md#predicate-writes) on a versioned entity.
+  [predicate write](04-writing.md#predicate-writes) on a versioned entity, or
+  `"read-only-write-target"` for any write to an entity
+  [declared read-only](02-modeling.md#entities-and-keys). Caught inside the callback,
+  that refusal leaves the transaction usable, and the writes buffered before and after
+  it still commit. If it escapes, it reaches you as the `cause` of an `ExecutionFailure`.
   `TransactionTimePinReadOnlyError` means the value was read as of a past Transaction
   Time, which [can't be rewritten](04-writing.md#correct-the-past).
 
@@ -373,6 +377,7 @@ of an `ExecutionFailure`:
 | Error | Raised | Retried? | What to do |
 | -- | -- | -- | -- |
 | A refused class, model, query, edit or write, such as `EntityDefinitionError`, `MetamodelValidationError`, `QueryDefinitionError`, `QueryTargetError`, `EditError`, `WriteEvidenceError`, `KeyedWriteValueError` or `WriteInstructionError` | where you make the request | No | Fix the request, or report its issues to whoever supplied it |
+| `InstructionRejectedError` whose `rule` is `"read-only-write-target"` | by the write verb, before anything is buffered | No | Leave the entity's rows to the system that owns them, or drop `persistence=READ_ONLY` if your application owns them |
 | `NoResultFound` or `TooManyResultsFound` | by `.result()` or `.result_or_none()`, after the read | No | Use the accessor for the shape you expect, or treat the absence as an answer |
 | `UnloadedRelationshipError` | when you touch a relationship the read didn't include | No | Include it in the read, or test it with `is_view_loaded` |
 | `StreamStateError` | when a stream is used outside its `with` block, entered twice or iterated twice | No | Consume each stream once, inside its `with` block |
