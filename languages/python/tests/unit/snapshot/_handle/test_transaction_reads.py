@@ -1064,11 +1064,11 @@ def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_
 
 
 # --------------------------------------------------------------------------- #
-# The shared read-preflight seam (`_preflight.preflight`), on the         #
-# participating path: the ordering is what these pin. `uow.read` force-flushes #
-# pending writes, so a read the connected model cannot answer must be refused  #
-# BEFORE the unit of work is touched — otherwise an invalid read becomes a     #
-# write.                                                                       #
+# The shared read-query resolution seam (`_read_query.resolve_read_query`), on #
+# the participating path: the ordering is what these pin. `uow.read`           #
+# force-flushes pending writes, so a read the connected model cannot answer    #
+# must be refused BEFORE the unit of work is touched — otherwise an invalid    #
+# read becomes a write.                                                        #
 # --------------------------------------------------------------------------- #
 def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
     def fn(tx: TxnContext) -> None:
@@ -1101,14 +1101,14 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
     assert caught.value.features == ("snapshot-history-includes",)
 
 
-def test_tx_find_preflight_rejects_before_a_pending_write_can_flush() -> None:
+def test_tx_find_read_query_resolution_rejects_before_a_pending_write_can_flush() -> None:
     port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: TxnContext) -> None:
         tx.insert(new_account())
         with pytest.raises(QueryTargetError):
             tx.find(mm.Person.where(mm.Person.id == 1))
-        # The buffered insert is still pending: preflight refused ahead of
+        # The buffered insert is still pending: read-query resolution refused ahead of
         # `uow.read`, so the force-flush that a valid read performs
         # (`test_find_force_flushes_pending_writes_first`) never ran.
         assert port.calls == [BeginCall()]

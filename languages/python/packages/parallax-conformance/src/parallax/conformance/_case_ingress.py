@@ -176,8 +176,8 @@ def normalize_case_query(query: ObjectQueryNode, model: AcceptedMetamodel) -> Ob
     Synthetic conformance queries may carry managed Python values, such as
     ``datetime`` temporal bounds, where canonical Wire has a string. This ingress
     encodes only those, by declared type; authored JSON values pass through
-    unchanged. Core preflight still owns model-aware validation, classification,
-    and lowering of the returned canonical query.
+    unchanged. Core read-query resolution still owns model-aware validation,
+    classification, and lowering of the returned canonical query.
     """
     temporal = {
         dimension: _normalize_temporal_selection(selection)

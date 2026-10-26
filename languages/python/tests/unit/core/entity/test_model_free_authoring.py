@@ -42,7 +42,7 @@ from parallax.core import (
     attr,
     inheritance,
 )
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import _authored_resolver
@@ -250,10 +250,10 @@ def test_both_connection_doors_refuse_a_bare_accepted_metamodel() -> None:
 
 
 def test_a_classless_database_refuses_a_read_before_it_resolves_the_target() -> None:
-    # The connection refusal precedes preflight on BOTH entry points. A Database
-    # that cannot materialize a Snapshot answers that first, so a query this
-    # model also does not declare still reports the connection rather than the
-    # target.
+    # The connection refusal precedes read-query resolution on BOTH entry points.
+    # A Database that cannot materialize a Snapshot answers that first, so a query
+    # this model also does not declare still reports the connection rather than
+    # the target.
     port = ScriptedAdapter()
     database = own_root(
         Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
@@ -596,7 +596,9 @@ def _carriers(predicate: object) -> tuple[tuple[type, object], ...]:
 def test_a_prepared_operand_binds_the_carrier_its_canonical_export_decodes_to(
     query: Any, model: DomainModel
 ) -> None:
-    canonical = preflight(object_query_node(query, model), model=model_of(model), form="graph")
+    canonical = resolve_read_query(
+        object_query_node(query, model), model=model_of(model), form="graph"
+    )
     typed = typed_resolved(query, model)
     assert _carriers(typed.predicate) == _carriers(canonical.predicate)
 
@@ -746,7 +748,7 @@ def test_an_unfinished_operation_exports_as_its_serving_model_resolves_it() -> N
     ],
 )
 def test_boolean_structure_binds_as_its_canonical_export_does(query: Any) -> None:
-    canonical = preflight(
+    canonical = resolve_read_query(
         object_query_node(query, vm.CUSTOMER_MODEL), model=model_of(vm.CUSTOMER_MODEL), form="graph"
     )
     assert typed_resolved(query, vm.CUSTOMER_MODEL) == canonical
@@ -784,7 +786,7 @@ def test_an_illegal_element_scope_interior_is_refused_as_its_canonical_export_is
 ) -> None:
     query = vm.Customer.where(vm.Customer.address.phones.any(interior))
     with pytest.raises(ModelRejectedError) as canonical:
-        preflight(
+        resolve_read_query(
             object_query_node(query, vm.CUSTOMER_MODEL),
             model=model_of(vm.CUSTOMER_MODEL),
             form="graph",

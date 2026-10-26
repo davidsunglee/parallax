@@ -87,8 +87,8 @@ def run_rejected_case(case: case_format.Case) -> str:
     protect a caller that reaches this engine without schema validation. An
     `objectQuery` input is deserialized through the same `m-object-query` serde
     every read uses, then checked by production's own read gate
-    (`execution._preflight.preflight`), which owns target resolution, so the two paths cannot
-    drift. A `model` input first
+    (`execution._read_query.resolve_read_query`), which owns target resolution, so
+    the two paths cannot drift. A `model` input first
     passes the descriptor frontend's own pre-formation family validator
     (:func:`~parallax.descriptor.validate_inheritance_families`) for descriptor
     spellings the accepted algebra cannot represent, then goes through the same

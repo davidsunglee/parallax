@@ -47,7 +47,7 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -210,4 +210,4 @@ def resolved(
     query: ObjectQuery[Any, Any], *, form: Literal["rows", "graph"] = "graph"
 ) -> ResolvedObjectQuery:
     """``query`` against :data:`MATRIX_MODEL`, validated as a read in ``form`` is."""
-    return preflight(object_query_node(query, MATRIX_MODEL), model=MATRIX_META, form=form)
+    return resolve_read_query(object_query_node(query, MATRIX_MODEL), model=MATRIX_META, form=form)

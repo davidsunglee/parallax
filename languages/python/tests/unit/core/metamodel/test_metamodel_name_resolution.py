@@ -18,7 +18,7 @@ import pytest
 
 from parallax.core import deep_fetch
 from parallax.core import predicate as oa
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._unit_work import instructions
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.dialect import POSTGRES
@@ -115,23 +115,23 @@ def _query(target: str, includes: tuple[IncludePathNode, ...] = ()) -> ObjectQue
     )
 
 
-def test_read_preflight_classifies_an_ambiguous_bare_name_by_the_same_rule() -> None:
-    # The read side: preflight resolves its target spelling through the
+def test_read_query_resolution_classifies_an_ambiguous_bare_name_by_the_same_rule() -> None:
+    # The read side: read-query resolution resolves its target spelling through the
     # same helper, and reports the same rule through `predicate`'s own rejected
     # carrier — so one rule and one class answer an ambiguous spelling whether
-    # preflight or lowering resolves it.
+    # read-query resolution or lowering resolves it.
     with pytest.raises(ModelRejectedError) as excinfo:
         model = _model()
-        preflight(_query("Person"), model=model, form="graph")
+        resolve_read_query(_query("Person"), model=model, form="graph")
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
 
-def test_read_preflight_refuses_a_target_the_model_does_not_declare() -> None:
+def test_read_query_resolution_refuses_a_target_the_model_does_not_declare() -> None:
     # An undeclared target earns `query-target-not-in-model` before the validated
     # execution token exists and therefore before any executor or I/O can run.
     with pytest.raises(QueryTargetError) as excinfo:
         model = _model()
-        preflight(_query("Nope"), model=model, form="graph")
+        resolve_read_query(_query("Nope"), model=model, form="graph")
     assert excinfo.value.code == "query-target-not-in-model"
 
 
@@ -180,9 +180,9 @@ def test_sql_lowering_reaches_the_table_the_canonical_spelling_names() -> None:
 # its own concrete subtypes may sit in different namespaces — and a reference   #
 # position spells them all bare. Resolving such a spelling into the REFERRING   #
 # Entity's namespace (the declaration rule) answers a different Entity than     #
-# `validate_predicate` resolved it to, so the read preflight accepted           #
-# failed to lower. Nothing in the shipped corpus exhibits it: every corpus      #
-# family restates one namespace on every member.                                #
+# `validate_predicate` resolved it to, so a query read-query resolution         #
+# accepted failed to lower. Nothing in the shipped corpus exhibits it: every    #
+# corpus family restates one namespace on every member.                         #
 # --------------------------------------------------------------------------- #
 def _cross_namespace_model() -> Metamodel:
     """An accepted model whose family root, concrete subtypes, and relationship

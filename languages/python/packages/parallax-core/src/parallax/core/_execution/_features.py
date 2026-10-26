@@ -77,7 +77,7 @@ def _includes_over_a_scan(query: QueryClauses) -> bool:
     scan is an ``asOfRange`` or ``history`` selection on any dimension.
 
     Reaching this answer costs no port, so this module stays clear of the
-    Database Port its own read-preflight consumer must not touch.
+    Database Port its own read-query resolution consumer must not touch.
     """
     return bool(query.includes) and any(
         isinstance(selection, (AsOfRange, History)) for selection in query.temporal.values()

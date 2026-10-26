@@ -19,7 +19,7 @@ import pytest
 from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import continuation, deep_fetch
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -71,7 +71,7 @@ def _reaches(root: object, target: object) -> bool:
 
 
 def _query(value: object = 1) -> ResolvedObjectQuery:
-    return preflight(
+    return resolve_read_query(
         deserialize(
             {
                 "target": "Order",
@@ -84,7 +84,7 @@ def _query(value: object = 1) -> ResolvedObjectQuery:
 
 
 def _name_query(value: str) -> ResolvedObjectQuery:
-    query = preflight(
+    query = resolve_read_query(
         deserialize(
             {
                 "target": "Order",
@@ -139,7 +139,7 @@ def test_equal_query_values_share_one_read_plan_but_result_forms_do_not() -> Non
 
 
 def _match_query(name: str) -> ResolvedObjectQuery:
-    return preflight(
+    return resolve_read_query(
         deserialize(
             {
                 "target": "OrderItem",
@@ -201,7 +201,7 @@ _LATEST: dict[str, object] = {"transaction-time": {"asOf": "latest"}}
 
 def _resolved_key(meta: Metamodel, document: Mapping[str, object]) -> object:
     query_key = cast("Callable[[object], object]", vars(_read_plan)["_query_key"])
-    return query_key(preflight(deserialize(dict(document)), model=meta, form="graph"))
+    return query_key(resolve_read_query(deserialize(dict(document)), model=meta, form="graph"))
 
 
 def _order_query(predicate: Mapping[str, object], **clauses: object) -> dict[str, object]:
@@ -545,7 +545,7 @@ def test_same_family_ignores_only_the_delivery_discriminator() -> None:
 def test_an_unpaged_query_keeps_its_authored_limit_in_its_family() -> None:
     def selected(**clauses: object) -> ResolvedObjectQuery:
         authored = {"target": "Order", "predicate": {"eq": {"path": "Order.id", "value": 1}}}
-        return preflight(deserialize(authored | clauses), model=_META, form="graph")
+        return resolve_read_query(deserialize(authored | clauses), model=_META, form="graph")
 
     assert not _key(selected(limit=3)).same_family(_key(selected()))
     assert not _key(selected(limit=3)).same_family(_key(selected(limit=5)))
@@ -1076,7 +1076,7 @@ def test_each_compiled_read_is_bound_under_the_projection_its_query_resolved(
 
 
 def _with_items() -> ResolvedObjectQuery:
-    return preflight(
+    return resolve_read_query(
         deserialize(
             {
                 "target": "Order",
@@ -1354,7 +1354,7 @@ _WORKBENCHES: Final[Mapping[str, object]] = {
 def _dormant_query(
     document: Mapping[str, object], meta: Metamodel = _DORMANT_META
 ) -> ResolvedObjectQuery:
-    return preflight(deserialize(document), model=meta, form="graph")
+    return resolve_read_query(deserialize(document), model=meta, form="graph")
 
 
 def _recording_preparation(monkeypatch: pytest.MonkeyPatch) -> list[str]:

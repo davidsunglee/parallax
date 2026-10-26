@@ -381,49 +381,6 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "parallax.core._execution._preflight may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.core._execution._preflight"]
-forbidden_modules = [
-    "parallax.aws",
-    "parallax.aws.postgres",
-    "parallax.conformance",
-    "parallax.core._formation_profile",
-    "parallax.core.auto_retry",
-    "parallax.core.batch_write",
-    "parallax.core.continuation",
-    "parallax.core.db_error",
-    "parallax.core.db_port",
-    "parallax.core.deep_fetch",
-    "parallax.core.diagnostics",
-    "parallax.core.dialect",
-    "parallax.core.document_codec",
-    "parallax.core.entity",
-    "parallax.core.execution",
-    "parallax.core.execution_authority",
-    "parallax.core.execution_lifecycle",
-    "parallax.core.navigate",
-    "parallax.core.opt_lock",
-    "parallax.core.pk_gen",
-    "parallax.core.read_delivery",
-    "parallax.core.read_lock",
-    "parallax.core.relationship",
-    "parallax.core.sql_gen",
-    "parallax.core.storage_layout",
-    "parallax.core.temporal_read",
-    "parallax.core.temporal_write",
-    "parallax.core.unit_work",
-    "parallax.core.value_object",
-    "parallax.core.write_payload",
-    "parallax.core.write_plan",
-    "parallax.descriptor",
-    "parallax.evolution.model_evolution",
-    "parallax.evolution.schema_delta",
-    "parallax.postgres",
-    "parallax.snapshot",
-]
-
-[[tool.importlinter.contracts]]
 name = "parallax.core._execution._publication may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core._execution._publication"]
@@ -466,6 +423,49 @@ forbidden_modules = [
     "parallax.core.pk_gen",
     "parallax.core.unit_work",
     "parallax.core.write_payload",
+    "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
+    "parallax.postgres",
+    "parallax.snapshot",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.core._execution._read_query may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core._execution._read_query"]
+forbidden_modules = [
+    "parallax.aws",
+    "parallax.aws.postgres",
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.continuation",
+    "parallax.core.db_error",
+    "parallax.core.db_port",
+    "parallax.core.deep_fetch",
+    "parallax.core.diagnostics",
+    "parallax.core.dialect",
+    "parallax.core.document_codec",
+    "parallax.core.entity",
+    "parallax.core.execution",
+    "parallax.core.execution_authority",
+    "parallax.core.execution_lifecycle",
+    "parallax.core.navigate",
+    "parallax.core.opt_lock",
+    "parallax.core.pk_gen",
+    "parallax.core.read_delivery",
+    "parallax.core.read_lock",
+    "parallax.core.relationship",
+    "parallax.core.sql_gen",
+    "parallax.core.storage_layout",
+    "parallax.core.temporal_read",
+    "parallax.core.temporal_write",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.core.write_payload",
+    "parallax.core.write_plan",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
     "parallax.evolution.schema_delta",

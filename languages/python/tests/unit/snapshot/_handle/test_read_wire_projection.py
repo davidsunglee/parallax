@@ -40,7 +40,7 @@ from parallax.core import (
 from parallax.core import (
     deep_fetch as deep_fetch_module,
 )
-from parallax.core._execution import _preflight as preflight_module
+from parallax.core._execution import _read_query as read_query_module
 from parallax.core.base import INFINITY, TIMESTAMP
 from parallax.core.entity._expressions import IncludeTraversal
 from parallax.core.entity._graph_construction import require_correspondence
@@ -245,7 +245,7 @@ def test_projection_does_not_serialize_or_reclassify(
 
     monkeypatch.setattr(vo.Customer, "model_dump", forbidden)
     monkeypatch.setattr(deep_fetch_module, "plan", forbidden)
-    monkeypatch.setattr(preflight_module, "preflight", forbidden)
+    monkeypatch.setattr(read_query_module, "resolve_read_query", forbidden)
     monkeypatch.setattr(wire_materialize, "classify_roots", forbidden)
 
     assert typed.wire().result()["name"] == "Ada"

@@ -40,9 +40,10 @@ the other no longer carries.
 A forbidden row is the complement of a *closure*, so a scope is never forbidden
 what its own grants reach transitively. A scope that exists in order to stay
 clear of some boundary therefore has to be granted narrowly enough that the
-boundary falls outside its closure — the read preflight seam grants the Object
-Query scope rather than the Entity frontend that re-exports its typed surface,
-for exactly that reason — rather than granted widely and excepted afterwards.
+boundary falls outside its closure — the read-query resolution seam grants the
+Object Query scope rather than the Entity frontend that re-exports its typed
+surface, for exactly that reason — rather than granted widely and excepted
+afterwards.
 
 The core conformance-family exception (``modules.md``) is encoded structurally:
 conformance scopes (``parallax.conformance.*``) are exempt on the *importing*
@@ -303,7 +304,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # no SQL, and no dialect. The Database Port is NOT one of those: the granted
     # Entity frontend reaches it through `_formation_profile -> opt_lock ->
     # unit_work -> db_port`, and a forbidden row is the complement of a closure,
-    # so this row admits it — `parallax.core._execution._preflight` below is the
+    # so this row admits it — `parallax.core._execution._read_query` below is the
     # scope whose grant is narrowed for exactly the boundary this one cannot
     # state.
     "parallax.snapshot._inspection": frozenset(
@@ -373,15 +374,15 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     "parallax.core.execution": frozenset({"parallax.core._execution"}),
     "parallax.core.unit_work": frozenset({"parallax.core._execution._unit_work"}),
     # The read gate is scoped apart from its own package so the generated
-    # contract proves what its module docstring claims: a preflight that resolves
-    # a target and validates a query names no SQL generation, no dialect, no
-    # Database Port, no deep-fetch planning and no materialization. The grant is
-    # the Object Query scope rather than the Entity frontend precisely so
+    # contract proves what its module docstring claims: resolving a target and
+    # validating a query names no SQL generation, no dialect, no Database Port,
+    # no deep-fetch planning and no materialization. The grant is the Object
+    # Query scope rather than the Entity frontend precisely so
     # the Database Port falls OUTSIDE this row's closure: the frontend package
     # reaches one through `_formation_profile -> opt_lock -> unit_work ->
     # db_port`, and a forbidden row is the complement of a closure, so a grant
     # wide enough to include that chain could never forbid its endpoint.
-    "parallax.core._execution._preflight": frozenset(
+    "parallax.core._execution._read_query": frozenset(
         {
             "parallax.core.metamodel",
             "parallax.core.predicate",
@@ -476,7 +477,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # temporal write policies, and with them what only they reached —
     # `_formation_profile`, `value_object`, and `db_error`. Port- and
     # dialect-freedom is NOT claimed: `m-unit-work` reaches `m-db-port` and
-    # `m-dialect`, so `_preflight`'s property cannot be replicated here.
+    # `m-dialect`, so `_read_query`'s property cannot be replicated here.
     #
     # The one-way rule — retention never names the Page collector that drives
     # it — is the half no contract sourced here can state: `compute_forbidden`
@@ -643,9 +644,6 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     "parallax.core._execution._keyed_writes": ChildScope(
         parent="parallax.core._execution", policy="ordinary"
     ),
-    "parallax.core._execution._preflight": ChildScope(
-        parent="parallax.core._execution", policy="ordinary"
-    ),
     # Model publication is sealed for what a prepared selection must not hold:
     # the root, the scopes, the Attempt, the read policy, the keyed write
     # ingress, and every other module of the execution package carries a
@@ -657,6 +655,9 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
         parent="parallax.core._execution", policy="sealed"
     ),
     "parallax.core._execution._read_policy": ChildScope(
+        parent="parallax.core._execution", policy="ordinary"
+    ),
+    "parallax.core._execution._read_query": ChildScope(
         parent="parallax.core._execution", policy="ordinary"
     ),
     # Write-observation retention is sealed for the same reason read the other

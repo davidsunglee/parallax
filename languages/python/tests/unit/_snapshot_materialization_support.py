@@ -68,7 +68,7 @@ from parallax.core import (
     deep_fetch,
     rel,
 )
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import SQL_NULL, DocumentValue, ManagedValue, PresentDocument
 from parallax.core.db_port import DocumentReadOrdinals, Row
 from parallax.core.dialect import POSTGRES, Dialect, scalar_result
@@ -254,7 +254,7 @@ def metamodel(layout: Layout) -> Metamodel:
 def query(layout: Layout, model: Metamodel) -> ResolvedObjectQuery:
     """The read every batch runs: three includes off the root and one
     back-reference revisiting it."""
-    return preflight(
+    return resolve_read_query(
         _WORKLOADS[layout].query,
         model=model,
         form="graph",

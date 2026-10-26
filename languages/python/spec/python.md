@@ -138,11 +138,11 @@ much as about the ones they do not.
 opposite reason: it needs a WIDER grant than its parent. The typed Object Query is
 generic over Entity Classes, so it reaches the Entity frontend for the descriptor
 values a clause call is written with, while `m-object-query` itself must stay
-reachable by `m-temporal-read`, `m-deep-fetch`, `m-sql`, and the read-preflight
-seam — none of which may reach that frontend. The parent package's own interface
-therefore does not import this module: a consumer of the canonical query value
-never pulls the typed surface in, and one that wants the typed surface names this
-module. That is what keeps the widening contained rather than leaking through the
+reachable by `m-temporal-read`, `m-deep-fetch`, `m-sql`, and the read-query
+resolution seam — none of which may reach that frontend. The parent package's own
+interface therefore does not import this module: a consumer of the canonical query
+value never pulls the typed surface in, and one that wants the typed surface names
+this module. That is what keeps the widening contained rather than leaking through the
 package.
 
 `parallax.core._execution._read_policy` is the read policy every eager,
@@ -383,9 +383,9 @@ come from `core/spec/modules.md`.
 | `parallax.core._execution` | `parallax.core.entity` |
 | `parallax.core._execution._family`, `parallax.core._execution._keyed_sql`, `parallax.core._execution._write_lowering` | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-write-plan`, `m-opt-lock` |
 | `parallax.core._execution._keyed_writes` | `parallax.core.entity`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-write-plan`, `m-execution-lifecycle` |
-| `parallax.core._execution._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` |
 | `parallax.core._execution._publication` | `parallax.core.entity`, `m-unit-work` |
 | `parallax.core._execution._read_policy` | `parallax.core.entity`, `m-read-delivery`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-execution-authority`, `m-execution-lifecycle` |
+| `parallax.core._execution._read_query` | `m-metamodel`, `m-predicate`, `m-object-query` |
 | `parallax.core._execution._retention` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-unit-work`, `m-write-plan`, `m-opt-lock` |
 | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` |
 | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` |
@@ -498,9 +498,9 @@ for the scopes each policy governs.
 | `parallax.core._execution._family` | `parallax.core._execution` | ordinary |
 | `parallax.core._execution._keyed_sql` | `parallax.core._execution` | ordinary |
 | `parallax.core._execution._keyed_writes` | `parallax.core._execution` | ordinary |
-| `parallax.core._execution._preflight` | `parallax.core._execution` | ordinary |
 | `parallax.core._execution._publication` | `parallax.core._execution` | sealed |
 | `parallax.core._execution._read_policy` | `parallax.core._execution` | ordinary |
+| `parallax.core._execution._read_query` | `parallax.core._execution` | ordinary |
 | `parallax.core._execution._retention` | `parallax.core._execution` | sealed |
 | `parallax.core._execution._unit_work` | `parallax.core._execution` | sealed |
 | `parallax.core._execution._write_lowering` | `parallax.core._execution` | ordinary |
@@ -614,8 +614,8 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   second frontend with a typed query's canonical export under its serving model;
   `parallax.conformance.workloads` binds the same name so a catalog entry can
   retain the typed query and compare its normalized node with a class-backed
-  consumer before handing either to production preflight. These reaches are
-  **rebutted rather than exempted**: `model_of` and the export are accepted
+  consumer before handing either to production read-query resolution. These
+  reaches are **rebutted rather than exempted**: `model_of` and the export are accepted
   private seams of production's own composition root and Typed resolution — the
   export judges and spells a typed query through the resolver a read of it runs —
   and both are reached by naming the module that owns them. `model_of` exists precisely so a separately
@@ -632,7 +632,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   member layout the writer reads it against, so the fixture hands a row over the
   one way production hands one over and no rule is restated in a second place.
   The adapter engine's model-facts mechanism and the second-source fixture also
-  import execution's private `preflight` operation so compile-only and
+  import execution's private `resolve_read_query` operation so compile-only and
   alternate-source reads consume the same validated execution token as
   production. The second-source fixture then drives read delivery's eager
   `find` over that token and publishes the sealed `Page` it returns through
@@ -705,7 +705,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   materially narrower than the parent's closure or when one orchestration leaf
   requires a narrowly additive first-party grant that must remain forbidden to
   the rest of the parent package. The declared children of
-  `parallax.core._execution` are the narrower read-preflight, read-policy,
+  `parallax.core._execution` are the narrower read-query, read-policy,
   keyed-ingress, model-publication, and retention scopes, the write-lowering
   scopes, and the unit of work's behavioral scope; read delivery's Page child
   and Snapshot's value-publication and inspection children narrow their
@@ -766,7 +766,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   A scope that exists in order to stay clear of some boundary must therefore be
   granted narrowly enough that the boundary falls **outside** its closure; there
   is no exception mechanism that puts a reachable target back into a row.
-  `parallax.core._execution._preflight` is the case in point: the seam resolves
+  `parallax.core._execution._read_query` is the case in point: the seam resolves
   a target and validates a query before any I/O, so it must reach no
   Database Port, and the `parallax.core.entity` package reaches one through
   `parallax.core._formation_profile` → `m-opt-lock` → `m-unit-work` →
@@ -775,7 +775,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   it — none of which reaches the Entity frontend, and the ordinary generated row
   forbids `parallax.core.entity` outright along with `m-db-port`, `m-opt-lock`,
   `m-unit-work` and `parallax.core._formation_profile`, with indirect chains
-  reported. `_preflight` naming `parallax.core.entity._model` therefore breaks
+  reported. `_read_query` naming `parallax.core.entity._model` therefore breaks
   the gate twice over: on the frontend package it may not name at all, and on
   `_model`'s own edge to `parallax.core._formation_profile`.
   Granting a child scope instead omits that child's ancestors from the row,

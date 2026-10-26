@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 
 from parallax.core import DomainModel
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import deserialize
@@ -97,7 +97,7 @@ def test_typed_binding_resolves_the_independently_authored_predicate(shape: str)
         )
     )
     canonical = deserialize({"target": _TARGET, "predicate": _PREDICATES[shape]})
-    expected = preflight(canonical, model=model, form="graph")
+    expected = resolve_read_query(canonical, model=model, form="graph")
     assert actual == expected
 
 

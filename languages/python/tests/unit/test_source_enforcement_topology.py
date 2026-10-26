@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import get_type_hints
 
 from parallax.core import sql_gen
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._unit_work.instructions import (
     PreparedInstruction,
     PreparedTargetInstruction,
@@ -162,7 +162,7 @@ def test_carrier_neutral_private_sql_reaches_match_the_language_contract() -> No
 
 
 def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() -> None:
-    assert get_type_hints(preflight)["return"] is ResolvedObjectQuery
+    assert get_type_hints(resolve_read_query)["return"] is ResolvedObjectQuery
     assert get_type_hints(plan_deep_fetch)["query"] is ResolvedObjectQuery
     assert get_type_hints(compile_read)["query"] is PlannedEntityQuery
     assert get_type_hints(compile_write_predicate)["op"] is TemporallyResolvedPredicate
@@ -533,13 +533,13 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.another_source", "parallax.snapshot._publication._root"): frozenset(
         {"RootView"}
     ),
-    ("parallax.conformance.another_source", "parallax.core._execution._preflight"): frozenset(
-        {"preflight"}
+    ("parallax.conformance.another_source", "parallax.core._execution._read_query"): frozenset(
+        {"resolve_read_query"}
     ),
     (
         "parallax.conformance._mechanism.model_facts",
-        "parallax.core._execution._preflight",
-    ): frozenset({"preflight"}),
+        "parallax.core._execution._read_query",
+    ): frozenset({"resolve_read_query"}),
     ("parallax.conformance._wire_submission", "parallax.snapshot._publication._wire"): frozenset(
         {"authoring_of", "read_evidence_of"}
     ),

@@ -9,7 +9,7 @@ import pytest
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.core import deep_fetch
 from parallax.core._execution._concurrency import CONCURRENCY
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -77,7 +77,7 @@ def _publish(page: Page) -> Callable[[RootView, int], Iterator[object]]:
 
 def _order_read() -> tuple[Metamodel, CatalogedModel, CompiledRead]:
     meta = model_of(ORDERS_MODEL)
-    query = preflight(
+    query = resolve_read_query(
         deserialize({"target": "Order", "predicate": {"true": {}}}),
         model=meta,
         form="graph",

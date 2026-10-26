@@ -61,7 +61,7 @@ from parallax.core import (
     Predicate,
     QueryDefinitionError,
 )
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import LATEST, deserialize
@@ -280,7 +280,9 @@ def test_the_idiomatic_query_resolves_as_its_canonical_query_does(case_id: str) 
     # decoded literals resolve to.
     model = _DESCRIPTOR_MODELS[Path(corpus_case(case_id).model).stem]
     query = BUILDERS[case_id]()
-    canonical = preflight(object_query_node(query, model), model=model_of(model), form="graph")
+    canonical = resolve_read_query(
+        object_query_node(query, model), model=model_of(model), form="graph"
+    )
     assert typed_resolved(query, model) == canonical
 
 
@@ -391,7 +393,7 @@ def test_the_idiomatic_query_rejects_the_corpus_rule_at_the_read_gate(case_id: s
     assert exported.value.rule == expected_rule
     corpus_query = deserialize(case_document(corpus_case(case_id))["when"]["objectQuery"])
     with pytest.raises(ModelRejectedError) as corpus:
-        preflight(corpus_query, model=model_of(REJECTED_MODELS[case_id]), form="graph")
+        resolve_read_query(corpus_query, model=model_of(REJECTED_MODELS[case_id]), form="graph")
     assert corpus.value.rule == expected_rule
 
 

@@ -28,7 +28,7 @@ from parallax.conformance.workloads import (
     workload_digest,
 )
 from parallax.core import deep_fetch, inheritance
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.sql_gen._compile import compile_read, compile_template
@@ -38,7 +38,7 @@ def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> Non
     for workload in catalog().values():
         assert workload.model.entity(workload.query.target) is not None
         assert workload.page_sizes == tuple(sorted(set(workload.page_sizes)))
-        validated = preflight(workload.query, model=workload.model, form="graph")
+        validated = resolve_read_query(workload.query, model=workload.model, form="graph")
         plan = deep_fetch.plan(
             validated,
             workload.model,
