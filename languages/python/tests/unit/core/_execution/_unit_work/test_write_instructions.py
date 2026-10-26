@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from decimal import Decimal
 from typing import Any, cast
 
@@ -23,13 +23,29 @@ import pytest
 from referencing import Registry, Resource
 
 from parallax.conformance import models
-from parallax.core import inheritance
+from parallax.core import (
+    READ_ONLY,
+    AbstractRoot,
+    AbstractSubtype,
+    Attr,
+    Bitemporal,
+    ConcreteSubtype,
+    DomainModel,
+    Entity,
+    Int32,
+    TablePerHierarchy,
+    TxTemporal,
+    attr,
+    inheritance,
+)
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work import instructions as wi
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, JSON, InstantError
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import Table, WriteAssignmentError
+from parallax.core.predicate import ModelRejectedError
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import WriteRejectedError
 from tests._support.repo import REPO_ROOT
@@ -2626,3 +2642,265 @@ def test_a_predicate_write_selecting_through_an_interpretation_has_no_canonical_
     )
     with pytest.raises(wi.WriteInstructionError, match="no canonical write-instruction document"):
         wi.serialize(instruction)
+
+
+# --------------------------------------------------------------------------- #
+# Persistence admission (`m-unit-work` "Writes to a ReadOnly family"): once the #
+# target resolves, a ReadOnly family refuses every write before anything else  #
+# about it is judged. Each ReadOnly target below has a corpus ReadWrite twin   #
+# with the same shape, whose refusal shows the fault the persistence judgment  #
+# outranks is real and keeps its place there.                                  #
+# --------------------------------------------------------------------------- #
+_RO_NS = "parallax.test"
+
+
+class RoNote(Entity, table="ro_note", namespace=_RO_NS, persistence=READ_ONLY):
+    id: Attr[int] = attr(primary_key=True)
+    owner: Attr[str] = attr(max_length=64)
+    balance: Attr[Decimal] = attr(precision=18, scale=2)
+
+
+class RoLedger(Entity, table="ro_ledger", namespace=_RO_NS, persistence=READ_ONLY):
+    id: Attr[int] = attr(primary_key=True)
+    owner: Attr[str] = attr(max_length=64)
+    balance: Attr[Decimal] = attr(precision=18, scale=2)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
+class RoBalance(TxTemporal, table="ro_balance", namespace=_RO_NS, persistence=READ_ONLY):
+    id: Attr[int] = attr(primary_key=True, column="bal_id")
+    acct_num: Attr[str] = attr(max_length=32)
+    value: Attr[Decimal] = attr(column="val", precision=18, scale=2)
+
+
+class RoPosition(Bitemporal, table="ro_position", namespace=_RO_NS, persistence=READ_ONLY):
+    id: Attr[int] = attr(primary_key=True, column="pos_id")
+    acct_num: Attr[str] = attr(max_length=32)
+    value: Attr[Decimal] = attr(precision=18, scale=2)
+
+
+class RoArchive(
+    Entity,
+    table="ro_archive",
+    namespace=_RO_NS,
+    persistence=READ_ONLY,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
+class RoRecord(RoArchive, namespace=_RO_NS, inheritance=AbstractSubtype):
+    filed: Attr[str | None] = attr(max_length=16)
+
+
+class RoDeed(RoRecord, namespace=_RO_NS, inheritance=ConcreteSubtype(tag_value="deed")):
+    parcel: Attr[str | None] = attr(max_length=16)
+
+
+class RoLetter(RoArchive, namespace=_RO_NS, inheritance=ConcreteSubtype(tag_value="letter")):
+    sender: Attr[str | None] = attr(max_length=16)
+
+
+_READ_ONLY = model_of(
+    DomainModel(RoNote, RoLedger, RoBalance, RoPosition, RoArchive, RoRecord, RoDeed, RoLetter)
+)
+_READ_ONLY_WRITE_TARGET = "read-only-write-target"
+
+
+def _refusal(prepare: Any, instruction: wi.WriteInstruction, model: AcceptedMetamodel) -> str:
+    """The rule a classified refusal names, or the class of an unclassified one."""
+    try:
+        prepare(instruction, model)
+    except (wi.InstructionRejectedError, WriteRejectedError, ModelRejectedError) as refused:
+        return refused.rule
+    except (wi.WriteInstructionError, inheritance.InheritanceError) as refused:
+        return type(refused).__name__
+    raise AssertionError(f"{instruction!r} was admitted")
+
+
+def _keyed(
+    mutation: str, entity: str, *rows: Mapping[str, object], valid_from: dt.datetime | None = None
+) -> wi.KeyedWriteInstruction:
+    return wi.KeyedWriteInstruction(
+        cast("wi.KeyedMutation", mutation), entity, rows, valid_from=valid_from
+    )
+
+
+def _where(
+    entity: str, path: str, *assignments: tuple[str, object]
+) -> wi.PredicateWriteInstruction:
+    return wi.PredicateWriteInstruction(
+        "amend" if assignments else "delete",
+        wi.PredicateSelection(
+            entity, predicate_algebra.deserialize({"eq": {"path": path, "value": 1}})
+        ),
+        assignments=tuple(wi.WriteAssignment(attr, value) for attr, value in assignments),
+    )
+
+
+type _Build = Callable[[str], wi.WriteInstruction]
+
+# Each fault paired with the ReadWrite twin's own answer to it.
+_OUTRANKED: list[tuple[str, _Build, AcceptedMetamodel, str, str]] = [
+    (
+        "temporal-delete",
+        lambda entity: _keyed("delete", entity, {"id": 1}),
+        _POSITION,
+        "Position",
+        "WriteInstructionError",
+    ),
+    (
+        "missing-window",
+        lambda entity: _keyed("amend", entity, {"id": 1, "value": "1.00"}),
+        _POSITION,
+        "Position",
+        "WriteInstructionError",
+    ),
+    (
+        "temporal-multi-row",
+        lambda entity: _keyed(
+            "amend",
+            entity,
+            {"id": 1, "value": "1.00"},
+            {"id": 2, "value": "2.00"},
+            valid_from=_I1,
+        ),
+        _POSITION,
+        "Position",
+        "temporal-keyed-write-multi-row",
+    ),
+    (
+        "transaction-time-multi-row",
+        lambda entity: _keyed(
+            "amend", entity, {"id": 1, "value": "1.00"}, {"id": 2, "value": "2.00"}
+        ),
+        _BALANCE,
+        "Balance",
+        "temporal-keyed-write-multi-row",
+    ),
+    (
+        "missing-revision",
+        lambda entity: wi.TargetWriteInstruction("amend", entity, {"id": 1, "owner": "Zed"}),
+        _ACCOUNT,
+        "Account",
+        "WriteInstructionError",
+    ),
+    (
+        "misstated-revision",
+        lambda entity: wi.TargetWriteInstruction("delete", entity, {"id": 1}, if_tx_start=_I1),
+        _ACCOUNT,
+        "Account",
+        "WriteInstructionError",
+    ),
+    (
+        "readless-target",
+        lambda entity: _where(entity, f"{entity}.id", (f"{entity}.owner", "Zed")),
+        _ACCOUNT,
+        "Account",
+        "set-based-write-target-unsupported",
+    ),
+    (
+        "unresolvable-predicate",
+        lambda entity: _where(entity, f"{entity}.nothing"),
+        _WALLET,
+        "Wallet",
+        "path-unknown-member",
+    ),
+    (
+        "abstract-target",
+        lambda entity: _keyed("insert", entity, {"id": 1, "amount": "1.00"}),
+        _PAYMENT,
+        "Payment",
+        "abstract-write-target",
+    ),
+    (
+        "missing-required-member",
+        lambda entity: _keyed("insert", entity, {"id": 1, "owner": "Ada"}),
+        _WALLET,
+        "Wallet",
+        "write-required-attribute-missing",
+    ),
+    (
+        "undeclared-member",
+        lambda entity: _keyed("amend", entity, {"id": 1, "nothing": 1}),
+        _WALLET,
+        "Wallet",
+        "WriteInstructionError",
+    ),
+]
+
+_READ_ONLY_TWIN = {
+    "Position": "RoPosition",
+    "Balance": "RoBalance",
+    "Account": "RoLedger",
+    "Wallet": "RoNote",
+    "Payment": "RoArchive",
+}
+
+
+@_PRODUCERS
+@pytest.mark.parametrize(
+    ("build", "read_write", "entity", "outranked"),
+    [(build, model, entity, outranked) for _, build, model, entity, outranked in _OUTRANKED],
+    ids=[fault for fault, *_ in _OUTRANKED],
+)
+def test_persistence_is_judged_before_every_other_fault_of_the_write(
+    prepare: Any, build: _Build, read_write: AcceptedMetamodel, entity: str, outranked: str
+) -> None:
+    assert _refusal(prepare, build(entity), read_write) == outranked
+    assert _refusal(prepare, build(_READ_ONLY_TWIN[entity]), _READ_ONLY) == _READ_ONLY_WRITE_TARGET
+
+
+_FAMILY_WRITES: dict[str, _Build] = {
+    "keyed-insert": lambda entity: _keyed("insert", entity, {"id": 1, "amount": "1.00"}),
+    "keyed-empty-amend": lambda entity: _keyed("amend", entity, {"id": 1}),
+    "target-amend": lambda entity: wi.TargetWriteInstruction(
+        "amend", entity, {"id": 1}, if_version=3
+    ),
+    "target-delete": lambda entity: wi.TargetWriteInstruction(
+        "delete", entity, {"id": 1}, if_version=3
+    ),
+    "predicate": lambda entity: _where(entity, f"{entity}.id"),
+}
+
+
+@_PRODUCERS
+@pytest.mark.parametrize("position", ["RoArchive", "RoRecord", "RoDeed", "RoLetter"])
+@pytest.mark.parametrize("build", _FAMILY_WRITES.values(), ids=list(_FAMILY_WRITES))
+def test_every_position_of_a_read_only_family_refuses_the_write(
+    prepare: Any, position: str, build: _Build
+) -> None:
+    # The descendants declare no mode of their own: the root's is the family's.
+    assert _refusal(prepare, build(position), _READ_ONLY) == _READ_ONLY_WRITE_TARGET
+
+
+@_PRODUCERS
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        _keyed("insert", "RoNote", {"id": 1, "owner": "Ada", "balance": "1.00"}),
+        _keyed("amend", "RoNote", {"id": 1}),
+        _keyed("replace", "RoNote", {"id": 1, "owner": "Ada", "balance": "1.00"}),
+        _keyed("delete", "RoNote", {"id": 1}),
+        wi.TargetWriteInstruction("replace", "RoLedger", {"id": 1}, if_version=3),
+        _where("RoNote", "RoNote.id", ("RoNote.owner", "Zed")),
+    ],
+    ids=["insert", "empty-amend", "replace", "delete", "target-replace", "predicate-amend"],
+)
+def test_a_well_formed_write_to_a_read_only_entity_is_refused_by_its_mode(
+    prepare: Any, instruction: wi.WriteInstruction
+) -> None:
+    with pytest.raises(wi.InstructionRejectedError) as refused:
+        prepare(instruction, _READ_ONLY)
+    assert refused.value.rule == _READ_ONLY_WRITE_TARGET
+    assert "ReadOnly" in str(refused.value)
+
+
+@_PRODUCERS
+def test_an_unresolved_target_keeps_its_own_refusal_beside_read_only_entities(
+    prepare: Any,
+) -> None:
+    refused = _refusal(prepare, _keyed("insert", "Nothing", {"id": 1}), _READ_ONLY)
+    assert refused == "WriteInstructionError"

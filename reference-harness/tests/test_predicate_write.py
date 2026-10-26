@@ -21,6 +21,7 @@ from reference_harness.predicate_write_validate import (
 from reference_harness.schema_validate import validate_tree
 from reference_harness.schemas import build_registry, load_schemas
 from reference_harness.value_object_resolve import RejectionError
+from reference_harness.write_validate import READ_ONLY_WRITE_TARGET
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -589,3 +590,46 @@ def test_a_count_belongs_to_no_buffered_write_step() -> None:
     step = case["when"]["scenario"][0]  # type: ignore[index]
     step["write"] = [{"mutation": "delete", "entity": "Wallet", "rows": [{"id": 1}]}]
     assert next(_schema().iter_errors(case), None) is not None
+
+
+def _rejected_predicate_case(model: Model, instruction: dict[str, object]) -> Case:
+    return Case(
+        path=Path("m-unit-work-999-predicate-write.yaml"),
+        raw={
+            "model": str(model.path),
+            "tags": ["m-unit-work"],
+            "shape": "rejected",
+            "when": {"write": instruction},
+            "then": {"rejectedRule": READ_ONLY_WRITE_TARGET},
+        },
+        model=model,
+    )
+
+
+@pytest.mark.parametrize("mutation", ["amend", "delete"])
+def test_a_read_only_target_is_refused_before_anything_the_write_carries(mutation: str) -> None:
+    # The predicate names a stranger and the assignment a nonexistent member, and
+    # neither is weighed: a read-only family accepts no write at all.
+    model = load_model(_COMPATIBILITY_ROOT, "models/scalars.yaml")
+    instruction: dict[str, object] = {
+        "mutation": mutation,
+        "target": {
+            "entity": "parallax.compatibility.ScalarThing",
+            "predicate": {"lessThan": {"path": "Wallet.balance", "value": "200.00"}},
+        },
+    }
+    if mutation == "amend":
+        instruction["assignments"] = [{"attr": "ScalarThing.nonsense", "value": 1}]
+
+    with pytest.raises(RejectionError) as refused:
+        _validate_rejected_predicate_write(
+            _rejected_predicate_case(model, instruction), instruction
+        )
+
+    assert refused.value.rule == READ_ONLY_WRITE_TARGET
+
+
+def test_a_read_write_target_still_reaches_the_predicate_write_checks() -> None:
+    model = load_model(_COMPATIBILITY_ROOT, "models/wallet.yaml")
+    instruction = _update_instruction()
+    _validate_rejected_predicate_write(_rejected_predicate_case(model, instruction), instruction)

@@ -1,0 +1,21 @@
+# A predicate-selected amendment of a ReadOnly Entity is refused when it is
+# prepared, before its predicate or assignments are judged (m-unit-work "Writes to
+# a ReadOnly family"). The target is unversioned and non-temporal, so nothing else
+# about the write is inadmissible.
+model: models/scalars.yaml
+tags: [m-unit-work, write, rejected, read-only, predicate-write, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    mutation: amend
+    target:
+      entity: parallax.compatibility.ScalarThing
+      predicate:
+        eq:
+          path: parallax.compatibility.ScalarThing.id
+          value: 1
+    assignments:
+      - attr: parallax.compatibility.ScalarThing.f64
+        value: 3.5
+then:
+  rejectedRule: read-only-write-target

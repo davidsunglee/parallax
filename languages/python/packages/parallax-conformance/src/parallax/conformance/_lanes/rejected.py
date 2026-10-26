@@ -21,10 +21,8 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
-    PredicateWriteInstruction,
     WriteRejectedError,
 )
-from parallax.core.write_plan import WritePlanningError
 from parallax.descriptor import (
     DescriptorError,
     domain_model_from_document,
@@ -104,17 +102,13 @@ def run_rejected_case(case: case_format.Case) -> str:
 
     A `write` input is one of three, dispatched on the members the input itself
     carries (`m-case-format` Rejected cases) — never on the case's tags or
-    filename. A `target` names a predicate-selected instruction; `rows` names a
-    keyed instruction, which brings its own `entity` handle
-    (:func:`_rejected_keyed_write`); anything else is the bare neutral write row
-    (①), which names no handle at all and is therefore resolved against the
-    model's default entity (`_rejected_target`'s own convention, reused here —
-    the family root when the model declares one, else the model's single
-    entity), wrapped as the canonical keyed instruction, and routed through
-    the case-format preparation seam. That seam normalizes carriers and delegates
+    filename — and adapted once to the instruction it denotes
+    (:func:`_rejected_instruction`). Every form is then graded through the one
+    case-format preparation seam, which normalizes carriers and delegates
     recursive Wire decoding, validation, and retained-value freezing to
     :func:`~parallax.core._execution._unit_work.instructions.prepare_wire_write`, so the
-    rejected lane cannot drift from ordinary Wire write ingress.
+    rejected lane cannot drift from ordinary Wire write ingress. A classified
+    refusal is the rule; an unclassified one, or acceptance, fails the case.
 
     Membership can decide the form only because `target` and `rows` are RESERVED
     from a bare row at this position (`compatibility-case.schema.json`
@@ -182,6 +176,8 @@ def _rejected_model(case: case_format.Case, inline_model: Mapping[str, object]) 
 
 
 def _rejected_write(case: case_format.Case, raw_write: object, model: AcceptedMetamodel) -> str:
+    """Adapt the one `when.write` input to its instruction, then grade it
+    through the single case-format preparation every form shares."""
     if not isinstance(raw_write, Mapping):
         raise EngineError(
             f"{case.path.name}: a rejected `when.write` is a predicate-selected instruction, a "
@@ -190,41 +186,8 @@ def _rejected_write(case: case_format.Case, raw_write: object, model: AcceptedMe
             f"which asserts an aggregate affected-row count no rejected case emits SQL to "
             f"produce (m-case-format Rejected cases)"
         )
-    row = cast("Mapping[str, object]", raw_write)
-    if "target" in row:
-        return _rejected_predicate_write(case, row, model)
-    if "rows" in row:
-        return _rejected_keyed_write(case, row, model)
-    return _rejected_bare_row(case, row, model)
-
-
-def _rejected_predicate_write(
-    case: case_format.Case, row: Mapping[str, object], model: AcceptedMetamodel
-) -> str:
+    instruction = _rejected_instruction(case, cast("Mapping[str, object]", raw_write), model)
     try:
-        instruction = instructions.deserialize(row)
-    except WritePlanningError as exc:  # pragma: no cover - schema validation owns malformed writes
-        raise EngineError(f"{case.path.name}: {exc}") from exc
-    # A `target` implies a predicate write.
-    if not isinstance(instruction, PredicateWriteInstruction):  # pragma: no cover
-        raise EngineError(f"{case.path.name}: rejected predicate write decoded as keyed")
-    try:
-        _case_ingress.prepare_case_write(instruction, model)
-    except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
-        return exc.rule
-    raise EngineError(  # pragma: no cover - rejected cases must classify
-        f"{case.path.name}: the model-aware validator accepted a predicate write the "
-        "case expects rejected pre-SQL"
-    )
-
-
-def _rejected_bare_row(
-    case: case_format.Case, row: Mapping[str, object], model: AcceptedMetamodel
-) -> str:
-    target = case_entity(model, _rejected_target(case, model))
-    try:
-        durable_row = {name: value for name, value in row.items() if name != "observedVersion"}
-        instruction = KeyedWriteInstruction("insert", target.identity.canonical, (durable_row,))
         _case_ingress.prepare_case_write(instruction, model)
     except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
         return exc.rule
@@ -236,46 +199,56 @@ def _rejected_bare_row(
     )
 
 
-def _rejected_keyed_write(
+# The members a keyed `when.write` carries into its canonical instruction; any
+# other member is case context, such as the Clock's `at`, and never an
+# instruction field (`m-unit-work`).
+_KEYED_INSTRUCTION_MEMBERS: Final[tuple[str, ...]] = (
+    "mutation",
+    "entity",
+    "rows",
+    "validFrom",
+    "until",
+)
+
+
+def _rejected_instruction(
     case: case_format.Case, authored: Mapping[str, object], model: AcceptedMetamodel
-) -> str:
-    """Grade a rejected `when.write` that is a KEYED INSTRUCTION, returning the rule.
+) -> instructions.WriteInstruction:
+    """The instruction a rejected `when.write` puts under test.
 
-    A keyed instruction names its own `entity`, so unlike the bare neutral write
-    row beside it this input needs no default-target convention: the handle it is
-    validated against is the one it authored. The canonical document is rebuilt
-    from the instruction members alone, exactly as the writeSequence/scenario
-    producer rebuilds it — the case format's `at` is harness Clock context and
-    never an instruction field (`m-unit-work`), so it is not carried across.
-
-    The refusal is the shared build-time
-    case-format preparation seam's strict Wire producer — the
-    Wire producer parallel to the typed producer every keyed developer verb runs
-    before it buffers anything. It asks the concrete-subtype payload-shape rules
-    (`m-inheritance` "Concrete-subtype writes") first, and they classify a
-    framework-owned metadata key and a sibling-branch member more specifically
-    than the generic member-name-honesty gate ever could, so a keyed update of
-    `CardPayment` carrying `CashPayment`'s own attribute is
-    `subtype-write-sibling-attribute` rather than an undeclared-member authoring
-    failure. The keyed rejected lane, the bare-row lane, and the developer
-    transaction reach that one classification through the same preparation.
+    A `target` names a predicate-selected instruction, deserialized whole. `rows`
+    names a keyed instruction, which brings its own `entity` handle: its document
+    is rebuilt from the instruction members alone, exactly as the
+    writeSequence/scenario producer rebuilds one, once the input is known to carry
+    no other instruction's carrier — filtering first would discard that carrier
+    and grade a malformed input as though it were well formed. Anything else is
+    the bare neutral write row (①), which names no handle: it is resolved against
+    the model's default entity (:func:`_rejected_target`) and wrapped as a keyed
+    insert, its flush-time `observedVersion` context set aside.
     """
-    doc: dict[str, object] = {
-        key: authored[key]
-        for key in ("mutation", "entity", "rows", "validFrom", "until")
-        if key in authored
-    }
+    if "target" in authored:
+        return _deserialized(case, authored)
+    if "rows" in authored:
+        if "row" in authored:
+            raise EngineError(
+                f"{case.path.name}: a keyed `when.write` carries `rows` and also `row`, which "
+                "names another instruction form (m-case-format Rejected cases)"
+            )
+        return _deserialized(
+            case, {key: authored[key] for key in _KEYED_INSTRUCTION_MEMBERS if key in authored}
+        )
+    target = case_entity(model, _rejected_target(case, model))
+    durable_row = {name: value for name, value in authored.items() if name != "observedVersion"}
     try:
-        instruction = instructions.deserialize(doc)
-    except (
-        instructions.WriteInstructionError
-    ) as exc:  # pragma: no cover - schema validation owns malformed writes
+        return KeyedWriteInstruction("insert", target.identity.canonical, (durable_row,))
+    except instructions.WriteInstructionError as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
+
+
+def _deserialized(
+    case: case_format.Case, document: Mapping[str, object]
+) -> instructions.WriteInstruction:
     try:
-        _case_ingress.prepare_case_write(instruction, model)
-    except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
-        return exc.rule
-    raise EngineError(
-        f"{case.path.name}: the model-aware validator accepted a keyed write instruction the "
-        "case expects rejected pre-SQL"
-    )
+        return instructions.deserialize(document)
+    except instructions.WriteInstructionError as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc

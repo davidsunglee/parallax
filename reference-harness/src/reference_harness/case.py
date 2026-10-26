@@ -278,12 +278,17 @@ class Entity:
     def runtime_facts(self) -> dict[str, Any]:
         """The ancestry-flattened declarations behind this entity's semantics.
 
-        These answer which members, temporal axes, and tag an inheritance
-        participant behaves as if it declared locally. They are not a physical
-        table: column sequence, effective nullability, physical keys, and table
-        membership come from :attr:`Model.storage_layout` alone.
+        These answer which members, temporal axes, tag, and Persistence Mode an
+        inheritance participant behaves as if it declared locally. They are not a
+        physical table: column sequence, effective nullability, physical keys, and
+        table membership come from :attr:`Model.storage_layout` alone.
         """
         return self.definition if self.effective_definition is None else self.effective_definition
+
+    @property
+    def effective_persistence(self) -> str:
+        """The family-wide Persistence Mode writes to this entity are judged by."""
+        return self.runtime_facts.get("persistence", "read-write")
 
     @property
     def name(self) -> str:

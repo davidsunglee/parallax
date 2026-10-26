@@ -7,6 +7,7 @@ case's wire expectations.
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any, Final, cast
@@ -15,7 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.read_models import Balance, Payment
+from parallax.conformance.read_models import Balance, Payment, ScalarThing
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Account, Position, Wallet
 from parallax.conformance.vo_models import (
@@ -729,3 +730,49 @@ def test_idiomatic_predicate_write_rejects_the_corpus_rule(case_id: str) -> None
         db.transact(write)
     assert exc_info.value.rule == expected_rule
     assert port.statements() == []
+
+
+# --------------------------------------------------------------------------- #
+# The persistence-admission rejects: each Typed verb refuses the SAME write to  #
+# a ReadOnly Entity the corpus's rejected lane prepares through Wire, naming    #
+# the SAME classified rule, and writes nothing (`api_suite.EXAMPLES`' own       #
+# entries are these exact snippets).                                           #
+# --------------------------------------------------------------------------- #
+_SCALAR_THING_ROW: MappingRow = {
+    "id": 1,
+    "f32": 1.5,
+    "f64": 2.25,
+    "payload": bytes.fromhex("01020304"),
+    "local_time": dt.time(12, 34, 56),
+    "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
+}
+
+REJECTED_READ_ONLY_WRITES: dict[str, Callable[[TxnContext], object]] = {
+    "m-unit-work-066": lambda tx: tx.insert(
+        ScalarThing(
+            id=2,
+            f32=1.5,
+            f64=2.25,
+            payload=bytes.fromhex("01020304"),
+            local_time=dt.time(12, 34, 56),
+            external_id=uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
+        )
+    ),
+    "m-unit-work-067": lambda tx: tx.amend(
+        tx.find(ScalarThing.where(ScalarThing.id == 1)).result()
+    ),
+    "m-unit-work-069": lambda tx: tx.amend_where(
+        ScalarThing.where(ScalarThing.id == 1), ScalarThing.f64.set(3.5)
+    ),
+}
+
+
+@pytest.mark.parametrize("case_id", sorted(REJECTED_READ_ONLY_WRITES))
+def test_idiomatic_read_only_write_rejects_the_corpus_rule(case_id: str) -> None:
+    expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
+    port = _KeyedSeedPort(rows=[_SCALAR_THING_ROW])
+    db = own_root(Database.connect(port, MODELS["scalars"])).using_database_login()
+    with raises_contextualized(InstructionRejectedError) as exc_info:
+        db.transact(REJECTED_READ_ONLY_WRITES[case_id])
+    assert exc_info.value.rule == expected_rule
+    assert not port.wrote

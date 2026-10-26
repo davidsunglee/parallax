@@ -1719,6 +1719,7 @@
             "abstract-write-target",
             "subtype-write-set-based-unsupported",
             "set-based-write-target-unsupported",
+            "read-only-write-target",
             "metamodel-index-identity-duplicate",
             "metamodel-temporal-member-reserved",
             "inheritance-unknown-parent",

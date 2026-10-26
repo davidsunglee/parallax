@@ -44,6 +44,7 @@ from parallax.conformance.read_models import (
     PAYMENT_MODEL,
     PERSON_MODEL,
     RATE_MODEL,
+    SCALARS_MODEL,
     Balance,
     Passport,
     Payment,
@@ -613,6 +614,7 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("wallet", WALLET_MODEL),
     ("pk-sequence", PK_SEQUENCE_MODEL),
     ("writable-scalars", WRITABLE_SCALARS_MODEL),
+    ("scalars", SCALARS_MODEL),
     ("taxpayer", TAXPAYER_MODEL),
     ("document-codec", DOCUMENT_CODEC_MODEL),
     ("scalar-collection-layout-twin-columns", SCALAR_COLLECTION_COLUMNS_MODEL),
@@ -895,10 +897,6 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "reading": (
             "no mirror authored; it is the mirrored `payment`'s table-per-hierarchy family with "
             "a transaction-time-only root axis and a subtype that declares no local member"
-        ),
-        "scalars": (
-            "no mirror authored; the mirrored `writable-scalars` carries the same scalar set, so "
-            "the only construct this model adds is `persistence=READ_ONLY`"
         ),
         "scalar-collection-lifecycle-layout-twin-columns": _SCALAR_COLLECTION_LIFECYCLE_REASON,
         "scalar-collection-lifecycle-layout-twin-document": _SCALAR_COLLECTION_LIFECYCLE_REASON,

@@ -262,8 +262,10 @@ members, nullability, and other structural failures retain their existing rules.
 
 Two producer operations converge on the same private immutable prepared-write
 algebra, and they are the one admissibility judgment every ingress crosses. Each
-resolves the target first and judges whether it admits the write. A
-predicate-selected write refuses a versioned or temporal target
+resolves the target first and judges whether it admits the write. A target whose
+family is ReadOnly admits none, and that refusal precedes every judgment below
+(*Writes to a ReadOnly family*). A
+predicate-selected write then refuses a versioned or temporal target
 (`set-based-write-target-unsupported`, `m-batch-write`) before anything else is
 judged. A keyed or target write is judged for applicability: a temporal
 target refuses `delete`; the window must be stated as the verb's form requires,
@@ -311,6 +313,38 @@ variant retains an authored scalar literal or unresolved instruction field.
 Construction is restricted to these operations, with no public constructor or
 serialization contract. Buffering, evidence envelopes, coalescing, and planning
 retain the immutable product and do not decode or recursively copy it again.
+
+### Writes to a ReadOnly family
+
+A family's Persistence Mode states whether Parallax accepts persistence writes to
+it (`m-descriptor`), and the effective mode is the root's, shared by every
+position of the family (`m-inheritance`). A model-aware validator **MUST** refuse
+every write whose resolved target's effective Persistence Mode is `ReadOnly`, with
+the pre-SQL rule `read-only-write-target` (`m-case-format` *Rejected cases*). The
+rule covers every keyed, target, and predicate-selected mutation, at a standalone
+Entity, an abstract root, an abstract subtype, and a concrete subtype alike. It is
+judged against the effective mode, never a local declaration, so a descendant that
+declares nothing is refused when its root is `ReadOnly`.
+
+The judgment follows target resolution and precedes every other judgment of the
+write: a keyed or target write's applicability, row count, and revision
+arguments, a predicate-selected write's readless-target, predicate, and family
+refusals, and every payload rule, so no verb, window, revision, predicate, or
+payload could make the write admissible and none is weighed. A target spelling
+that names no Entity, or names one ambiguously, keeps its own refusal. Refusals
+an ingress makes before a write reaches preparation — a source's shape,
+provenance, or pin, or an argument parsed without the model — keep their order.
+An empty amendment is judged like any other, so stating nothing never lets a
+write to a ReadOnly family pass as eliminated work.
+
+The refusal is a preparation refusal: nothing is buffered, no Read Evidence is
+admitted, nothing pending is flushed, no SQL is issued for the write, and the
+attempt is not doomed. A caller that catches it may keep writing and commit what
+it buffered before and after. Reads of a ReadOnly family are unaffected, and
+stored state for one is established outside modeled execution.
+
+`m-unit-work-066` and `-067` witness a refused keyed insert and a refused
+key-only empty amendment, and `-069` a refused predicate-selected amendment.
 
 ### Write value provenance
 

@@ -2623,7 +2623,17 @@ checked payload-shape-first then target-validity):
 
 **Instruction** rules (`m-unit-work`, `m-batch-write` — a schema-valid instruction
 whose own shape a model-aware validator MUST refuse pre-SQL, judged against the
-target's temporal profile and versioning rather than against any row's contents):
+target family's Persistence Mode, temporal profile, and versioning rather than
+against any row's contents):
+
+- `read-only-write-target` — a write of **any** form whose resolved target
+  family's effective Persistence Mode is `ReadOnly` (`m-unit-work` *Writes to a
+  ReadOnly family*). It is judged once the target resolves and before every other
+  rule a write can violate — the Subtype-write and Write rules a row carries, the
+  other Instruction rules, and a predicate-selected instruction's predicate —
+  because no verb, row, or predicate could make the write admissible. The mode is
+  family-wide and root-owned, so a write at any position of a ReadOnly family,
+  abstract positions included, is this rule rather than `abstract-write-target`.
 
 - `temporal-keyed-write-multi-row` — a keyed instruction on a **temporal** target
   carries more than one row. Each row of a milestone chain closes its own current
@@ -2811,7 +2821,9 @@ answers to its own row of the table, so the three rules hold "at any depth" by
 recursion rather than by a separate depth rule. Where the target participates in an
 inheritance family, the **Subtype-write** rules above run **first**
 and over the family-effective member set, so an inherited required member is
-required of a subtype write.
+required of a subtype write. Ahead of all of it — the Subtype-write rules, the
+member-honesty refusal, and the walk — a target whose family is `ReadOnly` is
+refused `read-only-write-target`, whatever the row carries.
 
 ### Evolution cases (`m-model-evolution`)
 

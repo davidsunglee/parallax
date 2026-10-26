@@ -1039,6 +1039,49 @@ EXAMPLES: Final[list[Example]] = [
         "# raises ExecutionFailure"
         ' caused by InstructionRejectedError(rule="set-based-write-target-unsupported")',
     ),
+    # Persistence-admission proofs: each Typed verb refuses the SAME write to a
+    # ReadOnly Entity the corpus's rejected lane prepares through Wire, naming the
+    # SAME classified rule before anything is written — proven by
+    # `test_idiomatic_read_only_write_rejects_the_corpus_rule`
+    # (`tests/api/test_write_no_drift.py`).
+    Example(
+        "m-unit-work-066",
+        "A keyed insert into a ReadOnly Entity",
+        "db.transact(\n"
+        "    lambda tx: tx.insert(\n"
+        "        ScalarThing(\n"
+        "            id=2,\n"
+        "            f32=1.5,\n"
+        "            f64=2.25,\n"
+        '            payload=bytes.fromhex("01020304"),\n'
+        "            local_time=dt.time(12, 34, 56),\n"
+        '            external_id=uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),\n'
+        "        )\n"
+        "    )\n"
+        ")\n"
+        "# raises ExecutionFailure"
+        ' caused by InstructionRejectedError(rule="read-only-write-target")',
+    ),
+    Example(
+        "m-unit-work-067",
+        "An amendment of a ReadOnly Entity that assigns nothing",
+        "db.transact(\n"
+        "    lambda tx: tx.amend(tx.find(ScalarThing.where(ScalarThing.id == 1)).result())\n"
+        ")\n"
+        "# raises ExecutionFailure"
+        ' caused by InstructionRejectedError(rule="read-only-write-target")',
+    ),
+    Example(
+        "m-unit-work-069",
+        "A predicate amendment of a ReadOnly Entity",
+        "db.transact(\n"
+        "    lambda tx: tx.amend_where(\n"
+        "        ScalarThing.where(ScalarThing.id == 1), ScalarThing.f64.set(3.5)\n"
+        "    )\n"
+        ")\n"
+        "# raises ExecutionFailure"
+        ' caused by InstructionRejectedError(rule="read-only-write-target")',
+    ),
     Example(
         "m-batch-write-055",
         "A predicate replacement omitting a required member",

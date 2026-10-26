@@ -28,7 +28,13 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
-from reference_harness.case import Case, dialect_executed_cases, discover_cases, load_model
+from reference_harness.case import (
+    Case,
+    Model,
+    dialect_executed_cases,
+    discover_cases,
+    load_model,
+)
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import ALL_REJECTED_RULES, run_case
 from reference_harness.inheritance import (
@@ -94,9 +100,11 @@ from reference_harness.value_object_resolve import (
     literal_matches_type,
 )
 from reference_harness.write_validate import (
+    READ_ONLY_WRITE_TARGET,
     framework_owned_names,
     validate_subtype_write,
     validate_write,
+    validate_write_persistence,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -805,6 +813,173 @@ def test_the_dialect_free_and_dialect_executed_cases_partition_the_harness_lane(
     assert evolution.isdisjoint(dialect_executed)
     assert rejected.isdisjoint(evolution)
     assert rejected | evolution | dialect_executed == harness_lane
+
+
+# --- persistence admission (m-unit-work "Writes to a ReadOnly family") -------
+#
+# The effective mode is the root's, derived independently here from the authored
+# descriptor, and a write of any form to a read-only family is refused before any
+# other judgement of it.
+
+
+def _standalone_model(persistence: str | None) -> Model:
+    entity: dict[str, Any] = {
+        "name": "Ledger",
+        "namespace": "parallax.compatibility",
+        "table": "ledger",
+        "attributes": [
+            {"name": "id", "type": "int64", "primaryKey": True},
+            {"name": "note", "type": "string"},
+        ],
+    }
+    if persistence is not None:
+        entity["persistence"] = persistence
+    return Model(path=Path("models/ledger.yaml"), descriptor={"entity": entity})
+
+
+def _family_model(persistence: str | None) -> Model:
+    root: dict[str, Any] = {
+        "name": "Archive",
+        "namespace": "parallax.compatibility",
+        "table": "archive",
+        "inheritance": {
+            "role": "root",
+            "strategy": "table-per-hierarchy",
+            "tag": {"column": "kind"},
+        },
+        "attributes": [
+            {"name": "id", "type": "int64", "primaryKey": True},
+            {"name": "title", "type": "string"},
+        ],
+    }
+    if persistence is not None:
+        root["persistence"] = persistence
+    return Model(
+        path=Path("models/archive.yaml"),
+        descriptor={
+            "entities": [
+                root,
+                {
+                    "name": "Record",
+                    "namespace": "parallax.compatibility",
+                    "inheritance": {"role": "abstract-subtype", "parent": "Archive"},
+                    "attributes": [{"name": "filed", "type": "string"}],
+                },
+                {
+                    "name": "Deed",
+                    "namespace": "parallax.compatibility",
+                    "inheritance": {
+                        "role": "concrete-subtype",
+                        "parent": "Record",
+                        "tagValue": "deed",
+                    },
+                    "attributes": [{"name": "parcel", "type": "string"}],
+                },
+                {
+                    "name": "Letter",
+                    "namespace": "parallax.compatibility",
+                    "inheritance": {
+                        "role": "concrete-subtype",
+                        "parent": "Archive",
+                        "tagValue": "letter",
+                    },
+                    "attributes": [{"name": "sender", "type": "string"}],
+                },
+            ]
+        },
+    )
+
+
+_FAMILY_POSITIONS = ("Archive", "Record", "Deed", "Letter")
+
+
+@pytest.mark.parametrize(
+    ("persistence", "expected"),
+    [(None, "read-write"), ("read-write", "read-write"), ("read-only", "read-only")],
+)
+def test_a_standalone_entity_is_judged_by_its_own_mode(
+    persistence: str | None, expected: str
+) -> None:
+    entity = _standalone_model(persistence).entity("Ledger")
+    assert entity.effective_persistence == expected
+    if expected == "read-only":
+        with pytest.raises(RejectionError) as refused:
+            validate_write_persistence(entity)
+        assert refused.value.rule == READ_ONLY_WRITE_TARGET
+    else:
+        validate_write_persistence(entity)
+
+
+@pytest.mark.parametrize("position", _FAMILY_POSITIONS)
+def test_every_position_of_a_read_only_family_carries_the_roots_mode(position: str) -> None:
+    # Only the root declares the mode; every descendant, abstract or concrete,
+    # behaves as the root's.
+    entity = _family_model("read-only").entity(position)
+    assert entity.effective_persistence == "read-only"
+    with pytest.raises(RejectionError) as refused:
+        validate_write_persistence(entity)
+    assert refused.value.rule == READ_ONLY_WRITE_TARGET
+
+
+@pytest.mark.parametrize("persistence", [None, "read-write"])
+@pytest.mark.parametrize("position", _FAMILY_POSITIONS)
+def test_every_position_of_a_read_write_family_admits_writes(
+    position: str, persistence: str | None
+) -> None:
+    entity = _family_model(persistence).entity(position)
+    assert entity.effective_persistence == "read-write"
+    validate_write_persistence(entity)
+
+
+def test_the_authored_descendant_declaration_stays_unchanged() -> None:
+    entity = _family_model("read-only").entity("Deed")
+    assert "persistence" not in entity.definition
+    assert entity.runtime_facts["persistence"] == "read-only"
+
+
+def _rejected_write_case(model: Model, write: dict[str, Any], rule: str) -> Case:
+    raw = {
+        "model": str(model.path),
+        "tags": ["m-unit-work"],
+        "shape": "rejected",
+        "when": {"write": write},
+        "then": {"rejectedRule": rule},
+    }
+    return Case(path=Path("m-unit-work-999-x.yaml"), raw=raw, model=model)
+
+
+@pytest.mark.parametrize(
+    ("model", "write"),
+    [
+        # A bare row missing a required member: persistence precedes the walk.
+        (_standalone_model("read-only"), {"id": 1}),
+        # A keyed insert at the abstract root: persistence precedes the subtype rules.
+        (
+            _family_model("read-only"),
+            {"mutation": "insert", "entity": "Archive", "rows": [{"id": 1, "title": "t"}]},
+        ),
+        # A keyed amendment naming a sibling branch's member.
+        (
+            _family_model("read-only"),
+            {"mutation": "amend", "entity": "Letter", "rows": [{"id": 1, "parcel": "p"}]},
+        ),
+        # A keyed amendment naming no declared member: persistence precedes honesty.
+        (
+            _standalone_model("read-only"),
+            {"mutation": "amend", "entity": "Ledger", "rows": [{"id": 1, "nothing": 1}]},
+        ),
+    ],
+    ids=["bare-row", "keyed-abstract-root", "keyed-sibling-member", "keyed-undeclared-member"],
+)
+def test_the_runner_judges_persistence_before_every_other_write_check(
+    model: Model, write: dict[str, Any]
+) -> None:
+    run_case(_rejected_write_case(model, write, READ_ONLY_WRITE_TARGET), None)
+
+
+def test_the_runner_keeps_read_write_ordering_unchanged() -> None:
+    write = {"mutation": "insert", "entity": "Archive", "rows": [{"id": 1, "title": "t"}]}
+    run_case(_rejected_write_case(_family_model(None), write, ABSTRACT_WRITE_TARGET), None)
 
 
 # --- the validators ACCEPT valid inputs (no false rejections) ---------------

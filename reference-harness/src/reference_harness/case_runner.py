@@ -140,7 +140,13 @@ from .write_plan import (
     unit_resolving_reads,
     version_column,
 )
-from .write_validate import undeclared_members, validate_subtype_write, validate_write
+from .write_validate import (
+    WRITE_PERSISTENCE_REJECTED_RULES,
+    undeclared_members,
+    validate_subtype_write,
+    validate_write,
+    validate_write_persistence,
+)
 
 
 def _write_column_order(case: Case, entity: Entity) -> tuple[str, ...]:
@@ -173,6 +179,7 @@ ALL_REJECTED_RULES = (
     | WRITE_REJECTED_RULES
     | KEYED_WRITE_REJECTED_RULES
     | PREDICATE_WRITE_REJECTED_RULES
+    | WRITE_PERSISTENCE_REJECTED_RULES
 )
 
 
@@ -720,8 +727,10 @@ def _assert_rejected(case: Case) -> None:
                 raise CaseFailure(
                     f"{case.path.name}: keyed instruction did not match its pre-SQL refusal"
                 )
-            # The concrete-subtype payload-shape and target-validity rules run
-            # FIRST, unconditionally (`m-inheritance` "A validator checks these
+            # Persistence admission runs first, as it does for both instruction
+            # forms (`m-unit-work` "Writes to a ReadOnly family"). The
+            # concrete-subtype payload-shape and target-validity rules run next,
+            # unconditionally (`m-inheritance` "A validator checks these
             # payload-shape rules... before the target-validity rule"): a malformed
             # inheritance payload has no well-defined target for the declared-member
             # walk to run against. A no-op on a non-inheritance model.
@@ -730,6 +739,7 @@ def _assert_rejected(case: Case) -> None:
             # instruction forms above name their own handle, so a model with no
             # default is only a defect for the bare row, which names none.
             entity = _rejected_default_root(case)
+            validate_write_persistence(entity)
             validate_subtype_write(entity, case.model.entity_defs, write)
             _assert_bare_row_members_declared(case, entity, write)
             validate_write(entity, write)
@@ -854,6 +864,9 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
     outright rather than being classified with an instruction rule it never
     reached.
 
+    Persistence admission precedes all of it (`m-unit-work` "Writes to a ReadOnly
+    family"): a read-only family is refused whatever the instruction carries.
+
     Ahead of BOTH runs the concrete-subtype payload-shape protocol, once per row,
     exactly as the bare-row lane runs it ahead of its own member-honesty refusal
     (:func:`_assert_bare_row_members_declared`). Those rules own the family-specific
@@ -870,6 +883,7 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
             f"{case.path.name}: keyed instruction names entity {entity_name!r}, which the "
             f"case's model does not declare"
         ) from exc
+    validate_write_persistence(entity)
     rows = write.get("rows")
     for row in rows if isinstance(rows, list) else ():
         if isinstance(row, dict):
@@ -889,6 +903,7 @@ def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> Non
     entity = case.model.entity(str(target_name))
     if entity is None:
         return
+    validate_write_persistence(entity)
     validate_predicate_write(entity, write, case.model.entity_defs)
 
 
