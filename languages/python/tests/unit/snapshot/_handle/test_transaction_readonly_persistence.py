@@ -1,11 +1,4 @@
-"""Writes to a ReadOnly family through the public verbs (scripted port).
-
-Every write verb — keyed, target, and predicate-selected, Typed and Wire, bounded
-or not — is refused at the verb with ``read-only-write-target`` (`m-unit-work`
-"Writes to a ReadOnly family"). A caught refusal sends nothing, flushes nothing,
-and leaves the transaction usable: work buffered before and after it commits. An
-uncaught one reaches the caller as ``ExecutionFailure.cause`` and is not retried.
-"""
+"""Writes to a ReadOnly family through the public verbs (scripted port)."""
 
 from __future__ import annotations
 
@@ -143,12 +136,9 @@ def _wire_ledger(tx: TxnContext) -> WireEntity:
 
 @dataclass(frozen=True, slots=True)
 class _Refusal:
-    """One refused verb: how to reach it inside a transaction, and the rows the
-    source read it makes first, if any, is answered with."""
-
     name: str
     reaching: Callable[[TxnContext], Callable[[], object]]
-    reads: tuple[Mapping[str, object], ...] = ()
+    source_rows: tuple[Mapping[str, object], ...] = ()
 
 
 def _unsourced(name: str, call: Callable[[TxnContext], object]) -> _Refusal:
@@ -391,8 +381,6 @@ _PREDICATE: Final[tuple[_Refusal, ...]] = (
     _unsourced("wire-delete-where", lambda tx: tx.wire.delete_where(_selection("Register"))),
 )
 
-# The same refusal under the Relational Document Layout, and at each position of
-# a ReadOnly inheritance family whose descendants declare no mode of their own.
 _LAYOUT_AND_FAMILY: Final[tuple[_Refusal, ...]] = (
     _unsourced("typed-document-insert", lambda tx: tx.insert(Catalog(id=2, title="new"))),
     _sourced(
@@ -452,7 +440,7 @@ def _journal_inserts(port: ScriptedAdapter) -> list[tuple[object, ...]]:
 def test_a_caught_refusal_keeps_pending_work_and_the_transaction_usable(
     refusal: _Refusal,
 ) -> None:
-    port = ScriptedAdapter(Transact(*(Read(rows=[row]) for row in refusal.reads), Write()))
+    port = ScriptedAdapter(Transact(*(Read(rows=[row]) for row in refusal.source_rows), Write()))
 
     def fn(tx: TxnContext) -> None:
         refuse = refusal.reaching(tx)
@@ -461,7 +449,6 @@ def test_a_caught_refusal_keeps_pending_work_and_the_transaction_usable(
         with pytest.raises(InstructionRejectedError) as rejected:
             refuse()
         assert rejected.value.rule == _RULE
-        # Nothing was sent, and the pending insert was not flushed.
         assert port.calls == seen
         tx.insert(Journal(id=2, note="after"))
 
@@ -473,7 +460,7 @@ def test_a_caught_refusal_keeps_pending_work_and_the_transaction_usable(
 
 @pytest.mark.parametrize("refusal", _REFUSALS, ids=[refusal.name for refusal in _REFUSALS])
 def test_an_uncaught_refusal_fails_the_transaction_once_without_retry(refusal: _Refusal) -> None:
-    port = ScriptedAdapter(Transact(*(Read(rows=[row]) for row in refusal.reads)))
+    port = ScriptedAdapter(Transact(*(Read(rows=[row]) for row in refusal.source_rows)))
 
     def fn(tx: TxnContext) -> None:
         refuse = refusal.reaching(tx)
@@ -486,7 +473,7 @@ def test_an_uncaught_refusal_fails_the_transaction_once_without_retry(refusal: _
     assert failure.value.rule == _RULE
     assert [type(call) for call in port.calls] == [
         BeginCall,
-        *(ReadCall for _ in refusal.reads),
+        *(ReadCall for _ in refusal.source_rows),
         RollbackCall,
     ]
 
