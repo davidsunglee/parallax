@@ -4168,6 +4168,31 @@
       "valueObject": {}
     }
   },
+  "models/read-only-inheritance.yaml": {
+    "parallax.compatibility.Magazine": {
+      "attribute": {
+        "issue": "issue"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Periodical": {
+      "attribute": {
+        "frequency": "frequency"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Publication": {
+      "attribute": {
+        "id": "id",
+        "title": "title",
+        "version": "version"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/reading.yaml": {
     "parallax.compatibility.MeterReading": {
       "attribute": {},

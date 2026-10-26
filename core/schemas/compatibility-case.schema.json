@@ -210,7 +210,7 @@
       }
     },
     {
-      "description": "A rejected case (m-value-object / m-predicate / m-inheritance / m-storage-layout negative validation, resolved Q7 + Q3): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries EXACTLY ONE invalid input — an `objectQuery` (a SCHEMA-VALID m-object-query document, predicate included, that violates a resolver MUST or the m-value-object materialization/navigation contract), a `write` (a neutral write row whose value-object document is invalid, a predicate-selected instruction, or a whole KEYED instruction whose shape a model-aware validator refuses), OR a `model` (an inline descriptor whose accepted-model formation has a standalone/table-level defect or a cross-entity family-invariant defect). The inline `model` stays quarantined inside the case so the shared models registry remains loadable and is round-tripped through descriptor serde before semantic validation asserts the rejection. The `oneOf` below, paired with the `propertyNames` enum that forbids other keys, admits EXACTLY ONE of `objectQuery`/`write`/`model`. A rejected read names its own queried position inside its `objectQuery`, so no lane falls back to a default root. All three `write` forms are OBJECTS, which this branch requires: the shared `when.write` vocabulary also carries the multi-key ARRAY form, and that form is the conflict lane's alone — it states one collapsed statement's aggregate affected-row count, which a rejection asserted pre-SQL has nothing to say about. Admitting it here would leave the graders reading one input two ways, since a rejected case's dispatch asks which MEMBER a write carries and an array carries none. It carries NO golden SQL because rejection is asserted pre-SQL, on no dialect. Purely schema-level negatives stay schema-validation unit tests, not rejected cases.",
+      "description": "A rejected case (m-value-object / m-predicate / m-inheritance / m-storage-layout negative validation, resolved Q7 + Q3): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries EXACTLY ONE invalid input — an `objectQuery` (a SCHEMA-VALID m-object-query document, predicate included, that violates a resolver MUST or the m-value-object materialization/navigation contract), a `write` (a neutral write row whose value-object document is invalid, a predicate-selected instruction, or a whole KEYED or TARGET instruction a model-aware validator refuses), OR a `model` (an inline descriptor whose accepted-model formation has a standalone/table-level defect or a cross-entity family-invariant defect). The inline `model` stays quarantined inside the case so the shared models registry remains loadable and is round-tripped through descriptor serde before semantic validation asserts the rejection. The `oneOf` below, paired with the `propertyNames` enum that forbids other keys, admits EXACTLY ONE of `objectQuery`/`write`/`model`. A rejected read names its own queried position inside its `objectQuery`, so no lane falls back to a default root. All four `write` forms are OBJECTS, which this branch requires: the shared `when.write` vocabulary also carries the multi-key ARRAY form, and that form is the conflict lane's alone — it states one collapsed statement's aggregate affected-row count, which a rejection asserted pre-SQL has nothing to say about. Admitting it here would leave the graders reading one input two ways, since a rejected case's dispatch asks which MEMBER a write carries and an array carries none. It carries NO golden SQL because rejection is asserted pre-SQL, on no dialect. Purely schema-level negatives stay schema-validation unit tests, not rejected cases.",
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "rejected" },
@@ -402,6 +402,24 @@
             "required": ["write"],
             "properties": {
               "write": { "type": "object", "required": ["mutation", "entity", "rows"] }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": ["shape"],
+        "properties": { "shape": { "const": "rejected" } }
+      }
+    },
+    {
+      "description": "A `when.write` that is a whole TARGET INSTRUCTION (`write-instruction.schema.json#/$defs/targetWriteInstruction`, recognized by the `mutation` + `entity` + `row` it carries together) belongs to the `rejected` shape alone, for the reason a keyed instruction does: an executing shape reaches a target write through a scenario's own target submission, whose resulting state grades it, while the rejected lane emits no SQL and so puts the instruction ITSELF under test. A predicate replacement's `row` rides beside a `target` rather than an `entity`, so it never matches this restriction.",
+      "if": {
+        "required": ["when"],
+        "properties": {
+          "when": {
+            "required": ["write"],
+            "properties": {
+              "write": { "type": "object", "required": ["mutation", "entity", "row"] }
             }
           }
         }
@@ -1495,10 +1513,11 @@
           }
         },
         "write": {
-          "description": "conflict cases, single-attempt form. The neutral write input (①) for this conflict's keyed UPDATE or DELETE, as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key, so the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. An ORDERED ARRAY of rows is the MULTI-KEY form: one unit of work buffers every row and the batching rule collapses them into a single set-based statement whose one Key Target holds every key, so `then.affectedRows` is the AGGREGATE that complete target owns (m-batch-write; m-unit-work affected-row attribution). The array form is keyed and unversioned — a versioned target materializes to per-row writes instead of collapsing. The `$defs/keyedWrite` branch is the `rejected` shape's alone (restricted below): a rejected case may pin a rule about the INSTRUCTION rather than about a row's contents, and only a whole keyed instruction — its `mutation`, its own `entity` handle, and its `rows` — can carry one. A reader dispatches the four branches on the members the input itself carries: `target` is the predicate-selected instruction, `rows` the keyed one, an array the multi-key conflict form, anything else the bare neutral write row (①), which names no entity handle and is therefore resolved against the model's default write root. The branches are DISJOINT because `$defs/bareWriteRow` — the single-row branch here — reserves `target` and `rows` from the row's own open vocabulary; each instruction branch is therefore load-bearing rather than shadowed by a row that would also admit it. Member dispatch answers for the three OBJECT branches alone, so the array branch is scoped to the shape whose affected-row aggregate it exists for: the `rejected` shape requires an object (restricted above), leaving no lane where an array reaches a reader that asks it for a member.",
+          "description": "conflict cases, single-attempt form. The neutral write input (①) for this conflict's keyed UPDATE or DELETE, as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key, so the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. An ORDERED ARRAY of rows is the MULTI-KEY form: one unit of work buffers every row and the batching rule collapses them into a single set-based statement whose one Key Target holds every key, so `then.affectedRows` is the AGGREGATE that complete target owns (m-batch-write; m-unit-work affected-row attribution). The array form is keyed and unversioned — a versioned target materializes to per-row writes instead of collapsing. The `$defs/keyedWrite` and canonical `targetWriteInstruction` branches are the `rejected` shape's alone (restricted below): a rejected case may pin a rule about the INSTRUCTION rather than about a row's contents, and only a whole keyed instruction — its `mutation`, its own `entity` handle, and its `rows` — or a whole target instruction — its `mutation`, `entity`, singular `row`, and stated revision — can carry one. A reader dispatches the five branches on the members the input itself carries, in order: `target` is the predicate-selected instruction (whose replacement also carries a `row`), otherwise `rows` the keyed one, otherwise `row` the target one, an array the multi-key conflict form, anything else the bare neutral write row (①), which names no entity handle and is therefore resolved against the model's default write root. Every instruction branch is closed, so an input mixing two forms' carriers matches none of them. The branches are DISJOINT because `$defs/bareWriteRow` — the single-row branch here — reserves `target`, `rows`, and `row` from the row's own open vocabulary; each instruction branch is therefore load-bearing rather than shadowed by a row that would also admit it. Member dispatch answers for the three OBJECT branches alone, so the array branch is scoped to the shape whose affected-row aggregate it exists for: the `rejected` shape requires an object (restricted above), leaving no lane where an array reaches a reader that asks it for a member.",
           "anyOf": [
             { "$ref": "#/$defs/predicateWrite" },
             { "$ref": "#/$defs/keyedWrite" },
+            { "$ref": "write-instruction.schema.json#/$defs/targetWriteInstruction" },
             { "$ref": "#/$defs/bareWriteRow" },
             {
               "type": "array",
@@ -2988,12 +3007,16 @@
       }
     },
     "bareWriteRow": {
-      "description": "The BARE neutral write row (①) at the one location an instruction may stand in its place — `when.write`, whose four forms a reader dispatches on the members the input itself carries (`target` the predicate-selected instruction, `rows` the keyed one, an array the multi-key conflict form, anything else this). That dispatch is only sound if the two discriminators are RESERVED from the row's own open vocabulary, so this is `$defs/writeRow` with `target` and `rows` forbidden. Without the reservation the row branch swallows both instruction forms — every instruction is also a row, since an instruction's members are all admissible `writeRowValue`s — so the instruction branches would add no validity and a legitimate row naming a `many` value object `rows` would be silently re-read as a keyed instruction by every dispatcher. The reservation is POSITIONAL: it holds where the ambiguity is, so a row inside the multi-key ARRAY form — unambiguous by JSON type — keeps the full vocabulary. A model whose entity really does declare a member named `target` or `rows` therefore cannot author a bare `when.write` for it; the row is REFUSED here rather than reclassified, because a silent reclassification is what turns an authoring mistake into a case that grades the wrong rule.",
+      "description": "The BARE neutral write row (①) at the one location an instruction may stand in its place — `when.write`, whose five forms a reader dispatches on the members the input itself carries (`target` the predicate-selected instruction, `rows` the keyed one, `row` the target one, an array the multi-key conflict form, anything else this). That dispatch is only sound if the three discriminators are RESERVED from the row's own open vocabulary, so this is `$defs/writeRow` with `target`, `rows`, and `row` forbidden. Without the reservation the row branch swallows every instruction form — every instruction is also a row, since an instruction's members are all admissible `writeRowValue`s — so the instruction branches would add no validity and a legitimate row naming a `many` value object `rows` would be silently re-read as a keyed instruction by every dispatcher. The reservation is POSITIONAL: it holds where the ambiguity is, so a row inside the multi-key ARRAY form — unambiguous by JSON type — keeps the full vocabulary. A model whose entity really does declare a member named `target`, `rows`, or `row` therefore cannot author a bare `when.write` for it; the row is REFUSED here rather than reclassified, because a silent reclassification is what turns an authoring mistake into a case that grades the wrong rule.",
       "allOf": [
         { "$ref": "#/$defs/writeRow" },
         {
           "not": {
-            "anyOf": [{ "required": ["target"] }, { "required": ["rows"] }]
+            "anyOf": [
+              { "required": ["target"] },
+              { "required": ["rows"] },
+              { "required": ["row"] }
+            ]
           }
         }
       ]

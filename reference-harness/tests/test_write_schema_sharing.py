@@ -70,6 +70,19 @@ def test_case_keyed_write_references_canonical_defs() -> None:
     assert keyed["rows"]["items"]["$ref"].endswith(f"{_WRITE_ID}#/$defs/writeRow")
 
 
+def test_case_write_admits_the_canonical_target_instruction_by_reference() -> None:
+    # The rejected target form is the canonical instruction itself, so its
+    # revision, mutation, and window grammar has one owner.
+    branches = _CASE["properties"]["when"]["properties"]["write"]["anyOf"]
+    target_refs = [
+        branch["$ref"]
+        for branch in branches
+        if branch.get("$ref", "").endswith("targetWriteInstruction")
+    ]
+    assert target_refs == [f"{_WRITE_ID}#/$defs/targetWriteInstruction"]
+    assert "targetWriteInstruction" not in _CASE["$defs"]
+
+
 def test_case_write_row_value_union_references_canonical() -> None:
     # The flush-context row keeps the observedVersion control key, but its VALUE
     # vocabulary is the shared canonical `writeRowValue`, not a private copy.

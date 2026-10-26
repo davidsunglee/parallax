@@ -2445,14 +2445,23 @@ embedded-value use (an embedded value is not a relationship target and cannot be
 reverse-navigated); Parallax pins the same "these operations are structurally
 invalid" semantics as a language-neutral pre-SQL rejection.
 
-A `when.write` is one of three inputs, and an implementation **MUST** dispatch on
-the members the input itself carries — never on the case's tags, filename, or
-named rule, which no adapter is obliged to read before validating. A `target`
-names a **predicate-selected instruction**; a `rows` array names a whole **keyed
-instruction**; anything else is the **bare neutral write row** (①). The three
-differ in what supplies the entity handle, which is why the distinction is
-load-bearing rather than cosmetic: the first two name their own target, so a
-validator checks the payload against the entity the input authored, while a bare
+A `when.write` is one of four inputs, and an implementation **MUST** dispatch on
+the members the input itself carries, in this order — never on the case's tags,
+filename, or named rule, which no adapter is obliged to read before validating. A
+`target` names a **predicate-selected instruction**; otherwise a `rows` array
+names a whole **keyed instruction**; otherwise a singular `row` names a **target
+instruction** (`write-instruction.schema.json` `targetWriteInstruction`, the
+`m-unit-work` *Target writes* form); anything else is the **bare neutral write
+row** (①). The order is what keeps a predicate replacement, which carries its
+complete writable state as a `row` beside its `target`, a predicate-selected
+instruction. Each explicit form is validated whole against its own definition, so
+an input mixing the carriers of two forms — `target` with `rows`, or `rows` with
+`row` — is **invalid** rather than graded as whichever form the dispatch reached
+first: discarding the other carrier would turn an authoring mistake into a case
+that grades a rule it never meant to reach. The four differ in what supplies the
+entity handle, which is why the distinction is load-bearing rather than cosmetic:
+the three instructions name their own target, so a validator checks the payload
+against the entity the input authored, while a bare
 row names none at all and is resolved against the model's default write root: the
 inheritance-family root when the model declares exactly one family, else — when it
 declares no family at all — its own first entity. A model declaring **several**
@@ -2462,7 +2471,7 @@ entity happens to be declared first would grade a rule against an entity the cas
 never named. A `when.objectQuery` names its own queried position and reaches none
 of this.
 
-All three are **objects**, and a rejected `when.write` that is not one is
+All four are **objects**, and a rejected `when.write` that is not one is
 **invalid**. The `when.write` vocabulary is shared with conflict cases, which also
 spell the multi-key form as an **array** of rows; that form states the aggregate
 affected-row count one collapsed statement owns, which a rejection asserted pre-SQL
@@ -2470,25 +2479,27 @@ has nothing to say about. An array carries no member to dispatch on, so admittin
 one here would leave each implementation to invent an answer — the schema refuses
 it, and both graders refuse it by shape before asking for a member.
 
-`target` and `rows` are therefore **reserved** at this position: a bare write row
-authors neither, exactly as it authors neither half of an observed milestone's own
-edge coordinate. A row is a row only because nothing on it names an instruction,
-so without the reservation the row form would admit every instruction, the two
-instruction forms would decide nothing, and a legitimate row for an entity whose
-model declares a `many` value object named `rows` would be re-read by every
-dispatcher as a keyed instruction. Such a row is **refused** rather than
-reclassified — a silent reclassification turns an authoring mistake into a case
-that grades a rule it never meant to reach — and its entity is written through the
-keyed form, which names its own handle. The reservation is positional: it holds
-where a row and an instruction can stand in the same place, so the rows nested
-inside a keyed instruction, a `writeSequence` step, or the multi-key array form
-keep the full member vocabulary.
+`target`, `rows`, and `row` are therefore **reserved** at this position: a bare
+write row authors none of them, exactly as it authors neither half of an observed
+milestone's own edge coordinate. A row is a row only because nothing on it names
+an instruction, so without the reservation the row form would admit every
+instruction, the three instruction forms would decide nothing, and a legitimate
+row for an entity whose model declares a `many` value object named `rows` would be
+re-read by every dispatcher as a keyed instruction. Such a row is **refused**
+rather than reclassified — a silent reclassification turns an authoring mistake
+into a case that grades a rule it never meant to reach — and its entity is written
+through the keyed form, which names its own handle. The reservation is
+positional: it holds where a row and an instruction can stand in the same place,
+so the rows nested inside an instruction, a `writeSequence` step, or the
+multi-key array form keep the full member vocabulary, a member named `row`
+included.
 
-A keyed instruction is admissible **only** here: everywhere else
-a keyed instruction reaches an implementation through `when.writeSequence` or a
-`when.scenario` step's own buffer, where the golden SQL it lowers to is what
-grades it. The rejected lane emits no SQL, so it is the one lane in which the
-instruction itself — its verb, its target, and its row count together — is the
+A keyed or target instruction is admissible **only** here: everywhere else a
+keyed instruction reaches an implementation through `when.writeSequence` or a
+`when.scenario` step's own buffer, and a target instruction through a scenario's
+target submission, where the state or golden SQL it produces is what grades it.
+The rejected lane emits no SQL, so it is the one lane in which the instruction
+itself — its verb, its target, its revision, and its row count together — is the
 input under test rather than a row's contents.
 
 `then.rejectedRule` is a **closed vocabulary**, each identifier naming a normative
@@ -2734,7 +2745,7 @@ whereas a TPCS concrete subtype owns its table.
 
 #### What decides a bare write row
 
-The three forms above close the **dispatch** question by construction: the schema
+The four forms above close the **dispatch** question by construction: the schema
 admits exactly those objects, their discriminators are mutually reserved, and the
 array is refused outright, so every reader picks the same form for every admitted
 input. Nothing in the schema closes the question that follows it — *which rule an

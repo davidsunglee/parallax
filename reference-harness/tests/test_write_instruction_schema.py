@@ -238,3 +238,18 @@ def test_instruction_rejects_unknown_top_level_key() -> None:
     assert not _valid(
         {"mutation": "insert", "entity": "Balance", "rows": [{"id": 1}], "bogus": True}
     )
+
+
+def test_a_predicate_replacement_carrying_a_row_is_no_target_instruction() -> None:
+    # The `row` a predicate replacement states beside its `target` never makes it a
+    # target instruction, and no document carries two shapes' carriers at once.
+    replacement = {
+        "mutation": "replace",
+        "target": {"entity": "Account", "predicate": {"true": {}}},
+        "row": {"balance": 1.0},
+    }
+    assert _valid(replacement)
+    assert not _valid({**replacement, "entity": "Account", "ifVersion": 1})
+    assert not _valid({**replacement, "rows": [{"id": 1}]})
+    target = {"mutation": "amend", "entity": "Account", "row": {"id": 1}, "ifVersion": 3}
+    assert not _valid({**target, "rows": [{"id": 1}]})

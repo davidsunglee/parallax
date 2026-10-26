@@ -1,5 +1,5 @@
 """The rejected lane, driven database-free: the three-way ``when`` dispatch
-and the three-form ``when.write`` inside it, the rule each classified corpus
+and the four-form ``when.write`` inside it, the rule each classified corpus
 input returns, and every refusal the lane translates into an ``EngineError``
 naming the case — an input the validators accept, a malformed input, and a
 ``when`` carrying none or several of the three inputs.
@@ -377,7 +377,10 @@ def test_run_rejected_case_predicate_write_dispatch_classifies_the_rule() -> Non
     assert rejected.run_rejected_case(case) == "neutral-literal-type-mismatch"
 
 
-@pytest.mark.parametrize("case_id", ["m-unit-work-066", "m-unit-work-067", "m-unit-work-069"])
+@pytest.mark.parametrize(
+    "case_id",
+    ["m-unit-work-066", "m-unit-work-067", "m-unit-work-068", "m-unit-work-069", "m-unit-work-070"],
+)
 def test_a_write_to_a_read_only_entity_is_classified_by_its_persistence(case_id: str) -> None:
     assert rejected.run_rejected_case(_load_case(case_id)) == "read-only-write-target"
 
@@ -440,3 +443,107 @@ def test_a_bare_row_naming_an_observed_milestone_coordinate_is_malformed() -> No
     row: dict[str, object] = {"id": 1, "balance": "10.00", "observedTxStart": "x"}
     with pytest.raises(EngineError, match="observedTxStart"):
         rejected.run_rejected_case(_synthetic_bare_row(row, "models/account.yaml"))
+
+
+_READ_ONLY_FAMILY = "models/read-only-inheritance.yaml"
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        {
+            "mutation": "amend",
+            "entity": "parallax.compatibility.Magazine",
+            "row": {"id": 1},
+            "ifVersion": 1,
+        },
+        # Unclassified target defects — a destructive verb naming more than the
+        # key, a misstated revision — none weighed for a read-only family.
+        {
+            "mutation": "delete",
+            "entity": "parallax.compatibility.Periodical",
+            "row": {"id": 1, "title": "t"},
+            "ifVersion": 1,
+        },
+        {
+            "mutation": "replace",
+            "entity": "parallax.compatibility.Publication",
+            "row": {"id": 1},
+            "ifTxStart": "2024-01-01T00:00:00.000000Z",
+        },
+    ],
+    ids=["concrete-subtype", "abstract-subtype", "abstract-root"],
+)
+def test_a_target_instruction_to_a_read_only_family_is_refused_first(
+    write: dict[str, object],
+) -> None:
+    assert (
+        rejected.run_rejected_case(_synthetic_keyed_rejected(write, _READ_ONLY_FAMILY))
+        == "read-only-write-target"
+    )
+
+
+def test_a_predicate_replacement_carrying_a_row_stays_predicate_selected() -> None:
+    # The replacement's `row` is its payload beside the `target`, never a target
+    # instruction's carrier: dispatched as one, it would be malformed.
+    write: dict[str, object] = {
+        "mutation": "replace",
+        "target": {
+            "entity": "parallax.compatibility.Magazine",
+            "predicate": {"eq": {"path": "parallax.compatibility.Magazine.id", "value": 1}},
+        },
+        "row": {"title": "t"},
+    }
+    assert (
+        rejected.run_rejected_case(_synthetic_keyed_rejected(write, _READ_ONLY_FAMILY))
+        == "read-only-write-target"
+    )
+
+
+def test_a_read_write_target_instruction_accepted_by_preparation_fails_the_case() -> None:
+    write: dict[str, object] = {
+        "mutation": "amend",
+        "entity": "parallax.compatibility.Car",
+        "row": {"id": 1, "doors": 4},
+        "ifVersion": 1,
+    }
+    with pytest.raises(EngineError, match="accepted a write"):
+        rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/vehicle.yaml"))
+
+
+@pytest.mark.parametrize(
+    ("write", "detail"),
+    [
+        (
+            {
+                "mutation": "amend",
+                "entity": "parallax.compatibility.Car",
+                "row": {"id": 1},
+                "ifTxStart": "2024-01-01T00:00:00.000000Z",
+            },
+            "takes version",
+        ),
+        (
+            {
+                "mutation": "amend",
+                "entity": "parallax.compatibility.Car",
+                "row": {"id": 1},
+                "ifVersion": 1,
+                "at": "2024-01-01T00:00:00.000000Z",
+            },
+            "unexpected",
+        ),
+        (
+            {"mutation": "amend", "entity": "parallax.compatibility.Car", "row": 1, "ifVersion": 1},
+            "row",
+        ),
+    ],
+    ids=["misstated-revision", "case-context-member", "non-object-row"],
+)
+def test_an_unclassified_or_malformed_target_instruction_fails_the_case(
+    write: dict[str, object], detail: str
+) -> None:
+    # A target instruction carries no case-only member to set aside, so it is
+    # validated whole; its own refusals carry no rule a rejected case could grade.
+    with pytest.raises(EngineError, match=detail):
+        rejected.run_rejected_case(_synthetic_keyed_rejected(write, "models/vehicle.yaml"))

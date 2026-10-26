@@ -92,6 +92,7 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "predicate-traversal",
     "quote",
     "rate",
+    "read-only-inheritance",
     "reading",
     "scalar-collection-lifecycle-layout-twin-columns",
     "scalar-collection-lifecycle-layout-twin-document",

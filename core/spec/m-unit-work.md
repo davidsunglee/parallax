@@ -344,7 +344,10 @@ it buffered before and after. Reads of a ReadOnly family are unaffected, and
 stored state for one is established outside modeled execution.
 
 `m-unit-work-066` and `-067` witness a refused keyed insert and a refused
-key-only empty amendment, and `-069` a refused predicate-selected amendment.
+key-only empty amendment, `-068` a refused target amendment of a concrete subtype
+stating an otherwise valid revision, and `-069` a refused predicate-selected
+amendment. `-070` witnesses the family: a keyed insert at a ReadOnly family's
+abstract root is this refusal rather than `abstract-write-target`.
 
 ### Write value provenance
 

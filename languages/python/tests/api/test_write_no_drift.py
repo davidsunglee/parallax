@@ -16,7 +16,13 @@ import pytest
 from pydantic import ValidationError
 
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.read_models import Balance, Payment, ScalarThing
+from parallax.conformance.read_models import (
+    Balance,
+    Magazine,
+    Payment,
+    Publication,
+    ScalarThing,
+)
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Account, Position, Wallet
 from parallax.conformance.vo_models import (
@@ -747,22 +753,35 @@ _SCALAR_THING_ROW: MappingRow = {
     "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
 }
 
-REJECTED_READ_ONLY_WRITES: dict[str, Callable[[TxnContext], object]] = {
-    "m-unit-work-066": lambda tx: tx.insert(
-        ScalarThing(
-            id=2,
-            f32=1.5,
-            f64=2.25,
-            payload=bytes.fromhex("01020304"),
-            local_time=dt.time(12, 34, 56),
-            external_id=uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
-        )
+REJECTED_READ_ONLY_WRITES: dict[str, tuple[str, Callable[[TxnContext], object]]] = {
+    "m-unit-work-066": (
+        "scalars",
+        lambda tx: tx.insert(
+            ScalarThing(
+                id=2,
+                f32=1.5,
+                f64=2.25,
+                payload=bytes.fromhex("01020304"),
+                local_time=dt.time(12, 34, 56),
+                external_id=uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
+            )
+        ),
     ),
-    "m-unit-work-067": lambda tx: tx.amend(
-        tx.find(ScalarThing.where(ScalarThing.id == 1)).result()
+    "m-unit-work-067": (
+        "scalars",
+        lambda tx: tx.amend(tx.find(ScalarThing.where(ScalarThing.id == 1)).result()),
     ),
-    "m-unit-work-069": lambda tx: tx.amend_where(
-        ScalarThing.where(ScalarThing.id == 1), ScalarThing.f64.set(3.5)
+    "m-unit-work-068": (
+        "read-only-inheritance",
+        lambda tx: tx.amend_if(Magazine, Magazine.title.set("Spring issue"), key=1, version=1),
+    ),
+    "m-unit-work-069": (
+        "scalars",
+        lambda tx: tx.amend_where(ScalarThing.where(ScalarThing.id == 1), ScalarThing.f64.set(3.5)),
+    ),
+    "m-unit-work-070": (
+        "read-only-inheritance",
+        lambda tx: tx.insert(Publication(id=2, title="Annual report")),
     ),
 }
 
@@ -770,9 +789,10 @@ REJECTED_READ_ONLY_WRITES: dict[str, Callable[[TxnContext], object]] = {
 @pytest.mark.parametrize("case_id", sorted(REJECTED_READ_ONLY_WRITES))
 def test_idiomatic_read_only_write_rejects_the_corpus_rule(case_id: str) -> None:
     expected_rule = case_document(corpus_case(case_id))["then"]["rejectedRule"]
+    model, write = REJECTED_READ_ONLY_WRITES[case_id]
     port = _KeyedSeedPort(rows=[_SCALAR_THING_ROW])
-    db = own_root(Database.connect(port, MODELS["scalars"])).using_database_login()
+    db = own_root(Database.connect(port, MODELS[model])).using_database_login()
     with raises_contextualized(InstructionRejectedError) as exc_info:
-        db.transact(REJECTED_READ_ONLY_WRITES[case_id])
+        db.transact(write)
     assert exc_info.value.rule == expected_rule
     assert not port.wrote

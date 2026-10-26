@@ -653,6 +653,61 @@ def _rejected_keyed_write_case() -> dict[str, Any]:
     }
 
 
+def _rejected_target_write_case() -> dict[str, Any]:
+    """A rejected case whose `when.write` is a whole TARGET INSTRUCTION.
+
+    The fourth `when.write` form: a singular `row` names it, beside the revision
+    the caller states, and the entity handle rides on the instruction.
+    """
+    return {
+        "model": "models/read-only-inheritance.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "rejected",
+        "when": {
+            "write": {
+                "mutation": "amend",
+                "entity": "Magazine",
+                "row": {"id": 1, "title": "Spring issue"},
+                "ifVersion": 1,
+            }
+        },
+        "then": {"rejectedRule": "read-only-write-target"},
+    }
+
+
+def _rejected_predicate_replacement_case() -> dict[str, Any]:
+    """A rejected predicate REPLACEMENT, which carries both `target` and `row`.
+
+    Its `row` is the complete writable state beside the predicate's own target, so
+    the input stays predicate-selected rather than reading as a target instruction.
+    """
+    return {
+        "model": "models/scalars.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "rejected",
+        "when": {
+            "write": {
+                "mutation": "replace",
+                "target": {"entity": "ScalarThing", "predicate": {"true": {}}},
+                "row": {"f64": 1.0},
+            }
+        },
+        "then": {"rejectedRule": "read-only-write-target"},
+    }
+
+
+def _rejected_keyed_write_nesting_a_row_member() -> dict[str, Any]:
+    """A keyed instruction whose nested row names a domain member `row`.
+
+    The reservation is positional: it holds only where a bare row stands in an
+    instruction's place, so a row nested inside an instruction keeps the full
+    member vocabulary.
+    """
+    doc = _rejected_keyed_write_case()
+    doc["when"]["write"]["rows"] = [{"id": 1, "row": 3}]
+    return doc
+
+
 def _action_boundary_no_on_case() -> dict[str, Any]:
     """A scenario whose BOUNDARY action verbs (`flush` / `commit`) omit `on`.
 
@@ -858,6 +913,9 @@ VALID_CASES = {
     "rejected-declaring-its-zero-cost": _rejected_case_declaring_zero_database_calls,
     "rejected-write": _rejected_write_case,
     "rejected-keyed-write": _rejected_keyed_write_case,
+    "rejected-target-write": _rejected_target_write_case,
+    "rejected-predicate-replacement": _rejected_predicate_replacement_case,
+    "rejected-keyed-write-nesting-a-row-member": _rejected_keyed_write_nesting_a_row_member,
 }
 
 
@@ -1161,6 +1219,58 @@ def _bare_write_row_naming_target() -> dict[str, Any]:
     """
     doc = _conflict_case()
     doc["when"]["write"] = {"id": 2, "target": {"kind": "x"}, "observedVersion": 1}
+    return doc
+
+
+def _bare_write_row_naming_row() -> dict[str, Any]:
+    """A bare neutral write row whose entity declares a member `row`.
+
+    The third reserved discriminator: a singular `row` names the target
+    instruction, so a bare row may not author one.
+    """
+    doc = _conflict_case()
+    doc["when"]["write"] = {"id": 2, "row": 1, "observedVersion": 1}
+    return doc
+
+
+def _conflict_target_write() -> dict[str, Any]:
+    """A CONFLICT case whose `when.write` is a target instruction.
+
+    Like the keyed form, the target form belongs to the `rejected` shape alone: an
+    executing shape reaches a target write through a scenario's own submission.
+    """
+    doc = _conflict_case()
+    doc["when"]["write"] = {
+        "mutation": "amend",
+        "entity": "Account",
+        "row": {"id": 2, "balance": 250.0},
+        "ifVersion": 1,
+    }
+    return doc
+
+
+def _target_write_with_a_stray_member() -> dict[str, Any]:
+    """A target instruction carrying a member the canonical definition lacks.
+
+    The canonical `targetWriteInstruction` is closed and `row` is reserved from the
+    bare row, so no branch admits the document.
+    """
+    doc = _rejected_target_write_case()
+    doc["when"]["write"]["at"] = "2024-01-01T00:00:00Z"
+    return doc
+
+
+def _rejected_write_mixing_rows_and_row() -> dict[str, Any]:
+    """A keyed instruction also carrying the target form's `row`."""
+    doc = _rejected_keyed_write_case()
+    doc["when"]["write"]["row"] = {"id": 1}
+    return doc
+
+
+def _rejected_write_mixing_target_and_rows() -> dict[str, Any]:
+    """A predicate-selected instruction also carrying the keyed form's `rows`."""
+    doc = _rejected_predicate_replacement_case()
+    doc["when"]["write"]["rows"] = [{"id": 1}]
     return doc
 
 
@@ -1846,6 +1956,11 @@ REJECTED_CASES = {
     "rejected-write-multi-key-array": _rejected_write_multi_key_array,
     "bare-write-row-naming-rows": _bare_write_row_naming_rows,
     "bare-write-row-naming-target": _bare_write_row_naming_target,
+    "bare-write-row-naming-row": _bare_write_row_naming_row,
+    "conflict-target-write": _conflict_target_write,
+    "target-write-stray-member": _target_write_with_a_stray_member,
+    "rejected-write-mixing-rows-and-row": _rejected_write_mixing_rows_and_row,
+    "rejected-write-mixing-target-and-rows": _rejected_write_mixing_target_and_rows,
     "settled-write-ungrouped": _settled_write_ungrouped,
     "settled-write-on-array": _settled_write_on_array,
     "settled-write-legacy-string": _settled_write_legacy_string,

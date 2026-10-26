@@ -100,8 +100,8 @@ def run_rejected_case(case: case_format.Case) -> str:
     authored. The family validator parses shape only and has no schema phase,
     which is exactly why it can answer for a document expected never to form.
 
-    A `write` input is one of three, dispatched on the members the input itself
-    carries (`m-case-format` Rejected cases) — never on the case's tags or
+    A `write` input is one of four, dispatched in order on the members the input
+    itself carries (`m-case-format` Rejected cases) — never on the case's tags or
     filename — and adapted once to the instruction it denotes
     (:func:`_rejected_instruction`). Every form is then graded through the one
     case-format preparation seam, which normalizes carriers and delegates
@@ -110,9 +110,9 @@ def run_rejected_case(case: case_format.Case) -> str:
     rejected lane cannot drift from ordinary Wire write ingress. A classified
     refusal is the rule; an unclassified one, or acceptance, fails the case.
 
-    Membership can decide the form only because `target` and `rows` are RESERVED
-    from a bare row at this position (`compatibility-case.schema.json`
-    `$defs/bareWriteRow`): neither is a domain member name here, so no row can be
+    Membership can decide the form only because `target`, `rows`, and `row` are
+    RESERVED from a bare row at this position (`compatibility-case.schema.json`
+    `$defs/bareWriteRow`): none is a domain member name here, so no row can be
     re-read as an instruction and no instruction as a row. It can decide it only
     for an OBJECT at all, so the multi-key ARRAY the shared `when.write`
     vocabulary carries for the conflict lane is refused here by shape, before any
@@ -180,8 +180,8 @@ def _rejected_write(case: case_format.Case, raw_write: object, model: AcceptedMe
     through the single case-format preparation every form shares."""
     if not isinstance(raw_write, Mapping):
         raise EngineError(
-            f"{case.path.name}: a rejected `when.write` is a predicate-selected instruction, a "
-            f"keyed instruction, or a bare neutral write row — all objects, and the members "
+            f"{case.path.name}: a rejected `when.write` is a predicate-selected, keyed, or "
+            f"target instruction, or a bare neutral write row — all objects, and the members "
             f"decide which. {type(raw_write).__name__} is the conflict lane's multi-key form, "
             f"which asserts an aggregate affected-row count no rejected case emits SQL to "
             f"produce (m-case-format Rejected cases)"
@@ -216,14 +216,16 @@ def _rejected_instruction(
 ) -> instructions.WriteInstruction:
     """The instruction a rejected `when.write` puts under test.
 
-    A `target` names a predicate-selected instruction, deserialized whole. `rows`
-    names a keyed instruction, which brings its own `entity` handle: its document
-    is rebuilt from the instruction members alone, exactly as the
+    A `target` names a predicate-selected instruction, deserialized whole, so a
+    predicate replacement's `row` stays its payload. Otherwise `rows` names a
+    keyed instruction, which brings its own `entity` handle: its document is
+    rebuilt from the instruction members alone, exactly as the
     writeSequence/scenario producer rebuilds one, once the input is known to carry
     no other instruction's carrier — filtering first would discard that carrier
-    and grade a malformed input as though it were well formed. Anything else is
-    the bare neutral write row (①), which names no handle: it is resolved against
-    the model's default entity (:func:`_rejected_target`) and wrapped as a keyed
+    and grade a malformed input as though it were well formed. Otherwise `row`
+    names a target instruction, deserialized whole. Anything else is the bare
+    neutral write row (①), which names no handle: it is resolved against the
+    model's default entity (:func:`_rejected_target`) and wrapped as a keyed
     insert, its flush-time `observedVersion` context set aside.
     """
     if "target" in authored:
@@ -237,6 +239,8 @@ def _rejected_instruction(
         return _deserialized(
             case, {key: authored[key] for key in _KEYED_INSTRUCTION_MEMBERS if key in authored}
         )
+    if "row" in authored:
+        return _deserialized(case, authored)
     target = case_entity(model, _rejected_target(case, model))
     durable_row = {name: value for name, value in authored.items() if name != "observedVersion"}
     try:

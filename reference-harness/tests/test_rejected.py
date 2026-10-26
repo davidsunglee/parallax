@@ -982,6 +982,126 @@ def test_the_runner_keeps_read_write_ordering_unchanged() -> None:
     run_case(_rejected_write_case(_family_model(None), write, ABSTRACT_WRITE_TARGET), None)
 
 
+# --- the rejected target instruction (m-case-format Rejected cases) ---------
+#
+# A singular `row` names a target instruction, judged against the entity it names:
+# persistence admission first, then the one target validator static case
+# validation also asks, whose details are authoring failures rather than rules.
+
+
+def _read_only_family() -> Model:
+    return load_model(_COMPATIBILITY_ROOT, "models/read-only-inheritance.yaml")
+
+
+def _vehicle() -> Model:
+    return load_model(_COMPATIBILITY_ROOT, "models/vehicle.yaml")
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        {"mutation": "amend", "entity": "Magazine", "row": {"id": 1}, "ifVersion": 1},
+        # A destructive verb naming more than the key, and no revision at all: both
+        # unclassified target defects, neither weighed for a read-only family.
+        {"mutation": "delete", "entity": "Periodical", "row": {"id": 1, "title": "t"}},
+        {"mutation": "replace", "entity": "Publication", "row": {"id": 1}, "ifVersion": 1},
+    ],
+    ids=["concrete-subtype", "abstract-subtype", "abstract-root"],
+)
+def test_a_target_instruction_to_a_read_only_family_is_refused_first(
+    write: dict[str, Any],
+) -> None:
+    run_case(_rejected_write_case(_read_only_family(), write, READ_ONLY_WRITE_TARGET), None)
+
+
+def test_a_predicate_replacement_carrying_a_row_stays_predicate_selected() -> None:
+    write = {
+        "mutation": "replace",
+        "target": {
+            "entity": "Magazine",
+            "predicate": {"eq": {"path": "Magazine.id", "value": 1}},
+        },
+        "row": {"title": "t"},
+    }
+    run_case(_rejected_write_case(_read_only_family(), write, READ_ONLY_WRITE_TARGET), None)
+
+
+def test_a_read_write_target_instruction_accepted_fails_the_rejected_case() -> None:
+    write = {"mutation": "amend", "entity": "Car", "row": {"id": 1, "doors": 4}, "ifVersion": 1}
+    with pytest.raises(CaseFailure, match="target instruction did not match"):
+        run_case(_rejected_write_case(_vehicle(), write, READ_ONLY_WRITE_TARGET), None)
+
+
+@pytest.mark.parametrize(
+    ("write", "detail"),
+    [
+        (
+            {"mutation": "amend", "entity": "Car", "row": {"id": 1}, "ifTxStart": "x"},
+            "takes `ifVersion`",
+        ),
+        ({"mutation": "terminate", "entity": "Car", "row": {"id": 1}, "ifVersion": 1}, "no `"),
+        (
+            {"mutation": "amend", "entity": "Car", "row": {"id": 1, "bogus": 1}, "ifVersion": 1},
+            "names no assignable",
+        ),
+        ({"mutation": "amend", "entity": "Car", "row": 1, "ifVersion": 1}, "must be an object"),
+        ({"mutation": "amend", "entity": "Bus", "row": {"id": 1}, "ifVersion": 1}, "Bus"),
+    ],
+    ids=[
+        "misstated-revision",
+        "inapplicable-verb",
+        "undeclared-member",
+        "non-object-row",
+        "entity",
+    ],
+)
+def test_an_unclassified_target_defect_is_a_case_authoring_failure(
+    write: dict[str, Any], detail: str
+) -> None:
+    with pytest.raises(CaseFailure, match=detail):
+        run_case(_rejected_write_case(_vehicle(), write, READ_ONLY_WRITE_TARGET), None)
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        {
+            "mutation": "amend",
+            "entity": "Magazine",
+            "rows": [{"id": 1}],
+            "row": {"id": 1},
+            "ifVersion": 1,
+        },
+        {
+            "mutation": "amend",
+            "target": {"entity": "Magazine", "predicate": {"true": {}}},
+            "assignments": [],
+            "rows": [{"id": 1}],
+        },
+    ],
+    ids=["rows-and-row", "target-and-rows"],
+)
+def test_a_mixture_of_instruction_carriers_is_refused_before_any_judgement(
+    write: dict[str, Any],
+) -> None:
+    # Each is a write to a read-only family, so grading whichever form the dispatch
+    # reached first would report the very rule the case names.
+    with pytest.raises(CaseFailure, match="different instruction forms"):
+        run_case(_rejected_write_case(_read_only_family(), write, READ_ONLY_WRITE_TARGET), None)
+
+
+def test_a_member_named_row_inside_an_instruction_keeps_its_meaning() -> None:
+    # The reservation is positional, so a keyed instruction's own rows name a domain
+    # member `row` freely; the instruction is still keyed and still judged first by
+    # its family's Persistence Mode.
+    model = _standalone_model("read-only")
+    entity = dict(model.descriptor["entity"])
+    entity["attributes"] = [*entity["attributes"], {"name": "row", "type": "int32"}]
+    model = Model(path=model.path, descriptor={"entity": entity})
+    write = {"mutation": "amend", "entity": "Ledger", "rows": [{"id": 1, "row": 2}]}
+    run_case(_rejected_write_case(model, write, READ_ONLY_WRITE_TARGET), None)
+
+
 # --- the validators ACCEPT valid inputs (no false rejections) ---------------
 
 
