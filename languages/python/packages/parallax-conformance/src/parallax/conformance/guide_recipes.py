@@ -14,6 +14,7 @@ from parallax.conformance.guide_models import (
     Price,
     Product,
     Shipment,
+    Supplier,
 )
 from parallax.core import (
     TABLE_PER_CONCRETE_SUBTYPE,
@@ -124,6 +125,7 @@ __all__ = [
     "record_an_order",
     "register_a_customer",
     "rename_a_customer_through_wire",
+    "rename_a_supplier",
     "replace_contact_details",
     "reprice_a_tea_for",
     "reprice_from_a_review",
@@ -158,6 +160,16 @@ def add_and_find_a_customer(adapter: PostgresAdapter) -> Customer:
             lambda tx: tx.insert(Customer(id=1, name="Ada Lovelace", email="ada@example.com"))
         )
         return db.find(Customer.where(Customer.id == 1)).result()
+
+
+def rename_a_supplier(db: ScopedDatabase, supplier_id: int, name: str) -> None:
+    """Refused with ``InstructionRejectedError``: Parallax writes no ``Supplier``."""
+
+    def rename(tx: TxnContext) -> None:
+        supplier = tx.find(Supplier.where(Supplier.id == supplier_id)).result()
+        tx.amend(supplier.edit(name=name))
+
+    db.transact(rename)
 
 
 def customers_with_an_order_over(db: ScopedDatabase, total: Decimal) -> list[Customer]:

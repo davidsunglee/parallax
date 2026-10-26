@@ -30,6 +30,7 @@ from parallax.conformance.guide_models import (
     Price,
     Product,
     Shipment,
+    Supplier,
 )
 from parallax.conformance.guide_recipes import (
     CarrierDelivery,
@@ -108,6 +109,7 @@ from parallax.conformance.guide_recipes import (
     record_an_order,
     register_a_customer,
     rename_a_customer_through_wire,
+    rename_a_supplier,
     replace_contact_details,
     reprice_a_tea_for,
     reprice_from_a_review,
@@ -1021,6 +1023,20 @@ def test_predicate_writes_run_at_the_call_and_answer_their_row_count(profile_run
     assert db.find(Shipment.where(Shipment.all)).results() == []
 
 
+def test_a_read_only_entity_is_read_but_never_written(profile_run: Any) -> None:
+    # The supplier's row is seeded as stored data, the way the system that owns it
+    # would write it, rather than through Parallax.
+    profile_run.reset(model_of(SHOP_MODEL), {"Supplier": [{"id": 1, "name": "Leaf & Co"}]})
+    db = own_root(connect(profile_run.port, SHOP_MODEL)).using_database_login()
+
+    with pytest.raises(ExecutionFailure) as refused:
+        rename_a_supplier(db, 1, "Leaf Ltd")
+
+    assert isinstance(refused.value.cause, InstructionRejectedError)
+    assert refused.value.cause.rule == "read-only-write-target"
+    assert db.find(Supplier.where(Supplier.id == 1)).result().name == "Leaf & Co"
+
+
 def test_a_predicate_write_to_a_versioned_entity_is_refused(profile_run: Any) -> None:
     db = _shop(profile_run)
     _seed_customers(db)
@@ -1533,6 +1549,7 @@ _PRICE_ROW: Mapping[str, object] = {
 }
 _SALE_PRICE_ROW: Mapping[str, object] = {**_PRICE_ROW, "from_z": _JUN, "thru_z": _SEP}
 
+_SUPPLIER_ROW: Mapping[str, object] = {"id": 1, "name": "Leaf & Co"}
 _PRODUCT_ROW: Mapping[str, object] = {
     "sku": "TEA-1",
     "payload": {"name": "Green tea", "description": None},
@@ -1589,6 +1606,11 @@ def _amend_a_customer_read_earlier(db: ScopedDatabase) -> None:
     shown = look_up_a_customer(db, 1)
     with pytest.raises(ExecutionFailure):
         amend_a_value_read_earlier(db, shown, "ada@example.net")
+
+
+def _rename_supplier_one(db: ScopedDatabase) -> None:
+    with pytest.raises(ExecutionFailure):
+        rename_a_supplier(db, 1, "Leaf Ltd")
 
 
 def _amend_customer_one_after_reading_it_again(db: ScopedDatabase) -> None:
@@ -1848,6 +1870,7 @@ def _place_two_orders_together_serializably(db: ScopedDatabase) -> tuple[bool, b
             id="read-only-reads",
         ),
         pytest.param(_amend_a_customer_read_earlier, ([_CUSTOMER_ROW],), id="amend-refused"),
+        pytest.param(_rename_supplier_one, ([_SUPPLIER_ROW],), id="read-only-entity-refused"),
         pytest.param(
             _amend_customer_one_after_reading_it_again, ([_CUSTOMER_ROW],), id="amend-re-read"
         ),
@@ -2142,6 +2165,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             record_an_order,
             register_a_customer,
             rename_a_customer_through_wire,
+            rename_a_supplier,
             replace_contact_details,
             reprice_a_tea_for,
             reprice_from_a_review,

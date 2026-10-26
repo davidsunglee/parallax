@@ -34,6 +34,7 @@ from parallax.conformance.guide_models import (
     Price,
     Product,
     Shipment,
+    Supplier,
 )
 from parallax.conformance.read_models import Balance
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
@@ -253,6 +254,11 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="declare-customers-and-orders",
         title="Declare customers and their orders",
         snippet=_sources(Customer, Order),
+    ),
+    Recipe(
+        recipe_id="declare-a-read-only-entity",
+        title="Declare an entity Parallax only reads",
+        snippet=_sources(Supplier, guide_recipes.rename_a_supplier),
     ),
     Recipe(
         recipe_id="create-tables-from-the-model",

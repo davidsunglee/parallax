@@ -20,9 +20,11 @@ Entity `name=` overrides the class name verbatim. `namespace=` is local to each
 class and is never inherited from a base or module. Entity tables are explicit.
 The class header uses exceptional `persistence=READ_ONLY` and
 `layout=Document(column=...)`; omission means Read Write and Columns. Descendants
-cannot redeclare a family's persistence or layout. Inheritance uses
-`AbstractRoot(strategy)`, `AbstractSubtype`, and `ConcreteSubtype`; a TPH concrete
-subtype supplies `tag_value=`, while a TPCS concrete subtype supplies its table.
+cannot redeclare a family's persistence or layout. A Read Only family takes no
+writes ([Unit of Work](../../../core/spec/m-unit-work.md#writes-to-a-readonly-family)).
+Inheritance uses `AbstractRoot(strategy)`, `AbstractSubtype`, and
+`ConcreteSubtype`; a TPH concrete subtype supplies `tag_value=`, while a TPCS
+concrete subtype supplies its table.
 
 `Document`'s column defaults to `payload` at authoring; accepted metadata and
 descriptor output always contain that resolved name. `Document` and
