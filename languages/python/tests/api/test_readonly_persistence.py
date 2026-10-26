@@ -1,16 +1,4 @@
-"""Read-only Persistence Mode and read-only Attributes against real Postgres.
-
-A write to a ReadOnly family is refused at the verb (`m-unit-work` "Writes to a
-ReadOnly family"): caught, it sends no statement and leaves the rows the family
-holds as they were, while work buffered before and after it commits. Reads of
-those rows — seeded as stored data, never through a modeled write — are
-unaffected, under either storage layout and either delivery.
-
-An Attribute declared ``read_only`` on a ReadWrite Entity keeps its own,
-separate meaning: the caller authors it at insert, an explicit assignment of it
-is refused, and a replacement derived from a read value leaves it out of the
-``UPDATE`` it writes.
-"""
+"""Read-only Persistence Mode and read-only Attributes against real Postgres."""
 
 from __future__ import annotations
 
@@ -84,9 +72,6 @@ _FIXTURES: Final[Mapping[str, object]] = {
 
 
 class _Statements:
-    """A lifecycle Provider recording the SQL of every statement presented to the
-    port, in order."""
-
     def __init__(self) -> None:
         self.sql: list[str] = []
 
@@ -206,7 +191,6 @@ def test_a_caught_refusal_changes_no_row_and_the_transaction_commits_its_other_w
             with pytest.raises(InstructionRejectedError) as rejected:
                 refuse()
             assert rejected.value.rule == _RULE
-            # The refusal sent nothing, and did not flush the pending insert.
             assert len(statements.sql) == sent
             tx.insert(Journal(id=2, note="after"))
 
