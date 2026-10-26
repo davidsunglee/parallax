@@ -1,6 +1,3 @@
-# A keyed insert into a ReadOnly Entity is refused when it is prepared, before its
-# row is judged: a ReadOnly family accepts no persistence write (m-unit-work
-# "Writes to a ReadOnly family"). The row itself is complete and well formed.
 model: models/scalars.yaml
 tags: [m-unit-work, write, rejected, read-only, slice-snapshot-1, slice-managed-1]
 shape: rejected

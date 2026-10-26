@@ -223,8 +223,7 @@ PERSON_MODEL = DomainModel(Person, Passport)
 
 
 class ScalarThing(Entity, table="scalar_thing", namespace=_NS, persistence=READ_ONLY):
-    """Mirror of ``models/scalars.yaml``: an Entity the application only reads,
-    so every write to it is refused."""
+    """Mirror of ``models/scalars.yaml``."""
 
     id: Attr[int] = attr(primary_key=True)
     f32: Attr[float] = attr(type=Float32)
@@ -244,8 +243,7 @@ class Publication(
     persistence=READ_ONLY,
     inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
 ):
-    """Mirror of ``models/read-only-inheritance.yaml``: a family the application
-    only reads, so every write to any of its positions is refused."""
+    """Mirror of ``models/read-only-inheritance.yaml``."""
 
     id: Attr[int] = attr(primary_key=True)
     title: Attr[str] = attr(max_length=64)

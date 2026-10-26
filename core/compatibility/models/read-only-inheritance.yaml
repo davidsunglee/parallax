@@ -1,17 +1,5 @@
-# Publication: a READ-ONLY, VERSIONED TABLE-PER-HIERARCHY family
-# (m-unit-work "Writes to a ReadOnly family" x m-inheritance x m-opt-lock).
-#
-# The root declares the family's Persistence Mode, which every position inherits
-# without declaring it, and an optimistic-lock version every concrete subtype
-# inherits, so a target write of the concrete descendant can state an otherwise
-# valid `ifVersion`. The abstract subtype between them gives a write a position
-# that is neither the root nor concrete. Every write to any position is refused
-# `read-only-write-target`; the family's stored state is never written through
-# the framework.
-#
-#   Publication  (root, ABSTRACT, read-only) — strategy + tag column `kind`; owns id + title + version
-#     Periodical (abstract-subtype)          — adds frequency
-#       Magazine (concrete-subtype)          — tagValue 'magazine'; adds issue
+# `version` keeps a target write of Magazine otherwise admissible: it states a valid
+# `ifVersion`, so the family's read-only Persistence Mode is its only defect.
 entities:
   - name: Publication
     namespace: parallax.compatibility
