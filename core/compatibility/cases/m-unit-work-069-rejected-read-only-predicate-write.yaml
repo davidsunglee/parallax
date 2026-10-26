@@ -1,7 +1,3 @@
-# A predicate-selected amendment of a ReadOnly Entity is refused when it is
-# prepared, before its predicate or assignments are judged (m-unit-work "Writes to
-# a ReadOnly family"). The target is unversioned and non-temporal, so nothing else
-# about the write is inadmissible.
 model: models/scalars.yaml
 tags: [m-unit-work, write, rejected, read-only, predicate-write, slice-snapshot-1, slice-managed-1]
 shape: rejected

@@ -1,7 +1,4 @@
-# A keyed insert at a ReadOnly family's abstract root is refused for the family's
-# Persistence Mode, ahead of the abstract-write-target rule the same insert breaks
-# in a ReadWrite family (m-unit-work "Writes to a ReadOnly family"). The row is
-# otherwise well formed: it names every required member the root declares.
+# In a ReadWrite family this insert is refused `abstract-write-target`.
 model: models/read-only-inheritance.yaml
 tags: [m-unit-work, write, rejected, read-only, inheritance, slice-snapshot-1, slice-managed-1]
 shape: rejected

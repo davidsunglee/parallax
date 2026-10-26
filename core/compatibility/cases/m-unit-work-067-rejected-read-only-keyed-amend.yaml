@@ -1,7 +1,4 @@
-# A keyed amendment of a ReadOnly Entity is refused when it is prepared, even one
-# that assigns nothing: the persistence judgment precedes the empty amendment's
-# elimination, so stating nothing never passes as eliminated work (m-unit-work
-# "Writes to a ReadOnly family").
+# The amendment assigns nothing, which must not pass as eliminated work.
 model: models/scalars.yaml
 tags: [m-unit-work, write, rejected, read-only, slice-snapshot-1, slice-managed-1]
 shape: rejected
