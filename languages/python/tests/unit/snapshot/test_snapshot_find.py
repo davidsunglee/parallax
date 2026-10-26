@@ -46,7 +46,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._concurrency import CONCURRENCY
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     DatabaseConnection,
@@ -265,7 +265,7 @@ def _find(
     query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection
 ) -> EagerPageResult[ReadEvidence]:
     return find(
-        preflight(query, model=model, form="graph"),
+        resolve_read_query(query, model=model, form="graph"),
         _cataloged(model),
         port,
         origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
@@ -275,7 +275,9 @@ def _find(
 def _find_history(
     query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection
 ) -> HistoryPageResult:
-    return find_history(preflight(query, model=model, form="graph"), _cataloged(model), port)
+    return find_history(
+        resolve_read_query(query, model=model, form="graph"), _cataloged(model), port
+    )
 
 
 class QueuePort(ConnectsAsItself):
@@ -333,7 +335,7 @@ def test_a_later_root_document_is_not_classified_before_its_root_view() -> None:
     meta = model_of(_PROFILE_OWNER_MODEL)
     observer = RecordingObserver()
     result = find(
-        preflight(
+        resolve_read_query(
             deserialize_query({"target": "ProfileOwner", "predicate": {"true": {}}}),
             model=meta,
             form="graph",
@@ -1030,14 +1032,14 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The shared read-preflight seam (`_preflight.preflight`)                      #
+# The shared read-query resolution seam (`_read_query.resolve_read_query`)     #
 # --------------------------------------------------------------------------- #
 def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None:
     # `Person` is a perfectly declared Entity — of another model. What makes the
     # query unanswerable is the CONNECTED model, which is why the refusal is a
-    # RuntimeError and why it names neither the query nor the model. Preflight
-    # resolves the target before anything else, so the port is never touched:
-    # A refusing port raises on any read or write.
+    # RuntimeError and why it names neither the query nor the model. Read-query
+    # resolution resolves the target before anything else, so the port is never
+    # touched: a refusing port raises on any read or write.
     db = own_root(Database.connect(RefusingAdapter(), ACCOUNT)).using_database_login()
     with pytest.raises(QueryTargetError) as caught:
         db.find(mm.Person.where(mm.Person.id == 1))
@@ -1244,7 +1246,7 @@ def _row_form(
     cataloged: CatalogedModel | None = None,
     planner: ReadPlanner = UNCACHED_READ_PLANNER,
 ) -> tuple[PublishedRow, ...]:
-    query = preflight(
+    query = resolve_read_query(
         deserialize_query({"target": target, "predicate": {"true": {}}}), model=model, form="rows"
     )
     return find_rows(
@@ -1834,7 +1836,7 @@ def test_a_dormant_root_prepares_its_levels_but_renders_and_executes_nothing() -
     )
 
     result = find(
-        preflight(query, model=meta, form="graph"),
+        resolve_read_query(query, model=meta, form="graph"),
         _cataloged(meta),
         QueuePort([]),
         origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
@@ -2089,7 +2091,7 @@ def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[Ch
     query = deserialize_query(document)
     entity = entity_by_name(model, cast("str", document["target"]))
     assert entity is not None
-    validated = preflight(query, model=model, form="graph")
+    validated = resolve_read_query(query, model=model, form="graph")
     return slot_table(
         deep_fetch.plan(validated, model, projection=deep_fetch.ReadProjectionRequest("all", True))
     )

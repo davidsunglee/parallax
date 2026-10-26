@@ -21,9 +21,9 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core._execution._preflight import preflight
 from parallax.core._execution._publication import SelectedReadModel, read_projection
 from parallax.core._execution._read_policy import interpreted
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import INT64, STRING, DocumentValue, NeutralType, PresentDocument
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
@@ -186,7 +186,7 @@ class _PredicateDriver:
 
     def run(self) -> object:
         selected = self._selected
-        checked: ResolvedObjectQuery = preflight(
+        checked: ResolvedObjectQuery = resolve_read_query(
             interpreted(selected, self._query), model=selected.model.meta, form="graph"
         )
         if not self._cold_plan:

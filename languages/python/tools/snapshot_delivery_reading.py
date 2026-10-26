@@ -32,8 +32,8 @@ from parallax.conformance.workloads import (
     catalog,
 )
 from parallax.core import ObjectQuery
-from parallax.core._execution._preflight import preflight
 from parallax.core._execution._publication import read_projection
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.db_port import (
     DRIVER_MANAGED,
     CleanupResult,
@@ -608,7 +608,7 @@ class ColdPlan:
 
     The prepared model, the validated query, and the cache itself are composed
     once, outside every window: model preparation is priced by the write member,
-    preflight is query validation rather than planning, and production composes
+    read-query resolution is validation rather than planning, and production composes
     the cache when the handle is connected, before its first read. :meth:`plan`
     is the window — one ``ReadPlanCache.plan`` on a cache holding nothing — so
     what a window prices is the growth from an empty cache to one compiled
@@ -621,7 +621,9 @@ class ColdPlan:
 
     def __init__(self, model: DomainModel, query: ObjectQuery[Any, Any]) -> None:
         self.model = read_projection(prepare_model(model, edition=PLAN_EDITION)).model
-        self.query = preflight(object_query_node(query, model), model=self.model.meta, form="graph")
+        self.query = resolve_read_query(
+            object_query_node(query, model), model=self.model.meta, form="graph"
+        )
         self.cache = ReadPlanCache(DEFAULT_READ_PLAN_CACHE_CAPACITY)
 
     @classmethod

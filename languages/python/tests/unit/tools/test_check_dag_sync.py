@@ -32,7 +32,7 @@ importer exemption), and the four §7 relations:
   siblings as targets; and
 * a child scope named as another scope's GRANT, which is how the typed query
   surface takes the Entity frontend without the rest of `m-object-query` taking
-  it — with two canaries, one importing the Database Port into the read-preflight
+  it — with two canaries, one importing the Database Port into the read-query
   seam directly and one reaching it through a chain; and
 * the restricted-external ownership §7 declares as its own relation — the table
   grammar, parity with ``RESTRICTED_EXTERNAL_GRANTS`` in both directions, the
@@ -1058,7 +1058,7 @@ def test_an_isolated_child_is_forbidden_to_a_scope_granted_its_parent() -> None:
 
 
 def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
-    assert dag.scope_siblings("parallax.core._execution._preflight") == frozenset(
+    assert dag.scope_siblings("parallax.core._execution._read_query") == frozenset(
         {
             "parallax.core._execution._read_policy",
             "parallax.core._execution._keyed_writes",
@@ -1129,7 +1129,7 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
     assert dag.scope_descendants("parallax.descriptor") == frozenset({"parallax.descriptor._hub"})
     assert dag.scope_descendants("parallax.core._execution") == frozenset(
         {
-            "parallax.core._execution._preflight",
+            "parallax.core._execution._read_query",
             "parallax.core._execution._read_policy",
             "parallax.core._execution._keyed_writes",
             "parallax.core._execution._family",
@@ -1388,14 +1388,14 @@ def test_the_table_spells_a_zero_grant_scope_with_none() -> None:
 # --------------------------------------------------------------------------
 # A child scope as a GRANT: the narrow part of a wide package.
 # --------------------------------------------------------------------------
-def test_the_preflight_seam_grants_the_query_module_not_the_frontend() -> None:
+def test_the_read_query_seam_grants_the_query_module_not_the_frontend() -> None:
     # The whole point of the narrowing: the frontend PACKAGE reaches the port
     # (`_formation_profile -> opt_lock -> unit_work -> db_port`), and a forbidden
     # row is the complement of a closure, so granting the package would put the
     # port permanently out of the row's reach. The Object Query module does not
     # reach it, so the ordinary row forbids it.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    scope = "parallax.core._execution._preflight"
+    scope = "parallax.core._execution._read_query"
     assert dag.PYTHON_FIRST_PARTY_GRANTS[scope] == frozenset(
         {
             "parallax.core.metamodel",
@@ -1530,27 +1530,27 @@ def test_the_engine_slice_may_import_the_adapter_and_the_driver(linted_copy: Pat
 
 
 # --------------------------------------------------------------------------
-# Canary 5: the read-preflight seam may not reach a Database Port — by name...
+# Canary 5: the read-query seam may not reach a Database Port — by name...
 # --------------------------------------------------------------------------
-def test_a_direct_port_import_in_the_preflight_seam_fails_lint_imports(linted_copy: Path) -> None:
+def test_a_direct_port_import_in_the_read_query_seam_fails_lint_imports(linted_copy: Path) -> None:
     reported = broken_by(
         linted_copy,
-        "parallax.core._execution._preflight",
+        "parallax.core._execution._read_query",
         "import parallax.core.db_port  # deliberate port violation",
     )
 
     assert (
-        "parallax.core._execution._preflight may import only its permitted dependencies BROKEN"
+        "parallax.core._execution._read_query may import only its permitted dependencies BROKEN"
         in reported
     )
-    assert "parallax.core._execution._preflight -> parallax.core.db_port" in reported
+    assert "parallax.core._execution._read_query -> parallax.core.db_port" in reported
 
 
 # --------------------------------------------------------------------------
 # ...and Canary 6: nor through a chain. This is the half a row carrying
 # `allow_indirect_imports` cannot prove.
 # --------------------------------------------------------------------------
-def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports(linted_copy: Path) -> None:
+def test_an_indirect_reach_out_of_the_read_query_seam_fails_lint_imports(linted_copy: Path) -> None:
     # The seam's row forbids `parallax.core.entity` outright, so naming
     # `parallax.core.entity._model` breaks it on that edge alone. What this canary
     # adds is the half a row carrying `allow_indirect_imports` cannot prove: where
@@ -1558,16 +1558,16 @@ def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports(linted_c
     # chain toward the port that made the whole frontend too wide a grant.
     reported = broken_by(
         linted_copy,
-        "parallax.core._execution._preflight",
+        "parallax.core._execution._read_query",
         "import parallax.core.entity._model  # deliberate reach violation",
     )
 
     assert (
-        "parallax.core._execution._preflight may import only its permitted dependencies BROKEN"
+        "parallax.core._execution._read_query may import only its permitted dependencies BROKEN"
         in reported
     )
     # Two hops: the seam names the Domain Model, which names model formation.
-    assert "parallax.core._execution._preflight -> parallax.core.entity._model" in reported
+    assert "parallax.core._execution._read_query -> parallax.core.entity._model" in reported
     assert "parallax.core.entity._model -> parallax.core._formation_profile" in reported
 
 
@@ -1954,7 +1954,7 @@ def test_minimal_scope_roots_drops_a_scope_beneath_another_member() -> None:
     assert dag.minimal_scope_roots(
         {
             "parallax.core._execution",
-            "parallax.core._execution._preflight",
+            "parallax.core._execution._read_query",
             "parallax.core.entity._layout",
             "parallax.core.base",
         }

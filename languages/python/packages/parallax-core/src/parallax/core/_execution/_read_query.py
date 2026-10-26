@@ -14,7 +14,7 @@ from parallax.core.object_query import (
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.predicate import ModelRejectedError
 
-__all__ = ["QueryTargetError", "preflight"]
+__all__ = ["QueryTargetError", "resolve_read_query"]
 
 
 class QueryTargetError(RuntimeError):
@@ -34,7 +34,7 @@ class QueryTargetError(RuntimeError):
     code: Final[str] = "query-target-not-in-model"
 
 
-def preflight(
+def resolve_read_query(
     query: QueryInput, *, model: Metamodel, form: Literal["rows", "graph"]
 ) -> ResolvedObjectQuery:
     """Resolve and validate ``query`` against ``model``, and do no I/O.
@@ -43,8 +43,8 @@ def preflight(
     adapter is invoked at the same stage, so both meet one gate order.
 
     Target resolution follows the reference-position rule every validator and
-    lowering site resolves a spelling by, so "preflight accepted this target"
-    implies "planning resolves it". Raises
+    lowering site resolves a spelling by, so "read-query resolution accepted this
+    target" implies "planning resolves it". Raises
     the :class:`QueryTargetError` when ``model``
     declares no Entity for it,
     :class:`~parallax.core.predicate.ModelRejectedError` when a clause is not

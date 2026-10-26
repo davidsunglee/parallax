@@ -4,7 +4,7 @@
 ``Entity.is_a(...)`` constructor, and the query-level ``.narrow(...)``
 clause. Authoring reaches no model, so what a spelling BUILDS is checked here
 directly and what a model makes of it runs through the shared read gate
-`preflight`, the seam every execution path calls.
+`resolve_read_query`, the seam every execution path calls.
 
 A deeper relationship hop is composed rather than resolved: the segment is
 spelled from the path's own target, and the model settles its legality at that
@@ -39,7 +39,7 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import TIMESTAMP
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.entity import IncludePath
@@ -70,15 +70,16 @@ from tests._support.query_probes import canonical_query, predicate_node, typed_r
 # it is the composition every case here is measured against at the gate below.
 # Authoring reaches no model, so these classes are queryable without one; what a
 # model supplies is something to execute or export a query against, which is why
-# every case here reaches the preflight or the export rather than a connection.
+# every case here reaches read-query resolution or the export rather than a
+# connection.
 assert _ANIMAL_MODEL is not None
 _DOCUMENTS = read_models.DOCUMENT_MODEL
 
 
-def preflighted(
+def accepted_read_query(
     query: ObjectQuery[Any, Any], models: DomainModel = _ANIMAL_MODEL
 ) -> ObjectQuery[Any, Any]:
-    """``query`` after the shared read preflight accepted it against ``models``,
+    """``query`` after read-query resolution accepted it against ``models``,
     which defaults to the corpus animal model whose family every include/narrow
     case here traverses.
 
@@ -86,7 +87,7 @@ def preflighted(
     the query itself so a case can go on to assert its canonical lowering. A
     rejection propagates.
     """
-    preflight(object_query_node(query, models), model=model_of(models), form="graph")
+    resolve_read_query(object_query_node(query, models), model=model_of(models), form="graph")
     return query
 
 
@@ -167,7 +168,7 @@ def test_a_path_that_already_continued_cannot_continue_again() -> None:
 def test_a_deeper_hop_naming_no_declared_relationship_is_refused_at_the_gate() -> None:
     query = sm.SnapOrder.where(sm.SnapOrder.all).include(sm.SnapOrder.items.bogus_relationship)
     with pytest.raises(ValueError, match="names no declared relationship on SnapOrderItem"):
-        preflighted(query, sm.SNAP_ORDERS_MODEL)
+        accepted_read_query(query, sm.SNAP_ORDERS_MODEL)
 
 
 def test_include_accumulates_across_calls() -> None:
@@ -347,7 +348,7 @@ def test_a_root_guard_outside_the_queried_position_is_rejected_at_the_gate() -> 
     # its source, so a sibling's path never reaches this query's position, and an
     # ignore that goes idle fails `just python-typecheck`.
     with pytest.raises(ModelRejectedError) as exc:
-        preflighted(Pet.where(Pet.all).include(WildBoar.owner))  # pyright: ignore[reportArgumentType]
+        accepted_read_query(Pet.where(Pet.all).include(WildBoar.owner))  # pyright: ignore[reportArgumentType]
     assert exc.value.rule == "narrow-outside-position"
 
 
@@ -453,7 +454,7 @@ def test_python_narrowing_rejects_an_exact_duplicate_at_construction(build: Any)
 def test_model_aware_narrowing_rejects_overlapping_alternatives() -> None:
     query = im.Document.where(im.Document.is_a(im.FinancialDocument, im.Invoice))
     with pytest.raises(ModelRejectedError) as caught:
-        preflighted(query, _DOCUMENTS)
+        accepted_read_query(query, _DOCUMENTS)
     assert caught.value.rule == "subtype-selection-overlapping-alternatives"
 
 
@@ -479,7 +480,9 @@ def test_narrow_broadening_outside_the_threaded_position_is_rejected() -> None:
     # FinancialDocument's effective set is {Invoice, Receipt}; nesting a
     # same-position narrow to Memo (outside it) must be rejected.
     with pytest.raises(ModelRejectedError) as caught:
-        preflighted(im.FinancialDocument.where(im.FinancialDocument.is_a(im.Memo)), _DOCUMENTS)
+        accepted_read_query(
+            im.FinancialDocument.where(im.FinancialDocument.is_a(im.Memo)), _DOCUMENTS
+        )
     assert caught.value.rule == "narrow-outside-position"
 
 
@@ -536,7 +539,7 @@ def test_subtype_attribute_outside_narrow_scope_is_rejected_at_the_gate() -> Non
     # never reaches an ancestor's position, and an ignore that goes idle fails
     # `just python-typecheck`.
     with pytest.raises(ModelRejectedError) as caught:
-        preflighted(im.Document.where(im.Invoice.amount_due > 3), _DOCUMENTS)  # pyright: ignore[reportArgumentType]
+        accepted_read_query(im.Document.where(im.Invoice.amount_due > 3), _DOCUMENTS)  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
@@ -569,8 +572,8 @@ def test_narrowing_last_is_refused_statically_and_only_statically() -> None:
         im.Invoice.amount_due > 3  # pyright: ignore[reportArgumentType]
     ).narrow(im.Invoice)
     scoped = im.Document.where(im.Document.is_a(im.Invoice, where=im.Invoice.amount_due > 3))
-    preflighted(narrowed, _DOCUMENTS)
-    preflighted(scoped, _DOCUMENTS)
+    accepted_read_query(narrowed, _DOCUMENTS)
+    accepted_read_query(scoped, _DOCUMENTS)
     assert canonical_query(narrowed, _DOCUMENTS) == canonical_query(scoped, _DOCUMENTS)
 
 
@@ -640,7 +643,7 @@ def test_a_deferred_combination_is_a_valid_query_the_gate_refuses_by_name() -> N
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
     with pytest.raises(DeferredFeatureError) as caught:
-        preflight(
+        resolve_read_query(
             object_query_node(query, POLICY_MODEL), model=model_of(POLICY_MODEL), form="graph"
         )
     assert caught.value.features == ("snapshot-history-includes",)

@@ -7,7 +7,7 @@ from typing import cast
 from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core import inheritance
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.entity import DomainModel
 from parallax.core.execution import (
     ServingModel,
@@ -219,13 +219,14 @@ def first_declared_entity(case: case_format.Case) -> str:
 
 
 def gate_read(query: ObjectQueryNode, model: AcceptedMetamodel) -> None:
-    """Run production's own read gate (`execution._preflight.preflight`) over ``query`` for its
-    refusal alone: it resolves the target, validates every clause from that
-    root, and classifies Deferred Execution Features."""
-    preflight(query, model=model, form="graph")
+    """Run production's own read gate (`execution._read_query.resolve_read_query`)
+    over ``query`` for its refusal alone: it resolves the target, validates every
+    clause from that root, and classifies Deferred Execution Features."""
+    resolve_read_query(query, model=model, form="graph")
 
 
 def read_scans(query: ObjectQueryNode, model: AcceptedMetamodel) -> bool:
     """Whether ``query`` scans any temporal dimension — a milestone-set read — as
-    production's own gate (`execution._preflight.preflight`) validates it."""
-    return scans_resolved_axis(preflight(query, model=model, form="graph").temporal)
+    production's own gate (`execution._read_query.resolve_read_query`) validates
+    it."""
+    return scans_resolved_axis(resolve_read_query(query, model=model, form="graph").temporal)

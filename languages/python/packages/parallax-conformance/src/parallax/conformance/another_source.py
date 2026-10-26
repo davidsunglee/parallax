@@ -6,8 +6,8 @@ from types import MappingProxyType
 from typing import Any, cast
 
 from parallax.core import ObjectQuery
-from parallax.core._execution._preflight import preflight
 from parallax.core._execution._publication import read_projection
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity import (
     UNLOADED,
@@ -99,7 +99,7 @@ class AnotherSource:
                 "this source materializes root-only Pages, and the query includes "
                 "a relationship level"
             )
-        validated = preflight(node, model=self._model.meta, form="graph")
+        validated = resolve_read_query(node, model=self._model.meta, form="graph")
         result = execute_read(validated, self._model, self._port, origin_collector=_NO_ORIGINS)
         return cast("tuple[S, ...]", self._materialize(result.page))
 

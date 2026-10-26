@@ -8,8 +8,8 @@ from parallax.core._execution._adoption import AdoptedExecution
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._connection_lifecycle import enter_connection, exit_connection
 from parallax.core._execution._page_origins import ReadEvidenceCollector
-from parallax.core._execution._preflight import preflight
 from parallax.core._execution._publication import SelectedReadModel
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.uow import Concurrency
@@ -143,7 +143,9 @@ def read_graph[Eager](
     is selected inside the bracket, after any read gate.
     """
     selected = read.selected
-    checked = preflight(interpreted(selected, query), model=selected.model.meta, form="graph")
+    checked = resolve_read_query(
+        interpreted(selected, query), model=selected.model.meta, form="graph"
+    )
 
     def published(activity: ReadActivity, inputs: ReadInputs) -> Eager:
         if scans_resolved_axis(checked.temporal):
@@ -183,7 +185,7 @@ def read_rows(read: BegunRead, node: ObjectQueryNode, planner: ReadPlanner) -> R
     nothing.
     """
     selected = read.selected
-    checked = preflight(node, model=selected.model.meta, form="rows")
+    checked = resolve_read_query(node, model=selected.model.meta, form="rows")
 
     def published(activity: ReadActivity, inputs: ReadInputs) -> RowsResult:
         return find_rows(
@@ -202,7 +204,7 @@ def read_rows(read: BegunRead, node: ObjectQueryNode, planner: ReadPlanner) -> R
 
 def resolved(read: BegunRead, query: ReadQuery, /) -> ResolvedObjectQuery:
     """``query`` through the shared read gate, under the selection ``read`` adopted."""
-    return preflight(interpreted(read.selected, query), model=read.meta, form="graph")
+    return resolve_read_query(interpreted(read.selected, query), model=read.meta, form="graph")
 
 
 def read_page(

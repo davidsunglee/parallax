@@ -9,12 +9,12 @@ from parallax.core._execution._keyed_writes import (
 )
 from parallax.core._execution._options import ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._planning import prepare_model
-from parallax.core._execution._preflight import QueryTargetError
 from parallax.core._execution._publication import (
     ModelSelection,
     PublicationConflictError,
     ServingModel,
 )
+from parallax.core._execution._read_query import QueryTargetError
 from parallax.core._execution._transaction._runner import (
     TransactionAccessModeError,
     TransactionAuthorityError,

@@ -26,7 +26,7 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core._execution._preflight import preflight
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.entity import model_of
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredQuantifier
@@ -325,7 +325,7 @@ def test_a_target_local_narrow_exports_its_reached_entitys_paths_relative() -> N
 
 def _wire_accepts(query: Any, model: DomainModel) -> dict[str, object]:
     node = object_query_node(query, model)
-    preflight(node, model=model_of(model), form="graph")
+    resolve_read_query(node, model=model_of(model), form="graph")
     return serialize(node.predicate)
 
 

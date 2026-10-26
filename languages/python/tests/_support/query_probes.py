@@ -13,9 +13,9 @@ from __future__ import annotations
 import functools
 from typing import Any, Literal
 
-from parallax.core._execution._preflight import preflight
 from parallax.core._execution._publication import SelectedReadModel, read_projection
 from parallax.core._execution._read_policy import interpreted
+from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.entity import DomainModel
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.execution import prepare_model
@@ -70,6 +70,6 @@ def typed_resolved(
     """``query`` resolved through the Typed adapter against ``model``, exactly as a
     read resolves it once it has adopted that model."""
     selected = _selected(model)
-    return preflight(
+    return resolve_read_query(
         interpreted(selected, typed_read_query(query)), model=selected.model.meta, form=form
     )
