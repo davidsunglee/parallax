@@ -258,9 +258,12 @@ class LoweredStatement:
         return LoweredStatement(sql, tuple(bound), spans, overrides, self._compiler_proven)
 
 
-EXPANDING_PLACEHOLDER: Final = "__parallax_deferred_keys__"
+EXPANDING_PLACEHOLDER: Final = "\0deferred_keys\0"
 """The SQL text a placeholder of gathered keys that expand stands in until its
-template renders one placeholder per key."""
+template renders one placeholder per key.
+
+Neither PostgreSQL nor MariaDB admits NUL in an identifier, so no identifier in
+a statement's SQL can spell this placeholder."""
 
 _KEYS: Final[ExecutionValueSource] = ("keys",)
 _UNRENDERED: Final = "a deferred execution value has no Wire projection until its template renders"
