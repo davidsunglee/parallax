@@ -8,7 +8,6 @@ stable Postgres major; bump the tag as new majors ship.
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
@@ -23,6 +22,7 @@ from testcontainers.community.postgres import PostgresContainer
 
 from .. import errors
 from .._declared_contributor import TEMPORAL_INFINITY
+from .._sql_placeholders import array_bind_indexes
 from ..ddl_builder import quote_identifier
 from ..document_codec import ParsedJsonString, is_document
 from ..portable_literal import AuthoredNumber
@@ -120,10 +120,7 @@ def _adapt(value: Any) -> Any:
 
 def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
     physical = adapt_document_scalar_binds(sql, binds, "postgres")
-    array_binds = {
-        sql[: match.start()].count("?")
-        for match in re.finditer(r"\bany\s*\(\?\)", sql, flags=re.IGNORECASE)
-    }
+    array_binds = array_bind_indexes(sql)
     return tuple(
         value if index in array_binds else _adapt(value) for index, value in enumerate(physical)
     )

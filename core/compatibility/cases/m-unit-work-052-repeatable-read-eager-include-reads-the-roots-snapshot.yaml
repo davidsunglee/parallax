@@ -42,7 +42,7 @@ when:
           kind: read
           statements:
             - sql:
-                postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(?)
+                postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(cast(? as bigint[]))
                 mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
               binds: { postgres: [[1]], mariadb: [1] }
           expectRows:

@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+import re
+
 import sqlglot
 from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
 _PLACEHOLDER_PREFIX = "__parallax_bind_"
+
+# One array parameter compared through `any`, bare or cast to an array type
+# (`any(?)`, `any(cast(? as bigint[]))`).
+_ARRAY_PARAMETER = re.compile(
+    r"\bany\s*\(\s*(?:\?|cast\s*\(\s*\?\s+as\s+[a-z ]+\[\s*\]\s*\))\s*\)",
+    flags=re.IGNORECASE,
+)
+
+
+def array_bind_indexes(statement: str) -> frozenset[int]:
+    """The positional indexes of the binds *statement* passes as one array each."""
+    return frozenset(
+        statement[: match.start()].count("?") for match in _ARRAY_PARAMETER.finditer(statement)
+    )
 
 
 def parse_indexed_statement(statement: str, dialect: str) -> Expr | None:

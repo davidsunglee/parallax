@@ -308,7 +308,7 @@ def test_one_default_transaction_locks_the_unversioned_level_and_not_the_version
     )
     assert level_sql == POSTGRES.to_driver_sql(
         "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-        "where t0.consignment_id = any(?) for share of t0"
+        "where t0.consignment_id = any(cast(? as bigint[])) for share of t0"
     )
 
 

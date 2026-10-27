@@ -334,7 +334,7 @@ def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversi
         ReadCall(
             POSTGRES.to_driver_sql(
                 "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-                "where t0.consignment_id = any(?) for share of t0"
+                "where t0.consignment_id = any(cast(? as bigint[])) for share of t0"
             ),
             ([1],),
         ),
@@ -369,7 +369,7 @@ def test_one_preference_produces_both_behaviors_across_two_entities() -> None:
             ReadCall,
             POSTGRES.to_driver_sql(
                 "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-                "where t0.consignment_id = any(?) for share of t0"
+                "where t0.consignment_id = any(cast(? as bigint[])) for share of t0"
             ),
         ),
         (

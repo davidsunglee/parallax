@@ -785,7 +785,7 @@ def _render_membership(
         array = scope.dialect.name == "postgres"
         scope.ctx.bind_deferred(("keys",), gathered_keys_form(values.neutral_type, array))
         if array:
-            return f"{subject.compared} = any(?)"
+            return f"{subject.compared} = any({scope.dialect.array_parameter(values.neutral_type)})"
         return f"{subject.compared} in ({EXPANDING_PLACEHOLDER})"
     holes = ", ".join("?" for _ in values)
     for index, value in enumerate(values):

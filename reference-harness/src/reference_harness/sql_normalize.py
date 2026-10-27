@@ -84,6 +84,12 @@ _TIGHT_PAREN_KEYWORDS = frozenset({"ANY"})
 # drives the "no space before the following ``(``" spacing rule.
 _FUNCTION_NAME = "function-name"
 
+# A private spacing sentinel for the empty brackets of an array type
+# (``cast(? as bigint[])``, the m-dialect *array parameter cast form*). They bind
+# tight to the type name, while an array constructor or subscript keeps its spaced
+# brackets (``array [ false ]``, ``) [ 1 ]``).
+_ARRAY_TYPE_SUFFIX = "array-type-suffix"
+
 # SQL keywords that sqlglot tokenizes as ``VAR`` rather than a dedicated keyword
 # token. The row-locking suffix ``for SHARE OF t0`` is the case in point: sqlglot
 # tokenizes ``SHARE`` and ``OF`` as ``VAR`` and its generator emits them
@@ -255,16 +261,37 @@ def _render_tokens(tokens: list[Token], dialect: str) -> str:
         is_keyword_var = token.token_type is TokenType.VAR and text.upper() in _KEYWORD_VARS
         if token.token_type not in _VALUE_TOKENS or is_function_name or is_keyword_var:
             text = text.lower()
-        token_type = _FUNCTION_NAME if (is_function_name or is_paren_type) else token.token_type
+        token_type: _RenderTokenType = (
+            _FUNCTION_NAME if (is_function_name or is_paren_type) else token.token_type
+        )
+        if _array_type_suffix(tokens, index):
+            token_type = _ARRAY_TYPE_SUFFIX
         parts.append((token_type, text))
     return _join_rendered(parts)
+
+
+def _array_type_suffix(tokens: list[Token], index: int) -> bool:
+    """Whether ``tokens[index]`` is a bracket of an empty ``[]`` after a type name."""
+    token_type = tokens[index].token_type
+    if token_type is TokenType.L_BRACKET:
+        return (
+            0 < index < len(tokens) - 1
+            and tokens[index - 1].token_type in _SQL_TYPE_TOKENS
+            and tokens[index + 1].token_type is TokenType.R_BRACKET
+        )
+    return token_type is TokenType.R_BRACKET and index > 0 and _array_type_suffix(tokens, index - 1)
 
 
 def _join_rendered(parts: list[tuple[_RenderTokenType, str]]) -> str:
     """Join rendered tokens with spaces, but keep punctuation tight (no space
     before ``,`` ``.`` ``)`` and no space after ``(`` ``.`` and a function name)."""
     out: list[str] = []
-    no_space_before = {TokenType.COMMA, TokenType.DOT, TokenType.R_PAREN}
+    no_space_before: set[_RenderTokenType] = {
+        TokenType.COMMA,
+        TokenType.DOT,
+        TokenType.R_PAREN,
+        _ARRAY_TYPE_SUFFIX,
+    }
     no_space_after: set[_RenderTokenType] = {TokenType.L_PAREN, TokenType.DOT, _FUNCTION_NAME}
     prev_type: _RenderTokenType | None = None
     for token_type, text in parts:

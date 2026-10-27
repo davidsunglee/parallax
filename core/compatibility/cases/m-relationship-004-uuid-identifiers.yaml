@@ -21,7 +21,7 @@ then:
         postgres: select t0.id, t0.label from uuid_parent t0
         mariadb: select t0.id, t0.label from uuid_parent t0
     - sql:
-        postgres: select t0.id, t0.parent_id from uuid_child t0 where t0.parent_id = any(?) order by t0.id asc
+        postgres: select t0.id, t0.parent_id from uuid_child t0 where t0.parent_id = any(cast(? as uuid[])) order by t0.id asc
         mariadb: select t0.id, t0.parent_id from uuid_child t0 where t0.parent_id in (?) order by t0.id asc
       binds:
         postgres: [['123e4567-e89b-12d3-a456-426614174000']]

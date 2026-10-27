@@ -396,9 +396,12 @@ _ANIMAL_BY_ID = {row["id"]: row for row in _ROOT_ANIMALS}
 
 _PETS_LEVEL_SQL = (
     "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
-    "t0.bark_volume from animal t0 where t0.owner_id = any(?) and "
+    "t0.bark_volume from animal t0 where t0.owner_id = any(cast(? as bigint[])) and "
     "t0.kind in (?, ?)"
 )
+
+
+_PEOPLE_LEVEL_SQL = "select t0.id, t0.name from person t0 where t0.id = any(cast(? as bigint[]))"
 
 
 def _pet_level_rows(*ids: int) -> list[dict[str, Any]]:
@@ -451,7 +454,7 @@ def _both_guarded_branches_continue(case: Case) -> Case:
     case.then["statements"] = [
         {"sql": {"postgres": case.then["statements"][0]["sql"]["postgres"]}},
         {
-            "sql": {"postgres": "select t0.id, t0.name from person t0 where t0.id = any(?)"},
+            "sql": {"postgres": _PEOPLE_LEVEL_SQL},
             "binds": [[12]],
         },
         {
@@ -459,7 +462,7 @@ def _both_guarded_branches_continue(case: Case) -> Case:
             "binds": [[12], "cat", "dog"],
         },
         {
-            "sql": {"postgres": "select t0.id, t0.name from person t0 where t0.id = any(?)"},
+            "sql": {"postgres": _PEOPLE_LEVEL_SQL},
             "binds": [[10, 11]],
         },
         {
@@ -580,11 +583,25 @@ def test_a_broad_singleton_hop_keeps_the_unguarded_root_target(
     case = damaged_case(_PARTIAL_TPH_INCLUDE)
     child = case.then["statements"][1]
     child["sql"]["postgres"] = child["sql"]["postgres"].replace(
-        "= any(?)", "= any(?) and t0.kind = ?"
+        "= any(cast(? as bigint[]))", "= any(cast(? as bigint[])) and t0.kind = ?"
     )
     child["binds"]["postgres"] = [[10, 11, 12], "wolf"]
 
     with pytest.raises(CaseFailure, match=r"level 1 \(beasts\) as-of suffix \['wolf'\]"):
+        assert_case_read(case, ScriptedReads(results=[_KEEPERS, _KEPT_BEASTS, _KEEPERS]))
+
+
+@pytest.mark.parametrize("key_array", ["?", "cast(? as int[])"], ids=["uncast", "narrower-type"])
+def test_a_postgres_level_casts_its_keys_to_the_key_type(
+    damaged_case: CaseLoader, key_array: str
+) -> None:
+    case = damaged_case(_PARTIAL_TPH_INCLUDE)
+    child = case.then["statements"][1]
+    child["sql"]["postgres"] = child["sql"]["postgres"].replace(
+        "= any(cast(? as bigint[]))", f"= any({key_array})"
+    )
+
+    with pytest.raises(CaseFailure, match=r"level 1 \(beasts\) does not compare its gathered keys"):
         assert_case_read(case, ScriptedReads(results=[_KEEPERS, _KEPT_BEASTS, _KEEPERS]))
 
 

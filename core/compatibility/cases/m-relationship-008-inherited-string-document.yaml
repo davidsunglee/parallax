@@ -22,7 +22,7 @@ then:
         mariadb: select t0.id, not t0.payload is null, t0.payload from string_family t0 where t0.kind = ?
       binds: [leaf]
     - sql:
-        postgres: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from string_link t0 where t0.parent_id = any(?) order by t0.id asc
+        postgres: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from string_link t0 where t0.parent_id = any(cast(? as text[])) order by t0.id asc
         mariadb: select t0.id, t0.parent_id, not t0.payload is null, t0.payload from string_link t0 where t0.parent_id in (?) order by t0.id asc
       binds: {postgres: [[inherited-A]], mariadb: [inherited-A]}
   referenceSql: select id, kind, payload from string_family where kind = 'leaf'

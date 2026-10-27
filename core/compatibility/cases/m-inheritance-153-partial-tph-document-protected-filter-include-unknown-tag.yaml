@@ -35,7 +35,7 @@ then:
         postgres: select u.id, u.kind, u.leader_id, not u.payload is null, u.payload from (select p1.id, p1.kind, p1.leader_id, p1.payload from (select * from beast_document t0 where t0.kind = ? offset 0) p1 where 1 = 0 or jsonb_extract_path_text(p1.payload, ?) = ? union all select p2.id, p2.kind, p2.leader_id, p2.payload from (select * from beast_document t0 where t0.kind = ? offset 0) p2 where jsonb_extract_path_text(p2.payload, ?) = ? or jsonb_extract_path_text(p2.payload, ?) = ?) u order by u.id asc
       binds: [fox, name, Bruno, wolf, howl, aroo, name, Bruno]
     - sql:
-        postgres: select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload from beast_document t0 where t0.leader_id = any(?) order by t0.id asc
+        postgres: select t0.id, t0.kind, t0.leader_id, not t0.payload is null, t0.payload from beast_document t0 where t0.leader_id = any(cast(? as bigint[])) order by t0.id asc
       binds: [[1, 2]]
   referenceSql: select id, kind, leader_id, payload from beast_document where (kind = 'fox' and payload ->> 'name' = 'Bruno') or (kind = 'wolf' and (payload ->> 'howl' = 'aroo' or payload ->> 'name' = 'Bruno')) order by id
   graph:

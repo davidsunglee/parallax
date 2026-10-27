@@ -34,6 +34,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from reference_harness._case_execution import CaseExecution
+from reference_harness._sql_placeholders import array_bind_indexes
 from reference_harness.case import Case, Model, discover_cases
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
@@ -204,6 +205,16 @@ def test_case_execution_converts_autocommit_and_held_session_binds() -> None:
         (statement, (Decimal("999.00"), 2, 2)),
         (statement, (Decimal("999.00"), 2, 2)),
     ]
+
+
+def test_an_array_bind_is_found_bare_or_cast_to_an_array_type() -> None:
+    statement = (
+        "select t0.id from item t0 where t0.a = ? and t0.b = any(?) "
+        "and t0.c = any(cast(? as bigint[])) and t0.d = any(cast(? as double precision[])) "
+        "and t0.e in (?, ?)"
+    )
+
+    assert array_bind_indexes(statement) == {1, 2, 3}
 
 
 def test_reference_sql_for_string_is_dialect_neutral() -> None:

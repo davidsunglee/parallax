@@ -574,7 +574,7 @@ def test_a_broad_hop_keeps_its_abstract_root_target_over_one_composed_concrete()
     assert level.query.narrow_to is None
     assert _child_sql(BEAST, level) == (
         "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 "
-        "where t0.keeper_id = any(?) order by t0.id asc",
+        "where t0.keeper_id = any(cast(? as bigint[])) order by t0.id asc",
         ("<keys>",),
     )
 
@@ -586,7 +586,7 @@ def test_a_singleton_narrow_keeps_its_guard_over_every_composed_concrete() -> No
     assert level.query.narrow_to is None
     assert _child_sql(BEAST, level) == (
         "select t0.id, t0.name, t0.keeper_id, t0.howl from beast t0 "
-        "where t0.keeper_id = any(?) and t0.kind = ? order by t0.id asc",
+        "where t0.keeper_id = any(cast(? as bigint[])) and t0.kind = ? order by t0.id asc",
         ("<keys>", "wolf"),
     )
 
@@ -597,7 +597,7 @@ def test_a_broad_hop_keeps_an_abstract_subtype_target_and_its_guard() -> None:
     assert level.query.target == EntityIdentity("parallax.compatibility", "Pet")
     assert _child_sql(model, level) == (
         "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume "
-        "from animal t0 where t0.owner_id = any(?) and t0.kind = ?",
+        "from animal t0 where t0.owner_id = any(cast(? as bigint[])) and t0.kind = ?",
         ("<keys>", "dog"),
     )
 
@@ -608,7 +608,7 @@ def test_a_broad_tpcs_hop_over_one_composed_concrete_reads_its_one_table() -> No
     assert level.query.target == EntityIdentity("parallax.compatibility", "Document")
     assert _child_sql(model, level) == (
         "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0 "
-        "where t0.folder_id = any(?)",
+        "where t0.folder_id = any(cast(? as bigint[]))",
         ("<keys>",),
     )
 
@@ -739,10 +739,10 @@ def test_original_root_coordinates_survive_a_non_temporal_middle_level() -> None
     rosters, members = _query_step(plan, 0), _query_step(plan, 1)
 
     assert _child_terms(rosters.query) == ()
-    assert _child_where(rosters) == (["t0.program_id = any(?)"], ("<keys>",))
+    assert _child_where(rosters) == (["t0.program_id = any(cast(? as bigint[]))"], ("<keys>",))
     assert _child_terms(members.query) == _injected(_PROGRAM, "Member", _VALID, _TX)
     assert _child_where(members) == (
-        [f"t0.roster_id = any(?) and {_PINNED_WHERE}"],
+        [f"t0.roster_id = any(cast(? as bigint[])) and {_PINNED_WHERE}"],
         ("<keys>", _VALID, _VALID, _TX, _TX),
     )
 
@@ -750,20 +750,24 @@ def test_original_root_coordinates_survive_a_non_temporal_middle_level() -> None
 @pytest.mark.parametrize(
     ("segment", "where", "target"),
     [
-        (_seg("Program.rates"), [f"t0.program_id = any(?) and {_PINNED_WHERE}"] * 2, "Rate"),
+        (
+            _seg("Program.rates"),
+            [f"t0.program_id = any(cast(? as bigint[])) and {_PINNED_WHERE}"] * 2,
+            "Rate",
+        ),
         (
             _seg("Program.rates", ("DepositRate",)),
-            [f"t0.program_id = any(?) and {_PINNED_WHERE}"],
+            [f"t0.program_id = any(cast(? as bigint[])) and {_PINNED_WHERE}"],
             "DepositRate",
         ),
         (
             _seg("Program.creatures", ("Lion",)),
-            [f"t0.program_id = any(?) and {_PINNED_WHERE} and t0.kind = ?"],
+            [f"t0.program_id = any(cast(? as bigint[])) and {_PINNED_WHERE} and t0.kind = ?"],
             "Lion",
         ),
         (
             _seg("Program.creatures", ("Lion", "Tiger")),
-            [f"t0.program_id = any(?) and {_PINNED_WHERE} and t0.kind in (?, ?)"],
+            [f"t0.program_id = any(cast(? as bigint[])) and {_PINNED_WHERE} and t0.kind in (?, ?)"],
             "Creature",
         ),
     ],
@@ -795,7 +799,10 @@ def test_a_scanned_root_axis_leaves_every_level_at_latest_on_it() -> None:
 
     assert _child_terms(members.query) == _injected(_PROGRAM, "Member", None, _TX)
     assert _child_where(members) == (
-        ["t0.roster_id = any(?) and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?"],
+        [
+            "t0.roster_id = any(cast(? as bigint[])) "
+            "and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?"
+        ],
         ("<keys>", INFINITY, _TX, _TX),
     )
 

@@ -488,7 +488,9 @@ def test_an_include_child_binds_its_retained_perspective_after_its_keys() -> Non
         .statement
     )
 
-    assert statement.sql.endswith(f"from ship t0 where t0.fleet_id = any(?) and {_visible('t0.')}")
+    assert statement.sql.endswith(
+        f"from ship t0 where t0.fleet_id = any(cast(? as bigint[])) and {_visible('t0.')}"
+    )
     assert statement.binds == ([1, 2], *_PINNED_BINDS)
     assert statement.wire_binds() == ([1, 2], *_PINNED_WIRE)
     assert _spans(statement) == [
