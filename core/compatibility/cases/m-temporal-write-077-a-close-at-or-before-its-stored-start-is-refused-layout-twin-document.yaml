@@ -1,13 +1,3 @@
-# A close ends its predecessor at the attempt's Transaction Instant, so that instant
-# must follow the predecessor's stored Transaction-Time start (m-temporal-write
-# 'A close follows its predecessor's start'). Each refused group scripts a clock at
-# or behind a stored start: an observed bounded amendment whose head, middle, and
-# tail would open at an instant equal to its predecessor's start, a target
-# termination behind it, and a target amendment of a later rectangle whose start
-# alone the instant does not follow. Each is a Temporal Conflict: the group rolls
-# back with nothing closed or opened, and each replay within the bound refuses
-# again at the same instant. The control states the first refusal's write at a
-# later instant, where it closes and splits as usual.
 model: models/buffered-sequence-layout-twin-document.yaml
 tags: [m-temporal-write, m-unit-work, m-auto-retry, m-storage-layout, scenario, bitemporal, temporal, observed-state, target-write, abort, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
 shape: scenario

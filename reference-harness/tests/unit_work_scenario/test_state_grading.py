@@ -310,7 +310,7 @@ def test_a_temporal_conflict_needs_a_current_row_its_instant_does_not_follow(
 ) -> None:
     case = damaged_case(_CONFLICT)
     case.when["scenario"][2]["write"][0]["at"] = "2023-12-02T00:00:00.000000Z"
-    with pytest.raises(CaseFailure, match="no current row of it starts at or after"):
+    with pytest.raises(CaseFailure, match="no current row of it that flush would close"):
         _grade(case)
 
 
@@ -321,6 +321,96 @@ def test_a_temporal_conflict_names_an_object_its_flush_would_close(
     case.then["units"]["behind"]["flushFailure"]["key"] = {"id": 4}
     with pytest.raises(CaseFailure, match="no submission pending at that flush writes it"):
         _grade(case)
+
+
+def test_an_insertion_raises_no_temporal_conflict(damaged_case: CaseLoader) -> None:
+    case = damaged_case(_CONFLICT)
+    case.when["scenario"][3]["write"][0] = {
+        "mutation": "insertUntil",
+        "entity": "parallax.compatibility.SequenceSpan",
+        "rows": [{"id": 3, "amount": 250, "label": "c", "memo": {"note": "n3"}}],
+        "validFrom": "2023-01-01T00:00:00.000000Z",
+        "until": "2023-06-01T00:00:00.000000Z",
+        "at": "2023-12-10T00:00:00.000000Z",
+    }
+    with pytest.raises(CaseFailure, match="no submission pending at that flush writes it"):
+        _grade(case)
+
+
+def test_a_temporal_conflict_needs_a_later_row_in_the_window_its_write_closes(
+    damaged_case: CaseLoader,
+) -> None:
+    # Only span 3's earlier rectangle, which the instant follows, meets the window.
+    case = damaged_case(_CONFLICT)
+    write = case.when["scenario"][3]["write"][0]
+    write["validFrom"] = "2024-02-01T00:00:00.000000Z"
+    write["until"] = "2024-04-01T00:00:00.000000Z"
+    with pytest.raises(CaseFailure, match="no current row of it that flush would close"):
+        _grade(case)
+
+
+_ENDED = "2023-12-20T00:00:00.000000Z"
+
+
+def test_a_temporal_conflict_needs_a_row_no_earlier_commit_closed(
+    damaged_case: CaseLoader,
+) -> None:
+    # A peer committing first terminates span 2 entirely, so the refused
+    # termination finds no current row to close.
+    case = damaged_case(_CONFLICT)
+    case.when["scenario"].insert(
+        2,
+        {
+            "uow": "ender",
+            "write": [
+                {
+                    "mutation": "terminate",
+                    "entity": "parallax.compatibility.SequenceSpan",
+                    "row": {"id": 2},
+                    "ifTxStart": _T0,
+                    "validFrom": "2024-01-01T00:00:00.000000Z",
+                    "at": _ENDED,
+                }
+            ],
+        },
+    )
+    case.then["units"]["ender"] = {"outcome": "committed"}
+    _find(_rows(case, "sequence_span"), id=2)["out_z"] = _ENDED
+    with pytest.raises(CaseFailure, match="no current row of it that flush would close"):
+        _grade(case)
+
+
+def test_a_temporal_conflict_may_close_a_row_a_later_starting_group_committed_first(
+    damaged_case: CaseLoader,
+) -> None:
+    # The refused group opens with a read; a peer starting after it amends
+    # span 2 and commits before the refused group's commit flushes its
+    # termination, whose instant precedes the peer's.
+    case = damaged_case(_CONFLICT)
+    scenario = case.when["scenario"]
+    read = {**scenario[0], "uow": "behind"}
+    amend = {
+        "uow": "ahead",
+        "write": [
+            {
+                "mutation": "amend",
+                "entity": "parallax.compatibility.SequenceSpan",
+                "row": {"id": 2, "amount": 120},
+                "ifTxStart": _T0,
+                "validFrom": "2024-01-01T00:00:00.000000Z",
+                "at": _ENDED,
+            }
+        ],
+    }
+    scenario[2:2] = [read, amend]
+    termination = scenario[4]["write"][0]
+    termination["ifTxStart"] = _ENDED
+    termination["at"] = "2023-12-10T00:00:00.000000Z"
+    case.then["units"]["ahead"] = {"outcome": "committed"}
+    rows = _rows(case, "sequence_span")
+    _find(rows, id=2)["out_z"] = _ENDED
+    rows.append(_span(2, "2024-01-01T00:00:00.000000Z", _INF, _ENDED, _INF, 120, "b"))
+    _grade(case)
 
 
 # --- the rules the document settles before any database ---------------------
