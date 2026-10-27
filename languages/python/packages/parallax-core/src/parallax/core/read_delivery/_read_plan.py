@@ -66,7 +66,7 @@ __all__ = [
 
 type ResultForm = Literal["row", "instance"]
 
-DEFAULT_READ_PLAN_CACHE_CAPACITY: Final = 16
+DEFAULT_READ_PLAN_CACHE_CAPACITY: Final = 128
 """The bounded plan reuse a root composed without an explicit capacity gets."""
 
 

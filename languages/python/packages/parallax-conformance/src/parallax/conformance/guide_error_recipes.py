@@ -98,6 +98,6 @@ def open_the_shop_database(
     return connect(
         adapter,
         model,
-        read_plan_cache_capacity=64,
+        read_plan_cache_capacity=512,
         lifecycle_provider=LoggingLifecycleProvider(logging.getLogger("shop.database")),
     )
