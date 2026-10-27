@@ -413,6 +413,101 @@ def test_a_temporal_conflict_may_close_a_row_a_later_starting_group_committed_fi
     _grade(case)
 
 
+def _overtake_observed_span_1(case: Case, peer: dict[str, Any]) -> list[dict[str, Any]]:
+    """Commit *peer*'s write of span 1 between the `equal` group's find and its
+    observed write, dropping the control that writes span 1 too."""
+    scenario = case.when["scenario"]
+    del scenario[4]
+    del case.then["units"]["control"]
+    case.when["uow"]["maxRetries"] = 0
+    scenario.insert(1, {"uow": "ahead", "write": [peer]})
+    case.then["units"]["ahead"] = {"outcome": "committed"}
+    rows = [row for row in _rows(case, "sequence_span") if row["id"] != 1]
+    rows.insert(0, _span(1, "2024-01-01T00:00:00.000000Z", _INF, _T0, _ENDED, 100, "a"))
+    case.then["tableState"]["sequence_span"] = rows
+    return rows
+
+
+@pytest.mark.parametrize("named", [True, False], ids=["named-find", "latest-reading"])
+def test_an_observed_write_is_judged_on_the_predecessor_its_find_recorded(
+    damaged_case: CaseLoader, named: bool
+) -> None:
+    # A peer amends span 1 after the find; the observed write still holds the
+    # start the find recorded, which its instant follows.
+    case = damaged_case(_CONFLICT)
+    rows = _overtake_observed_span_1(
+        case,
+        {
+            "mutation": "amend",
+            "entity": "parallax.compatibility.SequenceSpan",
+            "row": {"id": 1, "amount": 120},
+            "ifTxStart": _T0,
+            "validFrom": "2024-01-01T00:00:00.000000Z",
+            "at": _ENDED,
+        },
+    )
+    rows.insert(1, _span(1, "2024-01-01T00:00:00.000000Z", _INF, _ENDED, _INF, 120, "a"))
+    write = case.when["scenario"][2]["write"][0]
+    write["at"] = "2023-12-10T00:00:00.000000Z"
+    if not named:
+        del write["on"]
+    with pytest.raises(CaseFailure, match="no current row of it that flush would close"):
+        _grade(case)
+
+
+def test_an_observed_write_conflicts_on_a_predecessor_a_peer_closed_since_its_find(
+    damaged_case: CaseLoader,
+) -> None:
+    # A peer wholly terminates span 1 after the find; the observed write's
+    # instant still does not follow the start the find recorded.
+    case = damaged_case(_CONFLICT)
+    _overtake_observed_span_1(
+        case,
+        {
+            "mutation": "terminate",
+            "entity": "parallax.compatibility.SequenceSpan",
+            "row": {"id": 1},
+            "ifTxStart": _T0,
+            "validFrom": "2024-01-01T00:00:00.000000Z",
+            "at": _ENDED,
+        },
+    )
+    _grade(case)
+
+
+def test_an_observed_write_conflicts_on_a_row_its_deferred_range_reaches(
+    damaged_case: CaseLoader,
+) -> None:
+    # The find records span 3's earlier rectangle, which the instant follows;
+    # the window runs past it into the later one, read inside the flush.
+    case = damaged_case(_CONFLICT)
+    scenario = case.when["scenario"]
+    find = {
+        **scenario[0],
+        "uow": "later",
+        "objectQuery": {
+            **scenario[0]["objectQuery"],
+            "predicate": {"eq": {"path": "parallax.compatibility.SequenceSpan.id", "value": 3}},
+            "temporal": {
+                "transaction-time": {"asOf": "latest"},
+                "valid-time": {"asOf": "2024-02-01T00:00:00.000000Z"},
+            },
+        },
+        "expectRows": [_find(_rows(case, "sequence_span"), id=3, in_z=_T0)],
+    }
+    scenario[3]["write"][0] = {
+        "mutation": "amendUntil",
+        "on": 3,
+        "entity": "parallax.compatibility.SequenceSpan",
+        "rows": [{"id": 3, "amount": 250}],
+        "validFrom": "2024-02-01T00:00:00.000000Z",
+        "until": "2024-08-01T00:00:00.000000Z",
+        "at": "2023-12-10T00:00:00.000000Z",
+    }
+    scenario.insert(3, find)
+    _grade(case)
+
+
 # --- the rules the document settles before any database ---------------------
 
 

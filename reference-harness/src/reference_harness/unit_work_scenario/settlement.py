@@ -31,9 +31,10 @@ rows is. The proofs read the document and those rows alone:
   predicate submission of the group has since flushed;
 - **flush failures** — the object a failure names is one the failing flush
   writes, by a submission still pending when it began that the Shortfall can
-  arise from; a Temporal Conflict names an object one of them would close, a row
-  of which, current when that flush ran and within that write's Valid-Time
-  window, starts at or after the group's instant.
+  arise from; a Temporal Conflict names an object one of them would close, a
+  predecessor of which that write holds — the row its find recorded, or a row
+  current when that flush ran within the part of its Valid-Time window no
+  recorded row covers — starts at or after the group's instant.
 """
 
 from __future__ import annotations
@@ -544,13 +545,17 @@ def _assert_overtaken(
     closers: Sequence[Submission],
     starting: Mapping[str, list[dict[str, Any]]],
 ) -> None:
-    """A Temporal Conflict needs a row of its object, current when the failing
-    flush ran and within the Valid-Time window of a write there that would close
-    it, whose Transaction-Time start the group's instant does not follow.
+    """A Temporal Conflict needs a predecessor a write of the failing flush
+    holds, not opened by its own group, whose Transaction-Time start the
+    group's instant does not follow.
 
-    Such a row is one ``then.tableState`` states starting before the group — a
-    starting row's, or one a group committed before that flush opened — and
-    still current then: open, or closed only by a group committing after it.
+    A target write holds the rows within its Valid-Time window that are current
+    when the flush runs. An observed write holds the row its find recorded,
+    however a peer has changed it since, and reads current rows only for the
+    part of its window that row does not cover. A current row is one
+    ``then.tableState`` states starting before the group — a starting row's, or
+    one a group committed before that flush opened — and open, or closed only by
+    a group committing after it.
     """
     case = scenario.case
     entity = failure.entity
@@ -562,6 +567,7 @@ def _assert_overtaken(
             f"on {entity.name}, which only a temporal write stating its instant can raise."
         )
     tx_start, tx_end = tx_axis.start.column, tx_axis.end.column
+    valid_axis = axes.get("valid-time")
     flushed_at = fate.last_step if failure.at == "commit" else failure.at
     committed = [
         other
@@ -571,29 +577,107 @@ def _assert_overtaken(
     before = {_instant(other.instant) for other in committed if other.last_step < flushed_at}
     after = {_instant(other.instant) for other in committed if other.last_step > flushed_at}
     identity = _identity(_identity_value(entity, failure.key))
-    started = {
+    prior = {
         _instant(row.get(tx_start))
         for row in starting.get(entity.table, [])
         if _identity(row.get(entity.identity_column)) == identity
-    }
+    } | before
     current = [
         row
         for row in case.expected_table_state.get(entity.table, [])
         if _identity(row.get(entity.identity_column)) == identity
-        and _instant(row.get(tx_start)) in started | before
+        and _instant(row.get(tx_start)) in prior
         and (_instant(row.get(tx_end)) == _OPEN or _instant(row.get(tx_end)) in after)
     ]
+    held: list[Mapping[str, Any]] = []
+    for closer in closers:
+        if closer.kind == "target":
+            held += [row for row in current if _within_window(row, closer, valid_axis)]
+            continue
+        recorded = _recorded_predecessor(scenario, closer, entity, identity, valid_axis)
+        if recorded is None or _instant(recorded.get(tx_start)) not in prior:
+            continue
+        held.append(recorded)
+        held += [row for row in current if _beyond(row, recorded, closer, valid_axis)]
     instant = _instant(fate.instant)
-    if not any(
-        _instant(row.get(tx_start)) >= instant
-        and any(_within_window(row, closer, axes.get("valid-time")) for closer in closers)
-        for row in current
-    ):
+    if not any(_instant(row.get(tx_start)) >= instant for row in held):
         raise CaseFailure(
             f"{case.path.name}: then.units.{fate.label}.flushFailure is a Temporal Conflict "
             f"on {entity.name} {dict(failure.key)!r}, but no current row of it that flush "
             f"would close starts at or after the group's instant {fate.instant}."
         )
+
+
+def _recorded_predecessor(
+    scenario: CompiledScenario,
+    submission: Submission,
+    entity: Entity,
+    identity: str,
+    valid_axis: Axis | None,
+) -> Mapping[str, Any] | None:
+    """The row of *identity* an observed keyed write was handed: the one the
+    find its ``on`` names recorded, else its group's latest reading of it at its
+    ``validFrom``. ``None`` where it writes through its group's own insertion,
+    which it owns rather than closes."""
+    if submission.settles_on is not None:
+        sources = [(submission.settles_on.object_query, submission.settles_on.observed_rows)]
+    elif submission.entry.get("on") is not None or any(
+        other.inserts and _names_same_object(other, submission)
+        for other in _earlier_in_group(scenario, submission)
+    ):
+        return None
+    else:
+        label = scenario.steps[submission.step].group
+        sources = [
+            (
+                scenario.case.scenario[step.index].get("objectQuery"),
+                scenario.case.scenario[step.index].get("expectRows") or (),
+            )
+            for step in reversed(scenario.steps[: submission.step])
+            if isinstance(step, _RowPublishingStep) and step.group == label
+        ]
+    valid_from = submission.entry.get("validFrom")
+    for query, rows in sources:
+        if not _reads_table(scenario.case, query, entity.table):
+            continue
+        for row in rows:
+            if _identity(row.get(entity.identity_column)) == identity and (
+                valid_axis is None
+                or valid_from is None
+                or _instant(row.get(valid_axis.start.column))
+                <= _instant(valid_from)
+                < _instant(row.get(valid_axis.end.column))
+            ):
+                return row
+    return None
+
+
+def _reads_table(case: Case, query: Mapping[str, Any] | None, table: str) -> bool:
+    target = (query or {}).get("target")
+    if target is None:
+        return True
+    entity = case.model.entity(str(target))
+    return entity.is_abstract or entity.table == table
+
+
+def _beyond(
+    row: Mapping[str, Any],
+    recorded: Mapping[str, Any],
+    submission: Submission,
+    valid_axis: Axis | None,
+) -> bool:
+    """Whether *row* meets the part of *submission*'s Valid-Time window the
+    *recorded* predecessor does not cover, which the flush reads."""
+    entry = submission.entry
+    if valid_axis is None or entry.get("validFrom") is None:
+        return False
+    start, end = valid_axis.start.column, valid_axis.end.column
+    row_from, row_thru = _instant(row.get(start)), _instant(row.get(end))
+    window_from, window_until = _instant(entry["validFrom"]), _instant(entry.get("until"))
+    held_from, held_thru = _instant(recorded.get(start)), _instant(recorded.get(end))
+    return (row_from < min(window_until, held_from) and window_from < row_thru) or (
+        row_from < window_until and max(window_from, held_thru) < row_thru
+    )
 
 
 def _within_window(row: Mapping[str, Any], submission: Submission, valid_axis: Axis | None) -> bool:
