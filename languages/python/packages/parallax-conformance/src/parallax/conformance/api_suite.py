@@ -763,6 +763,7 @@ RECIPES: Final[list[Recipe]] = [
             "    InstructionRejectedError,\n"
             "    OptimisticLockConflictError,\n"
             "    RollbackOnlyError,\n"
+            "    TemporalConflictError,\n"
             "    WriteEvidenceError,\n"
             "    WriteInstructionError,\n"
             "    WritePreconditionError,\n"
@@ -2349,6 +2350,15 @@ _BUFFERED_SEQUENCE_REASON: Final[str] = (
     "developer surface"
 )
 
+_TEMPORAL_CONFLICT_REASON: Final[str] = (
+    "a state-graded buffered sequence whose refused closes run per layout arm through the "
+    "public verbs by the run conformance lane and are checked for consistency by the "
+    "reference harness; a fixed per-unit clock cannot show the replay a Temporal Conflict "
+    "earns, so its developer spelling — the caught refusal, the rollback, and the retry at a "
+    "fresh instant through Typed and Wire under both layouts — is the real-database suite "
+    "`tests/api/test_temporal_conflicts.py`"
+)
+
 _UNCHANGED_MILESTONE_REASON: Final[str] = (
     "a state-graded buffered sequence, run per layout arm through the public verbs by "
     "the run conformance lane and checked for consistency by the reference harness; "
@@ -2453,6 +2463,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
         ("m-read-lock-021", "m-read-lock-022", "m-temporal-write-050", "m-temporal-write-051"),
         _UNCHANGED_MILESTONE_REASON,
     ),
+    **dict.fromkeys(("m-temporal-write-076", "m-temporal-write-077"), _TEMPORAL_CONFLICT_REASON),
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     "m-opt-lock-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
     "m-opt-lock-006": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,

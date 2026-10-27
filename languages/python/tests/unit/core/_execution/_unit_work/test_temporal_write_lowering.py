@@ -57,6 +57,7 @@ from parallax.core.unit_work import (
     Concurrency,
     KeyedMutation,
     KeyedWriteInstruction,
+    TemporalConflictError,
     TransactionSettings,
     UnitOfWork,
 )
@@ -1531,15 +1532,29 @@ def test_terminating_an_owned_transaction_time_row_removes_it() -> None:
     ]
 
 
-def test_a_row_whose_start_equals_the_instant_is_closed_unless_the_attempt_opened_it() -> None:
+@pytest.mark.parametrize("stored_start", [_T, "2024-08-01T00:00:00+00:00"])
+def test_a_row_the_attempt_did_not_open_is_never_closed_at_or_before_its_start(
+    stored_start: str,
+) -> None:
     # A row an earlier attempt committed at the same instant — a repeating clock —
-    # carries `in_z = T` too; only the attempt's own record makes a row owned.
+    # carries `in_z = T` too; only the attempt's own record makes a row owned, so
+    # this one would be closed into an empty or inverted interval.
+    update = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("175.00")},))
+    observation = _observed(tx_start=stored_start, payload={"id": 1, "acctNum": "A", "value": 150})
+    with pytest.raises(TemporalConflictError) as refused:
+        _finalize(update, BALANCE, _T, observation=observation)
+    assert refused.value.entity == _BALANCE_ID
+    assert refused.value.instant == _instant(_T)
+    assert refused.value.key == {"id": 1}
+    assert refused.value.stored_bound == _instant(stored_start)
+
+
+def test_a_row_whose_start_equals_the_instant_is_revised_where_the_attempt_opened_it() -> None:
     update = KeyedWriteInstruction("amend", "Balance", ({"id": 1, "value": Decimal("175.00")},))
     observation = _observed(tx_start=_T, payload={"id": 1, "acctNum": "A", "value": 150})
-    assert [type(step) for step in _finalize(update, BALANCE, _T, observation=observation)] == [
-        PlannedClose,
-        PlannedInsert,
-    ]
+    assert [
+        type(step) for step, _ in _owned_lowering(update, BALANCE, observation, _own_balance())
+    ] == [PlannedTemporalRevision]
 
 
 def _owned_position(valid_start: str, valid_end: str = "infinity") -> TemporalObservation:

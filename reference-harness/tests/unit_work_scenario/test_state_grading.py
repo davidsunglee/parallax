@@ -36,6 +36,9 @@ _TEMPORAL = (
 _ROLLBACK = (
     "m-temporal-write-048-a-read-between-writes-completes-the-earlier-layout-twin-columns.yaml"
 )
+_CONFLICT = (
+    "m-temporal-write-076-a-close-at-or-before-its-stored-start-is-refused-layout-twin-columns.yaml"
+)
 
 _T0 = "2023-12-01T00:00:00.000000Z"
 _T1 = "2023-12-15T00:00:00.000000Z"
@@ -95,7 +98,7 @@ def _find(rows: list[dict[str, Any]], **cells: Any) -> dict[str, Any]:
 # --- what a state-graded run asks the database for ---------------------------
 
 
-@pytest.mark.parametrize("name", [_NON_TEMPORAL, _REFUSALS, _TEMPORAL, _ROLLBACK])
+@pytest.mark.parametrize("name", [_NON_TEMPORAL, _REFUSALS, _TEMPORAL, _ROLLBACK, _CONFLICT])
 def test_a_state_graded_case_reads_back_its_starting_rows_and_executes_nothing(
     corpus_case: CaseLoader, name: str
 ) -> None:
@@ -298,6 +301,24 @@ def test_a_flush_failure_names_a_shortfall_its_group_can_reach(damaged_case: Cas
     # shortfall is a failed precondition, never an observed write's conflict.
     case = damaged_case(_ROLLBACK)
     case.then["units"]["stale"]["flushFailure"]["shortfall"] = "optimisticConflict"
+    with pytest.raises(CaseFailure, match="no submission pending at that flush writes it"):
+        _grade(case)
+
+
+def test_a_temporal_conflict_needs_a_current_row_its_instant_does_not_follow(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_CONFLICT)
+    case.when["scenario"][2]["write"][0]["at"] = "2023-12-02T00:00:00.000000Z"
+    with pytest.raises(CaseFailure, match="no current row of it starts at or after"):
+        _grade(case)
+
+
+def test_a_temporal_conflict_names_an_object_its_flush_would_close(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case(_CONFLICT)
+    case.then["units"]["behind"]["flushFailure"]["key"] = {"id": 4}
     with pytest.raises(CaseFailure, match="no submission pending at that flush writes it"):
         _grade(case)
 

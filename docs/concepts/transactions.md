@@ -165,13 +165,15 @@ A failed attempt is classified once, after its rollback, and that one verdict de
 whether the invocation re-runs it
 ([bounded automatic retry](../../core/spec/m-auto-retry.md#bounded-automatic-retry),
 [ADR 0073](../adr/0073-internal-optimistic-conflicts-replay-automatically.md)). The
-failures a re-run against fresh state can resolve are the **recoverable conflicts**:
+failures a re-run against fresh state or with a fresh Transaction Instant can resolve are
+the **recoverable conflicts**:
 
 | Failure | Retried? | Why |
 | -- | -- | -- |
 | Deadlock or serialization failure | yes | transient; a re-run can succeed |
 | Optimistic Lock Conflict: a version or Transaction-Time start the framework observed in this attempt moved | yes | the re-run reads the newer state and applies the change to it |
-| Either of the above caught by the callback, leaving a rollback-only refusal | yes, on the original failure's terms | the failure that doomed the attempt decides |
+| Temporal Conflict: the attempt's instant does not follow the start of a stored row it would close | yes | the re-run reads again at a fresh instant ([a close follows the row's start](temporal-model.md#a-close-follows-the-rows-start)) |
+| Any of the above caught by the callback, leaving a rollback-only refusal | yes, on the original failure's terms | the failure that doomed the attempt decides |
 | Target write precondition failed: the revision the caller stated no longer matches | no | re-running would state the same revision again |
 | Connection acquisition failure | no | no attempt began, so nothing can be replayed |
 | Anything else | no | it surfaces after the attempt it ended |

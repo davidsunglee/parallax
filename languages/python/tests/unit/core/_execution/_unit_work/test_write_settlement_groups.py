@@ -50,7 +50,7 @@ from parallax.core.write_plan.steps import (
     PlannedUpdate,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
-from tests._support.clock_probes import inert_instant, instant_at
+from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     admitted_writes,
@@ -80,7 +80,8 @@ _ANIMAL = corpus_model("animal")
 _LEDGERS = formed(
     DescriptorMetamodel(entities=(*_MODELS["wallet"].entities, *_MODELS["account"].entities))
 )
-_INSTANT = inert_instant()
+# Later than every stored Transaction-Time start a test below closes.
+_INSTANT = instant_at("2024-06-01T00:00:00+00:00")
 _JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 

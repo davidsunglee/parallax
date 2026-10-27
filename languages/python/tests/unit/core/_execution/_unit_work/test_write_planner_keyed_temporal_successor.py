@@ -47,7 +47,7 @@ from parallax.core.write_plan.steps import (
     PlannedRow,
     PlannedStep,
 )
-from tests._support.clock_probes import inert_instant
+from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     observed_buffer,
@@ -61,9 +61,9 @@ from tests.unit._positional_row_support import positional_row
 _BALANCE = corpus_model("balance")
 
 # The planner threads its Transaction Instant through untouched to whichever
-# stage first needs it, so every test below shares one uncaptured holder rather
-# than pinning an instant it would never read.
-_INSTANT = inert_instant()
+# stage first needs it, so every test below shares one uncaptured holder, later
+# than every stored Transaction-Time start a test closes.
+_INSTANT = instant_at("2027-01-01T00:00:00+00:00")
 _ASSIGNED_TITLE = "title-changed"
 _INTERIOR_FROM = dt.datetime(2026, 3, 1, tzinfo=dt.UTC)
 _INTERIOR_UNTIL = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)

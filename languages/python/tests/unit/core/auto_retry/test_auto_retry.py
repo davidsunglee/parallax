@@ -4,12 +4,14 @@ under the longer of a fixed window and one scaled by the failed attempt's own
 duration, each doubling per attempt up to its limit, under an absolute ceiling;
 and nothing that is not a replay waits at all.
 
-Which failures become retry candidates, and when, is the transaction runner's,
-graded in ``tests/unit/core/_execution/_transaction/test_runner.py``.
+When a failure becomes a retry candidate is the transaction runner's, graded in
+``tests/unit/core/_execution/_transaction/test_runner.py``; the Temporal
+Conflict's own verdict and exhaustion are graded here beside the loop.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import random
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -17,8 +19,10 @@ from dataclasses import dataclass, field
 import pytest
 
 from parallax.core import auto_retry
-from parallax.core.auto_retry import RetryCandidate, run_with_retry
+from parallax.core.auto_retry import RetryCandidate, retry_eligible, run_with_retry
 from parallax.core.db_error import DatabaseError
+from parallax.core.metamodel import EntityIdentity
+from parallax.core.unit_work import RollbackOnlyError, TemporalConflictError
 
 # The formula, not the tuned values, is graded.
 _FLOOR_FIRST_S = auto_retry._FLOOR_FIRST_S  # pyright: ignore[reportPrivateUsage]
@@ -202,3 +206,52 @@ def test_a_negative_bound_is_refused_before_any_attempt() -> None:
     with pytest.raises(ValueError, match="retries must be >= 0"):
         run_with_retry(lambda: attempts.append(1), retries=-1)
     assert attempts == []
+
+
+_CONFLICT = TemporalConflictError(
+    EntityIdentity("parallax.compatibility", "Balance"),
+    dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+    key={"id": 1},
+    stored_bound=dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+)
+
+
+def _doomed_by(cause: BaseException) -> RollbackOnlyError:
+    try:
+        raise RollbackOnlyError("the attempt is rollback-only") from cause
+    except RollbackOnlyError as refused:
+        return refused
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [_CONFLICT, _doomed_by(_CONFLICT)],
+    ids=["direct", "rollback-only-cause"],
+)
+def test_a_temporal_conflict_is_a_recoverable_conflict(failure: BaseException) -> None:
+    assert retry_eligible(failure)
+
+
+@pytest.mark.parametrize("retries", [0, 2])
+def test_an_exhausted_temporal_conflict_surfaces_itself_with_the_attempt_count(
+    rng: _CeilingRng, timeline: _Time, retries: int
+) -> None:
+    del rng
+    failure = TemporalConflictError(
+        EntityIdentity("parallax.compatibility", "Balance"), dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+    )
+    attempts: list[None] = []
+
+    def attempt() -> str:
+        attempts.append(None)
+        timeline.work(0.004)
+        raise RetryCandidate(failure)
+
+    with pytest.raises(TemporalConflictError) as surfaced:
+        run_with_retry(attempt, retries=retries)
+    assert surfaced.value is failure
+    assert len(attempts) == retries + 1
+    assert surfaced.value.__notes__ == [
+        f"bounded retry exhausted after {retries + 1} attempts (retries={retries})"
+    ]
+    assert len(timeline.slept) == retries

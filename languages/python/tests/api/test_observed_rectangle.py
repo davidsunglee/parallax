@@ -589,22 +589,25 @@ def test_an_own_change_leaves_reads_of_the_rectangle_it_changed_and_another_writ
 
 
 @pytest.mark.parametrize("entity", [ColumnsLog, DocumentLog])
-def test_a_row_committed_at_a_repeated_instant_is_closed_not_revised(
+def test_a_row_committed_at_a_repeated_instant_is_neither_revised_nor_closed_empty(
     profile_run: Any, entity: type[Any]
 ) -> None:
-    # The clock answers the same instant to both attempts, so the stored row's
-    # Transaction-Time start equals the second attempt's own; it was not that
-    # attempt's opening, so it is closed into history as any committed row is.
+    # The clock answers the same instant to the first two attempts, so the
+    # stored row's Transaction-Time start equals the second attempt's own; it
+    # was not that attempt's opening, and closing it would leave an empty
+    # interval, so that attempt is refused and its retry closes the row at the
+    # clock's next instant.
+    later = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     profile_run.reset(model_of(_ATTEMPT_MODEL), {})
-    clock = ScriptedClock([_ATTEMPT, _ATTEMPT])
+    clock = ScriptedClock([_ATTEMPT, _ATTEMPT, later])
     db = own_root(connect(profile_run.port, _ATTEMPT_MODEL, clock=clock)).using_database_login()
     db.transact(lambda tx: tx.insert(entity(id=1, label="seeded", spec=_SPEC)))
 
     db.transact(lambda tx: _log_update(tx, _log_find(tx, entity, "typed"), "typed", "first"))
 
     assert _log_rows(profile_run, entity) == [
-        (_ATTEMPT, _ATTEMPT, "seeded", _SPEC_DOCUMENT),
-        (_ATTEMPT, None, "first", _SPEC_DOCUMENT),
+        (_ATTEMPT, later, "seeded", _SPEC_DOCUMENT),
+        (later, None, "first", _SPEC_DOCUMENT),
     ]
 
 

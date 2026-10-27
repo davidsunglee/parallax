@@ -222,6 +222,21 @@ process running Parallax, not the database's, when the attempt first sends a wri
 needs it. Every row the attempt closes or opens uses that instant, and a retry takes a
 fresh one.
 
+A close must end a milestone after it began. If the instant is not strictly later than
+the stored `tx_start` of a milestone the attempt would close, the write fails with
+`TemporalConflictError` from `parallax.core.unit_work` instead of storing an empty or
+backwards interval. That happens when clocks repeat an instant or run behind another
+server's, or when an attempt took its instant before another transaction committed the
+version it then reads and changes. Nothing is closed or opened, and the error is retried
+like an optimistic conflict: the retry is a new attempt, so it reads again and takes a
+fresh instant. Its `instant`, `key` and `stored_bound` fields name the instant, the object,
+and the start it failed to follow. Keep the clocks of every server writing one database
+synchronized, so that the retries rarely run out.
+
+The check covers closes only. An insert reads none of the key's stored history, so an
+insert after a termination, made by a clock behind the termination's, still opens a
+milestone overlapping the closed history; so can two transactions filling one gap at once.
+
 <!-- example: change-a-credit-limit -->
 ```python
 class CreditLimit(TxTemporal, table="credit_limit"):

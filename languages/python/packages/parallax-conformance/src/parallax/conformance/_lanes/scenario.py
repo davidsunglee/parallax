@@ -119,6 +119,7 @@ from parallax.core.unit_work import (
     RetainedObservation,
     StaleWriteError,
     SubjectActor,
+    TemporalConflictError,
     TransactionSettings,
     UnitOfWork,
     WriteEffectError,
@@ -2030,6 +2031,7 @@ _FLUSH_FAILURES = (
     StaleWriteError,
     OptimisticLockConflictError,
     WritePreconditionError,
+    TemporalConflictError,
 )
 _SHORTFALLS: Final[dict[type[WriteEffectError], str]] = {
     MissingTargetError: "missingTarget",
@@ -2040,26 +2042,31 @@ _SHORTFALLS: Final[dict[type[WriteEffectError], str]] = {
 
 def flush_failure(
     model: AcceptedMetamodel,
-    failure: WriteEffectError | WritePreconditionError,
+    failure: WriteEffectError | WritePreconditionError | TemporalConflictError,
     at: int | Literal["commit"],
 ) -> dict[str, object]:
     """The ``flushFailure`` a group reports: where its flush ran, and the object
-    and Shortfall the failure names, in the case's own spelling."""
-    if isinstance(failure, WritePreconditionError):
-        entity, key, shortfall = failure.entity, dict(failure.key), "failedPrecondition"
+    and Shortfall or error the failure names, in the case's own spelling."""
+    if isinstance(failure, TemporalConflictError):
+        assert failure.key is not None  # a refused close names the object it would close
+        entity, key = failure.entity, dict(failure.key)
+        outcome = ("error", "temporalConflict")
+    elif isinstance(failure, WritePreconditionError):
+        entity, key = failure.entity, dict(failure.key)
+        outcome = ("shortfall", "failedPrecondition")
     else:
         entity = failure.entity
         target = failure.target
         names = tuple(attribute.name for attribute in target.key_attributes)
         values = target.key_values[0] if isinstance(target, KeyTarget) else target.key_values
         key = dict(zip(names, values, strict=True))
-        shortfall = _SHORTFALLS[type(failure)]
+        outcome = ("shortfall", _SHORTFALLS[type(failure)])
     metadata = case_entity(model, entity.canonical)
     return {
         "at": at,
         "entity": entity.canonical,
         "key": ActualWireProjection(model).entity_values(metadata, key),
-        "shortfall": shortfall,
+        outcome[0]: outcome[1],
     }
 
 

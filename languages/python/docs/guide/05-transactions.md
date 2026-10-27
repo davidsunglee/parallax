@@ -345,7 +345,8 @@ Which failures are retried is fixed:
 | -- | -- | -- |
 | A deadlock or a serialization failure: a `DatabaseError` whose `category` is `"deadlock"` | Yes | It is transient: a re-run can succeed |
 | An optimistic lock conflict: a version or Transaction-Time start a read in this attempt observed has moved | Yes | The re-run reads the newer state and applies the change to it |
-| Either of the above, caught by the callback, after which the transaction refused to continue with `RollbackOnlyError` | Yes, on the original failure's terms | The failure that doomed the attempt is what counts |
+| A temporal conflict: `TemporalConflictError`, a close at an instant no later than the stored milestone's start | Yes | The re-run reads again and takes a fresh instant ([Writing](04-writing.md#transaction-time-only-entities)) |
+| Any of the above, caught by the callback, after which the transaction refused to continue with `RollbackOnlyError` | Yes, on the original failure's terms | The failure that doomed the attempt is what counts |
 | A target write's failed precondition: the revision you stated no longer matches | No | A re-run would state the same revision again |
 | A failure to get a connection | No | No attempt began, so there is nothing to re-run |
 | Anything else | No | It reaches you after the attempt it ended |
@@ -415,7 +416,9 @@ to 11 attempts. If every one of them fails with something retryable, the last at
 failure reaches you as the `cause` of an `ExecutionFailure`, with a note naming the
 count, such as `bounded retry exhausted after 11 attempts (retries=10)`. For a deadlock
 or a serialization failure, that cause is a `DatabaseError` whose `category` is
-`"deadlock"`; [Errors](08-errors.md#failures-the-database-reports) describes it.
+`"deadlock"`; [Errors](08-errors.md#failures-the-database-reports) describes it. A
+`TemporalConflictError` that outlasts every attempt means a clock stayed behind stored
+history for longer than the retries took.
 `max_retries=0` turns retries off, and the callback runs once:
 
 <!-- example: make-a-single-attempt -->

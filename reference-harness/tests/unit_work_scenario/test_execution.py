@@ -283,6 +283,17 @@ def test_an_ungated_shortfall_the_failing_statement_gates_is_refused(damaged_cas
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
 
 
+def test_a_temporal_conflict_whose_flush_executed_a_statement_on_its_object_is_refused(
+    damaged_case,
+) -> None:
+    case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
+    failure = case.then["units"]["ours"]["flushFailure"]
+    del failure["shortfall"]
+    failure["error"] = "temporalConflict"
+    with pytest.raises(CaseFailure, match="refused before its close executes"):
+        assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
+
+
 _GATED_UPDATE = "update account set balance = ?, version = ? where id = ? and version = ?"
 
 

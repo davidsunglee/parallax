@@ -17,6 +17,7 @@ from typing import Final
 from parallax.core._execution._unit_work.effects import OptimisticLockConflictError
 from parallax.core._execution._unit_work.uow import RollbackOnlyError
 from parallax.core.db_error import DatabaseError
+from parallax.core.temporal_write import TemporalConflictError
 
 __all__ = ["RetryCandidate", "check_retry_bound", "retry_eligible", "run_with_retry"]
 
@@ -53,13 +54,13 @@ def check_retry_bound(retries: int, /) -> None:
 def retry_eligible(failure: BaseException, /) -> bool:
     """Whether a rolled-back attempt's ``failure`` is a recoverable conflict.
 
-    A transient database failure (the ``deadlock`` category) and an internal
-    Optimistic Lock Conflict are recoverable, directly or as the cause of the
-    rollback-only refusal a caught one left behind. The verdict ignores the
-    remaining budget.
+    A transient database failure (the ``deadlock`` category), an internal
+    Optimistic Lock Conflict, and a Temporal Conflict are recoverable, directly
+    or as the cause of the rollback-only refusal a caught one left behind. The
+    verdict ignores the remaining budget.
     """
     cause = failure.__cause__ if isinstance(failure, RollbackOnlyError) else failure
-    if isinstance(cause, OptimisticLockConflictError):
+    if isinstance(cause, OptimisticLockConflictError | TemporalConflictError):
         return True
     return isinstance(cause, DatabaseError) and cause.is_retriable
 

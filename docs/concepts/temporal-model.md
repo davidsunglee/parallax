@@ -195,6 +195,18 @@ And writes of an object that is still only buffered compose before anything exec
 insert-then-amend opens one row with the final values
 ([same-transaction coalescing](../../core/spec/m-unit-work.md#same-transaction-write-coalescing)).
 
+### A close follows the row's start
+
+A row an earlier transaction committed is closed at the attempt's instant, so that
+instant has to come strictly after the row's own Transaction-Time start. When it doesn't —
+clocks that repeat an instant or run behind, or an attempt that took its instant before
+another transaction committed the version it then changes — the write is refused as a
+Temporal Conflict rather than storing an empty or backwards interval, and the transaction
+is retried with a fresh instant
+([a close follows its predecessor's start](../../core/spec/m-temporal-write.md#a-close-follows-its-predecessors-start)).
+The check covers closes only: an insert reads none of the object's history, so a clock
+behind a termination can still open a milestone overlapping it.
+
 ### Terminate, not delete
 
 A temporal object is removed with `terminate`, which closes its current coverage over a

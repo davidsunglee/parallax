@@ -218,20 +218,22 @@ type _CompiledStep = (
 )
 
 type Shortfall = Literal["missingTarget", "staleWrite", "optimisticConflict", "failedPrecondition"]
+type FlushError = Literal["temporalConflict"]
 
 
 @dataclass(frozen=True)
 class FlushFailure:
     """The failure a rolled-back group's flush reports: where the flush ran — a
-    step index, or ``"commit"`` — and the object and Shortfall it names.
-    ``flushed`` holds the pointers of the submissions that flush ran, the ones
-    still pending when it began — when several flushes run at one step, when
-    any of them began."""
+    step index, or ``"commit"`` — and the object it names, beside exactly one of
+    its Shortfall and an ``error`` that is no Shortfall. ``flushed`` holds the
+    pointers of the submissions that flush ran, the ones still pending when it
+    began — when several flushes run at one step, when any of them began."""
 
     at: int | Literal["commit"]
     entity: Entity
     key: Mapping[str, Any]
-    shortfall: Shortfall
+    shortfall: Shortfall | None
+    error: FlushError | None
     flushed: tuple[str, ...]
 
     @property
@@ -640,7 +642,8 @@ def _flush_failure(
         at=authored["at"],
         entity=case.model.entity(str(authored.get("entity", ""))),
         key=dict(authored.get("key") or {}),
-        shortfall=authored["shortfall"],
+        shortfall=authored.get("shortfall"),
+        error=authored.get("error"),
         flushed=candidates[authored["at"]],
     )
 

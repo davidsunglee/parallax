@@ -20,6 +20,7 @@ from parallax.core.base import INFINITY
 from parallax.core.document_codec import PreparedEffectiveChange, prepare_effective_change
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.temporal_read import TimeInterval
+from parallax.core.temporal_write import TemporalConflictError
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageGap, CoverageTransform
 from parallax.core.temporal_write.expansion import (
     ExpansionRole,
@@ -313,6 +314,105 @@ def test_a_starting_predecessors_gated_close_fails_as_its_callers_precondition(
     else:
         assert closing.concurrency is UNGATED
         assert closing.affected_rows.on_shortfall != FAILED_PRECONDITION
+
+
+# --------------------------------------------------------------------------- #
+# A close must follow its predecessor's stored Transaction-Time start.        #
+# --------------------------------------------------------------------------- #
+
+_LATER = dt.datetime(2024, 12, 1, tzinfo=dt.UTC)
+
+
+@pytest.mark.parametrize("stored_start", [_NOW, _LATER], ids=["equal", "later"])
+@pytest.mark.parametrize(
+    ("transform", "role"),
+    [
+        (_assigning(TimeInterval(_MAR, _SEP), {"amount": 300}), "coverage"),
+        (_assigning(TimeInterval(_MAR, INFINITY), None), "coverage"),
+        (_assigning(TimeInterval(_MAR, _SEP), {"amount": 300}), "starting"),
+        (NO_TRANSFORM, "validation"),
+    ],
+    ids=["bounded-amend", "terminate", "starting", "validation"],
+)
+@pytest.mark.parametrize("gated", [True, False], ids=["optimistic", "locking"])
+def test_a_close_at_or_before_its_predecessors_stored_start_is_refused(
+    stored_start: dt.datetime, transform: CoverageTransform, role: ExpansionRole, gated: bool
+) -> None:
+    predecessor = _span(_JAN, INFINITY, tx_start=stored_start)
+    decorated: list[PlannedClose] = []
+
+    class Recording:
+        def finalize_row(self, write_row: WriteRow, /) -> WriteRow:
+            return write_row
+
+        def decorate_close(self, close: PlannedClose, /) -> PlannedClose:
+            decorated.append(close)
+            return close
+
+    with pytest.raises(TemporalConflictError) as refused:
+        _expand(
+            _expansion(_SPAN_FACTS, transform, gated=gated, audit=Recording()),
+            _SPAN_FACTS,
+            predecessor,
+            role,
+        )
+    assert refused.value.entity == _SPAN
+    assert refused.value.instant == _NOW
+    assert refused.value.key == {"id": 1}
+    assert refused.value.stored_bound == stored_start
+    assert decorated == []
+
+
+@pytest.mark.parametrize("stored_start", [_NOW, _LATER], ids=["equal", "later"])
+def test_a_transaction_time_only_close_at_or_before_its_stored_start_is_refused(
+    stored_start: dt.datetime,
+) -> None:
+    predecessor = PredecessorRow(members={**_balance().members, "txStart": stored_start})
+    with pytest.raises(TemporalConflictError) as refused:
+        _expand(
+            _expansion(_BALANCE_FACTS, _assigning(None, {"value": Decimal("9.00")})),
+            _BALANCE_FACTS,
+            predecessor,
+        )
+    assert (refused.value.key, refused.value.stored_bound) == ({"id": 1}, stored_start)
+
+
+def test_a_close_one_microsecond_after_its_predecessors_start_proceeds() -> None:
+    predecessor = _span(_JAN, INFINITY, tx_start=_NOW - dt.timedelta(microseconds=1))
+    expanded = _expand(
+        _expansion(_SPAN_FACTS, _assigning(TimeInterval(_MAR, _SEP), {"amount": 300})),
+        _SPAN_FACTS,
+        predecessor,
+    )
+    assert _kinds(expanded.steps)[0] is PlannedClose
+
+
+@pytest.mark.parametrize("gated", [True, False], ids=["optimistic", "locking"])
+def test_an_unchanged_predecessor_starting_later_is_kept_rather_than_refused(gated: bool) -> None:
+    later = _span(_JAN, INFINITY, tx_start=_LATER)
+    expanded = _expand(
+        _expansion(_SPAN_FACTS, _RESTATING, gated=gated, guards=True), _SPAN_FACTS, later
+    )
+    assert _kinds(expanded.steps) == ([PlannedTemporalGuard] if gated else [])
+
+
+@pytest.mark.parametrize(
+    ("transform", "kinds"),
+    [
+        (
+            _assigning(TimeInterval(_MAR, INFINITY), {"amount": 300}),
+            [PlannedTemporalRevision, PlannedInsert],
+        ),
+        (_assigning(TimeInterval(_MAR, INFINITY), None), [PlannedTemporalRemoval, PlannedInsert]),
+    ],
+    ids=["revise", "remove"],
+)
+def test_a_row_the_attempt_opened_at_its_instant_is_revised_or_removed_not_refused(
+    transform: CoverageTransform, kinds: list[type[PlannedStep]]
+) -> None:
+    owned = OpenedRows(frozenset({_endpoint(INFINITY)}))
+    expanded = _expand(_expansion(_SPAN_FACTS, transform, ownership=owned), _SPAN_FACTS, _OPENED)
+    assert _kinds(expanded.steps) == kinds
 
 
 # --------------------------------------------------------------------------- #
