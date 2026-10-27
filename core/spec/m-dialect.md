@@ -78,12 +78,12 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **optimizer-fence form** (`m-sql`) | append `offset 0` to each tag-filtered branch; no bind | append `limit ?` to each tag-filtered branch; bind unsigned maximum `18446744073709551615` immediately after the tag bind |
 | **read-lock application** (`m-read-lock`) | locking-mode object find: `for share of t0` | locking-mode object find: **`lock in share mode`** (no `for share`; MDEV-17514) |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
-| **schema DDL primitives** (`m-schema-delta`) | `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …`; a created temporal table carries its named interval checks inline | the same statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table, and no interval check (see below) |
+| **schema DDL primitives** (`m-schema-delta`) | `create extension if not exists …` / `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …`; a created temporal table carries its named key, interval checks, and immediate GiST exclusion inline, behind the `btree_gist` prerequisite | the same Table and Index statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table, and no prerequisite, key name, interval check, or exclusion (see below) |
 | **identifier byte limit** (`m-schema-delta`) | 63 | 64 |
 | **bind parameter limit** | 65535 | 65535 |
 | typed bind normalization | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind adapted to the max sentinel |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
-| error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `23514`/`23P01` constraint, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062`/`1022`/`1169`/`1859` duplicate, `4025` constraint, `1213`/`1020` deadlock, `1205` lock timeout |
+| error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `23514`/`23P01` constraint, `40P01`/`40001` deadlock, `55P03` lock timeout; `23P01` is the exclusion-violation kind | errno: `1062`/`1022`/`1169`/`1859` duplicate, `4025` constraint, `1213`/`1020` deadlock, `1205` lock timeout; no exclusion-violation kind |
 | **unchanged-row count** (`m-unit-work` / `m-db-port`) | yes — an `UPDATE`'s count includes every row it matched | yes — every connection negotiates `CLIENT_FOUND_ROWS`, so an `UPDATE`'s count includes every row it matched (see below) |
 
 The read-lock application and infinity representation are the original two
@@ -566,7 +566,9 @@ statement fragments, so a `Dialect` never sees a layout type and `m-dialect` kee
 its single edge to `m-core`.
 
 ```text
-createTable(table, columns, primaryKey, intervalChecks) -> statement
+createExtension(name)                                  -> statement | Unsupported
+createTable(table, columns, primaryKey, intervalChecks,
+            primaryKeyName?, exclusion?)               -> statement
 addColumn(table, column)                               -> statement
 restateColumn(table, earlier, later)                   -> statement | Unsupported
 createIndex(table, name, columns, unique)              -> statement | Unsupported
@@ -575,12 +577,13 @@ dropIndex(table, name)                                 -> statement
 ColumnDdl        (column, typeSql, nullable)           already-quoted name, already-mapped type
 IndexColumnDdl   (column, neutralType, maxLength)      what index admissibility depends on
 IntervalCheckDdl (name, start, end)                    already-quoted check name and endpoint Columns
+ExclusionDdl     (name, equal, overlapping)            already-quoted name, key Columns, and (start, end) pairs
 Unsupported      (reason)                              a dialect-neutral reason, carried verbatim
 PhysicalIndexName(value)                               a nonempty physical identifier
 ```
 
 Every primitive takes already-quoted identifier strings and Neutral Types. Only
-the two a known dialect can refuse carry the `Unsupported` arm; the signature
+the three a dialect can refuse carry the `Unsupported` arm; the signature
 itself states that creating a Table, adding a Column, and dropping an Index can
 never be unsupported. A primitive answers with **the statement or with why not**,
 which is what keeps a capability predicate from drifting away from the renderer it
@@ -600,6 +603,25 @@ order. Postgres spells each one inline after the key clause as
 whoever writes it — has a nonempty, non-inverted interval on that axis, and a
 violating row fails with the check's own name. MariaDB spells none: its generated
 temporal tables carry no native temporal constraint.
+
+A temporal Table's key arrives with its compiled name, which Postgres spells as
+`constraint <name> primary key (…)`; a key without one is left for the database
+to name. Its exclusion arrives as the key Columns compared for equality and one
+`(start, end)` pair per axis. Postgres spells it last, as
+`constraint <name> exclude using gist (<key> with =, …, tstzrange(<start>,
+<end>) with &&, …)`: half-open Timestamp ranges, so intervals that only meet do
+not overlap, and a non-deferrable constraint checked as each statement runs. A
+violating row fails with the exclusion's own name under the exclusion-violation
+kind `23P01`; an inverted interval cannot even form its range and fails `22000`,
+which the interval checks preclude on a generated Table. MariaDB spells neither a
+key name nor an exclusion, and reports no exclusion-violation kind.
+
+`createExtension` installs a provider prerequisite only where the database lacks
+it. Postgres needs `btree_gist` for an exclusion's scalar equality operands —
+every accepted key type, Int32, Int64, String, and Uuid, has its operator class —
+and spells `create extension if not exists <name>`; installing it needs the
+`CREATE` privilege on the database, which suffices because the extension is
+trusted. A dialect with no exclusion names no prerequisite.
 
 `createIndex` receives each component's Neutral Type and String bound beside its
 Column, because that is what index admissibility depends on: Postgres indexes

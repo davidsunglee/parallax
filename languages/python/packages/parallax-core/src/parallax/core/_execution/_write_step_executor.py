@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Final, cast, overload
 
+from parallax.core import storage_layout
 from parallax.core._execution._unit_work.effects import (
     allocated_keys,
     enforce_affected_rows,
     returns_rows,
 )
 from parallax.core._execution._write_lowering import LoweringCursor
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     DatabaseConnection,
     OrderedWriteResult,
@@ -20,6 +22,7 @@ from parallax.core.db_port import (
     StatementNotExecuted,
 )
 from parallax.core.diagnostics import qualified_type
+from parallax.core.dialect import Dialect
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
     FlushActivity,
@@ -57,7 +60,7 @@ class WriteStepExecutor:
     returning.
     """
 
-    __slots__ = ("_connection", "_meta", "_ordered", "_payloads")
+    __slots__ = ("_connection", "_meta", "_ordered", "_payloads", "_recoverable")
 
     def __init__(
         self,
@@ -65,8 +68,13 @@ class WriteStepExecutor:
         *,
         payloads: WritePayloadPreparer,
         meta: Metamodel,
+        recoverable: Callable[[DatabaseError], None],
     ) -> None:
+        """``recoverable`` receives each statement failure recognized as a
+        recoverable conflict (:func:`recoverable_conflict`) before it propagates
+        unchanged."""
         self._connection = connection
+        self._recoverable = recoverable
         # Read once: a connection's transport capability is fixed for its
         # lifetime, and everything this executes runs on this connection.
         self._ordered = connection.ordered_write_transport
@@ -210,7 +218,7 @@ class WriteStepExecutor:
                 capped = False
                 break
         try:
-            _run_ordered_invocation(invocation, transport, flush)
+            _run_ordered_invocation(invocation, transport, flush, self._recognize)
         except BaseException:
             # The prefix's own failure is the one raised; the lowering failure
             # it overtook is dropped rather than kept reachable from it.
@@ -253,9 +261,13 @@ class WriteStepExecutor:
     ) -> int:
         connection = self._connection
         with flush.database_call(statement, "write", step.entity) as call:
-            affected = connection.execute_write(
-                connection.dialect.to_driver_sql(statement.sql), list(statement.binds)
-            )
+            try:
+                affected = connection.execute_write(
+                    connection.dialect.to_driver_sql(statement.sql), list(statement.binds)
+                )
+            except DatabaseError as error:
+                self._recognize(step, error)
+                raise
             call.write_completed(affected)
         with flush.enforcing(call):
             enforce_affected_rows(step, affected)
@@ -266,16 +278,46 @@ class WriteStepExecutor:
     ) -> tuple[object, ...]:
         connection = self._connection
         with flush.database_call(statement, "write", step.entity) as call:
-            rows = connection.execute(
-                connection.dialect.to_driver_sql(statement.sql), list(statement.binds)
-            )
+            try:
+                rows = connection.execute(
+                    connection.dialect.to_driver_sql(statement.sql), list(statement.binds)
+                )
+            except DatabaseError as error:
+                self._recognize(step, error)
+                raise
             call.write_rows_completed(rows)
         with flush.enforcing(call):
             return allocated_keys(step, rows)
 
+    def _recognize(self, step: PlannedStep, error: DatabaseError) -> None:
+        if recoverable_conflict(step, error, self._meta, self._connection.dialect):
+            self._recoverable(error)
+
+
+def recoverable_conflict(
+    step: PlannedStep, error: DatabaseError, meta: Metamodel, dialect: Dialect
+) -> bool:
+    """Whether ``error``, raised by the statement ``step`` lowered to, is a
+    recoverable temporal conflict.
+
+    It is exactly a violation of the exclusion constraint of the Table the
+    statement wrote, recognized by the dialect's exclusion-violation kind and
+    by the one constraint name that Table's layout compiled — never by the
+    native code alone or by any message text. A replay plans afresh against
+    whatever coverage a concurrent writer committed.
+    """
+    if error.constraint_name is None or not dialect.reports_exclusion_violation(error.native_code):
+        return False
+    view = storage_layout.view(meta).entity(step.entity)
+    constraints = None if view is None else view.layout.temporal_constraints
+    return constraints is not None and error.constraint_name == constraints.exclusion_name
+
 
 def _run_ordered_invocation(
-    invocation: OrderedInvocation, transport: OrderedWriteTransport, flush: FlushActivity
+    invocation: OrderedInvocation,
+    transport: OrderedWriteTransport,
+    flush: FlushActivity,
+    recognize: Callable[[PlannedStep, DatabaseError], None],
 ) -> None:
     """Present ``invocation`` through ``transport`` in one call observed by
     ``flush``, then enforce, in original order, what the result established.
@@ -288,7 +330,7 @@ def _run_ordered_invocation(
         result = observation.invoke(transport, invocation)
         _validate_ordered_result(result, len(invocation))
         observation.finish_calls(result)
-        _enforce_ordered_result(invocation, result, observation)
+        _enforce_ordered_result(invocation, result, observation, recognize)
 
 
 class OrderedInvocation(Sequence[LoweredStatement]):
@@ -419,7 +461,10 @@ def _require_exception(error: object, name: str) -> None:
 
 
 def _enforce_ordered_result(
-    invocation: OrderedInvocation, result: OrderedWriteResult, observation: OrderedCallObservation
+    invocation: OrderedInvocation,
+    result: OrderedWriteResult,
+    observation: OrderedCallObservation,
+    recognize: Callable[[PlannedStep, DatabaseError], None],
 ) -> None:
     """Interpret ``result``'s confirmed outcomes in original order, each
     against its own original, then raise the interruption that ended it.
@@ -435,6 +480,8 @@ def _enforce_ordered_result(
     for index, outcome in enumerate(confirmed):
         with observation.enforcing(index):
             if isinstance(outcome, StatementFailed):
+                if isinstance(outcome.error, DatabaseError):
+                    recognize(invocation.step(index), outcome.error)
                 raise outcome.error
             # Confirmed non-execution only ever follows a confirmed failure,
             # which has already been raised.

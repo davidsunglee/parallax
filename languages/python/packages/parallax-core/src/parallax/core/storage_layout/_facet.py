@@ -193,10 +193,21 @@ class PhysicalTemporalAxis:
 
 @dataclass(frozen=True, slots=True)
 class TemporalHistoryConstraints:
-    """The temporal-history constraints one temporal Table carries."""
+    """The temporal-history constraints one temporal Table carries.
 
+    ``primary_key`` is the Table's own derived primary-key Index, named
+    ``primary_key_name``. ``logical_key`` selects the slots of the family root's
+    declared key Attributes in declaration order, never the inheritance tag.
+    ``exclusion_name`` names the constraint that no two rows equal on
+    ``logical_key`` overlap on every axis at once.
+    """
+
+    primary_key: PhysicalIndex
+    primary_key_name: str
+    logical_key: tuple[ColumnSlot, ...]
     transaction_axis: PhysicalTemporalAxis
     valid_axis: PhysicalTemporalAxis | None
+    exclusion_name: str
 
 
 class TableLayout(Protocol):

@@ -2931,6 +2931,38 @@
       "valueObject": {}
     }
   },
+  "models/evolution-temporal-v1.yaml": {
+    "parallax.compatibility.Depot": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-temporal-v2.yaml": {
+    "parallax.compatibility.Depot": {
+      "attribute": {
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Tenancy": {
+      "attribute": {
+        "id": "id",
+        "rent": "rent",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/evolution-temporality-v1.yaml": {
     "parallax.compatibility.Meter": {
       "attribute": {

@@ -9,8 +9,10 @@ the shipped surface over a scripted port.
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import logging
 from collections.abc import Mapping
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -22,6 +24,7 @@ from parallax.conformance.guide_error_recipes import (
     change_a_customer_from_a_form,
     created_index_name,
     open_the_shop_database,
+    price_a_window_unless_it_is_priced,
     problems_in_a_model,
 )
 from parallax.conformance.guide_models import (
@@ -154,6 +157,56 @@ def test_a_free_id_is_added(profile_run: Any) -> None:
 
     assert added is True
     assert _customer(db, 3) == Customer(id=3, name="Grace", email=None)
+
+
+_MAR, _JUN, _SEP, _DEC = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (3, 6, 9, 12))
+
+
+def _prices(profile_run: Any) -> list[tuple[object, ...]]:
+    return [
+        tuple(row)
+        for row in profile_run.port.execute(
+            "select amount, from_z, thru_z, in_z, out_z from price order by in_z, from_z", []
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("start", "end"), [(_JUN, _DEC), (_MAR, _SEP)], ids=["partly-priced", "same-end"]
+)
+def test_a_priced_window_answers_false_at_once_and_keeps_the_stored_price(
+    profile_run: Any, start: dt.datetime, end: dt.datetime
+) -> None:
+    db = _shop(profile_run)
+    db.transact(
+        lambda tx: tx.insert(
+            Price(sku="TEA-1", amount=Decimal("4.00")), valid_from=_MAR, until=_SEP
+        )
+    )
+    before = _prices(profile_run)
+
+    priced = price_a_window_unless_it_is_priced(
+        db, Price(sku="TEA-1", amount=Decimal("5.00")), start, end
+    )
+
+    assert priced is False
+    assert _prices(profile_run) == before
+
+
+def test_an_unpriced_window_is_priced(profile_run: Any) -> None:
+    db = _shop(profile_run)
+    db.transact(
+        lambda tx: tx.insert(
+            Price(sku="TEA-1", amount=Decimal("4.00")), valid_from=_MAR, until=_SEP
+        )
+    )
+
+    priced = price_a_window_unless_it_is_priced(
+        db, Price(sku="TEA-1", amount=Decimal("5.00")), _SEP, _DEC
+    )
+
+    assert priced is True
+    assert [row[0] for row in _prices(profile_run)] == [Decimal("4.00"), Decimal("5.00")]
 
 
 def test_an_uncategorized_database_failure_passes_through(profile_run: Any) -> None:
@@ -357,6 +410,39 @@ def test_any_other_failure_passes_through_the_tracking_number_handler(
         )
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(_database_error("constraintViolation", "23P01"), id="overlap"),
+        pytest.param(_database_error("uniqueViolation", "23505"), id="same-end"),
+    ],
+)
+def test_an_overlap_answers_false_after_one_attempt(error: DatabaseError) -> None:
+    with ScriptedAdapter(Transact(Write(raises=error))) as adapter:
+        priced = price_a_window_unless_it_is_priced(
+            _scripted(adapter), Price(sku="TEA-1", amount=Decimal("5.00")), _JUN, _DEC
+        )
+    assert priced is False
+
+
+def test_an_unpriced_window_answers_true_after_one_insert() -> None:
+    with ScriptedAdapter(Transact(Write())) as adapter:
+        priced = price_a_window_unless_it_is_priced(
+            _scripted(adapter), Price(sku="TEA-1", amount=Decimal("5.00")), _JUN, _DEC
+        )
+    assert priced is True
+
+
+def test_any_other_failure_passes_through_the_overlap_handler() -> None:
+    with (
+        ScriptedAdapter(Transact(Write(raises=_database_error(None, "42P01")))) as adapter,
+        pytest.raises(ExecutionFailure),
+    ):
+        price_a_window_unless_it_is_priced(
+            _scripted(adapter), Price(sku="TEA-1", amount=Decimal("5.00")), _JUN, _DEC
+        )
+
+
 def test_a_unique_violation_naming_no_index_surfaces_without_one() -> None:
     unnamed = _database_error("uniqueViolation", "23505")
     with (
@@ -398,6 +484,7 @@ def test_every_recipe_the_module_exports_has_a_driver() -> None:
             change_a_customer_from_a_form,
             created_index_name,
             open_the_shop_database,
+            price_a_window_unless_it_is_priced,
             problems_in_a_model,
         )
     )

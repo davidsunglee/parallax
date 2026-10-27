@@ -317,8 +317,12 @@ PhysicalTemporalAxis
   intervalCheckName: string
 
 TemporalHistoryConstraints
+  primaryKey: PhysicalIndex
+  primaryKeyName: string
+  logicalKey: immutable sequence<ColumnSlot>
   transactionAxis: PhysicalTemporalAxis
   validAxis: PhysicalTemporalAxis | absent
+  exclusionName: string
 
 TableLayout
   table: Table
@@ -669,14 +673,33 @@ Column tier, a Column spelling, or the physical key.
 Each axis carries one **interval check**: every row of the Table has `start <
 end` on that axis, so no stored interval is empty or inverted. `transactionAxis`
 is present on every temporal Table and `validAxis` on a Bitemporal one. The
-checks constrain each row alone; they say nothing about how two rows of one
-object relate. Rendering them is `m-schema-delta`'s and `m-dialect`'s.
+checks constrain each row alone.
 
-A check's name is:
+The **exclusion** constrains how rows relate: no two rows equal on every
+`logicalKey` slot overlap, as half-open intervals, on every axis at once — in
+Transaction Time on a Transaction-Time-only Table, and in both periods on a
+Bitemporal one. This is *Milestones of one object never overlap*
+(`m-temporal-write`) stated over the Table's own rows, so it governs history as
+well as current coverage and every writer of the Table. Intervals that only meet
+do not overlap.
+
+`logicalKey` selects the Table's slots for the family root's declared
+primary-key Attributes in declaration order: `primaryKey` without the axis end
+Attributes it derives from them. It never includes the table-per-hierarchy
+discriminator, so a shared Table protects an object's history whatever concrete
+shape each row was written as, while a table-per-concrete-subtype family is
+protected per concrete Table, matching its physical key. `primaryKey` is the
+Table's own `primaryKeyIndex`, and `primaryKeyName` is the name it carries as a
+constraint; its Columns are unchanged.
+
+Rendering the checks, the key name, and the exclusion is `m-schema-delta`'s and
+`m-dialect`'s.
+
+Each constraint's name is:
 
 ```text
 pxc_<kind>_<readable-table-prefix>_<fingerprint>
-kind: tx | valid
+kind: pk | tx | valid | excl
 ```
 
 The **fingerprint** is the first 128 bits of SHA-256, as 32 lowercase
@@ -689,7 +712,11 @@ operand-group count, then per group: semantics, operand count, each operand Colu
 ```
 
 An interval check has one operand group, semantics `lt`, whose operands are the
-start Column then the end Column. Prefixing each group with its semantics and
+start Column then the end Column. A primary key has one group, semantics
+`unique`, whose operands are its Columns in key order. An exclusion has a group
+of semantics `eq` over the `logicalKey` Columns, then one group of semantics
+`overlap` per axis — its start then its end Column — Valid Time before
+Transaction Time. Prefixing each group with its semantics and
 operand count keeps group boundaries in the digest, and the version field makes
 a later change to what is hashed produce different names by construction. The
 Table name is the raw physical name, never a quoted or schema-qualified
@@ -702,8 +729,8 @@ underscores trimmed, and ASCII letters lowercased; an empty result becomes
 whatever the Dialect, and the trim and empty-result rules apply again after the
 cut. The kind and the fingerprint are never truncated.
 
-Every input is a fact of the check's own physical definition. A change to the
-Table name or an operand Column changes the name; an unrelated Entity or Class
+Every input is a fact of the constraint's own physical definition. A change to
+the Table name or an operand Column changes the name; an unrelated Entity or Class
 name, another Table, compilation order, and the model edition do not. Physical
 Index Names are `m-schema-delta`'s separate convention.
 
@@ -997,8 +1024,9 @@ their spellings equals a physical Column.
   rendered as the key constraint and each other unique Index as a unique
   constraint, and the two sets are disjoint because Model Formation refuses an
   Entity whose Indices share one name, so no consumer suppresses one constraint
-  because another happens to span the same Columns. A temporal Table's interval
-  checks come from `temporalConstraints` under their compiled names. The Structured
+  because another happens to span the same Columns. A temporal Table's key
+  name, interval checks, and exclusion come from `temporalConstraints` under
+  their compiled names. The Structured
   Column appears in DDL purely as a consequence of the layout owning one more
   `Document`-tier slot.
 - Fixture loading resolves logical members and derived discriminator values

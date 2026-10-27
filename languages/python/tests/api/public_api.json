@@ -553,6 +553,7 @@
     "COORDINATION_REASON_ORDER",
     "CardinalityChanged",
     "CollidingIndex",
+    "CollidingTemporalConstraint",
     "CollisionGroup",
     "ComponentsChanged",
     "ConcreteSubtypeAdded",
@@ -762,6 +763,7 @@
   ],
   "parallax.evolution.schema_delta": [
     "CollidingIndex",
+    "CollidingTemporalConstraint",
     "CollisionGroup",
     "CreatedIndex",
     "IndexPresence",

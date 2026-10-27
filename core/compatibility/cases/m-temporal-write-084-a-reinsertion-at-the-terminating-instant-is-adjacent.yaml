@@ -1,0 +1,48 @@
+# A reinsertion stamped at the very instant an earlier transaction terminated the
+# object opens [August, infinity) beside the closed [January, August). Intervals
+# are half-open, so the two milestones meet without overlapping and both stand.
+model: models/balance.yaml
+tags: [m-temporal-write, m-sql, write-sequence, terminate, insert, audit-only, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Balance
+      statements: 1
+      note: open a current milestone [2024-01-01, infinity)
+      rows:
+        - { id: 1, acctNum: A, value: "100.00" }
+      at: "2024-01-01T00:00:00.000000Z"
+    - mutation: terminate
+      entity: parallax.compatibility.Balance
+      statements: 1
+      note: close the current row at August
+      rows:
+        - { id: 1 }
+      at: "2024-08-01T00:00:00.000000Z"
+    - mutation: insert
+      entity: parallax.compatibility.Balance
+      statements: 1
+      note: reopen the object at the same instant, adjacent to the closed milestone
+      rows:
+        - { id: 1, acctNum: A, value: "120.00" }
+      at: "2024-08-01T00:00:00.000000Z"
+then:
+  statements:
+    - sql:
+        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", infinity]
+    - sql:
+        postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+        mariadb: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
+      binds: ["2024-08-01T00:00:00.000000Z", 1, infinity, "2024-01-01T00:00:00.000000Z"]
+    - sql:
+        postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, A, "120.00", "2024-08-01T00:00:00.000000Z", infinity]
+  tableState:
+    balance:
+      - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
+      - { bal_id: 1, acct_num: A, val: "120.00", in_z: "2024-08-01T00:00:00.000000Z", out_z: infinity }
+  databaseCalls: 4

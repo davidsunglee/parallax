@@ -147,7 +147,10 @@ def test_the_executor_relays_the_hooks_to_the_statements_it_executes() -> None:
     port = ScriptedAdapter(Write(), Write())
     captures = _Captures()
     executor = WriteStepExecutor(
-        port, payloads=build_write_planner(POSITION_META).payloads, meta=POSITION_META
+        port,
+        payloads=build_write_planner(POSITION_META).payloads,
+        meta=POSITION_META,
+        recoverable=lambda _: None,
     )
     with open_flush() as flush:
         assert (

@@ -1,0 +1,17 @@
+# Position 2 currently covers [March, September). An insert of [June, December) ends
+# elsewhere, so the end-keyed primary key admits it, but it overlaps current coverage
+# over [June, September) on both axes. The generated exclusion refuses it.
+model: models/position.yaml
+tags: [m-temporal-write, m-db-error, temporal, bitemporal, insert-until, constraintViolation, slice-snapshot-1, slice-managed-1]
+shape: error
+then:
+  statements:
+    - sql:
+        postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [2, B, "10.00", "2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z", infinity]
+    - sql:
+        postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+      binds: [2, B, "20.00", "2024-06-01T00:00:00.000000Z", "2024-12-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z", infinity]
+  errorClass: constraintViolation
+  nativeCode:
+    postgres: "23P01"

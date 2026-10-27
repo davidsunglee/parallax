@@ -255,3 +255,26 @@ def test_an_exhausted_temporal_conflict_surfaces_itself_with_the_attempt_count(
         f"bounded retry exhausted after {retries + 1} attempts (retries={retries})"
     ]
     assert len(timeline.slept) == retries
+
+
+def _exclusion_violation() -> DatabaseError:
+    return DatabaseError(
+        category="constraintViolation",
+        native_code="23P01",
+        message="conflicting key value violates exclusion constraint",
+        constraint_name="pxc_excl_balance_d9ac2f7e38d8f4040d3f5ed33ac09a0d",
+    )
+
+
+@pytest.mark.parametrize("doomed", [False, True], ids=["direct", "rollback-only-cause"])
+def test_a_recognized_conflict_is_recoverable_as_the_original_database_error(
+    doomed: bool,
+) -> None:
+    violation = _exclusion_violation()
+    failure = _doomed_by(violation) if doomed else violation
+    assert retry_eligible(failure, recognized=(violation,))
+    assert not retry_eligible(failure)
+
+
+def test_recognition_is_of_the_one_failure_and_never_of_an_equal_looking_one() -> None:
+    assert not retry_eligible(_exclusion_violation(), recognized=(_exclusion_violation(),))

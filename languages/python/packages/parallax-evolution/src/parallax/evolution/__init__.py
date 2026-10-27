@@ -110,6 +110,7 @@ from parallax.evolution.model_evolution import (
 )
 from parallax.evolution.schema_delta import (
     CollidingIndex,
+    CollidingTemporalConstraint,
     CollisionGroup,
     CreatedIndex,
     IndexPresence,
@@ -147,6 +148,7 @@ __all__ = [
     "BehavioralImpact",
     "CardinalityChanged",
     "CollidingIndex",
+    "CollidingTemporalConstraint",
     "CollisionGroup",
     "ComponentsChanged",
     "ConcreteSubtypeAdded",

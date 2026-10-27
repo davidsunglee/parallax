@@ -11,25 +11,34 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Sequence
+from typing import Literal
 
 import pytest
 
+from parallax.core import storage_layout
 from parallax.core.base import STRING
 from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
 from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.storage_layout import _temporal as temporal_naming
 from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
 from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
 from parallax.evolution.schema_delta import (
+    CollidingTemporalConstraint,
     CollisionGroup,
     IndexPresence,
     PhysicalIndexNameCollisionError,
     schema_delta,
 )
 from parallax.evolution.schema_delta import _naming as naming
-from parallax.evolution.schema_delta._naming import NamedIndex, collision_groups
-from parallax.evolution.schema_delta._physical import IndexDefinition, PhysicalColumn
-from tests.unit._corpus_model_support import formed
+from parallax.evolution.schema_delta._naming import NamedIndex, census, collision_groups
+from parallax.evolution.schema_delta._physical import (
+    IndexDefinition,
+    PhysicalColumn,
+    TemporalBackingIndex,
+)
+from parallax.evolution.schema_delta._plan import temporal_backing_indices
+from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
 _ENTITY = EntityIdentity(namespace="parallax.test", name="Widget")
@@ -49,10 +58,15 @@ def _definition(
 
 
 _SHARED = PhysicalIndexName("pxi_widget_code_00000000000000000000000000000000")
+_RECORDS_BALANCE = corpus_records()["balance"]
+
+
+def _backing_indices(model: AcceptedMetamodel) -> tuple[TemporalBackingIndex, ...]:
+    return temporal_backing_indices(storage_layout.view(model))
 
 
 def _entry(
-    definition: IndexDefinition,
+    definition: IndexDefinition | TemporalBackingIndex,
     name: PhysicalIndexName = _SHARED,
     presence: IndexPresence = IndexPresence.LATER,
 ) -> NamedIndex:
@@ -320,3 +334,75 @@ def _widget_with_one_index() -> AcceptedMetamodel:
             )
         )
     )
+
+
+def _backing(
+    kind: Literal["primaryKey", "exclusion"], table: str = "widget"
+) -> TemporalBackingIndex:
+    return TemporalBackingIndex(
+        table=Table(name=table),
+        kind=kind,
+        columns=(Column(name="id"), Column(name="out_z")),
+        name=_SHARED,
+    )
+
+
+def test_a_temporal_constraint_sharing_an_authored_name_is_reported_by_its_kind() -> None:
+    widget = _definition(_ENTITY, "widget_code")
+    (group,) = _groups([_entry(_backing("exclusion")), _entry(widget)])
+    (authored,) = group.definitions
+    assert authored.index == widget.index
+    (temporal,) = group.temporal_constraints
+    assert temporal == CollidingTemporalConstraint(
+        table=Table(name="widget"),
+        kind="exclusion",
+        columns=(Column(name="id"), Column(name="out_z")),
+        presence=IndexPresence.LATER,
+    )
+
+
+def test_a_temporal_constraint_is_never_dropped_so_it_never_frees_its_name() -> None:
+    # An authored Index freed before another is created gives the name up; a
+    # temporal constraint the later model no longer names is not dropped by any
+    # delta, so it still holds the name when the other is created.
+    taken = _definition(_OTHER, "taken", table="z")
+    (group,) = collision_groups(
+        [
+            _entry(_backing("primaryKey", "a"), presence=IndexPresence.EARLIER),
+            _entry(taken, presence=IndexPresence.LATER),
+        ],
+        {Table(name="a"), taken.table},
+    )
+    assert [entry.presence for entry in group.definitions] == [IndexPresence.LATER]
+    assert [entry.presence for entry in group.temporal_constraints] == [IndexPresence.EARLIER]
+
+
+def test_an_unchanged_temporal_constraint_is_one_entry_present_throughout() -> None:
+    model = formed(_RECORDS_BALANCE)
+    later = _backing_indices(model)
+    entries = census((), (), POSTGRES, earlier_temporal=later, later_temporal=later)
+    assert [(entry.name.value[:7], entry.presence) for entry in entries] == [
+        ("pxc_pk_", IndexPresence.BOTH),
+        ("pxc_exc", IndexPresence.BOTH),
+    ]
+    assert collision_groups(entries, {Table(name="balance")}) == ()
+
+
+def test_a_generated_delta_counts_temporal_constraints_in_the_census(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The two names a temporal Table compiles are its layout's own; stubbing
+    # them to one shows that the census reads them rather than deriving any.
+    def shared(table: object, kind: str, groups: object) -> str:
+        del table, kind, groups
+        return _SHARED.value
+
+    monkeypatch.setattr(temporal_naming, "constraint_name", shared)
+    with pytest.raises(PhysicalIndexNameCollisionError) as raised:
+        schema_delta(evolve(ABSENT, formed(_RECORDS_BALANCE)), POSTGRES)
+    (group,) = raised.value.groups
+    assert group.definitions == ()
+    assert [(entry.kind, entry.presence) for entry in group.temporal_constraints] == [
+        ("exclusion", IndexPresence.LATER),
+        ("primaryKey", IndexPresence.LATER),
+    ]

@@ -71,3 +71,11 @@ def test_a_binding_is_visible_to_the_thread_that_bound_it_alone() -> None:
         other.start()
         other.join()
     assert seen == [None]
+
+
+def test_an_attempt_recognizes_only_the_conflicts_its_execution_handed_it() -> None:
+    lifetime = TxnAttemptLifetime()
+    assert lifetime.recognized_conflicts == ()
+    conflict = RuntimeError("an exclusion violation")
+    lifetime.recognize_conflict(conflict)
+    assert tuple(lifetime.recognized_conflicts) == (conflict,)

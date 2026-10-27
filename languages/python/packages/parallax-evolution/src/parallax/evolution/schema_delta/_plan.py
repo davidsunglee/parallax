@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Final
 
 from parallax.core import storage_layout
 from parallax.core.base import JSON, STRING, NeutralType
@@ -23,6 +24,7 @@ from parallax.core.storage_layout import (
     InheritanceDiscriminator,
     StorageLayoutFacet,
     TableLayout,
+    TemporalHistoryConstraints,
 )
 from parallax.evolution.model_evolution import (
     AttributeAdded,
@@ -46,24 +48,31 @@ from parallax.evolution.model_evolution import (
 from parallax.evolution.schema_delta._naming import census, collision_groups, physical_index_name
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
+    CreateExtension,
     CreateIndex,
     CreateTable,
     DropIndex,
+    Exclusion,
     IndexDefinition,
     IntervalCheck,
     PhysicalColumn,
     PhysicalOperation,
     RestateColumnDomain,
+    TemporalBackingIndex,
 )
 from parallax.evolution.schema_delta._values import CollisionGroup
 
-__all__ = ["Plan", "plan"]
+__all__ = ["Plan", "plan", "temporal_backing_indices"]
 
 # The framework-owned table-per-hierarchy tag is not a declared Attribute
 # (m-inheritance), so it has no declared type to resolve: the generator fixes one
 # wide enough for any authored tagValue.
 _TAG_TYPE: NeutralType = STRING
 _TAG_MAX_LENGTH = 32
+
+_EXCLUSION_PREREQUISITE: Final = "btree_gist"
+"""The extension supplying the GiST equality operators an exclusion's scalar
+key Columns need beside its interval ranges."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,17 +102,76 @@ def plan(evolution: UnilateralEvolution, dialect: Dialect) -> Plan:
     later = _Endpoint.of(evolution.later)
     earlier = None if evolution.earlier is None else _Endpoint.of(evolution.earlier)
     causes = _Causes.over(evolution.operations, later, earlier)
+    operations = tuple(
+        operation
+        for layout in later.facet.tables
+        for operation in _lower(layout, later, earlier, causes, dialect)
+    )
     return Plan(
-        operations=tuple(
-            operation
-            for layout in later.facet.tables
-            for operation in _lower(layout, later, earlier, causes, dialect)
-        ),
+        operations=(*_prerequisites(operations, evolution.operations), *operations),
         collisions=collision_groups(
-            census(_authored_indices(earlier), _authored_indices(later), dialect),
+            census(
+                _authored_indices(earlier),
+                _authored_indices(later),
+                dialect,
+                earlier_temporal=() if earlier is None else temporal_backing_indices(earlier.facet),
+                later_temporal=temporal_backing_indices(later.facet),
+            ),
             surviving=frozenset(layout.table for layout in later.facet.tables),
         ),
     )
+
+
+def _prerequisites(
+    operations: Sequence[PhysicalOperation], evolution: Sequence[EvolutionOperation]
+) -> tuple[CreateExtension, ...]:
+    """The one extension every created exclusion requires, if any Table creates one.
+
+    Its causes are the canonical union of those creations' causes.
+    """
+    dependents = tuple(
+        operation
+        for operation in operations
+        if isinstance(operation, CreateTable) and operation.exclusion is not None
+    )
+    if not dependents:
+        return ()
+    caused_by = tuple(
+        operation
+        for operation in evolution
+        if any(operation in dependent.caused_by for dependent in dependents)
+    )
+    return (CreateExtension(name=_EXCLUSION_PREREQUISITE, caused_by=caused_by),)
+
+
+def temporal_backing_indices(facet: StorageLayoutFacet) -> tuple[TemporalBackingIndex, ...]:
+    """The Index behind each temporal primary key and exclusion one endpoint holds."""
+    held: list[TemporalBackingIndex] = []
+    for layout in facet.tables:
+        constraints = layout.temporal_constraints
+        if constraints is None:
+            continue
+        exclusion = _exclusion(constraints)
+        held.append(
+            TemporalBackingIndex(
+                table=layout.table,
+                kind="primaryKey",
+                columns=tuple(slot.column for slot in constraints.primary_key.columns),
+                name=PhysicalIndexName(constraints.primary_key_name),
+            )
+        )
+        held.append(
+            TemporalBackingIndex(
+                table=layout.table,
+                kind="exclusion",
+                columns=(
+                    *exclusion.equal,
+                    *(column for interval in exclusion.overlapping for column in interval),
+                ),
+                name=PhysicalIndexName(exclusion.name),
+            )
+        )
+    return tuple(held)
 
 
 def _authored_indices(endpoint: _Endpoint | None) -> tuple[IndexDefinition, ...]:
@@ -237,19 +305,23 @@ def _create(
 ) -> Iterator[PhysicalOperation]:
     """One new Table, then each authored Index it holds as its own statement.
 
-    A Table the earlier edition did not have is created whole, its temporal
-    interval checks inline. A Table that survives gains none: its stored rows
-    are the operator's to validate before any check governs them. An Index created
+    A Table the earlier edition did not have is created whole, a temporal
+    Table's named primary key, interval checks, and exclusion inline. A Table
+    that survives gains none of them: its stored rows are the operator's to
+    validate before any constraint governs them. An Index created
     as part of creating its Table is caused by everything that caused the Table:
     it arrives because the declarations the Table materializes arrived, and no
     Index operation of its own describes it.
     """
+    constraints = layout.temporal_constraints
     yield CreateTable(
         table=layout.table,
         columns=tuple(_physical_column(later.model, slot) for slot in layout.columns),
         primary_key=tuple(slot.column for slot in layout.physical_primary_key),
         interval_checks=_interval_checks(layout),
         caused_by=causes,
+        primary_key_name=None if constraints is None else constraints.primary_key_name,
+        exclusion=None if constraints is None else _exclusion(constraints),
     )
     for definition in definitions:
         yield CreateIndex(
@@ -257,6 +329,18 @@ def _create(
             name=physical_index_name(definition, dialect),
             caused_by=causes,
         )
+
+
+def _exclusion(constraints: TemporalHistoryConstraints) -> Exclusion:
+    """The Table's non-overlap constraint, its intervals in canonical axis order."""
+    axes = (constraints.valid_axis, constraints.transaction_axis)
+    return Exclusion(
+        name=constraints.exclusion_name,
+        equal=tuple(slot.column for slot in constraints.logical_key),
+        overlapping=tuple(
+            (axis.start.column, axis.end.column) for axis in axes if axis is not None
+        ),
+    )
 
 
 def _interval_checks(layout: TableLayout) -> tuple[IntervalCheck, ...]:

@@ -9,9 +9,10 @@ and that statement runs first whichever condition the caller stated first, so no
 statement leaves two current rows of the object overlapping
 (`m-temporal-write` *Predecessor Expansion*).
 
-A transient overlap leaves no trace in what is stored, so each proof reads the
-flush's statement order from the execution lifecycle beside the stored history
-that results.
+Each table carries the generated exclusion, which checks every statement as it
+runs (`m-storage-layout` *Temporal history constraints*), so a transient overlap
+would refuse the flush; each proof also reads the flush's statement order from
+the execution lifecycle beside the stored history that results.
 """
 
 from __future__ import annotations

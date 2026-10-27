@@ -150,10 +150,15 @@ def test_an_update_that_closes_a_row_at_its_own_start_is_refused(profile_run: An
 # Adopting the checks on a table that existed before them                     #
 # --------------------------------------------------------------------------- #
 def _without_checks(profile_run: Any) -> tuple[str, str]:
-    """A ``position`` table as an earlier release created it, holding bad rows."""
+    """A ``position`` table as an earlier release created it, holding bad rows.
+
+    That release generated neither the checks nor the exclusion, whose ranges
+    could not even be formed over an inverted interval.
+    """
     model = _provision(profile_run, "position.yaml")
     tx, valid = _names(model, "position")
-    for name in (tx, valid):
+    exclusion = _constraints(model, "position").exclusion_name
+    for name in (exclusion, tx, valid):
         profile_run.port.execute_write(f"alter table position drop constraint {name}", [])
     profile_run.port.execute_write(_INSERT_POSITION, [1, "A", 1, _JAN, INFINITY, _MAR, _FEB])
     profile_run.port.execute_write(_INSERT_POSITION, [2, "B", 1, _FEB, _FEB, _JAN, INFINITY])

@@ -179,3 +179,104 @@ def test_only_the_readable_prefix_bends_to_the_63_byte_budget(
     name = constraint_name(Table(table), kind, _INTERVAL)
     assert name == expected
     assert len(name.encode("utf-8")) <= 63
+
+
+def _keys(model: Metamodel) -> dict[str, tuple[str, str, tuple[str, ...]]]:
+    named: dict[str, tuple[str, str, tuple[str, ...]]] = {}
+    for layout in storage_layout.view(model).tables:
+        constraints = layout.temporal_constraints
+        if constraints is not None:
+            named[layout.table.name] = (
+                constraints.primary_key_name,
+                constraints.exclusion_name,
+                tuple(slot.column.name for slot in constraints.logical_key),
+            )
+    return named
+
+
+def test_a_temporal_table_names_its_own_primary_key_and_exclusion() -> None:
+    layout = _layout(corpus()["position"], "position")
+    constraints = layout.temporal_constraints
+    assert constraints is not None
+    assert constraints.primary_key is layout.primary_key_index
+    assert _keys(corpus()["position"]) == {
+        "position": (
+            "pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d",
+            "pxc_excl_position_e5c6616a7f7cfbf6c981cf0ad0f86610",
+            ("pos_id",),
+        )
+    }
+
+
+def test_a_shared_table_keys_history_by_the_root_key_and_never_the_tag() -> None:
+    model = corpus()["instrument"]
+    layout = _layout(model, "instrument")
+    constraints = layout.temporal_constraints
+    assert constraints is not None
+    assert [slot.column.name for slot in constraints.logical_key] == ["id"]
+    assert all(slot in layout.columns for slot in constraints.logical_key)
+    assert not any(
+        slot.tier is storage_layout.ColumnTier.DISCRIMINATOR for slot in constraints.logical_key
+    )
+
+
+def test_each_concrete_table_keys_its_own_history() -> None:
+    keys = _keys(corpus()["rate"])
+    assert keys["deposit_rate"][2] == keys["loan_rate"][2] == ("id",)
+    assert keys["deposit_rate"][:2] != keys["loan_rate"][:2]
+
+
+def test_the_storage_layout_does_not_move_a_key_or_exclusion_name() -> None:
+    columns = corpus()["shared-coverage-layout-twin-columns"]
+    document = corpus()["shared-coverage-layout-twin-document"]
+    assert _keys(columns) == _keys(document)
+
+
+def test_unrelated_identities_do_not_move_a_key_or_exclusion_name() -> None:
+    position = corpus_records()["position"]
+    (entity,) = position.entities
+    renamed = formed(
+        dataclasses.replace(
+            position, entities=(dataclasses.replace(entity, name="Holding", namespace="x"),)
+        )
+    )
+    assert _keys(renamed) == _keys(corpus()["position"])
+
+
+def _encoded(*fields: str) -> bytes:
+    return b"".join(len(field.encode()).to_bytes(4, "big") + field.encode() for field in fields)
+
+
+def test_the_primary_key_and_exclusion_fingerprints_hash_their_complete_encodings() -> None:
+    primary_key = _encoded("pxc-1", "balance", "pk", "1", "unique", "2", "bal_id", "out_z")
+    exclusion = _encoded(
+        "pxc-1", "balance", "excl", "2", "eq", "1", "bal_id", "overlap", "2", "in_z", "out_z"
+    )
+    assert _keys(corpus()["balance"])["balance"] == (
+        f"pxc_pk_balance_{hashlib.sha256(primary_key).hexdigest()[:32]}",
+        f"pxc_excl_balance_{hashlib.sha256(exclusion).hexdigest()[:32]}",
+        ("bal_id",),
+    )
+
+
+def test_a_bitemporal_exclusion_lists_valid_time_before_transaction_time() -> None:
+    exclusion = _encoded(
+        "pxc-1",
+        "position",
+        "excl",
+        "3",
+        "eq",
+        "1",
+        "pos_id",
+        "overlap",
+        "2",
+        "from_z",
+        "thru_z",
+        "overlap",
+        "2",
+        "in_z",
+        "out_z",
+    )
+    assert _keys(corpus()["position"])["position"][1] == (
+        f"pxc_excl_position_{hashlib.sha256(exclusion).hexdigest()[:32]}"
+    )

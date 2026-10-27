@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Generator
+from collections.abc import Collection, Generator
 from contextlib import contextmanager
 
 from parallax.core._execution._unit_work.uow import EscapedTransactionError, RollbackOnlyError
@@ -13,17 +13,28 @@ class TxnAttemptLifetime:
     """Whether one transaction attempt still admits work, and why not.
 
     The single owner of the attempt's open/closed status, its rollback-only
-    status, and the first failure that doomed it. The runner, the attempt, its
+    status, the first failure that doomed it, and the statement failures its
+    execution recognized as recoverable conflicts. The runner, the attempt, its
     handles and streams, and a writable attempt's unit of work all consult this
     one object, so no second flag can disagree with it.
     """
 
-    __slots__ = ("_closed", "_first_cause", "_rollback_only")
+    __slots__ = ("_closed", "_first_cause", "_recognized_conflicts", "_rollback_only")
 
     def __init__(self) -> None:
         self._closed = False
         self._rollback_only = False
         self._first_cause: BaseException | None = None
+        self._recognized_conflicts: list[BaseException] = []
+
+    @property
+    def recognized_conflicts(self) -> Collection[BaseException]:
+        """The statement failures execution recognized as recoverable conflicts."""
+        return tuple(self._recognized_conflicts)
+
+    def recognize_conflict(self, failure: BaseException) -> None:
+        """Record that execution recognized ``failure`` as a recoverable conflict."""
+        self._recognized_conflicts.append(failure)
 
     @property
     def rollback_only(self) -> bool:

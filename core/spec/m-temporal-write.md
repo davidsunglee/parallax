@@ -35,12 +35,18 @@ Same object, successive Transaction-Time versions:
 ```
 
 Every write this module specifies preserves the invariant over the coverage it
-reads. Storage that breaks it — through the race *Concurrent creation in gaps
-is not coordinated* describes, or a writer outside the framework — is invalid,
-not another temporal state: no read chooses one of the overlapping milestones,
-and nothing here detects or repairs it. Readers rely on the invariant without
-checking it (`m-read-delivery` *Streamed delivery*; `m-sql` *Shared to-one
-joins*).
+reads, and every statement of one object's flush leaves it intact (*Predecessor
+Expansion*). On a table whose generated constraints include the exclusion
+(`m-storage-layout` *Temporal history constraints*) the database itself refuses
+any statement that would break it, from any writer, and a refusal of a
+framework write is a recoverable conflict the bounded retry loop replays at a
+fresh instant (`m-auto-retry`). Elsewhere — a table generated without the
+exclusion, or one an operator has not migrated — storage that breaks it, through
+the race *Concurrent creation in gaps* describes, a clock behind stored history,
+or a writer outside the framework, is invalid, not another temporal state: no
+read chooses one of the overlapping milestones, and nothing here detects or
+repairs it. Readers rely on the invariant without checking it
+(`m-read-delivery` *Streamed delivery*; `m-sql` *Shared to-one joins*).
 
 ## Transaction-Time-Only milestone-chaining writes
 
@@ -296,8 +302,7 @@ what they left of that state covers it (`m-unit-work` *Observation ownership
 and lifetime*). Its **requested extent** is
 `[validFrom, until)`, through infinity when unbounded, and the write applies to
 every current-on-Transaction-Time rectangle of the object that overlaps it and
-that the write holds or reads (*Concurrent creation in gaps is not
-coordinated*):
+that the write holds or reads (*Concurrent creation in gaps*):
 
 - each overlapping rectangle is inactivated once, and its nonempty pieces are
   opened in Valid-Time order: a part outside the extent carries the
@@ -435,22 +440,39 @@ ownership and lifetime*), and the later operation revises or removes those
 rectangles like any the attempt opened, so the attempt adds no history of its
 own.
 
-**Concurrent creation in gaps is not coordinated.** The existing-row guards and
-shared locks above protect rows that exist when the flush reads them. A
-concurrent transaction may still open coverage inside a gap a replacement fills,
-or a gap an amendment passes over, and both commits can leave overlapping
-coverage; no isolation level is raised to prevent it. The result breaks
-*Milestones of one object never overlap*: it is invalid storage, not a second
-valid state. A write binds to the rows
-it already holds — the rectangles it observed; the current rectangles the attempt's own
-completed writes produced for a source continuing through them (`m-unit-work`
-*Observation ownership and lifetime*); the starting rectangles a Locking
-acquisition retained that are still current; and a pending insertion's own
-window — and
-reads only the coverage of its extent those leave. A rectangle
-created concurrently inside a held row's Valid-Time interval is therefore not
-reached: the write neither reads nor inactivates it, and it stays current
-beside the write's own pieces.
+**Concurrent creation in gaps.** The existing-row guards and shared locks above
+protect rows that exist when the flush reads them; they do not coordinate a
+concurrent transaction opening coverage inside a gap a replacement fills, or a
+gap an amendment or termination passes over, and no isolation level is raised to
+coordinate it. A write binds to the rows it already holds — the rectangles it
+observed; the current rectangles the attempt's own completed writes produced for
+a source continuing through them (`m-unit-work` *Observation ownership and
+lifetime*); the starting rectangles a Locking acquisition retained that are
+still current; and a pending insertion's own window — and reads only the
+coverage of its extent those leave. A rectangle created concurrently inside a
+held row's Valid-Time interval is therefore not reached.
+
+Which concurrent coverage a write covers follows the isolation level:
+
+- **Read Committed and Repeatable Read**: a write covers what its statements
+  read. A rectangle another transaction committed that was absent from them is
+  neither read nor inactivated, and stays current beside the write's own pieces
+  where they do not overlap it. Repeatable Read raises nothing for it: the
+  rectangle is a new row the write never touches.
+- **Serializable**: the two transactions' outcome is one some serial order of
+  them produces. The database may order the write before the concurrent
+  creation, so the write still does not reach the new rectangle, or refuse one
+  of them with a serialization failure, which the bounded retry loop replays.
+
+Where the two transactions' rows would overlap, storage decides. On a table
+carrying the exclusion, the later statement is refused, after waiting for the
+other transaction where that one has not yet committed; the refusal of a
+framework write is a recoverable conflict, so its re-execution reads the other
+transaction's committed coverage and plans against it, and a caller insert over
+coverage that is now current is refused on every attempt until the bound is
+spent (`m-auto-retry`). On a table without the exclusion both commits can leave
+overlapping coverage, which breaks *Milestones of one object never overlap*: it
+is invalid storage, not a second valid state.
 
 **Untracked same-token changes are a configuration constraint.** A supported
 deployment introduces no trigger or cascade that replaces or changes a tracked
@@ -589,7 +611,9 @@ current coverage, and a revision assigns no axis end or Transaction-Time start,
 so a revision moving its row's Valid-Time start can reach only coverage a close
 or removal of the same write ends, never coverage another revision leaves. No
 statement of the write therefore leaves two current rows of the object
-overlapping in Valid Time. Where several of a range's steps would fail, a lost
+overlapping in Valid Time, which is what lets a table's exclusion check each
+statement as it runs (`m-storage-layout` *Temporal history constraints*). Where
+several of a range's steps would fail, a lost
 start that a revised row holds therefore fails after every close, guard, and
 removal of the range.
 
@@ -727,10 +751,12 @@ stored history (`m-auto-retry`).
 
 This protects a close only. A new lineage — an insert, a pending insertion's
 surviving part, or a Coverage Gap — opens at the attempt's instant without
-reading the key's closed history, so a lineage opened after a termination by a
-clock that is behind can still overlap that history, and concurrent creation
-in a gap is still not coordinated (*Concurrent creation in gaps is not
-coordinated*).
+reading the key's closed history. On a table carrying the exclusion, a lineage
+opened after a termination by a clock that is behind would overlap that history,
+so storage refuses it and the retry opens it at a fresh instant; on a table
+without the exclusion it can still overlap that history, and concurrent creation
+in a gap is coordinated only as *Concurrent creation in gaps* describes. No
+portable guard refuses such an opening before it is written.
 
 ### Merging produced successors
 

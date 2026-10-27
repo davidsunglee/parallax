@@ -12,6 +12,7 @@ from parallax.evolution.schema_delta._plan import Plan, plan
 from parallax.evolution.schema_delta._render import render
 from parallax.evolution.schema_delta._values import (
     CollidingIndex,
+    CollidingTemporalConstraint,
     CollisionGroup,
     CreatedIndex,
     IndexPresence,
@@ -24,6 +25,7 @@ from parallax.evolution.schema_delta._values import (
 
 __all__ = [
     "CollidingIndex",
+    "CollidingTemporalConstraint",
     "CollisionGroup",
     "CreatedIndex",
     "IndexPresence",

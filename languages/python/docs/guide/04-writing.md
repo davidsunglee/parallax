@@ -233,13 +233,23 @@ fresh instant. Its `instant`, `key` and `stored_bound` fields name the instant, 
 and the start it failed to follow. Keep the clocks of every server writing one database
 synchronized, so that the retries rarely run out.
 
-The check covers closes only. An insert reads none of the key's stored history, so an
-insert after a termination, made by a clock behind the termination's, still opens a
-milestone overlapping the closed history; so can two transactions filling one gap at once.
-A temporal table Parallax creates on PostgreSQL also refuses an empty or backwards
-interval from any writer, through a check on each row (see
-[Temporal interval checks](../postgresql-lifecycle.md#temporal-interval-checks)); a check
-on one row can't see an overlap with another.
+That check covers closes only: an insert reads none of the key's stored history. The
+database covers the rest. A temporal table Parallax creates on PostgreSQL refuses, from
+any writer, a row with an empty or backwards interval and a row that overlaps another
+row of the same key on every axis at once (see
+[Temporal constraints](../postgresql-lifecycle.md#temporal-constraints)). An insert after
+a termination, made by a clock behind the termination's, would overlap the closed
+history, and so would the second of two transactions filling one gap at once; the
+database refuses that statement, and Parallax retries the attempt at a fresh instant,
+with fresh reads. Intervals that only meet don't overlap, so reopening an object at the
+very instant it was terminated succeeds.
+
+The refusal reaches you only when retries can't fix it: as the `cause` of an
+`ExecutionFailure`, a `DatabaseError` whose `category` is `"constraintViolation"` and
+whose `constraint_name` is the table's exclusion, with a note counting the attempts. An
+insert over a key's current coverage is such a case; [Errors](08-errors.md#failures-the-database-reports)
+shows how to tell it apart. A table Parallax didn't create, such as one from before this
+release that you haven't migrated, refuses none of this.
 
 <!-- example: change-a-credit-limit -->
 ```python
@@ -502,7 +512,8 @@ that has no row where it starts, so it is never an insert in disguise.
 To price a product again after a gap, insert it. Pricing `TEA-2` again from November is
 an ordinary `tx.insert` with `valid_from` set to November, even though the key has rows
 earlier in Valid Time. An insert reads none of the key's stored coverage, so it is yours
-to place where the key has none.
+to place where the key has none: an insert over current coverage is refused by the
+table, not merged into it.
 
 ### Terminate
 

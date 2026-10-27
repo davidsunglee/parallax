@@ -29,10 +29,14 @@ as predicates defined as category membership — not one stringly-typed method:
   (`category = uniqueViolation`);
 - the lock path asks `isTimedOut` (`category = lockWaitTimeout`).
 
-`constraintViolation` answers none of them: it is not retriable, and a database
-recognizing one of these codes says nothing about which constraint refused the
-row or why. Such a failure stays the original error; this module translates no
-constraint into a semantic outcome.
+`constraintViolation` answers none of them: the category is not retriable, and a
+database recognizing one of these codes says nothing about which constraint
+refused the row or why. Such a failure stays the original error; this module
+translates no constraint into a semantic outcome. Execution may still recognize
+one particular failure of the category — a temporal table's own exclusion,
+refused by the statement that wrote it — as a recoverable conflict
+(`m-auto-retry`); that verdict is execution's, made from the statement it
+attributes the failure to, and changes neither the category nor the error.
 
 ## The violated constraint name
 
@@ -58,8 +62,8 @@ host's question: it holds its own Schema Delta's created-index provenance and
 compares the two. Nothing in this module or below it consults a rollout.
 
 A `constraintViolation`'s name may be one `m-storage-layout` compiled for a
-temporal table's interval check. The error carries it as reported and is not
-otherwise distinguished from any other check failure.
+temporal table's interval check or exclusion. The error carries it as reported
+and is not otherwise distinguished from any other check or exclusion failure.
 
 ## Per-dialect native codes
 

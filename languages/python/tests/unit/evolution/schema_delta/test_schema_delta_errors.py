@@ -27,10 +27,15 @@ from parallax.core.dialect import (
     Unsupported,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.metamodel import Table
 from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
 from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
-from parallax.evolution.schema_delta import UnsupportedSchemaEvolutionError, schema_delta
-from tests.unit._corpus_model_support import formed
+from parallax.evolution.schema_delta import (
+    PhysicalLocation,
+    UnsupportedSchemaEvolutionError,
+    schema_delta,
+)
+from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
 _INDEX_REFUSAL = "this dialect indexes nothing"
@@ -103,7 +108,7 @@ def test_every_operation_a_dialect_refuses_is_reported_at_once() -> None:
     error = raised.value
     assert error.dialect_identity == "refusing"
     assert [operation.kind for operation in error.operations] == ["CreateIndex", "CreateIndex"]
-    assert {operation.location.table.name for operation in error.operations} == {"widget"}
+    assert {operation.location.table for operation in error.operations} == {Table(name="widget")}
     assert all(operation.reason == _INDEX_REFUSAL for operation in error.operations)
     for operation in error.operations:
         assert operation.caused_by
@@ -154,3 +159,30 @@ def test_a_refusing_dialect_returns_no_statement_at_all() -> None:
         "alter table widget alter column code type varchar(64)",
         f"create index {created.physical_index_name.value} on widget (code)",
     )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ExtensionlessDialect(Dialect):
+    """A Dialect that installs no extension."""
+
+    def create_extension(self, name: str) -> str | Unsupported:
+        del name
+        return Unsupported("this dialect installs no extension")
+
+
+def test_an_unsupported_prerequisite_is_reported_at_a_database_wide_location() -> None:
+    dialect = _ExtensionlessDialect(
+        name="extensionless",
+        reserved=POSTGRES.reserved,
+        quote_char=POSTGRES.quote_char,
+        error_codes=POSTGRES.error_codes,
+        max_identifier_bytes=POSTGRES.max_identifier_bytes,
+        max_bind_parameters=POSTGRES.max_bind_parameters,
+    )
+    model = formed(corpus_records()["balance"])
+    with pytest.raises(UnsupportedSchemaEvolutionError) as raised:
+        schema_delta(evolve(ABSENT, model), dialect)
+    (refusal,) = raised.value.operations
+    assert refusal.kind == "CreateExtension"
+    assert refusal.location == PhysicalLocation(extension="btree_gist")
+    assert refusal.caused_by

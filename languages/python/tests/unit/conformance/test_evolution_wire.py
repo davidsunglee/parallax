@@ -735,6 +735,31 @@ def test_a_delta_cell_carries_the_statements_and_the_created_index_provenance() 
     }
 
 
+def test_an_unsupported_prerequisite_is_placed_by_its_extension_alone() -> None:
+    refusal = UnsupportedSchemaEvolutionError(
+        "mariadb",
+        (
+            UnsupportedSchemaOperation(
+                kind="CreateExtension",
+                location=PhysicalLocation(extension="btree_gist"),
+                reason="ignored by the corpus",
+                caused_by=(EntityAdded(entity=_ORDER),),
+            ),
+        ),
+    )
+    assert unsupported_cell(refusal) == {
+        "unsupported": {
+            "operations": [
+                {
+                    "kind": "CreateExtension",
+                    "physicalLocation": {"extension": "btree_gist"},
+                    "causedBy": [{"kind": "EntityAdded", "entity": _ORDER_SPELLING}],
+                }
+            ]
+        }
+    }
+
+
 def test_an_unsupported_cell_names_each_operation_its_place_and_its_causes() -> None:
     # The physical location carries only the members the operation addresses, so
     # a whole-Table refusal names no column and no index.

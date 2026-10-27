@@ -58,6 +58,12 @@ a delta states what must happen to a database at a **known** edition rather than
 reconciling an unknown one, and a silently skipped statement would leave the
 later edition published over a schema that never received it.
 
+The one exception is a provider **prerequisite** — an extension the database
+must hold before a created Table's constraints can be spelled. It is not a
+model-owned object: no edition records it, another schema or an operator may
+already have installed it, and no delta ever removes it, so its statement
+installs it only if it is absent.
+
 Creating a unique Index is the authoritative validation of the data already
 stored. The generator performs no preflight data query: if existing rows violate
 the rule, the creating statement fails, the earlier definition is left intact, and
@@ -70,9 +76,11 @@ private algebra. It is the closed choice below and it never crosses the module's
 boundary in either direction.
 
 ```text
+CreateExtension      one database-wide prerequisite, named by the provider
 CreateTable          the complete target Table Layout: every target Column, the
-                     derived primary key, and each temporal axis's interval check
-                     inline, EXCLUDING authored secondary Indices
+                     derived primary key, and a temporal Table's named key,
+                     interval checks, and exclusion inline, EXCLUDING authored
+                     secondary Indices
 AddColumn            one target Column Slot
 RestateColumnDomain  the earlier and later physical Column facts, restating a
                      surviving Column's value domain as the later edition's
@@ -82,8 +90,8 @@ DropIndex            one earlier physical Index definition
 
 Drop-table, drop-column, rename, primary-key-alteration, and arbitrary-SQL
 variants are deliberately absent, because no Unilateral Evolution can produce
-one. So is adding a constraint to a Table the earlier edition already held: see
-*Temporal interval checks* below.
+one. So is adding a constraint to a Table the earlier edition already held, and so are
+an extension's upgrade and removal: see *Temporal constraints* below.
 
 `RestateColumnDomain` is not a generic column alteration either. It is legal in
 exactly two shapes, and both leave every stored value where it is:
@@ -184,12 +192,15 @@ Order is stated as dependency rules plus tie-breakers:
 - a Column is added before any new Index that references it;
 - an altered Index's target definition is created before its earlier definition
   is dropped;
+- a prerequisite is installed before every Table creation that requires it;
 - independent operations use stable physical-location and operation-kind
   tie-breakers, never a global phase order.
 
-Every edge those rules can produce stays inside **one Table**: the algebra emits
-no foreign key, and an Index is always local. The current algebra therefore
-admits a total key —
+Every Table-local edge those rules can produce stays inside **one Table**: the
+algebra emits no foreign key, and an Index is always local. The only edge that
+leaves a Table is a Table creation's on a prerequisite, which is not local to
+any Table, so every prerequisite precedes every Table operation, in name order.
+Among the Table operations the algebra admits a total key —
 
 ```text
 orderKey(operation) = (physical Table, physicalOperationKindRank, member addressed)
@@ -197,11 +208,11 @@ physicalOperationKindRank:
     CreateTable < AddColumn < RestateColumnDomain < CreateIndex < DropIndex
 ```
 
-— which is a linear extension of the dependency relation, so sorting by it emits
-what a deterministic topological walk over the same key would. Leading with the
-Table keeps one Table's statements together and keeps the whole output stable
+— which is a linear extension of their dependency relation, so sorting by it
+emits what a deterministic topological walk over the same key would. Leading with
+the Table keeps one Table's statements together and keeps the whole output stable
 under an edit to an unrelated Table. An implementation MAY sort; the rules above
-are the contract, and the first physical operation kind with a cross-Table
+are the contract, and the first Table operation kind with a cross-Table
 dependency reintroduces an explicit graph.
 
 Inspection order and statement order are independent. An Evolution's operations
@@ -212,28 +223,45 @@ APPLIED.
 Statements emitted for one physical operation stay contiguous and preserve
 renderer order.
 
-## Temporal interval checks
+## Temporal constraints
 
-A created temporal Table carries, inline in its `create table`, one named check
-per temporal axis requiring the axis's start Column to precede its end Column:
-Transaction Time on every temporal Table, and Valid Time too on a Bitemporal
-one. Each check's name, operands, and the Table carrying it are the Table
-Layout's `temporalConstraints` (`m-storage-layout`), read rather than derived
-here; the checks are listed in canonical axis order, Valid Time first. Spelling
-them, and whether a dialect's generated tables carry them at all, is
-`m-dialect`'s.
+A created temporal Table carries, inline in its `create table`, its temporal
+constraints from the Table Layout's `temporalConstraints` (`m-storage-layout`),
+read rather than derived here:
+
+- its primary key, under the compiled `primaryKeyName`, over unchanged Columns;
+  a Non-Temporal Table's key keeps the name the database gives it;
+- one interval check per temporal axis requiring the axis's start Column to
+  precede its end Column, listed in canonical axis order, Valid Time first;
+- the exclusion under `exclusionName`, which refuses a row overlapping another
+  row of the same `logicalKey` on every axis at once. It is checked as each
+  statement runs and is never deferrable, so no statement of a flush may leave
+  two rows of a key overlapping, even one a later statement of the same flush
+  would repair.
+
+Spelling them, and whether a dialect's generated tables carry them at all, is
+`m-dialect`'s. Where a dialect spells the exclusion, it names the prerequisite
+the exclusion requires, and a delta creating any Table that carries one plans
+exactly one `CreateExtension` for it. That prerequisite is caused by the
+canonical union of the causes of every Table creation requiring it, in
+canonical operation order, and reports a database-wide physical location naming
+the extension rather than a Table.
 
 A check is local to its Table, so its name enters no Physical Index Name census
-and no created-Index provenance. A Table the earlier edition already held gains
-no check: the delta states a known edition and cannot know whether stored rows
-satisfy one, so adopting the checks on an existing Table is a manual migration
-that validates its data first. Equal models still give an empty Schema Delta.
+and no created-Index provenance; the indexes backing the primary key and the
+exclusion share the schema's Index namespace and enter the census (see below).
+A Table the earlier edition already held gains no constraint and keeps its key's
+name: the delta states a known edition and cannot know whether stored rows
+satisfy a constraint, so adopting them on an existing Table is a manual migration
+that validates its data first. No delta upgrades or removes a prerequisite, or
+drops a temporal constraint. Equal models still give an empty Schema Delta.
 
 ## Physical Index Names
 
-Fresh provisioning creates each Table with all of its target Columns, its
-derived primary key, and its interval checks, then creates **every** authored secondary Index — unique and
-non-unique alike — as a separate, explicitly named statement. An incremental
+Fresh provisioning installs the prerequisite its temporal Tables require, creates
+each Table with all of its target Columns, its derived primary key, and its
+temporal constraints, then creates **every** authored secondary Index — unique
+and non-unique alike — as a separate, explicitly named statement. An incremental
 delta uses the same Index form. The derived primary-key Index is never a separate
 statement: it is the Table's key.
 
@@ -271,6 +299,12 @@ Because an altered Index's target definition differs from its earlier one in a
 fingerprinted fact, the two take distinct names — which is what lets the target
 be created and validated before the earlier Index is dropped.
 
+The indexes backing a temporal Table's primary key and exclusion share the same
+namespace. They enter the census under the names their Table Layouts compiled
+(`m-storage-layout`), never under a name derived here, each identified by its
+Table, its kind, and its Columns in constraint order. No delta drops one, so one
+held at either endpoint is present throughout.
+
 ## Errors
 
 Both errors are aggregated values, raised once with the complete finding set.
@@ -280,7 +314,8 @@ Neither returns a partial Schema Delta.
 checked against the selected Dialect. If any operation is unsupported, generation
 raises one atomic error carrying the Dialect Identity and the complete nonempty
 sequence of unsupported operations in deterministic physical-operation order.
-Each record carries the operation kind, its physical location, and its causal
+Each record carries the operation kind, its physical location — a Table and the
+member within it, or the extension a prerequisite installs — and its causal
 Evolution Operations in canonical operation order. This does **not** reclassify
 the dialect-independent Unilateral Evolution as coordinated: renderer support is a
 deployment capability, not a model-semantic fact.
@@ -304,10 +339,12 @@ throughout too. Because statements run Table by Table and a Table creates before
 it drops, a definition dropped from an earlier Table in that order frees its name
 before a later Table takes it, and only then. The error carries the Dialect
 Identity and every collision group in Physical Index Name order; each group
-carries the shared name and at least two colliding definitions in canonical
-logical-identity order, each naming its physical Table, logical Index Identity,
-ordered components, uniqueness, and whether it occurs in the earlier endpoint,
-the later endpoint, or both. This is a defensive backstop
+carries the shared name and at least two colliding definitions: authored Indices
+in canonical logical-identity order, each naming its physical Table, logical
+Index Identity, ordered components, and uniqueness, then temporal constraints in
+Table and kind order, each naming its physical Table, its kind — primary key or
+exclusion — and its Columns; every definition names whether it occurs in the
+earlier endpoint, the later endpoint, or both. This is a defensive backstop
 for an unexpected 128-bit fingerprint collision, not an ordinary control path and
 not a dialect-capability error.
 

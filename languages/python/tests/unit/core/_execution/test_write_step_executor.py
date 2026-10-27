@@ -20,7 +20,7 @@ from typing import Final
 import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
-from parallax.core import MAX, Attr, Bitemporal, DomainModel, attr
+from parallax.core import MAX, Attr, Bitemporal, DomainModel, attr, storage_layout
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
@@ -138,7 +138,7 @@ class Span(Bitemporal, table="span", namespace="parallax.execution.allocated"):
 _SPANS: Final = DomainModel(Span)
 
 
-def test_allocating_steps_answer_the_keys_their_insert_returned() -> None:
+def _allocating_group() -> WriteGroup:
     meta = model_of(_SPANS)
     prepared = prepare_typed_write(
         KeyedWriteInstruction(
@@ -162,12 +162,37 @@ def test_allocating_steps_answer_the_keys_their_insert_returned() -> None:
     assert isinstance(group, WriteGroup)
     (write,) = group.writes
     assert write.opened.allocated
+    return group
+
+
+def test_allocating_steps_answer_the_keys_their_insert_returned() -> None:
+    group = _allocating_group()
     port = ScriptedAdapter(Read(rows=[{"id": 42}]))
     with open_flush() as flush:
-        answered = step_executor(port, meta).execute(group.steps, allocates=True, flush=flush)
+        answered = step_executor(port, model_of(_SPANS)).execute(
+            group.steps, allocates=True, flush=flush
+        )
     assert answered == (42,)
     # The insert ran as row-producing DML rather than as a counted write.
     assert [type(call) for call in port.calls] == [ReadCall]
+
+
+def test_an_allocating_insert_refused_by_its_tables_exclusion_is_recognized() -> None:
+    layout = storage_layout.view(model_of(_SPANS)).entity(Span.identity)
+    assert layout is not None and layout.layout.temporal_constraints is not None
+    refused = DatabaseError(
+        category="constraintViolation",
+        native_code="23P01",
+        message="conflicting key value violates exclusion constraint",
+        constraint_name=layout.layout.temporal_constraints.exclusion_name,
+    )
+    recognized: list[DatabaseError] = []
+    with pytest.raises(DatabaseError) as raised, open_flush() as flush:
+        step_executor(
+            ScriptedAdapter(Read(raises=refused)), model_of(_SPANS), recognized=recognized
+        ).execute(_allocating_group().steps, allocates=True, flush=flush)
+    assert raised.value is refused
+    assert recognized == [refused]
 
 
 # --------------------------------------------------------------------------- #

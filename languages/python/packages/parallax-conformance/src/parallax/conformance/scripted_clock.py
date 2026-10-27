@@ -38,8 +38,7 @@ class ClockExhaustedError(RuntimeError):
 
 class ScriptedClock:
     """A :class:`~parallax.core.unit_work.Clock` yielding a FIXED, ORDERED
-    sequence of instants — one per call to :meth:`now`, never the same instant
-    twice.
+    sequence of instants — one per call to :meth:`now`.
 
     Construct one FRESH instance per story run (:data:`~parallax.conformance.
     stories.WriteStory.clock` is a zero-argument FACTORY for exactly this

@@ -76,6 +76,13 @@ Overlap on one axis is normal:
 The two current rectangles share a Transaction-Time interval and are adjacent on Valid
 Time. Each overlaps the closed milestone on Valid Time and not on Transaction Time.
 
+Every write preserves this over the coverage it reads. On PostgreSQL the tables
+Parallax generates also enforce it, for every writer: a statement that would store two
+overlapping milestones of one object is refused, and a Parallax write refused that way
+is retried at a fresh instant, because a concurrent writer or a lagging clock is what
+usually put the other milestone there
+([temporal history constraints](../../core/spec/m-storage-layout.md#temporal-history-constraints)).
+
 ## Reading at a point, across history, and over a range
 
 A read selects milestones on each axis its Entity has
@@ -204,8 +211,9 @@ another transaction committed the version it then changes — the write is refus
 Temporal Conflict rather than storing an empty or backwards interval, and the transaction
 is retried with a fresh instant
 ([a close follows its predecessor's start](../../core/spec/m-temporal-write.md#a-close-follows-its-predecessors-start)).
-The check covers closes only: an insert reads none of the object's history, so a clock
-behind a termination can still open a milestone overlapping it.
+The check covers closes only: an insert reads none of the object's history. A clock
+behind a termination would open a milestone overlapping it, which a generated
+PostgreSQL table refuses and the retry reopens at a fresh instant.
 
 ### Terminate, not delete
 

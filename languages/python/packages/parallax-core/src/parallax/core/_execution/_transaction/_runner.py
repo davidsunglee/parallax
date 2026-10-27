@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -399,9 +399,10 @@ class TransactionRunner:
                     selection = execution.adopt()
                     construct = attempt_for(selection)
                     with invocation.attempt(selection.edition) as physical:
+                        lifetime = TxnAttemptLifetime()
 
                         def in_txn(conn: DatabaseConnection) -> T:
-                            attempted = construct(conn, physical, TxnAttemptLifetime())
+                            attempted = construct(conn, physical, lifetime)
                             context = context_for(attempted)
                             active = _ActiveTransaction(attempted, context, self._root, capture)
                             return _completed(attempted, active, fn, context)
@@ -439,6 +440,7 @@ class TransactionRunner:
                                 ),
                                 physical,
                                 replayable,
+                                lifetime.recognized_conflicts,
                             )
                         except BaseException as failure:
                             exit_connection(resource, physical, held_since_ns, failure)
@@ -530,6 +532,7 @@ def _attempted[T](
     outcome: TransactionOutcome[T],
     attempt: TransactionAttemptActivity,
     replayable: list[Exception],
+    recognized: Collection[BaseException],
 ) -> T:
     """What one physical attempt answers, from the boundary outcome the port reported.
 
@@ -538,8 +541,9 @@ def _attempted[T](
     failure must never be retried while a rolled-back deadlock must be, and the
     retry loop cannot know which phase failed.
 
-    A completed rollback is the one outcome classified for replay, once: the
-    attempt reports that verdict, and an eligible failure is recorded in
+    A completed rollback is the one outcome classified for replay, once, beside
+    the statement failures the attempt's execution ``recognized`` as recoverable
+    conflicts: the attempt reports that verdict, and an eligible failure is recorded in
     ``replayable`` before it propagates, unchanged like any other, so the
     attempt's cleanup sees it and what a caller catches is what their own
     callback or the database raised. Only a failed rollback substitutes an error
@@ -561,13 +565,15 @@ def _attempted[T](
             raise error
         case RolledBack(trigger):
             error = trigger.error
-            eligible = retry_eligible(error)
+            eligible = retry_eligible(error, recognized=recognized)
             attempt.rolled_back(trigger, eligible)
             if eligible and isinstance(error, Exception):
                 replayable.append(error)
             raise error
         case RollbackFailed(trigger, rollback_error):
-            attempt.rollback_failed(trigger, rollback_error, retry_eligible(trigger.error))
+            attempt.rollback_failed(
+                trigger, rollback_error, retry_eligible(trigger.error, recognized=recognized)
+            )
             triggering_error = trigger.error
             if isinstance(triggering_error, Exception):
                 raise TransactionRollbackError(triggering_error, rollback_error) from rollback_error

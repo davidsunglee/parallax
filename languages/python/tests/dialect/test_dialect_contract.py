@@ -43,6 +43,7 @@ from parallax.core.dialect import (
     Dialect,
     DocumentLeafAssignment,
     DocumentValueAssignment,
+    ExclusionDdl,
     IndexColumnDdl,
     IntervalCheckDdl,
     PhysicalIndexName,
@@ -415,6 +416,39 @@ def test_create_table_names_each_interval_check_after_the_key(dialect: Dialect) 
         "constraint pxc_valid_span_1 check (from_z < thru_z), "
         "constraint pxc_tx_span_2 check (in_z < out_z))"
     )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_create_table_names_a_temporal_key_and_excludes_overlap_last(dialect: Dialect) -> None:
+    statement = dialect.create_table(
+        "span",
+        [ColumnDdl("id", "bigint", False)],
+        ["id", "thru_z", "out_z"],
+        [IntervalCheckDdl("pxc_tx_span_2", "in_z", "out_z")],
+        primary_key_name="pxc_pk_span_3",
+        exclusion=ExclusionDdl(
+            "pxc_excl_span_4", ("id",), (("from_z", "thru_z"), ("in_z", "out_z"))
+        ),
+    )
+    assert statement == (
+        "create table span (id bigint not null, "
+        "constraint pxc_pk_span_3 primary key (id, thru_z, out_z), "
+        "constraint pxc_tx_span_2 check (in_z < out_z), "
+        "constraint pxc_excl_span_4 exclude using gist "
+        "(id with =, tstzrange(from_z, thru_z) with &&, tstzrange(in_z, out_z) with &&))"
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_the_exclusion_prerequisite_is_installed_only_where_absent(dialect: Dialect) -> None:
+    assert dialect.create_extension("btree_gist") == "create extension if not exists btree_gist"
+
+
+def test_only_an_exclusion_violation_reports_the_exclusion_kind() -> None:
+    assert POSTGRES.reports_exclusion_violation("23P01")
+    for other in ("23514", "23505", "55P03", "40001", None):
+        assert not POSTGRES.reports_exclusion_violation(other)
+    assert POSTGRES.classify("23P01") == "constraintViolation"
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
