@@ -584,6 +584,17 @@ class Dialect:
             return f"decimal({neutral_type.precision}, {neutral_type.scale})"
         return self.column_type(neutral_type, max_length)
 
+    def array_parameter(self, neutral_type: NeutralType) -> str:
+        """One array bind cast to the array of ``neutral_type``'s comparison type.
+
+        The driver types an untyped array by its elements, so small integers would
+        arrive as a narrower integer array and make the comparison cross-type. The
+        element type carries no length or precision modifier: an explicit cast to
+        ``varchar(n)`` truncates and one to ``decimal(p, s)`` rounds, so either
+        could make a value equal a key it does not equal.
+        """
+        return f"cast(? as {_ARRAY_ELEMENT_TYPES[type(neutral_type)]}[])"
+
     # -- DDL type mapping -------------------------------------------------- #
     def column_type(self, neutral_type: NeutralType, max_length: int | None) -> str:
         """The concrete column type for a neutral type (used by DDL derivation)."""
@@ -688,6 +699,21 @@ _FIXED_COLUMN_TYPES: Final[Mapping[type, str]] = {
     Timestamp: "timestamptz",
     Uuid: "uuid",
     Json: "jsonb",
+}
+
+_ARRAY_ELEMENT_TYPES: Final[Mapping[type, str]] = {
+    Boolean: "boolean",
+    Int32: "int",
+    Int64: "bigint",
+    Float32: "real",
+    Float64: "double precision",
+    Decimal: "decimal",
+    String: "text",
+    Bytes: "bytea",
+    Date: "date",
+    Time: "time",
+    Timestamp: "timestamptz",
+    Uuid: "uuid",
 }
 
 # Postgres reserved words that appear as declared columns in the corpus and so

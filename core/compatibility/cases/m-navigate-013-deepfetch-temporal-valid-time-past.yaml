@@ -30,7 +30,7 @@ then:
         mariadb: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
       binds: ["2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity]
     - sql:
-        postgres: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id = any(?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+        postgres: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id = any(cast(? as bigint[])) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
         mariadb: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id in (?, ?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
       binds: { postgres: [[1, 2], "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity], mariadb: [1, 2, "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity] }
   graph:

@@ -8,10 +8,11 @@ returned by parent so the assembly can fan them back out in memory.
 
     The contract it proves is N+1 elimination, and it proves it against derivations of
     its own rather than against the database's answer: a level's authored binds start
-    with the gathered parent keys as one PostgreSQL array or as MariaDB's expanded
-    list, then carry the effective set's table-per-hierarchy tag values and propagated
-    as-of coordinates. A declared relationship ordering is graded on the rows the
-    golden returned. A level whose parents gathered no keys
+    with the gathered parent keys as one PostgreSQL array, cast to the array of the
+    key's type, or as MariaDB's expanded list, then carry the effective set's
+    table-per-hierarchy tag values and propagated as-of coordinates. A declared
+    relationship ordering is graded on the rows the golden returned. A level whose
+    parents gathered no keys
 issues no SQL at all, so the statement a case lists for it is dead SQL the case is
 refused for.
 """
@@ -92,6 +93,28 @@ def deepfetch_root_entity(model: Model, query: dict[str, Any]) -> Entity:
     first_rel = _deepfetch_paths(query)[0][0]
     root_class = first_rel.rpartition(".")[0]
     return model.entity(root_class)
+
+
+# m-core neutral type -> the unmodified PostgreSQL element type a key array is cast
+# to (the m-dialect array parameter cast form). A decimal casts to bare `decimal`.
+_POSTGRES_ARRAY_ELEMENTS = {
+    "boolean": "boolean",
+    "int32": "int",
+    "int64": "bigint",
+    "float32": "real",
+    "float64": "double precision",
+    "string": "text",
+    "bytes": "bytea",
+    "date": "date",
+    "time": "time",
+    "timestamp": "timestamptz",
+    "uuid": "uuid",
+}
+
+
+def _postgres_key_array(key_type: str) -> str:
+    element = "decimal" if key_type.startswith("decimal(") else _POSTGRES_ARRAY_ELEMENTS[key_type]
+    return f"cast(? as {element}[])"
 
 
 def column_of(entity: Entity, attr_name: str) -> str:
@@ -652,9 +675,19 @@ def execute_fetch_levels(
                 f"this temporal child (matched by axis), appended after the IN list."
             )
 
+        key_type = step.child_entity.attribute_by_name(step.child_attr)["type"]
+        if dialect == "postgres":
+            key_array = f"= any({_postgres_key_array(key_type)})"
+            if key_array not in level_sql:
+                raise CaseFailure(
+                    f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
+                    f"({step.view_key}) does not compare its gathered keys through "
+                    f"{key_array!r}. A PostgreSQL child level casts its one key array to "
+                    f"the array of the key's own type (m-sql / m-dialect)."
+                )
+
         # The authored keys are canonical Wire values; the level executes their
         # managed members, which a float32 key's Wire spelling does not equal.
-        key_type = step.child_entity.attribute_by_name(step.child_attr)["type"]
         managed_keys = [portable_literal.decode_canonical(key, key_type) for key in authored_keys]
         executed_keys: list[Any] = [managed_keys] if dialect == "postgres" else managed_keys
         child_rows = execute.query_rows(

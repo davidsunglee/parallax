@@ -562,10 +562,46 @@ def test_postgres_child_template_keeps_one_array_bind_for_every_key_count() -> N
     several = template.render([1, 42])
 
     assert first.statement.sql == several.statement.sql
-    assert first.statement.sql.endswith("where t0.order_id = any(?)")
+    assert first.statement.sql.endswith("where t0.order_id = any(cast(? as bigint[]))")
     assert first.statement.binds == ([1],)
     assert several.statement.binds == ([1, 42],)
     assert several.statement.wire_binds() == ([1, 42],)
+
+
+IDENTIFIERS = model("identifier-types")
+
+
+@pytest.mark.parametrize(
+    ("meta", "name", "attr", "column", "element"),
+    [
+        (IDENTIFIERS, "Int32Child", "parentId", "parent_id", "int"),
+        (IDENTIFIERS, "Int64Child", "parentId", "parent_id", "bigint"),
+        (IDENTIFIERS, "StringChild", "parentId", "parent_id", "text"),
+        (IDENTIFIERS, "UuidChild", "parentId", "parent_id", "uuid"),
+        (ORDERS, "Order", "price", "price", "decimal"),
+        (ORDERS, "OrderItem", "sku", "sku", "text"),
+        (SCALARS, "ScalarThing", "f32", "f32", "real"),
+        (SCALARS, "ScalarThing", "f64", "f64", "double precision"),
+        (SCALARS, "ScalarThing", "localTime", "local_time", "time"),
+    ],
+    ids=[
+        "int32",
+        "int64",
+        "string",
+        "uuid",
+        "decimal",
+        "bounded-string",
+        "float32",
+        "float64",
+        "time",
+    ],
+)
+def test_postgres_child_template_casts_its_key_array_to_the_key_type(
+    meta: Metamodel, name: str, attr: str, column: str, element: str
+) -> None:
+    sql = _child_template(POSTGRES, meta, name, attr).compiled.statement.sql
+
+    assert sql.endswith(f"where t0.{column} = any(cast(? as {element}[]))")
 
 
 def test_postgres_child_template_binds_the_gathered_list_under_the_template_metadata() -> None:
@@ -666,7 +702,7 @@ def test_a_template_discovers_no_expanding_placeholder_in_identifier_text(
 
     assert root_template.render() == sql_compile.compile_read(root, meta, dialect)
     assert f"from {table} t0" in child.sql
-    membership = "= any(?)" if dialect.name == "postgres" else "in (?, ?)"
+    membership = "= any(cast(? as bigint[]))" if dialect.name == "postgres" else "in (?, ?)"
     assert child.sql.endswith(f"where t0.order_id {membership}")
 
 
@@ -698,7 +734,9 @@ def test_a_template_renders_every_key_occurrence_of_one_form_from_one_gathered_s
 
     if dialect.name == "postgres":
         assert statement.binds == (keys, keys)
-        assert statement.sql.endswith("where t0.order_id = any(?) and t0.id = any(?)")
+        assert statement.sql.endswith(
+            "where t0.order_id = any(cast(? as bigint[])) and t0.id = any(cast(? as bigint[]))"
+        )
     else:
         assert statement.binds == (1, 2, 1, 2)
         assert statement.sql.endswith("where t0.order_id in (?, ?) and t0.id in (?, ?)")
@@ -764,7 +802,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         assert rendered.statement.binds == ("before", *key_binds, "after") * branches + (7,)
         assert rendered.statement.wire_binds() == rendered.statement.binds
         membership = (
-            "t0.folder_id = any(?)"
+            "t0.folder_id = any(cast(? as bigint[]))"
             if dialect.name == "postgres"
             else f"t0.folder_id in ({', '.join('?' for _ in keys)})"
         )

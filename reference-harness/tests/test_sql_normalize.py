@@ -65,6 +65,22 @@ def test_null_placement_leading_rank_term_normalizes_negation() -> None:
 # mangling the backticks (MariaDB), which is what broke before the fix.
 
 
+@pytest.mark.parametrize(
+    "element", ["int", "bigint", "text", "decimal", "uuid", "timestamptz", "double precision"]
+)
+def test_an_array_parameter_cast_binds_its_brackets_to_the_type(element: str) -> None:
+    canonical = f"select t0.id from item t0 where t0.order_id = any(cast(? as {element}[]))"
+    assert normalize(canonical.replace("[]", " [ ]")) == canonical
+    assert is_canonical(canonical)
+
+
+def test_an_array_constructor_and_subscript_keep_their_spaced_brackets() -> None:
+    canonical = "select t0.id from x t0 where (coalesce(array [ t0.a ], array [ false ])) [ 1 ] = ?"
+    assert normalize(
+        "select t0.id from x t0 where (coalesce(array[t0.a], array[false]))[1] = ?"
+    ) == (canonical)
+
+
 def test_quoted_reserved_identifier_is_canonical_postgres() -> None:
     canonical = 'select t0.id, t0."order", t0.label from grade t0 where t0."order" > ?'
     assert is_canonical(canonical, "postgres")

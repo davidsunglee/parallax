@@ -21,7 +21,7 @@ then:
         postgres: select t0.id, t0.label from int64_parent t0
         mariadb: select t0.id, t0.label from int64_parent t0
     - sql:
-        postgres: select t0.id, t0.parent_id from int64_child t0 where t0.parent_id = any(?) order by t0.id asc
+        postgres: select t0.id, t0.parent_id from int64_child t0 where t0.parent_id = any(cast(? as bigint[])) order by t0.id asc
         mariadb: select t0.id, t0.parent_id from int64_child t0 where t0.parent_id in (?) order by t0.id asc
       binds: {postgres: [[1099511627776]], mariadb: [1099511627776]}
   referenceSql: select id, label from int64_parent

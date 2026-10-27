@@ -24,7 +24,7 @@ then:
         postgres: select t0.id, t0.name from keeper t0 order by t0.id asc
         mariadb: select t0.id, t0.name from keeper t0 order by t0.id asc
     - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 where t0.keeper_id = any(?) order by t0.id asc
+        postgres: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 where t0.keeper_id = any(cast(? as bigint[])) order by t0.id asc
         mariadb: select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 where t0.keeper_id in (?, ?, ?) order by t0.id asc
       binds: { postgres: [[10, 11, 12]], mariadb: [10, 11, 12] }
   referenceSql: select id, name from keeper

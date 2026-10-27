@@ -504,8 +504,11 @@ does, and a `not` over it negates it whole.
 A framework-generated child-level membership carries a **deferred key set**
 rather than an authored list. Its statement is compiled once with one template
 hole and rendered when the distinct parent keys are known. Postgres renders
-`t0.col = any(?)` and binds the complete key set as one array parameter; its SQL
-text and bind arity are therefore constant across pages. MariaDB renders
+`t0.col = any(cast(? as <type>[]))` and binds the complete key set as one array
+parameter; its SQL text and bind arity are therefore constant across pages. The
+cast names the key's own type through the `m-dialect` **array parameter cast
+form**, so the comparison stays same-typed however the driver types the array.
+MariaDB renders
 `t0.col in (?, ..., ?)` with one placeholder and bind per key. Other predicate
 binds retain their authored order around the rendered key-set bind(s). An empty
 gathered key set issues no child statement, so no dialect renders an empty

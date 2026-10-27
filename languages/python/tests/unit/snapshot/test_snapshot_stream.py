@@ -526,7 +526,7 @@ def test_a_streamed_unknown_child_tag_fails_its_root_after_the_published_prefix(
         "bear",
     )
     child_sql = _reads(port)[1].sql
-    assert " where t0.keeper_id = any(%s) order by" in child_sql
+    assert " where t0.keeper_id = any(cast(%s as bigint[])) order by" in child_sql
 
 
 def test_a_streamed_unknown_child_tag_arrives_as_a_record_in_both_namespaces() -> None:

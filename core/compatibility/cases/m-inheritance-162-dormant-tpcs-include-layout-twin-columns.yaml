@@ -26,7 +26,7 @@ then:
         postgres: select t0.id, t0.name, t0.prototype_id, t0.concept_id from dormant_workbench t0 order by t0.id asc
         mariadb: select t0.id, t0.name, t0.prototype_id, t0.concept_id from dormant_workbench t0 order by t0.id asc
     - sql:
-        postgres: select t0.id, t0.kind, t0.label, t0.workbench_id, t0.spin from dormant_gadget t0 where t0.workbench_id = any(?) order by t0.id asc
+        postgres: select t0.id, t0.kind, t0.label, t0.workbench_id, t0.spin from dormant_gadget t0 where t0.workbench_id = any(cast(? as bigint[])) order by t0.id asc
         mariadb: select t0.id, t0.kind, t0.label, t0.workbench_id, t0.spin from dormant_gadget t0 where t0.workbench_id in (?, ?) order by t0.id asc
       binds: { postgres: [[1, 2]], mariadb: [1, 2] }
   referenceSql: select id, name, prototype_id, concept_id from dormant_workbench

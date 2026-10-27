@@ -486,7 +486,7 @@ def test_dependency_ready_sibling_levels_share_one_pipeline_batch() -> None:
     (pipeline,) = port.pipelines
     assert len(pipeline) == 2
     assert [statement.binds for statement in pipeline] == [([1],), ([1],)]
-    assert all(" = any(%s)" in statement.sql for statement in pipeline)
+    assert all(" = any(cast(%s as bigint[]))" in statement.sql for statement in pipeline)
     rows = _rows(result.page)
     root = _root(result)
     assert len(_refs(_view(rows, root, "items"))) == 1
@@ -686,7 +686,7 @@ def test_a_broad_include_over_a_partial_family_diagnoses_its_unknown_child_at_th
     child_sql, child_binds = port.executed[1]
     assert child_sql == (
         "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 "
-        "where t0.keeper_id = any(%s) order by t0.id asc"
+        "where t0.keeper_id = any(cast(%s as bigint[])) order by t0.id asc"
     )
     assert child_binds == [[10, 11]]
     with pytest.raises(InvalidDataError) as refused:
@@ -1882,7 +1882,7 @@ def test_an_include_of_a_dormant_target_loads_empty_and_null_without_a_child_sta
     (_root_read, gadgets) = _reads(port)
     assert gadgets.sql == (
         "select t0.id, t0.kind, t0.label, t0.workbench_id, t0.spin from dormant_gadget t0 "
-        "where t0.workbench_id = any(%s) order by t0.id asc"
+        "where t0.workbench_id = any(cast(%s as bigint[])) order by t0.id asc"
     )
     assert gadgets.binds == ([1, 2],)
     bench, shed = snapshot.results()

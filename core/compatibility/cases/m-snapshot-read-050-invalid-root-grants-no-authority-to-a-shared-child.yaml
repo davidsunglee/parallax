@@ -41,7 +41,7 @@ then:
         mariadb: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.id in (?, ?) order by t0.id asc
       binds: [100, 101]
     - sql:
-        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = any(?)
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = any(cast(? as bigint[]))
         mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id in (?)
       binds: { postgres: [[1]], mariadb: [1] }
   graph:
