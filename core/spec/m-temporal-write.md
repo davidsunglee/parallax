@@ -410,8 +410,9 @@ own `validFrom`, or the rectangle an observed source read. Both starts may lie
 inside one stored rectangle. Pending together, they execute as one range that
 inactivates each rectangle once and opens each operation's pieces inside its own
 window; every rectangle holding a caller's start is inactivated first, in the
-order the callers stated them, and one guard serves every start one rectangle
-holds. A replacement fills gaps of its own window only, and a termination
+order the callers stated them — a row the attempt opened and revises in place
+after every inactivation (*Predecessor Expansion*) — and one guard serves every
+start one rectangle holds. A replacement fills gaps of its own window only, and a termination
 destroys only its own.
 
 ```text
@@ -580,6 +581,17 @@ predecessors holding a caller's start first, in the order the callers stated
 them, then validated observations, then every other predecessor; its successors
 follow, and a replacement's Coverage Gaps come last. A row merged from several
 produced rows opens where the first of them would have.
+
+Within that order every close, guard, and removal of one object runs before any
+revision of a row the attempt opened (*Ownership disposal*, below), and the
+revisions keep that order among themselves. A close or removal only ends
+current coverage, and a revision assigns no axis end or Transaction-Time start,
+so a revision moving its row's Valid-Time start can reach only coverage a close
+or removal of the same write ends, never coverage another revision leaves. No
+statement of the write therefore leaves two current rows of the object
+overlapping in Valid Time. Where several of a range's steps would fail, a lost
+start that a revised row holds therefore fails after every close, guard, and
+removal of the range.
 
 A row opening a **new lineage** — an `insert`'s, each surviving part of a pending
 insert (`m-unit-work` *Same-transaction write coalescing*), and each Coverage

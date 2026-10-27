@@ -1,0 +1,168 @@
+model: models/buffered-sequence-layout-twin-columns.yaml
+tags: [m-temporal-write, m-unit-work, m-opt-lock, m-storage-layout, m-sql, scenario, target-write, disjoint, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: each composed flush writes against coverage its own read and the attempt's earlier flush leave, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: stored-neighbour
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 3, amount: 150 }
+          ifTxStart: "2023-12-15T00:00:00.000000Z"
+          validFrom: "2024-06-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+    - uow: stored-neighbour
+      objectQuery:
+        target: parallax.compatibility.SequenceSpan
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceSpan.id
+            value: 3
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-06-01T00:00:00.000000Z" } }
+      note: "flush the amendment, which opens the attempt's own June rectangle"
+      expectRows:
+        - id: 3
+          amount: 150
+          label: c
+          memo: { note: n3 }
+          from_z: "2024-06-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2024-11-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: stored-neighbour
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 3, amount: 175 }
+          ifTxStart: "2024-11-01T00:00:00.000000Z"
+          validFrom: "2024-06-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+        - mutation: amendUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 3, amount: 175 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          until: "2024-06-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+      note: "the condition on the attempt's own rectangle is stated first; both windows' successors merge into one row from January, so the attempt's own rectangle is revised to start at January and the stored January rectangle is closed"
+    - uow: owned-neighbour
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 1, amount: 150 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-06-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+    - uow: owned-neighbour
+      objectQuery:
+        target: parallax.compatibility.SequenceSpan
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceSpan.id
+            value: 1
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-06-01T00:00:00.000000Z" } }
+      note: "flush the amendment, which opens the attempt's own January head and June rectangle"
+      expectRows:
+        - id: 1
+          amount: 150
+          label: a
+          memo: { note: n1 }
+          from_z: "2024-06-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2024-11-02T00:00:00.000000Z"
+          out_z: infinity
+    - uow: owned-neighbour
+      write:
+        - mutation: amend
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 1, amount: 175 }
+          ifTxStart: "2024-11-02T00:00:00.000000Z"
+          validFrom: "2024-06-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+        - mutation: amendUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 1, amount: 175 }
+          ifTxStart: "2024-11-02T00:00:00.000000Z"
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          until: "2024-06-01T00:00:00.000000Z"
+          at: "2024-11-02T00:00:00.000000Z"
+      note: "the condition on the attempt's June rectangle is stated first; both windows' successors merge into one row from January, so the June rectangle is revised to start at January and the attempt's own January head is removed"
+then:
+  units:
+    stored-neighbour: { outcome: committed }
+    owned-neighbour: { outcome: committed }
+  tableState:
+    sequence_span:
+      - id: 1
+        amount: 100
+        label: a
+        memo: { note: n1 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-02T00:00:00.000000Z"
+      - id: 1
+        amount: 175
+        label: a
+        memo: { note: n1 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-11-02T00:00:00.000000Z"
+        out_z: infinity
+      - id: 2
+        amount: 100
+        label: b
+        memo: { note: n2 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 3
+        amount: 100
+        label: c
+        memo: { note: n3 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+      - id: 3
+        amount: 200
+        label: c
+        memo: { note: n3 }
+        from_z: "2024-06-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+      - id: 3
+        amount: 175
+        label: c
+        memo: { note: n3 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 4
+        amount: 90
+        label: d
+        memo: { note: n4 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2023-12-15T00:00:00.000000Z"
+      - id: 4
+        amount: 100
+        label: d
+        memo: { note: n4 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: infinity
