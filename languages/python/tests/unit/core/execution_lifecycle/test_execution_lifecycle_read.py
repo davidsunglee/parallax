@@ -62,9 +62,8 @@ from parallax.core.execution_lifecycle._activity import (
     open_read_root,
 )
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.read_delivery import _read_plan as read_plan_module
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate, compile_template
+from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
 from parallax.snapshot import ScopedDatabase, SnapshotMaterializationError, connect
 from parallax.snapshot._handle import _read as read_module
 from tests._support import mirrored_models as mm
@@ -693,16 +692,20 @@ def _recorded_openings(
 
 
 def _recorded_compilations(monkeypatch: pytest.MonkeyPatch) -> list[CompiledRead]:
-    """Every compiled read the executor produces, which is where the objects a
+    """Every root read the executor renders, which is where the objects a
     Database Call reports come from when the call site prepares nothing."""
     recorded: list[CompiledRead] = []
+    render = CompiledTemplate.render
 
-    def recording(*args: Any, **kwargs: Any) -> CompiledTemplate:
-        template = compile_template(*args, **kwargs)
-        recorded.append(template.compiled)
-        return template
+    def recording(
+        self: CompiledTemplate, keys: list[Any] | None = None, *, query: Any = None
+    ) -> CompiledRead:
+        rendered = render(self, keys, query=query)
+        if query is not None:
+            recorded.append(rendered)
+        return rendered
 
-    monkeypatch.setattr(read_plan_module, "compile_template", recording)
+    monkeypatch.setattr(CompiledTemplate, "render", recording)
     return recorded
 
 

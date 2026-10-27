@@ -6,6 +6,7 @@ from typing import Never
 from parallax.core import inheritance
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._resolved import ResolvedTemporalSelection
+from parallax.core.predicate._execution_values import ExecutionValueSources
 from parallax.core.predicate._resolved import (
     CurrentObject,
     ObjectPosition,
@@ -30,6 +31,7 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.temporal_read import (
     inject_resolved_as_of,
+    inject_sourced_as_of,
     propagated_selections,
     resolve_perspective,
 )
@@ -40,6 +42,7 @@ __all__ = [
     "RootSelections",
     "TemporalResolution",
     "TemporallyResolvedPredicate",
+    "resolve_sourced_temporal_visibility",
     "resolve_temporal_visibility",
 ]
 
@@ -98,16 +101,50 @@ def resolve_temporal_visibility(
     reach none are retained as they are. Root restrictions follow, so the
     terms they add are never traversed.
     """
+    resolved, injected = _resolved(predicate, target, model, resolution)
+    if injected is None:
+        return _closed(resolved)
+    return _closed(inject_resolved_as_of(resolved, injected, _family_root(target, model)))
+
+
+def resolve_sourced_temporal_visibility(
+    predicate: ResolvedPredicate,
+    sources: ExecutionValueSources,
+    *,
+    target: EntityMetadata,
+    model: Metamodel,
+    resolution: TemporalResolution,
+) -> tuple[TemporallyResolvedPredicate, ExecutionValueSources]:
+    """:func:`resolve_temporal_visibility`, carrying ``predicate``'s
+    execution-value sources to its occurrences in the resolved predicate."""
+    resolved, injected = _resolved(predicate, target, model, resolution)
+    if injected is None:
+        return _closed(resolved), sources
+    composed, carried = inject_sourced_as_of(
+        resolved, sources, injected, _family_root(target, model)
+    )
+    return _closed(composed), carried
+
+
+def _resolved(
+    predicate: ResolvedPredicate,
+    target: EntityMetadata,
+    model: Metamodel,
+    resolution: TemporalResolution,
+) -> tuple[ResolvedPredicate, tuple[ResolvedTemporalSelection, ...] | None]:
+    """``predicate`` with its relationships' visibility established, and the
+    selections whose terms restrict the root, if it states any.
+
+    Resolution keeps every occurrence at its path.
+    """
     match resolution:
         case RootSelections(selections=selections):
-            resolved = _Resolution(model, selections).predicate(predicate)
-            return _closed(inject_resolved_as_of(resolved, selections, _family_root(target, model)))
+            return _Resolution(model, selections).predicate(predicate), selections
         case PropagatedRootSelections(selections=selections):
             resolved = _Resolution(model, selections).predicate(predicate)
-            propagated = propagated_selections(target, model=model, root_selections=selections)
-            return _closed(inject_resolved_as_of(resolved, propagated, _family_root(target, model)))
+            return resolved, propagated_selections(target, model=model, root_selections=selections)
         case NoRootSelections():
-            return _closed(_Resolution(model, ()).predicate(predicate))
+            return _Resolution(model, ()).predicate(predicate), None
 
 
 def _family_root(target: EntityMetadata, model: Metamodel) -> EntityMetadata:

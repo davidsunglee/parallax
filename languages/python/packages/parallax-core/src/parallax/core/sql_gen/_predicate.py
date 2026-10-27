@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, assert_never
+from typing import Final, Literal, assert_never, cast
 
 from parallax.core.base import STRING, ManagedValue, NeutralType
 from parallax.core.dialect import Dialect, ScalarResult
@@ -19,6 +19,7 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.predicate import MembershipOp, StringOp
+from parallax.core.predicate._execution_values import ExecutionValueSource, ExecutionValueSources
 from parallax.core.predicate._resolved import (
     CurrentObject,
     DeferredKeySet,
@@ -44,7 +45,11 @@ from parallax.core.predicate._resolved import (
 )
 from parallax.core.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
+    AffixForm,
+    ComparisonTextForm,
+    ExecutionValueForm,
     GatheredKeysForm,
+    ManagedOperandForm,
     SqlGenError,
     StatementBuilder,
 )
@@ -490,7 +495,7 @@ def _render(
             | ResolvedStringMatch()
             | ResolvedNullCheck()
         ):
-            return _render_operation(predicate, _placement(lexical, path), lexical, scope)
+            return _render_operation(predicate, _placement(lexical, path), lexical, path, scope)
         case ResolvedQuantifier():
             return _render_quantifier(predicate, plan, lexical, path, scope)
         case ResolvedPresence():
@@ -556,6 +561,7 @@ def _render_operation(
     operation: _Operation,
     placement: _PredicatePlacement,
     lexical: _LexicalScopePlan,
+    path: _PredicatePath,
     scope: PredicateScope,
 ) -> str:
     """One scalar operation over its member's subject expression.
@@ -576,17 +582,19 @@ def _render_operation(
         subject = _subject_reached_by(operation, placement, lexical, scope)
     else:
         subject = _subject_here(member, operation.position, scope)
+    sources = lexical.execution_value_sources
+    source = None if sources is None else sources.operand(path)
     match operation:
         case ResolvedComparison():
-            return _compared(operation, subject, scope)
+            return _compared(operation, subject, scope, source)
         case ResolvedRange(lower=lower, upper=upper):
-            _bind_operand(lower, subject, scope)
-            _bind_operand(upper, subject, scope)
+            _bind_operand(lower, subject, scope, source=source)
+            _bind_operand(upper, subject, scope, source=_following(sources, path, 1))
             return f"{subject.compared} between ? and ?"
         case ResolvedMembership(op=tag, values=values):
-            return _render_membership(tag, values, subject, scope)
+            return _render_membership(tag, values, subject, scope, sources, path)
         case ResolvedStringMatch(op=tag, pattern=pattern, case_insensitive=folded):
-            return _render_like(tag, pattern, folded, subject.extraction, scope)
+            return _render_like(tag, pattern, folded, subject.extraction, scope, source)
         case ResolvedNullCheck(op=tag):
             column = subject.extraction
             return f"{column} is null" if tag == "isNull" else f"not {column} is null"
@@ -738,11 +746,20 @@ def _relative_path(path: tuple[str, ...], container: OccurrenceMetadata) -> tupl
     return path[len(base) :]
 
 
+def _following(
+    sources: ExecutionValueSources | None, path: _PredicatePath, index: int
+) -> ExecutionValueSource | None:
+    """The source of operand ``index`` of the occurrence at ``path``."""
+    return None if sources is None else sources.operand(path, index)
+
+
 def _render_membership(
     tag: MembershipOp,
     values: tuple[ManagedValue, ...] | DeferredKeySet,
     subject: MemberSubject,
     scope: PredicateScope,
+    sources: ExecutionValueSources | None,
+    path: _PredicatePath,
 ) -> str:
     if isinstance(values, DeferredKeySet):
         if tag != "in":  # pragma: no cover - generated child reads are positive
@@ -753,16 +770,22 @@ def _render_membership(
             return f"{subject.compared} = any(?)"
         return f"{subject.compared} in ({EXPANDING_PLACEHOLDER})"
     holes = ", ".join("?" for _ in values)
-    for value in values:
-        _bind_operand(value, subject, scope)
+    for index, value in enumerate(values):
+        _bind_operand(value, subject, scope, source=_following(sources, path, index))
     fragment = f"{subject.compared} in ({holes})"
     return fragment if tag == "in" else f"not {fragment}"
 
 
 def _bind_operand(
-    value: object, subject: MemberSubject, scope: PredicateScope, *, framework: bool = False
+    value: object,
+    subject: MemberSubject,
+    scope: PredicateScope,
+    *,
+    framework: bool = False,
+    source: ExecutionValueSource | None = None,
 ) -> None:
-    """Bind one compared operand in the form ``subject``'s expression compares.
+    """Bind one compared operand in the form ``subject``'s expression compares,
+    or the marker of that form a template fills from ``source``.
 
     A direct Column is compared in the engine's own column type, so its operand
     crosses the seam as its managed value with explicit neutral-type metadata,
@@ -772,7 +795,16 @@ def _bind_operand(
     where the extraction casts. Wire decoding already occurred in predicate
     validation.
     """
-    if not subject.document_resident:
+    if source is not None:
+        if framework:  # pragma: no cover - only generated comparisons bind a framework value
+            raise SqlGenError("a framework operand is never an authored execution value")
+        form: ExecutionValueForm = (
+            ComparisonTextForm(subject.type)
+            if subject.document_resident and subject.text_compared
+            else ManagedOperandForm(subject.type)
+        )
+        scope.ctx.bind_deferred(source, form)
+    elif not subject.document_resident:
         if framework:
             scope.ctx.bind_framework(value)
         else:
@@ -783,9 +815,14 @@ def _bind_operand(
         scope.ctx.bind_managed(value, subject.type)
 
 
-def _compared(comparison: ResolvedComparison, subject: MemberSubject, scope: PredicateScope) -> str:
+def _compared(
+    comparison: ResolvedComparison,
+    subject: MemberSubject,
+    scope: PredicateScope,
+    source: ExecutionValueSource | None = None,
+) -> str:
     """``comparison`` over its already resolved ``subject``, its operand bound."""
-    _bind_operand(comparison.value, subject, scope, framework=comparison.framework)
+    _bind_operand(comparison.value, subject, scope, framework=comparison.framework, source=source)
     # A Value Object leaf's inequality keeps its negated-equality form.
     if comparison.op == "notEq" and not isinstance(comparison.member, AttributeMetadata):
         return f"not {subject.compared} = ?"
@@ -798,6 +835,7 @@ def _render_like(
     case_insensitive: bool,
     subject_sql: str,
     scope: PredicateScope,
+    source: ExecutionValueSource | None = None,
 ) -> str:
     """Render one string predicate over an ALREADY-RESOLVED subject expression.
 
@@ -807,18 +845,15 @@ def _render_like(
     the affix forms bind an escaped pattern and append `escape ?` plus its bind ONLY
     when escaping actually changed the literal, `notLike` negates INFIX (the
     normalizer's fixed point for this operator, unlike membership's leading `not`),
-    and case-insensitive matching folds both sides.
+    and case-insensitive matching folds both sides. A deferred pattern's escape
+    clause follows the authored pattern it was compiled from, which every pattern
+    rendered into it shares.
     """
-    if kind in ("like", "notLike"):
-        scope.ctx.bind_comparison_text(value, STRING)
-        needs_escape = False
+    needs_escape = kind not in ("like", "notLike") and affix_needs_escape(value)
+    if source is not None:
+        scope.ctx.bind_deferred(source, AffixForm(kind, case_insensitive))
     else:
-        # The affix pattern is folded to lower case under case-insensitive matching,
-        # so the pattern bind is already lowercased (the corpus's affix convention);
-        # `like`/`notLike` keep the pattern verbatim and rely on `lower(?)` alone.
-        literal = value.lower() if case_insensitive else value
-        pattern, needs_escape = _affix_pattern(kind, literal)
-        scope.ctx.bind_comparison_text(pattern, STRING)
+        scope.ctx.bind_comparison_text(_pattern(kind, value, case_insensitive), STRING)
     subject_expr = f"lower({subject_sql})" if case_insensitive else subject_sql
     rhs = "lower(?)" if case_insensitive else "?"
     operator = "not like" if kind == "notLike" else "like"
@@ -831,20 +866,53 @@ def _render_like(
 
 # The three AFFIX kinds, whose `value` is literal text this module wraps in
 # wildcards. `like` / `notLike` are deliberately absent: their value is already a
-# pattern, and `_render_like` routes them away before any affix rendering — so the
+# pattern, and `_pattern` routes them away before any affix rendering — so the
 # narrower domain makes that contract unrepresentable rather than merely documented.
 _AffixOp = Literal["startsWith", "endsWith", "contains"]
 
+# Every character an affix literal escapes, the escape character itself first.
+_AFFIX_ESCAPED: Final = ("\\", "%", "_")
 
-def _affix_pattern(kind: _AffixOp, value: str) -> tuple[str, bool]:
-    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    needs_escape = escaped != value
+
+def affix_needs_escape(value: str) -> bool:
+    """Whether an affix match over literal ``value`` carries an `escape` clause.
+
+    Case folding changes none of the escaped characters, so a folded and an
+    unfolded literal agree.
+    """
+    return any(character in value for character in _AFFIX_ESCAPED)
+
+
+def prepared_operand(form: ExecutionValueForm, value: object) -> object:
+    """The bind an authored operand ``value`` takes under ``form``."""
+    match form:
+        case ComparisonTextForm(neutral_type=neutral_type):
+            return comparison_text(neutral_type, value)
+        case AffixForm(op=op, case_insensitive=folded):
+            return _pattern(op, cast("str", value), folded)
+        case _:
+            return value
+
+
+def _pattern(kind: StringOp, value: str, case_insensitive: bool) -> str:
+    """The pattern a string match binds: ``value`` itself for `like` and
+    `notLike`, else its escaped affix, folded to lower case under
+    case-insensitive matching (the corpus's affix convention)."""
+    if kind == "like" or kind == "notLike":
+        return value
+    return _affix_pattern(kind, value.lower() if case_insensitive else value)
+
+
+def _affix_pattern(kind: _AffixOp, value: str) -> str:
+    escaped = value
+    for character in _AFFIX_ESCAPED:
+        escaped = escaped.replace(character, f"\\{character}")
     if kind == "startsWith":
-        return f"{escaped}%", needs_escape
+        return f"{escaped}%"
     if kind == "endsWith":
-        return f"%{escaped}", needs_escape
+        return f"%{escaped}"
     if kind == "contains":
-        return f"%{escaped}%", needs_escape
+        return f"%{escaped}%"
     assert_never(kind)  # pragma: no cover - exhaustiveness guard
 
 

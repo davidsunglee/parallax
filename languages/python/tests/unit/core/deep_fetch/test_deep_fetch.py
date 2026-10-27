@@ -63,6 +63,7 @@ from parallax.core.predicate import (
     TrueNode,
     validate_predicate,
 )
+from parallax.core.predicate._execution_values import ExecutionValueSources
 from parallax.core.predicate._perspective import (
     AtPerspective,
     AxisPerspective,
@@ -1723,3 +1724,30 @@ def test_equivalent_requests_resolve_to_one_equal_selection_matched_by_exact_ide
     assert not narrowed.includes_value_object(other_family_home.identity)
     assert whole.includes_value_object(right_home.identity)
     assert not deep_fetch.ResolvedReadProjection((), True).includes_value_object(left_home.identity)
+
+
+def test_releasing_execution_value_sources_clears_the_root_and_every_query_step() -> None:
+    planned = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
+    sources = ExecutionValueSources.authored(_query_step(planned).query.predicate.predicate)
+    step = _query_step(planned)
+    sourced = deep_fetch.ObjectQueryPlan(
+        dataclasses.replace(planned.root, execution_value_sources=sources),
+        planned.includes,
+        (
+            dataclasses.replace(
+                step, query=dataclasses.replace(step.query, execution_value_sources=sources)
+            ),
+        ),
+    )
+
+    released = deep_fetch.release_execution_value_sources(sourced)
+    root_only = deep_fetch.release_execution_value_sources(
+        dataclasses.replace(sourced, fetch_steps=planned.fetch_steps)
+    )
+
+    assert released.root.execution_value_sources is None
+    assert _query_step(released).query.execution_value_sources is None
+    assert released.root == planned.root and released.fetch_steps == planned.fetch_steps
+    assert root_only.root.execution_value_sources is None
+    assert root_only.fetch_steps is planned.fetch_steps
+    assert deep_fetch.release_execution_value_sources(planned) is planned

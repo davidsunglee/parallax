@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import decimal
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Never, assert_type, cast
 
 import pytest
@@ -32,18 +33,21 @@ from parallax.core.navigate import (
     RootSelections,
     TemporallyResolvedPredicate,
     TemporalResolution,
+    resolve_sourced_temporal_visibility,
     resolve_temporal_visibility,
 )
 from parallax.core.object_query import AsOf, History, TemporalSelection, validate_object_query
 from parallax.core.object_query import object_query as authored_query
 from parallax.core.object_query._nodes import TemporalDimension as QueryTemporalDimension
-from parallax.core.object_query._resolved import ResolvedObjectQuery
+from parallax.core.object_query._resolved import ResolvedObjectQuery, ResolvedTemporalSelection
+from parallax.core.predicate._execution_values import ExecutionValueSources
 from parallax.core.predicate._perspective import (
     AtPerspective,
     LatestPerspective,
     TemporalPerspective,
 )
 from parallax.core.predicate._resolved import (
+    OccurrencePath,
     RelatedObject,
     ResolvedAnd,
     ResolvedComparison,
@@ -830,3 +834,42 @@ def test_a_match_and_every_hop_its_operand_reaches_carry_their_terms() -> None:
     )
     assert binds[0] == "Auto"
     assert binds[1:5] == (_B_MANAGED, _B_MANAGED, _P_MANAGED, _P_MANAGED)
+
+
+_RESOLUTIONS: dict[
+    str,
+    tuple[Callable[[tuple[ResolvedTemporalSelection, ...]], TemporalResolution], OccurrencePath],
+] = {
+    "no-root-selections": (lambda _selections: RootSelections(()), ()),
+    "no-root-conditions": (lambda _selections: NoRootSelections(), ()),
+    "root-selections": (RootSelections, (0,)),
+    "propagated-selections": (PropagatedRootSelections, (0,)),
+}
+
+
+@pytest.mark.parametrize(("resolve", "moved_to"), _RESOLUTIONS.values(), ids=_RESOLUTIONS.keys())
+def test_sourced_resolution_carries_authored_sources_to_their_resolved_occurrences(
+    resolve: Callable[[tuple[ResolvedTemporalSelection, ...]], TemporalResolution],
+    moved_to: OccurrencePath,
+) -> None:
+    query = _query(
+        oa.Comparison(op="eq", subject=oa.FieldSubject("Policy.name"), value="a"),
+        POLICY,
+        "Policy",
+        _PINNED,
+    )
+    resolution = resolve(query.temporal)
+
+    sourced, carried = resolve_sourced_temporal_visibility(
+        query.predicate,
+        ExecutionValueSources.authored(query.predicate),
+        target=query.root,
+        model=POLICY,
+        resolution=resolution,
+    )
+
+    assert sourced == resolve_temporal_visibility(
+        query.predicate, target=query.root, model=POLICY, resolution=resolution
+    )
+    assert carried.operand(moved_to) == ("predicate", 0)
+    assert isinstance(sourced.predicate, ResolvedAnd) is bool(moved_to)

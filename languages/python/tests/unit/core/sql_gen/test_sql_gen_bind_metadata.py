@@ -23,11 +23,14 @@ from parallax.core.sql_gen._compile import CompiledTemplate, compile_read
 from parallax.core.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
     PAGE_CAP,
+    AffixForm,
+    ComparisonTextForm,
     ContinuationCarrierForm,
     ExecutionValueForm,
     ExecutionValuePositions,
     GatheredKeysForm,
     LoweredStatement,
+    ManagedOperandForm,
     SqlGenError,
     StatementBuilder,
     _ExecutionValueMarker,  # pyright: ignore[reportPrivateUsage]
@@ -477,10 +480,42 @@ def _overridden(builder: StatementBuilder) -> None:
     builder.bind_framework(_ExecutionValueMarker(("limit",), PAGE_CAP), wire_value=1)
 
 
+def _managed_as_text(builder: StatementBuilder) -> None:
+    builder.bind_comparison_text(
+        _ExecutionValueMarker(("predicate", 0), ManagedOperandForm(DATE)), DATE
+    )
+
+
+def _text_as_managed(builder: StatementBuilder) -> None:
+    builder.bind_managed(_ExecutionValueMarker(("predicate", 0), ComparisonTextForm(DATE)), DATE)
+
+
+def _affix_as_managed(builder: StatementBuilder) -> None:
+    builder.bind_managed(
+        _ExecutionValueMarker(("predicate", 0), AffixForm("contains", False)), STRING
+    )
+
+
 @pytest.mark.parametrize(
     "bind",
-    [_untyped, _typed_structure, _other_type, _overridden],
-    ids=["untyped", "typed-structure", "other-type", "overridden"],
+    [
+        _untyped,
+        _typed_structure,
+        _other_type,
+        _overridden,
+        _managed_as_text,
+        _text_as_managed,
+        _affix_as_managed,
+    ],
+    ids=[
+        "untyped",
+        "typed-structure",
+        "other-type",
+        "overridden",
+        "managed-as-text",
+        "text-as-managed",
+        "affix-as-managed",
+    ],
 )
 def test_discovery_refuses_a_marker_bound_outside_its_form(
     bind: Callable[[StatementBuilder], None],
@@ -489,6 +524,24 @@ def test_discovery_refuses_a_marker_bound_outside_its_form(
     bind(builder)
     with pytest.raises(SqlGenError, match="classification its form selects"):
         builder.finish("select ?").execution_value_positions()
+
+
+def test_discovery_keeps_two_forms_of_one_authored_operand_adjacent_in_source_order() -> None:
+    builder = _builder()
+    managed = ManagedOperandForm(DATE)
+    text = ComparisonTextForm(DATE)
+    builder.bind_deferred(("predicate", 1), managed)
+    builder.bind_deferred(("predicate", 0), AffixForm("startsWith", True))
+    builder.bind_deferred(("predicate", 1), text)
+    builder.bind_deferred(("predicate", 1), managed)
+
+    positions = builder.finish("select ?, ?, ?, ?").execution_value_positions()
+
+    assert [(group.source, group.form, group.indices) for group in positions] == [
+        (("predicate", 0), AffixForm("startsWith", True), (1,)),
+        (("predicate", 1), managed, (0, 3)),
+        (("predicate", 1), text, (2,)),
+    ]
 
 
 def test_discovery_refuses_gathered_keys_in_two_forms() -> None:

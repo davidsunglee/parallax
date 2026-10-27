@@ -49,6 +49,7 @@ from parallax.core.sql_gen._compile import (
     compile_read,
     compile_template,
 )
+from parallax.core.sql_gen._predicate import affix_needs_escape
 from parallax.core.sql_gen._seek import continuation_pattern
 from parallax.core.temporal_read import scans_resolved_axis
 
@@ -279,11 +280,11 @@ def _read_plan_key(
 def _query_key(query: ResolvedObjectQuery) -> tuple[object, ...]:
     """Everything about ``query`` its compiled plan depends on.
 
-    A plan captures its ordinary binds, so the predicate's and the temporal
-    selections' managed operands are part of the key; a page's cap and seek
-    coordinate are substituted at render time and are not. Members and
-    positions are named by identity: the model the key also names fixes the
-    metadata behind each.
+    The predicate's operands, a page's cap, and its seek coordinate are
+    execution values its template renders, so only their structure is part of
+    the key; a finite temporal selection's values are still bound when its plan
+    compiles, so they are too. Members and positions are named by identity: the
+    model the key also names fixes the metadata behind each.
     """
     return (
         query.root.identity,
@@ -306,12 +307,17 @@ def _query_key(query: ResolvedObjectQuery) -> tuple[object, ...]:
 
 
 def _operand_key(value: object) -> object:
-    """``value`` as plan key material that two binds share only if they are the
-    same bind: equal values of different exact types, and Decimals spelling
-    one number at different exponents, stay apart."""
+    """``value``'s exact type, and a Decimal's exponent, but not the value:
+    operands that share them render into one template."""
     if isinstance(value, Decimal):
-        return Decimal, value.as_tuple()
-    return type(value), value
+        return Decimal, value.as_tuple().exponent
+    return type(value)
+
+
+def _temporal_value_key(value: object) -> object:
+    """A finite temporal coordinate's exact type and value, which its plan
+    still binds when it compiles."""
+    return _operand_key(value), value
 
 
 def _predicate_key(predicate: ResolvedPredicate) -> object:  # noqa: C901 - exhaustive dispatcher
@@ -355,7 +361,7 @@ def _predicate_key(predicate: ResolvedPredicate) -> object:  # noqa: C901 - exha
                 ResolvedStringMatch,
                 op,
                 member.identity,
-                _operand_key(pattern),
+                op not in ("like", "notLike") and affix_needs_escape(pattern),
                 case_insensitive,
                 _position_key(position),
             )
@@ -411,9 +417,14 @@ def _temporal_key(selection: ResolvedTemporalSelection) -> object:
         case ResolvedLatestSelection(axis=axis) | ResolvedHistorySelection(axis=axis):
             return type(selection), axis.dimension
         case ResolvedAsOfSelection(axis=axis, coordinate=coordinate):
-            return ResolvedAsOfSelection, axis.dimension, _operand_key(coordinate)
+            return ResolvedAsOfSelection, axis.dimension, _temporal_value_key(coordinate)
         case ResolvedRangeSelection(axis=axis, start=start, end=end):
-            return ResolvedRangeSelection, axis.dimension, _operand_key(start), _operand_key(end)
+            return (
+                ResolvedRangeSelection,
+                axis.dimension,
+                _temporal_value_key(start),
+                _temporal_value_key(end),
+            )
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(selection)
 
@@ -436,11 +447,13 @@ def _plan_uncached(
         result_form == "instance",
     )
     planned = (
-        deep_fetch.plan(query, model.meta, projection=projection)
+        deep_fetch.plan(query, model.meta, projection=projection, defer_execution_values=templated)
         if reusable is None
         else replace(
             reusable._query_plan,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
-            root=deep_fetch.plan_root(query, model.meta, projection=projection),
+            root=deep_fetch.plan_root(
+                query, model.meta, projection=projection, defer_execution_values=templated
+            ),
         )
     )
     root_template: CompiledTemplate | None = None
@@ -494,7 +507,7 @@ def _plan_uncached(
             reusable._schema,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
         )
     prepared = ReadPlan(
-        planned,
+        deep_fetch.release_execution_value_sources(planned),
         root,
         None
         if isinstance(root, EmptyRead)

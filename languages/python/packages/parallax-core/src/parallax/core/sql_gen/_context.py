@@ -10,6 +10,7 @@ from parallax.core.base import (
     INFINITY,
     INFINITY_LITERAL,
     JSON,
+    STRING,
     ManagedValue,
     NeutralType,
     detach_json_container,
@@ -19,6 +20,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.predicate import StringOp
 from parallax.core.predicate._execution_values import ExecutionValueSource, source_order
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 from parallax.core.wire import (
@@ -270,6 +272,41 @@ _UNRENDERED: Final = "a deferred execution value has no Wire projection until it
 
 
 @dataclass(frozen=True, slots=True)
+class ManagedOperandForm:
+    """An authored operand bound as its managed value."""
+
+    neutral_type: NeutralType
+    expands: ClassVar[bool] = False
+
+    @property
+    def typed_slot(self) -> tuple[NeutralType, _BindForm]:
+        return self.neutral_type, "MANAGED"
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonTextForm:
+    """An authored operand bound as the codec's comparison text of its value."""
+
+    neutral_type: NeutralType
+    expands: ClassVar[bool] = False
+
+    @property
+    def typed_slot(self) -> tuple[NeutralType, _BindForm]:
+        return self.neutral_type, "COMPARISON_TEXT"
+
+
+@dataclass(frozen=True, slots=True)
+class AffixForm:
+    """A string match's authored pattern, bound as the pattern its operator
+    and case folding make of it."""
+
+    op: StringOp
+    case_insensitive: bool
+    typed_slot: ClassVar[tuple[NeutralType, _BindForm]] = (STRING, "COMPARISON_TEXT")
+    expands: ClassVar[bool] = False
+
+
+@dataclass(frozen=True, slots=True)
 class ContinuationCarrierForm:
     """A carrier the database already evaluated, bound as itself under the
     typed metadata of the expression it is compared against."""
@@ -311,7 +348,14 @@ class GatheredKeysForm:
         return not self.array
 
 
-type ExecutionValueForm = ContinuationCarrierForm | PageCapForm | GatheredKeysForm
+type ExecutionValueForm = (
+    ManagedOperandForm
+    | ComparisonTextForm
+    | AffixForm
+    | ContinuationCarrierForm
+    | PageCapForm
+    | GatheredKeysForm
+)
 
 
 @dataclass(frozen=True, slots=True)

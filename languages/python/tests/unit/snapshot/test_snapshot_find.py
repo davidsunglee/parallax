@@ -2384,19 +2384,21 @@ def test_typed_and_wire_reads_share_resolved_include_work_within_each_delivery_m
 ) -> None:
     resolutions: list[object] = []
     child_compiles: list[deep_fetch.PlannedEntityQuery] = []
-    resolve = cast("Callable[..., Any]", vars(deep_fetch)["resolve_temporal_visibility"])
     compile_child = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
+    for name in ("resolve_temporal_visibility", "resolve_sourced_temporal_visibility"):
+        resolve = cast("Callable[..., Any]", vars(deep_fetch)[name])
 
-    def counting_resolution(*args: Any, **kwargs: Any) -> Any:
-        resolutions.append(kwargs["resolution"])
-        return resolve(*args, **kwargs)
+        def counting_resolution(*args: Any, _resolve: Any = resolve, **kwargs: Any) -> Any:
+            resolutions.append(kwargs["resolution"])
+            return _resolve(*args, **kwargs)
+
+        monkeypatch.setattr(deep_fetch, name, counting_resolution)
 
     def counting_child(query: deep_fetch.PlannedEntityQuery, *args: Any, **kwargs: Any) -> Any:
         if query.entity.identity.name == "OrderItem":
             child_compiles.append(query)
         return compile_child(query, *args, **kwargs)
 
-    monkeypatch.setattr(deep_fetch, "resolve_temporal_visibility", counting_resolution)
     monkeypatch.setattr(_read_plan, "compile_template", counting_child)
     eager_read, first_page, last_page = (
         _page((1, 2), (1, 2)),

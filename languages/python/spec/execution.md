@@ -46,14 +46,16 @@ for the same key share one build and its success or failure; failures are not
 cached, while unrelated keys can build concurrently.
 
 Cache identity includes the exact model edition, cataloged model and dialect,
-the resolved query's structure and its ordinary managed predicate and temporal
-values, result form, and concurrency preference. Values of distinct exact types,
-and Decimals of distinct exponents, remain distinct; two spellings of one
-managed value share an entry.
+the resolved query's structure and its finite temporal selection values, result
+form, and concurrency preference. A predicate operand contributes its exact type
+and a Decimal's exponent, a membership its width, and an affix match whether its
+literal needs escaping. Operands of distinct exact types, and Decimals of
+distinct exponents, remain distinct; two spellings of one managed temporal value
+share an entry.
 The first stream page and each continuation-coordinate pattern of NULL, finite,
-and open-bound (`INFINITY`) carriers use distinct entries; the finite coordinate
-values and page limits are execution values rendered into their cached template,
-not cache identity. Plans retain immutable planning and
+and open-bound (`INFINITY`) carriers use distinct entries; predicate operands,
+finite coordinate values, and page limits are execution values rendered into
+their cached template, not cache identity. Plans retain immutable planning and
 conversion data, not runtimes, connections, rows, pages, origins, or results.
 The cache has the `Database` lifetime; closing the root does not promise to clear
 plans while the closed root is still referenced, and eviction or release makes
