@@ -43,8 +43,10 @@ from parallax.core.metamodel import (
     Metamodel,
     RelationshipIdentity,
 )
+from parallax.core.metamodel import TemporalDimension as AcceptedTemporalDimension
 from parallax.core.object_query import (
     AsOf,
+    AsOfRange,
     History,
     IncludeSegment,
     TemporalSelection,
@@ -63,7 +65,7 @@ from parallax.core.predicate import (
     TrueNode,
     validate_predicate,
 )
-from parallax.core.predicate._execution_values import ExecutionValueSources
+from parallax.core.predicate._execution_values import ExecutionValueSource, ExecutionValueSources
 from parallax.core.predicate._perspective import (
     AtPerspective,
     AxisPerspective,
@@ -165,6 +167,8 @@ def _plan(
     paths: tuple[IncludePathNode, ...],
     temporal: dict[TemporalDimension, TemporalSelection] | None = None,
     predicate: PredicateNode | None = None,
+    *,
+    defer_execution_values: bool = False,
     **clauses: object,
 ) -> deep_fetch.ObjectQueryPlan:
     entity = entity_of(model, target)
@@ -179,6 +183,7 @@ def _plan(
         validate_object_query(entity, query, model),
         model,
         projection=deep_fetch.ReadProjectionRequest("all", True),
+        defer_execution_values=defer_execution_values,
     )
 
 
@@ -1751,3 +1756,63 @@ def test_releasing_execution_value_sources_clears_the_root_and_every_query_step(
     assert root_only.root.execution_value_sources is None
     assert root_only.fetch_steps is planned.fetch_steps
     assert deep_fetch.release_execution_value_sources(planned) is planned
+
+
+_VALID_COORDINATE: ExecutionValueSource = (
+    "temporal",
+    AcceptedTemporalDimension.VALID_TIME,
+    "coordinate",
+)
+_TX_COORDINATE: ExecutionValueSource = (
+    "temporal",
+    AcceptedTemporalDimension.TRANSACTION_TIME,
+    "coordinate",
+)
+
+
+@pytest.mark.parametrize(
+    ("temporal", "propagated"),
+    [
+        pytest.param(
+            _PINNED,
+            (_VALID_COORDINATE, _VALID_COORDINATE, _TX_COORDINATE, _TX_COORDINATE),
+            id="instants",
+        ),
+        pytest.param(
+            {
+                "valid-time": AsOf("2024-03-01T00:00:00Z"),
+                "transaction-time": AsOfRange(
+                    start="2024-01-01T00:00:00Z", end="2024-02-01T00:00:00Z"
+                ),
+            },
+            (_VALID_COORDINATE, _VALID_COORDINATE, None),
+            id="range-propagates-latest",
+        ),
+        pytest.param(
+            {"valid-time": History(), "transaction-time": AsOf("2024-02-01T00:00:00Z")},
+            (None, _TX_COORDINATE, _TX_COORDINATE),
+            id="history-propagates-latest",
+        ),
+    ],
+)
+def test_a_deferring_plan_sources_every_level_from_the_roots_selections(
+    temporal: dict[TemporalDimension, TemporalSelection],
+    propagated: tuple[ExecutionValueSource | None, ...],
+) -> None:
+    paths = (_path(_seg("Policy.coverages"), _seg("Coverage.claims")),)
+
+    deferring = _plan(POLICY, "Policy", paths, temporal, defer_execution_values=True)
+    concrete = _plan(POLICY, "Policy", paths, temporal)
+
+    assert (deferring.root, deferring.fetch_steps) == (concrete.root, concrete.fetch_steps)
+    assert concrete.root.execution_value_sources is None
+    assert deferring.root.execution_value_sources is not None
+    for index in range(2):
+        child, plain = _query_step(deferring, index).query, _query_step(concrete, index).query
+        sources = child.execution_value_sources
+        assert sources is not None and plain.execution_value_sources is None
+        assert len(_child_terms(child)) == len(propagated)
+        assert sources.operand((0,)) is None
+        assert tuple(sources.operand((term,)) for term in range(1, 1 + len(propagated))) == (
+            propagated
+        )

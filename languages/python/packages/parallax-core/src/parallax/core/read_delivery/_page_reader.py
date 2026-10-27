@@ -18,7 +18,6 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._resolved import (
     ContinuationCoordinate,
     ResolvedObjectQuery,
-    ResolvedTemporalSelection,
 )
 from parallax.core.read_delivery._fetch import (
     attach_back_reference,
@@ -222,7 +221,7 @@ class _RootRead:
     converter: ReadRowConverter
     rows: list[Row]
     coordinates: tuple[ContinuationCoordinate | None, ...]
-    temporal: tuple[ResolvedTemporalSelection, ...]
+    query: ResolvedObjectQuery
     observer: MaterializationObserver = INERT_OBSERVER
 
     def take_rows(self) -> list[Row]:
@@ -459,7 +458,7 @@ class PageReader:
             converter=converter,
             rows=list(driver_rows),
             coordinates=row_coordinates(compiled_read.result_contract, driver_rows),
-            temporal=query.temporal,
+            query=query,
             observer=self.observer,
         )
 
@@ -526,7 +525,13 @@ class PageReader:
                 template, converter = prepared
                 root_read.observer.statement_rendered(index + 1)
                 pending.append(
-                    _PendingFetch(index, step, parents, template.render(keys), converter)
+                    _PendingFetch(
+                        index,
+                        step,
+                        parents,
+                        template.render(keys, query=root_read.query),
+                        converter,
+                    )
                 )
 
             if len(pending) == 1:
@@ -541,7 +546,7 @@ class PageReader:
                 attach_children(builder, meta, includes, fetch.step, fetch.parents, child_refs)
                 fetch_refs[fetch.index] = child_refs
 
-        page = builder.finish(root_refs, resolved_query_pin(root_read.temporal))
+        page = builder.finish(root_refs, resolved_query_pin(root_read.query.temporal))
         return EagerPageResult(
             page=page, includes=includes, origins=origin_collector.origins_for(page)
         )

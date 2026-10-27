@@ -107,6 +107,7 @@ from parallax.core.storage_layout import (
     TableLayout,
 )
 from parallax.core.temporal_read import perspective_terms as _perspective_terms
+from parallax.core.temporal_read import sourced_perspective_terms as _sourced_perspective_terms
 from parallax.core.wire._codec import encoded_json_kind
 
 _HOP_TOKENS: Final = itertools.count()
@@ -577,7 +578,7 @@ def _render_operation(
     if not isinstance(placement, _UnsharedEvaluation):
         subject = _subject_reached_by(operation, placement, lexical, scope)
     elif not placement.continuation.reaches_target:
-        return _absent_operation(operation, placement.continuation, scope)
+        return _absent_operation(operation, placement.continuation, lexical, scope)
     elif placement.continuation.hops:
         subject = _subject_reached_by(operation, placement, lexical, scope)
     else:
@@ -625,7 +626,14 @@ def _subject_reached_by(
         case _UnsharedEvaluation(continuation=continuation):
             return _subject_reached(
                 member,
-                lambda value: _continue(continuation, scope, _valued(value), None, None),
+                lambda value: _continue(
+                    continuation,
+                    scope,
+                    _valued(value),
+                    None,
+                    None,
+                    sources=lexical.execution_value_sources,
+                ),
                 reads_text=reads_text,
             )
         case _OwnerResultEvaluation():  # pragma: no cover - owner results hold quantifiers
@@ -637,16 +645,24 @@ def _valued(value: _Value) -> _Emit:
 
 
 def _absent_operation(
-    operation: _Operation, continuation: _Continuation, scope: PredicateScope
+    operation: _Operation,
+    continuation: _Continuation,
+    lexical: _LexicalScopePlan,
+    scope: PredicateScope,
 ) -> str:
     """An operation over a field no candidate can supply: a null check sees the
     missing value, and every other operation is unknown. The answer is read
     where the continuation stops, before the empty target, so every hop reaching
     it still asserts its cardinality."""
+    sources = lexical.execution_value_sources
     if isinstance(operation, ResolvedNullCheck):
         answer = "1 = 1" if operation.op == "isNull" else "1 = 0"
-        return _continue(continuation, scope, _valued(lambda _: answer), answer, answer)
-    return _continue(continuation, scope, _valued(lambda _: _UNKNOWN), _UNKNOWN, None)
+        return _continue(
+            continuation, scope, _valued(lambda _: answer), answer, answer, sources=sources
+        )
+    return _continue(
+        continuation, scope, _valued(lambda _: _UNKNOWN), _UNKNOWN, None, sources=sources
+    )
 
 
 def _subject_here(
@@ -928,6 +944,7 @@ def _continue(
     absent: str | None,
     default: str | None,
     *,
+    sources: ExecutionValueSources | None,
     reach: tuple[tuple[_SharedSourceRef, _SharedSourcePlan], ...] = (),
 ) -> str:
     """An occurrence evaluated through ``continuation`` from ``scope``.
@@ -940,7 +957,9 @@ def _continue(
     a database runs once per row never plans a join of its own. Where the
     continuation stops before a target with no candidate, the occurrence
     answers ``absent`` there. ``reach`` confines the first hop's candidates to
-    the shared sources the row joined (:func:`_confined`).
+    the shared sources the row joined (:func:`_confined`). ``sources`` are the
+    rendering lexical plan's, which say whether each hop's temporal visibility
+    defers its instants.
     """
     hops = continuation.hops
     if not hops:
@@ -949,7 +968,7 @@ def _continue(
             return _absence(absent)
         return emit(scope, terminal)
     return _hop_chain(
-        hops, continuation.terminals, _entity_row(scope), emit, absent, default, reach
+        hops, continuation.terminals, _entity_row(scope), emit, absent, default, reach, sources
     )
 
 
@@ -967,15 +986,19 @@ def _hop_chain(
     absent: str | None,
     default: str | None,
     reach: tuple[tuple[_SharedSourceRef, _SharedSourcePlan], ...],
+    sources: ExecutionValueSources | None,
 ) -> str:
     first, rest = hops[0], hops[1:]
     if rest:
         return _scalar_hop(
             first,
             scope,
-            lambda reached, _index: _hop_chain(rest, terminals, reached, emit, absent, default, ()),
+            lambda reached, _index: _hop_chain(
+                rest, terminals, reached, emit, absent, default, (), sources
+            ),
             default,
             reach,
+            sources,
         )
 
     def terminal(reached: EntityRowScope, index: int) -> str:
@@ -984,7 +1007,7 @@ def _hop_chain(
             return _absence(absent)
         return emit(reached, planned)
 
-    return _scalar_hop(first, scope, terminal, default, reach)
+    return _scalar_hop(first, scope, terminal, default, reach, sources)
 
 
 def _scalar_hop(
@@ -993,6 +1016,7 @@ def _scalar_hop(
     inner: Callable[[EntityRowScope, int], str],
     default: str | None,
     reach: tuple[tuple[_SharedSourceRef, _SharedSourcePlan], ...],
+    sources: ExecutionValueSources | None,
 ) -> str:
     """One correlated scalar subquery selecting ``inner`` from each candidate
     ``hop`` plans; a table-per-concrete-subtype target contributes every
@@ -1007,7 +1031,9 @@ def _scalar_hop(
         rendered, branch_scope = _rendered_candidate(branch, scope, alias=token)
         value = inner(branch_scope, index)
         alias = scope.next_alias()
-        where = _candidate_where(hop.relationship, branch_scope, rendered, None, reach)
+        where = _candidate_where(
+            hop.relationship, branch_scope, rendered, None, reach, sources=sources
+        )
         selected = f"select {value} from {rendered.table} {token} where {where}"
         branches.append(selected.replace(token, alias))
     subquery = f"({' union all '.join(branches)})"
@@ -1035,6 +1061,7 @@ def _confined(
         emit,
         absent,
         default,
+        sources=lexical.execution_value_sources,
         reach=_reach(lexical, prefix),
     )
 
@@ -1071,6 +1098,8 @@ def _candidate_where(
     rendered: _RenderedRelationshipCandidate,
     interior: str | None,
     reach: tuple[tuple[_SharedSourceRef, _SharedSourcePlan], ...] = (),
+    *,
+    sources: ExecutionValueSources | None,
 ) -> str:
     """The correlated `where` of one candidate branch: correlation, then the
     interior (if any), then the hop's temporal visibility, then its family
@@ -1079,7 +1108,7 @@ def _candidate_where(
     terms = [rendered.correlation_sql]
     if interior:
         terms.append(interior)
-    terms.extend(_visibility(relationship, scope))
+    terms.extend(_visibility(relationship, scope, sources))
     if rendered.family_guard_sql is not None:
         terms.append(rendered.family_guard_sql)
     scope.ctx.bind_framework_all(rendered.family_guard_binds)
@@ -1087,7 +1116,7 @@ def _candidate_where(
         binding = scope.ctx.source_binding(ref)
         target = binding.target
         rejoined = _render_relationship_candidate(source.candidate, binding.origin, target.alias)
-        terms.append(_join_terms(source.relationship, target, rejoined))
+        terms.append(_join_terms(source.relationship, target, rejoined, sources))
     return " and ".join(terms)
 
 
@@ -1095,28 +1124,40 @@ def _join_terms(
     relationship: ResolvedRelationship,
     target: EntityRowScope,
     rendered: _RenderedRelationshipCandidate,
+    sources: ExecutionValueSources | None,
 ) -> str:
     """A joined target's `on`: its correlation, its temporal visibility, then
     its family guard, each pushing its binds as its text lands."""
     terms = [rendered.correlation_sql]
-    terms.extend(_visibility(relationship, target))
+    terms.extend(_visibility(relationship, target, sources))
     if rendered.family_guard_sql is not None:
         terms.append(rendered.family_guard_sql)
     target.ctx.bind_framework_all(rendered.family_guard_binds)
     return " and ".join(terms)
 
 
-def _visibility(relationship: ResolvedRelationship, scope: EntityRowScope) -> list[str]:
+def _visibility(
+    relationship: ResolvedRelationship,
+    scope: EntityRowScope,
+    sources: ExecutionValueSources | None,
+) -> list[str]:
     """The comparisons restricting ``scope``'s current object to
     ``relationship``'s temporal visibility, each pushing its binds as its text
-    lands.
+    lands; a template's lexical plans carry ``sources``, and its finite terms
+    bind the markers their instants render into.
 
     The terms are over the family root's members, which declare the axes.
     """
     root = root_metadata(scope.facet, scope.meta, scope.entity.identity)
+    perspective = _temporal_visibility(relationship)
+    if sources is None:
+        return [
+            _compared(term, _subject(term.member, scope), scope)
+            for term in _perspective_terms(perspective, root)
+        ]
     return [
-        _compared(term, _subject(term.member, scope), scope)
-        for term in _perspective_terms(_temporal_visibility(relationship), root)
+        _compared(term, _subject(term.member, scope), scope, source)
+        for term, source in _sourced_perspective_terms(perspective, root)
     ]
 
 
@@ -1138,6 +1179,7 @@ def _existence(
     *,
     negate: bool,
     counterexample: bool = False,
+    sources: ExecutionValueSources | None,
 ) -> str:
     """One correlated `exists` per planned candidate of ``relationship``, each
     taking its alias as it opens, so a later branch's alias follows everything
@@ -1145,7 +1187,14 @@ def _existence(
     if not isinstance(existence, _CandidateExistence):  # pragma: no cover - planned evaluations
         raise SqlGenError("a relationship is evaluated without planned candidates")
     fragments = [
-        _candidate_exists(plan, relationship, candidate, scope, counterexample=counterexample)
+        _candidate_exists(
+            plan,
+            relationship,
+            candidate,
+            scope,
+            counterexample=counterexample,
+            sources=sources,
+        )
         for candidate in existence.candidates
     ]
     return _existential(fragments, negate=negate)
@@ -1158,6 +1207,7 @@ def _candidate_exists(
     scope: EntityRowScope,
     *,
     counterexample: bool,
+    sources: ExecutionValueSources | None,
 ) -> str:
     """One candidate branch's `exists`: its complete operand — or, for a
     universal, its counterexample — beside the candidate test, the operand's
@@ -1175,7 +1225,7 @@ def _candidate_exists(
             if counterexample
             else _conjunct(operand.predicate, plan, operand, (), branch_scope)
         )
-    where_sql = _candidate_where(relationship, branch_scope, rendered, interior)
+    where_sql = _candidate_where(relationship, branch_scope, rendered, interior, sources=sources)
     return f"exists (select 1 from {source} where {where_sql})"
 
 
@@ -1222,7 +1272,14 @@ def _render_quantifier(
         case _ConfinedScalarEvaluation(prefix=prefix, continuation=continuation):
             return _confined(lexical, prefix, continuation, scope, at, default, default)
         case _UnsharedEvaluation(continuation=continuation):
-            return _continue(continuation, scope, at, default, default)
+            return _continue(
+                continuation,
+                scope,
+                at,
+                default,
+                default,
+                sources=lexical.execution_value_sources,
+            )
 
 
 def _quantify(
@@ -1249,6 +1306,7 @@ def _quantify(
             _entity_row(scope),
             negate=quantifier.kind != "any",
             counterexample=quantifier.kind == "all",
+            sources=lexical.execution_value_sources,
         )
     if isinstance(collection, ScalarCollection):
         guard = _scalar_array_guard(collection.member, scope)
@@ -1339,8 +1397,10 @@ def _render_presence(
     each candidate's own row, so only a candidate making it true matches; a
     presence whose target is itself shared reads that target's join."""
 
+    sources = lexical.execution_value_sources
+
     def present(reached: PredicateScope, terminal: _Terminal) -> str:
-        return _present(presence, terminal, plan, reached, negate=False)
+        return _present(presence, terminal, plan, reached, negate=False, sources=sources)
 
     match _placement(lexical, path):
         case _SharedRowEvaluation(source=source, terminal=_JoinedTargetMatch() as joined):
@@ -1349,16 +1409,26 @@ def _render_presence(
             )
         case _SharedRowEvaluation(source=source, terminal=terminal):
             return _present(
-                presence, terminal, plan, _target(scope, source), negate=presence.negated
+                presence,
+                terminal,
+                plan,
+                _target(scope, source),
+                negate=presence.negated,
+                sources=sources,
             )
         case _ConfinedScalarEvaluation(prefix=prefix, continuation=continuation):
             sql = _confined(lexical, prefix, continuation, scope, present, "false", "false")
         case _UnsharedEvaluation(continuation=continuation):
             if not continuation.hops and continuation.reaches_target:
                 return _present(
-                    presence, continuation.terminals[0], plan, scope, negate=presence.negated
+                    presence,
+                    continuation.terminals[0],
+                    plan,
+                    scope,
+                    negate=presence.negated,
+                    sources=sources,
                 )
-            sql = _continue(continuation, scope, present, "false", "false")
+            sql = _continue(continuation, scope, present, "false", "false", sources=sources)
         case _OwnerResultEvaluation():  # pragma: no cover - owner results hold quantifiers
             raise SqlGenError("a presence reads no owner result")
     return f"not {sql}" if presence.negated else sql
@@ -1371,11 +1441,14 @@ def _present(
     reached: PredicateScope,
     *,
     negate: bool,
+    sources: ExecutionValueSources | None,
 ) -> str:
     """``presence``'s test at the object it reaches."""
     target = presence.target
     if isinstance(target, ResolvedRelationship):
-        return _existence(plan, target, terminal, _entity_row(reached), negate=negate)
+        return _existence(
+            plan, target, terminal, _entity_row(reached), negate=negate, sources=sources
+        )
     sql = _object_presence(target, reached)
     return f"not {sql}" if negate else sql
 
@@ -1442,7 +1515,14 @@ def _render_narrow(
             case _ConfinedScalarEvaluation(prefix=prefix, continuation=continuation):
                 return _confined(lexical, prefix, continuation, scope, emit, default, default)
             case _UnsharedEvaluation(continuation=continuation):
-                return _continue(continuation, scope, emit, default, default)
+                return _continue(
+                    continuation,
+                    scope,
+                    emit,
+                    default,
+                    default,
+                    sources=lexical.execution_value_sources,
+                )
             case _:  # pragma: no cover - a reached narrowing holds no owner result
                 raise SqlGenError("a narrowing reads no owner result")
 
@@ -1597,7 +1677,7 @@ def render_shared_sources(
         parent = scope if source.parent is None else ctx.source_binding(source.parent).target
         rendered, target = _rendered_candidate(source.candidate, parent)
         ctx.record_source_binding(_SharedSourceRef(scope_id, index), target=target, origin=parent)
-        terms = _join_terms(source.relationship, target, rendered)
+        terms = _join_terms(source.relationship, target, rendered, lexical.execution_value_sources)
         joins.append(f"left join {rendered.table} {rendered.alias} on {terms}")
     joins.extend(
         _owner_results(statement_plan, _OwnerResultsRef(scope_id, index), results, scope)

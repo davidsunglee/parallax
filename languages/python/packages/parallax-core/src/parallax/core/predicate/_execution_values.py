@@ -110,6 +110,11 @@ class ExecutionValueSources:
         _record_authored(predicate, (), occurrences, 0)
         return ExecutionValueSources(occurrences)
 
+    @staticmethod
+    def generated(source: ExecutionValueSource) -> ExecutionValueSources:
+        """A generated one-operand predicate's operand rendering from ``source``."""
+        return ExecutionValueSources({(): source})
+
     def operand(self, path: OccurrencePath, index: int = 0) -> ExecutionValueSource | None:
         """The source of operand ``index`` of the occurrence at ``path``, if it
         defers one."""

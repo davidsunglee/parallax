@@ -9,18 +9,26 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from parallax.conformance import _case_ingress, case_format, engine
 from parallax.core._execution._read_query import resolve_read_query
+from parallax.core.base import Date as DateType
+from parallax.core.base import Decimal as DecimalType
 from parallax.core.base import Float32 as Float32Type
-from parallax.core.base import NeutralType, matches_neutral_type
+from parallax.core.base import Int32 as Int32Type
+from parallax.core.base import Int64 as Int64Type
+from parallax.core.base import ManagedValue, NeutralType, matches_neutral_type
+from parallax.core.base import String as StringType
+from parallax.core.base import Timestamp as TimestampType
+from parallax.core.base import Uuid as UuidType
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._resolved import (
     ResolvedAsOfSelection,
     ResolvedObjectQuery,
     ResolvedRangeSelection,
+    ResolvedTemporalSelection,
 )
 from parallax.core.predicate._resolved import (
     ResolvedAnd,
@@ -78,18 +86,59 @@ def corpus_read(case: case_format.Case) -> CorpusRead:
     return CorpusRead(case, meta, query, "instance" if instance else "row")
 
 
-def selects_a_finite_instant(query: ResolvedObjectQuery) -> bool:
-    return any(
-        isinstance(selection, ResolvedAsOfSelection | ResolvedRangeSelection)
-        for selection in query.temporal
-    )
+# Finite temporal bounds move by a step no authored operand takes, so a
+# selection bound initially equal to an authored operand differs from it after.
+_TEMPORAL_STEP: Final = dt.timedelta(microseconds=3)
 
 
 def varied(query: ResolvedObjectQuery) -> ResolvedObjectQuery:
     """``query`` with every authored operand changed to another valid value of
     the same exact carrier type, Decimal exponent, membership width, and affix
-    escape category; an operand no such value exists for is kept."""
-    return replace(query, predicate=_varied(query.predicate))
+    escape category, and every finite temporal bound moved; an operand no such
+    value exists for is kept."""
+    return replace(
+        query,
+        predicate=_varied(query.predicate),
+        temporal=tuple(_moved(selection) for selection in query.temporal),
+    )
+
+
+def _moved(selection: ResolvedTemporalSelection) -> ResolvedTemporalSelection:
+    match selection:
+        case ResolvedAsOfSelection(coordinate=dt.datetime() as coordinate):
+            return replace(selection, coordinate=coordinate + _TEMPORAL_STEP)
+        case ResolvedRangeSelection(start=dt.datetime() as start, end=dt.datetime() as end):
+            return replace(selection, start=start + _TEMPORAL_STEP, end=end + _TEMPORAL_STEP)
+        case _:
+            return selection
+
+
+def key_sets(neutral_type: NeutralType) -> tuple[list[ManagedValue], list[ManagedValue]]:
+    """Two different gathered key sets of ``neutral_type``: two keys, then a
+    third key alone."""
+    first = _example_key(neutral_type)
+    second = _stepped(first, neutral_type, 1)
+    third = _stepped(second, neutral_type, 1)
+    assert second is not None and third is not None
+    return [first, cast("ManagedValue", second)], [cast("ManagedValue", third)]
+
+
+def _example_key(neutral_type: NeutralType) -> ManagedValue:
+    match neutral_type:
+        case Int32Type() | Int64Type():
+            return 7
+        case StringType():
+            return "k"
+        case UuidType():
+            return uuid.UUID(int=7)
+        case DecimalType(scale=scale):
+            return Decimal(7).scaleb(-scale)
+        case DateType():
+            return dt.date(2024, 1, 7)
+        case TimestampType():
+            return dt.datetime(2024, 1, 7, tzinfo=dt.UTC)
+        case _:
+            raise AssertionError(f"no example key of {neutral_type!r}")
 
 
 def _varied(predicate: ResolvedPredicate) -> ResolvedPredicate:

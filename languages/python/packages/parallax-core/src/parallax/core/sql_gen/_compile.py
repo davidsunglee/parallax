@@ -22,14 +22,17 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    TemporalDimension,
 )
 from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import (
     Paging,
+    ResolvedAsOfSelection,
     ResolvedObjectQuery,
+    ResolvedRangeSelection,
     ResolvedSeek,
 )
-from parallax.core.predicate._execution_values import ExecutionValueSource, predicate_operands
+from parallax.core.predicate._execution_values import predicate_operands
 from parallax.core.predicate._resolved import disjunctive
 from parallax.core.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
@@ -231,8 +234,8 @@ def _execution_values(
                 if operand is _EXHAUSTED:
                     raise SqlGenError("the query's predicate lacks an operand its template renders")
                 yield group, _prepared_operand(group.form, operand)
-            case source:
-                yield group, _execution_value(source, keys, query)
+            case _:
+                yield group, _execution_value(group, keys, query)
 
 
 def _gathered(keys: list[ManagedValue] | None) -> list[ManagedValue]:
@@ -242,11 +245,13 @@ def _gathered(keys: list[ManagedValue] | None) -> list[ManagedValue]:
 
 
 def _execution_value(
-    source: ExecutionValueSource,
+    group: ExecutionValuePositions,
     keys: list[ManagedValue] | None,
     query: ResolvedObjectQuery | None,
 ) -> object:
-    match source:
+    match group.source:
+        case ("temporal", dimension, bound):
+            return _prepared_operand(group.form, _temporal_bound(query, dimension, bound))
         case ("keys",):
             return _gathered(keys)
         case ("paging", at):
@@ -261,8 +266,27 @@ def _execution_value(
             if query is None or query.paging is None or query.limit is None:
                 raise SqlGenError("a paged read template requires its current page cap")
             return query.limit
-        case _:  # pragma: no cover - temporal sources are never deferred
+        case source:  # pragma: no cover - authored operands stream in one traversal
             raise SqlGenError(f"no execution value renders from {source!r}")
+
+
+def _temporal_bound(
+    query: ResolvedObjectQuery | None,
+    dimension: TemporalDimension,
+    bound: Literal["coordinate", "start", "end"],
+) -> object:
+    """The current finite selection's ``bound`` in ``dimension``."""
+    for selection in () if query is None else query.temporal:
+        if selection.axis.dimension is not dimension:
+            continue
+        match selection:
+            case ResolvedAsOfSelection(coordinate=coordinate) if bound == "coordinate":
+                return coordinate
+            case ResolvedRangeSelection(start=start, end=end) if bound != "coordinate":
+                return start if bound == "start" else end
+            case _:
+                break
+    raise SqlGenError(f"a temporal read template requires its current finite {bound}")
 
 
 def compile_template(
@@ -274,8 +298,8 @@ def compile_template(
     lock: LockMode | None = None,
 ) -> CompiledTemplate:
     """Compile a read once, deferring to rendering its page's cap and seek
-    carriers, its gathered parent keys, and the predicate operands its planned
-    query's execution-value sources name."""
+    carriers, its gathered parent keys, and the predicate operands and finite
+    temporal bounds its planned query's execution-value sources name."""
     return _template(
         _compile_read(query, model, dialect, result_form=result_form, lock=lock, deferred=True)
     )
