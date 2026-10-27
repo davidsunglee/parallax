@@ -599,7 +599,7 @@ def _expected_units(case: case_format.Case) -> dict[str, Any]:
 def _grade_units(case: case_format.Case, observations: dict[str, Any]) -> None:
     """Each group's reported fate is the one the case states: its outcome, and
     the flush failure that ended it — where it ran, the object it reports, and
-    its Shortfall."""
+    its Shortfall or error."""
     observed = cast("dict[str, Any]", observations.get("units", {}))
     expected = _expected_units(case)
     assert set(observed) == set(expected), (case.case_id, observed)
@@ -612,7 +612,10 @@ def _grade_units(case: case_format.Case, observations: dict[str, Any]) -> None:
             continue
         actual = reported["flushFailure"]
         assert actual["at"] == failure["at"], (case.case_id, label, actual)
-        assert actual["shortfall"] == failure["shortfall"], (case.case_id, label, actual)
+        assert (actual.get("shortfall"), actual.get("error")) == (
+            failure.get("shortfall"),
+            failure.get("error"),
+        ), (case.case_id, label, actual)
         assert _same_entity(actual["entity"], failure["entity"]), (case.case_id, label, actual)
         assert wire_value_deep(actual["key"]) == wire_value_deep(failure["key"]), (
             case.case_id,

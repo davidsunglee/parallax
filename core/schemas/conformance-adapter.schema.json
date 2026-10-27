@@ -253,7 +253,7 @@
       }
     },
     "unitObservation": {
-      "description": "ONE `uow` group's fate as a run observed it (m-conformance-adapter *Unit fates*): whether its unit of work committed or rolled back, and — where a flush failure ended it — where that flush ran (the step whose read flushed, or `commit`) and the object and Shortfall the failure reported.",
+      "description": "ONE `uow` group's fate as a run observed it (m-conformance-adapter *Unit fates*): whether its unit of work committed or rolled back, and — where a flush failure ended it — where that flush ran (the step whose read flushed, or `commit`) and the object and the Shortfall or error the failure reported.",
       "type": "object",
       "additionalProperties": false,
       "required": ["outcome"],
@@ -262,7 +262,8 @@
         "flushFailure": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["at", "entity", "key", "shortfall"],
+          "required": ["at", "entity", "key"],
+          "oneOf": [{ "required": ["shortfall"] }, { "required": ["error"] }],
           "properties": {
             "at": {
               "oneOf": [
@@ -274,7 +275,8 @@
             "key": { "$ref": "#/$defs/row" },
             "shortfall": {
               "enum": ["missingTarget", "staleWrite", "optimisticConflict", "failedPrecondition"]
-            }
+            },
+            "error": { "enum": ["temporalConflict"] }
           }
         }
       }

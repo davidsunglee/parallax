@@ -41,6 +41,7 @@ contract owners; this index does not add requirements.
 | Predecessor Expansion | The per-milestone rules that settle one predecessor's effect and successors | [Temporal writes](core/spec/m-temporal-write.md) |
 | Merged row / contribution | One opened row covering adjacent produced rows of identical stored state, and the part of it each original or insertion contributed | [Temporal writes](core/spec/m-temporal-write.md) |
 | Unchanged Milestone / Guard | A milestone a write leaves exactly as it was and keeps, versus the write that proves it still stands as observed | [Temporal writes](core/spec/m-temporal-write.md) |
+| Temporal Conflict | A close the attempt's Transaction Instant cannot follow, because the row it would end starts at or after that instant: refused and retried at a fresh instant, never clamped, and distinct from an Optimistic Lock Conflict's moved gate | [Temporal writes](core/spec/m-temporal-write.md) |
 | Concurrency Preference / Strategy | Requested policy versus the strategy resolved for an entity | [Read locks](core/spec/m-read-lock.md) |
 | Transaction Time / Valid Time | Audit history versus effective-world history | [Temporal reads](core/spec/m-temporal-read.md) |
 | Read Delivery | Turning a validated read into a judged Page, delivered whole or streamed | [Read delivery](core/spec/m-read-delivery.md) |

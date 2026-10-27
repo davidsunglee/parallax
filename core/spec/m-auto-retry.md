@@ -26,13 +26,20 @@ default 10), with the default owned by the root rather than by each call.
 
 Which failures are retriable is fixed policy rather than an option. Together
 they are the **recoverable conflicts**: a failure a re-execution against fresh
-state can resolve.
+state or with a fresh Transaction Instant can resolve.
 
 - **Transient database failures** — deadlock and serialization failure (the
   `m-db-error` `deadlock` category).
 - An **Optimistic Lock Conflict Error** — a gate an observation of the attempt
   bound came up short because a concurrent writer moved the row first.
-- Either one carried as the cause of the rollback-only refusal a caught failure
+- A **Temporal Conflict Error** — the attempt's Transaction Instant does not
+  follow the stored start of a row it would close (`m-unit-work` *Closes the
+  instant cannot follow*). The re-execution is a new attempt with its own lazy
+  instant and fresh reads, so the ordinary bounded delay rides out a clock that
+  is briefly behind or an instant another writer overtook; a clock behind by
+  more than the attempts can cover exhausts the bound, and the conflict
+  surfaces as the failure.
+- Any of them carried as the cause of the rollback-only refusal a caught failure
   left behind (`m-unit-work` *Abort*): the refusal is replayed on the terms of
   the failure that doomed the attempt.
 
@@ -109,6 +116,12 @@ That ownership is what keeps the retry loop free of a dependency on an optional
 concurrency module. An implementation **MUST NOT** require the composition root
 to inject the conflict type into the retry classifier, and **MUST NOT** take a
 `m-auto-retry --> m-opt-lock` edge to name it.
+
+The Temporal Conflict Error is owned by **`m-temporal-write`**, whose expansion
+raises it, and `m-unit-work` exposes it beside the Write Effect Error family.
+This module recognizes it directly, as it does the Optimistic Lock Conflict
+Error, through `m-unit-work`'s own edge to `m-temporal-write`; nothing injects
+it into the classifier.
 
 The Write Precondition Error a target write raises (`m-unit-work`) is
 never in the retriable set, and neither is a doom it caused: a retry re-states

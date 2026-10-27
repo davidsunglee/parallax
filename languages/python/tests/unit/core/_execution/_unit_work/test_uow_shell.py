@@ -81,6 +81,7 @@ from parallax.core.unit_work import (
     RetainedObservation,
     RollbackOnlyError,
     SystemClock,
+    TemporalConflictError,
     TransactionInstant,
     TransactionSettings,
     UnitOfWork,
@@ -1040,11 +1041,13 @@ def test_a_row_its_settled_write_removed_is_no_longer_owned() -> None:
         uow.buffer(_balance_terminate_from(2, _FIXED))
         uow.read(lambda: None)
         # Both owned rows are gone, so a row read at the attempt's instant now
-        # is one the attempt does not own.
+        # is one the attempt does not own, and closing it at its own start is
+        # refused rather than revising it in place.
         uow.buffer(_balance_update_from(1, _FIXED))
 
-    _run(body, meta=_BALANCE, steps=simulated)
-    assert _kinds(simulated) == ["insert", "delete", "delete", "close", "insert"]
+    with pytest.raises(TemporalConflictError):
+        _run(body, meta=_BALANCE, steps=simulated)
+    assert _kinds(simulated) == ["insert", "delete", "delete"]
 
 
 def test_a_row_whose_start_is_the_attempts_instant_is_not_owned_without_its_opening() -> None:
@@ -1053,8 +1056,10 @@ def test_a_row_whose_start_is_the_attempts_instant_is_not_owned_without_its_open
     def body(uow: UnitOfWork) -> None:
         uow.buffer(_balance_update_from(1, _FIXED))
 
-    _run(body, meta=_BALANCE, steps=simulated)
-    assert _kinds(simulated) == ["close", "insert"]
+    with pytest.raises(TemporalConflictError) as refused:
+        _run(body, meta=_BALANCE, steps=simulated)
+    assert refused.value.stored_bound == _FIXED
+    assert _kinds(simulated) == []
 
 
 def test_each_settled_write_publishes_its_change_before_the_next_group_executes() -> None:
@@ -2012,3 +2017,75 @@ def _position_endpoint(end: dt.datetime | None) -> TemporalRowCoordinates:
     if end is None:
         return TemporalRowCoordinates(entity, (1,), OPEN_BITEMPORAL_ENDS)
     return TemporalRowCoordinates(entity, (1,), (Finite(instant=end), PLANNED_INFINITY))
+
+
+# --------------------------------------------------------------------------- #
+# A close the attempt's instant cannot follow.                                 #
+# --------------------------------------------------------------------------- #
+_LATER = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+
+def test_a_held_predecessor_starting_later_is_refused_while_planning() -> None:
+    # Planning holds the predecessor, so the refusal precedes execution: it
+    # leaves the attempt usable, its write still buffered, and its one
+    # instant captured once however many flushes plan it again.
+    clock = CountingClock([_FIXED])
+    simulated = _simulated(_BALANCE)
+    refusals: list[TemporalConflictError] = []
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer(_balance_update_from(1, _LATER))
+        for _ in range(2):
+            with pytest.raises(TemporalConflictError) as refused:
+                uow.read(lambda: None)
+            refusals.append(refused.value)
+
+    with pytest.raises(TemporalConflictError) as at_commit:
+        _run(body, meta=_BALANCE, steps=simulated, clock=clock)
+    assert [refusal.stored_bound for refusal in (*refusals, at_commit.value)] == [_LATER] * 3
+    assert {refusal.instant for refusal in (*refusals, at_commit.value)} == {_FIXED}
+    assert clock.calls == 1
+    assert _kinds(simulated) == []
+
+
+def _late_position_target() -> PreparedTargetInstruction:
+    prepared = prepare_wire_write(
+        TargetWriteInstruction(
+            "amendUntil",
+            "WherePosition",
+            {"id": 1, "value": "175.00"},
+            if_tx_start=_LATER,
+            valid_from=_JUN,
+            until=_AUG,
+        ),
+        _PREDICATED,
+    )
+    assert isinstance(prepared, PreparedTargetInstruction)
+    return prepared
+
+
+def test_a_predecessor_bound_inside_the_flush_starting_later_dooms_the_attempt() -> None:
+    # The target's current row is read inside the flush that writes it, so
+    # its close is refused while binding, which is execution: the caught
+    # refusal dooms the attempt and stays its first cause.
+    clock = CountingClock([_FIXED])
+    simulated = _simulated(_PREDICATED)
+    coverage = HeldRows(_PREDICATED, (_position_row(_JAN, _LATER),))
+    caught: list[TemporalConflictError] = []
+
+    def body(uow: UnitOfWork) -> None:
+        uow.buffer_target(_late_position_target())
+        with pytest.raises(TemporalConflictError) as refused:
+            uow.read(lambda: None)
+        caught.append(refused.value)
+        with pytest.raises(RollbackOnlyError) as doomed:
+            uow.read(lambda: None)
+        assert doomed.value.__cause__ is refused.value
+
+    with pytest.raises(RollbackOnlyError) as at_commit:
+        _run(body, meta=_PREDICATED, steps=simulated, rows=coverage, clock=clock)
+    (refusal,) = caught
+    assert at_commit.value.__cause__ is refusal
+    assert (refusal.key, refusal.instant, refusal.stored_bound) == ({"id": 1}, _FIXED, _LATER)
+    assert clock.calls == 1
+    assert _kinds(simulated) == []

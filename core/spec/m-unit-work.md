@@ -1644,7 +1644,49 @@ Temporal expansion disposes of each predecessor by this record: a row that
 existed before the attempt is closed, and one the attempt opened is revised in
 place or removed (`m-temporal-write` *Ownership disposal*). Ownership is the
 attempt's record alone. A Transaction-Time start equal to the attempt's instant
-**MUST NOT** be read as ownership — clocks may repeat an instant across attempts.
+**MUST NOT** be read as ownership — clocks may repeat an instant across attempts
+— and a row an earlier attempt committed at that instant is refused rather than
+closed (*Closes the instant cannot follow*, below).
+
+### Closes the instant cannot follow
+
+A close of a row the attempt did not open is legal only at an instant strictly
+later than that row's stored Transaction-Time start (`m-temporal-write` *A close
+follows its predecessor's start*). A clock that repeats an instant across
+attempts, a clock behind another writer's, or an instant captured early — a
+forced flush captures it, and another transaction then commits a later version
+that the attempt reads and changes — would otherwise store an empty or inverted
+interval. Temporal expansion refuses such a close with a **Temporal Conflict
+Error**, raised with:
+
+- the Entity Identity and the attempt's Transaction Instant, always;
+- the object's key, by declared attribute name, where the refusing path knows
+  it;
+- the stored Transaction-Time start the instant failed to follow, where the
+  refusal compared one.
+
+It retains no statement, plan, row, or payload. It is not a Write Effect Error,
+whose payload is counts, and it is not a Write Precondition Error, because no
+caller stated the start it compares; it is their standalone sibling, owned by
+`m-temporal-write` and exposed beside them.
+
+The comparison uses the predecessor expansion already holds, so it consults the
+Clock Strategy no more often than the expansion itself does and reads nothing
+else. Where it runs follows *The planning pipeline* and *Abort* without an
+exception of its own: a predecessor planning holds is refused at stage 7, a
+planning refusal that leaves the attempt usable and its writes buffered, so the
+next flush plans and refuses them again at the same instant; a predecessor a
+deferred range binds inside the flush is refused while that flush executes,
+which dooms the attempt with the refusal as its first cause. Either way the
+attempt cannot commit the refused write. The instant is never clamped or
+replaced within an attempt: the Temporal Conflict Error is a recoverable
+conflict, so the bounded retry loop replays it (`m-auto-retry`) as a new
+attempt with its own lazy instant and fresh reads.
+
+This guard protects closes alone. A new lineage still opens at the attempt's
+instant without reading the key's closed history, and creation inside a gap is
+still not coordinated (`m-temporal-write` *Concurrent creation in gaps is not
+coordinated*).
 
 ## Actor Identity
 
@@ -1704,7 +1746,8 @@ Retriability follows the classification, not the raising site: an Optimistic Loc
 Conflict Error is a recoverable conflict the bounded retry loop replays
 (`m-auto-retry`), while a Missing Target Error, a Stale Write Error, a
 Cardinality Corruption Error, and a Write Precondition Error are **never**
-retriable.
+retriable. A Temporal Conflict Error (*Closes the instant cannot follow*) is
+raised by temporal expansion rather than by enforcement, and is recoverable.
 
 ### When several steps share a driver batch
 

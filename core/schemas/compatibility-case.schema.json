@@ -2906,7 +2906,7 @@
       ]
     },
     "unitFate": {
-      "description": "One `uow` group's fate (m-case-format *Unit fates*). `flushFailure` names the failure a flush raised: `at` is the step whose read flushed, or `commit`, and `entity` / `key` / `shortfall` are the object it reports and its Shortfall (m-write-plan *Affected Rows Policy*), matching the error's own payload. A failed flush ends the unit of work, so a group stating one rolls back.",
+      "description": "One `uow` group's fate (m-case-format *Unit fates*). `flushFailure` names the failure a flush raised: `at` is the step whose read flushed, or `commit`, and `entity` / `key` are the object it reports, beside exactly one of `shortfall`, its Shortfall (m-write-plan *Affected Rows Policy*), or `error`, a flush failure that is no Shortfall (`temporalConflict`, m-unit-work *Closes the instant cannot follow*), matching the error's own payload. A failed flush ends the unit of work, so a group stating one rolls back.",
       "type": "object",
       "additionalProperties": false,
       "required": ["outcome"],
@@ -2915,7 +2915,8 @@
         "flushFailure": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["at", "entity", "key", "shortfall"],
+          "required": ["at", "entity", "key"],
+          "oneOf": [{ "required": ["shortfall"] }, { "required": ["error"] }],
           "properties": {
             "at": {
               "oneOf": [
@@ -2932,7 +2933,8 @@
             },
             "shortfall": {
               "enum": ["missingTarget", "staleWrite", "optimisticConflict", "failedPrecondition"]
-            }
+            },
+            "error": { "enum": ["temporalConflict"] }
           }
         }
       },

@@ -320,6 +320,7 @@ def test_composed_temporal_writes_overlay_every_member_any_of_them_assigned() ->
         ],
         _BALANCE,
         observations={corpus_object_key("Balance", ("id", 1)): observation},
+        tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
     )
     _origin, row = _changed_entry(plan)
     values = _row_values(row)

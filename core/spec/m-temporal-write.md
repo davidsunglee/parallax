@@ -141,9 +141,10 @@ Under Optimistic the address is followed by the observed-`in_z` gate exactly as
 a close's is. An amendment every assigned value of which the row already holds
 writes nothing. Ownership is the attempt's record of what it opened, never an
 `in_z` that happens to equal `txInstant`: a row an earlier attempt committed at
-the same instant is closed as usual. After the attempt, the Transaction-Time
-history holds each pre-attempt milestone closed once and one current row per
-key, with no empty interval.
+the same instant is not the attempt's, and closing it would leave an empty
+interval, so the write is refused (*A close follows its predecessor's start*,
+below). After the attempt, the Transaction-Time history holds each pre-attempt
+milestone closed once and one current row per key, with no empty interval.
 
 A write the insertion itself authorized after its insert flushed observed no
 row: the object's current row is read inside the flush that writes it, and is
@@ -555,7 +556,9 @@ facts and the attempt's ownership as it stands then:
   `Ungated` decision (`m-opt-lock`). A predecessor holding a caller's start fails
   its gate as that caller's precondition rather than as a conflict;
 - the predecessor's own effect by ownership (*Ownership disposal*, below), and
-  its nonempty successors.
+  its nonempty successors; a close is refused where the attempt's instant does
+  not follow the predecessor's stored Transaction-Time start (*A close follows
+  its predecessor's start*, below).
 
 For one authored mutation of a lone row this is the profile tables above: an
 `amend` closes as `Superseded` and opens a `ChangedFrom` successor, plus
@@ -678,6 +681,44 @@ its statement executes. That is an execution failure (`m-unit-work` *Abort*):
 earlier Write Groups stay completed, its own group completes nothing, and no
 later group executes. A revision assigning only direct Columns, a successor
 insert, and a readless predicate update are unaffected.
+
+### A close follows its predecessor's start
+
+A close ends a predecessor's Transaction-Time interval at the attempt's
+Transaction Instant, so that instant **MUST** be strictly later than the
+predecessor's stored Transaction-Time start. A predecessor whose disposition is
+finally a close — one the attempt did not open, whether it is superseded,
+terminated, or a retired validation — and whose stored start is at or after the
+attempt's instant is not closed: the write is refused as a **Temporal
+Conflict** (`m-unit-work` *Closes the instant cannot follow*) before its close
+is decorated or any of its steps is emitted. Equal instants are refused as
+well as earlier ones, because `[T, T)` is an empty interval and an earlier end
+inverts it.
+
+```text
+stored predecessor [S, infinity), attempt instant T
+  T > S   -> close at T; open the successors at [T, infinity)
+  T <= S  -> Temporal Conflict; nothing is closed or opened
+```
+
+The comparison reads the stored start the held predecessor already carries —
+the same value an Optimistic gate binds — so it adds no read, statement, or
+predicate, and it is made wherever the predecessor is expanded: during planning
+for a predecessor planning holds, and while binding inside the flush for one a
+deferred range reads. Ownership decides first, by the attempt's record alone:
+a row the attempt opened is revised or removed in place whatever its start
+(*Ownership disposal*), a predecessor kept unchanged is not closed, and no
+timestamp equality establishes ownership. A Temporal Conflict is never
+clamped: the attempt's one instant is already written by any earlier flush, so
+the attempt ends and a retry plans again with a fresh instant against fresh
+stored history (`m-auto-retry`).
+
+This protects a close only. A new lineage — an insert, a pending insertion's
+surviving part, or a Coverage Gap — opens at the attempt's instant without
+reading the key's closed history, so a lineage opened after a termination by a
+clock that is behind can still overlap that history, and concurrent creation
+in a gap is still not coordinated (*Concurrent creation in gaps is not
+coordinated*).
 
 ### Merging produced successors
 

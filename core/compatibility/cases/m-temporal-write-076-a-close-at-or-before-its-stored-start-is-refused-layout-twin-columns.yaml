@@ -1,0 +1,181 @@
+# A close ends its predecessor at the attempt's Transaction Instant, so that instant
+# must follow the predecessor's stored Transaction-Time start (m-temporal-write
+# 'A close follows its predecessor's start'). Each refused group scripts a clock at
+# or behind a stored start: an observed bounded amendment whose head, middle, and
+# tail would open at an instant equal to its predecessor's start, a target
+# termination behind it, and a target amendment of a later rectangle whose start
+# alone the instant does not follow. Each is a Temporal Conflict: the group rolls
+# back with nothing closed or opened, and each replay within the bound refuses
+# again at the same instant. The control states the first refusal's write at a
+# later instant, where it closes and splits as usual.
+model: models/buffered-sequence-layout-twin-columns.yaml
+tags: [m-temporal-write, m-unit-work, m-auto-retry, m-storage-layout, scenario, bitemporal, temporal, observed-state, target-write, abort, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: scenario
+grading: state
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "state-graded: each close is refused or settled against the coverage its own flush reads, so no golden statement is stated to compile against (m-case-format 'State-graded scenarios')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+    maxRetries: 2
+  scenario:
+    - uow: equal
+      objectQuery:
+        target: parallax.compatibility.SequenceSpan
+        predicate:
+          eq:
+            path: parallax.compatibility.SequenceSpan.id
+            value: 1
+        temporal: { transaction-time: { asOf: latest }, valid-time: { asOf: "2024-03-01T00:00:00.000000Z" } }
+      note: "observe span 1 at March"
+      expectRows:
+        - id: 1
+          amount: 100
+          label: a
+          memo: { note: n1 }
+          from_z: "2024-01-01T00:00:00.000000Z"
+          thru_z: infinity
+          in_z: "2023-12-01T00:00:00.000000Z"
+          out_z: infinity
+    - uow: equal
+      write:
+        - mutation: amendUntil
+          "on": 0
+          entity: parallax.compatibility.SequenceSpan
+          rows:
+            - { id: 1, amount: 150 }
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          until: "2024-05-01T00:00:00.000000Z"
+          at: "2023-12-01T00:00:00.000000Z"
+      note: "the instant equals the observed rectangle's start, so its close would leave an empty interval: refused while planning"
+    - uow: behind
+      write:
+        - mutation: terminate
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 2 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          at: "2023-11-01T00:00:00.000000Z"
+      note: "the instant is behind span 2's start, read inside the flush: refused while binding"
+    - uow: later
+      write:
+        - mutation: amendUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 3, amount: 250 }
+          ifTxStart: "2023-12-15T00:00:00.000000Z"
+          validFrom: "2024-07-01T00:00:00.000000Z"
+          until: "2024-09-01T00:00:00.000000Z"
+          at: "2023-12-10T00:00:00.000000Z"
+      note: "the instant follows span 3's earlier rectangle but not the later one this window reaches"
+    - uow: control
+      write:
+        - mutation: amendUntil
+          entity: parallax.compatibility.SequenceSpan
+          row: { id: 1, amount: 150 }
+          ifTxStart: "2023-12-01T00:00:00.000000Z"
+          validFrom: "2024-03-01T00:00:00.000000Z"
+          until: "2024-05-01T00:00:00.000000Z"
+          at: "2024-11-01T00:00:00.000000Z"
+      note: "the same window at a later instant closes span 1 and opens its head, middle, and tail"
+then:
+  units:
+    equal:
+      outcome: rolledBack
+      flushFailure:
+        at: commit
+        entity: parallax.compatibility.SequenceSpan
+        key: { id: 1 }
+        error: temporalConflict
+    behind:
+      outcome: rolledBack
+      flushFailure:
+        at: commit
+        entity: parallax.compatibility.SequenceSpan
+        key: { id: 2 }
+        error: temporalConflict
+    later:
+      outcome: rolledBack
+      flushFailure:
+        at: commit
+        entity: parallax.compatibility.SequenceSpan
+        key: { id: 3 }
+        error: temporalConflict
+    control: { outcome: committed }
+  tableState:
+    sequence_span:
+      - id: 1
+        amount: 100
+        label: a
+        memo: { note: n1 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2024-11-01T00:00:00.000000Z"
+      - id: 1
+        amount: 100
+        label: a
+        memo: { note: n1 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-03-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 1
+        amount: 150
+        label: a
+        memo: { note: n1 }
+        from_z: "2024-03-01T00:00:00.000000Z"
+        thru_z: "2024-05-01T00:00:00.000000Z"
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 1
+        amount: 100
+        label: a
+        memo: { note: n1 }
+        from_z: "2024-05-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-11-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 2
+        amount: 100
+        label: b
+        memo: { note: n2 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 3
+        amount: 100
+        label: c
+        memo: { note: n3 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 3
+        amount: 200
+        label: c
+        memo: { note: n3 }
+        from_z: "2024-06-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: infinity
+      - id: 4
+        amount: 90
+        label: d
+        memo: { note: n4 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-01T00:00:00.000000Z"
+        out_z: "2023-12-15T00:00:00.000000Z"
+      - id: 4
+        amount: 100
+        label: d
+        memo: { note: n4 }
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2023-12-15T00:00:00.000000Z"
+        out_z: infinity

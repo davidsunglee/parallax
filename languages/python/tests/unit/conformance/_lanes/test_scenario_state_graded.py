@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import decimal
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,11 @@ from parallax.conformance import case_format, models
 from parallax.conformance._lanes import scenario
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
-from parallax.core.unit_work import OptimisticLockConflictError, WriteEvidenceError
+from parallax.core.unit_work import (
+    OptimisticLockConflictError,
+    TemporalConflictError,
+    WriteEvidenceError,
+)
 from parallax.core.write_plan.steps import INFINITY, MilestoneTarget
 from tests._support.case_corpus import cases as corpus_cases
 from tests._support.repo import REPO_ROOT
@@ -336,6 +341,20 @@ def test_a_milestone_targets_failure_names_its_key() -> None:
         "entity": "parallax.compatibility.SequenceSpan",
         "key": {"id": 4},
         "shortfall": "optimisticConflict",
+    }
+
+
+def test_a_temporal_conflict_is_reported_as_an_error_naming_its_key() -> None:
+    model = models.load_model(_CORPUS / "models" / "buffered-sequence-layout-twin-columns.yaml")
+    entity = entity_by_name(model, "parallax.compatibility.SequenceSpan")
+    assert entity is not None
+    instant = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
+    failure = TemporalConflictError(entity.identity, instant, key={"id": 1}, stored_bound=instant)
+    assert scenario.flush_failure(model, failure, "commit") == {
+        "at": "commit",
+        "entity": "parallax.compatibility.SequenceSpan",
+        "key": {"id": 1},
+        "error": "temporalConflict",
     }
 
 

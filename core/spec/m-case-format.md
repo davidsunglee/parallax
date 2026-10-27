@@ -1788,20 +1788,26 @@ one its callback abandons once its last step has run. A group stating a
 **`flushFailure`** is one a flush ended: `at` is where that flush ran — the
 group's last step, where that is a find or a write step whose predicate
 submission runs the group's last flush, or `commit`, where
-the group's last step leaves writes pending — and `entity`, `key`,
-and `shortfall` are the object the failure reports and its Shortfall
+the group's last step leaves writes pending — and `entity` and `key` are the
+object the failure reports, beside exactly one of `shortfall`, its Shortfall
 (`missingTarget` / `staleWrite` / `optimisticConflict` / `failedPrecondition`,
-`m-write-plan` *Affected Rows Policy*), matching the error's own payload rather
-than a statement index. A failed flush ends the unit of work, so the group rolls
-back and nothing it did stands.
+`m-write-plan` *Affected Rows Policy*), or `error`, a flush failure that is no
+Shortfall — `temporalConflict`, a close the attempt's instant cannot follow
+(`m-unit-work` *Closes the instant cannot follow*) — matching the error's own
+payload rather than a statement index. A failed flush ends the unit of work, so
+the group rolls back and nothing it did stands. A Temporal Conflict is a
+recoverable conflict, replayed within the case's resolved bound (`m-auto-retry`):
+each replay runs at the group's same `at` and refuses again, so the group reports
+the failure once the bound is exhausted.
 
 A golden-graded group's flush failure is graded on the golden of the write steps
-that flush ran, the ones still pending when it began: exactly one statement
-addressing the object it names affected no row, gated where
+that flush ran, the ones still pending when it began. For a Shortfall, exactly
+one statement addressing the object it names affected no row, gated where
 the Shortfall is a gate's — an optimistic conflict, or a failed precondition,
 under `concurrency: optimistic` — and ungated otherwise, so a rollback that merely
 discarded writes that all succeeded fails the case rather than passing on the
-rollback.
+rollback. A Temporal Conflict is refused before the close it names executes, so
+no statement of that flush addresses its object.
 
 #### Root configuration
 

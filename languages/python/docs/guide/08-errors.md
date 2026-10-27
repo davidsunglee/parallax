@@ -55,6 +55,7 @@ from parallax.core.unit_work import (
     InstructionRejectedError,
     OptimisticLockConflictError,
     RollbackOnlyError,
+    TemporalConflictError,
     WriteEvidenceError,
     WriteInstructionError,
     WritePreconditionError,
@@ -221,6 +222,13 @@ section covers the ones that reach you.
 - **A deadlock or a serialization failure** is retried the same way. The database
   reports it, so it reaches you as a `DatabaseError` cause whose `category` is
   `"deadlock"` ([below](#failures-the-database-reports)).
+- **A temporal conflict** means the transaction's instant is no later than the stored
+  `tx_start` of a milestone it would close: clocks that repeat or run behind, or an
+  instant taken before another transaction committed the version this one changes.
+  Parallax retries it at a fresh instant, so a `TemporalConflictError` reaches you only
+  when retries are off or used up. Its `instant`, `key` and `stored_bound` name the
+  instant, the object and the start it failed to follow
+  ([Writing](04-writing.md#transaction-time-only-entities)).
 - **Retries run out** when every attempt fails with something retryable. You then get the
   last attempt's failure as the `cause`, with a note naming the count, such as
   `bounded retry exhausted after 11 attempts (retries=10)`.
@@ -387,6 +395,7 @@ of an `ExecutionFailure`:
 | `RollbackOnlyError` | at any read or write after a failure doomed the transaction | On the original failure's terms | Let the original failure escape; the transaction can only roll back |
 | `PublicationConflictError` | when `publish` finds another selection held than the one it expected | No | Read the current selection and decide whether to publish again |
 | `OptimisticLockConflictError`, or a `DatabaseError` whose `category` is `"deadlock"` | when the transaction sends its writes, or at the statement | Yes, up to `max_retries` | If retries run out: try later, shorten the transactions, or prefer locking |
+| `TemporalConflictError` | when the transaction sends its writes | Yes, up to `max_retries` | If retries run out: synchronize the clocks of the servers that write the database |
 | `WritePreconditionError` | when the transaction sends its writes, or at the call under locking | No | Read the current value and let the user decide again |
 | A `DatabaseError` whose `category` is `"uniqueViolation"` | when the insert is sent, usually at commit | No | Choose another key, or treat the object as already there |
 | A `DatabaseError` whose `category` is `"lockWaitTimeout"` or `None` | at the statement | No | Read `native_code` and `message`; fix the schema or privilege, or try later |

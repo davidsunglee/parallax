@@ -82,6 +82,7 @@ from parallax.core._execution._unit_work.write_planner import (
     WritePlanningRequest,
 )
 from parallax.core._execution._unit_work.write_validate import WriteRejectedError
+from parallax.core.temporal_write import TemporalConflictError
 
 __all__ = [
     "AMEND_MUTATIONS",
@@ -122,6 +123,7 @@ __all__ = [
     "SystemClock",
     "TargetMutation",
     "TargetWriteInstruction",
+    "TemporalConflictError",
     "TransactionInstant",
     "TransactionSettings",
     "UnitOfWork",

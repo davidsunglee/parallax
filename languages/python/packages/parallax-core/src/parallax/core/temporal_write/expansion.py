@@ -17,6 +17,7 @@ from parallax.core.temporal_read import (
     TimeInterval,
     TransactionTimeOnly,
 )
+from parallax.core.temporal_write._errors import TemporalConflictError
 from parallax.core.temporal_write.coverage import (
     CoverageGap,
     CoverageTransform,
@@ -597,9 +598,16 @@ class PredecessorExpander:
 
     def _own(self, record: _Reached) -> PlannedStep | None:
         """The step ``record``'s predecessor finally takes of its own: its
-        decorated close, a guard, a removal, a revision, or none."""
+        decorated close, a guard, a removal, a revision, or none.
+
+        A close of a predecessor the attempt did not open ends it at the
+        attempt's instant, so that instant must follow the predecessor's
+        stored Transaction-Time start; otherwise the close is refused as a
+        :class:`TemporalConflictError` before anything is decorated."""
         disposal = record.code & _DISPOSAL
         if disposal == _CLOSE:
+            if not record.owned:
+                self._require_later_than(record)
             return self._audit.decorate_close(record.closing)
         return (
             None
@@ -607,6 +615,26 @@ class PredecessorExpander:
             else _own_step(
                 self._facts, record.code, record.closing, record.realized, record.predecessor
             )
+        )
+
+    def _require_later_than(self, record: _Reached) -> None:
+        facts = self._facts
+        stored_start = record.predecessor.cell(facts.shape.transaction_time.start_attribute)
+        assert isinstance(stored_start, dt.datetime)  # a stored Transaction-Time start is finite
+        if facts.instant > stored_start:
+            return
+        target = record.closing.target
+        raise TemporalConflictError(
+            facts.entity.identity,
+            facts.instant,
+            key=dict(
+                zip(
+                    (attribute.name for attribute in target.key_attributes),
+                    target.key_values,
+                    strict=True,
+                )
+            ),
+            stored_bound=stored_start,
         )
 
     def _runs(self, candidates: list[_Candidate]) -> list[list[_Candidate]]:
