@@ -4,7 +4,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Final, Literal, NamedTuple, Protocol, assert_never, cast
+from typing import Final, Literal, NamedTuple, Protocol, assert_never
 
 from parallax.core import deep_fetch, inheritance
 from parallax.core._execution._unit_work.uow import Concurrency
@@ -12,8 +12,6 @@ from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.object_query._resolved import (
-    ContinuationCoordinate,
-    Paging,
     ResolvedAsOfSelection,
     ResolvedHistorySelection,
     ResolvedLatestSelection,
@@ -51,7 +49,7 @@ from parallax.core.sql_gen._compile import (
     compile_read,
     compile_template,
 )
-from parallax.core.sql_gen._seek import null_pattern
+from parallax.core.sql_gen._seek import continuation_pattern
 from parallax.core.temporal_read import scans_resolved_axis
 
 __all__ = [
@@ -176,32 +174,18 @@ class ReadPlanner(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _CachedDelivery:
+    """A plan whose root is ``root_template``'s unrendered read, when it has one."""
+
     plan: ReadPlan
-    coordinate_positions: tuple[tuple[int, int], ...] = ()
-    limit_positions: tuple[int, ...] = ()
+    root_template: CompiledTemplate | None
 
     def render(self, query: ResolvedObjectQuery) -> ReadPlan:
-        if not self.coordinate_positions and not self.limit_positions:
+        template = self.root_template
+        if template is None:
             return self.plan
-        paging = query.paging
-        if self.coordinate_positions and (
-            paging is None or paging.seek is None
-        ):  # pragma: no cover - constructor invariant
-            raise ValueError("a continuing read plan requires a seek coordinate")
-        root = self.plan.root_read()
-        if isinstance(root, EmptyRead):  # pragma: no cover - an empty root retains no positions
-            raise ValueError("an empty read plan carries no paging binds")
-        compiled, _ = root
-        binds = list(compiled.statement.binds)
-        for bind_index, carrier_index in self.coordinate_positions:
-            assert paging is not None and paging.seek is not None
-            binds[bind_index] = paging.seek.coordinate.carriers[carrier_index]
-        for bind_index in self.limit_positions:
-            binds[bind_index] = query.limit
-        compiled = replace(
-            compiled,
-            statement=replace(compiled.statement, binds=tuple(binds)),
-        )
+        compiled = template.render(query=query)
+        if compiled is template.compiled:
+            return self.plan
         return self.plan.with_root(compiled)
 
 
@@ -277,7 +261,9 @@ def _read_plan_key(
     else:
         delivery = (
             None,
-            "first" if paging.seek is None else ("after", null_pattern(paging.seek.coordinate)),
+            "first"
+            if paging.seek is None
+            else ("after", continuation_pattern(paging.seek.coordinate)),
         )
     return _ReadPlanKey(
         edition,
@@ -432,33 +418,6 @@ def _temporal_key(selection: ResolvedTemporalSelection) -> object:
             assert_never(selection)
 
 
-def _template_query(
-    query: ResolvedObjectQuery,
-) -> tuple[ResolvedObjectQuery, tuple[object | None, ...], object | None]:
-    paging = query.paging
-    if paging is None:
-        return query, (), None
-    limit_marker = object()
-    if paging.seek is None:
-        return replace(query, limit=cast("int", limit_marker)), (), limit_marker
-    markers = tuple(
-        None if carrier is None else object() for carrier in paging.seek.coordinate.carriers
-    )
-    seek = replace(
-        paging.seek,
-        coordinate=ContinuationCoordinate(markers),
-    )
-    return (
-        replace(
-            query,
-            paging=Paging(seek),
-            limit=cast("int", limit_marker),
-        ),
-        markers,
-        limit_marker,
-    )
-
-
 def _plan_uncached(
     *,
     model: CatalogedModel,
@@ -467,34 +426,38 @@ def _plan_uncached(
     result_form: ResultForm,
     preference: Concurrency | None,
     reusable: ReadPlan | None = None,
+    templated: bool = False,
 ) -> _CachedDelivery:
+    """Plan ``query``; a ``templated`` plan's root is the unrendered read of a
+    template every cached delivery renders."""
     empty_root = _empty_root(model, query)
-    compiled_query, markers, limit_marker = (
-        (query, (), None) if empty_root else _template_query(query)
-    )
     projection = deep_fetch.ReadProjectionRequest(
         "none" if result_form == "row" else "all",
         result_form == "instance",
     )
     planned = (
-        deep_fetch.plan(compiled_query, model.meta, projection=projection)
+        deep_fetch.plan(query, model.meta, projection=projection)
         if reusable is None
         else replace(
             reusable._query_plan,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
-            root=deep_fetch.plan_root(compiled_query, model.meta, projection=projection),
+            root=deep_fetch.plan_root(query, model.meta, projection=projection),
         )
     )
-    root: CompiledRead | EmptyRead = (
-        EMPTY_READ
-        if empty_root
-        else compile_read(
-            planned.root,
-            model.meta,
-            dialect,
-            result_form=result_form,
-            lock=entity_read_lock(model.meta, query.root.identity, preference),
-        )
-    )
+    root_template: CompiledTemplate | None = None
+    root: CompiledRead | EmptyRead
+    if empty_root:
+        root = EMPTY_READ
+    else:
+        lock = entity_read_lock(model.meta, query.root.identity, preference)
+        if templated:
+            root_template = compile_template(
+                planned.root, model.meta, dialect, result_form=result_form, lock=lock
+            )
+            root = root_template.compiled
+        else:
+            root = compile_read(
+                planned.root, model.meta, dialect, result_form=result_form, lock=lock
+            )
     if reusable is None:
         fetches = _fetch_work(
             planned, model, dialect, result_form, preference, empty_root=empty_root
@@ -546,29 +509,7 @@ def _plan_uncached(
         fetches,
         fetch_rows,
     )
-    if isinstance(root, EmptyRead):
-        return _CachedDelivery(prepared)
-    positions = tuple(
-        (bind_index, carrier_index)
-        for bind_index, bind_value in enumerate(root.statement.binds)
-        for carrier_index, marker in enumerate(markers)
-        if marker is not None and bind_value is marker
-    )
-    expected = {index for index, marker in enumerate(markers) if marker is not None}
-    if {carrier for _bind, carrier in positions} != expected:
-        raise ValueError("compiled continuation lost a non-null coordinate bind")
-    limit_positions = (
-        ()
-        if limit_marker is None
-        else tuple(
-            bind_index
-            for bind_index, bind_value in enumerate(root.statement.binds)
-            if bind_value is limit_marker
-        )
-    )
-    if limit_marker is not None and not limit_positions:
-        raise ValueError("compiled continuation lost its page limit bind")
-    return _CachedDelivery(prepared, positions, limit_positions)
+    return _CachedDelivery(prepared, root_template)
 
 
 def _empty_root(model: CatalogedModel, query: ResolvedObjectQuery) -> bool:
@@ -669,14 +610,14 @@ class ReadPlanCache:
             preference=preference,
         )
         reusable: ReadPlan | None = None
+        pending: _Pending | None = None
+        elected = False
         with self._lock:
             cached = self._entries.get(key)
             if cached is not None:
                 self._entries.move_to_end(key)
                 self._hits += 1
-                return cached.render(query)
-            pending = self._pending.get(key)
-            if pending is None:
+            elif (pending := self._pending.get(key)) is None:
                 pending = _Pending(threading.Event())
                 self._pending[key] = pending
                 self._misses += 1
@@ -688,22 +629,12 @@ class ReadPlanCache:
                     ),
                     None,
                 )
-                build = True
-            else:
-                build = False
-
-        if not build:
-            pending.ready.wait()
-            if pending.error is not None:
-                raise pending.error
-            cached = pending.prepared
-            if cached is None:  # pragma: no cover - event publication invariant
-                raise RuntimeError("a completed read plan published no result")
-            with self._lock:
-                self._hits += 1
-                if key in self._entries:
-                    self._entries.move_to_end(key)
+                elected = True
+        if cached is not None:
             return cached.render(query)
+        assert pending is not None
+        if not elected:
+            return self._awaited(key, pending).render(query)
 
         try:
             cached = _plan_uncached(
@@ -713,6 +644,7 @@ class ReadPlanCache:
                 result_form=result_form,
                 preference=preference,
                 reusable=reusable,
+                templated=True,
             )
         except BaseException as exc:
             with self._lock:
@@ -730,6 +662,19 @@ class ReadPlanCache:
             pending.prepared = cached
             pending.ready.set()
         return cached.render(query)
+
+    def _awaited(self, key: _ReadPlanKey, pending: _Pending) -> _CachedDelivery:
+        pending.ready.wait()
+        if pending.error is not None:
+            raise pending.error
+        cached = pending.prepared
+        if cached is None:  # pragma: no cover - event publication invariant
+            raise RuntimeError("a completed read plan published no result")
+        with self._lock:
+            self._hits += 1
+            if key in self._entries:
+                self._entries.move_to_end(key)
+        return cached
 
     def _statistics(self) -> _ReadPlanCacheStatistics:
         with self._lock:

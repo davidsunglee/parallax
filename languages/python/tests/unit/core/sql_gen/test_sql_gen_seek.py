@@ -19,7 +19,7 @@ import pytest
 
 from parallax.core import continuation, deep_fetch
 from parallax.core.base import INFINITY, INFINITY_LITERAL, PresentDocument
-from parallax.core.dialect import POSTGRES, LockMode
+from parallax.core.dialect import POSTGRES, Dialect, LockMode
 from parallax.core.metamodel import Metamodel
 from parallax.core.metamodel import TemporalDimension as AxisKind
 from parallax.core.object_query import AsOf, OrderKey, object_query, validate_object_query
@@ -30,10 +30,11 @@ from parallax.core.object_query._resolved import (
     ResolvedObjectQuery,
     ResolvedSeek,
 )
-from parallax.core.predicate import Comparison, FieldSubject, Or, TrueNode
+from parallax.core.predicate import Comparison, FieldSubject, Or, PredicateNode, TrueNode
 from parallax.core.read_delivery._row_decoding import row_coordinates
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.sql_gen._compile import compile_template
 from parallax.core.sql_gen._context import LoweredStatement
 from parallax.core.sql_gen._inheritance import SingleTableReadPlan, TpcsUnionReadPlan
 from parallax.core.sql_gen._planning import SharedSourceRef
@@ -859,3 +860,197 @@ def test_both_continuing_arms_of_a_union_render_its_branch_roots_through_fresh_b
         (sibling,) = (scope_id for scope_id in branch_roots if scope_id != root.scope_id)
         with pytest.raises(SqlGenError, match="no selected lexical plan"):
             builder.source_binding(SharedSourceRef(sibling, 0))
+
+
+_MARIADB: Final = replace(POSTGRES, name="mariadb")
+_ORDER_SHIPPED = "parallax.compatibility.OrderItem.shippedOn"
+_ORDER_ORDERED_ON = "parallax.compatibility.Order.orderedOn"
+_POSITION_VALUE = "parallax.compatibility.Position.value"
+
+
+def _page_query(
+    model: Metamodel, target: str, node: PredicateNode, *keys: OrderKey
+) -> continuation.ContinuationPlan:
+    entity = entity_of(model, target)
+    query = object_query(entity.identity, node, order_by=keys)
+    return continuation.plan(validate_object_query(entity, query, model), model)
+
+
+def _template_pages() -> list[object]:
+    def after(
+        plan: continuation.ContinuationPlan, cold: tuple[object, ...], current: tuple[object, ...]
+    ) -> tuple[ResolvedObjectQuery, ResolvedObjectQuery]:
+        return (
+            plan.after(ContinuationCoordinate(cold), limit=2),
+            plan.after(ContinuationCoordinate(current), limit=5),
+        )
+
+    orders = _planned(ORDERS, "Order")
+    nullable = _planned(
+        ORDERS, "Order", OrderKey(attr=_ORDER_SKU), OrderKey(attr=_ORDER_ORDERED_ON, nulls="first")
+    )
+    positions = _planned(
+        POSITIONS, "Position", OrderKey(attr=_POSITION_VALID_END), OrderKey(attr=_POSITION_VALUE)
+    )
+    february, march = dt.date(2024, 2, 15), dt.date(2024, 3, 1)
+    return [
+        pytest.param(
+            orders.first(limit=2), orders.first(limit=5), ORDERS, None, id="first-page-cap"
+        ),
+        pytest.param(*after(orders, (1,), (9,)), ORDERS, None, id="direct-hoisted-range"),
+        pytest.param(*after(orders, (1,), (9,)), ORDERS, "locking", id="locking-outer-join"),
+        pytest.param(
+            *after(_planned(ORDERS, "Order", OrderKey(attr=_ORDER_ACTIVE)), (True, 1), (False, 7)),
+            ORDERS,
+            None,
+            id="null-tail-arms",
+        ),
+        pytest.param(
+            *after(nullable, (None, february, 1), (None, march, 4)),
+            ORDERS,
+            None,
+            id="null-then-finite",
+        ),
+        pytest.param(
+            *after(nullable, ("A-100", None, 1), ("B-200", None, 3)),
+            ORDERS,
+            "locking",
+            id="finite-then-null",
+        ),
+        pytest.param(
+            *after(positions, (INFINITY, Decimal("1.50"), 1), (INFINITY, Decimal("2.5"), 2)),
+            POSITIONS,
+            None,
+            id="infinity-then-finite",
+        ),
+        pytest.param(
+            *after(positions, (INFINITY, Decimal("1.50"), 1), (INFINITY, Decimal("2.5"), 2)),
+            POSITIONS,
+            "locking",
+            id="infinity-locking",
+        ),
+        pytest.param(
+            *after(
+                _planned(DOCUMENT_LAYOUT, "Traveler", OrderKey(attr=_TRAVELER_JOINED)),
+                ("2024-01-05", 1),
+                ("0000-13-99", 2),
+            ),
+            DOCUMENT_LAYOUT,
+            None,
+            id="text-compared-carrier",
+        ),
+        pytest.param(
+            *after(_planned(PAYMENT, "CardPayment"), (1,), (6,)),
+            PAYMENT,
+            "locking",
+            id="family-tag-guard",
+        ),
+        pytest.param(
+            *after(
+                _page_query(
+                    TRAVERSAL,
+                    "Vehicle",
+                    Comparison(op="eq", subject=FieldSubject("Vehicle.dealer.name"), value="Ada"),
+                    OrderKey(attr="parallax.compatibility.Vehicle.dealerId"),
+                ),
+                (3, 1),
+                (8, 5),
+            ),
+            TRAVERSAL,
+            None,
+            id="union-branches",
+        ),
+        pytest.param(
+            *after(
+                _page_query(
+                    ORDERS,
+                    "OrderItem",
+                    Comparison(op="eq", subject=FieldSubject("OrderItem.order.name"), value="Ada"),
+                    OrderKey(attr=_ORDER_SHIPPED),
+                ),
+                (february, 11),
+                (march, 12),
+            ),
+            ORDERS,
+            "locking",
+            id="shared-source-arms",
+        ),
+    ]
+
+
+@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
+@pytest.mark.parametrize(("cold", "current", "model", "lock"), _template_pages())
+def test_a_page_template_renders_what_direct_compilation_of_the_current_page_binds(
+    cold: ResolvedObjectQuery,
+    current: ResolvedObjectQuery,
+    model: Metamodel,
+    lock: LockMode | None,
+    dialect: Dialect,
+) -> None:
+    # The template is compiled from another page of the same pattern, so every
+    # finite carrier and cap it renders is the current page's, while NULL
+    # branches, the open bound's framework bind, and every typed span and
+    # override stay those direct compilation of the current page derives.
+    template = compile_template(
+        deep_fetch.plan(cold, model, projection=_PROJECTION).root, model, dialect, lock=lock
+    )
+    direct = compile_entity_query(
+        deep_fetch.plan(current, model, projection=_PROJECTION).root, model, dialect, lock=lock
+    )
+
+    rendered = template.render(query=current)
+
+    assert rendered.statement == direct.statement
+    assert [type(bind) for bind in rendered.statement.binds] == [
+        type(bind) for bind in direct.statement.binds
+    ]
+    assert all(
+        rendered_bind is current_bind
+        for rendered_bind, current_bind in zip(
+            rendered.statement.binds, direct.statement.binds, strict=True
+        )
+        if not isinstance(current_bind, (int, str))
+    )
+    assert rendered.statement.wire_binds() == direct.statement.wire_binds()
+    assert rendered.result_contract == direct.result_contract
+    assert rendered.statement.is_compiler_proven
+    assert (
+        template.render(query=cold).statement
+        == compile_entity_query(
+            deep_fetch.plan(cold, model, projection=_PROJECTION).root, model, dialect, lock=lock
+        ).statement
+    )
+
+
+def test_an_unpaged_template_renders_its_compiled_read_without_inputs() -> None:
+    node = validate_object_query(
+        entity_of(ORDERS, "Order"),
+        object_query(entity_of(ORDERS, "Order").identity, TrueNode()),
+        ORDERS,
+    )
+    template = compile_template(
+        deep_fetch.plan(node, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
+    )
+
+    assert template.render() is template.compiled
+    assert template.render(query=node) is template.compiled
+
+
+def test_a_page_template_refuses_missing_or_mismatched_current_inputs() -> None:
+    plan = _planned(ORDERS, "Order")
+    continued = plan.after(ContinuationCoordinate((1,)), limit=2)
+    first = compile_template(
+        deep_fetch.plan(plan.first(limit=2), ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
+    )
+    after = compile_template(
+        deep_fetch.plan(continued, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
+    )
+
+    with pytest.raises(SqlGenError, match="current page cap"):
+        first.render()
+    with pytest.raises(SqlGenError, match="current seek"):
+        after.render(query=plan.first(limit=2))
+    with pytest.raises(SqlGenError, match="only a finite carrier"):
+        after.render(query=plan.after(ContinuationCoordinate((INFINITY,)), limit=2))
+    with pytest.raises(SqlGenError, match="until its template renders"):
+        after.compiled.statement.wire_binds()

@@ -1005,21 +1005,17 @@ def test_a_delivery_compiles_each_structural_statement_once(
 ) -> None:
     root_compiles = 0
     child_compiles = 0
-    prepare_root = cast("Callable[..., Any]", vars(_read_plan)["compile_read"])
-    compile_child = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
+    compile_template = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
 
-    def counting_prepared_root(*args: Any, **kwargs: Any) -> Any:
-        nonlocal root_compiles
-        root_compiles += 1
-        return prepare_root(*args, **kwargs)
+    def counting_compile(query: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal root_compiles, child_compiles
+        if query.entity.identity.name == "OrderItem":
+            child_compiles += 1
+        else:
+            root_compiles += 1
+        return compile_template(query, *args, **kwargs)
 
-    def counting_child(*args: Any, **kwargs: Any) -> Any:
-        nonlocal child_compiles
-        child_compiles += 1
-        return compile_child(*args, **kwargs)
-
-    monkeypatch.setattr(_read_plan, "compile_read", counting_prepared_root)
-    monkeypatch.setattr(_read_plan, "compile_template", counting_child)
+    monkeypatch.setattr(_read_plan, "compile_template", counting_compile)
     port = ScriptedAdapter(
         Read(rows=[_order_row(1), _order_row(2), _order_row(3)]),
         Read(rows=[_item_row(10, 1), _item_row(11, 2)]),

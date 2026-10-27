@@ -104,7 +104,7 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.core.read_delivery._read_plan",
         "parallax.core.sql_gen._seek",
-    ): frozenset({"null_pattern"}),
+    ): frozenset({"continuation_pattern"}),
     (
         "parallax.core._execution._write_lowering",
         "parallax.core.sql_gen._write",

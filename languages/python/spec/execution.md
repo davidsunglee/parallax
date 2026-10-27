@@ -50,9 +50,10 @@ the resolved query's structure and its ordinary managed predicate and temporal
 values, result form, and concurrency preference. Values of distinct exact types,
 and Decimals of distinct exponents, remain distinct; two spellings of one
 managed value share an entry.
-The first stream page and each continuation-coordinate NULL pattern use distinct
-entries; the coordinate values and page limits are execution values rendered
-into their cached template, not cache identity. Plans retain immutable planning and
+The first stream page and each continuation-coordinate pattern of NULL, finite,
+and open-bound (`INFINITY`) carriers use distinct entries; the finite coordinate
+values and page limits are execution values rendered into their cached template,
+not cache identity. Plans retain immutable planning and
 conversion data, not runtimes, connections, rows, pages, origins, or results.
 The cache has the `Database` lifetime; closing the root does not promise to clear
 plans while the closed root is still referenced, and eviction or release makes

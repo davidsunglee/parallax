@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from bisect import bisect_left
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from itertools import islice
-from typing import Literal, Protocol, cast
+from typing import ClassVar, Final, Literal, Protocol, cast
 
 from parallax.core.base import (
     INFINITY,
@@ -19,7 +19,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.predicate._resolved import DeferredKeySet
+from parallax.core.predicate._execution_values import ExecutionValueSource, source_order
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 from parallax.core.wire import (
     WireDecodingError,
@@ -126,38 +126,105 @@ class LoweredStatement:
                 projected[index] = _wire_bind(self.binds[index])
         return cast("tuple[WireValue, ...]", tuple(projected))
 
-    def deferred_key_markers(self) -> tuple[int, ...]:
-        """Every bind position of this statement's one deferred key set, which a
-        table-per-concrete-subtype union places once per branch."""
-        binds = self.binds
-        markers = tuple(
-            [index for index, value in enumerate(binds) if isinstance(value, DeferredKeySet)]
-        )
-        if not markers or any(binds[index] is not binds[markers[0]] for index in markers):
-            raise SqlGenError("a child read template must carry exactly one deferred key set")
-        for span in self._typed_bind_spans:
-            if not isinstance(span, _RepeatedTypedBindSpan):
-                continue
-            stop = span.start + (span.repetitions - 1) * span.stride + span.width
-            if bisect_left(markers, span.start) != bisect_left(markers, stop):
-                raise SqlGenError("a deferred key set cannot occupy repeated row-bind metadata")
-        return markers
+    def execution_value_positions(self) -> tuple[ExecutionValuePositions, ...]:
+        """Every deferred execution value's positions, one group per source and
+        form in canonical source order, once each marker's bind metadata is the
+        classification its form selects.
 
-    def with_keys(
-        self, sql: str, markers: tuple[int, ...], values: Sequence[object]
+        A statement's gathered keys take one form, and keys that expand cannot
+        occupy repeated row-bind metadata.
+        """
+        found: dict[_ExecutionValueMarker, list[int]] = {}
+        for index, value in enumerate(self.binds):
+            if isinstance(value, _ExecutionValueMarker):
+                found.setdefault(value, []).append(index)
+        if not found:
+            return ()
+        slots, repeated = self._marker_slots(
+            sorted(index for indices in found.values() for index in indices)
+        )
+        overridden = {override.index for override in self._wire_bind_overrides}
+        groups: list[ExecutionValuePositions] = []
+        for marker, indices in found.items():
+            form = marker.form
+            for index in indices:
+                if slots.get(index) != form.typed_slot or index in overridden:
+                    raise SqlGenError(
+                        "a deferred execution value's bind metadata is not the "
+                        "classification its form selects"
+                    )
+                if form.expands and index in repeated:
+                    raise SqlGenError("a deferred key set cannot occupy repeated row-bind metadata")
+            groups.append(ExecutionValuePositions(marker, tuple(indices)))
+        if sum(1 for group in groups if group.source == _KEYS) > 1:
+            raise SqlGenError("a statement's gathered keys take exactly one bind form")
+        groups.sort(key=lambda group: (source_order(group.source), group.indices[0]))
+        return tuple(groups)
+
+    def _marker_slots(
+        self, marked: list[int]
+    ) -> tuple[dict[int, tuple[NeutralType, _BindForm]], set[int]]:
+        """The typed slot covering each of the ascending ``marked`` positions,
+        and which of them repeated row-bind metadata covers."""
+        slots: dict[int, tuple[NeutralType, _BindForm]] = {}
+        repeated: set[int] = set()
+        members = frozenset(marked)
+        for span in self._typed_bind_spans:
+            if isinstance(span, _TypedBindSpan):
+                covered = marked[bisect_left(marked, span.start) : bisect_left(marked, span.stop)]
+            else:
+                covered = [index for index in span.indexes() if index in members]
+                repeated.update(covered)
+            for index in covered:
+                slots[index] = (span.neutral_type, span.form)
+        return slots, repeated
+
+    def with_execution_values(
+        self,
+        values: Iterable[tuple[ExecutionValuePositions, object]],
+        *,
+        sql: str,
     ) -> LoweredStatement:
-        """This statement as ``sql``, with ``values`` in place of the bind at each of
-        ``markers``. A typed span covering a marker grows with it and later metadata
-        moves; when nothing grows, the statement's own metadata is reused."""
-        binds = self.binds
+        """This statement as ``sql``, with each value at every position of its
+        group. Gathered keys that expand take one position per key: a typed span
+        covering them grows and later metadata moves. When nothing grows, the
+        statement's own metadata is reused."""
+        binds = list(self.binds)
+        expansion: tuple[tuple[int, ...], Sequence[object]] | None = None
+        for positions, value in values:
+            if positions.form.expands:
+                expansion = positions.indices, cast("Sequence[object]", value)
+            else:
+                for index in positions.indices:
+                    binds[index] = value
+        if expansion is None:
+            return LoweredStatement(
+                sql,
+                tuple(binds),
+                self._typed_bind_spans,
+                self._wire_bind_overrides,
+                self._compiler_proven,
+            )
+        return self._expanded(binds, *expansion, sql=sql)
+
+    def _expanded(
+        self,
+        binds: list[object],
+        expanding: tuple[int, ...],
+        elements: Sequence[object],
+        *,
+        sql: str,
+    ) -> LoweredStatement:
+        if not elements:
+            raise SqlGenError("an expanding execution value requires at least one element")
+        growth = len(elements) - 1
         bound: list[object] = []
         start = 0
-        for marker in markers:
-            bound += islice(binds, start, marker)
-            bound += values
-            start = marker + 1
+        for index in expanding:
+            bound += islice(binds, start, index)
+            bound += elements
+            start = index + 1
         bound += islice(binds, start, None)
-        growth = len(values) - 1
         if not growth:
             return LoweredStatement(
                 sql,
@@ -169,20 +236,20 @@ class LoweredStatement:
         spans = tuple(
             [
                 _TypedBindSpan(
-                    span.start + bisect_left(markers, span.start) * growth,
-                    span.stop + bisect_left(markers, span.stop) * growth,
+                    span.start + bisect_left(expanding, span.start) * growth,
+                    span.stop + bisect_left(expanding, span.stop) * growth,
                     span.neutral_type,
                     span.form,
                 )
                 if isinstance(span, _TypedBindSpan)
-                else span.shifted(bisect_left(markers, span.start) * growth)
+                else span.shifted(bisect_left(expanding, span.start) * growth)
                 for span in self._typed_bind_spans
             ]
         )
         overrides = tuple(
             [
                 _WireBindOverride(
-                    override.index + bisect_left(markers, override.index) * growth,
+                    override.index + bisect_left(expanding, override.index) * growth,
                     override.value,
                 )
                 for override in self._wire_bind_overrides
@@ -191,9 +258,84 @@ class LoweredStatement:
         return LoweredStatement(sql, tuple(bound), spans, overrides, self._compiler_proven)
 
 
+EXPANDING_PLACEHOLDER: Final = "__parallax_deferred_keys__"
+"""The SQL text a placeholder of gathered keys that expand stands in until its
+template renders one placeholder per key."""
+
+_KEYS: Final[ExecutionValueSource] = ("keys",)
+_UNRENDERED: Final = "a deferred execution value has no Wire projection until its template renders"
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuationCarrierForm:
+    """A carrier the database already evaluated, bound as itself under the
+    typed metadata of the expression it is compared against."""
+
+    neutral_type: NeutralType
+    bind_form: _ScalarBindForm
+    expands: ClassVar[bool] = False
+
+    @property
+    def typed_slot(self) -> tuple[NeutralType, _BindForm]:
+        return self.neutral_type, self.bind_form
+
+
+@dataclass(frozen=True, slots=True)
+class PageCapForm:
+    """A page's cap, bound structurally."""
+
+    typed_slot: ClassVar[None] = None
+    expands: ClassVar[bool] = False
+
+
+PAGE_CAP: Final = PageCapForm()
+
+
+@dataclass(frozen=True, slots=True)
+class GatheredKeysForm:
+    """A child read's gathered parent keys: one managed array bind, or one
+    managed bind per key in place of an expanding placeholder."""
+
+    neutral_type: NeutralType
+    array: bool
+
+    @property
+    def typed_slot(self) -> tuple[NeutralType, _BindForm]:
+        return self.neutral_type, "MANAGED_ARRAY" if self.array else "MANAGED"
+
+    @property
+    def expands(self) -> bool:
+        return not self.array
+
+
+type ExecutionValueForm = ContinuationCarrierForm | PageCapForm | GatheredKeysForm
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionValueMarker:
+    source: ExecutionValueSource
+    form: ExecutionValueForm
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionValuePositions:
+    """The ascending bind positions one deferred execution value fills."""
+
+    marker: _ExecutionValueMarker
+    indices: tuple[int, ...]
+
+    @property
+    def source(self) -> ExecutionValueSource:
+        return self.marker.source
+
+    @property
+    def form(self) -> ExecutionValueForm:
+        return self.marker.form
+
+
 def _typed_wire_bind(value: object, neutral_type: NeutralType, form: _BindForm) -> WireValue:
-    if isinstance(value, DeferredKeySet):
-        raise SqlGenError("a deferred key set has no Wire projection until its keys are rendered")
+    if isinstance(value, _ExecutionValueMarker):
+        raise SqlGenError(_UNRENDERED)
     if form == "MANAGED":
         return encode_wire(neutral_type, cast("ManagedValue", value))
     if form == "MANAGED_ARRAY":
@@ -202,6 +344,8 @@ def _typed_wire_bind(value: object, neutral_type: NeutralType, form: _BindForm) 
 
 
 def _wire_bind(value: object) -> WireValue:
+    if isinstance(value, _ExecutionValueMarker):
+        raise SqlGenError(_UNRENDERED)
     if isinstance(value, JsonDocument):
         value = detach_json_container(value.value)
     if value is None:
@@ -467,6 +611,19 @@ class StatementBuilder[RowScope = object]:
 
     def bind_managed_array(self, value: object, neutral_type: NeutralType) -> None:
         self._bind_typed(value, neutral_type, "MANAGED_ARRAY")
+
+    def bind_concrete(self, value: object, form: ExecutionValueForm) -> None:
+        """Bind ``value`` now, under the classification ``form`` selects."""
+        slot = form.typed_slot
+        if slot is None:
+            self._append(value)
+        else:
+            self._bind_typed(value, *slot)
+
+    def bind_deferred(self, source: ExecutionValueSource, form: ExecutionValueForm) -> None:
+        """Bind the marker a template fills from ``source`` when it renders,
+        under the classification ``form`` selects."""
+        self.bind_concrete(_ExecutionValueMarker(source, form), form)
 
     def bind_framework(
         self,

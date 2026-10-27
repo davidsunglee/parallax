@@ -160,7 +160,8 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │     includes: IncludeTree
    │     fetch_steps: QueryFetchStep | BackReferenceFetchStep
    ├ entity_read_lock(meta, entity, preference) for the root and each query fetch step
-   ├ compile_read(root) / compile_template(each query fetch step)        sql_gen._compile
+   ├ compile_template(cached root, each query fetch step) / compile_read(uncached root)
+   │                                                                     sql_gen._compile
    │     resolve storage layout, inheritance and physical reads; append the lock
    │     a SelectListBuilder per select list renders each cell           sql_gen._select_list
    │       (the dialect renders scalar cells) and records what it carries

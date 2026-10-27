@@ -193,10 +193,8 @@ def _rendered_keys(
     """The key-set bind ``step``'s compiled child read carries once ``keys`` are
     rendered into it."""
     template = compile_template(step.query, model, POSTGRES, result_form="instance")
-    (index,) = (
-        index
-        for index, value in enumerate(template.compiled.statement.binds)
-        if isinstance(value, DeferredKeySet)
+    ((index,),) = (
+        group.indices for group in template.compiled.statement.execution_value_positions()
     )
     return template.render(keys).statement.binds[index]
 
@@ -550,8 +548,14 @@ def _child_sql(
 ) -> tuple[str, tuple[object, ...]]:
     template = compile_template(level.query, model, POSTGRES, result_form="instance")
     statement = template.compiled.statement
+    keys = {
+        index
+        for group in statement.execution_value_positions()
+        if group.source == ("keys",)
+        for index in group.indices
+    }
     return statement.sql, tuple(
-        "<keys>" if isinstance(bind, DeferredKeySet) else bind for bind in statement.binds
+        "<keys>" if index in keys else bind for index, bind in enumerate(statement.binds)
     )
 
 

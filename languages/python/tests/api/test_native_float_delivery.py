@@ -685,13 +685,18 @@ def test_rendering_an_include_page_calls_no_wire_codec(
         if event == "call" and frame.f_code.co_filename.startswith(_WIRE_PACKAGE):
             wire_calls.append(frame.f_code.co_qualname)
 
-    def spied_render(template: CompiledTemplate, keys: list[ManagedValue]) -> CompiledRead:
+    def spied_render(
+        template: CompiledTemplate,
+        keys: list[ManagedValue] | None = None,
+        *,
+        query: Any = None,
+    ) -> CompiledRead:
         nonlocal renders
         renders += 1
         previous = sys.getprofile()
         sys.setprofile(record_wire_calls)
         try:
-            return render(template, keys)
+            return render(template, keys, query=query)
         finally:
             sys.setprofile(previous)
 

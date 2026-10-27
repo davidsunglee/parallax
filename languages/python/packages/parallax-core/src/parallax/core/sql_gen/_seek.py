@@ -13,24 +13,26 @@ from parallax.core.object_query._resolved import (
     ResolvedOrderTerm,
     ResolvedSeek,
 )
-from parallax.core.sql_gen._context import SqlGenError, StatementBuilder
+from parallax.core.sql_gen._context import ContinuationCarrierForm, SqlGenError, StatementBuilder
 from parallax.core.sql_gen._predicate import MemberSubject
 
 __all__ = [
     "LoweredTerm",
     "TermSubject",
+    "continuation_pattern",
     "emits_null_tail",
     "lower_seek",
     "lowered_terms",
-    "null_pattern",
     "order_clause",
 ]
 
 type TermSubject = Callable[[AttributeMetadata], MemberSubject]
 """How one read shape resolves an ordering term's member to what it compares."""
 
-type NullPattern = tuple[bool, ...]
-"""Which carriers of one continuation coordinate are NULL, in term order."""
+type ContinuationCategory = Literal["null", "finite", "infinity"]
+"""What one carrier decides about its statement: NULL takes its own SQL
+branches, the open temporal bound crosses as a framework bind, and every finite
+carrier crosses in its expression's typed form."""
 
 _EXHAUSTED: Final = "1 = 0"
 """The seek past a coordinate the database placed last in its own ordering."""
@@ -87,9 +89,18 @@ def lowered_terms(
     return tuple(terms)
 
 
-def null_pattern(coordinate: ContinuationCoordinate) -> NullPattern:
-    """The reusable statement-template shape of one coordinate."""
-    return tuple(carrier is None for carrier in coordinate.carriers)
+def continuation_pattern(coordinate: ContinuationCoordinate) -> tuple[ContinuationCategory, ...]:
+    """The statement-template structure of one coordinate: each carrier's
+    category, in term order."""
+    return tuple(_category(carrier) for carrier in coordinate.carriers)
+
+
+def _category(carrier: object) -> ContinuationCategory:
+    if carrier is None:
+        return "null"
+    if carrier is INFINITY:
+        return "infinity"
+    return "finite"
 
 
 def emits_null_tail(seek: ResolvedSeek, dialect: Dialect, *, leading_resident: bool) -> bool:
@@ -129,6 +140,7 @@ def lower_seek[RowScope](
     ctx: StatementBuilder[RowScope],
     *,
     leading_resident: bool,
+    deferred: bool,
 ) -> str:
     """The `where`-clause fragment admitting the roots after ``seek``.
 
@@ -155,7 +167,8 @@ def lower_seek[RowScope](
     Every comparison is emitted from the same ``subject`` the order clause was.
 
     Binds append in emitted order, after whatever the caller's own predicate has
-    already pushed.
+    already pushed. A ``deferred`` seek binds each finite carrier as the marker
+    its template renders the current coordinate's carrier into.
     """
     if len(seek.terms) != len(terms):
         raise SqlGenError(
@@ -171,18 +184,19 @@ def lower_seek[RowScope](
     for term, lowered in zip(seek.terms, terms, strict=True):
         _refuse_a_crossed_term(term, lowered)
     dialect = ctx.dialect
+    coordinate = _Coordinate(carriers, deferred)
     parts: list[str] = []
     if _hoists_a_leading_range(seek.terms, carriers, resident=leading_resident):
         lead = seek.terms[0]
         comparator = ">=" if lead.direction == "asc" else "<="
-        parts.append(_compared(terms[0], subject, carriers[0], comparator, ctx))
+        parts.append(_compared(terms[0], subject, coordinate, 0, comparator, ctx))
     branches: list[str] = []
     loose = False
     for depth, term in enumerate(seek.terms):
         if carriers[depth] is None and _placement(term, dialect) == "last":
             continue
-        conjuncts = [_ties_with(terms[at], subject, carriers[at], ctx) for at in range(depth)]
-        after = _after(term, terms[depth], subject, carriers[depth], ctx)
+        conjuncts = [_ties_with(terms[at], subject, coordinate, at, ctx) for at in range(depth)]
+        after = _after(term, terms[depth], subject, coordinate, depth, ctx)
         spans = _spans_a_disjunction(term, carriers[depth], dialect)
         if not conjuncts:
             branches.append(after)
@@ -284,10 +298,11 @@ def _after[RowScope](
     term: ContinuationTerm,
     lowered: LoweredTerm,
     subject: TermSubject,
-    carrier: object,
+    coordinate: _Coordinate,
+    at: int,
     ctx: StatementBuilder[RowScope],
 ) -> str:
-    """Everything ``lowered`` orders strictly after ``carrier``.
+    """Everything ``lowered`` orders strictly after carrier ``at``.
 
     Measured in the term's OWN ordering: a descending term reverses the
     comparison, and where the emitted clause placed nulls first, a null carrier
@@ -297,31 +312,45 @@ def _after[RowScope](
     what a delivery over non-conforming storage needs, since a `NOT NULL`
     constraint that is gone leaves a NULL the ordering still ranks.
     """
+    carrier = coordinate.carriers[at]
     if carrier is None:
         return f"{subject(lowered.member).extraction} is not null"
     strict = ">" if term.direction == "asc" else "<"
-    comparison = _compared(lowered, subject, carrier, strict, ctx)
+    comparison = _compared(lowered, subject, coordinate, at, strict, ctx)
     if not _spans_a_disjunction(term, carrier, ctx.dialect):
         return comparison
     return f"{comparison} or {subject(lowered.member).extraction} is null"
 
 
 def _ties_with[RowScope](
-    lowered: LoweredTerm, subject: TermSubject, carrier: object, ctx: StatementBuilder[RowScope]
+    lowered: LoweredTerm,
+    subject: TermSubject,
+    coordinate: _Coordinate,
+    at: int,
+    ctx: StatementBuilder[RowScope],
 ) -> str:
-    if carrier is None:
+    if coordinate.carriers[at] is None:
         return f"{subject(lowered.member).extraction} is null"
-    return _compared(lowered, subject, carrier, "=", ctx)
+    return _compared(lowered, subject, coordinate, at, "=", ctx)
+
+
+@dataclass(frozen=True, slots=True)
+class _Coordinate:
+    """One seek's carriers, and whether its finite carriers are deferred."""
+
+    carriers: tuple[object, ...]
+    deferred: bool
 
 
 def _compared[RowScope](
     lowered: LoweredTerm,
     subject: TermSubject,
-    carrier: object,
+    coordinate: _Coordinate,
+    at: int,
     comparator: str,
     ctx: StatementBuilder[RowScope],
 ) -> str:
-    """One comparison of ``lowered``'s expression against its own carrier.
+    """One comparison of ``lowered``'s expression against carrier ``at``.
 
     The carrier is bound in the form that expression compares, which is the
     split an authored predicate over the same member already takes: a direct
@@ -343,10 +372,18 @@ def _compared[RowScope](
     coordinate stopped being the database's own answer.
     """
     resolved = subject(lowered.member)
-    if carrier is INFINITY:
-        ctx.bind_framework(carrier)
-    elif resolved.text_compared:
-        ctx.bind_comparison_text(carrier, resolved.type)
-    else:
-        ctx.bind_managed(carrier, resolved.type)
+    carrier = coordinate.carriers[at]
+    match _category(carrier):
+        case "infinity":
+            ctx.bind_framework(carrier)
+        case "finite":
+            form = ContinuationCarrierForm(
+                resolved.type, "COMPARISON_TEXT" if resolved.text_compared else "MANAGED"
+            )
+            if coordinate.deferred:
+                ctx.bind_deferred(("paging", at), form)
+            else:
+                ctx.bind_concrete(carrier, form)
+        case "null":  # pragma: no cover - a NULL carrier lowers to a NULL test
+            raise SqlGenError("a NULL continuation carrier is never compared")
     return f"{resolved.compared} {comparator} ?"

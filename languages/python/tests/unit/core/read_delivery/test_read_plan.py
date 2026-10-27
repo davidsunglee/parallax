@@ -120,6 +120,10 @@ def _plan(
     )
 
 
+def _forbidden_concrete_root(*_args: object, **_kwargs: object) -> object:
+    raise AssertionError("a cached root compiles as a template")
+
+
 def _root(plan: _read_plan.ReadPlan) -> tuple[CompiledRead, ReadRowConverter]:
     root = plan.root_read()
     assert not isinstance(root, EmptyRead)
@@ -702,7 +706,8 @@ def test_capacity_zero_does_no_key_work(monkeypatch: pytest.MonkeyPatch) -> None
         "_QueryKey",
         "_Identity",
         "_query_key",
-        "null_pattern",
+        "continuation_pattern",
+        "compile_template",
     ):
         monkeypatch.setattr(_read_plan, name, reject)
     uncached = cast("Callable[..., Any]", vars(_read_plan)["_plan_uncached"])
@@ -722,6 +727,7 @@ def test_capacity_zero_does_no_key_work(monkeypatch: pytest.MonkeyPatch) -> None
     planned = _plan(planner, continued)
 
     assert 1 in _root(planned)[0].statement.binds
+    assert _root(planned)[0].statement.execution_value_positions() == ()
     assert received == [
         frozenset({"model", "dialect", "query", "result_form", "preference"}),
     ]
@@ -799,41 +805,125 @@ def test_a_continuation_replans_its_template_for_a_new_effective_lock_variant() 
     assert cache._statistics().misses == 2
 
 
-def test_continuation_planning_rejects_a_compiler_that_drops_coordinate_binds(
+def _after(carrier: object) -> ResolvedObjectQuery:
+    return continuation.plan(_query(), _META).after(ContinuationCoordinate((carrier,)), limit=3)
+
+
+def _blocking_renders(
+    monkeypatch: pytest.MonkeyPatch, *, hold: Callable[[], object]
+) -> list[CompiledTemplate]:
+    """Make every root render run ``hold`` first, recording each template."""
+    render = CompiledTemplate.render
+    rendering: list[CompiledTemplate] = []
+
+    def held(
+        self: CompiledTemplate, keys: list[Any] | None = None, *, query: Any = None
+    ) -> CompiledRead:
+        if query is not None:
+            rendering.append(self)
+            hold()
+        return render(self, keys, query=query)
+
+    monkeypatch.setattr(CompiledTemplate, "render", held)
+    return rendering
+
+
+def test_cache_hits_render_their_own_values_outside_the_cache_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    compile_read = cast("Callable[..., Any]", vars(_read_plan)["compile_read"])
+    cache = ReadPlanCache()
+    _plan(cache, _after(1))
+    together = threading.Barrier(2, timeout=2)
+    rendering = _blocking_renders(monkeypatch, hold=together.wait)
 
-    def dropping_markers(*args: Any, **kwargs: Any) -> Any:
-        compiled = compile_read(*args, **kwargs)
-        binds = tuple(0 if type(value) is object else value for value in compiled.statement.binds)
-        return replace(compiled, statement=replace(compiled.statement, binds=binds))
+    def plan(carrier: int) -> _read_plan.ReadPlan:
+        return _plan(cache, _after(carrier))
 
-    monkeypatch.setattr(_read_plan, "compile_read", dropping_markers)
-    continued = continuation.plan(_query(), _META).after(ContinuationCoordinate((1,)), limit=3)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        plans = tuple(pool.map(plan, (2, 3)))
 
-    with pytest.raises(ValueError, match="lost a non-null coordinate bind"):
-        _plan(ReadPlanCache(), continued)
+    assert len(rendering) == 2 and rendering[0] is rendering[1]
+    uncached = ReadPlanCache(0)
+    for carrier, delivered in zip((2, 3), plans, strict=True):
+        statement = _root(delivered)[0].statement
+        assert statement == _root(_plan(uncached, _after(carrier)))[0].statement
+        assert statement.execution_value_positions() == ()
+    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 1, 2, 1, 0)
 
 
-def test_continuation_planning_rejects_a_compiler_that_drops_the_limit_bind(
+def test_a_hit_renders_after_its_entry_is_evicted(monkeypatch: pytest.MonkeyPatch) -> None:
+    cache = ReadPlanCache(capacity=1)
+    cached = _plan(cache, _after(1))
+    looked_up = threading.Event()
+    evicted = threading.Event()
+
+    def hold() -> None:
+        looked_up.set()
+        assert evicted.wait(timeout=2)
+
+    _blocking_renders(monkeypatch, hold=hold)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        hit = pool.submit(_plan, cache, _after(2))
+        assert looked_up.wait(timeout=2)
+        monkeypatch.undo()
+        _plan(cache, _query(2))
+        evicted.set()
+        rendered = hit.result()
+
+    assert _read_plan._ReadPlanCacheStatistics(1, 1, 1, 2, 1) == cache._statistics()
+    assert _root(rendered)[0].statement == _root(_plan(ReadPlanCache(0), _after(2)))[0].statement
+    assert rendered._fetches is cached._fetches
+
+
+def test_callers_of_one_pending_key_each_render_their_own_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    compile_read = cast("Callable[..., Any]", vars(_read_plan)["compile_read"])
+    uncached = cast("Callable[..., Any]", vars(_read_plan)["_plan_uncached"])
+    started = threading.Event()
+    release = threading.Event()
+    callers = threading.Barrier(4)
 
-    def dropping_limit(*args: Any, **kwargs: Any) -> Any:
-        compiled = compile_read(*args, **kwargs)
-        binds = list(compiled.statement.binds)
-        marker_positions = [index for index, value in enumerate(binds) if type(value) is object]
-        limit_marker = binds[marker_positions[-1]]
-        binds = [0 if value is limit_marker else value for value in binds]
-        return replace(compiled, statement=replace(compiled.statement, binds=tuple(binds)))
+    def delayed_build(**kwargs: Any) -> Any:
+        started.set()
+        assert release.wait(timeout=2)
+        return uncached(**kwargs)
 
-    monkeypatch.setattr(_read_plan, "compile_read", dropping_limit)
-    continued = continuation.plan(_query(), _META).after(ContinuationCoordinate((1,)), limit=3)
+    monkeypatch.setattr(_read_plan, "_plan_uncached", delayed_build)
+    cache = ReadPlanCache()
 
-    with pytest.raises(ValueError, match="lost its page limit bind"):
-        _plan(ReadPlanCache(), continued)
+    def plan(carrier: int) -> _read_plan.ReadPlan:
+        callers.wait()
+        return _plan(cache, _after(carrier))
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = tuple(pool.submit(plan, carrier) for carrier in (10, 20, 30, 40))
+        assert started.wait(timeout=2)
+        time.sleep(0.05)
+        release.set()
+        plans = tuple(future.result() for future in futures)
+
+    uncached_planner = ReadPlanCache(0)
+    for carrier, delivered in zip((10, 20, 30, 40), plans, strict=True):
+        expected = _root(_plan(uncached_planner, _after(carrier)))[0].statement
+        assert _root(delivered)[0].statement == expected
+    assert len({id(delivered._schema) for delivered in plans}) == 1
+    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 1, 3, 1, 0)
+
+
+def test_capacity_zero_compiles_its_root_concretely_and_defers_only_child_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _recording_preparation(monkeypatch)
+    pages = continuation.plan(_with_items(), _META)
+
+    plan = _plan(ReadPlanCache(0), pages.after(ContinuationCoordinate((1,)), limit=2))
+
+    assert sorted(prepared) == ["bind", "bind", "compile_read", "compile_template"]
+    assert _root(plan)[0].statement.execution_value_positions() == ()
+    template = cast("CompiledTemplate", _child_work(plan))
+    assert [group.source for group in template.compiled.statement.execution_value_positions()] == [
+        ("keys",)
+    ]
 
 
 def test_editions_and_exact_models_are_isolated_without_invalidating_each_other() -> None:
@@ -1002,7 +1092,7 @@ def test_a_warm_hit_repeats_no_planning_compilation_or_binding(
     calls = {"plan": 0, "compile": 0, "bind": 0}
     deep_fetch_module = vars(_read_plan)["deep_fetch"]
     plan = cast("Callable[..., Any]", deep_fetch_module.plan)
-    compile_read = cast("Callable[..., Any]", vars(_read_plan)["compile_read"])
+    compile_template = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
     bind = cast("Callable[..., Any]", vars(_read_plan)["bind"])
 
     def counting_plan(*args: Any, **kwargs: Any) -> Any:
@@ -1011,14 +1101,15 @@ def test_a_warm_hit_repeats_no_planning_compilation_or_binding(
 
     def counting_compile(*args: Any, **kwargs: Any) -> Any:
         calls["compile"] += 1
-        return compile_read(*args, **kwargs)
+        return compile_template(*args, **kwargs)
 
     def counting_bind(*args: Any, **kwargs: Any) -> Any:
         calls["bind"] += 1
         return bind(*args, **kwargs)
 
     monkeypatch.setattr(deep_fetch_module, "plan", counting_plan)
-    monkeypatch.setattr(_read_plan, "compile_read", counting_compile)
+    monkeypatch.setattr(_read_plan, "compile_read", _forbidden_concrete_root)
+    monkeypatch.setattr(_read_plan, "compile_template", counting_compile)
     monkeypatch.setattr(_read_plan, "bind", counting_bind)
     cache = ReadPlanCache()
 
@@ -1107,9 +1198,10 @@ def test_retained_child_work_is_resolved_and_compiled_once_per_plan_family(
         calls["child" if propagated else "root"] += 1
         return resolve(*args, **kwargs)
 
-    def counting_child(*args: Any, **kwargs: Any) -> Any:
-        calls["compile"] += 1
-        return compile_template(*args, **kwargs)
+    def counting_child(query: deep_fetch.PlannedEntityQuery, *args: Any, **kwargs: Any) -> Any:
+        if query.entity.identity.name == "OrderItem":
+            calls["compile"] += 1
+        return compile_template(query, *args, **kwargs)
 
     monkeypatch.setattr(deep_fetch, "resolve_temporal_visibility", counting_resolve)
     monkeypatch.setattr(_read_plan, "compile_template", counting_child)
@@ -1146,8 +1238,10 @@ def test_a_delivered_child_level_renders_its_retained_template_into_its_one_cont
     rendered: list[tuple[CompiledTemplate, CompiledRead]] = []
     render = CompiledTemplate.render
 
-    def recording_render(self: CompiledTemplate, keys: list[Any]) -> CompiledRead:
-        rendered.append((self, render(self, keys)))
+    def recording_render(
+        self: CompiledTemplate, keys: list[Any] | None = None, *, query: Any = None
+    ) -> CompiledRead:
+        rendered.append((self, render(self, keys, query=query)))
         return rendered[-1][1]
 
     monkeypatch.setattr(CompiledTemplate, "render", recording_render)
@@ -1171,7 +1265,8 @@ def test_a_delivered_child_level_renders_its_retained_template_into_its_one_cont
     )
 
     assert result.page.root_count == 1
-    ((used, child),) = rendered
+    (root_template, root), (used, child) = rendered
+    assert root is root_template.compiled
     assert used is template
     assert child.statement is not template.compiled.statement
     assert child.result_contract is template.compiled.result_contract
@@ -1183,14 +1278,15 @@ def test_database_transactions_share_read_plans_across_connections(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     compiled = 0
-    compile_read = cast("Callable[..., Any]", vars(_read_plan)["compile_read"])
+    compile_template = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
 
     def counting_compile(*args: Any, **kwargs: Any) -> Any:
         nonlocal compiled
         compiled += 1
-        return compile_read(*args, **kwargs)
+        return compile_template(*args, **kwargs)
 
-    monkeypatch.setattr(_read_plan, "compile_read", counting_compile)
+    monkeypatch.setattr(_read_plan, "compile_read", _forbidden_concrete_root)
+    monkeypatch.setattr(_read_plan, "compile_template", counting_compile)
     row = {
         "id": 1,
         "name": "order-1",
@@ -1211,21 +1307,23 @@ def test_database_transactions_share_read_plans_across_connections(
     assert compiled == 1
 
 
-@pytest.mark.parametrize(("capacity", "expected_compilations"), [(0, 2), (16, 1)])
+@pytest.mark.parametrize(
+    ("capacity", "expected_compilation"), [(0, "compile_read"), (16, "compile_template")]
+)
 def test_public_capacity_zero_disables_cross_delivery_reuse_without_bypassing_planning(
     monkeypatch: pytest.MonkeyPatch,
     capacity: int,
-    expected_compilations: int,
+    expected_compilation: str,
 ) -> None:
-    compiled = 0
-    compile_read = cast("Callable[..., Any]", vars(_read_plan)["compile_read"])
+    compiled: list[str] = []
+    for name in ("compile_read", "compile_template"):
+        original = cast("Callable[..., Any]", vars(_read_plan)[name])
 
-    def counting_compile(*args: Any, **kwargs: Any) -> Any:
-        nonlocal compiled
-        compiled += 1
-        return compile_read(*args, **kwargs)
+        def counting_compile(*args: Any, _name: str = name, _run: Any = original, **kw: Any) -> Any:
+            compiled.append(_name)
+            return _run(*args, **kw)
 
-    monkeypatch.setattr(_read_plan, "compile_read", counting_compile)
+        monkeypatch.setattr(_read_plan, name, counting_compile)
     row = {
         "id": 1,
         "name": "order-1",
@@ -1246,7 +1344,7 @@ def test_public_capacity_zero_disables_cross_delivery_reuse_without_bypassing_pl
         database.find(Order.where(Order.id == 1)).result()
         database.find(Order.where(Order.id == 1)).result()
 
-    assert compiled == expected_compilations
+    assert compiled == [expected_compilation] * (2 if capacity == 0 else 1)
 
 
 @pytest.mark.parametrize("capacity", [True, -1, 1.5])
@@ -1417,7 +1515,7 @@ def test_an_empty_include_target_prepares_no_child_work_or_routing_demand(
     assert live_correlations == (_gadget_member("workbenchId"),)
     workbench_id = AttributeIdentity(EntityIdentity("parallax.compatibility", "Workbench"), "id")
     assert plan._correlations[0] == (workbench_id,)
-    assert sorted(prepared) == ["bind", "bind", "compile_read", "compile_template"]
+    assert sorted(prepared) == ["bind", "bind", "compile_template", "compile_template"]
 
 
 def _view_name(plan: _read_plan.ReadPlan, index: int) -> str:
@@ -1426,13 +1524,10 @@ def _view_name(plan: _read_plan.ReadPlan, index: int) -> str:
     return view.relationship.name
 
 
-def test_a_dormant_page_carries_no_paging_marker_positions(
+def test_a_dormant_page_carries_no_root_template(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def refuse(_query: object) -> object:
-        raise AssertionError("an empty root created paging markers")
-
-    monkeypatch.setattr(_read_plan, "_template_query", refuse)
+    prepared = _recording_preparation(monkeypatch)
     cache = ReadPlanCache()
     pages = continuation.plan(_dormant_query(_TO_EMPTY_ANCESTRY), _DORMANT_META)
 
@@ -1446,10 +1541,9 @@ def test_a_dormant_page_carries_no_paging_marker_positions(
     assert after._fetch_rows is first._fetch_rows
     assert after._correlations is first._correlations
     assert after._schema is first._schema
-    assert [
-        (entry.coordinate_positions, entry.limit_positions) for entry in cache._entries.values()
-    ] == [((), ()), ((), ())]
+    assert [entry.root_template for entry in cache._entries.values()] == [None, None]
     assert _plan(cache, pages.first(limit=5), model=_DORMANT) is first
+    assert prepared == []
 
 
 def test_cached_and_uncached_dormant_plans_agree() -> None:
