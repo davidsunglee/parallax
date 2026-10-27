@@ -362,7 +362,7 @@ class PredecessorExpander:
     ) -> BoundRange:
         """One object settled whole: a pending insertion's surviving parts
         (``lineage``, its resolved seed over its own window), each predecessor
-        expanded in its role, in the order its own effect runs, and a
+        expanded in its role, in the order its kind of effect runs, and a
         replacement's ``gaps`` — as the steps realizing them and the effects
         their success publishes (`m-temporal-write` *Merging produced
         successors*).
@@ -384,12 +384,13 @@ class PredecessorExpander:
         whose own successor ends a merged run where the row ends is revised in
         place into the whole run by its own assignments, every other such row
         whose address a merged run absorbed is removed, and every remaining run
-        is opened. Every predecessor's own effect keeps its order, ahead of
-        every opening, so a lost condition fails before anything new is
-        written, and every predecessor keeps its own effect however few rows
-        the merge leaves. Openings follow in the order their first produced
-        part was: the insertion's parts, each predecessor's successors, the
-        gaps.
+        is opened. Every predecessor's own effect runs ahead of every opening,
+        so a lost condition fails before anything new is written, and every
+        predecessor keeps its own effect however few rows the merge leaves:
+        closes, guards, and removals keep their predecessors' order, and
+        revisions follow them in that order (:meth:`_non_inserts`). Openings
+        follow in the order their first produced part was: the insertion's
+        parts, each predecessor's successors, the gaps.
 
         Each changed predecessor a continuable source reaches is described
         with the rows it left (:class:`Derivation`), and each row produced
@@ -585,15 +586,27 @@ class PredecessorExpander:
     def _non_inserts(
         self, reached: Sequence[_Reached]
     ) -> tuple[list[PlannedStep], list[CurrentRowOutput]]:
-        """Each reached predecessor's own step, in order, and the output each
-        revision into a row a continuable source reaches persists."""
-        owned = [(record, self._own(record)) for record in reached]
-        non_inserts = [step for _record, step in owned if step is not None]
-        outputs = [
-            _revised_output(record, step)
-            for record, step in owned
-            if record.publishes and isinstance(step, PlannedTemporalRevision)
-        ]
+        """Each reached predecessor's own step — every close, guard, and
+        removal in order, then every revision in order — and the output each
+        revision into a row a continuable source reaches persists.
+
+        Closes and removals only shrink the object's current coverage, and a
+        revision assigns no axis end or Transaction-Time start, so it can only
+        need coverage they vacate, never coverage another revision vacates:
+        running revisions last leaves no statement with two current rows of
+        the object overlapping."""
+        non_inserts: list[PlannedStep] = []
+        revisions: list[PlannedStep] = []
+        outputs: list[CurrentRowOutput] = []
+        for record in reached:
+            step = self._own(record)
+            if isinstance(step, PlannedTemporalRevision):
+                revisions.append(step)
+                if record.publishes:
+                    outputs.append(_revised_output(record, step))
+            elif step is not None:
+                non_inserts.append(step)
+        non_inserts.extend(revisions)
         return non_inserts, outputs
 
     def _own(self, record: _Reached) -> PlannedStep | None:

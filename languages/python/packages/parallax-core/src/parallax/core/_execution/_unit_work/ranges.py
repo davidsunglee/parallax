@@ -335,8 +335,8 @@ def _expansions(
     validations: Sequence[_RangePredecessor],
     predecessors: Sequence[_RangePredecessor],
 ) -> Iterator[tuple[PredecessorRow, ExpansionRole, ObjectStateKey, TimeInterval | None]]:
-    """Each predecessor in the role it settles in, in the order its own effect
-    runs: the starts, the validations, then every other predecessor."""
+    """Each predecessor in the role it settles in, in the order its kind of
+    effect runs: the starts, the validations, then every other predecessor."""
     for predecessor in starts:
         yield _expanded(predecessor, "starting")
     for predecessor in validations:
@@ -438,10 +438,13 @@ class _TemporalRangeBinder:
         completed writes replaced stands at the attempt's own instant, so a
         condition stating the start they replaced fails. The predecessors the
         conditions start from are affected first, in the order the callers
-        stated them, so a lost start fails ahead of every other predecessor's
-        effect; one guard serves every start one predecessor holds. Validations
-        follow, then the remaining predecessors, and a replacement's extent then
-        opens its complete state over every gap the predecessors leave.
+        stated them; one guard serves every start one predecessor holds.
+        Validations follow, then the remaining predecessors, and a
+        replacement's extent then opens its complete state over every gap the
+        predecessors leave. Within that order every close, guard, and removal
+        runs before any revision of a row the attempt opened, so a lost start
+        fails ahead of every other predecessor's effect unless a revision holds
+        it, which fails after every close, guard, and removal of the range.
 
         A pending insertion the range settles with opens what the transform
         leaves of its own window as new lineages, ahead of the predecessors'

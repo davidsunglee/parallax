@@ -6,16 +6,17 @@ what each original and insertion contributes to them."""
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any
+from itertools import combinations, pairwise, product
+from typing import Any, Final, cast
 
 import pytest
 
 from parallax.core import inheritance, temporal_read
 from parallax.core._execution._unit_work.strategy import NO_AUDIT, AuditDecoration
 from parallax.core._execution._write_lowering import lowered
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -551,6 +552,156 @@ def test_an_owned_row_merged_with_a_later_stored_rows_part_is_removed_and_the_ru
     assert isinstance(merged.entries[0].origin, ChangedFrom)
     assert tuple(settled.removed) == (_endpoint(_APR),)
     assert tuple(settled.opened.fresh) == (_endpoint(_JUN), _endpoint(_JUL))
+
+
+# --------------------------------------------------------------------------- #
+# The order an object's effects run in.                                        #
+# --------------------------------------------------------------------------- #
+@_LAYOUTS
+@pytest.mark.parametrize("neighbour_owned", [False, True], ids=["stored", "owned"])
+@pytest.mark.parametrize("owned_first", [True, False], ids=["owned-first", "neighbour-first"])
+def test_a_revision_runs_after_the_row_its_merged_run_absorbs_is_closed_or_removed(
+    meta: Metamodel, neighbour_owned: bool, owned_first: bool
+) -> None:
+    neighbour = _span(meta, _FEB, _APR, 100, tx_start=_NOW if neighbour_owned else _T0)
+    revised = _span(meta, _APR, INFINITY, 200, tx_start=_NOW)
+    opened = {_endpoint(INFINITY), *((_endpoint(_APR),) if neighbour_owned else ())}
+    transform = _amending(TimeInterval(_APR, INFINITY), {"amount": 150}).followed_by(
+        TimeInterval(_FEB, _APR), {"amount": 150}, replaces=False
+    )
+    stated = [(revised, TimeInterval(_APR, INFINITY)), (neighbour, TimeInterval(_FEB, _APR))]
+    if not owned_first:
+        stated.reverse()
+    facts = _facts(meta)
+    settled = _expansion(meta, transform, ownership=OpenedRows(frozenset(opened))).settle(
+        (row, "starting", _state(facts, row), coverage) for row, coverage in stated
+    )
+    vacating, revision = settled.steps
+    assert type(vacating) is (PlannedTemporalRemoval if neighbour_owned else PlannedClose)
+    assert isinstance(vacating, PlannedTemporalRemoval | PlannedClose)
+    assert vacating.target.end_values == (Finite(instant=_APR), OPEN_END)
+    assert isinstance(revision, PlannedTemporalRevision)
+    assert revision.target.end_values == OPEN_BITEMPORAL_ENDS
+    assigned = {identity.name: value for identity, value in revision.assignments.attributes.items()}
+    assert assigned == {"amount": 150, "validStart": _FEB}
+
+
+type _Stored = tuple[tuple[dt.datetime, dt.datetime | TemporalBound, bool, bool], ...]
+"""One object's current rows before a write, in Valid-Time order: each row's
+start, its end, whether the attempt opened it, and whether it already holds
+the value the write assigns."""
+
+_CUTS: Final = (_FEB, _APR, _JUN)
+_ADDRESS: Final = frozenset({"id", "txStart", "txEnd", "validEnd"})
+
+
+def _current_rows() -> Iterator[_Stored]:
+    """Two or three rows partitioning January onward, each stored or opened
+    by the attempt and holding the assigned value or not, the middle one of
+    three also missing so a gap lies there."""
+    for count in (1, 2):
+        for cuts in combinations(_CUTS, count):
+            bounds: tuple[dt.datetime | TemporalBound, ...] = (_JAN, *cuts, INFINITY)
+            spans = list(pairwise(bounds))
+            for opened in product((False, True), repeat=len(spans)):
+                for holding in product((False, True), repeat=len(spans)):
+                    rows = tuple(
+                        (cast("dt.datetime", start), end, owned, holds)
+                        for (start, end), owned, holds in zip(spans, opened, holding, strict=True)
+                    )
+                    yield rows
+                    if len(rows) == 3:
+                        yield (rows[0], rows[2])
+
+
+def _write_windows() -> Iterator[tuple[TimeInterval, ...]]:
+    """Windows starting from January to May and ending from March onward or
+    never, and every two adjacent windows meeting at a cut, the later stated
+    first."""
+    for start in (_JAN, _FEB, _MAR, _APR, _MAY):
+        for end in (_MAR, _APR, _MAY, _JUN, _JUL, INFINITY):
+            if end is INFINITY or end > start:
+                yield (TimeInterval(start, end),)
+    for cut in _CUTS:
+        yield (TimeInterval(cut, INFINITY), TimeInterval(_JAN, cut))
+
+
+def _ordinal(bound: object) -> dt.datetime:
+    return (
+        dt.datetime.max.replace(tzinfo=dt.UTC) if bound is INFINITY else cast("dt.datetime", bound)
+    )
+
+
+def _replay(current: dict[object, object], steps: Iterable[PlannedStep]) -> None:
+    """Apply ``steps`` in order to ``current`` — each current row's Valid-Time
+    start by its Valid-Time end, which addresses it — failing at the first
+    statement that leaves two current rows overlapping, reuses a current row's
+    address, or revises an address."""
+    for step in steps:
+        if isinstance(step, PlannedInsert):
+            for entry in step.entries:
+                cells = {identity.name: value for identity, value in entry.row.attributes.items()}
+                assert cells["validEnd"] not in current, step
+                current[cells["validEnd"]] = cells["validStart"]
+        else:
+            assert isinstance(
+                step,
+                PlannedClose
+                | PlannedTemporalRemoval
+                | PlannedTemporalRevision
+                | PlannedTemporalGuard,
+            )
+            valid_end = step.target.end_values[0]
+            end = valid_end.instant if isinstance(valid_end, Finite) else INFINITY
+            assert end in current, step
+            if isinstance(step, PlannedClose | PlannedTemporalRemoval):
+                del current[end]
+            elif isinstance(step, PlannedTemporalRevision):
+                assigned = {
+                    identity.name: value for identity, value in step.assignments.attributes.items()
+                }
+                assert _ADDRESS.isdisjoint(assigned), step
+                current[end] = assigned.get("validStart", current[end])
+        ordered = sorted(current.items(), key=lambda row: _ordinal(row[1]))
+        for (end, _), (_, start) in pairwise(ordered):
+            assert _ordinal(end) <= _ordinal(start), (step, ordered)
+
+
+@pytest.mark.parametrize("gated", [True, False], ids=["optimistic", "locking"])
+@pytest.mark.parametrize("replaces", [False, True], ids=["amend", "replace"])
+def test_no_statement_of_an_object_leaves_two_current_rows_overlapping(
+    gated: bool, replaces: bool
+) -> None:
+    """Whatever order the predecessors are settled in, every close, removal,
+    and revision a write's merged rows choose — over stored rows and rows the
+    attempt opened, holding the assigned value already or not — leaves the
+    object's current rows disjoint after each statement, and no revision
+    assigns its row's address."""
+    facts = _facts(_COLUMNS)
+    assigned: dict[str, object] = (
+        {"amount": 150, "label": "a", "memo": None} if replaces else {"amount": 150}
+    )
+    for rows in _current_rows():
+        predecessors = [
+            (
+                _span(_COLUMNS, start, end, 150 if holds else 100, tx_start=_NOW if owned else _T0),
+                TimeInterval(start, end),
+            )
+            for start, end, owned, holds in rows
+        ]
+        ownership = OpenedRows(frozenset(_endpoint(end) for _, end, owned, _ in rows if owned))
+        coverage = [interval for _, interval in predecessors]
+        for windows in _write_windows():
+            transform = NO_TRANSFORM
+            for window in windows:
+                transform = transform.followed_by(window, assigned, replaces=replaces)
+            gaps = transform.gaps(coverage) if replaces else ()
+            for order in (predecessors, predecessors[::-1]):
+                settled = _expansion(_COLUMNS, transform, gated=gated, ownership=ownership).settle(
+                    ((row, "coverage", _state(facts, row), interval) for row, interval in order),
+                    gaps=gaps,
+                )
+                _replay({end: start for start, end, _, _ in rows}, settled.steps)
 
 
 # --------------------------------------------------------------------------- #

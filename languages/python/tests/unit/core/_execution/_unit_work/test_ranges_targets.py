@@ -49,6 +49,7 @@ from parallax.core.write_plan.steps import (
     UNGATED,
     Finite,
     PlannedTemporalGuard,
+    PlannedTemporalRemoval,
     PlannedTemporalRevision,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
@@ -636,3 +637,58 @@ def test_a_start_in_a_merged_row_stated_at_its_own_revision_revises_it_in_place(
     bound = _bound(settled, [_MERGED_ROW], ownership=OpenedRows(frozenset({_coordinates(SEP)})))
     assert not any(isinstance(step, PlannedClose) for step in bound.steps)
     assert any(isinstance(step, PlannedTemporalRevision) for step in bound.steps)
+
+
+# --------------------------------------------------------------------------- #
+# A revision runs after every close and removal of its range.                 #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("neighbour_start", [T0, T], ids=["stored", "owned"])
+@pytest.mark.parametrize("owned_first", [True, False], ids=["owned-first", "neighbour-first"])
+def test_a_row_revised_to_an_earlier_start_follows_the_row_its_merged_run_absorbs(
+    neighbour_start: dt.datetime, owned_first: bool
+) -> None:
+    on_owned = addressed_write(valid_from=APR, until=None, tx_start=T, value="175.00")
+    on_neighbour = addressed_write(
+        valid_from=JAN, until=APR, tx_start=neighbour_start, value="175.00"
+    )
+    settled = _deferred_write(
+        *((on_owned, on_neighbour) if owned_first else (on_neighbour, on_owned))
+    )
+    neighbour = rectangle(JAN, APR, "100.00", tx_start=neighbour_start)
+    opened = {_coordinates(INFINITY), *((_coordinates(APR),) if neighbour_start == T else ())}
+    bound = _bound(
+        settled,
+        [neighbour, _opened(APR, "150.00")],
+        ownership=OpenedRows(frozenset(opened)),
+    )
+    vacating, revision = bound.steps
+    assert type(vacating) is (PlannedTemporalRemoval if neighbour_start == T else PlannedClose)
+    assert isinstance(revision, PlannedTemporalRevision)
+    assert revision.target.end_values == OPEN_BITEMPORAL_ENDS
+    assigned = {identity.name: value for identity, value in revision.assignments.attributes.items()}
+    assert assigned == {"value": Decimal("175.00"), "validStart": JAN}
+
+
+def test_a_revised_rows_lost_start_fails_after_every_close_of_its_range() -> None:
+    settled = _deferred_write(
+        addressed_write(valid_from=APR, until=None, tx_start=T, value="175.00"),
+        addressed_write(valid_from=FEB, until=APR, value="175.00"),
+    )
+    bound = _bound(
+        settled,
+        [rectangle(JAN, MAR, "100.00"), rectangle(MAR, APR, "120.00"), _opened(APR, "150.00")],
+        ownership=OpenedRows(frozenset({_coordinates(INFINITY)})),
+    )
+    # The caller's first-stated start is the revised row's, yet the closes of
+    # the second caller's start and of the coverage between run first.
+    assert [type(step) for step in bound.steps] == [
+        PlannedClose,
+        PlannedClose,
+        PlannedTemporalRevision,
+        PlannedInsert,
+    ]
+    assert [step.affected_rows.on_shortfall for step in bound.steps[:3]] == [  # type: ignore[union-attr]
+        FAILED_PRECONDITION,
+        OPTIMISTIC_CONFLICT,
+        FAILED_PRECONDITION,
+    ]

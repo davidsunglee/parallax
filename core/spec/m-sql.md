@@ -1370,8 +1370,10 @@ alone.
 
 Once a range's rectangles are known, every rectangle's inactivation,
 revision, or removal is emitted before any successor is inserted — rectangles in
-Valid-Time order, each rectangle's successors in Valid-Time order — so a lost
-condition fails before the range writes anything new. A row merged from several
+Valid-Time order, each revision after every inactivation and removal
+(`m-temporal-write` *Predecessor Expansion*), each rectangle's successors in
+Valid-Time order — so a lost condition fails before the range writes anything
+new. A row merged from several
 successors or gaps of identical stored state (`m-temporal-write` *Merging
 produced successors*) is one insert, emitted where the first of them would have
 been.
@@ -1411,7 +1413,8 @@ where they cover it, as a Transaction-Time-Only object's acquired current row
 always does. The
 rectangles holding callers' starts are inactivated, revised, removed, or
 guarded first, in the order the callers stated them, then the others in
-Valid-Time order. A
+Valid-Time order, except that every revision follows every inactivation, guard,
+and removal. A
 replacement's openings over the gaps of its extent follow every rectangle's
 successors, in Valid-Time order. Under
 Locking the write's submission first reads its starting rectangle alone, with
