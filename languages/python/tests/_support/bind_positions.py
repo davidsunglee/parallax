@@ -206,11 +206,16 @@ class _Statement:
 
     def compared(self, placeholder: exp.Placeholder) -> BindPosition | None:
         """The position of the operand ``placeholder`` is compared with, where the
-        operand is a Column or a casting extraction of one Column's document."""
-        operand = _compared_operand(placeholder)
-        if operand is None:
+        operand is a Column or a casting extraction of one Column's document; an
+        array compared through ``any`` holds one such position per element."""
+        compared = _compared_operand(placeholder)
+        if compared is None:
             return None
-        operand = _unwrapped(operand)
+        operand, array = compared
+        position = self._operand_position(_unwrapped(operand))
+        return Elements(position) if array and position is not None else position
+
+    def _operand_position(self, operand: exp.Expr) -> BindPosition | None:
         if isinstance(operand, exp.Column):
             return self._column_position(operand)
         if not isinstance(operand, exp.Cast):
@@ -391,17 +396,21 @@ class _Statement:
         return value if isinstance(value, str) else None
 
 
-def _compared_operand(placeholder: exp.Placeholder) -> exp.Expr | None:
+def _compared_operand(placeholder: exp.Placeholder) -> tuple[exp.Expr, bool] | None:
+    """The operand ``placeholder`` is compared with, and whether it binds an
+    array compared element by element through ``any``."""
     current: exp.Expr = placeholder
-    while isinstance(current.parent, (exp.Paren, exp.Cast)):
+    array = False
+    while isinstance(current.parent, (exp.Paren, exp.Cast, exp.Any)):
         current = current.parent
+        array = array or isinstance(current, exp.Any)
     parent = current.parent
     if isinstance(parent, _COMPARISONS):
-        return parent.expression if current is parent.this else parent.this
+        return (parent.expression if current is parent.this else parent.this), array
     if isinstance(parent, exp.Between) and current is not parent.this:
-        return parent.this
+        return parent.this, array
     if isinstance(parent, exp.In) and current is not parent.this:
-        return parent.this
+        return parent.this, array
     return None
 
 

@@ -9,7 +9,7 @@ import threading
 import time
 import types
 import weakref
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal
@@ -34,7 +34,7 @@ from parallax.core.navigate import (
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
 from parallax.core.predicate._execution_values import ExecutionValueSources
-from parallax.core.predicate._resolved import ResolvedAnd, ResolvedComparison
+from parallax.core.predicate._resolved import ResolvedAnd, ResolvedComparison, ResolvedMembership
 from parallax.core.read_delivery import _read_plan
 from parallax.core.read_delivery._delivery import find
 from parallax.core.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
@@ -296,12 +296,6 @@ _DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, obje
         _order_query({"between": {"path": "Order.id", "lower": 1, "upper": 5}}),
     ),
     (
-        "membership-width",
-        _ORDERS,
-        _order_query({"in": {"path": "Order.id", "values": [1, 2]}}),
-        _order_query({"in": {"path": "Order.id", "values": [1, 2, 3]}}),
-    ),
-    (
         "affix-escape",
         _ORDERS,
         _order_query({"startsWith": {"path": "Order.name", "value": "ab"}}),
@@ -544,6 +538,12 @@ _SHARED_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, object
         _ORDERS,
         _order_query({"in": {"path": "Order.id", "values": [1, 2]}}),
         _order_query({"in": {"path": "Order.id", "values": [1, 3]}}),
+    ),
+    (
+        "membership-width",
+        _ORDERS,
+        _order_query({"notIn": {"path": "Order.id", "values": [1]}}),
+        _order_query({"notIn": {"path": "Order.id", "values": [1, 2, 3]}}),
     ),
     (
         "unescaped-affixes",
@@ -1034,10 +1034,26 @@ def _balance_as_of(day: int) -> ResolvedObjectQuery:
 
 
 _BALANCE_MODEL = CatalogedModel(_BALANCE)
+
+
+def _membership(width: int, *, op: str = "in") -> ResolvedObjectQuery:
+    return resolve_read_query(
+        deserialize(
+            {
+                "target": "Order",
+                "predicate": {op: {"path": "Order.id", "values": list(range(1, width + 1))}},
+            }
+        ),
+        model=_META,
+        form="graph",
+    )
+
+
 _VALUED: Final[Mapping[str, tuple[CatalogedModel, Callable[[int], ResolvedObjectQuery]]]] = {
     "continuation": (_MODEL, lambda value: _after(value)),
     "predicate": (_MODEL, lambda value: _query(value)),
     "temporal": (_BALANCE_MODEL, _balance_as_of),
+    "membership-width": (_MODEL, _membership),
 }
 
 
@@ -1068,6 +1084,83 @@ def test_cache_hits_render_their_own_values_outside_the_cache_lock(
     assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(
         _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 1, 2, 1, 0
     )
+
+
+@pytest.mark.parametrize(
+    "dialect", [POSTGRES, replace(POSTGRES, name="mariadb")], ids=["postgres", "mariadb"]
+)
+def test_memberships_of_every_width_share_one_entry_and_render_their_own_elements(
+    dialect: Dialect,
+) -> None:
+    cache = ReadPlanCache()
+    plans = [_plan(cache, _membership(width), dialect=dialect) for width in (1, 3, 1000)]
+
+    assert (cache._statistics().misses, cache._statistics().hits) == (1, 2)
+    uncached = ReadPlanCache(0)
+    for width, planned in zip((1, 3, 1000), plans, strict=True):
+        statement = _root(planned)[0].statement
+        cold = _root(_plan(uncached, _membership(width), dialect=dialect))[0].statement
+        assert (statement, _carriers(statement.binds)) == (cold, _carriers(cold.binds))
+        assert statement.wire_binds() == cold.wire_binds()
+    first, _, widest = (_root(planned)[0].statement for planned in plans)
+    if dialect is POSTGRES:
+        assert first.sql == widest.sql
+        assert first.sql.endswith("where t0.id = any(cast(? as bigint[]))")
+        assert widest.binds == (list(range(1, 1001)),)
+    else:
+        assert first.sql.endswith("where t0.id in (?)")
+        assert widest.binds == tuple(range(1, 1001))
+
+
+@pytest.mark.parametrize(
+    "dialect", [POSTGRES, replace(POSTGRES, name="mariadb")], ids=["postgres", "mariadb"]
+)
+def test_a_wide_membership_template_retains_one_position_group_per_rendering(
+    dialect: Dialect,
+) -> None:
+    cache = ReadPlanCache()
+    _plan(cache, _membership(1000), dialect=dialect)
+    ((_key, entry),) = cache._entries.items()
+    template = entry.root_template
+    assert template is not None
+
+    (group,) = template._positions
+    assert group.source == ("predicate", 0)
+    assert group.indices == (0,)
+    assert len(template.compiled.statement.binds) == 1
+
+
+def test_empty_and_nonempty_memberships_and_their_element_structures_key_apart() -> None:
+    query_key = cast("Callable[[object], object]", vars(_read_plan)["_query_key"])
+    nonempty = _membership(2)
+    membership = nonempty.predicate
+    assert isinstance(membership, ResolvedMembership)
+
+    def with_values(*values: object) -> object:
+        return query_key(replace(nonempty, predicate=replace(membership, values=values)))
+
+    assert with_values(1, 2) == with_values(5) == with_values(*range(1000))
+    assert with_values() != with_values(1)
+    assert with_values(1, 2) != with_values(True, False)
+    assert with_values(1, 2) != with_values(1, True)
+    assert with_values(Decimal("1.5")) != with_values(Decimal("1.50"))
+    assert with_values(Decimal("1.50"), Decimal("2.75")) == with_values(Decimal("3.25"))
+
+
+def test_an_empty_membership_compiles_its_literal_list_on_every_dialect() -> None:
+    nonempty = _membership(2, op="notIn")
+    membership = nonempty.predicate
+    assert isinstance(membership, ResolvedMembership)
+    empty = replace(nonempty, predicate=replace(membership, values=()))
+
+    for dialect in (POSTGRES, replace(POSTGRES, name="mariadb")):
+        cache = ReadPlanCache()
+        _plan(cache, nonempty, dialect=dialect)
+        statement = _root(_plan(cache, empty, dialect=dialect))[0].statement
+
+        assert cache._statistics().misses == 2
+        assert statement.sql.endswith("where not t0.id in ()")
+        assert statement.binds == ()
 
 
 def test_a_hit_renders_after_its_entry_is_evicted(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1833,11 +1926,16 @@ _DOCUMENT = corpus_model("document")
 _DOCUMENT_LAYOUT = corpus_model("document-layout")
 
 
-def _carriers(binds: tuple[object, ...]) -> list[tuple[object, ...]]:
-    return [
-        (type(bind), bind, bind.as_tuple()) if isinstance(bind, Decimal) else (type(bind), bind)
-        for bind in binds
-    ]
+def _carriers(binds: Sequence[object]) -> list[tuple[object, ...]]:
+    return [_carrier(bind) for bind in binds]
+
+
+def _carrier(bind: object) -> tuple[object, ...]:
+    if isinstance(bind, Decimal):
+        return type(bind), bind, bind.as_tuple()
+    if isinstance(bind, list):
+        return list, tuple(_carriers(cast("list[object]", bind)))
+    return type(bind), bind
 
 
 def _in_order(expected: list[tuple[object, ...]], carriers: list[tuple[object, ...]]) -> bool:
@@ -1904,8 +2002,8 @@ _RENDERED_OPERANDS: tuple[
         _ORDERS,
         "Order",
         {"in": {"path": "Order.id", "values": [1, 2]}},
-        {"in": {"path": "Order.id", "values": [5, 6]}},
-        [(int, 5), (int, 6)],
+        {"in": {"path": "Order.id", "values": [5, 6, 7]}},
+        [(list, ((int, 5), (int, 6), (int, 7)))],
     ),
     (
         "unescaped-affix",
@@ -2371,9 +2469,9 @@ def test_direct_compilation_and_write_reads_prepare_no_template(
         order,
     )
 
-    assert direct.statement.binds == (1, 2, 1, 1, 2, 1, 2, 2, 2)
+    assert direct.statement.binds == ([1, 2], 1, 1, 2, [1, 2], 2, 2)
     assert 7 in target.statement.binds
-    assert written.binds == (1, 2)
+    assert written.binds == ([1, 2],)
 
 
 _CORPUS_ORDERS = corpus_model("orders")

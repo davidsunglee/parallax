@@ -395,19 +395,10 @@ class Dialect:
         declarable type compares as the extracted text, because the canonical spelling
         `m-document-codec` writes already equates and orders correctly as text.
         """
-        match neutral_type:
-            case Decimal(precision, scale):
-                return f"cast({extraction} as decimal({precision}, {scale}))"
-            case Int32() | Int64():
-                return f"cast({extraction} as bigint)"
-            case Float32():
-                return f"cast({extraction} as real)"
-            case Float64():
-                return f"cast({extraction} as double precision)"
-            case Boolean():
-                return f"cast({extraction} as boolean)"
-            case _:
-                return extraction  # a text-compared type — compare the extraction
+        if isinstance(neutral_type, Decimal):
+            return f"cast({extraction} as decimal({neutral_type.precision}, {neutral_type.scale}))"
+        cast_type = _EXTRACTION_CASTS.get(type(neutral_type))
+        return extraction if cast_type is None else f"cast({extraction} as {cast_type})"
 
     def array_guard(self, document: str, segments: tuple[str, ...]) -> tuple[str, list[object]]:
         """The array-type guard fragment for a `multiplicity: many` value-object
@@ -571,8 +562,11 @@ class Dialect:
             return f"decimal({neutral_type.precision}, {neutral_type.scale})"
         return self.column_type(neutral_type, max_length)
 
-    def array_parameter(self, neutral_type: NeutralType) -> str:
-        """One array bind cast to the array of ``neutral_type``'s comparison type.
+    def array_parameter(self, neutral_type: NeutralType, *, extracted: bool = False) -> str:
+        """One array bind cast to the array of the type an expression of
+        ``neutral_type`` compares in: its column type, or, when ``extracted``
+        from a document, the type :meth:`nested_cast` casts the text to, else
+        text.
 
         The driver types an untyped array by its elements, so small integers would
         arrive as a narrower integer array and make the comparison cross-type. The
@@ -580,7 +574,13 @@ class Dialect:
         ``varchar(n)`` truncates and one to ``decimal(p, s)`` rounds, so either
         could make a value equal a key it does not equal.
         """
-        return f"cast(? as {_ARRAY_ELEMENT_TYPES[type(neutral_type)]}[])"
+        if not extracted:
+            element = _ARRAY_ELEMENT_TYPES[type(neutral_type)]
+        elif isinstance(neutral_type, Decimal):
+            element = "decimal"
+        else:
+            element = _EXTRACTION_CASTS.get(type(neutral_type), "text")
+        return f"cast(? as {element}[])"
 
     # -- DDL type mapping -------------------------------------------------- #
     def column_type(self, neutral_type: NeutralType, max_length: int | None) -> str:
@@ -678,6 +678,16 @@ _FIXED_COLUMN_TYPES: Final[Mapping[type, str]] = {
     Timestamp: "timestamptz",
     Uuid: "uuid",
     Json: "jsonb",
+}
+
+# The cast a document extraction of each non-decimal type compares through; a
+# type absent here compares as the extracted text.
+_EXTRACTION_CASTS: Final[Mapping[type, str]] = {
+    Int32: "bigint",
+    Int64: "bigint",
+    Float32: "real",
+    Float64: "double precision",
+    Boolean: "boolean",
 }
 
 _ARRAY_ELEMENT_TYPES: Final[Mapping[type, str]] = {

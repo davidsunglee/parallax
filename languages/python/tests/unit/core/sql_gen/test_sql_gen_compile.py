@@ -1100,19 +1100,32 @@ def test_a_deferred_root_binds_each_authored_operand_under_the_form_its_subject_
 
 
 def test_deferred_operands_of_one_classification_share_one_form_across_templates() -> None:
-    def membership(values: list[int]) -> deep_fetch.PlannedEntityQuery:
-        return _sourced_root(_traveler_query({"in": {"path": "Traveler.score", "values": values}}))
+    def operands(low: int, high: int) -> deep_fetch.PlannedEntityQuery:
+        predicate = {
+            "and": {
+                "operands": [
+                    {"between": {"path": "Traveler.score", "lower": low, "upper": high}},
+                    {"in": {"path": "Traveler.score", "values": [low, high]}},
+                    {"notIn": {"path": "Traveler.score", "values": [high]}},
+                ]
+            }
+        }
+        return _sourced_root(_traveler_query(predicate))
 
-    wide = sql_compile.compile_template(membership([1, 2, 3, 4]), _TRAVELERS, POSTGRES)
-    narrow = sql_compile.compile_template(membership([5, 6]), _TRAVELERS, POSTGRES)
+    templates = [
+        sql_compile.compile_template(operands(low, low + 3), _TRAVELERS, POSTGRES) for low in (1, 5)
+    ]
 
     forms = [
-        group.form
-        for template in (wide, narrow)
-        for group in template.compiled.statement.execution_value_positions()
+        [group.form for group in template.compiled.statement.execution_value_positions()]
+        for template in templates
     ]
-    assert len(forms) == 6
-    assert {id(form) for form in forms} == {id(forms[0])}
+    assert [len(template_forms) for template_forms in forms] == [4, 4]
+    for template_forms in forms:
+        assert template_forms[0] is template_forms[1]
+        assert template_forms[2] is template_forms[3]
+        assert template_forms[0] is not template_forms[2]
+    assert all(left is right for left, right in zip(*forms, strict=True))
 
 
 def test_a_deferred_root_renders_the_current_operands_as_direct_compilation_binds_them() -> None:

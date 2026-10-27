@@ -1499,8 +1499,8 @@ def test_run_case_streamed_observation_reports_the_delivered_roots() -> None:
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "ok"
     assert [emission["binds"] for emission in envelope["emissions"]] == [
-        [1, 2, 3, 42, 3],
-        [1, 2, 3, 42, 2, 2, 3, 1, 2, 3, 42, 3, 3],
+        [[1, 2, 3, 42], 3],
+        [[1, 2, 3, 42], 2, 2, 3, [1, 2, 3, 42], 3, 3],
     ]
     assert envelope["observations"]["databaseCalls"] == 2
     assert [root["id"] for root in envelope["observations"]["graph"]["Order"]] == [1, 2, 3, 42]

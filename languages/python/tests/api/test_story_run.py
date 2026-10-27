@@ -1432,7 +1432,10 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, profile_r
             else golden_sql
         )
         assert sql == POSTGRES.to_driver_sql(cast("str", golden_text)), story.case_id
-        compare_binds(binds, cast("list[object]", entry.get("binds", [])))
+        golden_binds = entry.get("binds", [])
+        if isinstance(golden_binds, dict):
+            golden_binds = cast("dict[str, object]", golden_binds)["postgres"]
+        compare_binds(binds, cast("list[object]", golden_binds))
 
 
 def test_every_read_story_mirrors_an_active_case_exactly_once() -> None:

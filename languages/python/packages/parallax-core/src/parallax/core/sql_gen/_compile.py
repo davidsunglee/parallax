@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import chain
-from typing import Final, Literal, assert_never
+from typing import Final, Literal, assert_never, cast
 
 from parallax.core.base import (
     INFINITY,
@@ -178,6 +178,8 @@ class CompiledTemplate:
     compiled: CompiledRead
     _positions: tuple[ExecutionValuePositions, ...] = ()
     _sql_parts: tuple[str, ...] = ()
+    # The group of _positions filling each expanding placeholder, in text order.
+    _placeholders: tuple[int, ...] = ()
 
     def render(
         self,
@@ -195,13 +197,29 @@ class CompiledTemplate:
         if not positions:
             return self.compiled
         statement = self.compiled.statement
+        values: Iterable[tuple[ExecutionValuePositions, object]] = _execution_values(
+            positions, keys, query
+        )
         sql = statement.sql
         if self._sql_parts:
-            sql = ", ".join("?" for _ in _gathered(keys)).join(self._sql_parts)
-        rendered = statement.with_execution_values(
-            _execution_values(positions, keys, query), sql=sql
-        )
+            values = tuple(values)
+            sql = _expanded_sql(self._sql_parts, self._placeholders, values)
+        rendered = statement.with_execution_values(values, sql=sql)
         return replace(self.compiled, statement=rendered)
+
+
+def _expanded_sql(
+    parts: tuple[str, ...],
+    placeholders: tuple[int, ...],
+    values: tuple[tuple[ExecutionValuePositions, object], ...],
+) -> str:
+    """``parts`` joined by one hole per element of the group filling each
+    placeholder between them."""
+    sql = [parts[0]]
+    for group, part in zip(placeholders, parts[1:], strict=True):
+        sql.append(", ".join("?" for _ in cast("Sequence[object]", values[group][1])))
+        sql.append(part)
+    return "".join(sql)
 
 
 _EXHAUSTED: Final = object()
@@ -306,13 +324,26 @@ def compile_template(
 
 
 def _template(compiled: CompiledRead) -> CompiledTemplate:
+    """``compiled`` with its execution values' positions, and its SQL split at
+    each expanding placeholder.
+
+    Text order is bind order, so the placeholders, in order, are the expanding
+    positions in ascending order.
+    """
     statement = compiled.statement
     positions = statement.execution_value_positions()
-    expanding = sum(len(group.indices) for group in positions if group.form.expands)
+    expanding = sorted(
+        (index, number)
+        for number, group in enumerate(positions)
+        if group.form.expands
+        for index in group.indices
+    )
     parts = tuple(statement.sql.split(EXPANDING_PLACEHOLDER))
-    if len(parts) - 1 != expanding:
-        raise SqlGenError("a template's expanding placeholders disagree with its key positions")
-    return CompiledTemplate(compiled, positions, parts if expanding else ())
+    if len(parts) - 1 != len(expanding):
+        raise SqlGenError("a template's expanding placeholders disagree with its positions")
+    if not expanding:
+        return CompiledTemplate(compiled, positions)
+    return CompiledTemplate(compiled, positions, parts, tuple(number for _, number in expanding))
 
 
 def compile_read(

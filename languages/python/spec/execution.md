@@ -48,9 +48,10 @@ cached, while unrelated keys can build concurrently.
 Cache identity includes the exact model edition, cataloged model and dialect,
 the resolved query's structure, result form, and concurrency preference. A
 predicate operand or finite temporal bound contributes its exact type and a
-Decimal's exponent, a membership its width, an affix match whether its literal
-needs escaping, and a temporal selection its kind and axis. Operands of distinct
-exact types, and Decimals of distinct exponents, remain distinct.
+Decimal's exponent, a membership whether it is empty and the distinct exact types
+and exponents of its elements but not their number, an affix match whether its
+literal needs escaping, and a temporal selection its kind and axis. Operands of
+distinct exact types, and Decimals of distinct exponents, remain distinct.
 The first stream page and each continuation-coordinate pattern of NULL, finite,
 and open-bound (`INFINITY`) carriers use distinct entries; predicate operands,
 finite temporal bounds, finite coordinate values, and page limits are execution

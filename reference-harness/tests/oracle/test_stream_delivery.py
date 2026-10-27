@@ -415,7 +415,7 @@ def test_each_pages_child_levels_are_consumed_before_the_next_pages_root(
 
     statements = case.golden_statements("postgres")
     assert reads.statements[3] == statements[3]
-    assert reads.calls[3][1] == (1, 2, 42, 2, 2, 3, 1, 2, 42, 3, 3)
+    assert reads.calls[3][1] == ([1, 2, 42], 2, 2, 3, [1, 2, 42], 3, 3)
 
 
 def test_a_result_filling_its_final_page_exactly_costs_no_terminal_statement(
@@ -432,7 +432,7 @@ def test_a_result_filling_its_final_page_exactly_costs_no_terminal_statement(
     assert_case_read(case, reads)
 
     assert len(reads.calls) == 5
-    assert reads.calls[2][1] == (1, 2, 3, 42, 2, 2, 3, 1, 2, 3, 42, 3, 3)
+    assert reads.calls[2][1] == ([1, 2, 3, 42], 2, 2, 3, [1, 2, 3, 42], 3, 3)
 
 
 _BEASTS: dict[int, dict[str, Any]] = {
@@ -667,7 +667,7 @@ def test_a_nulls_first_sort_key_seeks_a_null_coordinate_through_a_negated_null_t
 
     assert_case_read(case, reads)
 
-    assert reads.calls[1][1] == (1, 4, 4, 2)
+    assert reads.calls[1][1] == ([1, 4], 4, 2)
 
 
 def test_a_multi_term_order_binds_a_coordinate_at_every_tie_depth(
@@ -807,7 +807,7 @@ def test_a_page_seeking_from_the_wrong_root_is_refused(damaged_case: CaseLoader)
 def test_a_page_asking_for_the_wrong_size_is_refused(damaged_case: CaseLoader) -> None:
     """The requested size is `batchSize` plus one, not whatever the golden binds."""
     case = damaged_case(_DEEP_FETCH)
-    _statements(case)[0]["binds"][-1] = 2
+    _statements(case)[0]["binds"]["postgres"][-1] = 2
     reads = ScriptedReads(results=_deep_fetch_script())
 
     with pytest.raises(CaseFailure, match="the size it is asking for"):

@@ -290,9 +290,9 @@ a `Date` member rather than reject it.
 
 ### Membership
 
-`in` / `notIn` take `{ "path"?, "values": [ … ] }` (non-empty). Each value is a
-bind, in list order; the SQL is `<subject> in (?, ?, …)`. The `in(subquery)` form
-is not part of this schema revision.
+`in` / `notIn` take `{ "path"?, "values": [ … ] }` (non-empty). The values bind in
+list order; `m-sql` owns their SQL form. The `in(subquery)` form is not part of
+this schema revision.
 
 ### Value-object fields
 

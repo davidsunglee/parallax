@@ -238,6 +238,112 @@ def test_preflight_requires_canonical_document_leaf_statement_binds() -> None:
         preflight_case_literals(case)
 
 
+def _array_statement(sql: str, binds: list[object]) -> Case:
+    case = _case()
+    case.then["statements"] = [{"sql": {"postgres": sql}, "binds": binds}]
+    return case
+
+
+def test_preflight_requires_canonical_elements_of_an_array_bind() -> None:
+    case = _array_statement(
+        "select id from reading where amount = any(cast(? as decimal[]))", [["10.50", "10.5"]]
+    )
+
+    with pytest.raises(CaseFailure, match=r"then\.statements\[0\]\.binds\[0\]\[1\].*noncanonical"):
+        preflight_case_literals(case)
+
+
+@pytest.mark.parametrize(
+    ("sql", "binds"),
+    [
+        pytest.param(
+            "select id from reading where amount = any(cast(? as decimal[]))",
+            [["10.50"]],
+            id="column",
+        ),
+        pytest.param(
+            "select id from reading where not day = any(cast(? as date[]))",
+            [["2026-01-15"]],
+            id="negated-column",
+        ),
+        pytest.param(
+            "select id from reading where jsonb_extract_path_text(profile, ?)"
+            " = any(cast(? as text[]))",
+            ["expires", ["2026-01-15"]],
+            id="text-extraction",
+        ),
+        pytest.param(
+            "select id from reading where cast(jsonb_extract_path_text(profile, ?) as bigint)"
+            " = any(cast(? as bigint[]))",
+            ["count", [1]],
+            id="cast-extraction",
+        ),
+        pytest.param(
+            "select id from reading t0 where exists (select 1 from sample t1"
+            " where t1.reading_id = t0.id and t1.quantity = any(cast(? as int[])))",
+            [[3]],
+            id="related-column",
+        ),
+        pytest.param(
+            "select id from reading t0 where (select t1.quantity from sample t1"
+            " where t1.reading_id = t0.id) = any(cast(? as int[]))",
+            [[3]],
+            id="scalar-subquery",
+        ),
+        pytest.param(
+            "select id from reading t0 where exists (select 1 from jsonb_array_elements(t0.tags)"
+            " t1 where case when jsonb_typeof(t1.value) = ? then t1.value #>> ? end"
+            " = any(cast(? as text[])))",
+            ["string", "{}", ["a"]],
+            id="guarded-element",
+        ),
+    ],
+)
+def test_preflight_accepts_an_array_cast_to_the_type_its_operand_compares_in(
+    sql: str, binds: list[object]
+) -> None:
+    preflight_case_literals(_array_statement(sql, binds))
+
+
+@pytest.mark.parametrize(
+    ("sql", "binds", "expected"),
+    [
+        pytest.param("select id from reading where id = any(?)", [[1]], "bigint", id="uncast"),
+        pytest.param(
+            "select id from reading where id = any(cast(? as int[]))",
+            [[1]],
+            "bigint",
+            id="narrower-integer",
+        ),
+        pytest.param(
+            "select id from reading where amount = any(cast(? as decimal(12, 2)[]))",
+            [["10.50"]],
+            "decimal",
+            id="modified-decimal",
+        ),
+        pytest.param(
+            "select id from reading where jsonb_extract_path_text(profile, ?)"
+            " = any(cast(? as date[]))",
+            ["expires", ["2026-01-15"]],
+            "text",
+            id="text-extraction-cast-to-its-declared-type",
+        ),
+        pytest.param(
+            "select id from reading where cast(jsonb_extract_path_text(profile, ?) as bigint)"
+            " = any(cast(? as int[]))",
+            ["count", [1]],
+            "bigint",
+            id="cast-extraction-cast-to-the-column-type",
+        ),
+    ],
+)
+def test_preflight_refuses_an_array_not_cast_to_the_type_its_operand_compares_in(
+    sql: str, binds: list[object], expected: str
+) -> None:
+    with pytest.raises(CaseFailure, match=f"compared with a {expected} operand"):
+        preflight_case_literals(_array_statement(sql, binds))
+
+
 def test_preflight_excludes_untyped_statement_control_binds() -> None:
     case = _case()
     case.then["statements"] = [

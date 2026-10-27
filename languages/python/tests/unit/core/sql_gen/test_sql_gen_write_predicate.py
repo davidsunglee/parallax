@@ -151,8 +151,8 @@ def test_a_current_row_term_binds_managed_infinity_and_publishes_its_literal() -
         ),
         (
             oa.Membership(op="in", subject=oa.FieldSubject("Account.id"), values=(1, 2)),
-            "id in (?, ?)",
-            (1, 2),
+            "id = any(cast(? as bigint[]))",
+            ([1, 2],),
         ),
         (
             oa.StringMatch(op="startsWith", subject=oa.FieldSubject("Account.owner"), value="A"),

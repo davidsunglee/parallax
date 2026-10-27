@@ -15,10 +15,10 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) in (?)
+        postgres: select t0.id, t0.name from customer t0 where not jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))
         mariadb: select t0.id, t0.name from customer t0 where not json_value(t0.address, ?) in (?)
       binds:
-        postgres: [city, Oslo]
+        postgres: [city, [Oslo]]
         mariadb: ['$.city', Oslo]
   referenceSql:
     postgres: select id, name from customer where address ->> 'city' not in ('Oslo')

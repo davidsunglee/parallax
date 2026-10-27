@@ -13,8 +13,8 @@ when:
             values: [gift, x]
 then:
   statements:
-  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.tags) = ? then t0.tags else cast(? as jsonb) end) t1 where not case when jsonb_typeof(t1.value) = ? then t1.value #>> ? end in (?, ?))'}
-    binds: [array, '[]', string, '{}', gift, x]
+  - sql: {postgres: 'select t0.id, t0.label, t0.owner_id, not t0.tags is null, t0.tags, not t0.scores is null, t0.scores, not t0.prices is null, t0.prices, not t0.flags is null, t0.flags, not t0.parcels is null, t0.parcels, not t0.meta is null, t0.meta from basket t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(t0.tags) = ? then t0.tags else cast(? as jsonb) end) t1 where not case when jsonb_typeof(t1.value) = ? then t1.value #>> ? end = any(cast(? as text[])))'}
+    binds: [array, '[]', string, '{}', [gift, x]]
   graph:
     Basket:
     - id: 1

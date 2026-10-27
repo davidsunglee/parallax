@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Final
 
 import pytest
@@ -20,6 +21,7 @@ from parallax.core.predicate._resolved import (
     ResolvedAnd,
     ResolvedConstant,
     ResolvedGroup,
+    ResolvedMembership,
     ResolvedOr,
     ResolvedPredicate,
     deferred_membership,
@@ -103,24 +105,38 @@ _EVERY_OPERAND_FORM: Final[dict[str, object]] = {
 def test_authored_operands_are_ordered_depth_first_and_sourced_at_their_occurrences() -> None:
     predicate = _resolved(_CUSTOMER, "Customer", _EVERY_OPERAND_FORM)
 
-    assert list(predicate_operands(predicate)) == ["a", 1, 5, 7, 8, 9, "b", "home", "depot"]
+    assert list(predicate_operands(predicate)) == ["a", 1, 5, (7, 8, 9), "b", "home", "depot"]
     sources = ExecutionValueSources.authored(predicate)
     assert [sources.operand(path) for path in ((1,), (2,), (4, 0), (4, 1, 0))] == [
         ("predicate", 0),
         ("predicate", 1),
         ("predicate", 3),
-        ("predicate", 6),
+        ("predicate", 4),
     ]
     assert sources.operand((2,), 1) == ("predicate", 2)
-    assert [sources.operand((4, 0), index) for index in range(3)] == [
-        ("predicate", 3),
-        ("predicate", 4),
-        ("predicate", 5),
-    ]
-    assert sources.operand((5, 0)) == ("predicate", 7)
-    assert sources.operand((6, 0, 0)) == ("predicate", 8)
+    assert sources.operand((5, 0)) == ("predicate", 5)
+    assert sources.operand((6, 0, 0)) == ("predicate", 6)
     for unsourced in ((), (0,), (3,), (4,), (4, 1), (5,), (6,), (6, 0), (7,)):
         assert sources.operand(unsourced) is None
+
+
+def test_an_empty_membership_renders_no_operand() -> None:
+    comparison = _resolved(_CUSTOMER, "Customer", {"eq": {"path": "Customer.name", "value": "a"}})
+    empty = ResolvedAnd((replace(_membership(), values=()), comparison, _membership()))
+
+    assert list(predicate_operands(empty)) == ["a", (7, 8)]
+    sources = ExecutionValueSources.authored(empty)
+    assert [sources.operand((index,)) for index in range(3)] == [
+        None,
+        ("predicate", 0),
+        ("predicate", 1),
+    ]
+
+
+def _membership() -> ResolvedMembership:
+    resolved = _resolved(_CUSTOMER, "Customer", {"in": {"path": "Customer.id", "values": [7, 8]}})
+    assert isinstance(resolved, ResolvedMembership)
+    return resolved
 
 
 def test_narrowing_and_presence_operands_follow_their_one_slot() -> None:
@@ -170,7 +186,7 @@ def test_sources_rerooted_within_an_occurrence_keep_only_what_lies_beneath_it() 
 
     within = sources.within((4,))
 
-    assert (within.operand((0,)), within.operand((1, 0))) == (("predicate", 3), ("predicate", 6))
+    assert (within.operand((0,)), within.operand((1, 0))) == (("predicate", 3), ("predicate", 4))
     assert within.operand(()) is None
     assert sources.within((7,)).operand(()) is None
 

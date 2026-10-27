@@ -8,9 +8,11 @@ from dataclasses import dataclass
 from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
+from ._postgres_arrays import column_array_element
 from ._sql_placeholders import parse_indexed_statement, placeholder_index
 from .case import Case
 from .storage_layout import (
+    AttributeContributor,
     ColumnSlot,
     DocumentMember,
     RelationalDocument,
@@ -277,9 +279,11 @@ def _transparent_placeholder(expression: Expr, placeholder: exp.Placeholder) -> 
 
 
 def _compared_operand(placeholder: exp.Placeholder) -> Expr | None:
+    """The operand ``placeholder`` is compared with; an array bound through
+    ``any`` is compared element by element with it."""
     current: Expr = placeholder
     parent = current.parent
-    while isinstance(parent, (exp.Cast, exp.Paren)):
+    while isinstance(parent, (exp.Cast, exp.Paren, exp.Any)):
         current = parent
         parent = current.parent
     if isinstance(parent, (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)):
@@ -292,6 +296,84 @@ def _compared_operand(placeholder: exp.Placeholder) -> Expr | None:
     if isinstance(parent, exp.In) and current in parent.expressions:
         return parent.this
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class ArrayCastMismatch:
+    """A Postgres array parameter not cast to the array of the unmodified type
+    its compared operand compares in; ``cast`` is ``None`` for an uncast one."""
+
+    index: int
+    cast: str | None
+    expected: str
+
+
+def array_cast_mismatches(
+    case: Case, statement: str, binds: Sequence[object]
+) -> tuple[ArrayCastMismatch, ...]:
+    """Every array parameter of the Postgres *statement* whose cast is not the
+    m-dialect *array parameter cast form* of its compared operand: a column's own
+    type, a cast extraction's type, or text for a text extraction. An operand
+    this cannot type is not judged."""
+    tree = parse_indexed_statement(statement, "postgres")
+    if tree is None:
+        return ()
+    mismatches: list[ArrayCastMismatch] = []
+    for array in tree.find_all(exp.Any):
+        parameter = array.this
+        while isinstance(parameter, exp.Paren):
+            parameter = parameter.this
+        comparison = array.parent
+        placeholder = parameter.this if isinstance(parameter, exp.Cast) else parameter
+        index = placeholder_index(placeholder) if isinstance(placeholder, exp.Placeholder) else None
+        if index is None or not isinstance(comparison, exp.EQ):
+            continue
+        operand = comparison.this if array is comparison.expression else comparison.expression
+        expected = _compared_type(case, operand, binds)
+        if expected is None:
+            continue
+        element = _array_element(parameter.to) if isinstance(parameter, exp.Cast) else None
+        if element is None or element.this != expected.this or element.expressions:
+            mismatches.append(
+                ArrayCastMismatch(
+                    index,
+                    None if element is None else element.sql(dialect="postgres").lower(),
+                    expected.sql(dialect="postgres").lower(),
+                )
+            )
+    return tuple(mismatches)
+
+
+def _array_element(data_type: exp.DataType) -> exp.DataType | None:
+    if data_type.this is not exp.DType.ARRAY or len(data_type.expressions) != 1:
+        return None
+    element = data_type.expressions[0]
+    return element if isinstance(element, exp.DataType) else None
+
+
+def _compared_type(case: Case, operand: Expr, binds: Sequence[object]) -> exp.DataType | None:
+    """The unmodified type ``operand`` compares in, where it is a column, a cast,
+    a text extraction, or a guarded or scalar-subquery reading of one."""
+    while isinstance(operand, exp.Paren):
+        operand = operand.this
+    if isinstance(operand, exp.Case) and len(operand.args.get("ifs") or ()) == 1:
+        return _compared_type(case, operand.args["ifs"][0].args["true"], binds)
+    if isinstance(operand, exp.Subquery) and isinstance(operand.this, exp.Select):
+        selected = operand.this.expressions
+        return _compared_type(case, selected[0], binds) if len(selected) == 1 else None
+    if isinstance(operand, exp.Cast):
+        return exp.DataType(this=operand.to.this)
+    if isinstance(operand, exp.Column):
+        slot, _guarded = _column_slot(case, operand, binds)
+        contributor = None if slot is None else slot.contributor
+        if not isinstance(contributor, AttributeContributor):
+            return None
+        neutral_type = case.model.entity(contributor.owner).attribute_by_name(contributor.name)
+        return exp.DataType.build(column_array_element(neutral_type["type"]), dialect="postgres")
+    text_extraction = isinstance(operand, exp.JSONBExtractScalar) or (
+        isinstance(operand, exp.Anonymous) and operand.name.lower() == "jsonb_extract_path_text"
+    )
+    return exp.DataType.build("text") if text_extraction else None
 
 
 def _expression_target(

@@ -218,23 +218,25 @@ list, and `given.apply`), so there is **no positional pairing convention** to le
 At **golden locations** (`then.statements`, the per-step `statements` lists in
 scenario / coherence / attempts / concurrency) `sql` is a **dialect-keyed map**
 (`postgres` / `mariadb`), the dialect texts side by side, and `binds` is authored
-once (bind order is identical across dialects), defaulting to `[]`:
+once wherever the dialects' bind holes agree, defaulting to `[]`:
 
 ```yaml
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?)
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?)   # optional
-      binds: [1, 2, 42]
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.qty > ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.qty > ?   # optional
+      binds: [5]
 ```
 
 **`binds` follows the same scalar-or-dialect-keyed form as `sql`.** The flat array
-above is the authored form wherever the bind holes are shared across dialects
-(every ordinary case). Where the hole structure *diverges* — the structured-document
-extraction, where Postgres carries one bind per JSON path segment while MariaDB
-carries a single `'$.a.b'` path bind (`m-dialect`) — `binds` is a **dialect-keyed
-map** whose keys **MUST** equal that statement's `sql` map's keys (harness-asserted):
+above is the authored form wherever the bind holes are shared across dialects.
+Where the hole structure *diverges* — the structured-document extraction, where
+Postgres carries one bind per JSON path segment while MariaDB carries a single
+`'$.a.b'` path bind (`m-dialect`), or a membership list, which Postgres binds as
+one array and MariaDB as one bind per value (`m-sql`) — `binds` is a
+**dialect-keyed map** whose keys **MUST** equal that statement's `sql` map's keys
+(harness-asserted):
 
 ```yaml
 then:

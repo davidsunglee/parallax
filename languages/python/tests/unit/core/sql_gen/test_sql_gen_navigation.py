@@ -689,10 +689,11 @@ def test_every_scalar_operation_reads_a_shared_join() -> None:
     )
     compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "OrderStatus"))
     assert compiled.statement.sql.endswith(
-        "left join order_item t1 on t1.id = t0.order_item_id where t1.sku in (?) and "
+        "left join order_item t1 on t1.id = t0.order_item_id where "
+        "t1.sku = any(cast(? as text[])) and "
         "t1.quantity between ? and ? and t1.sku like ? and not t1.shipped_on is null"
     )
-    assert compiled.statement.binds == ("A", 1, 9, "S%")
+    assert compiled.statement.binds == (["A"], 1, 9, "S%")
 
 
 def test_distinct_relationships_to_one_entity_open_their_own_joins() -> None:

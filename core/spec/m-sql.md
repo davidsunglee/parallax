@@ -82,7 +82,7 @@ Where canonical compatibility projection needs declared-type information, the
 statement carries compact private metadata over that tuple:
 
 ```text
-BindForm = MANAGED | MANAGED_ARRAY | COMPARISON_TEXT
+BindForm = MANAGED | MANAGED_ARRAY | COMPARISON_TEXT | COMPARISON_TEXT_ARRAY
 
 TypedBindSpan(start, stop, declaredType, form)
 RepeatedTypedBindSpan(start, width, stride, repetitions, declaredType, form)
@@ -111,8 +111,11 @@ calls `encodeWire` only for `MANAGED` and `MANAGED_ARRAY` spans, emits
 `COMPARISON_TEXT` values as the already-canonical Wire strings they represent,
 applies sparse overrides, and unwraps document values. A `MANAGED_ARRAY` bind is
 one ordered array of members of the declared type, and projects as a JSON array
-of each element's `encodeWire` under that type, in order. It never infers a
-`NeutralType` from a runtime carrier.
+of each element's `encodeWire` under that type, in order. A
+`COMPARISON_TEXT_ARRAY` bind is one ordered array of the comparison texts a
+text-compared document extraction is compared with, and projects as a JSON array
+of those strings, in order. It never infers a `NeutralType` from a runtime
+carrier.
 An unannotated bind in a publicly constructible statement may pass through only
 when it is already an ordinary Wire Value or a document wrapper; any other
 carrier is a SQL-generation error rather than a guessed encoding.
@@ -469,8 +472,8 @@ left-to-right.
 | `startsWith`/`endsWith`/`contains` | `t0.col like ?` (affix pattern in the bind) |
 | `like … escape` (literal wildcard) | `t0.col like ? escape ?` |
 | case-insensitive string | `lower(t0.col) like lower(?)` |
-| `in` | `t0.col in (?, ?, …)` |
-| `notIn` | `not t0.col in (?, ?, …)` |
+| `in` | `t0.col = any(cast(? as <type>[]))` (one array bind; see below) |
+| `notIn` | `not t0.col = any(cast(? as <type>[]))` |
 | `and` | operands joined by ` and ` |
 | `or` | operands joined by ` or ` |
 | `not` | `not <operand>`; `not (<operand>)` when the operand is an `and` or `or` |
@@ -501,6 +504,21 @@ standing in for the `narrow` in a concrete table's branch is parenthesized when
 it is an `and` or `or`, so the narrowing stays one term, as its tag-guarded form
 does, and a `not` over it negates it whole.
 
+An authored `in` or `notIn` binds its whole list as **one array parameter** on
+Postgres: `t0.col = any(cast(? as <type>[]))`, under a leading `not` for `notIn`,
+whose bind is the list's values in list order. The cast names the type the
+subject compares in, through the `m-dialect` **array parameter cast form** — the
+column's own type, or, for a document extraction, the type its typed cast form
+casts to and otherwise text — so the comparison stays same-typed however the
+driver types the array. The statement's text and bind arity are therefore
+independent of the list's length. The elements are managed values of the
+subject's declared type (`MANAGED_ARRAY`), or the comparison texts a
+text-compared extraction compares with (`COMPARISON_TEXT_ARRAY`). MariaDB has no
+array parameter and renders `t0.col in (?, ?, …)` with one placeholder and bind
+per value. A list is never empty (`m-predicate`); no dialect array-binds an empty
+one, since `not t0.col = any(…)` over an empty array is true even for a null
+subject, which `notIn` excludes.
+
 A framework-generated child-level membership carries a **deferred key set**
 rather than an authored list. Its statement is compiled once with one template
 hole and rendered when the distinct parent keys are known. Postgres renders
@@ -512,8 +530,7 @@ MariaDB renders
 `t0.col in (?, ..., ?)` with one placeholder and bind per key. Other predicate
 binds retain their authored order around the rendered key-set bind(s). An empty
 gathered key set issues no child statement, so no dialect renders an empty
-membership list. Authored `in` and `notIn` predicates retain the ordinary forms
-in the table and are not array-bound on Postgres.
+membership list.
 
 ### Normalization notes (the surprising fixed points)
 
@@ -2015,8 +2032,8 @@ differ per dialect (`m-dialect`):
 | `greaterThan(vo.geo.num, v)` (numeric) | `cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) > ?` | `cast(json_value(t0.address, ?) as double) > ?` |
 | `greaterThanEquals` / `lessThan` / `lessThanEquals` | as `greaterThan`, with `>=` / `<` / `<=` | as `greaterThan`, with `>=` / `<` / `<=` |
 | `between(vo.geo.num, lo, hi)` (numeric) | `cast(jsonb_extract_path_text(t0.address, ?, ?) as double precision) between ? and ?` | `cast(json_value(t0.address, ?) as double) between ? and ?` |
-| `in(vo.field, [v, …])` | `jsonb_extract_path_text(t0.address, ?) in (?, …)` | `json_value(t0.address, ?) in (?, …)` |
-| `notIn(vo.field, [v, …])` | `not jsonb_extract_path_text(t0.address, ?) in (?, …)` | `not json_value(t0.address, ?) in (?, …)` |
+| `in(vo.field, [v, …])` | `jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))` | `json_value(t0.address, ?) in (?, …)` |
+| `notIn(vo.field, [v, …])` | `not jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))` | `not json_value(t0.address, ?) in (?, …)` |
 | `like(vo.field, p)` | `jsonb_extract_path_text(t0.address, ?) like ?` | `json_value(t0.address, ?) like ?` |
 | `notLike(vo.field, p)` | `jsonb_extract_path_text(t0.address, ?) not like ?` | `json_value(t0.address, ?) not like ?` |
 | `startsWith` / `endsWith` / `contains` | as `like`, the affix pattern bound (plus `escape ?` when escaping changed it) | as `like`, identically |
@@ -2086,9 +2103,11 @@ numeric order; over a type whose canonical spelling already orders as text they
 compare the extraction directly. `between` follows the same rule and lowers to **one**
 `<extraction> between ? and ?` — never a pair of
 comparisons (`m-predicate`) — binding the JSON path first, then `lower`, then
-`upper`. `in` lowers the membership to `<extraction> in (?, …)` — the JSON
-path bind(s) first, then one bind per list value in `values` order — and
-`notIn` to the same fragment under a **leading `not`**, adding no bind.
+`upper`. `in` lowers the membership over the extraction — the cast extraction for
+a casting type — to Postgres `<extraction> = any(cast(? as <type>[]))` and MariaDB
+`<extraction> in (?, …)`: the JSON path bind(s) first, then the list in `values`
+order, as one array bind on Postgres and one bind per value on MariaDB. `notIn`
+is the same fragment under a **leading `not`**, adding no bind.
 
 The five string predicates apply **no** cast — their leaf is `String` by the
 non-string-member rule (`m-predicate`), so the extraction is already the text they
@@ -2179,7 +2198,7 @@ as an error or a spurious element. So the canonical fragment carries an
 | bare `none(Class.vo.arr)` (empty-or-absent) | `not exists (select 1 from jsonb_array_elements(<arr>) t1)` | `not coalesce(<g> and json_length(t0.address, ?) > ?, ?)` |
 | `any(Class.vo.arr, eq(field, v))` | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) = ?)` | `<g> and json_contains(t0.address, ?, ?)` |
 | `any(Class.vo.arr, between(field, lo, hi))` | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) between ? and ?)` | — outside the containment golden; reject per `m-dialect` |
-| `any(Class.vo.arr, notIn(field, [v, …]))` | `exists (select 1 from jsonb_array_elements(<arr>) t1 where not jsonb_extract_path_text(t1.value, ?) in (?, …))` | — outside the containment golden; reject per `m-dialect` |
+| `any(Class.vo.arr, notIn(field, [v, …]))` | `exists (select 1 from jsonb_array_elements(<arr>) t1 where not jsonb_extract_path_text(t1.value, ?) = any(cast(? as text[])))` | — outside the containment golden; reject per `m-dialect` |
 | `any(Class.vo.arr, startsWith(field, s))` | `exists (select 1 from jsonb_array_elements(<arr>) t1 where jsonb_extract_path_text(t1.value, ?) like ?)` | — outside the containment golden; reject per `m-dialect` |
 | `any(Class.vo.arr, <conjunction>)` (one element) | one `exists` with every element predicate on the **same** `t1` | `<g> and json_contains(t0.address, ?, ?)` with a candidate object carrying every field |
 | `none(Class.vo.arr, <compound>)` (no element) | `not exists (select 1 from jsonb_array_elements(<arr>) t1 where <compound on t1>)` | `not coalesce(<g> and json_contains(t0.address, ?, ?), ?)` |
@@ -2276,7 +2295,8 @@ classified at publication rather than used as ordinary result witnesses.
 A range, a negated membership, or a string predicate inside a quantifier's
 `where` composes the same way. The bind order is the guarded unnest's own binds first, then the
 element path segment(s), then the predicate's own binds in authored order — `lower`
-then `upper` for a range, one per list value for a membership, the pattern (then the
+then `upper` for a range, the list for a membership (one array bind on Postgres),
+the pattern (then the
 escape character, when escaping applies) for a string predicate. Because the whole
 range, list, or pattern rides **one** element predicate on **one** alias, a single
 element must satisfy it (`m-predicate`):
@@ -2294,9 +2314,9 @@ element must satisfy it (`m-predicate`):
     postgres: [phones, 'array', phones, '[]', number, '555-1%']
 # any(Customer.address.phones, notIn(type, [work])):
 - sql:
-    postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where not jsonb_extract_path_text(t1.value, ?) in (?))
+    postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where not jsonb_extract_path_text(t1.value, ?) = any(cast(? as text[])))
   binds:
-    postgres: [phones, 'array', phones, '[]', type, work]
+    postgres: [phones, 'array', phones, '[]', type, [work]]
 ```
 
 The MariaDB `json_contains` golden expresses **equality/containment** element

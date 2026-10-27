@@ -337,10 +337,12 @@ def _predicate_key(predicate: ResolvedPredicate) -> object:  # noqa: C901 - exha
                 _position_key(position),
             )
         case ResolvedMembership(op=op, member=member, values=values, position=position):
+            # Emptiness and the elements' distinct structures, not their number:
+            # a nonempty list renders into its template whatever its length.
             operands = (
                 values
                 if isinstance(values, DeferredKeySet)
-                else tuple(_operand_key(value) for value in values)
+                else frozenset(_operand_key(value) for value in values)
             )
             return ResolvedMembership, op, member.identity, operands, _position_key(position)
         case ResolvedStringMatch(
