@@ -34,7 +34,7 @@ def open_the_shop_database(
     return connect(
         adapter,
         model,
-        read_plan_cache_capacity=64,
+        read_plan_cache_capacity=512,
         lifecycle_provider=LoggingLifecycleProvider(logging.getLogger("shop.database")),
     )
 ```
@@ -58,7 +58,7 @@ process and close at the end. Each setting here has a section of its own:
   lifecycle guide on [where the password lives](../postgresql-lifecycle.md#where-the-password-lives).
 - **Read plans.** Planning a query, from its predicate and includes to the SQL for each
   level, is work a root keeps and reuses. `read_plan_cache_capacity` sets how many plans
-  it keeps, 16 by default; raise it when a service runs more distinct queries than that,
+  it keeps, 128 by default; raise it when a service runs more distinct queries than that,
   or pass 0 to plan every read afresh. The
   [Python execution binding](../../spec/execution.md#models-roots-and-scopes) defines
   what makes two reads share a plan.

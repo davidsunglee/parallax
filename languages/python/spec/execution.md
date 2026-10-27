@@ -39,7 +39,7 @@ adapter with the credential source and TLS mode required for IAM authentication.
 
 `read_plan_cache_capacity` controls per-root reuse of immutable read plans. It
 must be a nonnegative exact built-in `int`; invalid values raise `ValueError`
-before the adapter runtime opens. The default is `16`, and zero disables reuse
+before the adapter runtime opens. The default is `128`, and zero disables reuse
 between deliveries while preserving the normal planning path. A positive value
 bounds a true least-recently-used cache by entry count. Concurrent cold requests
 for the same key share one build and its success or failure; failures are not

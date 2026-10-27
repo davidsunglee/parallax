@@ -170,7 +170,9 @@ def test_different_query_values_share_one_read_plan_but_result_forms_do_not() ->
     assert _shares_preparation(other_value, first)
     assert (_root(first)[0].statement.binds, _root(other_value)[0].statement.binds) == ((1,), (2,))
     assert _root(row_form)[1] is not _root(first)[1]
-    assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(16, 2, 1, 2, 0)
+    assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(
+        _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 2, 1, 2, 0
+    )
 
 
 def _match_query(name: str) -> ResolvedObjectQuery:
@@ -201,7 +203,9 @@ def test_matches_with_different_operands_on_one_relationship_share_one_template(
     (ada_read, _), (bob_read, _) = _root(ada), _root(bob)
     assert ada_read.statement.sql == bob_read.statement.sql
     assert (ada_read.statement.binds, bob_read.statement.binds) == (("Ada",), ("Bob",))
-    assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(16, 1, 1, 1, 0)
+    assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(
+        _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 1, 1, 1, 0
+    )
 
 
 def test_equal_dialect_values_with_distinct_identities_do_not_share_a_read_plan() -> None:
@@ -827,7 +831,9 @@ def test_concurrent_waiters_compare_no_family_keys(
 
     assert all(_shares_preparation(value, prepared[0]) for value in prepared)
     assert verdicts == [False]
-    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 2, 7, 2, 0)
+    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(
+        _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 2, 7, 2, 0
+    )
 
 
 def test_equal_coordinate_values_of_distinct_exact_types_keep_cold_and_warm_binds() -> None:
@@ -1059,7 +1065,9 @@ def test_cache_hits_render_their_own_values_outside_the_cache_lock(
         assert statement == _root(_plan(uncached, valued(value), model=model))[0].statement
         assert statement.execution_value_positions() == ()
     assert statements[0].binds != statements[1].binds
-    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 1, 2, 1, 0)
+    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(
+        _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 1, 2, 1, 0
+    )
 
 
 def test_a_hit_renders_after_its_entry_is_evicted(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1121,7 +1129,9 @@ def test_callers_of_one_pending_key_each_render_their_own_values(
         expected = _root(_plan(uncached_planner, valued(value), model=model))[0].statement
         assert _root(delivered)[0].statement == expected
     assert len({id(delivered._schema) for delivered in plans}) == 1
-    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 1, 3, 1, 0)
+    assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(
+        _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY, 1, 3, 1, 0
+    )
 
 
 def test_capacity_zero_compiles_its_root_concretely_and_defers_only_child_keys(
@@ -1572,6 +1582,13 @@ def test_public_capacity_zero_disables_cross_delivery_reuse_without_bypassing_pl
         database.find(Order.where(Order.id == 1)).result()
 
     assert compiled == [expected_compilation] * (2 if capacity == 0 else 1)
+
+
+def test_a_root_composed_without_a_capacity_bounds_its_cache_by_the_default() -> None:
+    with Database.connect(ScriptedAdapter(), ORDERS_MODEL) as root:
+        statistics = root._resources.planner._statistics()
+
+    assert statistics.capacity == _read_plan.DEFAULT_READ_PLAN_CACHE_CAPACITY
 
 
 @pytest.mark.parametrize("capacity", [True, -1, 1.5])
