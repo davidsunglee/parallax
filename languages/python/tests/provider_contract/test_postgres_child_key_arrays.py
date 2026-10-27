@@ -1,9 +1,9 @@
 """A delivered child level's key array, as the server plans it.
 
-The driver types an untyped integer array by its largest element, so small keys
-would reach a wider key column as ``smallint[]``. Each level is planned by the
-server with the binds the read delivered, and again with the cast removed, which
-shows what the cast is holding the comparison against.
+The adapter binds every integer array as ``bigint[]``, so keys would reach a
+narrower key column cross-typed. Each level is planned by the server with the
+binds the read delivered, and again with the cast removed, which shows what the
+cast is holding the comparison against.
 """
 
 from __future__ import annotations
@@ -94,4 +94,4 @@ def test_a_child_level_compares_small_keys_as_an_array_of_the_key_type(
 
     assert _planned_array(profile_run, statement.sql, statement.binds).endswith(planned)
     uncast = statement.sql.replace(cast_array, "?")
-    assert _planned_array(profile_run, uncast, statement.binds).endswith("::smallint[])")
+    assert _planned_array(profile_run, uncast, statement.binds).endswith("::bigint[])")

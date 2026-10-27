@@ -16,6 +16,7 @@ from __future__ import annotations
 import decimal
 import gc
 import json
+import struct
 from collections.abc import Callable, Sequence
 from types import FrameType, FunctionType, ModuleType, SimpleNamespace
 from typing import Any, cast
@@ -101,6 +102,10 @@ from tests.unit.postgres._native_pipeline_support import (
 # own internals, so grading them under any other dialect would grade something
 # the adapter never runs.
 _DIALECT = PostgresAdapter.dialect
+
+
+class _IntSubclass(int):
+    """An ``int`` that is not exactly one."""
 
 
 def test_public_surface_is_the_adapter_its_options_and_this_engines_isolation_spelling() -> None:
@@ -452,6 +457,7 @@ def test_adapter_registers_boundary_value_adapters() -> None:
         ("jsonb", connection_module._DocumentJsonbLoader),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
         ("jsonb", connection_module._DocumentJsonbBinaryLoader),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
         (TemporalBound, connection_module._NativeInfinityDumper),  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
+        (connection_module._Int8Array, connection_module._Int8ArrayBinaryDumper),  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
     ]
 
 
@@ -484,6 +490,84 @@ def test_the_open_bound_dumper_is_registered_on_the_connection_alone() -> None:
     assert connection.adapters.get_dumper(TemporalBound, PyFormat.AUTO) is dumper
     assert postgres.adapters.get_dumper(TemporalBound, PyFormat.AUTO) is not dumper
     assert AdaptersMap(postgres.adapters).get_dumper(TemporalBound, PyFormat.AUTO) is not dumper
+
+
+def _int8_array(values: Sequence[int]) -> bytes:
+    """The binary ``int8[]`` wire form of a one-dimensional array without nulls."""
+    head = struct.pack("!IIIII", 1, 0, 20, len(values), 1)
+    return head + b"".join(struct.pack("!iq", 8, value) for value in values)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        pytest.param([7], id="one"),
+        pytest.param([1, 2, 42], id="small"),
+        pytest.param([-1, 0, 2**31, -(2**31) - 1], id="negative-and-beyond-int32"),
+        pytest.param([-(2**63), 2**63 - 1], id="int8-bounds"),
+    ],
+)
+def test_an_integer_list_binds_as_one_binary_int8_array_whatever_its_magnitudes(
+    values: list[int],
+) -> None:
+    connection = _FakeConnection()
+    _adapter(connection)
+
+    (adapted,) = adapt_binds([values])
+    assert type(adapted) is connection_module._Int8Array  # pyright: ignore[reportPrivateUsage] - the bound carrier is this test's subject
+    assert adapted == values
+    assert adapted is not values
+    assert _dumped(connection.adapters, values) == (_int8_array(values), 1016, Format.BINARY)
+
+
+@pytest.mark.parametrize(
+    "bind",
+    [
+        pytest.param([True, False], id="bool-list"),
+        pytest.param([1.5, 2.0], id="float-list"),
+        pytest.param([decimal.Decimal(1)], id="decimal-list"),
+        pytest.param(["1", "2"], id="string-list"),
+        pytest.param([], id="empty-list"),
+        pytest.param((1, 2), id="int-tuple"),
+        pytest.param(1, id="int"),
+        pytest.param(True, id="bool"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_every_other_bind_passes_through_bind_adaptation_unchanged(bind: object) -> None:
+    (adapted,) = adapt_binds([bind])
+    assert adapted is bind
+
+
+@pytest.mark.parametrize(
+    ("values", "refusal"),
+    [
+        pytest.param([1, True], TypeError, id="bool"),
+        pytest.param([1, None], TypeError, id="null"),
+        pytest.param([1, 2.0], TypeError, id="float"),
+        pytest.param([1, decimal.Decimal(2)], TypeError, id="decimal"),
+        pytest.param([1, "2"], TypeError, id="string"),
+        pytest.param([1, _IntSubclass(2)], TypeError, id="int-subclass"),
+        pytest.param([1, 2**63], ValueError, id="above-int8"),
+        pytest.param([-(2**63) - 1, 1], ValueError, id="below-int8"),
+    ],
+)
+def test_an_integer_list_refuses_an_element_it_cannot_bind_as_int8(
+    values: list[object], refusal: type[Exception]
+) -> None:
+    with pytest.raises(refusal, match="integer array bind"):
+        adapt_binds([values])
+
+
+def test_the_integer_array_dumper_is_registered_on_the_connection_alone() -> None:
+    connection = _FakeConnection()
+    _adapter(connection)
+    carrier = connection_module._Int8Array  # pyright: ignore[reportPrivateUsage] - the bound carrier is this test's subject
+    dumper = connection_module._Int8ArrayBinaryDumper  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
+
+    assert connection.adapters.get_dumper(carrier, PyFormat.AUTO) is dumper
+    assert postgres.adapters.get_dumper(carrier, PyFormat.AUTO) is not dumper
+    assert AdaptersMap(postgres.adapters).get_dumper(carrier, PyFormat.AUTO) is not dumper
 
 
 @pytest.mark.parametrize(
