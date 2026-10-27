@@ -14,6 +14,7 @@ __all__ = [
     "CreateTable",
     "DropIndex",
     "IndexDefinition",
+    "IntervalCheck",
     "PhysicalColumn",
     "PhysicalOperation",
     "RestateColumnDomain",
@@ -55,8 +56,18 @@ class IndexDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class IntervalCheck:
+    """One temporal axis's named requirement that ``start`` precede ``end``."""
+
+    name: str
+    start: Column
+    end: Column
+
+
+@dataclass(frozen=True, slots=True)
 class CreateTable:
-    """Create one whole Table: every target Column and the derived primary key.
+    """Create one whole Table: every target Column, the derived primary key, and
+    the interval checks of its temporal axes.
 
     Authored secondary Indices are deliberately excluded — each is its own
     separately named statement, so a violation reports a name a rollout can
@@ -66,6 +77,7 @@ class CreateTable:
     table: Table
     columns: tuple[PhysicalColumn, ...]
     primary_key: tuple[Column, ...]
+    interval_checks: tuple[IntervalCheck, ...]
     caused_by: tuple[EvolutionOperation, ...]
 
 

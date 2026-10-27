@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from parallax.core.dialect import ColumnDdl, Dialect, IndexColumnDdl, Unsupported
+from parallax.core.dialect import (
+    ColumnDdl,
+    Dialect,
+    IndexColumnDdl,
+    IntervalCheckDdl,
+    Unsupported,
+)
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
     CreateIndex,
@@ -23,6 +29,14 @@ def render(operation: PhysicalOperation, dialect: Dialect) -> str | Unsupported:
                 dialect.quote(operation.table.name),
                 [_column(column, dialect) for column in operation.columns],
                 [dialect.quote(column.name) for column in operation.primary_key],
+                [
+                    IntervalCheckDdl(
+                        name=dialect.quote(check.name),
+                        start=dialect.quote(check.start.name),
+                        end=dialect.quote(check.end.name),
+                    )
+                    for check in operation.interval_checks
+                ],
             )
         case AddColumn():
             return dialect.add_column(

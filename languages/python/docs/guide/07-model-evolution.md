@@ -208,6 +208,9 @@ Creating a unique index checks the rows already stored: if any break the new rul
 statement fails, and you don't publish the release. The full result of `schema_delta`
 also lists each index it creates in `created_indices`, with the physical name a later
 uniqueness violation reports, so keep it as a record of what each rollout created.
+A temporal table the delta creates carries its interval checks inline; a delta never
+adds them to a table that already exists (see
+[Temporal interval checks](../postgresql-lifecycle.md#temporal-interval-checks)).
 
 ## Rolling out a new model
 

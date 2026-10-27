@@ -563,7 +563,7 @@
         },
         "returnedRows": {"type": "integer", "minimum": 0},
         "affectedRows": {"type": "integer", "minimum": 0},
-        "category": {"enum": ["uniqueViolation", "deadlock", "lockWaitTimeout", null]},
+        "category": {"enum": ["uniqueViolation", "constraintViolation", "deadlock", "lockWaitTimeout", null]},
         "code": {"type": "string", "minLength": 1}
       },
       "allOf": [
@@ -1286,7 +1286,7 @@
         "errorClass": {
           "description": "The neutral `m-db-error` category the final trigger statement's raised failure classified to on an error-shape run, compared against the case's `then.errorClass`. Distinct from the application-lifecycle `errors` observation (which has no native-code witness). Optional and additive — only error-shape runs report it, and existing run outputs stay valid.",
           "type": "string",
-          "enum": ["uniqueViolation", "deadlock", "lockWaitTimeout"]
+          "enum": ["uniqueViolation", "constraintViolation", "deadlock", "lockWaitTimeout"]
         },
         "nativeCode": {
           "description": "The preserved native code witness paired with `errorClass` (Postgres SQLSTATE string / MariaDB vendor errno integer), compared against the case's per-dialect `then.nativeCode`.",

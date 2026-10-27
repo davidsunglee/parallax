@@ -1645,9 +1645,9 @@
           "minimum": 0
         },
         "errorClass": {
-          "description": "error cases (m-db-error). The neutral m-db-error error category a triggered DB error MUST classify to. uniqueViolation = duplicate-key; deadlock = deadlock or serialization failure (retriable); lockWaitTimeout = blocked past the lock-wait budget.",
+          "description": "error cases (m-db-error). The neutral m-db-error error category a triggered DB error MUST classify to. uniqueViolation = duplicate-key; constraintViolation = a check or exclusion constraint; deadlock = deadlock or serialization failure (retriable); lockWaitTimeout = blocked past the lock-wait budget.",
           "type": "string",
-          "enum": ["uniqueViolation", "deadlock", "lockWaitTimeout"]
+          "enum": ["uniqueViolation", "constraintViolation", "deadlock", "lockWaitTimeout"]
         },
         "nativeCode": {
           "description": "error cases (m-db-error). The native code each dialect's driver MUST surface for this error, witnessing the divergence the classifier absorbs: Postgres a SQLSTATE string (e.g. \"23505\"), MariaDB a vendor errno (e.g. 1062). `errorClass` is the single dialect-neutral seam output; this is the per-dialect input.",
@@ -2513,7 +2513,7 @@
         },
         "returnedRows": {"type": "integer", "minimum": 0},
         "affectedRows": {"type": "integer", "minimum": 0},
-        "category": {"enum": ["uniqueViolation", "deadlock", "lockWaitTimeout", null]},
+        "category": {"enum": ["uniqueViolation", "constraintViolation", "deadlock", "lockWaitTimeout", null]},
         "code": {"type": "string", "minLength": 1}
       },
       "allOf": [

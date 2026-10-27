@@ -61,6 +61,7 @@ from parallax.core.storage_layout._facet import (
 )
 from parallax.core.storage_layout._roles import DirectRoles
 from parallax.core.storage_layout._rules import STORAGE_LAYOUT_MODULE
+from parallax.core.storage_layout._temporal import temporal_history_constraints
 
 __all__ = [
     "MODEL_COMPILER",
@@ -476,12 +477,12 @@ def _layout(
     audit_designations: frozenset[AttributeIdentity],
     applicability_intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]],
 ) -> TableLayout:
-    """``group``'s Table with its slots and every Index mapped onto them.
+    """``group``'s Table with its slots, every Index, and its temporal constraints.
 
     The family root declares both the key and the axes, so the Index it derives
     is the whole physical key of every Table the family maps — a shared
     table-per-hierarchy Table and each table-per-concrete-subtype concrete Table
-    alike.
+    alike — and its axes are every such Table's temporal constraints.
     """
     attribute_applicability, value_object_applicability = _applicability(index, group.row_owners)
     row_owners = _interned(set(group.row_owners), applicability_intern)
@@ -575,6 +576,9 @@ def _layout(
         None if primary_key is None else _physical_index(group.table, primary_key, by_contributor),
         tuple(mapped for mapped in secondary if mapped is not None),
         _placements(group, roles, by_contributor),
+        temporal_history_constraints(
+            group.table, _entity(index, group.root).declared_as_of_axes, by_contributor
+        ),
     )
 
 

@@ -20,7 +20,12 @@ from pymysql.constants import FIELD_TYPE
 from reference_harness._case_execution import CaseExecution
 from reference_harness._declared_contributor import TEMPORAL_INFINITY
 from reference_harness.case import Case, Model, load_model
-from reference_harness.ddl_builder import _column_type, ddl_for, quote_identifier
+from reference_harness.ddl_builder import (
+    _column_type,
+    ddl_for,
+    interval_check_name,
+    quote_identifier,
+)
 from reference_harness.document_codec import decode_stored
 from reference_harness.providers.mariadb import (
     _INFINITY_SENTINEL,
@@ -108,6 +113,46 @@ def test_mariadb_ddl_derives_from_descriptor() -> None:
     assert "in_z datetime(6)" in create
     assert "out_z datetime(6)" in create
     assert "val decimal(18,2)" in create
+
+
+def test_postgres_checks_each_temporal_axis_inline_and_mariadb_checks_none() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/position.yaml")
+    postgres, *_indexes = ddl_for(model, "postgres")
+    mariadb, *_indexes = ddl_for(model, "mariadb")
+    assert (
+        "constraint pxc_valid_position_9c4697753a4cc41ed976ab6ee1f1f88b check (from_z < thru_z)"
+        in postgres
+    )
+    assert "constraint pxc_tx_position_05e7b5d0b3866810c782a91a8d1f7971 check (in_z < out_z)" in (
+        postgres
+    )
+    assert "check" not in mariadb
+
+
+def test_every_table_a_temporal_family_maps_carries_the_roots_checks() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/rate.yaml")
+    created = {ddl.split()[2]: ddl for ddl in ddl_for(model, "postgres")}
+    assert (
+        "constraint pxc_tx_deposit_rate_414fd0086fa88b25167aa860be1092ee"
+        in (created["deposit_rate"])
+    )
+    assert (
+        "constraint pxc_valid_loan_rate_e484575d67cc8dc583c0e35f7e6bc9a2" in (created["loan_rate"])
+    )
+    payment = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
+    assert all("check" not in ddl for ddl in ddl_for(payment, "postgres"))
+
+
+def test_interval_check_names_shorten_only_their_readable_prefix() -> None:
+    assert interval_check_name("balance", "tx", "in_z", "out_z") == (
+        "pxc_tx_balance_c54215aec2277be436e89b2c6506715d"
+    )
+    assert interval_check_name("a" * 80, "tx", "in_z", "out_z") == (
+        "pxc_tx_aaaaaaaaaaaaaaaaaaaaaaa_d4730c4aedc190f433484ce5737639c4"
+    )
+    assert interval_check_name("Ωμέγα", "tx", "in_z", "out_z") == (
+        "pxc_tx_table_59f0e8b3fa6d6ad94c6e41195b5b8032"
+    )
 
 
 # --- identifier quoting (the divergent quote character) ----------------------

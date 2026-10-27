@@ -70,8 +70,9 @@ private algebra. It is the closed choice below and it never crosses the module's
 boundary in either direction.
 
 ```text
-CreateTable          the complete target Table Layout: every target Column and the
-                     derived primary key inline, EXCLUDING authored secondary Indices
+CreateTable          the complete target Table Layout: every target Column, the
+                     derived primary key, and each temporal axis's interval check
+                     inline, EXCLUDING authored secondary Indices
 AddColumn            one target Column Slot
 RestateColumnDomain  the earlier and later physical Column facts, restating a
                      surviving Column's value domain as the later edition's
@@ -81,7 +82,8 @@ DropIndex            one earlier physical Index definition
 
 Drop-table, drop-column, rename, primary-key-alteration, and arbitrary-SQL
 variants are deliberately absent, because no Unilateral Evolution can produce
-one.
+one. So is adding a constraint to a Table the earlier edition already held: see
+*Temporal interval checks* below.
 
 `RestateColumnDomain` is not a generic column alteration either. It is legal in
 exactly two shapes, and both leave every stored value where it is:
@@ -210,10 +212,27 @@ APPLIED.
 Statements emitted for one physical operation stay contiguous and preserve
 renderer order.
 
+## Temporal interval checks
+
+A created temporal Table carries, inline in its `create table`, one named check
+per temporal axis requiring the axis's start Column to precede its end Column:
+Transaction Time on every temporal Table, and Valid Time too on a Bitemporal
+one. Each check's name, operands, and the Table carrying it are the Table
+Layout's `temporalConstraints` (`m-storage-layout`), read rather than derived
+here; the checks are listed in canonical axis order, Valid Time first. Spelling
+them, and whether a dialect's generated tables carry them at all, is
+`m-dialect`'s.
+
+A check is local to its Table, so its name enters no Physical Index Name census
+and no created-Index provenance. A Table the earlier edition already held gains
+no check: the delta states a known edition and cannot know whether stored rows
+satisfy one, so adopting the checks on an existing Table is a manual migration
+that validates its data first. Equal models still give an empty Schema Delta.
+
 ## Physical Index Names
 
-Fresh provisioning creates each Table with all of its target Columns and its
-derived primary key, then creates **every** authored secondary Index — unique and
+Fresh provisioning creates each Table with all of its target Columns, its
+derived primary key, and its interval checks, then creates **every** authored secondary Index — unique and
 non-unique alike — as a separate, explicitly named statement. An incremental
 delta uses the same Index form. The derived primary-key Index is never a separate
 statement: it is the Table's key.

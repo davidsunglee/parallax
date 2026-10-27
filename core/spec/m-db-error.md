@@ -10,7 +10,8 @@ reasons in categories.
 ## Neutral categories and call-site predicates
 
 The categories are a closed set: `uniqueViolation` (duplicate key / unique-index
-violation), `deadlock` (a true deadlock **or** a serialization failure — both
+violation), `constraintViolation` (a row refused by a check or exclusion
+constraint), `deadlock` (a true deadlock **or** a serialization failure — both
 retriable), `lockWaitTimeout` (blocked past the lock-wait budget), plus
 `connectionDead` (reserved).
 
@@ -28,19 +29,25 @@ as predicates defined as category membership — not one stringly-typed method:
   (`category = uniqueViolation`);
 - the lock path asks `isTimedOut` (`category = lockWaitTimeout`).
 
-## The violated Physical Index Name
+`constraintViolation` answers none of them: it is not retriable, and a database
+recognizing one of these codes says nothing about which constraint refused the
+row or why. Such a failure stays the original error; this module translates no
+constraint into a semantic outcome.
 
-A classified error additionally carries the Physical Index Name the violation
-named, or nothing. It is present only when the category is `uniqueViolation`: a
-check or foreign-key constraint reports its own name through the same driver
-field and is not an Index, so nothing else may carry one.
+## The violated constraint name
 
-The name is read from the driver's own **structured diagnostics**. No
-implementation parses the error message. A concrete adapter forwards whatever
-name those diagnostics hold and interprets nothing; this module owns the single
-rule above. A driver whose diagnostics carry no name, or whose detecting path
-named none, yields no violated name at all — which is an ordinary outcome, not a
-defect.
+A classified error additionally carries the name of the constraint the failure
+violated, or nothing. The name is read from the driver's own **structured
+diagnostics**, whatever the category, and no implementation parses the error
+message. A concrete adapter forwards whatever name those diagnostics hold and
+interprets nothing; this module owns the rules below. A driver whose
+diagnostics carry no name, or whose detecting path named none, yields no name at
+all — which is an ordinary outcome, not a defect. An empty name is no name.
+
+The **violated Physical Index Name** is that same name read as an Index. It is
+present only when the category is `uniqueViolation` and a name is: a check,
+exclusion, or foreign-key constraint reports its own name through the same driver
+field and is not an Index, so no other category carries one.
 
 The value is a Physical Index Name as `m-dialect` defines it: any nonempty
 physical identifier. A name the database itself derived for a primary key's
@@ -49,6 +56,10 @@ nothing a rollout created is an ordinary negative correlation. Deciding whether 
 name corresponds to an index a rollout created, and what to do about it, is the
 host's question: it holds its own Schema Delta's created-index provenance and
 compares the two. Nothing in this module or below it consults a rollout.
+
+A `constraintViolation`'s name may be one `m-storage-layout` compiled for a
+temporal table's interval check. The error carries it as reported and is not
+otherwise distinguished from any other check failure.
 
 ## Per-dialect native codes
 
@@ -64,8 +75,15 @@ errno below reports `23000`, and both `1020` and `1205` report the catch-all
 | Category | Postgres (`SQLSTATE`) | MariaDB (errno) |
 |---|---|---|
 | `uniqueViolation` | `23505` | `1062`, `1022`, `1169`, `1859` |
+| `constraintViolation` | `23514`, `23P01` | `4025` |
 | `deadlock` | `40P01`, `40001` | `1213`, `1020` |
 | `lockWaitTimeout` | `55P03` | `1205` |
+
+Postgres reports a check failure as `23514` and an exclusion failure as `23P01`.
+MariaDB reports a check failure as `4025` (`ER_CONSTRAINT_FAILED`) under the
+shared state `23000`, so only the errno separates it from a duplicate key.
+Recognizing a code installs no constraint: which constraints a generated table
+carries is `m-schema-delta`'s and `m-dialect`'s question.
 
 MariaDB reports a duplicate on a table's own unique index under four errnos,
 chosen by which path detected it: `1062` (`ER_DUP_ENTRY`) when the offending key
@@ -100,7 +118,8 @@ into the shared neutral vocabulary above.
 
 ## What the suite pins down
 
-The compatibility suite exercises all three classes on both dialects (cases
+The compatibility suite exercises `uniqueViolation`, `deadlock`, and
+`lockWaitTimeout` on both dialects (cases
 `m-db-error-001`–`m-db-error-011`): a case triggers a real error and asserts the
 neutral category, the per-dialect native code, and the call-site predicate
 partition. `uniqueViolation` cases trigger single-connection (a duplicate insert /

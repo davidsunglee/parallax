@@ -310,6 +310,16 @@ PhysicalIndex
   declaration: IndexMetadata
   columns: immutable sequence<ColumnSlot>
 
+PhysicalTemporalAxis
+  declaration: AsOfAxisMetadata
+  start: ColumnSlot
+  end: ColumnSlot
+  intervalCheckName: string
+
+TemporalHistoryConstraints
+  transactionAxis: PhysicalTemporalAxis
+  validAxis: PhysicalTemporalAxis | absent
+
 TableLayout
   table: Table
   columns: immutable sequence<ColumnSlot>
@@ -317,6 +327,7 @@ TableLayout
   primaryKeyIndex: PhysicalIndex | absent
   indexes: immutable sequence<PhysicalIndex>
   uniqueKeys: immutable sequence<PhysicalIndex>
+  temporalConstraints: TemporalHistoryConstraints | absent
   column(Column) -> ColumnSlot | absent
   columnPosition(Column) -> integer | absent
   contribution(ColumnContributor) -> ColumnSlot | absent
@@ -643,6 +654,59 @@ Document-path indexes, expression indexes, generated columns, and
 provider-native document indexes are outside this contract; adding one requires
 its own design rather than a looser index rule.
 
+## Temporal history constraints
+
+`temporalConstraints` is a temporal Table's own constraint definitions, compiled
+once with the layout and retained for the accepted model's lifetime; it is absent
+exactly when the family mapped to the Table declares no As-Of Axis. Each `PhysicalTemporalAxis`
+references the family root's accepted `AsOfAxisMetadata` and selects the Table's
+existing slots for its start and end Attributes, resolved through the Table's own
+contributor lookup exactly as the physical primary key's components are. So a
+table-per-hierarchy Table and every table-per-concrete-subtype concrete Table
+carry the root's axes over their own slots, and no consumer infers an axis from a
+Column tier, a Column spelling, or the physical key.
+
+Each axis carries one **interval check**: every row of the Table has `start <
+end` on that axis, so no stored interval is empty or inverted. `transactionAxis`
+is present on every temporal Table and `validAxis` on a Bitemporal one. The
+checks constrain each row alone; they say nothing about how two rows of one
+object relate. Rendering them is `m-schema-delta`'s and `m-dialect`'s.
+
+A check's name is:
+
+```text
+pxc_<kind>_<readable-table-prefix>_<fingerprint>
+kind: tx | valid
+```
+
+The **fingerprint** is the first 128 bits of SHA-256, as 32 lowercase
+hexadecimal characters, over this sequence of UTF-8 fields, each preceded by its
+byte length as four big-endian bytes:
+
+```text
+"pxc-1", Table name, kind,
+operand-group count, then per group: semantics, operand count, each operand Column
+```
+
+An interval check has one operand group, semantics `lt`, whose operands are the
+start Column then the end Column. Prefixing each group with its semantics and
+operand count keeps group boundaries in the digest, and the version field makes
+a later change to what is hashed produce different names by construction. The
+Table name is the raw physical name, never a quoted or schema-qualified
+spelling.
+
+The **readable prefix** is the Table name with every maximal run of characters
+other than ASCII letters and digits replaced by one underscore, surrounding
+underscores trimmed, and ASCII letters lowercased; an empty result becomes
+`table`. Only that prefix is truncated, so that the whole name fits **63 bytes**
+whatever the Dialect, and the trim and empty-result rules apply again after the
+cut. The kind and the fingerprint are never truncated.
+
+Every input is a fact of the check's own physical definition. A change to the
+Table name or an operand Column changes the name; an unrelated Entity or Class
+name, another Table, compilation order, and the model edition do not. Physical
+Index Names are `m-schema-delta`'s separate convention.
+
 ## Entity and position views
 
 The facet exposes table layouts plus selections that reference their existing
@@ -928,12 +992,13 @@ their spellings equals a physical Column.
   Column slot their placements name, in canonical logical placement order.
 - DDL iterates `TableLayout.columns`, applies `effectiveNullable`, selects
   `physicalPrimaryKey`, and renders every other entry of `indexes` over its
-  selected slots; dialects only render the already-selected values. Every
-  constraint it emits comes from an Index: the derived primary-key Index is
+  selected slots; dialects only render the already-selected values. Every key
+  or unique constraint it emits comes from an Index: the derived primary-key Index is
   rendered as the key constraint and each other unique Index as a unique
   constraint, and the two sets are disjoint because Model Formation refuses an
   Entity whose Indices share one name, so no consumer suppresses one constraint
-  because another happens to span the same Columns. The Structured
+  because another happens to span the same Columns. A temporal Table's interval
+  checks come from `temporalConstraints` under their compiled names. The Structured
   Column appears in DDL purely as a consequence of the layout owning one more
   `Document`-tier slot.
 - Fixture loading resolves logical members and derived discriminator values

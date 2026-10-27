@@ -12,6 +12,8 @@ read after an authored Schema Delta be compared against a catalog read after thi
 builder ran. The naming rule is re-derived here from the normative statement
 rather than shared with any implementation: it is the second oracle a delta cell
 is graded against, so a shared derivation would grade the implementation twice.
+The interval checks a PostgreSQL temporal table carries inline are named by
+m-storage-layout's rule, re-derived here on the same terms.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from .storage_layout import (
     derived_primary_key_index,
     is_scalar_collection,
 )
+from .temporality import Axis, temporal_axes
 
 # m-core neutral type -> Postgres column type.
 _POSTGRES_BASE_TYPES = {
@@ -278,12 +281,12 @@ _EMPTY_PREFIX = "index"
 _UNIQUE_MARKER = {True: "unique", False: "non-unique"}
 
 
-def _readable_prefix(fields: Sequence[str]) -> str:
-    """The readable half of a Physical Index Name, from the facts it is derived over.
+def _readable_prefix(fields: Sequence[str], empty: str = _EMPTY_PREFIX) -> str:
+    """The readable half of a derived name, from the facts it is derived over.
 
     ASCII letters lowercase, digits stay, every maximal run of anything else —
     including the boundary between two fields — becomes one underscore, and the
-    result is trimmed. An input keeping nothing at all becomes ``index``.
+    result is trimmed. An input keeping nothing at all becomes ``empty``.
     """
     kept: list[str] = []
     separated = False
@@ -295,7 +298,7 @@ def _readable_prefix(fields: Sequence[str]) -> str:
             kept.append(character.lower())
         else:
             separated = True
-    return "".join(kept) or _EMPTY_PREFIX
+    return "".join(kept) or empty
 
 
 def _fingerprint(fields: Sequence[str]) -> str:
@@ -363,6 +366,28 @@ def physical_index_name(index: _AuthoredIndex, table: str, dialect: str) -> str:
     return f"{_NAME_NAMESPACE}_{kept}_{fingerprint}"
 
 
+# The temporal constraint name grammar (m-storage-layout):
+# `pxc_<kind>_<readable-table>_<fingerprint>`, 63 bytes on every dialect.
+_CONSTRAINT_NAMESPACE = "pxc"
+_CONSTRAINT_VERSION = "pxc-1"
+_CONSTRAINT_NAME_BYTES = 63
+_CONSTRAINT_EMPTY_PREFIX = "table"
+_INTERVAL_CHECK_KIND = {"transaction-time": "tx", "valid-time": "valid"}
+
+
+def interval_check_name(table: str, kind: str, start: str, end: str) -> str:
+    """The interval check ``start < end``'s derived name on ``table``.
+
+    The fingerprint hashes the table, the kind, and one operand group — its
+    ``lt`` semantics and its two ordered columns — each group behind its count.
+    """
+    fingerprint = _fingerprint([_CONSTRAINT_VERSION, table, kind, "1", "lt", "2", start, end])
+    budget = _CONSTRAINT_NAME_BYTES - len(_CONSTRAINT_NAMESPACE) - len(kind) - len(fingerprint) - 3
+    prefix = _readable_prefix([table], _CONSTRAINT_EMPTY_PREFIX)
+    kept = prefix[:budget].strip("_") or _CONSTRAINT_EMPTY_PREFIX
+    return f"{_CONSTRAINT_NAMESPACE}_{kind}_{kept}_{fingerprint}"
+
+
 @dataclass(frozen=True)
 class _Declarations:
     """The authored facts DDL still resolves outside the physical layout.
@@ -374,12 +399,14 @@ class _Declarations:
     contributors: Mapping[ColumnContributor, DeclaredContributor]
     primary_key_indices: tuple[tuple[str, dict[str, Any]], ...]
     authored_indices: tuple[_AuthoredIndex, ...]
+    temporal_axes: tuple[tuple[str, tuple[Axis, ...]], ...]
 
 
 def _declarations(model: Model) -> _Declarations:
     contributors: dict[ColumnContributor, DeclaredContributor] = {}
     primary_key_indices: list[tuple[str, dict[str, Any]]] = []
     authored_indices: list[_AuthoredIndex] = []
+    axes: list[tuple[str, tuple[Axis, ...]]] = []
     for entity in model.entities:
         owner = entity.canonical_name
         definition = entity.definition
@@ -399,6 +426,9 @@ def _declarations(model: Model) -> _Declarations:
         derived = derived_primary_key_index(definition)
         if derived is not None:
             primary_key_indices.append((owner, derived))
+        declared_axes = temporal_axes(definition)
+        if declared_axes:
+            axes.append((owner, declared_axes))
         authored_indices.extend(
             _AuthoredIndex(
                 namespace=definition.get("namespace") or "",
@@ -411,6 +441,7 @@ def _declarations(model: Model) -> _Declarations:
         contributors=contributors,
         primary_key_indices=tuple(primary_key_indices),
         authored_indices=tuple(authored_indices),
+        temporal_axes=tuple(axes),
     )
 
 
@@ -462,6 +493,31 @@ def _index_columns(layout: TableLayout, owner: str, index: Mapping[str, Any]) ->
     return [slot.column for slot in slots if slot is not None]
 
 
+def _interval_checks(layout: TableLayout, declarations: _Declarations, dialect: str) -> list[str]:
+    """The PostgreSQL interval checks of each As-Of Axis ``layout`` carries.
+
+    The family root declares the axes, and each endpoint resolves through the
+    layout's contributor lookup, which reaches a root-declared Attribute from
+    every table the family maps.
+    """
+    clauses = []
+    for owner, axes in declarations.temporal_axes:
+        for axis in axes:
+            start = layout.contribution(AttributeContributor(owner, axis.start.name))
+            end = layout.contribution(AttributeContributor(owner, axis.end.name))
+            if start is None or end is None:
+                continue
+            name = interval_check_name(
+                layout.table, _INTERVAL_CHECK_KIND[axis.dimension], start.column, end.column
+            )
+            clauses.append(
+                f"constraint {quote_identifier(name, dialect)} check "
+                f"({quote_identifier(start.column, dialect)} < "
+                f"{quote_identifier(end.column, dialect)})"
+            )
+    return clauses
+
+
 def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str) -> str:
     """One physical table's ``create table``, keyed inline.
 
@@ -469,7 +525,9 @@ def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str
     authored Index is a separate statement instead, so a unique one is a named
     object a violation can report rather than an anonymous table constraint. The
     layout owns the complete slot sequence and effective physical nullability
-    (m-storage-layout); this only renders selected values per dialect.
+    (m-storage-layout); this only renders selected values per dialect. Only
+    PostgreSQL carries the interval checks: MariaDB's generated tables enforce
+    no temporal constraint natively.
     """
     columns = [_slot_ddl(slot, declarations, dialect) for slot in layout.columns]
 
@@ -479,6 +537,8 @@ def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str
             continue
         quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)
         columns.append(f"primary key ({quoted})")
+    if dialect == "postgres":
+        columns.extend(_interval_checks(layout, declarations, dialect))
 
     column_clause = ",\n  ".join(columns)
     return f"create table {quote_identifier(layout.table, dialect)} (\n  {column_clause}\n)"

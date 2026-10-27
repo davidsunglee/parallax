@@ -50,6 +50,7 @@ from parallax.evolution.schema_delta._physical import (
     CreateTable,
     DropIndex,
     IndexDefinition,
+    IntervalCheck,
     PhysicalColumn,
     PhysicalOperation,
     RestateColumnDomain,
@@ -236,7 +237,9 @@ def _create(
 ) -> Iterator[PhysicalOperation]:
     """One new Table, then each authored Index it holds as its own statement.
 
-    A Table the earlier edition did not have is created whole. An Index created
+    A Table the earlier edition did not have is created whole, its temporal
+    interval checks inline. A Table that survives gains none: its stored rows
+    are the operator's to validate before any check governs them. An Index created
     as part of creating its Table is caused by everything that caused the Table:
     it arrives because the declarations the Table materializes arrived, and no
     Index operation of its own describes it.
@@ -245,6 +248,7 @@ def _create(
         table=layout.table,
         columns=tuple(_physical_column(later.model, slot) for slot in layout.columns),
         primary_key=tuple(slot.column for slot in layout.physical_primary_key),
+        interval_checks=_interval_checks(layout),
         caused_by=causes,
     )
     for definition in definitions:
@@ -253,6 +257,19 @@ def _create(
             name=physical_index_name(definition, dialect),
             caused_by=causes,
         )
+
+
+def _interval_checks(layout: TableLayout) -> tuple[IntervalCheck, ...]:
+    """Each temporal axis's interval check, in canonical axis order."""
+    constraints = layout.temporal_constraints
+    if constraints is None:
+        return ()
+    axes = (constraints.valid_axis, constraints.transaction_axis)
+    return tuple(
+        IntervalCheck(name=axis.interval_check_name, start=axis.start.column, end=axis.end.column)
+        for axis in axes
+        if axis is not None
+    )
 
 
 def _columns(

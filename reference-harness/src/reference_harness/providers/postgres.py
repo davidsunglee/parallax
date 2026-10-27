@@ -39,6 +39,8 @@ POSTGRES_IMAGE = "postgres:18"
 # an unclassified error fails an assertion loudly rather than passing silently.
 _CODES: dict[str, str] = {
     "23505": errors.UNIQUE_VIOLATION,
+    "23514": errors.CONSTRAINT_VIOLATION,  # check_violation
+    "23P01": errors.CONSTRAINT_VIOLATION,  # exclusion_violation
     "40P01": errors.DEADLOCK,
     "40001": errors.DEADLOCK,  # serialization_failure -- retriable, folded into deadlock
     "55P03": errors.LOCK_WAIT_TIMEOUT,  # lock_not_available (SET lock_timeout exceeded)

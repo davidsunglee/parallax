@@ -81,6 +81,7 @@ _CODES: dict[int, str] = {
     1022: errors.UNIQUE_VIOLATION,  # ER_DUP_KEY
     1169: errors.UNIQUE_VIOLATION,  # ER_DUP_UNIQUE
     1859: errors.UNIQUE_VIOLATION,  # ER_DUP_UNKNOWN_IN_INDEX
+    4025: errors.CONSTRAINT_VIOLATION,  # ER_CONSTRAINT_FAILED, a CHECK constraint
     1213: errors.DEADLOCK,  # ER_LOCK_DEADLOCK
     1205: errors.LOCK_WAIT_TIMEOUT,  # ER_LOCK_WAIT_TIMEOUT
     # ER_CHECKREAD: a snapshot-isolation write/write conflict at Repeatable Read,

@@ -236,6 +236,10 @@ synchronized, so that the retries rarely run out.
 The check covers closes only. An insert reads none of the key's stored history, so an
 insert after a termination, made by a clock behind the termination's, still opens a
 milestone overlapping the closed history; so can two transactions filling one gap at once.
+A temporal table Parallax creates on PostgreSQL also refuses an empty or backwards
+interval from any writer, through a check on each row (see
+[Temporal interval checks](../postgresql-lifecycle.md#temporal-interval-checks)); a check
+on one row can't see an overlap with another.
 
 <!-- example: change-a-credit-limit -->
 ```python

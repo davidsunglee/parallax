@@ -37,6 +37,7 @@ __all__ = [
     "DocumentValueAssignment",
     "EncodedJsonKind",
     "IndexColumnDdl",
+    "IntervalCheckDdl",
     "LockMode",
     "PhysicalIndexName",
     "RenderedScalarCell",
@@ -205,6 +206,18 @@ class IndexColumnDdl:
     column: str
     neutral_type: NeutralType
     max_length: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class IntervalCheckDdl:
+    """One named check that a row's ``start`` Column precedes its ``end`` Column.
+
+    Every identifier is already quoted for the dialect.
+    """
+
+    name: str
+    start: str
+    end: str
 
 
 def _column_clause(column: ColumnDdl) -> str:
@@ -584,18 +597,26 @@ class Dialect:
 
     # -- DDL statements ---------------------------------------------------- #
     def create_table(
-        self, table: str, columns: Sequence[ColumnDdl], primary_key: Sequence[str]
+        self,
+        table: str,
+        columns: Sequence[ColumnDdl],
+        primary_key: Sequence[str],
+        interval_checks: Sequence[IntervalCheckDdl] = (),
     ) -> str:
-        """``create table`` for one whole Table, keyed inline.
+        """``create table`` for one whole Table, keyed and checked inline.
 
-        The caller supplies the complete physical column sequence and the key
-        columns in their own order; both are already quoted. An empty
-        ``primary_key`` emits no key clause, which is the keyless Table a model
-        declaring no primary key produces.
+        The caller supplies the complete physical column sequence, the key
+        columns, and the interval checks in their own order; all are already
+        quoted. An empty ``primary_key`` emits no key clause, which is the
+        keyless Table a model declaring no primary key produces.
         """
         parts = [_column_clause(column) for column in columns]
         if primary_key:
             parts.append(f"primary key ({', '.join(primary_key)})")
+        parts.extend(
+            f"constraint {check.name} check ({check.start} < {check.end})"
+            for check in interval_checks
+        )
         return f"create table {table} ({', '.join(parts)})"
 
     def add_column(self, table: str, column: ColumnDdl) -> str:
@@ -681,6 +702,8 @@ POSTGRES: Final[Dialect] = Dialect(
     quote_char='"',
     error_codes={
         "23505": "uniqueViolation",
+        "23514": "constraintViolation",
+        "23P01": "constraintViolation",
         "40P01": "deadlock",
         "40001": "deadlock",
         "55P03": "lockWaitTimeout",

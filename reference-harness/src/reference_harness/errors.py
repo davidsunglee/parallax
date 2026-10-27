@@ -20,13 +20,14 @@ classify for both.
 from __future__ import annotations
 
 UNIQUE_VIOLATION = "uniqueViolation"
+CONSTRAINT_VIOLATION = "constraintViolation"  # check or exclusion; no call-site predicate
 DEADLOCK = "deadlock"  # covers true deadlock AND serialization failure (retriable)
 LOCK_WAIT_TIMEOUT = "lockWaitTimeout"
 CONNECTION_DEAD = "connectionDead"  # reserved for language impls; not exercised
 UNKNOWN = "unknown"
 
 CATEGORIES: frozenset[str] = frozenset(
-    {UNIQUE_VIOLATION, DEADLOCK, LOCK_WAIT_TIMEOUT, CONNECTION_DEAD, UNKNOWN}
+    {UNIQUE_VIOLATION, CONSTRAINT_VIOLATION, DEADLOCK, LOCK_WAIT_TIMEOUT, CONNECTION_DEAD, UNKNOWN}
 )
 
 

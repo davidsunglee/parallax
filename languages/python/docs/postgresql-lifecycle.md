@@ -709,6 +709,45 @@ identical executions, defaulting to 5. Pass `None` where the same connection may
 see a table's shape change underneath identical query text — a
 schema-reset-per-case harness, never a deployed application.
 
+## Temporal interval checks
+
+A temporal table that `schema_delta` creates carries one named check per axis:
+`in_z < out_z` on every temporal table, and `from_z < thru_z` too on a Bitemporal
+one. PostgreSQL then refuses an empty or inverted interval from any writer, Parallax
+or not, with a `DatabaseError` whose `category` is `"constraintViolation"`, whose
+`native_code` is `23514`, and whose `constraint_name` names the check. The checks
+judge each row on its own: they don't stop two rows of one object from overlapping.
+
+The names are `pxc_tx_<table>_<fingerprint>` and `pxc_valid_<table>_<fingerprint>`,
+derived from the table and its columns. A table that already existed gets no check
+from a later delta, because a delta can't know whether the stored rows satisfy one.
+To adopt them, take the names from the `create table` statement that provisioning
+the same model from `ABSENT` returns, then validate the rows yourself. For a
+Bitemporal `position` table, find the rows each check would refuse:
+
+```sql
+select pos_id, in_z, out_z from position where not (in_z < out_z);
+select pos_id, from_z, thru_z from position where not (from_z < thru_z);
+```
+
+Correct or remove each one; which is right is a decision about your history, not
+one Parallax can make. Adding a check validates every stored row while it holds an
+`ACCESS EXCLUSIVE` lock, which blocks reads and writes of the table. On a large
+table, add it `NOT VALID` instead, which takes that lock only briefly and checks
+new writes from then on, and validate the stored rows afterwards under a
+`SHARE UPDATE EXCLUSIVE` lock, which lets reads and writes continue:
+
+```sql
+alter table position add constraint pxc_tx_position_05e7b5d0b3866810c782a91a8d1f7971 check (in_z < out_z) not valid;
+alter table position validate constraint pxc_tx_position_05e7b5d0b3866810c782a91a8d1f7971;
+```
+
+`validate constraint` fails while any stored row breaks the check, and leaves it
+`NOT VALID`; correct the row and validate again. Repeat both statements for the
+`pxc_valid_…` check. Only check constraints, foreign keys and not-null constraints
+can be added `NOT VALID`: PostgreSQL offers no staged validation for an exclusion
+constraint, which validates every row as it is added.
+
 ## What gets logged, and by whom
 
 Three reporting paths with three different disclosure policies. They are not

@@ -480,6 +480,7 @@
     "InheritanceDiscriminator",
     "MODEL_COMPILER",
     "PhysicalIndex",
+    "PhysicalTemporalAxis",
     "PositionBranch",
     "PositionLayoutView",
     "RULE_SET",
@@ -487,6 +488,7 @@
     "STORAGE_LAYOUT_MODULE",
     "StorageLayoutFacet",
     "TableLayout",
+    "TemporalHistoryConstraints",
     "view"
   ],
   "parallax.core.write_plan:EntityStateRow": [

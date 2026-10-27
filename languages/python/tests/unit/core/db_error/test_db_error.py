@@ -2,11 +2,11 @@
 
 Covers the closed neutral category set, the classification seam over the pure
 Postgres dialect code table, and the call-site **predicate partition** (each
-category fires exactly one of ``is_retriable`` / ``violates_unique_index`` /
-``is_timed_out``, and the reserved ``connectionDead`` and the uncategorized
-``None`` fire none). It also covers the one rule the violated Physical Index
-Name obeys: a constraint name the adapter read off the driver is kept only for a
-unique violation. The port-boundary re-raise is proven separately in
+category fires at most one of ``is_retriable`` / ``violates_unique_index`` /
+``is_timed_out``; ``constraintViolation``, the reserved ``connectionDead``, and
+the uncategorized ``None`` fire none). It also covers the violated constraint
+name: kept whatever the category, and read as a violated Physical Index Name only
+for a unique violation. The port-boundary re-raise is proven separately in
 ``test_postgres_adapter`` (Docker-free) and end-to-end by the provider deadlock
 proof.
 """
@@ -20,6 +20,7 @@ import pytest
 from parallax.core.db_error import (
     CATEGORIES,
     CONNECTION_DEAD,
+    CONSTRAINT_VIOLATION,
     DEADLOCK,
     LOCK_WAIT_TIMEOUT,
     UNIQUE_VIOLATION,
@@ -43,6 +44,7 @@ _PREDICATES: dict[str, Callable[[Category | None], bool]] = {
 # for the uncategorized None). This is the closed partition the seam guarantees.
 _PARTITION: list[tuple[Category | None, set[str]]] = [
     (UNIQUE_VIOLATION, {"violates_unique_index"}),
+    (CONSTRAINT_VIOLATION, set()),
     (DEADLOCK, {"is_retriable"}),
     (LOCK_WAIT_TIMEOUT, {"is_timed_out"}),
     (CONNECTION_DEAD, set()),
@@ -50,8 +52,14 @@ _PARTITION: list[tuple[Category | None, set[str]]] = [
 ]
 
 
-def test_category_set_is_the_closed_four() -> None:
-    assert {"uniqueViolation", "deadlock", "lockWaitTimeout", "connectionDead"} == CATEGORIES
+def test_category_set_is_the_closed_five() -> None:
+    assert {
+        "uniqueViolation",
+        "constraintViolation",
+        "deadlock",
+        "lockWaitTimeout",
+        "connectionDead",
+    } == CATEGORIES
 
 
 @pytest.mark.parametrize(("category", "expected"), _PARTITION, ids=[str(c) for c, _ in _PARTITION])
@@ -64,6 +72,8 @@ def test_call_site_predicate_partition(category: Category | None, expected: set[
     ("code", "category"),
     [
         ("23505", UNIQUE_VIOLATION),
+        ("23514", CONSTRAINT_VIOLATION),
+        ("23P01", CONSTRAINT_VIOLATION),
         ("40P01", DEADLOCK),
         # A serialization failure (40001) is retriable and shares the deadlock
         # category — the load-bearing distinction the seam localizes.
@@ -100,6 +110,7 @@ def test_classify_error_uncategorized_without_a_native_code() -> None:
     ("category", "retriable", "unique", "timed_out"),
     [
         (UNIQUE_VIOLATION, False, True, False),
+        (CONSTRAINT_VIOLATION, False, False, False),
         (DEADLOCK, True, False, False),
         (LOCK_WAIT_TIMEOUT, False, False, True),
         (None, False, False, False),
@@ -139,16 +150,77 @@ def test_a_name_read_off_the_database_is_as_legitimate_as_a_generated_one() -> N
 @pytest.mark.parametrize(
     ("code", "name"),
     [
-        ("23514", "widget_label_check"),
+        ("23514", "pxc_tx_widget_0f1e"),
+        ("23P01", "widget_overlap_excl"),
         ("23503", "widget_owner_fkey"),
-        ("40P01", None),
     ],
 )
-def test_only_a_unique_violation_carries_a_violated_index(code: str, name: str | None) -> None:
-    # A check and a foreign-key constraint report their names through the same
-    # driver field; neither is an Index, so neither may masquerade as one.
+def test_every_category_keeps_the_constraint_name_but_only_an_index_is_violated(
+    code: str, name: str
+) -> None:
+    # A check, an exclusion, and a foreign-key constraint report their names
+    # through the same driver field; none is an Index, so none may masquerade as one.
     error = classify_error(POSTGRES, code, "boom", constraint_name=name)
+    assert error.constraint_name == name
     assert error.violated_index is None
+
+
+def test_a_failure_naming_nothing_has_no_constraint_name() -> None:
+    assert classify_error(POSTGRES, "40P01", "boom").constraint_name is None
+    assert classify_error(POSTGRES, "23514", "boom", constraint_name="").constraint_name is None
+
+
+def test_a_legacy_violated_index_becomes_the_constraint_name() -> None:
+    unique = DatabaseError(
+        category=UNIQUE_VIOLATION,
+        native_code="23505",
+        message="m",
+        violated_index=PhysicalIndexName("widget_pkey"),
+    )
+    assert unique.constraint_name == "widget_pkey"
+    assert unique.violated_index == PhysicalIndexName("widget_pkey")
+
+
+def test_only_a_unique_violation_projects_a_violated_index_whatever_was_constructed() -> None:
+    error = DatabaseError(
+        category=CONSTRAINT_VIOLATION,
+        native_code="23514",
+        message="m",
+        violated_index=PhysicalIndexName("pxc_tx_widget_0f1e"),
+    )
+    assert error.constraint_name == "pxc_tx_widget_0f1e"
+    assert error.violated_index is None
+
+
+def test_both_spellings_may_name_the_same_constraint() -> None:
+    error = DatabaseError(
+        category=UNIQUE_VIOLATION,
+        native_code="23505",
+        message="m",
+        violated_index=PhysicalIndexName("widget_pkey"),
+        constraint_name="widget_pkey",
+    )
+    assert error.constraint_name == "widget_pkey"
+
+
+def test_two_spellings_naming_different_constraints_are_refused() -> None:
+    with pytest.raises(ValueError, match="name different constraints"):
+        DatabaseError(
+            category=UNIQUE_VIOLATION,
+            native_code="23505",
+            message="m",
+            violated_index=PhysicalIndexName("widget_pkey"),
+            constraint_name="widget_label_key",
+        )
+
+
+def test_naming_a_constraint_leaves_formatting_and_args_unchanged() -> None:
+    named = DatabaseError(
+        category=CONSTRAINT_VIOLATION, native_code="23514", message="m", constraint_name="c"
+    )
+    plain = DatabaseError(category=CONSTRAINT_VIOLATION, native_code="23514", message="m")
+    assert named.args == plain.args == ("constraintViolation [23514]: m",)
+    assert str(named) == str(plain)
 
 
 def test_an_absent_constraint_name_leaves_the_violated_index_absent() -> None:

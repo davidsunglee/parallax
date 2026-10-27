@@ -44,6 +44,7 @@ from parallax.core.dialect import (
     DocumentLeafAssignment,
     DocumentValueAssignment,
     IndexColumnDdl,
+    IntervalCheckDdl,
     PhysicalIndexName,
     RenderedScalarCell,
     ScalarResult,
@@ -353,6 +354,8 @@ def test_an_escaped_percent_never_reads_as_a_placeholder(dialect: Dialect) -> No
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_error_classification(dialect: Dialect) -> None:
     assert dialect.classify("23505") == "uniqueViolation"
+    assert dialect.classify("23514") == "constraintViolation"
+    assert dialect.classify("23P01") == "constraintViolation"
     assert dialect.classify("40P01") == "deadlock"
     assert dialect.classify("40001") == "deadlock"
     assert dialect.classify("55P03") == "lockWaitTimeout"
@@ -393,6 +396,24 @@ def test_create_table_renders_columns_then_the_inline_key(dialect: Dialect) -> N
     )
     assert (
         statement == "create table widget (id bigint not null, label varchar(8), primary key (id))"
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_create_table_names_each_interval_check_after_the_key(dialect: Dialect) -> None:
+    statement = dialect.create_table(
+        "span",
+        [ColumnDdl("id", "bigint", False), ColumnDdl("in_z", "timestamptz", False)],
+        ["id"],
+        [
+            IntervalCheckDdl("pxc_valid_span_1", "from_z", "thru_z"),
+            IntervalCheckDdl("pxc_tx_span_2", "in_z", "out_z"),
+        ],
+    )
+    assert statement == (
+        "create table span (id bigint not null, in_z timestamptz not null, primary key (id), "
+        "constraint pxc_valid_span_1 check (from_z < thru_z), "
+        "constraint pxc_tx_span_2 check (in_z < out_z))"
     )
 
 

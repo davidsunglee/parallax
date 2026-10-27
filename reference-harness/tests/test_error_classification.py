@@ -35,11 +35,16 @@ def test_predicates_partition_by_category() -> None:
     assert errors.is_timed_out(errors.LOCK_WAIT_TIMEOUT)
     assert not errors.is_retriable(errors.LOCK_WAIT_TIMEOUT)
 
+    assert not errors.is_retriable(errors.CONSTRAINT_VIOLATION)
+    assert not errors.violates_unique_index(errors.CONSTRAINT_VIOLATION)
+    assert not errors.is_timed_out(errors.CONSTRAINT_VIOLATION)
+
 
 def test_predicate_for_names_the_true_predicate() -> None:
     assert errors.predicate_for(errors.DEADLOCK) == "is_retriable"
     assert errors.predicate_for(errors.UNIQUE_VIOLATION) == "violates_unique_index"
     assert errors.predicate_for(errors.LOCK_WAIT_TIMEOUT) == "is_timed_out"
+    assert errors.predicate_for(errors.CONSTRAINT_VIOLATION) is None
     assert errors.predicate_for(errors.UNKNOWN) is None
 
 
@@ -61,6 +66,8 @@ def test_postgres_codes_map_to_categories() -> None:
     assert provider.dialect == "postgres"
     assert provider.native_error_code(_FakePgError("23505")) == "23505"
     assert provider.classify_error(_FakePgError("23505")) == errors.UNIQUE_VIOLATION
+    assert provider.classify_error(_FakePgError("23514")) == errors.CONSTRAINT_VIOLATION
+    assert provider.classify_error(_FakePgError("23P01")) == errors.CONSTRAINT_VIOLATION
     assert provider.classify_error(_FakePgError("40P01")) == errors.DEADLOCK
     # A serialization failure is retriable like a deadlock (folded in).
     assert provider.classify_error(_FakePgError("40001")) == errors.DEADLOCK
@@ -81,6 +88,8 @@ def test_mariadb_errnos_map_to_categories() -> None:
     # 1586 is the ER_DUP_ENTRY_WITH_KEY_NAME message template, formatted into an error
     # reported under 1062; a client never receives it as a code.
     assert provider.classify_error(_FakeMariaError(1586)) == errors.UNKNOWN
+    # ER_CONSTRAINT_FAILED: a CHECK refused the row, under the same SQLSTATE 23000.
+    assert provider.classify_error(_FakeMariaError(4025)) == errors.CONSTRAINT_VIOLATION
     assert provider.classify_error(_FakeMariaError(1213)) == errors.DEADLOCK
     # ER_CHECKREAD: the snapshot-isolation write/write conflict, rolled back like
     # a deadlock and therefore retriable in the same category.
