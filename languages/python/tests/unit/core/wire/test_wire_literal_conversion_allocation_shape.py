@@ -3,6 +3,7 @@ conversion (`cost` class)."""
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 import tracemalloc
 from collections.abc import Callable, Sequence
@@ -33,6 +34,9 @@ from tests.unit.memory_instruments import (
 
 _MODEL: Final = corpus_model("wallet")
 _WALLET: Final = target(_MODEL, "Wallet")
+# Postgres binds a membership as one array; a dialect without arrays expands it
+# into one same-type bind per element.
+_ARRAYLESS: Final = dataclasses.replace(POSTGRES, name="mariadb")
 # Every count is past CPython's small-integer cache, so the span bound each one
 # ends at is an integer the statement allocates at every count rather than at
 # some.
@@ -55,7 +59,7 @@ def _same_type_statement(bind_count: int) -> Callable[[], LoweredStatement]:
         membership = predicate.Membership(
             op="in", subject=predicate.FieldSubject("Wallet.owner"), values=("value",) * bind_count
         )
-        statement = compile_read(membership, _MODEL, POSTGRES, _WALLET).statement
+        statement = compile_read(membership, _MODEL, _ARRAYLESS, _WALLET).statement
         assert len(statement.binds) == bind_count
         assert statement.sql.endswith(
             f"where t0.owner in ({', '.join('?' for _ in range(bind_count))})"
