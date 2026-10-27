@@ -43,8 +43,10 @@ def test_dotted_null_check_and_membership() -> None:
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
-    assert membership.statement.sql.endswith("in (?, ?)")
-    assert membership.statement.binds == ("city", "Oslo", "Boston")
+    assert membership.statement.sql.endswith(
+        "jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))"
+    )
+    assert membership.statement.binds == ("city", ["Oslo", "Boston"])
 
 
 def test_a_dotted_range_lowers_to_one_between_with_the_typed_cast() -> None:
@@ -65,8 +67,8 @@ def test_a_dotted_range_lowers_to_one_between_with_the_typed_cast() -> None:
 
 
 def test_dotted_negated_membership_lowers_to_a_leading_not_with_no_extra_bind() -> None:
-    # The corpus negation form: a LEADING `not` over the identical `in (…)` fragment
-    # the positive tag emits, with the same bind list (m-sql).
+    # The corpus negation form: a LEADING `not` over the identical fragment the
+    # positive tag emits, with the same bind list (m-sql).
     positive = compile_read(
         oa.Membership(op="in", subject=oa.FieldSubject("Customer.address.city"), values=("Oslo",)),
         CUSTOMER,
@@ -81,10 +83,10 @@ def test_dotted_negated_membership_lowers_to_a_leading_not_with_no_extra_bind() 
         POSTGRES,
         target(CUSTOMER, "Customer"),
     )
-    where = "where jsonb_extract_path_text(t0.address, ?) in (?)"
+    where = "where jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))"
     assert positive.statement.sql.endswith(where)
     assert negated.statement.sql.endswith(f"where not {where.removeprefix('where ')}")
-    assert negated.statement.binds == positive.statement.binds == ("city", "Oslo")
+    assert negated.statement.binds == positive.statement.binds == ("city", ["Oslo"])
 
 
 def test_a_range_inside_a_quantifier_binds_one_element() -> None:
@@ -133,7 +135,7 @@ def test_range_and_negated_membership_lower_inside_a_quantifier() -> None:
     assert compiled.statement.sql.count("jsonb_array_elements(") == 1
     assert compiled.statement.sql.endswith(
         "where jsonb_extract_path_text(t1.value, ?) between ? and ? "
-        "and not jsonb_extract_path_text(t1.value, ?) in (?))"
+        "and not jsonb_extract_path_text(t1.value, ?) = any(cast(? as text[])))"
     )
     assert compiled.statement.binds == (
         "phones",
@@ -144,7 +146,7 @@ def test_range_and_negated_membership_lower_inside_a_quantifier() -> None:
         "555-9000",
         "555-9999",
         "type",
-        "work",
+        ["work"],
     )
 
 

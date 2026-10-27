@@ -14,8 +14,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where not t0.sku in (?, ?)
-      binds: [A-100, B-200]
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where not t0.sku = any(cast(? as text[]))
+      binds: [[A-100, B-200]]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where sku not in ('A-100', 'B-200')
   rows:
     - { id: 3, name: ada, sku: A-300, qty: 15, price: "30.25", active: false, ordered_on: 2024-03-15 }

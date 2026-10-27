@@ -3305,7 +3305,7 @@ def test_a_unit_reads_each_entity_it_writes_once_however_many_entries_address_it
     assert run.database_calls == 3  # the step's own read + its one DELETE + the dependent find
     assert next(sql for sql, _binds in port.reads) == (
         "select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on"
-        " from order_item t0 where t0.id in (%s) for share of t0"
+        " from order_item t0 where t0.id = any(cast(%s as bigint[])) for share of t0"
     )
     assert [sql for sql, _binds in port.writes] == ["delete from order_item where id = %s"]
 
@@ -3509,7 +3509,8 @@ def test_one_entity_spelled_two_ways_owes_one_membership_read() -> None:
     )
     scenario.run_scenario_case(case, port)
     assert len(port.reads) == 1
-    assert port.reads[0][0].endswith("where t0.id in (%s, %s) for share of t0")
+    assert port.reads[0][0].endswith("where t0.id = any(cast(%s as bigint[])) for share of t0")
+    assert sorted(cast("list[int]", port.reads[0][1][0])) == [21, 22]
 
 
 def _registry_advance(sequence: str) -> dict[str, object]:

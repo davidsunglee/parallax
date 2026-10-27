@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from .. import portable_literal
+from .._postgres_arrays import column_array_parameter
 from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure, coerce_identity_key
 from ..inheritance import (
@@ -93,28 +94,6 @@ def deepfetch_root_entity(model: Model, query: dict[str, Any]) -> Entity:
     first_rel = _deepfetch_paths(query)[0][0]
     root_class = first_rel.rpartition(".")[0]
     return model.entity(root_class)
-
-
-# m-core neutral type -> the unmodified PostgreSQL element type a key array is cast
-# to (the m-dialect array parameter cast form). A decimal casts to bare `decimal`.
-_POSTGRES_ARRAY_ELEMENTS = {
-    "boolean": "boolean",
-    "int32": "int",
-    "int64": "bigint",
-    "float32": "real",
-    "float64": "double precision",
-    "string": "text",
-    "bytes": "bytea",
-    "date": "date",
-    "time": "time",
-    "timestamp": "timestamptz",
-    "uuid": "uuid",
-}
-
-
-def _postgres_key_array(key_type: str) -> str:
-    element = "decimal" if key_type.startswith("decimal(") else _POSTGRES_ARRAY_ELEMENTS[key_type]
-    return f"cast(? as {element}[])"
 
 
 def column_of(entity: Entity, attr_name: str) -> str:
@@ -677,7 +656,7 @@ def execute_fetch_levels(
 
         key_type = step.child_entity.attribute_by_name(step.child_attr)["type"]
         if dialect == "postgres":
-            key_array = f"= any({_postgres_key_array(key_type)})"
+            key_array = f"= any({column_array_parameter(key_type)})"
             if key_array not in level_sql:
                 raise CaseFailure(
                     f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "

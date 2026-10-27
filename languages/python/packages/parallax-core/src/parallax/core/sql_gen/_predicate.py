@@ -48,12 +48,14 @@ from parallax.core.sql_gen._context import (
     AffixForm,
     ComparisonTextForm,
     ExecutionValueForm,
+    MembershipForm,
     SqlGenError,
     StatementBuilder,
     affix_form,
     comparison_text_form,
     gathered_keys_form,
     managed_operand_form,
+    membership_form,
 )
 from parallax.core.sql_gen._context import table_layout as _table_layout
 
@@ -595,7 +597,7 @@ def _render_operation(
             _bind_operand(upper, subject, scope, source=_following(sources, path, 1))
             return f"{subject.compared} between ? and ?"
         case ResolvedMembership(op=tag, values=values):
-            return _render_membership(tag, values, subject, scope, sources, path)
+            return _render_membership(tag, values, subject, scope, source)
         case ResolvedStringMatch(op=tag, pattern=pattern, case_insensitive=folded):
             return _render_like(tag, pattern, folded, subject.extraction, scope, source)
         case ResolvedNullCheck(op=tag):
@@ -776,22 +778,48 @@ def _render_membership(
     values: tuple[ManagedValue, ...] | DeferredKeySet,
     subject: MemberSubject,
     scope: PredicateScope,
-    sources: ExecutionValueSources | None,
-    path: _PredicatePath,
+    source: ExecutionValueSource | None,
 ) -> str:
+    """A membership over its already resolved ``subject``.
+
+    Postgres binds a list as one array cast to the type ``subject`` compares in,
+    which keeps the text of the statement independent of the list's length;
+    another dialect lists one placeholder per element, which a deferred list
+    expands into when its template renders. An empty authored list keeps its
+    literal `in ()` on every dialect: an empty array would answer a negated
+    membership true even for a null subject.
+    """
+    array = scope.dialect.name == "postgres"
     if isinstance(values, DeferredKeySet):
         if tag != "in":  # pragma: no cover - generated child reads are positive
             raise SqlGenError("a deferred key set supports only positive membership")
-        array = scope.dialect.name == "postgres"
         scope.ctx.bind_deferred(("keys",), gathered_keys_form(values.neutral_type, array))
         if array:
             return f"{subject.compared} = any({scope.dialect.array_parameter(values.neutral_type)})"
         return f"{subject.compared} in ({EXPANDING_PLACEHOLDER})"
-    holes = ", ".join("?" for _ in values)
-    for index, value in enumerate(values):
-        _bind_operand(value, subject, scope, source=_following(sources, path, index))
-    fragment = f"{subject.compared} in ({holes})"
+    if not values or (source is None and not array):
+        for value in values:
+            _bind_operand(value, subject, scope)
+        fragment = f"{subject.compared} in ({', '.join('?' for _ in values)})"
+    else:
+        form = membership_form(subject.type, _compares_text(subject), array)
+        if source is None:
+            scope.ctx.bind_concrete(prepared_operand(form, values), form)
+        else:
+            scope.ctx.bind_deferred(source, form)
+        if array:
+            parameter = scope.dialect.array_parameter(
+                subject.type, extracted=subject.document_resident
+            )
+            fragment = f"{subject.compared} = any({parameter})"
+        else:
+            fragment = f"{subject.compared} in ({EXPANDING_PLACEHOLDER})"
     return fragment if tag == "in" else f"not {fragment}"
+
+
+def _compares_text(subject: MemberSubject) -> bool:
+    """Whether an operand compared with ``subject`` binds its comparison text."""
+    return subject.document_resident and subject.text_compared
 
 
 def _bind_operand(
@@ -818,7 +846,7 @@ def _bind_operand(
             raise SqlGenError("a framework operand is never an authored execution value")
         form: ExecutionValueForm = (
             comparison_text_form(subject.type)
-            if subject.document_resident and subject.text_compared
+            if _compares_text(subject)
             else managed_operand_form(subject.type)
         )
         scope.ctx.bind_deferred(source, form)
@@ -908,6 +936,13 @@ def prepared_operand(form: ExecutionValueForm, value: object) -> object:
             return comparison_text(neutral_type, value)
         case AffixForm(op=op, case_insensitive=folded):
             return _pattern(op, cast("str", value), folded)
+        case MembershipForm(neutral_type=neutral_type, comparison_text=True):
+            return [
+                comparison_text(neutral_type, element)
+                for element in cast("tuple[object, ...]", value)
+            ]
+        case MembershipForm():
+            return list(cast("tuple[object, ...]", value))
         case _:
             return value
 

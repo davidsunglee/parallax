@@ -207,8 +207,9 @@ def test_an_entity_document_classifies_each_requested_member() -> None:
         ),
         (
             oa.Membership(op="in", subject=oa.FieldSubject("Person.score"), values=(1, 2)),
-            "where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) in (?, ?)",
-            ("score", 1, 2),
+            "where cast(jsonb_extract_path_text(t0.payload, ?) as bigint)"
+            " = any(cast(? as bigint[]))",
+            ("score", [1, 2]),
         ),
         (
             oa.NullCheck(op="isNull", subject=oa.FieldSubject("Person.displayName")),

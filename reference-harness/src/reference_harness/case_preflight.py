@@ -13,10 +13,12 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from . import portable_literal
+from ._sql_placeholders import array_bind_indexes
 from ._statement_bind_inference import (
     CanonicalBindTarget,
     DocumentBindTarget,
     LiteralBindTarget,
+    array_cast_mismatches,
     infer_statement_bind_targets,
 )
 from .case import Case, Entity
@@ -666,9 +668,25 @@ def _statement_entry(
     dialect: str,
     where: str,
 ) -> None:
+    arrays = array_bind_indexes(statement) if dialect == "postgres" else frozenset()
+    if dialect == "postgres":
+        for mismatch in array_cast_mismatches(case, statement, binds):
+            raise CaseFailure(
+                f"{case.path.name}: {where}[{mismatch.index}]: a Postgres array parameter "
+                f"compared with a {mismatch.expected} operand is cast to "
+                f"{mismatch.expected}[], not "
+                f"{'nothing' if mismatch.cast is None else mismatch.cast + '[]'} "
+                f"(m-dialect array parameter cast form)"
+            )
     for index, target in infer_statement_bind_targets(case, statement, binds, dialect).items():
-        if index < len(binds):
-            _canonical_target_value(case, target, binds[index], f"{where}[{index}]")
+        if index >= len(binds):
+            continue
+        value = binds[index]
+        if index in arrays and isinstance(value, list):
+            for position, element in enumerate(value):
+                _canonical_target_value(case, target, element, f"{where}[{index}][{position}]")
+        else:
+            _canonical_target_value(case, target, value, f"{where}[{index}]")
 
 
 def _canonical_target_value(

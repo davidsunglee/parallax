@@ -33,7 +33,7 @@ from parallax.core.wire import (
 )
 
 type _ScalarBindForm = Literal["MANAGED", "COMPARISON_TEXT"]
-type _BindForm = _ScalarBindForm | Literal["MANAGED_ARRAY"]
+type _BindForm = _ScalarBindForm | Literal["MANAGED_ARRAY", "COMPARISON_TEXT_ARRAY"]
 type _TypedBindSlot = tuple[NeutralType, _ScalarBindForm]
 
 
@@ -134,8 +134,8 @@ class LoweredStatement:
         form in canonical source order, once each marker's bind metadata is the
         classification its form selects.
 
-        A statement's gathered keys take one form, and keys that expand cannot
-        occupy repeated row-bind metadata.
+        A statement's gathered keys take one form, and a value that expands
+        cannot occupy repeated row-bind metadata.
         """
         found: dict[_ExecutionValueMarker, list[int]] = {}
         for index, value in enumerate(self.binds):
@@ -157,7 +157,9 @@ class LoweredStatement:
                         "classification its form selects"
                     )
                 if form.expands and index in repeated:
-                    raise SqlGenError("a deferred key set cannot occupy repeated row-bind metadata")
+                    raise SqlGenError(
+                        "an expanding execution value cannot occupy repeated row-bind metadata"
+                    )
             groups.append(ExecutionValuePositions(marker, tuple(indices)))
         if sum(1 for group in groups if group.source == _KEYS) > 1:
             raise SqlGenError("a statement's gathered keys take exactly one bind form")
@@ -189,18 +191,21 @@ class LoweredStatement:
         sql: str,
     ) -> LoweredStatement:
         """This statement as ``sql``, with each value at every position of its
-        group. Gathered keys that expand take one position per key: a typed span
-        covering them grows and later metadata moves. When nothing grows, the
-        statement's own metadata is reused."""
+        group. A value that expands takes one position per element at each of its
+        positions: a typed span covering them grows and later metadata moves.
+        When nothing grows, the statement's own metadata is reused."""
         binds = list(self.binds)
-        expansion: tuple[tuple[int, ...], Sequence[object]] | None = None
+        expansions: list[tuple[int, Sequence[object]]] = []
         for positions, value in values:
             if positions.form.expands:
-                expansion = positions.indices, cast("Sequence[object]", value)
+                elements = cast("Sequence[object]", value)
+                if not elements:
+                    raise SqlGenError("an expanding execution value requires at least one element")
+                expansions.extend((index, elements) for index in positions.indices)
             else:
                 for index in positions.indices:
                     binds[index] = value
-        if expansion is None:
+        if not expansions:
             return LoweredStatement(
                 sql,
                 tuple(binds),
@@ -208,27 +213,31 @@ class LoweredStatement:
                 self._wire_bind_overrides,
                 self._compiler_proven,
             )
-        return self._expanded(binds, *expansion, sql=sql)
+        expansions.sort(key=_position)
+        return self._expanded(binds, expansions, sql=sql)
 
     def _expanded(
         self,
         binds: list[object],
-        expanding: tuple[int, ...],
-        elements: Sequence[object],
+        expansions: list[tuple[int, Sequence[object]]],
         *,
         sql: str,
     ) -> LoweredStatement:
-        if not elements:
-            raise SqlGenError("an expanding execution value requires at least one element")
-        growth = len(elements) - 1
+        """``binds`` with each ascending expanding position replaced by its
+        elements, and the metadata after each position moved by the growth of
+        every position before it."""
+        expanding: list[int] = []
+        grown = [0]
         bound: list[object] = []
         start = 0
-        for index in expanding:
+        for index, elements in expansions:
+            expanding.append(index)
+            grown.append(grown[-1] + len(elements) - 1)
             bound += islice(binds, start, index)
             bound += elements
             start = index + 1
         bound += islice(binds, start, None)
-        if not growth:
+        if not grown[-1]:
             return LoweredStatement(
                 sql,
                 tuple(bound),
@@ -236,34 +245,34 @@ class LoweredStatement:
                 self._wire_bind_overrides,
                 self._compiler_proven,
             )
+
+        def moved(index: int) -> int:
+            return index + grown[bisect_left(expanding, index)]
+
         spans = tuple(
             [
-                _TypedBindSpan(
-                    span.start + bisect_left(expanding, span.start) * growth,
-                    span.stop + bisect_left(expanding, span.stop) * growth,
-                    span.neutral_type,
-                    span.form,
-                )
+                _TypedBindSpan(moved(span.start), moved(span.stop), span.neutral_type, span.form)
                 if isinstance(span, _TypedBindSpan)
-                else span.shifted(bisect_left(expanding, span.start) * growth)
+                else span.shifted(moved(span.start) - span.start)
                 for span in self._typed_bind_spans
             ]
         )
         overrides = tuple(
             [
-                _WireBindOverride(
-                    override.index + bisect_left(expanding, override.index) * growth,
-                    override.value,
-                )
+                _WireBindOverride(moved(override.index), override.value)
                 for override in self._wire_bind_overrides
             ]
         )
         return LoweredStatement(sql, tuple(bound), spans, overrides, self._compiler_proven)
 
 
-EXPANDING_PLACEHOLDER: Final = "\0deferred_keys\0"
-"""The SQL text a placeholder of gathered keys that expand stands in until its
-template renders one placeholder per key.
+def _position(expansion: tuple[int, Sequence[object]]) -> int:
+    return expansion[0]
+
+
+EXPANDING_PLACEHOLDER: Final = "\0expanding\0"
+"""The SQL text an expanding execution value's placeholder stands in until its
+template renders one placeholder per element.
 
 Neither PostgreSQL nor MariaDB admits NUL in an identifier, so no identifier in
 a statement's SQL can spell this placeholder."""
@@ -349,6 +358,29 @@ class GatheredKeysForm:
         return not self.array
 
 
+@dataclass(frozen=True, slots=True)
+class MembershipForm:
+    """An authored membership's elements, each managed or its comparison text:
+    one array bind, or one bind per element in place of an expanding
+    placeholder."""
+
+    neutral_type: NeutralType
+    comparison_text: bool
+    array: bool
+
+    @property
+    def typed_slot(self) -> tuple[NeutralType, _BindForm]:
+        if self.array:
+            return self.neutral_type, (
+                "COMPARISON_TEXT_ARRAY" if self.comparison_text else "MANAGED_ARRAY"
+            )
+        return self.neutral_type, "COMPARISON_TEXT" if self.comparison_text else "MANAGED"
+
+    @property
+    def expands(self) -> bool:
+        return not self.array
+
+
 # Forms are stateless, so equivalent ones are shared: a template retains one
 # form per distinct classification rather than one per bound operand.
 managed_operand_form: Final[Callable[[NeutralType], ManagedOperandForm]] = cache(ManagedOperandForm)
@@ -358,6 +390,7 @@ continuation_carrier_form: Final[
     Callable[[NeutralType, _ScalarBindForm], ContinuationCarrierForm]
 ] = cache(ContinuationCarrierForm)
 gathered_keys_form: Final[Callable[[NeutralType, bool], GatheredKeysForm]] = cache(GatheredKeysForm)
+membership_form: Final[Callable[[NeutralType, bool, bool], MembershipForm]] = cache(MembershipForm)
 
 
 type ExecutionValueForm = (
@@ -367,6 +400,7 @@ type ExecutionValueForm = (
     | ContinuationCarrierForm
     | PageCapForm
     | GatheredKeysForm
+    | MembershipForm
 )
 
 
@@ -399,6 +433,8 @@ def _typed_wire_bind(value: object, neutral_type: NeutralType, form: _BindForm) 
         return encode_wire(neutral_type, cast("ManagedValue", value))
     if form == "MANAGED_ARRAY":
         return [encode_wire(neutral_type, element) for element in cast("list[ManagedValue]", value)]
+    if form == "COMPARISON_TEXT_ARRAY":
+        return list(cast("list[str]", value))
     return cast("str", value)
 
 

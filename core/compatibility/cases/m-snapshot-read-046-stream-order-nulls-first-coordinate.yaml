@@ -26,13 +26,13 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.id in (?, ?) order by t0.sku asc nulls first, t0.id asc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.id = any(cast(? as bigint[])) order by t0.sku asc nulls first, t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.id in (?, ?) order by t0.sku asc, t0.id asc limit ?
-      binds: [1, 4, 2]
+      binds: { postgres: [[1, 4], 2], mariadb: [1, 4, 2] }
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.id in (?, ?) and (t0.sku is not null or (t0.sku is null and (t0.id > ? or t0.id is null))) order by t0.sku asc nulls first, t0.id asc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.id = any(cast(? as bigint[])) and (t0.sku is not null or (t0.sku is null and (t0.id > ? or t0.id is null))) order by t0.sku asc nulls first, t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.id in (?, ?) and (not t0.sku is null or (t0.sku is null and t0.id > ?)) order by t0.sku asc, t0.id asc limit ?
-      binds: [1, 4, 4, 2]
+      binds: { postgres: [[1, 4], 4, 2], mariadb: [1, 4, 4, 2] }
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (1, 4)
   graph:
     Order:

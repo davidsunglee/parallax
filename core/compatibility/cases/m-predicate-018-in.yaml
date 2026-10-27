@@ -15,9 +15,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?)
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(cast(? as bigint[]))
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?)
-      binds: [1, 2, 42]
+      binds: { postgres: [[1, 2, 42]], mariadb: [1, 2, 42] }
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (1, 2, 42)
   rows:
     - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05 }

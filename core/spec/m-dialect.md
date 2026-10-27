@@ -67,7 +67,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six text-compared types compare as the canonical document text on both dialects |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
-| **array parameter cast form** (`m-sql` deferred key set) | `cast(? as <type>[])` — the one key-set array cast to the array of the key's unmodified type (see below) | none — the key set expands to one placeholder per key |
+| **array parameter cast form** (`m-sql` membership and deferred key set) | `cast(? as <type>[])` — the one list or key-set array cast to the array of the unmodified type its subject compares in (see below) | none — the list or key set expands to one placeholder per element |
 | **scalar element projection** (`m-predicate` scalar quantifiers) | `case when jsonb_typeof(t1.value) = ? then <typed projection of t1.value #>> ?> end` — the element's declared JSON kind guards the projection (see below) | none — a filtered scalar quantifier is outside the MariaDB lane and is refused (see below) |
 | **single-object presence** (`m-predicate` `exists` over a value object) | `coalesce(jsonb_typeof(jsonb_extract_path(col, ?, …)) = ?, false)` | none — outside the MariaDB lane |
 | **Boolean result envelope** (`m-sql` target-local narrowing with an operand) | `(coalesce((select array [ <boolean> ] …), array [ false ])) [ 1 ]` — keeps a selected target's unknown apart from an absent target (see below) | none — outside the MariaDB lane |
@@ -257,34 +257,38 @@ there, while Postgres casts each to its own type. A future dialect supplies its 
 placeholder-cast spelling behind this same decision point; nothing above the seam
 names the concrete cast type.
 
-### Array parameter cast form (`m-sql` deferred key set)
+### Array parameter cast form (`m-sql` membership and deferred key set)
 
-Postgres binds a child level's gathered key set as one array parameter
-(`m-sql`). A driver types an array by its elements, so small integer keys can
-arrive as a narrower integer array; against a wider key column the comparison
-would then be cross-type, which forgoes hashed evaluation of a long array and
-misleads plan choice. The array is therefore cast to the array of the key's own
-type. The element type carries **no length or precision modifier**: a cast to
-`varchar(n)` truncates and one to `decimal(p, s)` rounds, so either could make an
-element equal a key it does not equal, while comparing against the unmodified type
-uses the column's own equality and index.
+Postgres binds an authored membership's list, and a child level's gathered key
+set, as one array parameter (`m-sql`). A driver types an array by its elements,
+so small integers can arrive as a narrower integer array; against a wider
+subject the comparison would then be cross-type, which forgoes hashed evaluation
+of a long array and misleads plan choice. The array is therefore cast to the
+array of the type its subject compares in: a column's own type, or, for a
+document extraction, the type the typed cast form above casts it to, and text for
+one of the six text-compared types. The element type carries **no length or
+precision modifier**: a cast to `varchar(n)` truncates and one to `decimal(p, s)`
+rounds, so either could make an element equal a value it does not equal, while
+comparing against the unmodified type uses the subject's own equality and index.
 
-| Neutral type | Postgres array cast |
-|---|---|
-| `boolean` | `cast(? as boolean[])` |
-| `int32` | `cast(? as int[])` |
-| `int64` | `cast(? as bigint[])` |
-| `float32` | `cast(? as real[])` |
-| `float64` | `cast(? as double precision[])` |
-| `decimal(p, s)` | `cast(? as decimal[])` |
-| `string` (bounded or not) | `cast(? as text[])` |
-| `bytes` | `cast(? as bytea[])` |
-| `date` | `cast(? as date[])` |
-| `time` | `cast(? as time[])` |
-| `timestamp` | `cast(? as timestamptz[])` |
-| `uuid` | `cast(? as uuid[])` |
+| Neutral type | Postgres array cast, column | Postgres array cast, document extraction |
+|---|---|---|
+| `boolean` | `cast(? as boolean[])` | `cast(? as boolean[])` |
+| `int32` | `cast(? as int[])` | `cast(? as bigint[])` |
+| `int64` | `cast(? as bigint[])` | `cast(? as bigint[])` |
+| `float32` | `cast(? as real[])` | `cast(? as real[])` |
+| `float64` | `cast(? as double precision[])` | `cast(? as double precision[])` |
+| `decimal(p, s)` | `cast(? as decimal[])` | `cast(? as decimal[])` |
+| `string` (bounded or not) | `cast(? as text[])` | `cast(? as text[])` |
+| `bytes` | `cast(? as bytea[])` | `cast(? as text[])` |
+| `date` | `cast(? as date[])` | `cast(? as text[])` |
+| `time` | `cast(? as time[])` | `cast(? as text[])` |
+| `timestamp` | `cast(? as timestamptz[])` | `cast(? as text[])` |
+| `uuid` | `cast(? as uuid[])` | `cast(? as text[])` |
 
-MariaDB has no array parameter and expands the key set instead.
+A text-compared extraction's array holds the comparison texts its elements bind
+as (`m-sql` `COMPARISON_TEXT_ARRAY`). MariaDB has no array parameter and expands
+the list or key set instead.
 
 ### Array traversal form (`m-value-object`)
 

@@ -61,7 +61,8 @@ def source_order(source: ExecutionValueSource) -> tuple[object, ...]:
 
 def predicate_operands(predicate: ResolvedPredicate) -> Iterator[object]:  # noqa: C901 - exhaustive dispatcher
     """``predicate``'s authored operands in canonical order: depth first, a
-    range's lower bound before its upper and a membership's values in sequence.
+    range's lower bound before its upper, and a nonempty membership's values
+    together as one operand.
 
     The position of an operand in this order is its ordinal.
     """
@@ -72,8 +73,8 @@ def predicate_operands(predicate: ResolvedPredicate) -> Iterator[object]:  # noq
             yield lower
             yield upper
         case ResolvedMembership(values=values):
-            if not isinstance(values, DeferredKeySet):
-                yield from values
+            if not isinstance(values, DeferredKeySet) and values:
+                yield values
         case ResolvedStringMatch(pattern=pattern):
             yield pattern
         case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
@@ -179,7 +180,7 @@ def _record_authored(
         case ResolvedRange():
             width = 2
         case ResolvedMembership(values=values):
-            width = 0 if isinstance(values, DeferredKeySet) else len(values)
+            width = 0 if isinstance(values, DeferredKeySet) or not values else 1
         case ResolvedAnd(operands=operands) | ResolvedOr(operands=operands):
             for index, operand in enumerate(operands):
                 ordinal = _record_authored(operand, (*path, index), occurrences, ordinal)

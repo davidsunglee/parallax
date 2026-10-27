@@ -1,5 +1,5 @@
 # notIn(values) — negated set membership. The m-sql canonical form renders the
-# negation as `not t0.id in (...)` (the normalizer's fixed point); the naive
+# negation as a leading `not` over the membership (the normalizer's fixed point); the naive
 # referenceSql uses the familiar `not in` to cross-check.
 model: models/orders.yaml
 tags: [m-predicate, notIn, membership, slice-snapshot-1, slice-managed-1]
@@ -17,8 +17,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where not t0.id in (?, ?, ?)
-      binds: [1, 2, 42]
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where not t0.id = any(cast(? as bigint[]))
+      binds: [[1, 2, 42]]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id not in (1, 2, 42)
   rows:
     - { id: 3, name: ada, sku: A-300, qty: 15, price: "30.25", active: false, ordered_on: 2024-03-15 }

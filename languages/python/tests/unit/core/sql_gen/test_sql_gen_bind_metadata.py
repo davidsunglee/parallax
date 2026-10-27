@@ -5,19 +5,31 @@ import datetime as dt
 import math
 from collections.abc import Callable
 from decimal import Decimal
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from parallax.core import deep_fetch, inheritance, storage_layout
 from parallax.core import predicate as oa
-from parallax.core.base import DATE, FLOAT32, INFINITY, INT64, STRING, TIMESTAMP, ManagedValue
+from parallax.core.base import (
+    DATE,
+    FLOAT32,
+    INFINITY,
+    INFINITY_LITERAL,
+    INT64,
+    STRING,
+    TIMESTAMP,
+    ManagedValue,
+)
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import JsonDocument
 from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.predicate._execution_values import ExecutionValueSource
-from parallax.core.predicate._resolved import ResolvedConstant
+from parallax.core.predicate._resolved import ResolvedAnd, ResolvedConstant, ResolvedMembership
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import CompiledTemplate, compile_read
 from parallax.core.sql_gen._context import (
@@ -31,6 +43,7 @@ from parallax.core.sql_gen._context import (
     GatheredKeysForm,
     LoweredStatement,
     ManagedOperandForm,
+    MembershipForm,
     SqlGenError,
     StatementBuilder,
     _ExecutionValueMarker,  # pyright: ignore[reportPrivateUsage]
@@ -442,6 +455,72 @@ def test_groups_follow_canonical_source_order_and_substitute_in_any_stream_order
     assert rendered[0].wire_binds() == (3, "b", 7, 42, 8, 9, "b", 42)
 
 
+def test_expanding_groups_of_different_widths_move_the_metadata_after_each() -> None:
+    builder = _builder()
+    first = MembershipForm(INT64, False, False)
+    second = MembershipForm(STRING, True, False)
+    builder.bind_managed(7, INT64)
+    builder.bind_deferred(("predicate", 0), first)
+    builder.bind_framework(INFINITY)
+    builder.bind_deferred(("predicate", 1), second)
+    builder.bind_deferred(("predicate", 0), first)
+    builder.bind_managed(8, INT64)
+    builder.bind_framework(INFINITY)
+    statement = builder.finish(
+        f"?, ({EXPANDING_PLACEHOLDER}), ?, ({EXPANDING_PLACEHOLDER}), "
+        f"({EXPANDING_PLACEHOLDER}), ?, ?"
+    )
+    template = _template(statement)
+    groups = template._positions  # pyright: ignore[reportPrivateUsage]
+    assert [(group.source, group.indices) for group in groups] == [
+        (("predicate", 0), (1, 4)),
+        (("predicate", 1), (3,)),
+    ]
+    assert template._placeholders == (0, 1, 0)  # pyright: ignore[reportPrivateUsage]
+
+    values: dict[ExecutionValueSource, list[object]] = {
+        ("predicate", 0): [1, 2, 3],
+        ("predicate", 1): ["a", "b"],
+    }
+    for stream in (groups, tuple(reversed(groups))):
+        rendered = statement.with_execution_values(
+            ((group, values[group.source]) for group in stream), sql="rendered"
+        )
+        assert rendered.binds == (7, 1, 2, 3, INFINITY, "a", "b", 1, 2, 3, 8, INFINITY)
+        assert rendered.typed_bind_spans == (
+            _TypedBindSpan(0, 4, INT64, "MANAGED"),
+            _TypedBindSpan(5, 7, STRING, "COMPARISON_TEXT"),
+            _TypedBindSpan(7, 11, INT64, "MANAGED"),
+        )
+        assert [override.index for override in rendered.wire_bind_overrides] == [4, 11]
+        assert rendered.wire_binds() == (
+            7, 1, 2, 3, INFINITY_LITERAL, "a", "b", 1, 2, 3, 8, INFINITY_LITERAL,
+        )  # fmt: skip
+
+    widths_of_one = statement.with_execution_values(
+        ((group, values[group.source][:1]) for group in groups), sql="rendered"
+    )
+    assert widths_of_one.typed_bind_spans is statement.typed_bind_spans
+    assert widths_of_one.wire_bind_overrides is statement.wire_bind_overrides
+
+
+def test_a_template_fills_each_expanding_placeholder_from_its_own_group() -> None:
+    builder = _builder()
+    builder.bind_deferred(("predicate", 1), MembershipForm(INT64, False, False))
+    builder.bind_deferred(("predicate", 0), MembershipForm(INT64, False, False))
+    statement = builder.finish(f"a in ({EXPANDING_PLACEHOLDER}) and b in ({EXPANDING_PLACEHOLDER})")
+    member = WALLET.entities[0].declared_attributes[0]
+    predicate = ResolvedAnd(
+        (ResolvedMembership("in", member, (5,)), ResolvedMembership("in", member, (1, 2, 3)))
+    )
+    query = cast("ResolvedObjectQuery", SimpleNamespace(predicate=predicate))
+
+    rendered = _template(statement).render(query=query).statement
+
+    assert rendered.sql == "a in (?, ?, ?) and b in (?)"
+    assert rendered.binds == (1, 2, 3, 5)
+
+
 def test_a_marker_fills_repeated_row_metadata_unless_it_expands() -> None:
     carrier = _ExecutionValueMarker(("paging", 0), ContinuationCarrierForm(STRING, "MANAGED"))
     statement = LoweredStatement(
@@ -555,9 +634,9 @@ def test_discovery_refuses_gathered_keys_in_two_forms() -> None:
 def test_a_template_refuses_placeholders_that_disagree_with_its_key_positions() -> None:
     builder = _builder()
     builder.bind_deferred(("keys",), GatheredKeysForm(INT64, False))
-    with pytest.raises(SqlGenError, match="disagree with its key positions"):
+    with pytest.raises(SqlGenError, match="disagree with its positions"):
         _template(builder.finish("select ?"))
-    with pytest.raises(SqlGenError, match="disagree with its key positions"):
+    with pytest.raises(SqlGenError, match="disagree with its positions"):
         _template(_builder().finish(f"select {EXPANDING_PLACEHOLDER}"))
 
 

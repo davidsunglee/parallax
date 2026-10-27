@@ -93,9 +93,9 @@ _TEMPORAL_STEP: Final = dt.timedelta(microseconds=3)
 
 def varied(query: ResolvedObjectQuery) -> ResolvedObjectQuery:
     """``query`` with every authored operand changed to another valid value of
-    the same exact carrier type, Decimal exponent, membership width, and affix
-    escape category, and every finite temporal bound moved; an operand no such
-    value exists for is kept."""
+    the same exact carrier type, Decimal exponent, and affix escape category,
+    every nonempty membership one element wider, and every finite temporal
+    bound moved; an operand no such value exists for is kept."""
     return replace(
         query,
         predicate=_varied(query.predicate),
@@ -148,10 +148,9 @@ def _varied(predicate: ResolvedPredicate) -> ResolvedPredicate:
         case ResolvedRange(member=member, lower=lower, upper=upper):
             lower, upper = _ordered_change(lower, upper, member.type)
             return replace(predicate, lower=lower, upper=upper)
-        case ResolvedMembership(member=member, values=tuple() as values):
-            return replace(
-                predicate, values=tuple(_changed(value, member.type) for value in values)
-            )
+        case ResolvedMembership(member=member, values=tuple() as values) if values:
+            changed = tuple(_changed(value, member.type) for value in values)
+            return replace(predicate, values=(*changed, changed[0]))
         case ResolvedStringMatch(pattern=pattern):
             # A prefix of ordinary text escapes nothing, so the escape
             # category stays the authored one.
@@ -254,6 +253,8 @@ def observed(read: CompiledRead) -> tuple[object, ...]:
 
 
 def _carrier(bind: object) -> tuple[object, ...]:
+    if isinstance(bind, list):
+        return list, tuple(_carrier(element) for element in cast("list[object]", bind))
     if isinstance(bind, Decimal):
         return Decimal, bind, bind.as_tuple()
     if isinstance(bind, float):

@@ -207,6 +207,20 @@ def test_case_execution_converts_autocommit_and_held_session_binds() -> None:
     ]
 
 
+def test_case_execution_converts_each_element_of_an_authored_array_bind() -> None:
+    case = next(
+        case
+        for case in discover_cases(_COMPATIBILITY_ROOT)
+        if case.path.name == "m-predicate-018-in.yaml"
+    )
+    statement = "select t0.id from orders t0 where not t0.price = any(cast(? as decimal[]))"
+
+    provider = _RecordingExecutor()
+    CaseExecution(case, provider).execute(statement, [["10.50", "99.99"]])
+
+    assert provider.executed == [(statement, ([Decimal("10.50"), Decimal("99.99")],))]
+
+
 def test_an_array_bind_is_found_bare_or_cast_to_an_array_type() -> None:
     statement = (
         "select t0.id from item t0 where t0.a = ? and t0.b = any(?) "
