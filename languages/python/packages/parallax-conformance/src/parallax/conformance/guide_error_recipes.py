@@ -67,18 +67,21 @@ def price_a_window_unless_it_is_priced(
     db: ScopedDatabase, price: Price, start: dt.datetime, end: dt.datetime
 ) -> bool:
     """Price ``price.sku`` over ``[start, end)``, or answer False where it already has one."""
+
+    def price_unless_priced(tx: TxnContext) -> bool:
+        priced = Price.where(Price.sku == price.sku).as_of_range(valid_time=(start, end))
+        if tx.find(priced).results():
+            return False
+        tx.insert(price, valid_from=start, until=end)
+        return True
+
     try:
-        db.transact(lambda tx: tx.insert(price, valid_from=start, until=end), max_retries=0)
+        return db.transact(price_unless_priced)
     except ExecutionFailure as failure:
         cause = failure.cause
-        overlapping = isinstance(cause, DatabaseError) and cause.category in (
-            "uniqueViolation",
-            "constraintViolation",
-        )
-        if not overlapping:
+        if not (isinstance(cause, DatabaseError) and cause.category == "uniqueViolation"):
             raise
         return False
-    return True
 
 
 def created_index_name(rollout: SchemaDelta, entity: str, index: str) -> PhysicalIndexName:

@@ -796,7 +796,7 @@ RECIPES: Final[list[Recipe]] = [
     ),
     Recipe(
         recipe_id="price-a-window-unless-it-is-priced",
-        title="Tell an insert over existing temporal coverage from other database errors",
+        title="Read temporal coverage before inserting over it",
         snippet=_sources(guide_error_recipes.price_a_window_unless_it_is_priced),
     ),
     Recipe(
