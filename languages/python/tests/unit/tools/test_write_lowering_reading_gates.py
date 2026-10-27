@@ -217,11 +217,17 @@ def test_the_prepared_model_stays_within_its_memory_gates() -> None:
     _within_gates(gate_support.owner_of(test_the_prepared_model_stays_within_its_memory_gates))
 
 
-@in_a_child_interpreter
-def test_the_cross_object_flushes_stay_within_their_memory_gates() -> None:
-    _within_gates(
-        gate_support.owner_of(test_the_cross_object_flushes_stay_within_their_memory_gates)
-    )
+def _cross_object_flush(owner: gate_support.GateOwner) -> Callable[[], None]:
+    def flush() -> None:
+        _within_gates(owner)
+
+    flush.__name__ = flush.__qualname__ = owner.test
+    return in_a_child_interpreter(flush)
+
+
+globals().update(
+    {owner.test: _cross_object_flush(owner) for owner in gate_support.CROSS_OBJECT_FLUSH_OWNERS}
+)
 
 
 @in_a_child_interpreter

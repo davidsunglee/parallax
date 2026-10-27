@@ -100,6 +100,18 @@ def test_the_owners_partition_every_address_the_instruments_gate() -> None:
     assert all(leaf_addresses)
     assert claimed_leaf_addresses == leaf_addresses
 
+    cross_object_addresses = {
+        frozenset(address for address in predicted if address[:2] == (subject, workload))
+        for subject, workload, _cell in predicted
+        if subject == gate_support.WRITE_SUBJECT and workload.startswith("cross-object.")
+    }
+    claimed_flush_addresses = {
+        frozenset((gate.subject, gate.workload, gate.cell) for gate in owner.gates(every_predicted))
+        for owner in gate_support.CROSS_OBJECT_FLUSH_OWNERS
+    }
+    assert all(cross_object_addresses)
+    assert claimed_flush_addresses == cross_object_addresses
+
 
 @pytest.mark.usefixtures("committed_cost_evidence")
 def test_every_memory_gate_is_an_address_the_instruments_read() -> None:

@@ -27,8 +27,16 @@ from tests.unit._workload_spelling_support import (
     LEAF_PREFIX,
     PLAN_PREFIX,
 )
+from tests.unit._write_lowering_support import CROSS_OBJECT_CASES
 
-__all__ = ["LEAF_READ_OWNERS", "OWNERS", "GateOwner", "owner_of", "unowned_gates"]
+__all__ = [
+    "CROSS_OBJECT_FLUSH_OWNERS",
+    "LEAF_READ_OWNERS",
+    "OWNERS",
+    "GateOwner",
+    "owner_of",
+    "unowned_gates",
+]
 
 WRITE_SUBJECT: Final = "write-lowering"
 SNAPSHOT_SUBJECT: Final = "snapshot-delivery"
@@ -94,6 +102,18 @@ LEAF_READ_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
 )
 """One cost item per measured leaf type and storage layout."""
 
+CROSS_OBJECT_FLUSH_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
+    GateOwner(
+        WRITE_MODULE,
+        f"test_the_{case.name.replace('.', '_').replace('-', '_')}"
+        "_flush_stays_within_its_memory_gates",
+        WRITE_SUBJECT,
+        _exactly(case.name),
+    )
+    for case in CROSS_OBJECT_CASES
+)
+
+
 OWNERS: Final[tuple[GateOwner, ...]] = (
     GateOwner(
         WRITE_MODULE,
@@ -125,12 +145,7 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         WRITE_SUBJECT,
         _exactly("model.prepared", "model.prepared.family"),
     ),
-    GateOwner(
-        WRITE_MODULE,
-        "test_the_cross_object_flushes_stay_within_their_memory_gates",
-        WRITE_SUBJECT,
-        _prefixed("cross-object."),
-    ),
+    *CROSS_OBJECT_FLUSH_OWNERS,
     GateOwner(
         SNAPSHOT_MODULE,
         "test_the_depth_reads_stay_within_their_memory_gates",
