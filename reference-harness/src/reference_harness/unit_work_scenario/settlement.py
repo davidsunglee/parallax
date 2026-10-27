@@ -31,9 +31,9 @@ rows is. The proofs read the document and those rows alone:
   predicate submission of the group has since flushed;
 - **flush failures** — the object a failure names is one the failing flush
   writes, by a submission still pending when it began that the Shortfall can
-  arise from; a Temporal Conflict names an object one of them would close, whose
-  history before the group holds a current row starting at or after the group's
-  instant.
+  arise from; a Temporal Conflict names an object one of them would close, a row
+  of which, current when that flush ran and within that write's Valid-Time
+  window, starts at or after the group's instant.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ from typing import Any
 
 from ..case import Case, Entity
 from ..case_assertions import CaseFailure, rows_equal, write_value_equal
-from ..temporality import temporal_axes
+from ..temporality import Axis, temporal_axes
 from ..write_plan import (
     has_temporal_gate,
     has_version_gate,
@@ -225,9 +225,9 @@ def assert_settled_state(
             _assert_refusal(scenario, submission)
     for fate in scenario.units.values():
         if fate.flush_failure is not None:
-            _assert_failure_subject(scenario, fate, fate.flush_failure)
+            closers = _assert_failure_subject(scenario, fate, fate.flush_failure)
             if fate.flush_failure.error == "temporalConflict":
-                _assert_overtaken(scenario, fate, fate.flush_failure, starting)
+                _assert_overtaken(scenario, fate, fate.flush_failure, closers, starting)
     group_of = {step.index: step.group for step in scenario.steps}
     committed = [
         submission
@@ -499,7 +499,9 @@ def _pending_at(scenario: CompiledScenario, earlier: Submission, later: Submissi
 
 def _assert_failure_subject(
     scenario: CompiledScenario, fate: UnitFate, failure: FlushFailure
-) -> None:
+) -> list[Submission]:
+    """The submissions pending at the failing flush that write its object so
+    that they could fail as it states; refused when there are none."""
     case = scenario.case
     flushed = [
         submission
@@ -510,7 +512,11 @@ def _assert_failure_subject(
         submission for submission in flushed if submission.names(failure.entity, failure.key)
     ]
     if failure.error == "temporalConflict":
-        able = [submission for submission in writers if submission.kind != "predicate"]
+        able = [
+            submission
+            for submission in writers
+            if submission.kind != "predicate" and not submission.inserts
+        ]
     elif failure.shortfall == "failedPrecondition":
         able = [submission for submission in writers if submission.kind == "target"]
     elif failure.shortfall == "missingTarget":
@@ -528,17 +534,24 @@ def _assert_failure_subject(
             f"{failure.shortfall or failure.error!r}, but no "
             f"submission pending at that flush writes it so that it could fall short that way."
         )
+    return able
 
 
 def _assert_overtaken(
     scenario: CompiledScenario,
     fate: UnitFate,
     failure: FlushFailure,
+    closers: Sequence[Submission],
     starting: Mapping[str, list[dict[str, Any]]],
 ) -> None:
-    """A Temporal Conflict needs a current row of its object, before the group,
-    whose Transaction-Time start the group's instant does not follow: a starting
-    row, or one a committed group running earlier opened at its own instant."""
+    """A Temporal Conflict needs a row of its object, current when the failing
+    flush ran and within the Valid-Time window of a write there that would close
+    it, whose Transaction-Time start the group's instant does not follow.
+
+    Such a row is one ``then.tableState`` states starting before the group — a
+    starting row's, or one a group committed before that flush opened — and
+    still current then: open, or closed only by a group committing after it.
+    """
     case = scenario.case
     entity = failure.entity
     axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
@@ -548,30 +561,50 @@ def _assert_overtaken(
             f"{case.path.name}: then.units.{fate.label}.flushFailure is a Temporal Conflict "
             f"on {entity.name}, which only a temporal write stating its instant can raise."
         )
+    tx_start, tx_end = tx_axis.start.column, tx_axis.end.column
+    flushed_at = fate.last_step if failure.at == "commit" else failure.at
+    committed = [
+        other
+        for other in scenario.units.values()
+        if not other.rolls_back and other.instant is not None
+    ]
+    before = {_instant(other.instant) for other in committed if other.last_step < flushed_at}
+    after = {_instant(other.instant) for other in committed if other.last_step > flushed_at}
     identity = _identity(_identity_value(entity, failure.key))
-    starts = [
-        _instant(row.get(tx_axis.start.column))
+    started = {
+        _instant(row.get(tx_start))
         for row in starting.get(entity.table, [])
         if _identity(row.get(entity.identity_column)) == identity
-        and _instant(row.get(tx_axis.end.column)) == _OPEN
+    }
+    current = [
+        row
+        for row in case.expected_table_state.get(entity.table, [])
+        if _identity(row.get(entity.identity_column)) == identity
+        and _instant(row.get(tx_start)) in started | before
+        and (_instant(row.get(tx_end)) == _OPEN or _instant(row.get(tx_end)) in after)
     ]
-    group_of = {step.index: step.group for step in scenario.steps}
-    for other in scenario.units.values():
-        if other.rolls_back or other.instant is None or other.steps[0] >= fate.steps[0]:
-            continue
-        if any(
-            submission.refusal is None
-            and group_of[submission.step] == other.label
-            and submission.names(entity, failure.key)
-            for submission in scenario.submissions()
-        ):
-            starts.append(_instant(other.instant))
-    if not starts or max(starts) < _instant(fate.instant):
+    instant = _instant(fate.instant)
+    if not any(
+        _instant(row.get(tx_start)) >= instant
+        and any(_within_window(row, closer, axes.get("valid-time")) for closer in closers)
+        for row in current
+    ):
         raise CaseFailure(
             f"{case.path.name}: then.units.{fate.label}.flushFailure is a Temporal Conflict "
-            f"on {entity.name} {dict(failure.key)!r}, but no current row of it starts at or "
-            f"after the group's instant {fate.instant}."
+            f"on {entity.name} {dict(failure.key)!r}, but no current row of it that flush "
+            f"would close starts at or after the group's instant {fate.instant}."
         )
+
+
+def _within_window(row: Mapping[str, Any], submission: Submission, valid_axis: Axis | None) -> bool:
+    """Whether *row*'s Valid-Time interval meets *submission*'s
+    ``[validFrom, until)`` window; any row does where either has none."""
+    entry = submission.entry
+    if valid_axis is None or entry.get("validFrom") is None:
+        return True
+    return _instant(row.get(valid_axis.start.column)) < _instant(entry.get("until")) and (
+        _instant(entry["validFrom"]) < _instant(row.get(valid_axis.end.column))
+    )
 
 
 def _identity(value: Any) -> str:
