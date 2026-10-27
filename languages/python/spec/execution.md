@@ -149,11 +149,18 @@ ordinary behavior.
 A failed statement's `cause` is a `parallax.core.db_error.DatabaseError`. Its
 `category` is a `Category`, the closed set
 [Database Error Classification](../../../core/spec/m-db-error.md) owns, or
-`None` when the failure is uncategorized. Its `violated_index` is a
-`PhysicalIndexName`, or `None` whenever the failure names no index, a unique
-violation included. Handlers narrow with `isinstance(failure.cause,
-DatabaseError)`; a handler meant for one constraint compares `violated_index`
-with that index's name rather than treating every `uniqueViolation` as its own.
+`None` when the failure is uncategorized. Its `constraint_name` is the name the
+database reported for the violated constraint, or `None`. Its `violated_index`
+is that name as a `PhysicalIndexName` for a `uniqueViolation`, and `None`
+otherwise, a unique violation naming no constraint included. Handlers narrow
+with `isinstance(failure.cause, DatabaseError)`; a handler meant for one
+constraint compares `violated_index` or `constraint_name` with that
+constraint's name rather than treating every failure of a category as its own.
+
+Constructing a `DatabaseError` directly accepts `violated_index=` as a spelling
+of `constraint_name=`, and raises `ValueError` when the two name different
+constraints. `violated_index` is derived rather than stored, so it reads `None`
+for every category but `"uniqueViolation"` whatever the constructor received.
 
 Failed rollback after an ordinary trigger raises `TransactionRollbackError`,
 exposing both `triggering_error` and `rollback_error` and chaining the rollback

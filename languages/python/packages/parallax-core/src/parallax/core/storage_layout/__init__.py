@@ -12,11 +12,13 @@ from parallax.core.storage_layout._facet import (
     EntityLayoutView,
     InheritanceDiscriminator,
     PhysicalIndex,
+    PhysicalTemporalAxis,
     PositionBranch,
     PositionLayoutView,
     RelationalDocument,
     StorageLayoutFacet,
     TableLayout,
+    TemporalHistoryConstraints,
     view,
 )
 from parallax.core.storage_layout._rules import ISSUE_CODES, RULE_SET, STORAGE_LAYOUT_MODULE
@@ -36,10 +38,12 @@ __all__ = [
     "EntityLayoutView",
     "InheritanceDiscriminator",
     "PhysicalIndex",
+    "PhysicalTemporalAxis",
     "PositionBranch",
     "PositionLayoutView",
     "RelationalDocument",
     "StorageLayoutFacet",
     "TableLayout",
+    "TemporalHistoryConstraints",
     "view",
 ]

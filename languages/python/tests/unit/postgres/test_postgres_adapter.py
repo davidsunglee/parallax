@@ -217,6 +217,22 @@ def test_translate_driver_error_forwards_the_violated_index_name() -> None:
     assert error.violated_index == PhysicalIndexName("pxi_widget_label_0f1e2d3c")
 
 
+class _NamedCheckViolation(errors.CheckViolation):
+    """A `23514` whose libpq diagnostics name the check it violated."""
+
+    @property
+    def diag(self) -> Any:
+        return SimpleNamespace(constraint_name="pxc_tx_balance_c54215aec2277be436e89b2c6506715d")
+
+
+def test_translate_driver_error_keeps_a_checks_name_without_reading_it_as_an_index() -> None:
+    error = translate_driver_error(_DIALECT, _NamedCheckViolation("check failed"))
+    assert (error.category, error.native_code) == ("constraintViolation", "23514")
+    assert error.constraint_name == "pxc_tx_balance_c54215aec2277be436e89b2c6506715d"
+    assert error.violated_index is None
+    assert not error.is_retriable
+
+
 def test_translate_driver_error_reports_no_index_when_the_diagnostics_name_none() -> None:
     # A duplicate whose detecting path named no constraint is an ordinary
     # negative correlation, not a defect: the adapter interprets nothing.

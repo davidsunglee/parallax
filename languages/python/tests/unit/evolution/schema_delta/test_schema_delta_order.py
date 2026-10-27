@@ -106,7 +106,11 @@ def _index(name: str, column: PhysicalColumn = _CODE) -> IndexDefinition:
 
 def _create_table() -> CreateTable:
     return CreateTable(
-        table=_TABLE, columns=(_CODE, _COUNT), primary_key=(Column(name="code"),), caused_by=_CAUSE
+        table=_TABLE,
+        columns=(_CODE, _COUNT),
+        primary_key=(Column(name="code"),),
+        interval_checks=(),
+        caused_by=_CAUSE,
     )
 
 
@@ -132,7 +136,13 @@ def _add_column(column: PhysicalColumn) -> AddColumn:
 def test_the_key_leads_with_the_physical_table() -> None:
     # One Table's statements stay together and the whole output stays stable
     # under an edit to an unrelated Table.
-    other = CreateTable(table=Table(name="aardvark"), columns=(), primary_key=(), caused_by=_CAUSE)
+    other = CreateTable(
+        table=Table(name="aardvark"),
+        columns=(),
+        primary_key=(),
+        interval_checks=(),
+        caused_by=_CAUSE,
+    )
     assert order_key(other) < order_key(_create_table())
 
 

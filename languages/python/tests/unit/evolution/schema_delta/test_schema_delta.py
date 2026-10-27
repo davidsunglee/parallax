@@ -51,6 +51,7 @@ from parallax.evolution.schema_delta._physical import (
     CreateTable,
     DropIndex,
     IndexDefinition,
+    IntervalCheck,
     PhysicalColumn,
     RestateColumnDomain,
     location_of,
@@ -145,6 +146,72 @@ def test_provisioning_temporal_pk_is_business_key_plus_to_columns() -> None:
     # before Transaction Time (thru_z then out_z), which is the derived index's order.
     bitemporal = _tables(_MODELS["position"])["position"]
     assert "primary key (pos_id, thru_z, out_z)" in bitemporal
+
+
+def test_provisioning_checks_each_temporal_axis_inline_in_axis_order() -> None:
+    assert _tables(_MODELS["balance"])["balance"] == (
+        "create table balance (bal_id bigint not null, acct_num varchar(32) not null, "
+        "val numeric(18, 2) not null, in_z timestamptz not null, out_z timestamptz not null, "
+        "primary key (bal_id, out_z), "
+        "constraint pxc_tx_balance_c54215aec2277be436e89b2c6506715d check (in_z < out_z))"
+    )
+    assert _tables(_MODELS["position"])["position"].endswith(
+        "primary key (pos_id, thru_z, out_z), "
+        "constraint pxc_valid_position_9c4697753a4cc41ed976ab6ee1f1f88b check (from_z < thru_z), "
+        "constraint pxc_tx_position_05e7b5d0b3866810c782a91a8d1f7971 check (in_z < out_z))"
+    )
+
+
+def test_provisioning_checks_every_table_a_temporal_family_maps() -> None:
+    (shared,) = [ddl for ddl in _statements(_MODELS["instrument"]) if "instrument" in ddl]
+    assert shared.count(" check (") == 2
+    tables = _tables(_MODELS["rate"])
+    assert "constraint pxc_tx_deposit_rate_" in tables["deposit_rate"]
+    assert "constraint pxc_valid_loan_rate_" in tables["loan_rate"]
+    assert " check (" not in _tables(_MODELS["payment"])["payment"]
+
+
+def test_provisioning_checks_the_document_twin_like_its_columns_twin() -> None:
+    def checks(stem: str) -> list[str]:
+        return [
+            ddl[ddl.index("constraint ") :]
+            for ddl in _statements(_MODELS[stem])
+            if ddl.startswith("create table ")
+        ]
+
+    assert checks("shared-coverage-layout-twin-document") == checks(
+        "shared-coverage-layout-twin-columns"
+    )
+
+
+def test_a_surviving_temporal_table_gains_no_check() -> None:
+    balance = _RECORDS["balance"]
+    position = _RECORDS["position"]
+    earlier = formed(balance)
+    later = formed(dataclasses.replace(balance, entities=(*balance.entities, *position.entities)))
+    evolution = evolve(earlier, later)
+    assert isinstance(evolution, UnilateralEvolution)
+    statements = schema_delta(evolution, POSTGRES).statements
+    assert [ddl.split(" ")[2] for ddl in statements if " check (" in ddl] == ["position"]
+    assert not [ddl for ddl in statements if "balance" in ddl and "create table" in ddl]
+    unchanged = evolve(later, later)
+    assert isinstance(unchanged, UnilateralEvolution)
+    assert schema_delta(unchanged, POSTGRES) == SchemaDelta(statements=(), created_indices=())
+
+
+def test_creating_a_table_delegates_its_check_spelling_to_the_dialect() -> None:
+    operation = CreateTable(
+        table=Table(name="Span"),
+        columns=(),
+        primary_key=(),
+        interval_checks=(
+            IntervalCheck(name="pxc_tx_span_0", start=Column("Begins"), end=Column("order")),
+        ),
+        caused_by=(),
+    )
+    assert render(operation, POSTGRES) == (
+        'create table "Span" (constraint pxc_tx_span_0 check ("Begins" < "order"))'
+    )
 
 
 def test_provisioning_create_the_shared_table_once() -> None:
@@ -565,7 +632,11 @@ def test_creating_an_index_addresses_its_physical_name() -> None:
 
 def test_creating_a_table_addresses_no_member() -> None:
     operation = CreateTable(
-        table=_TABLE, columns=(_LABEL,), primary_key=(Column(name="label"),), caused_by=()
+        table=_TABLE,
+        columns=(_LABEL,),
+        primary_key=(Column(name="label"),),
+        interval_checks=(),
+        caused_by=(),
     )
     assert member_key(operation) == ""
     assert location_of(operation) == PhysicalLocation(table=_TABLE)

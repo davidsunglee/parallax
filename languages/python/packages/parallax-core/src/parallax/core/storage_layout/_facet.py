@@ -8,6 +8,7 @@ from typing import Final, Protocol, TypeGuard
 
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
+    AsOfAxisMetadata,
     AttributeIdentity,
     Column,
     EntityIdentity,
@@ -34,6 +35,7 @@ __all__ = [
     "InheritanceDiscriminator",
     "MemberPlacement",
     "PhysicalIndex",
+    "PhysicalTemporalAxis",
     "PositionBranch",
     "PositionColumn",
     "PositionColumnFacts",
@@ -45,6 +47,7 @@ __all__ = [
     "StorageLayoutFacet",
     "StorageLayoutFamilyFacts",
     "TableLayout",
+    "TemporalHistoryConstraints",
     "storage_layout_facet",
     "table_layout",
     "view",
@@ -173,6 +176,29 @@ class PhysicalIndex:
     columns: tuple[ColumnSlot, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PhysicalTemporalAxis:
+    """One As-Of Axis as one Table carries it.
+
+    ``start`` and ``end`` are the Table's existing slots for the axis's
+    declared endpoints. ``interval_check_name`` names the constraint requiring
+    ``start < end`` on every row of the Table.
+    """
+
+    declaration: AsOfAxisMetadata
+    start: ColumnSlot
+    end: ColumnSlot
+    interval_check_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalHistoryConstraints:
+    """The temporal-history constraints one temporal Table carries."""
+
+    transaction_axis: PhysicalTemporalAxis
+    valid_axis: PhysicalTemporalAxis | None
+
+
 class TableLayout(Protocol):
     """The complete canonical physical shape of one structural Table."""
 
@@ -188,6 +214,8 @@ class TableLayout(Protocol):
     def indexes(self) -> Sequence[PhysicalIndex]: ...
     @property
     def unique_keys(self) -> Sequence[PhysicalIndex]: ...
+    @property
+    def temporal_constraints(self) -> TemporalHistoryConstraints | None: ...
     def column(self, column: Column) -> ColumnSlot | None: ...
     def column_position(self, column: Column) -> int | None: ...
     def contribution(self, contributor: ColumnContributor) -> ColumnSlot | None: ...
@@ -279,6 +307,7 @@ class _TableLayout:
     physical_primary_key: tuple[ColumnSlot, ...]
     primary_key_index: PhysicalIndex | None
     indexes: tuple[PhysicalIndex, ...]
+    temporal_constraints: TemporalHistoryConstraints | None
     unique_keys: tuple[PhysicalIndex, ...] = field(repr=False, compare=False)
     _placements: Mapping[MemberIdentity, MemberPlacement] = field(repr=False, compare=False)
     _column_positions: Mapping[Column, int] = field(init=False, repr=False, compare=False)
@@ -318,6 +347,7 @@ def table_layout(
     primary_key_index: PhysicalIndex | None,
     secondary_indexes: Sequence[PhysicalIndex],
     placements: Mapping[MemberIdentity, MemberPlacement],
+    temporal_constraints: TemporalHistoryConstraints | None,
 ) -> TableLayout:
     """Construct one immutable lookup-bearing Table Layout.
 
@@ -325,6 +355,7 @@ def table_layout(
     answer for every member applicable to ``table``, so the published lookup is
     total rather than computed per call. The physical primary key is the
     primary-key Index's slot selection, and ``indexes`` leads with that Index.
+    ``temporal_constraints`` is absent exactly when the Table is not temporal.
     Public consumers receive the protocol and cannot mutate either index or
     ordered sequence.
     """
@@ -339,6 +370,7 @@ def table_layout(
         () if primary_key_index is None else primary_key_index.columns,
         primary_key_index,
         indexes,
+        temporal_constraints,
         tuple(index for index in indexes if index.declaration.unique),
         MappingProxyType(dict(placements)),
     )

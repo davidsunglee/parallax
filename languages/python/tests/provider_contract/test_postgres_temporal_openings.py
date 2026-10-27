@@ -397,7 +397,8 @@ def test_a_grouped_insert_of_distinct_objects_fails_whole_naming_no_row(
 
     cause = escaped.value.cause
     assert isinstance(cause, DatabaseError)
-    assert (cause.category, cause.native_code) == (None, "23514")
+    assert (cause.category, cause.native_code) == ("constraintViolation", "23514")
+    assert cause.constraint_name == "opn_ledger_amount"
     events = _events(provider)
     closes, inserts = _writes(events)[:3], _writes(events)[3:]
     assert all(close.startswith("update opn_ledger") for close in closes)

@@ -275,14 +275,17 @@ an `ExecutionFailure`, and that cause is a `DatabaseError`. Test it with `isinst
 and then read its attributes:
 
 - `category` says what kind of failure it is, in Parallax's portable vocabulary. Its
-  type is `Category`: `"uniqueViolation"` for a duplicate key, `"deadlock"` for a
-  deadlock or a serialization failure, and `"lockWaitTimeout"` for a lock waited on past
-  the database's limit. `Category` also reserves `"connectionDead"`, which no failure
+  type is `Category`: `"uniqueViolation"` for a duplicate key, `"constraintViolation"`
+  for a row a check or exclusion constraint refused, `"deadlock"` for a deadlock or a
+  serialization failure, and `"lockWaitTimeout"` for a lock waited on past the
+  database's limit. `Category` also reserves `"connectionDead"`, which no failure
   reports yet.
-- `category` is `None` for a failure Parallax doesn't categorize, such as a check or
-  foreign-key constraint, a missing table, or a privilege the role lacks.
-- `violated_index` is the `PhysicalIndexName` of the unique index a duplicate key
-  broke, when the database names one, and `None` otherwise. It can be `None` even for a
+- `category` is `None` for a failure Parallax doesn't categorize, such as a foreign-key
+  constraint, a missing table, or a privilege the role lacks.
+- `constraint_name` is the name the database gave for the constraint the failure broke,
+  when it names one, and `None` otherwise.
+- `violated_index` is that name as the `PhysicalIndexName` of the unique index a
+  duplicate key broke, and `None` for any other category. It can be `None` even for a
   `"uniqueViolation"`, so a handler mustn't depend on it being there.
 - `native_code` is the database's own code, PostgreSQL's SQLSTATE, such as `"23505"`
   for a duplicate key.
@@ -361,8 +364,13 @@ through. So does a `"uniqueViolation"` that names no index, and every other fail
 
 Of the categories, Parallax retries only `"deadlock"`, so you see one only once retries
 run out. A `"uniqueViolation"` asks you to choose another key or treat the object as
-already there. A `"lockWaitTimeout"` means another transaction held a lock for too long:
-try again later, or find what holds it. For a failure with no category, `native_code`
+already there. A `"constraintViolation"` names the constraint the row broke in
+`constraint_name`, and isn't retried either. On a temporal table Parallax created, the
+checks named `pxc_tx_…` and `pxc_valid_…` require every row's interval to start before
+it ends, whoever writes it (see
+[the PostgreSQL lifecycle guide](../postgresql-lifecycle.md#temporal-interval-checks)).
+A `"lockWaitTimeout"` means another transaction held a lock for too long: try again
+later, or find what holds it. For a failure with no category, `native_code`
 and `message` say what happened. A missing table or column usually means the schema
 doesn't match the model (see [Model evolution](07-model-evolution.md)), and a refused
 privilege belongs to the role the work runs as (see
@@ -398,6 +406,7 @@ of an `ExecutionFailure`:
 | `TemporalConflictError` | when the transaction sends its writes | Yes, up to `max_retries` | If retries run out: synchronize the clocks of the servers that write the database |
 | `WritePreconditionError` | when the transaction sends its writes, or at the call under locking | No | Read the current value and let the user decide again |
 | A `DatabaseError` whose `category` is `"uniqueViolation"` | when the insert is sent, usually at commit | No | Choose another key, or treat the object as already there |
+| A `DatabaseError` whose `category` is `"constraintViolation"` | at the statement | No | Read `constraint_name` to find the constraint, and correct the row that broke it |
 | A `DatabaseError` whose `category` is `"lockWaitTimeout"` or `None` | at the statement | No | Read `native_code` and `message`; fix the schema or privilege, or try later |
 | `ConnectionAcquisitionError` | before an attempt begins | No | Check the database and the pool |
 | `TransactionRollbackError` | when the rollback after a failure fails too | No | Read `triggering_error` for the failure, and `rollback_error` for the rollback's |

@@ -78,12 +78,12 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **optimizer-fence form** (`m-sql`) | append `offset 0` to each tag-filtered branch; no bind | append `limit ?` to each tag-filtered branch; bind unsigned maximum `18446744073709551615` immediately after the tag bind |
 | **read-lock application** (`m-read-lock`) | locking-mode object find: `for share of t0` | locking-mode object find: **`lock in share mode`** (no `for share`; MDEV-17514) |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
-| **schema DDL primitives** (`m-schema-delta`) | `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …` | the same statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table (see below) |
+| **schema DDL primitives** (`m-schema-delta`) | `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …`; a created temporal table carries its named interval checks inline | the same statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table, and no interval check (see below) |
 | **identifier byte limit** (`m-schema-delta`) | 63 | 64 |
 | **bind parameter limit** | 65535 | 65535 |
 | typed bind normalization | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind adapted to the max sentinel |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
-| error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062`/`1022`/`1169`/`1859` duplicate, `1213`/`1020` deadlock, `1205` lock timeout |
+| error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `23514`/`23P01` constraint, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062`/`1022`/`1169`/`1859` duplicate, `4025` constraint, `1213`/`1020` deadlock, `1205` lock timeout |
 | **unchanged-row count** (`m-unit-work` / `m-db-port`) | yes — an `UPDATE`'s count includes every row it matched | yes — every connection negotiates `CLIENT_FOUND_ROWS`, so an `UPDATE`'s count includes every row it matched (see below) |
 
 The read-lock application and infinity representation are the original two
@@ -566,7 +566,7 @@ statement fragments, so a `Dialect` never sees a layout type and `m-dialect` kee
 its single edge to `m-core`.
 
 ```text
-createTable(table, columns, primaryKey)                -> statement
+createTable(table, columns, primaryKey, intervalChecks) -> statement
 addColumn(table, column)                               -> statement
 restateColumn(table, earlier, later)                   -> statement | Unsupported
 createIndex(table, name, columns, unique)              -> statement | Unsupported
@@ -574,6 +574,7 @@ dropIndex(table, name)                                 -> statement
 
 ColumnDdl        (column, typeSql, nullable)           already-quoted name, already-mapped type
 IndexColumnDdl   (column, neutralType, maxLength)      what index admissibility depends on
+IntervalCheckDdl (name, start, end)                    already-quoted check name and endpoint Columns
 Unsupported      (reason)                              a dialect-neutral reason, carried verbatim
 PhysicalIndexName(value)                               a nonempty physical identifier
 ```
@@ -592,6 +593,13 @@ restates the whole Column with `modify`. Nullability only ever relaxes across th
 seam — `m-schema-delta` asks for a domain restatement in exactly two shapes, and
 neither can tighten one — so a dropped `not null` is the only nullability action a
 caller can request.
+
+`createTable` receives each temporal axis's interval check in the caller's
+order. Postgres spells each one inline after the key clause as
+`constraint <name> check (<start> < <end>)`, so every row the Table stores —
+whoever writes it — has a nonempty, non-inverted interval on that axis, and a
+violating row fails with the check's own name. MariaDB spells none: its generated
+temporal tables carry no native temporal constraint.
 
 `createIndex` receives each component's Neutral Type and String bound beside its
 Column, because that is what index admissibility depends on: Postgres indexes
@@ -635,8 +643,10 @@ lowering step substitutes another proof for the count.
 `maxIdentifierBytes` is how many bytes of an identifier the database stores
 without truncating it: **63** on Postgres and **64** on MariaDB. It constrains
 DERIVED identifiers only. An authored Table or Column name is the author's own
-and is spelled as declared; the one identifier this system derives is a Physical
-Index Name, whose shortening rule is `m-schema-delta`'s.
+and is spelled as declared; a Physical Index Name is shortened to this limit by
+`m-schema-delta`'s rule. A temporal constraint name is compiled with the model,
+before any Dialect is chosen, so `m-storage-layout` fits it to a fixed 63 bytes,
+within both limits.
 
 ### Bind parameter limit
 

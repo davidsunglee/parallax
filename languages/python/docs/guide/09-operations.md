@@ -80,6 +80,9 @@ The lifecycle guide also covers the decisions a deployment makes once:
   building the root after a forking server forks, and closing it on shutdown.
 - [Session settings](../postgresql-lifecycle.md#session-settings): the driver build, and
   how a subject scope's role is set on and cleared from each connection.
+- [Temporal interval checks](../postgresql-lifecycle.md#temporal-interval-checks): the
+  checks generated temporal tables carry, and adopting them on a table that existed
+  before them.
 
 [Model evolution](07-model-evolution.md) covers rolling a new model out to running
 processes, and [Errors](08-errors.md) covers what reaches your code when the database
