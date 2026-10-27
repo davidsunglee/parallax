@@ -13,7 +13,7 @@ from parallax.core.object_query._resolved import (
     ResolvedOrderTerm,
     ResolvedSeek,
 )
-from parallax.core.sql_gen._context import ContinuationCarrierForm, SqlGenError, StatementBuilder
+from parallax.core.sql_gen._context import SqlGenError, StatementBuilder, continuation_carrier_form
 from parallax.core.sql_gen._predicate import MemberSubject
 
 __all__ = [
@@ -377,7 +377,7 @@ def _compared[RowScope](
         case "infinity":
             ctx.bind_framework(carrier)
         case "finite":
-            form = ContinuationCarrierForm(
+            form = continuation_carrier_form(
                 resolved.type, "COMPARISON_TEXT" if resolved.text_compared else "MANAGED"
             )
             if coordinate.deferred:
