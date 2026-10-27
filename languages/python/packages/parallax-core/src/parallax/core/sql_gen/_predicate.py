@@ -42,7 +42,12 @@ from parallax.core.predicate._resolved import (
     ScalarElement,
     disjunctive,
 )
-from parallax.core.sql_gen._context import SqlGenError, StatementBuilder
+from parallax.core.sql_gen._context import (
+    EXPANDING_PLACEHOLDER,
+    GatheredKeysForm,
+    SqlGenError,
+    StatementBuilder,
+)
 from parallax.core.sql_gen._context import table_layout as _table_layout
 
 # The family LANE of the compiler — distinct from `parallax.core.inheritance`
@@ -742,11 +747,11 @@ def _render_membership(
     if isinstance(values, DeferredKeySet):
         if tag != "in":  # pragma: no cover - generated child reads are positive
             raise SqlGenError("a deferred key set supports only positive membership")
-        if scope.dialect.name == "postgres":
-            scope.ctx.bind_managed_array(values, values.neutral_type)
+        array = scope.dialect.name == "postgres"
+        scope.ctx.bind_deferred(("keys",), GatheredKeysForm(values.neutral_type, array))
+        if array:
             return f"{subject.compared} = any(?)"
-        scope.ctx.bind_managed(values, values.neutral_type)
-        return f"{subject.compared} in (__parallax_deferred_keys__)"
+        return f"{subject.compared} in ({EXPANDING_PLACEHOLDER})"
     holes = ", ".join("?" for _ in values)
     for value in values:
         _bind_operand(value, subject, scope)

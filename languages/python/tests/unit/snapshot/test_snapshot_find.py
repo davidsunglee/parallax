@@ -2392,7 +2392,8 @@ def test_typed_and_wire_reads_share_resolved_include_work_within_each_delivery_m
         return resolve(*args, **kwargs)
 
     def counting_child(query: deep_fetch.PlannedEntityQuery, *args: Any, **kwargs: Any) -> Any:
-        child_compiles.append(query)
+        if query.entity.identity.name == "OrderItem":
+            child_compiles.append(query)
         return compile_child(query, *args, **kwargs)
 
     monkeypatch.setattr(deep_fetch, "resolve_temporal_visibility", counting_resolution)

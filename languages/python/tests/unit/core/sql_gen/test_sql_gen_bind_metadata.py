@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import math
+from collections.abc import Callable
 from decimal import Decimal
 
 import pytest
@@ -15,13 +16,21 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
-from parallax.core.predicate._resolved import DeferredKeySet, ResolvedConstant
+from parallax.core.predicate._execution_values import ExecutionValueSource
+from parallax.core.predicate._resolved import ResolvedConstant
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import CompiledTemplate, compile_read
 from parallax.core.sql_gen._context import (
+    EXPANDING_PLACEHOLDER,
+    PAGE_CAP,
+    ContinuationCarrierForm,
+    ExecutionValueForm,
+    ExecutionValuePositions,
+    GatheredKeysForm,
     LoweredStatement,
     SqlGenError,
     StatementBuilder,
+    _ExecutionValueMarker,  # pyright: ignore[reportPrivateUsage]
     _RepeatedTypedBindSpan,  # pyright: ignore[reportPrivateUsage]
     _TypedBindSlot,  # pyright: ignore[reportPrivateUsage]
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
@@ -54,7 +63,7 @@ def _builder() -> StatementBuilder:
     )
 
 
-def _template(statement: LoweredStatement, *, postgres_array: bool) -> CompiledTemplate:
+def _template(statement: LoweredStatement) -> CompiledTemplate:
     entity = WALLET.entities[0]
     compiled = compile_read(
         deep_fetch.PlannedEntityQuery(
@@ -68,7 +77,7 @@ def _template(statement: LoweredStatement, *, postgres_array: bool) -> CompiledT
         POSTGRES,
     )
     return sql_compile._template(  # pyright: ignore[reportPrivateUsage]
-        dataclasses.replace(compiled, statement=statement), postgres_array=postgres_array
+        dataclasses.replace(compiled, statement=statement)
     )
 
 
@@ -311,21 +320,20 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
     postgres_array: bool,
 ) -> None:
     builder = _builder()
-    marker = DeferredKeySet(INT64)
+    keys_form = GatheredKeysForm(INT64, postgres_array)
     builder.bind_framework("leading-driver", wire_value="leading-wire")
     builder.bind_managed(100, INT64)
-    bind_keys = builder.bind_managed_array if postgres_array else builder.bind_managed
-    bind_keys(marker, INT64)
+    builder.bind_deferred(("keys",), keys_form)
     builder.bind_managed(200, INT64)
     builder.bind_framework("middle-driver", wire_value=None)
-    bind_keys(marker, INT64)
-    bind_keys(marker, INT64)
+    builder.bind_deferred(("keys",), keys_form)
+    builder.bind_deferred(("keys",), keys_form)
     builder.bind_comparison_text("tail", STRING)
     builder.bind_framework("trailing-driver", wire_value="trailing-wire")
     builder.bind_typed_rows((("a",), ("b",)), ((STRING, "MANAGED"),))
-    member = "any(?)" if postgres_array else "(__parallax_deferred_keys__)"
+    member = "any(?)" if postgres_array else f"({EXPANDING_PLACEHOLDER})"
     statement = builder.finish(f"select ?, ?, {member}, ?, ?, {member}, {member}, ?, ?, ?, ?")
-    template = _template(statement, postgres_array=postgres_array)
+    template = _template(statement)
     indexes = (2, 5, 6)
     keys: list[ManagedValue] = [10, 20, 30]
     rendered = template.render(keys).statement
@@ -358,10 +366,12 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
     )
     assert rendered.is_compiler_proven
     if postgres_array:
+        assert rendered.sql == statement.sql
         assert rendered.typed_bind_spans is statement.typed_bind_spans
         assert rendered.wire_bind_overrides is statement.wire_bind_overrides
         assert all(rendered.binds[index] is keys for index in indexes)
     else:
+        assert rendered.sql == "select ?, ?, (?, ?, ?), ?, ?, (?, ?, ?), (?, ?, ?), ?, ?, ?, ?"
         assert rendered.typed_bind_spans == (
             _TypedBindSpan(1, 6, INT64, "MANAGED"),
             _TypedBindSpan(7, 13, INT64, "MANAGED"),
@@ -374,34 +384,172 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
             _WireBindOverride(14, "trailing-wire"),
         )
     assert keys == [10, 20, 30]
-    assert statement.binds[2] is statement.binds[5] is statement.binds[6] is marker
+    (group,) = statement.execution_value_positions()
+    assert (group.source, group.form, group.indices) == (("keys",), keys_form, indexes)
     again = template.render([40]).statement
     assert again.typed_bind_spans is statement.typed_bind_spans
     assert again.wire_bind_overrides is statement.wire_bind_overrides
     assert rendered.binds != again.binds
 
 
-def test_a_deferred_set_cannot_be_inserted_into_repeated_write_row_metadata() -> None:
-    marker = DeferredKeySet(STRING)
+_CARRIER = ContinuationCarrierForm(INT64, "MANAGED")
+_TEXT_CARRIER = ContinuationCarrierForm(STRING, "COMPARISON_TEXT")
+
+
+def test_groups_follow_canonical_source_order_and_substitute_in_any_stream_order() -> None:
+    builder = _builder()
+    builder.bind_deferred(("limit",), PAGE_CAP)
+    builder.bind_deferred(("paging", 1), _TEXT_CARRIER)
+    builder.bind_managed(7, INT64)
+    builder.bind_deferred(("paging", 0), _CARRIER)
+    builder.bind_deferred(("keys",), GatheredKeysForm(INT64, False))
+    builder.bind_deferred(("paging", 1), _TEXT_CARRIER)
+    builder.bind_deferred(("paging", 0), _CARRIER)
+    statement = builder.finish(f"select ?, ?, ?, ?, ({EXPANDING_PLACEHOLDER}), ?, ?")
+
+    groups = statement.execution_value_positions()
+
+    assert [(group.source, group.indices) for group in groups] == [
+        (("paging", 0), (3, 6)),
+        (("paging", 1), (1, 5)),
+        (("limit",), (0,)),
+        (("keys",), (4,)),
+    ]
+    values: dict[object, object] = {
+        ("paging", 0): 42,
+        ("paging", 1): "b",
+        ("limit",): 3,
+        ("keys",): [8, 9],
+    }
+    streams = (groups, tuple(reversed(groups)))
+    rendered = [
+        statement.with_execution_values(
+            ((group, values[group.source]) for group in stream), sql="rendered"
+        )
+        for stream in streams
+    ]
+    assert rendered[0] == rendered[1]
+    assert rendered[0].binds == (3, "b", 7, 42, 8, 9, "b", 42)
+    assert rendered[0].typed_bind_spans == (
+        _TypedBindSpan(1, 2, STRING, "COMPARISON_TEXT"),
+        _TypedBindSpan(2, 6, INT64, "MANAGED"),
+        _TypedBindSpan(6, 7, STRING, "COMPARISON_TEXT"),
+        _TypedBindSpan(7, 8, INT64, "MANAGED"),
+    )
+    assert rendered[0].wire_binds() == (3, "b", 7, 42, 8, 9, "b", 42)
+
+
+def test_a_marker_fills_repeated_row_metadata_unless_it_expands() -> None:
+    carrier = _ExecutionValueMarker(("paging", 0), ContinuationCarrierForm(STRING, "MANAGED"))
     statement = LoweredStatement(
         "",
-        (marker, "a"),
+        (carrier, "a", carrier, "b"),
+        (_RepeatedTypedBindSpan(0, 2, 2, 2, STRING, "MANAGED"),),
+    )
+    (group,) = statement.execution_value_positions()
+    rendered = statement.with_execution_values(((group, "z"),), sql="")
+    assert rendered.binds == ("z", "a", "z", "b")
+    assert rendered.typed_bind_spans is statement.typed_bind_spans
+
+    keys = _ExecutionValueMarker(("keys",), GatheredKeysForm(STRING, False))
+    expanding = LoweredStatement(
+        "",
+        (keys, "a"),
         (_RepeatedTypedBindSpan(0, 1, 1, 2, STRING, "MANAGED"),),
     )
     with pytest.raises(SqlGenError, match="repeated row-bind metadata"):
-        _template(statement, postgres_array=False)
+        _template(expanding)
 
 
-@pytest.mark.parametrize("form", ["MANAGED", "MANAGED_ARRAY"])
-def test_an_unrendered_key_set_has_no_wire_projection(form: str) -> None:
+def _untyped(builder: StatementBuilder) -> None:
+    builder.bind_structural(_ExecutionValueMarker(("paging", 0), _CARRIER))
+
+
+def _typed_structure(builder: StatementBuilder) -> None:
+    builder.bind_managed(_ExecutionValueMarker(("limit",), PAGE_CAP), INT64)
+
+
+def _other_type(builder: StatementBuilder) -> None:
+    builder.bind_managed(_ExecutionValueMarker(("paging", 0), _CARRIER), STRING)
+
+
+def _overridden(builder: StatementBuilder) -> None:
+    builder.bind_framework(_ExecutionValueMarker(("limit",), PAGE_CAP), wire_value=1)
+
+
+@pytest.mark.parametrize(
+    "bind",
+    [_untyped, _typed_structure, _other_type, _overridden],
+    ids=["untyped", "typed-structure", "other-type", "overridden"],
+)
+def test_discovery_refuses_a_marker_bound_outside_its_form(
+    bind: Callable[[StatementBuilder], None],
+) -> None:
     builder = _builder()
-    if form == "MANAGED":
-        builder.bind_managed(DeferredKeySet(FLOAT32), FLOAT32)
-    else:
-        builder.bind_managed_array(DeferredKeySet(FLOAT32), FLOAT32)
+    bind(builder)
+    with pytest.raises(SqlGenError, match="classification its form selects"):
+        builder.finish("select ?").execution_value_positions()
 
-    with pytest.raises(SqlGenError, match="until its keys are rendered"):
+
+def test_discovery_refuses_gathered_keys_in_two_forms() -> None:
+    builder = _builder()
+    builder.bind_deferred(("keys",), GatheredKeysForm(INT64, True))
+    builder.bind_deferred(("keys",), GatheredKeysForm(STRING, True))
+    with pytest.raises(SqlGenError, match="exactly one bind form"):
+        builder.finish("select ?, ?").execution_value_positions()
+
+
+def test_a_template_refuses_placeholders_that_disagree_with_its_key_positions() -> None:
+    builder = _builder()
+    builder.bind_deferred(("keys",), GatheredKeysForm(INT64, False))
+    with pytest.raises(SqlGenError, match="disagree with its key positions"):
+        _template(builder.finish("select ?"))
+    with pytest.raises(SqlGenError, match="disagree with its key positions"):
+        _template(_builder().finish(f"select {EXPANDING_PLACEHOLDER}"))
+
+
+def test_substitution_refuses_an_empty_expansion() -> None:
+    builder = _builder()
+    builder.bind_deferred(("keys",), GatheredKeysForm(INT64, False))
+    statement = builder.finish("select ?")
+    (group,) = statement.execution_value_positions()
+    with pytest.raises(SqlGenError, match="at least one element"):
+        statement.with_execution_values(((group, []),), sql="select")
+
+
+def test_a_statement_without_markers_retains_no_positions() -> None:
+    builder = _builder()
+    builder.bind_managed(1, INT64)
+    statement = builder.finish("select ?")
+    template = _template(statement)
+    assert statement.execution_value_positions() == ()
+    assert template.render() is template.compiled
+
+
+@pytest.mark.parametrize(
+    ("source", "form"),
+    [
+        (("keys",), GatheredKeysForm(FLOAT32, False)),
+        (("keys",), GatheredKeysForm(FLOAT32, True)),
+        (("limit",), PAGE_CAP),
+        (("paging", 0), _CARRIER),
+    ],
+    ids=["keys", "key-array", "page-cap", "carrier"],
+)
+def test_an_unrendered_marker_has_no_wire_projection(
+    source: ExecutionValueSource, form: ExecutionValueForm
+) -> None:
+    builder = _builder()
+    builder.bind_deferred(source, form)
+
+    with pytest.raises(SqlGenError, match="until its template renders"):
         builder.finish("select ?").wire_binds()
+
+
+def test_positions_name_their_marker_s_source_and_form() -> None:
+    marker = _ExecutionValueMarker(("limit",), PAGE_CAP)
+    positions = ExecutionValuePositions(marker, (0, 2))
+    assert (positions.source, positions.form) == (("limit",), PAGE_CAP)
 
 
 def test_multirow_write_uses_one_repeated_descriptor_per_typed_row_run() -> None:

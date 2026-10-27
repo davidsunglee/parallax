@@ -593,7 +593,7 @@ def test_child_template_projects_each_float32_key_to_its_canonical_wire_value(
 
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
 def test_an_unrendered_child_template_has_no_wire_projection(dialect: Dialect) -> None:
-    with pytest.raises(SqlGenError, match="until its keys are rendered"):
+    with pytest.raises(SqlGenError, match="until its template renders"):
         _child_template(dialect).compiled.statement.wire_binds()
 
 
@@ -603,7 +603,9 @@ def test_child_template_refuses_an_empty_set_that_should_issue_no_statement() ->
 
 
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
-def test_child_template_refuses_a_query_without_one_deferred_key_set(dialect: Dialect) -> None:
+def test_a_template_deferring_nothing_renders_its_compiled_read_without_inputs(
+    dialect: Dialect,
+) -> None:
     entity = target(ACCOUNT, "Account")
     query = deep_fetch.PlannedEntityQuery(
         target=entity.identity,
@@ -613,33 +615,51 @@ def test_child_template_refuses_a_query_without_one_deferred_key_set(dialect: Di
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
 
-    with pytest.raises(SqlGenError, match="exactly one deferred key set"):
-        sql_compile.compile_template(query, ACCOUNT, dialect)
+    template = sql_compile.compile_template(query, ACCOUNT, dialect)
+
+    assert template.compiled == sql_compile.compile_read(query, ACCOUNT, dialect)
+    assert template.render() is template.compiled
+    assert template.render([1]) is template.compiled
 
 
-@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
-def test_child_template_refuses_distinct_markers_even_when_their_types_match(
-    dialect: Dialect,
-) -> None:
+def _two_key_sets(members: tuple[str, str]) -> deep_fetch.PlannedEntityQuery:
     entity = target(ORDERS, "OrderItem")
-    member = entity.attribute("orderId")
-    assert member is not None
-    query = deep_fetch.PlannedEntityQuery(
+    first, second = (entity.attribute(name) for name in members)
+    assert first is not None and second is not None
+    return deep_fetch.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         position=read_position(ORDERS, entity),
         predicate=resolved_as_stated(
-            conjunction(
-                deferred_membership(member=member),
-                deferred_membership(member=member),
-            ),
+            conjunction(deferred_membership(member=first), deferred_membership(member=second)),
             ORDERS,
             entity,
         ),
         projection=deep_fetch.ResolvedReadProjection((), False),
     )
-    with pytest.raises(SqlGenError, match="exactly one deferred key set"):
-        sql_compile.compile_template(query, ORDERS, dialect)
+
+
+@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
+def test_a_template_renders_every_key_occurrence_of_one_form_from_one_gathered_set(
+    dialect: Dialect,
+) -> None:
+    rendered = sql_compile.compile_template(_two_key_sets(("orderId", "id")), ORDERS, dialect)
+    keys: list[ManagedValue] = [1, 2]
+
+    statement = rendered.render(keys).statement
+
+    if dialect.name == "postgres":
+        assert statement.binds == (keys, keys)
+        assert statement.sql.endswith("where t0.order_id = any(?) and t0.id = any(?)")
+    else:
+        assert statement.binds == (1, 2, 1, 2)
+        assert statement.sql.endswith("where t0.order_id in (?, ?) and t0.id in (?, ?)")
+
+
+@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
+def test_a_template_refuses_gathered_keys_of_two_forms(dialect: Dialect) -> None:
+    with pytest.raises(SqlGenError, match="exactly one bind form"):
+        sql_compile.compile_template(_two_key_sets(("orderId", "sku")), ORDERS, dialect)
 
 
 @pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
@@ -687,7 +707,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
     monkeypatch.setattr(sql_compile, "compile_read", forbidden)
     monkeypatch.setattr(sql_compile, "_plan_read_shape", forbidden)
     monkeypatch.setattr(sql_compile, "_plan_statement", forbidden)
-    monkeypatch.setattr(LoweredStatement, "deferred_key_markers", forbidden)
+    monkeypatch.setattr(LoweredStatement, "execution_value_positions", forbidden)
     for keys in ([10], [10, 20, 30], [40, 50]):
         original_keys = tuple(keys)
         gathered = cast("list[ManagedValue]", keys)

@@ -5,6 +5,7 @@ from itertools import chain
 from typing import Literal, assert_never
 
 from parallax.core.base import (
+    INFINITY,
     Bytes,
     DocumentReadOrdinals,
     ManagedValue,
@@ -24,10 +25,15 @@ from parallax.core.metamodel import (
 from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import (
     Paging,
+    ResolvedObjectQuery,
     ResolvedSeek,
 )
+from parallax.core.predicate._execution_values import ExecutionValueSource
 from parallax.core.predicate._resolved import disjunctive
 from parallax.core.sql_gen._context import (
+    EXPANDING_PLACEHOLDER,
+    PAGE_CAP,
+    ExecutionValuePositions,
     LoweredStatement,
     SqlGenError,
     StatementBuilder,
@@ -158,26 +164,70 @@ class CompiledRead:
 
 @dataclass(frozen=True, slots=True)
 class CompiledTemplate:
-    """One compiled child read whose parent key set is supplied per execution."""
+    """One compiled read whose execution values are supplied when it renders.
+
+    ``compiled`` is the unrendered read; its statement carries a marker at every
+    position a rendered read fills.
+    """
 
     compiled: CompiledRead
-    postgres_array: bool
-    _markers: tuple[int, ...]
+    _positions: tuple[ExecutionValuePositions, ...] = ()
     _sql_parts: tuple[str, ...] = ()
 
-    def render(self, keys: list[ManagedValue]) -> CompiledRead:
-        """Bind ``keys`` at every position of the deferred key set; the Postgres array
-        bind is the list itself, so the caller hands it over and must not mutate it
-        afterwards."""
-        if not keys:
-            raise SqlGenError("a child read template requires at least one gathered key")
+    def render(
+        self,
+        keys: list[ManagedValue] | None = None,
+        *,
+        query: ResolvedObjectQuery | None = None,
+    ) -> CompiledRead:
+        """This read with its execution values taken from ``query`` and the
+        gathered ``keys``, or :attr:`compiled` itself when it defers none.
+
+        A Postgres key-set bind is the ``keys`` list itself, so the caller hands
+        it over and must not mutate it afterwards.
+        """
+        positions = self._positions
+        if not positions:
+            return self.compiled
         statement = self.compiled.statement
-        if self.postgres_array:
-            rendered = statement.with_keys(statement.sql, self._markers, (keys,))
-        else:
-            holes = ", ".join("?" for _ in keys)
-            rendered = statement.with_keys(holes.join(self._sql_parts), self._markers, keys)
+        sql = statement.sql
+        if self._sql_parts:
+            sql = ", ".join("?" for _ in _gathered(keys)).join(self._sql_parts)
+        rendered = statement.with_execution_values(
+            ((group, _execution_value(group.source, keys, query)) for group in positions),
+            sql=sql,
+        )
         return replace(self.compiled, statement=rendered)
+
+
+def _gathered(keys: list[ManagedValue] | None) -> list[ManagedValue]:
+    if not keys:
+        raise SqlGenError("a child read template requires at least one gathered key")
+    return keys
+
+
+def _execution_value(
+    source: ExecutionValueSource,
+    keys: list[ManagedValue] | None,
+    query: ResolvedObjectQuery | None,
+) -> object:
+    match source:
+        case ("keys",):
+            return _gathered(keys)
+        case ("paging", at):
+            seek = None if query is None or query.paging is None else query.paging.seek
+            if seek is None:
+                raise SqlGenError("a continuing read template requires its current seek")
+            carrier = seek.coordinate.carriers[at]
+            if carrier is None or carrier is INFINITY:
+                raise SqlGenError("a continuing read template renders only a finite carrier")
+            return carrier
+        case ("limit",):
+            if query is None or query.paging is None or query.limit is None:
+                raise SqlGenError("a paged read template requires its current page cap")
+            return query.limit
+        case _:  # pragma: no cover - predicate and temporal sources are never deferred
+            raise SqlGenError(f"no execution value renders from {source!r}")
 
 
 def compile_template(
@@ -188,19 +238,21 @@ def compile_template(
     result_form: _ResultForm = "row",
     lock: LockMode | None = None,
 ) -> CompiledTemplate:
-    """Compile a child read once, deferring only its gathered parent keys."""
-    compiled = compile_read(query, model, dialect, result_form=result_form, lock=lock)
-    return _template(compiled, postgres_array=dialect.name == "postgres")
-
-
-def _template(compiled: CompiledRead, *, postgres_array: bool) -> CompiledTemplate:
-    statement = compiled.statement
-    return CompiledTemplate(
-        compiled,
-        postgres_array,
-        statement.deferred_key_markers(),
-        () if postgres_array else tuple(statement.sql.split("__parallax_deferred_keys__")),
+    """Compile a read once, deferring its page's cap and seek carriers and its
+    gathered parent keys to rendering."""
+    return _template(
+        _compile_read(query, model, dialect, result_form=result_form, lock=lock, deferred=True)
     )
+
+
+def _template(compiled: CompiledRead) -> CompiledTemplate:
+    statement = compiled.statement
+    positions = statement.execution_value_positions()
+    expanding = sum(len(group.indices) for group in positions if group.form.expands)
+    parts = tuple(statement.sql.split(EXPANDING_PLACEHOLDER))
+    if len(parts) - 1 != expanding:
+        raise SqlGenError("a template's expanding placeholders disagree with its key positions")
+    return CompiledTemplate(compiled, positions, parts if expanding else ())
 
 
 def compile_read(
@@ -216,7 +268,21 @@ def compile_read(
     ``result_form`` chooses only the materialization contract. Projection membership is
     already present on ``query``; ``lock`` is the caller-derived effective read lock.
     """
+    return _compile_read(query, model, dialect, result_form=result_form, lock=lock, deferred=False)
 
+
+def _compile_read(
+    query: PlannedEntityQuery,
+    model: Metamodel,
+    dialect: Dialect,
+    *,
+    result_form: _ResultForm,
+    lock: LockMode | None,
+    deferred: bool,
+) -> CompiledRead:
+    """Lower ``query`` once; a ``deferred`` read binds its page's execution
+    values as markers."""
+    page_deferred = deferred and query.paging is not None
     storage = _storage_view(model)
     facet = _inheritance_view(model)
     terms = _lowered_terms(query.order_by, _reserved_result_keys(model, storage))
@@ -249,6 +315,7 @@ def compile_read(
         dialect,
         lock=arm_lock,
         null_tail=False,
+        deferred=page_deferred,
     )
     if two_arms:
         null_tail, tail_list = _render_read_arm(
@@ -262,6 +329,7 @@ def compile_read(
             dialect,
             lock=arm_lock,
             null_tail=True,
+            deferred=page_deferred,
         )
         select_list.require_agreement(tail_list)
         statement, select_list = _union_null_tail(
@@ -275,6 +343,7 @@ def compile_read(
             storage,
             dialect,
             locking=outer_lock,
+            deferred=page_deferred,
         )
     return CompiledRead(
         statement,
@@ -301,6 +370,7 @@ def _union_null_tail(
     dialect: Dialect,
     *,
     locking: bool,
+    deferred: bool,
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
     """The ordered, capped `union all` of a continuing page's ordinary and
     NULL-tail arms, selected through the cells both arms emit; a ``locking``
@@ -329,7 +399,7 @@ def _union_null_tail(
             outer_alias,
         )
         source += base_join
-    statement_ctx.bind_structural(query.limit)
+    _bind_limit(statement_ctx, query.limit, deferred=deferred)
     statement = statement_ctx.finish(
         f"select {outer_list.sql} from {source} order by {ordering} "
         f"{dialect.limit_clause()}{lock_suffix}"
@@ -494,6 +564,7 @@ def _render_seek(
     ctx: StatementBuilder[_EntityRowScope],
     *,
     null_tail: bool = False,
+    deferred: bool,
 ) -> str:
     """This read's seek fragment, or nothing where it starts at the beginning.
 
@@ -514,6 +585,7 @@ def _render_seek(
         subject,
         ctx,
         leading_resident=bool(terms) and scope.document_resident(terms[0].member),
+        deferred=deferred,
     )
 
 
@@ -546,6 +618,8 @@ def _append_read_tail(
     subject: _TermSubject,
     limit: int | None,
     lock: LockMode | None,
+    *,
+    deferred: bool,
 ) -> None:
     """Append the ``order by`` / ``limit`` / read-lock tail (m-sql) to the select
     reading ``scope``'s rows: a single-table read, or the outer select over a
@@ -565,11 +639,21 @@ def _append_read_tail(
         parts.append(ordering)
     if limit is not None:
         parts.append(scope.dialect.limit_clause())
-        scope.ctx.bind_structural(limit)
+        _bind_limit(scope.ctx, limit, deferred=deferred)
     if lock == "locking":
         # The shared-row-lock suffix is the last thing in the statement (after any
         # `where` / `order by` / `limit`).
         parts.append(scope.dialect.read_lock_suffix(scope.alias))
+
+
+def _bind_limit[RowScope](
+    ctx: StatementBuilder[RowScope], limit: int | None, *, deferred: bool
+) -> None:
+    """Bind a read's ``limit``; a ``deferred`` read leaves its page's cap to rendering."""
+    if deferred:
+        ctx.bind_deferred(("limit",), PAGE_CAP)
+    else:
+        ctx.bind_structural(limit)
 
 
 def _render_read_arm(
@@ -584,6 +668,7 @@ def _render_read_arm(
     *,
     lock: LockMode | None,
     null_tail: bool,
+    deferred: bool,
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
     """Render one ordinary or NULL-tail arm of ``query`` from its one physical
     plan and one statement plan, through builders of this arm's own: its
@@ -609,6 +694,7 @@ def _render_read_arm(
                 storage,
                 dialect,
                 null_tail,
+                deferred=deferred,
             )
         case _SingleTableReadPlan() if statement_plan.requires_tph_partition:
             return _render_tph_partitioned_read(
@@ -624,6 +710,7 @@ def _render_read_arm(
                 dialect,
                 lock,
                 null_tail,
+                deferred=deferred,
             )
         case _SingleTableReadPlan():
             return _render_single_table_read(
@@ -639,6 +726,7 @@ def _render_read_arm(
                 dialect,
                 lock,
                 null_tail,
+                deferred=deferred,
             )
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
@@ -675,6 +763,8 @@ def _render_single_table_read(
     dialect: Dialect,
     lock: LockMode | None,
     null_tail: bool,
+    *,
+    deferred: bool,
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
     """Render one SELECT over the plan's one Table (m-sql "Inheritance —
     table-per-hierarchy lowering" and "… — table-per-concrete-subtype
@@ -692,7 +782,9 @@ def _render_single_table_read(
     _emit_coordinates(select_list, terms, scope.subject_for, paging)
     parts = [f"select {select_list.sql}", f"from {plan.table} {scope.alias}"]
     where_sql = _render_selection(statement_plan, statement_plan.root_scopes[None], scope, parts)
-    seek_sql = _render_seek(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
+    seek_sql = _render_seek(
+        terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail, deferred=deferred
+    )
     conjoined = bool(seek_sql) or plan.tag_guard is not None
     where_terms = [
         _where_as_conjunct(statement_plan.predicate, where_sql, conjoined=conjoined),
@@ -706,7 +798,7 @@ def _render_single_table_read(
         where_terms.append(tag_sql)
         ctx.bind_framework_all(tag_binds)
     _append_where(parts, *where_terms)
-    _append_read_tail(parts, scope, terms, scope.subject_for, limit, lock)
+    _append_read_tail(parts, scope, terms, scope.subject_for, limit, lock, deferred=deferred)
     return _normalize(ctx.finish(" ".join(parts))), select_list
 
 
@@ -723,6 +815,8 @@ def _render_tph_partitioned_read(
     dialect: Dialect,
     lock: LockMode | None,
     null_tail: bool,
+    *,
+    deferred: bool,
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
     """Render one tag-disjoint branch per selected TPH document variant."""
     branch_sqls: list[str] = []
@@ -801,9 +895,12 @@ def _render_tph_partitioned_read(
                 paging,
                 statement_ctx,
                 null_tail=null_tail,
+                deferred=deferred,
             ),
         )
-        _append_read_tail(parts, outer_scope, terms, outer_scope.subject_for, limit, lock)
+        _append_read_tail(
+            parts, outer_scope, terms, outer_scope.subject_for, limit, lock, deferred=deferred
+        )
         return _normalize(statement_ctx.finish(" ".join(parts))), select_list
 
     if branch_list is None:  # pragma: no cover - a position names at least one concrete
@@ -832,9 +929,12 @@ def _render_tph_partitioned_read(
             paging,
             statement_ctx,
             null_tail=null_tail,
+            deferred=deferred,
         ),
     )
-    _append_read_tail(parts, outer_scope, terms, outer_scope.subject_for, limit, None)
+    _append_read_tail(
+        parts, outer_scope, terms, outer_scope.subject_for, limit, None, deferred=deferred
+    )
     return _normalize(statement_ctx.finish(" ".join(parts))), select_list
 
 
@@ -850,6 +950,8 @@ def _render_tpcs_union_read(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     null_tail: bool,
+    *,
+    deferred: bool,
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
     """Render a table-per-concrete-subtype `union all` read (m-sql "Inheritance —
     table-per-concrete-subtype lowering").
@@ -928,9 +1030,10 @@ def _render_tpcs_union_read(
             paging,
             tail_ctx,
             null_tail=null_tail,
+            deferred=deferred,
         ),
     )
-    _append_read_tail(outer_parts, outer_scope, terms, tail_subject, limit, None)
+    _append_read_tail(outer_parts, outer_scope, terms, tail_subject, limit, None, deferred=deferred)
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
     statement_ctx.append_fragment(capture_ctx.finish(""))
     for branch in branch_statements:

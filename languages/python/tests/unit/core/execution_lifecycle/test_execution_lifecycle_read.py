@@ -64,7 +64,7 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.read_delivery import _read_plan as read_plan_module
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._compile import CompiledRead, compile_read
+from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate, compile_template
 from parallax.snapshot import ScopedDatabase, SnapshotMaterializationError, connect
 from parallax.snapshot._handle import _read as read_module
 from tests._support import mirrored_models as mm
@@ -697,12 +697,12 @@ def _recorded_compilations(monkeypatch: pytest.MonkeyPatch) -> list[CompiledRead
     Database Call reports come from when the call site prepares nothing."""
     recorded: list[CompiledRead] = []
 
-    def recording(*args: Any, **kwargs: Any) -> CompiledRead:
-        compiled = compile_read(*args, **kwargs)
-        recorded.append(compiled)
-        return compiled
+    def recording(*args: Any, **kwargs: Any) -> CompiledTemplate:
+        template = compile_template(*args, **kwargs)
+        recorded.append(template.compiled)
+        return template
 
-    monkeypatch.setattr(read_plan_module, "compile_read", recording)
+    monkeypatch.setattr(read_plan_module, "compile_template", recording)
     return recorded
 
 
