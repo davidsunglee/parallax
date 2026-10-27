@@ -508,6 +508,82 @@ def test_an_observed_write_conflicts_on_a_row_its_deferred_range_reaches(
     _grade(case)
 
 
+@pytest.mark.parametrize(
+    ("observed_at", "recorded_start", "window", "instant"),
+    [
+        (
+            "2024-02-01T00:00:00.000000Z",
+            _T0,
+            ("2024-02-01T00:00:00.000000Z", "2024-04-01T00:00:00.000000Z"),
+            "2023-12-10T00:00:00.000000Z",
+        ),
+        (
+            "2024-07-01T00:00:00.000000Z",
+            _T1,
+            ("2024-07-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z"),
+            "2023-12-16T00:00:00.000000Z",
+        ),
+    ],
+    ids=["earlier-rectangle", "later-rectangle"],
+)
+def test_an_observed_write_within_its_recorded_row_reads_no_current_row(
+    damaged_case: CaseLoader,
+    observed_at: str,
+    recorded_start: str,
+    window: tuple[str, str],
+    instant: str,
+) -> None:
+    # After the find, a peer merges span 3's rectangles into one row spanning
+    # the recorded row's boundary; the window lies wholly inside the recorded
+    # row, whose start the instant follows.
+    case = damaged_case(_CONFLICT)
+    scenario = case.when["scenario"]
+    rows = _rows(case, "sequence_span")
+    find = {
+        **scenario[0],
+        "uow": "later",
+        "objectQuery": {
+            **scenario[0]["objectQuery"],
+            "predicate": {"eq": {"path": "parallax.compatibility.SequenceSpan.id", "value": 3}},
+            "temporal": {
+                "transaction-time": {"asOf": "latest"},
+                "valid-time": {"asOf": observed_at},
+            },
+        },
+        "expectRows": [_find(rows, id=3, in_z=recorded_start)],
+    }
+    merge = {
+        "uow": "ahead",
+        "write": [
+            {
+                "mutation": "amend",
+                "entity": "parallax.compatibility.SequenceSpan",
+                "row": {"id": 3, "amount": 300},
+                "ifTxStart": _T0,
+                "validFrom": "2024-01-01T00:00:00.000000Z",
+                "at": _ENDED,
+            }
+        ],
+    }
+    scenario[3]["write"][0] = {
+        "mutation": "amendUntil",
+        "on": 3,
+        "entity": "parallax.compatibility.SequenceSpan",
+        "rows": [{"id": 3, "amount": 250}],
+        "validFrom": window[0],
+        "until": window[1],
+        "at": instant,
+    }
+    scenario[3:3] = [find, merge]
+    case.then["units"]["ahead"] = {"outcome": "committed"}
+    for row in rows:
+        if row["id"] == 3:
+            row["out_z"] = _ENDED
+    rows.append(_span(3, "2024-01-01T00:00:00.000000Z", _INF, _ENDED, _INF, 300, "c"))
+    with pytest.raises(CaseFailure, match="no current row of it that flush would close"):
+        _grade(case)
+
+
 # --- the rules the document settles before any database ---------------------
 
 

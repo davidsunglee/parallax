@@ -675,9 +675,11 @@ def _beyond(
     row_from, row_thru = _instant(row.get(start)), _instant(row.get(end))
     window_from, window_until = _instant(entry["validFrom"]), _instant(entry.get("until"))
     held_from, held_thru = _instant(recorded.get(start)), _instant(recorded.get(end))
-    return (row_from < min(window_until, held_from) and window_from < row_thru) or (
-        row_from < window_until and max(window_from, held_thru) < row_thru
+    uncovered = (
+        (window_from, min(window_until, held_from)),
+        (max(window_from, held_thru), window_until),
     )
+    return any(lo < hi and row_from < hi and lo < row_thru for lo, hi in uncovered)
 
 
 def _within_window(row: Mapping[str, Any], submission: Submission, valid_axis: Axis | None) -> bool:
