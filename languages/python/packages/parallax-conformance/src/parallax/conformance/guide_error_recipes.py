@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from collections.abc import Mapping
 
-from parallax.conformance.guide_models import Customer, Shipment
+from parallax.conformance.guide_models import Customer, Price, Shipment
 from parallax.core import DomainModel, EditError, Entity, MetamodelValidationError
 from parallax.core.db_error import DatabaseError, PhysicalIndexName
 from parallax.core.db_port import CredentialSource
@@ -19,6 +20,7 @@ __all__ = [
     "change_a_customer_from_a_form",
     "created_index_name",
     "open_the_shop_database",
+    "price_a_window_unless_it_is_priced",
     "problems_in_a_model",
 ]
 
@@ -56,6 +58,24 @@ def add_a_customer_unless_the_id_is_taken(db: ScopedDatabase, customer: Customer
     except ExecutionFailure as failure:
         cause = failure.cause
         if not (isinstance(cause, DatabaseError) and cause.category == "uniqueViolation"):
+            raise
+        return False
+    return True
+
+
+def price_a_window_unless_it_is_priced(
+    db: ScopedDatabase, price: Price, start: dt.datetime, end: dt.datetime
+) -> bool:
+    """Price ``price.sku`` over ``[start, end)``, or answer False where it already has one."""
+    try:
+        db.transact(lambda tx: tx.insert(price, valid_from=start, until=end), max_retries=0)
+    except ExecutionFailure as failure:
+        cause = failure.cause
+        overlapping = isinstance(cause, DatabaseError) and cause.category in (
+            "uniqueViolation",
+            "constraintViolation",
+        )
+        if not overlapping:
             raise
         return False
     return True

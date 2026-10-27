@@ -1,0 +1,26 @@
+# Depot and Tenancy (v2): the later endpoint of the TEMPORAL TABLE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `Tenancy`
+# is Bitemporal, so the table its addition creates carries its named key, both
+# interval checks, and its exclusion, behind the exclusion's prerequisite.
+entities:
+  - name: Depot
+    namespace: parallax.compatibility
+    table: evolution_depot
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 64
+  - name: Tenancy
+    namespace: parallax.compatibility
+    table: evolution_tenancy
+    temporality: bitemporal
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: rent
+        type: int64

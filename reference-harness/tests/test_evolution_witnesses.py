@@ -90,6 +90,7 @@ def _physical_operation_kinds() -> frozenset[str]:
 # dialects share; a domain restatement is the one that diverges, and the
 # alternation is that divergence rather than a second grammar.
 _PHYSICAL_OPERATION_STATEMENTS: Final[Mapping[str, str]] = {
+    "CreateExtension": r"^create extension\b",
     "CreateTable": r"^create table\b",
     "AddColumn": r"^alter table \S+ add column\b",
     "RestateColumnDomain": r"^alter table \S+ (alter column|modify)\b",

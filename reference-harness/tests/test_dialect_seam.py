@@ -117,7 +117,7 @@ def test_mariadb_ddl_derives_from_descriptor() -> None:
 
 def test_postgres_checks_each_temporal_axis_inline_and_mariadb_checks_none() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/position.yaml")
-    postgres, *_indexes = ddl_for(model, "postgres")
+    _prerequisite, postgres, *_indexes = ddl_for(model, "postgres")
     mariadb, *_indexes = ddl_for(model, "mariadb")
     assert (
         "constraint pxc_valid_position_9c4697753a4cc41ed976ab6ee1f1f88b check (from_z < thru_z)"
@@ -131,7 +131,7 @@ def test_postgres_checks_each_temporal_axis_inline_and_mariadb_checks_none() -> 
 
 def test_every_table_a_temporal_family_maps_carries_the_roots_checks() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/rate.yaml")
-    created = {ddl.split()[2]: ddl for ddl in ddl_for(model, "postgres")}
+    created = {ddl.split()[2]: ddl for ddl in ddl_for(model, "postgres") if "create table" in ddl}
     assert (
         "constraint pxc_tx_deposit_rate_414fd0086fa88b25167aa860be1092ee"
         in (created["deposit_rate"])
@@ -141,6 +141,42 @@ def test_every_table_a_temporal_family_maps_carries_the_roots_checks() -> None:
     )
     payment = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
     assert all("check" not in ddl for ddl in ddl_for(payment, "postgres"))
+
+
+def test_postgres_names_the_temporal_key_and_excludes_overlap_and_mariadb_does_neither() -> None:
+    model = load_model(COMPATIBILITY_ROOT, "models/position.yaml")
+    prerequisite, postgres, *_indexes = ddl_for(model, "postgres")
+    assert prerequisite == "create extension if not exists btree_gist"
+    assert (
+        "constraint pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d "
+        "primary key (pos_id, thru_z, out_z)" in postgres
+    )
+    assert (
+        "constraint pxc_excl_position_e5c6616a7f7cfbf6c981cf0ad0f86610 exclude using gist "
+        "(pos_id with =, tstzrange(from_z, thru_z) with &&, tstzrange(in_z, out_z) with &&)"
+        in postgres
+    )
+    mariadb, *_indexes = ddl_for(model, "mariadb")
+    assert "exclude" not in mariadb and "constraint" not in mariadb
+    assert not any("extension" in ddl for ddl in ddl_for(model, "mariadb"))
+
+
+def test_a_shared_table_excludes_by_the_root_key_and_each_concrete_table_by_its_own() -> None:
+    instrument = load_model(COMPATIBILITY_ROOT, "models/instrument.yaml")
+    (shared,) = [ddl for ddl in ddl_for(instrument, "postgres") if "create table" in ddl]
+    assert "exclude using gist (id with =, tstzrange(from_z, thru_z)" in shared
+    assert "kind with =" not in shared
+    rate = load_model(COMPATIBILITY_ROOT, "models/rate.yaml")
+    created = {ddl.split()[2]: ddl for ddl in ddl_for(rate, "postgres") if "create table" in ddl}
+    assert (
+        "constraint pxc_excl_deposit_rate_ea12fdba9b842cd0660b9f10d5593728"
+        in (created["deposit_rate"])
+    )
+    assert "constraint pxc_excl_loan_rate_4eee23731629fb6ebaa7cc5fc179b5eb" in created["loan_rate"]
+    payment = load_model(COMPATIBILITY_ROOT, "models/payment.yaml")
+    assert all(
+        "exclude" not in ddl and "extension" not in ddl for ddl in ddl_for(payment, "postgres")
+    )
 
 
 def test_interval_check_names_shorten_only_their_readable_prefix() -> None:

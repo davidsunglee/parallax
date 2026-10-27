@@ -218,6 +218,24 @@ def transaction_time_only_terminate_closes_the_current_milestone(db: ScopedDatab
     db.transact(close)
 
 
+def transaction_time_only_reinsertion_at_the_terminating_instant_is_adjacent(
+    db: ScopedDatabase,
+) -> None:
+    def insert(tx: TxnContext) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
+
+    def close(tx: TxnContext) -> None:
+        current = tx.find(Balance.where(Balance.id == 1)).result()
+        tx.terminate(current)
+
+    def reopen(tx: TxnContext) -> None:
+        tx.insert(Balance(id=1, acct_num="A", value=Decimal("120.00")))
+
+    db.transact(insert)
+    db.transact(close)
+    db.transact(reopen)
+
+
 def transaction_time_only_chain_update_via_a_sparse_copy(db: ScopedDatabase) -> None:
     def insert(tx: TxnContext) -> None:
         tx.insert(Balance(id=1, acct_num="A", value=Decimal("100.00")))
@@ -346,6 +364,27 @@ def bitemporal_insert_until_opens_one_bounded_rectangle(db: ScopedDatabase) -> N
         )
 
     db.transact(fn)
+
+
+def bitemporal_insert_meeting_current_coverage_in_valid_time_is_adjacent(
+    db: ScopedDatabase,
+) -> None:
+    def first(tx: TxnContext) -> None:
+        tx.insert(
+            Position(id=1, acct_num="A", value=Decimal("100.00")),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+        )
+
+    def adjacent(tx: TxnContext) -> None:
+        tx.insert(
+            Position(id=1, acct_num="A", value=Decimal("150.00")),
+            valid_from=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+            until=dt.datetime(2024, 12, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(first)
+    db.transact(adjacent)
 
 
 def bitemporal_plain_update_splits_head_and_new_tail(db: ScopedDatabase) -> None:
@@ -616,6 +655,22 @@ def _temporal_write_003_clock() -> Clock:
     )
 
 
+def _temporal_write_084_clock() -> Clock:
+    return ScriptedClock(
+        [
+            dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            dt.datetime(2024, 8, 1, tzinfo=dt.UTC),
+            dt.datetime(2024, 8, 1, tzinfo=dt.UTC),
+        ]
+    )
+
+
+def _temporal_write_085_clock() -> Clock:
+    return ScriptedClock(
+        [dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 2, 1, tzinfo=dt.UTC)]
+    )
+
+
 def _temporal_write_005_clock() -> Clock:
     return ScriptedClock([dt.datetime(2024, 9, 1, tzinfo=dt.UTC)])
 
@@ -752,6 +807,14 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         clock=_temporal_write_003_clock,
     ),
     WriteStory(
+        "m-temporal-write-084",
+        "Transaction-Time-Only reinsertion at the terminating instant is adjacent",
+        "commit",
+        "balance",
+        transaction_time_only_reinsertion_at_the_terminating_instant_is_adjacent,
+        clock=_temporal_write_084_clock,
+    ),
+    WriteStory(
         "m-temporal-write-004",
         "Transaction-Time-Only chain update carries every new attribute",
         "commit",
@@ -863,6 +926,14 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "position",
         bitemporal_insert_until_opens_one_bounded_rectangle,
         clock=_temporal_write_019_clock,
+    ),
+    WriteStory(
+        "m-temporal-write-085",
+        "Bitemporal insert meeting current coverage in Valid Time is adjacent",
+        "commit",
+        "position",
+        bitemporal_insert_meeting_current_coverage_in_valid_time_is_adjacent,
+        clock=_temporal_write_085_clock,
     ),
     WriteStory(
         "m-temporal-write-022",

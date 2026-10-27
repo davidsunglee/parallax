@@ -253,6 +253,10 @@ def unsupported_cell(error: UnsupportedSchemaEvolutionError) -> dict[str, Any]:
 
 
 def _physical_location(location: PhysicalLocation) -> dict[str, str]:
+    if location.extension is not None:
+        return {"extension": location.extension}
+    if location.table is None:  # pragma: no cover - every location names one of the two
+        raise ValueError("a physical location names a Table or an extension")
     spelled = {"table": location.table.name}
     if location.column is not None:
         spelled["column"] = location.column.name

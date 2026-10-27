@@ -199,6 +199,18 @@ promises, and nothing should depend on an anomaly occurring. On PostgreSQL:
 Parallax [retries](#retries) a serialization failure, so a stronger level usually costs
 re-runs rather than errors.
 
+The level also decides which concurrently committed temporal rows a write reaches. An
+amendment, replacement or termination over a Valid-Time window changes the rows its own
+reads found. At Read Committed and Repeatable Read, a rectangle another transaction
+inserted into a gap of that window, and that those reads didn't see, is left as it is,
+beside the write's own rows; Repeatable Read raises nothing for it. At Serializable,
+PostgreSQL either orders the write before the insert, so the write still doesn't reach
+the new rectangle, or fails one of them with a serialization failure, which Parallax
+retries. Whatever the level, a temporal table Parallax creates on PostgreSQL never
+stores two overlapping rectangles of one key: where the two transactions' rows would
+overlap, the later statement is refused, after waiting for the other transaction if it
+hasn't committed yet, and Parallax retries it.
+
 Both `transact` and `read_only` run at Read Committed unless you pass `isolation=`, as
 `"read_committed"`, `"repeatable_read"` or `"serializable"`, or give the root or scope
 another default. Parallax asks for the level on every attempt rather than relying on the
@@ -346,13 +358,15 @@ Which failures are retried is fixed:
 | A deadlock or a serialization failure: a `DatabaseError` whose `category` is `"deadlock"` | Yes | It is transient: a re-run can succeed |
 | An optimistic lock conflict: a version or Transaction-Time start a read in this attempt observed has moved | Yes | The re-run reads the newer state and applies the change to it |
 | A temporal conflict: `TemporalConflictError`, a close at an instant no later than the stored milestone's start | Yes | The re-run reads again and takes a fresh instant ([Writing](04-writing.md#transaction-time-only-entities)) |
+| A temporal overlap: a `DatabaseError` whose `category` is `"constraintViolation"`, naming the exclusion of the temporal table the failing statement wrote | Yes | Another transaction or a lagging clock put history there first; the re-run reads it and takes a fresh instant ([Writing](04-writing.md#transaction-time-only-entities)) |
 | Any of the above, caught by the callback, after which the transaction refused to continue with `RollbackOnlyError` | Yes, on the original failure's terms | The failure that doomed the attempt is what counts |
 | A target write's failed precondition: the revision you stated no longer matches | No | A re-run would state the same revision again |
 | A failure to get a connection | No | No attempt began, so there is nothing to re-run |
 | Anything else | No | It reaches you after the attempt it ended |
 
 Anything else includes your own exceptions, a lock that couldn't be had in time, and a
-constraint violation such as a duplicate key. Each reaches you as the `cause` of an
+constraint violation such as a duplicate key, a check, or an exclusion Parallax didn't
+generate for the table it writes. Each reaches you as the `cause` of an
 `ExecutionFailure`. The database reports the last two as a `DatabaseError`: a lock
 waited on too long has the `category` `"lockWaitTimeout"`, a duplicate key
 `"uniqueViolation"`, and another constraint violation none
@@ -418,7 +432,14 @@ count, such as `bounded retry exhausted after 11 attempts (retries=10)`. For a d
 or a serialization failure, that cause is a `DatabaseError` whose `category` is
 `"deadlock"`; [Errors](08-errors.md#failures-the-database-reports) describes it. A
 `TemporalConflictError` that outlasts every attempt means a clock stayed behind stored
-history for longer than the retries took.
+history for longer than the retries took. A temporal overlap that outlasts every attempt
+is usually permanent, such as an insert over coverage that is already current: every
+attempt is refused again, so the error arrives only after every retry and the waits
+between them. The waits grow with how long the attempts take, up to a second each, so at
+the default that is a fraction of a second for quick attempts and can reach several
+seconds for slow ones. A transaction that expects
+such a refusal, and has its own answer for it, passes a lower `max_retries`, as
+[Errors](08-errors.md#failures-the-database-reports) shows.
 `max_retries=0` turns retries off, and the callback runs once:
 
 <!-- example: make-a-single-attempt -->

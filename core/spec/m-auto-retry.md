@@ -39,6 +39,23 @@ state or with a fresh Transaction Instant can resolve.
   is briefly behind or an instant another writer overtook; a clock behind by
   more than the attempts can cover exhausts the bound, and the conflict
   surfaces as the failure.
+- A **recognized exclusion conflict** — a statement the attempt executed was
+  refused by the exclusion of the temporal table it wrote (`m-storage-layout`
+  *Temporal history constraints*). Recognition takes both the dialect's
+  exclusion-violation kind and the exact name that table's layout compiled for
+  its exclusion; neither a native code alone, a name prefix, nor any message
+  text recognizes one, and execution, which knows which statement failed and
+  which table it wrote, makes the recognition where it attributes the failure to
+  that statement. It is not attributed to a caller's or a derived write: a
+  concurrent writer may have opened coverage the plan did not hold, or a clock
+  behind stored history may have stamped an opening inside it, and a
+  re-execution plans again against fresh state at a fresh instant. The failure
+  stays the original `m-db-error` `constraintViolation` error with its
+  constraint name, retried or surfaced. A refusal no re-execution can resolve —
+  an insert over coverage that is already current, or a planner defect — is
+  re-executed until the bound is spent and then surfaces with the attempt count,
+  so it costs up to the whole bound's attempts and waits; a caller expecting
+  such a refusal lowers the bound for that transaction.
 - Any of them carried as the cause of the rollback-only refusal a caught failure
   left behind (`m-unit-work` *Abort*): the refusal is replayed on the terms of
   the failure that doomed the attempt.
@@ -47,6 +64,10 @@ Everything else surfaces after the attempt it ended:
 
 - A **lock-wait timeout** (the `m-db-error` `lockWaitTimeout` category) is **not**
   retriable.
+- Every other `constraintViolation` — a check, a primary key's or unique
+  index's duplicate (`uniqueViolation`), an exclusion of another name or of
+  another table, and any exclusion violation not attributed to the statement
+  that raised it — is **not** retriable.
 - The remaining Write Effect Errors — **Missing Target Error**, **Stale Write
   Error**, and **Cardinality Corruption Error** (`m-unit-work`) — are **never**
   retriable, under any option. None of them describes a lost update that a

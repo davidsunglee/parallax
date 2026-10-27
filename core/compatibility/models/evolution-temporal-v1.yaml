@@ -1,0 +1,16 @@
+# Depot (v1): the earlier endpoint of the TEMPORAL TABLE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It holds
+# one Non-Temporal Entity, so the earlier database has no temporal table and no
+# extension.
+entity:
+  name: Depot
+  namespace: parallax.compatibility
+  table: evolution_depot
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: name
+      type: string
+      maxLength: 64

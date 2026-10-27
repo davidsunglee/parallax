@@ -3,15 +3,18 @@ from __future__ import annotations
 from parallax.core.dialect import (
     ColumnDdl,
     Dialect,
+    ExclusionDdl,
     IndexColumnDdl,
     IntervalCheckDdl,
     Unsupported,
 )
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
+    CreateExtension,
     CreateIndex,
     CreateTable,
     DropIndex,
+    Exclusion,
     IndexDefinition,
     PhysicalColumn,
     PhysicalOperation,
@@ -24,6 +27,8 @@ __all__ = ["render"]
 def render(operation: PhysicalOperation, dialect: Dialect) -> str | Unsupported:
     """``operation`` as one statement, or why ``dialect`` cannot spell it."""
     match operation:
+        case CreateExtension():
+            return dialect.create_extension(dialect.quote(operation.name))
         case CreateTable():
             return dialect.create_table(
                 dialect.quote(operation.table.name),
@@ -37,6 +42,16 @@ def render(operation: PhysicalOperation, dialect: Dialect) -> str | Unsupported:
                     )
                     for check in operation.interval_checks
                 ],
+                primary_key_name=(
+                    None
+                    if operation.primary_key_name is None
+                    else dialect.quote(operation.primary_key_name)
+                ),
+                exclusion=(
+                    None
+                    if operation.exclusion is None
+                    else _exclusion(operation.exclusion, dialect)
+                ),
             )
         case AddColumn():
             return dialect.add_column(
@@ -66,6 +81,17 @@ def _column(column: PhysicalColumn, dialect: Dialect) -> ColumnDdl:
         column=dialect.quote(column.column.name),
         type_sql=dialect.column_type(column.neutral_type, column.max_length),
         nullable=column.nullable,
+    )
+
+
+def _exclusion(exclusion: Exclusion, dialect: Dialect) -> ExclusionDdl:
+    return ExclusionDdl(
+        name=dialect.quote(exclusion.name),
+        equal=tuple(dialect.quote(column.name) for column in exclusion.equal),
+        overlapping=tuple(
+            (dialect.quote(start.name), dialect.quote(end.name))
+            for start, end in exclusion.overlapping
+        ),
     )
 
 

@@ -7852,6 +7852,133 @@
       ]
     }
   },
+  "models/evolution-temporal-v1.yaml": {
+    "evolution_depot": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Depot"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Depot.id",
+          "declaringOwner": "parallax.compatibility.Depot",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Depot"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Depot.name",
+          "declaringOwner": "parallax.compatibility.Depot",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/evolution-temporal-v2.yaml": {
+    "evolution_depot": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Depot"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Depot.id",
+          "declaringOwner": "parallax.compatibility.Depot",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Depot"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Depot.name",
+          "declaringOwner": "parallax.compatibility.Depot",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "evolution_tenancy": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Tenancy"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Tenancy.id",
+          "declaringOwner": "parallax.compatibility.Tenancy",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Tenancy"
+          ],
+          "column": "rent",
+          "contributor": "attribute:parallax.compatibility.Tenancy.rent",
+          "declaringOwner": "parallax.compatibility.Tenancy",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Tenancy"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.Tenancy.validStart",
+          "declaringOwner": "parallax.compatibility.Tenancy",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Tenancy"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.Tenancy.validEnd",
+          "declaringOwner": "parallax.compatibility.Tenancy",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Tenancy"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.Tenancy.txStart",
+          "declaringOwner": "parallax.compatibility.Tenancy",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Tenancy"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.Tenancy.txEnd",
+          "declaringOwner": "parallax.compatibility.Tenancy",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        3,
+        5
+      ]
+    }
+  },
   "models/evolution-temporality-v1.yaml": {
     "evolution_meter": {
       "columns": [

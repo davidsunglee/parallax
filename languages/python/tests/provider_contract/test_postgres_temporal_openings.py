@@ -95,7 +95,7 @@ type _Row = tuple[object, ...]
 
 _T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
 _TA = dt.datetime(2024, 1, 10, tzinfo=dt.UTC)
-_JAN, _FEB, _AUG, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 2, 8, 9))
+_JAN, _FEB, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 2, 9))
 
 _TAGS = ("a", "a", *(f"t{index}" for index in range(300)))
 _LEGS = (Leg(stops=()), Leg(stops=("x", "x")), *(Leg(stops=("s",) * 40) for _ in range(20)))
@@ -207,11 +207,14 @@ def test_one_grouped_statement_stores_the_history_each_opening_alone_stores(
 def _conflicting_amendment(
     profile_run: Any, entity: type[Any], then: Callable[[TxnContext], None]
 ) -> Callable[[TxnContext], None]:
-    """Amend span 1 after another session committed a row holding the key the
-    changed middle opens, once an account constraint no opening satisfies is in
-    force: the head violates that constraint, which is checked as its
-    statement ends, and the middle violates the key, which is checked as its
-    row is inserted."""
+    """Amend span 1 once two constraints no opening satisfies are in force: the
+    head violates an account constraint, which is checked as its statement
+    ends, and the changed middle violates a row check, which is checked as its
+    row is inserted.
+
+    The row check stands in for a key another session's committed row would
+    hold: the generated exclusion refuses any such row while span 1's stored
+    coverage is current, so no concurrent writer can stage that collision."""
     control = profile_run.control()
     try:
         control.execute_write(
@@ -219,21 +222,16 @@ def _conflicting_amendment(
             "foreign key (account) references opn_account (code) not valid",
             [],
         )
+        control.execute_write(
+            f"alter table {_TABLES[entity]} add constraint opn_span_amount "
+            "check (amount <> 150) not valid",
+            [],
+        )
     finally:
         control.close()
 
     def edit(tx: TxnContext) -> None:
         source = _find(tx, entity)
-        other = profile_run.control()
-        try:
-            other.execute_write(
-                f"insert into {_TABLES[entity]} (id, account, amount, tags, legs, "
-                "from_z, thru_z, in_z, out_z) values (1, 'B-2', 7, '[]', '[]', "
-                f"'{_AUG.isoformat()}', '{_SEP.isoformat()}', '{_TA.isoformat()}', 'infinity')",
-                [],
-            )
-        finally:
-            other.close()
         tx.amend(source.edit(amount=150), until=_SEP)
         then(tx)
 
@@ -271,8 +269,7 @@ def _failed(
             db.transact(edit, max_retries=2)
     events = _events(provider)
     rows = _rows(profile_run, ColumnsSpan)
-    assert len(rows) == len(before) + 1
-    assert all(row in rows for row in before)
+    assert rows == before
     return _Failed(
         escaped.value.cause,
         [event for event in events if isinstance(event, TransactionAttemptFinished)],
@@ -305,12 +302,13 @@ def test_a_grouped_statement_fails_whole_with_its_own_diagnostic_and_retry_verdi
     assert (raw.cause.category, raw.cause.native_code) == (None, "23503")
     assert _diagnostic(raw) == (None, "23503")
     assert len(raw.writes) == 2
-    # Grouped, the one statement fails as a whole on the middle's key, which is
-    # checked as its row is inserted, before the head's constraint is checked.
+    # Grouped, the one statement fails as a whole on the middle's row check,
+    # which is checked as its row is inserted, before the head's constraint is
+    # checked.
     assert isinstance(grouped.cause, DatabaseError)
-    assert (grouped.cause.category, grouped.cause.native_code) == ("uniqueViolation", "23505")
-    assert grouped.cause.violated_index is not None
-    assert _diagnostic(grouped) == ("uniqueViolation", "23505")
+    assert (grouped.cause.category, grouped.cause.native_code) == ("constraintViolation", "23514")
+    assert grouped.cause.constraint_name == "opn_span_amount"
+    assert _diagnostic(grouped) == ("constraintViolation", "23514")
     assert len(grouped.writes) == 2
     assert grouped.writes[1].count("), (") == 2
     for failed in (raw, grouped):
@@ -337,7 +335,7 @@ def test_a_grouped_statements_failure_leaves_the_attempt_rollback_only(
     failed = _failed(profile_run, monkeypatch, grouped=True, then=then)
     flush_failure, refused = outcomes
     assert isinstance(flush_failure, DatabaseError)
-    assert flush_failure.category == "uniqueViolation"
+    assert flush_failure.category == "constraintViolation"
     assert isinstance(refused, RollbackOnlyError)
     assert refused.__cause__ is flush_failure
     assert isinstance(failed.cause, RollbackOnlyError)

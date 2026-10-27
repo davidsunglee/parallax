@@ -80,9 +80,12 @@ The lifecycle guide also covers the decisions a deployment makes once:
   building the root after a forking server forks, and closing it on shutdown.
 - [Session settings](../postgresql-lifecycle.md#session-settings): the driver build, and
   how a subject scope's role is set on and cleared from each connection.
-- [Temporal interval checks](../postgresql-lifecycle.md#temporal-interval-checks): the
-  checks generated temporal tables carry, and adopting them on a table that existed
-  before them.
+- [Temporal constraints](../postgresql-lifecycle.md#temporal-constraints): the key
+  names, checks and exclusion generated temporal tables carry, the `btree_gist`
+  prerequisite, and adopting them on a table that existed before them.
+- Clocks: every server writing one database stamps Transaction Time from its own clock,
+  so keep their clocks synchronized. A clock behind stored history makes writes retry
+  until it catches up ([Writing](04-writing.md#transaction-time-only-entities)).
 
 [Model evolution](07-model-evolution.md) covers rolling a new model out to running
 processes, and [Errors](08-errors.md) covers what reaches your code when the database

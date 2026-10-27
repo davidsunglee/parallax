@@ -7,15 +7,23 @@ from dataclasses import dataclass
 from parallax.core.dialect import Dialect, PhysicalIndexName
 from parallax.core.metamodel import (
     AttributeIdentity,
+    Column,
     IndexIdentity,
     IndexLocation,
+    ModelLocationKey,
     Table,
     canonical_location_key,
 )
 from parallax.evolution.schema_delta._order import order_key
-from parallax.evolution.schema_delta._physical import CreateIndex, DropIndex, IndexDefinition
+from parallax.evolution.schema_delta._physical import (
+    CreateIndex,
+    DropIndex,
+    IndexDefinition,
+    TemporalBackingIndex,
+)
 from parallax.evolution.schema_delta._values import (
     CollidingIndex,
+    CollidingTemporalConstraint,
     CollisionGroup,
     IndexPresence,
 )
@@ -119,7 +127,7 @@ class NamedIndex:
     """One physical Index definition, its derived name, and where it occurs."""
 
     name: PhysicalIndexName
-    definition: IndexDefinition
+    definition: IndexDefinition | TemporalBackingIndex
     presence: IndexPresence
 
 
@@ -127,6 +135,9 @@ def census(
     earlier: Sequence[IndexDefinition],
     later: Sequence[IndexDefinition],
     dialect: Dialect,
+    *,
+    earlier_temporal: Sequence[TemporalBackingIndex] = (),
+    later_temporal: Sequence[TemporalBackingIndex] = (),
 ) -> tuple[NamedIndex, ...]:
     """Every Index either endpoint defines, named once and told where it occurs.
 
@@ -141,26 +152,47 @@ def census(
     lifetime, before any name-keyed plan exists: an entry present at one endpoint
     alone is the one the delta creates or drops, and one present at both is an
     object the database holds throughout.
+
+    The Indices backing temporal primary keys and exclusions share the same
+    namespace and enter under the names their Table Layouts compiled, never a
+    name derived here.
     """
     entries: dict[tuple[PhysicalIndexName, _Identity], NamedIndex] = {}
-    for definitions, presence in ((earlier, IndexPresence.EARLIER), (later, IndexPresence.LATER)):
+
+    def enter(
+        name: PhysicalIndexName,
+        definition: IndexDefinition | TemporalBackingIndex,
+        presence: IndexPresence,
+    ) -> None:
+        key = (name, _identity(definition))
+        held = entries.get(key)
+        entries[key] = NamedIndex(
+            name=name,
+            definition=definition,
+            presence=IndexPresence.BOTH if held is not None else presence,
+        )
+
+    for definitions, temporal, presence in (
+        (earlier, earlier_temporal, IndexPresence.EARLIER),
+        (later, later_temporal, IndexPresence.LATER),
+    ):
         for definition in definitions:
-            name = physical_index_name(definition, dialect)
-            key = (name, _identity(definition))
-            held = entries.get(key)
-            entries[key] = NamedIndex(
-                name=name,
-                definition=definition,
-                presence=IndexPresence.BOTH if held is not None else presence,
-            )
+            enter(physical_index_name(definition, dialect), definition, presence)
+        for backing in temporal:
+            enter(backing.name, backing, presence)
     return tuple(entries.values())
 
 
-type _Identity = tuple[Table, IndexIdentity, tuple[AttributeIdentity, ...], bool]
+type _Identity = (
+    tuple[Table, IndexIdentity, tuple[AttributeIdentity, ...], bool]
+    | tuple[Table, str, tuple[Column, ...]]
+)
 
 
-def _identity(definition: IndexDefinition) -> _Identity:
+def _identity(definition: IndexDefinition | TemporalBackingIndex) -> _Identity:
     """The facts a Physical Index Name is derived over, as a comparable key."""
+    if isinstance(definition, TemporalBackingIndex):
+        return (definition.table, definition.kind, definition.columns)
     return (definition.table, definition.index, definition.components, definition.unique)
 
 
@@ -178,35 +210,61 @@ def collision_groups(
     endpoint still holds, because an Index the delta does not carry a Table
     forward for is never dropped and so is present throughout.
 
-    Ordered by name; each group's definitions in canonical logical-identity
-    order, each naming the endpoints it occurs in, so a report reads as a
-    complete account of the clash rather than as the first pair found.
+    Ordered by name; each group's authored definitions in canonical
+    logical-identity order and its temporal constraints by Table and kind,
+    each naming the endpoints it occurs in, so a report reads as a complete
+    account of the clash rather than as the first pair found.
     """
     grouped: dict[PhysicalIndexName, list[NamedIndex]] = {}
     for entry in census:
         grouped.setdefault(entry.name, []).append(entry)
     return tuple(
-        CollisionGroup(
-            name=name,
-            definitions=tuple(
-                CollidingIndex(
-                    table=entry.definition.table,
-                    index=entry.definition.index,
-                    components=entry.definition.components,
-                    unique=entry.definition.unique,
-                    presence=entry.presence,
-                )
-                for entry in sorted(
-                    entries,
-                    key=lambda held: (
-                        canonical_location_key(IndexLocation(held.definition.index)),
-                        held.definition.table.name,
-                    ),
-                )
-            ),
-        )
+        CollisionGroup(name, *_reported(entries))
         for name, entries in sorted(grouped.items(), key=lambda entry: entry[0].value)
         if _coexist(entries, surviving)
+    )
+
+
+def _reported(
+    entries: Sequence[NamedIndex],
+) -> tuple[tuple[CollidingIndex, ...], tuple[CollidingTemporalConstraint, ...]]:
+    authored: list[tuple[tuple[ModelLocationKey, str], CollidingIndex]] = []
+    temporal: list[tuple[tuple[str, str], CollidingTemporalConstraint]] = []
+    for entry in entries:
+        definition = entry.definition
+        if isinstance(definition, TemporalBackingIndex):
+            temporal.append(
+                (
+                    (definition.table.name, definition.kind),
+                    CollidingTemporalConstraint(
+                        table=definition.table,
+                        kind=definition.kind,
+                        columns=definition.columns,
+                        presence=entry.presence,
+                    ),
+                )
+            )
+        else:
+            authored.append(
+                (
+                    (
+                        canonical_location_key(IndexLocation(definition.index)),
+                        definition.table.name,
+                    ),
+                    CollidingIndex(
+                        table=definition.table,
+                        index=definition.index,
+                        components=definition.components,
+                        unique=definition.unique,
+                        presence=entry.presence,
+                    ),
+                )
+            )
+    authored.sort(key=lambda held: held[0])
+    temporal.sort(key=lambda held: held[0])
+    return (
+        tuple(report for _, report in authored),
+        tuple(report for _, report in temporal),
     )
 
 
@@ -227,18 +285,28 @@ def _overlap(one: NamedIndex, other: NamedIndex, surviving: Collection[Table]) -
     dropped and the other created — and only when the drop is emitted first. Two
     definitions the earlier endpoint both holds are already there before the first
     statement, and two the later endpoint both holds are both there after the
-    last.
+    last. A temporal constraint's backing Index is never dropped, so it bounds no
+    lifetime and coexists with every other definition sharing its name.
     """
     dropped, created = (one, other) if one.presence is IndexPresence.EARLIER else (other, one)
     return not (
-        dropped.presence is IndexPresence.EARLIER
+        isinstance(dropped.definition, IndexDefinition)
+        and isinstance(created.definition, IndexDefinition)
+        and dropped.presence is IndexPresence.EARLIER
         and created.presence is IndexPresence.LATER
         and dropped.definition.table in surviving
-        and _drop_precedes_create(dropped, created)
+        and _drop_precedes_create(
+            dropped.definition, dropped.name, created.definition, created.name
+        )
     )
 
 
-def _drop_precedes_create(dropped: NamedIndex, created: NamedIndex) -> bool:
+def _drop_precedes_create(
+    dropped: IndexDefinition,
+    dropped_name: PhysicalIndexName,
+    created: IndexDefinition,
+    created_name: PhysicalIndexName,
+) -> bool:
     """Whether the delta's own statement order emits the drop before the create.
 
     The order key is a function of the Table, the operation kind, and the member
@@ -247,6 +315,6 @@ def _drop_precedes_create(dropped: NamedIndex, created: NamedIndex) -> bool:
     owner of the order rather than restating it here is what keeps the two from
     drifting apart.
     """
-    return order_key(
-        DropIndex(definition=dropped.definition, name=dropped.name, caused_by=())
-    ) < order_key(CreateIndex(definition=created.definition, name=created.name, caused_by=()))
+    return order_key(DropIndex(definition=dropped, name=dropped_name, caused_by=())) < order_key(
+        CreateIndex(definition=created, name=created_name, caused_by=())
+    )

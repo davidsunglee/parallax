@@ -573,8 +573,9 @@ the window no current row covers opens with it (`m-temporal-write` *Observed
 writes span their requested extent*). Authority comes first: a source whose
 evidence or insertion authority fails opens nothing, so a replacement is never
 an upsert, and existing-row proofs still do not coordinate concurrent creation
-inside a gap, which can leave invalid overlapping coverage (`m-temporal-write`
-*Concurrent creation in gaps is not coordinated*).
+inside a gap: storage refuses an overlap where the table carries the exclusion,
+and elsewhere it can be left as invalid overlapping coverage (`m-temporal-write`
+*Concurrent creation in gaps*).
 
 ### Target writes
 
@@ -959,7 +960,7 @@ temporal topology and correctness semantics already decided.
   work runs*) hold are read; a
   part that read finds nothing in is a gap, read once, and a rectangle created
   concurrently inside a held row's interval is not reached (`m-temporal-write`
-  *Concurrent creation in gaps is not coordinated*). Each caller's start holds
+  *Concurrent creation in gaps*). Each caller's start holds
   only where a current row stands at the stated start, literally; any other
   caller's start is a failed precondition.
 - A Write Group's Planned Steps are a **logical** sequence. An implementation MAY
@@ -1684,9 +1685,12 @@ conflict, so the bounded retry loop replays it (`m-auto-retry`) as a new
 attempt with its own lazy instant and fresh reads.
 
 This guard protects closes alone. A new lineage still opens at the attempt's
-instant without reading the key's closed history, and creation inside a gap is
-still not coordinated (`m-temporal-write` *Concurrent creation in gaps is not
-coordinated*).
+instant without reading the key's closed history. Where the table carries the
+exclusion (`m-storage-layout` *Temporal history constraints*), storage refuses
+an opening that would overlap stored history, and the refusal is a recoverable
+conflict the bounded retry loop replays at a fresh instant (`m-auto-retry`);
+elsewhere such an opening, or concurrent creation inside a gap, can still store
+an overlap (`m-temporal-write` *Concurrent creation in gaps*).
 
 ## Actor Identity
 
@@ -1747,7 +1751,11 @@ Conflict Error is a recoverable conflict the bounded retry loop replays
 (`m-auto-retry`), while a Missing Target Error, a Stale Write Error, a
 Cardinality Corruption Error, and a Write Precondition Error are **never**
 retriable. A Temporal Conflict Error (*Closes the instant cannot follow*) is
-raised by temporal expansion rather than by enforcement, and is recoverable.
+raised by temporal expansion rather than by enforcement, and is recoverable. A
+statement a flush executes that the exclusion of the table it writes refuses
+surfaces as the original database error; execution recognizes it as a
+recoverable conflict (`m-auto-retry`), and it dooms the attempt like any other
+flush failure.
 
 ### When several steps share a driver batch
 

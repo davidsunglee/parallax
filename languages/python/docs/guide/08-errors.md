@@ -22,6 +22,7 @@ these imports:
 
 <!-- example: errors-imports -->
 ```python
+import datetime as dt
 from collections.abc import Mapping
 
 from pydantic import ValidationError
@@ -362,13 +363,44 @@ tracking number is taken. A duplicate shipment id is a `"uniqueViolation"` too, 
 PostgreSQL reports it against the key's own index, `shipment_pkey`, so it passes
 through. So does a `"uniqueViolation"` that names no index, and every other failure.
 
+A temporal table answers an insert over coverage the key already has the same way. A
+temporal table Parallax creates on PostgreSQL refuses a row overlapping another row of
+the same key on every axis at once: an insert ending where the stored row ends breaks
+the key, a `"uniqueViolation"`, and one ending elsewhere breaks the table's exclusion, a
+`"constraintViolation"`. Parallax retries the exclusion's refusal, because a concurrent
+writer or a lagging clock can cause one that a re-run fixes, so an overlap that can't go
+away arrives only after every retry. A caller with an answer for it makes one attempt:
+
+<!-- example: price-a-window-unless-it-is-priced -->
+```python
+def price_a_window_unless_it_is_priced(
+    db: ScopedDatabase, price: Price, start: dt.datetime, end: dt.datetime
+) -> bool:
+    """Price ``price.sku`` over ``[start, end)``, or answer False where it already has one."""
+    try:
+        db.transact(lambda tx: tx.insert(price, valid_from=start, until=end), max_retries=0)
+    except ExecutionFailure as failure:
+        cause = failure.cause
+        overlapping = isinstance(cause, DatabaseError) and cause.category in (
+            "uniqueViolation",
+            "constraintViolation",
+        )
+        if not overlapping:
+            raise
+        return False
+    return True
+```
+<!-- /example -->
+
 Of the categories, Parallax retries only `"deadlock"`, so you see one only once retries
 run out. A `"uniqueViolation"` asks you to choose another key or treat the object as
 already there. A `"constraintViolation"` names the constraint the row broke in
-`constraint_name`, and isn't retried either. On a temporal table Parallax created, the
-checks named `pxc_tx_…` and `pxc_valid_…` require every row's interval to start before
-it ends, whoever writes it (see
-[the PostgreSQL lifecycle guide](../postgresql-lifecycle.md#temporal-interval-checks)).
+`constraint_name`, and isn't retried either, with one exception: a refusal by the
+exclusion of the temporal table the statement wrote is retried, and reaches you only
+once retries run out. On a temporal table Parallax created, the checks named `pxc_tx_…`
+and `pxc_valid_…` require every row's interval to start before it ends, and the
+exclusion named `pxc_excl_…` refuses overlapping history, whoever writes it (see
+[the PostgreSQL lifecycle guide](../postgresql-lifecycle.md#temporal-constraints)).
 A `"lockWaitTimeout"` means another transaction held a lock for too long: try again
 later, or find what holds it. For a failure with no category, `native_code`
 and `message` say what happened. A missing table or column usually means the schema
@@ -406,7 +438,8 @@ of an `ExecutionFailure`:
 | `TemporalConflictError` | when the transaction sends its writes | Yes, up to `max_retries` | If retries run out: synchronize the clocks of the servers that write the database |
 | `WritePreconditionError` | when the transaction sends its writes, or at the call under locking | No | Read the current value and let the user decide again |
 | A `DatabaseError` whose `category` is `"uniqueViolation"` | when the insert is sent, usually at commit | No | Choose another key, or treat the object as already there |
-| A `DatabaseError` whose `category` is `"constraintViolation"` | at the statement | No | Read `constraint_name` to find the constraint, and correct the row that broke it |
+| A `DatabaseError` whose `category` is `"constraintViolation"`, naming the exclusion of the temporal table the failing statement wrote | when the transaction sends its writes | Yes, up to `max_retries` | If retries run out, the row overlaps history the key already has: write where the key has no coverage, or change that coverage instead |
+| Any other `DatabaseError` whose `category` is `"constraintViolation"` | at the statement | No | Read `constraint_name` to find the constraint, and correct the row that broke it |
 | A `DatabaseError` whose `category` is `"lockWaitTimeout"` or `None` | at the statement | No | Read `native_code` and `message`; fix the schema or privilege, or try later |
 | `ConnectionAcquisitionError` | before an attempt begins | No | Check the database and the pool |
 | `TransactionRollbackError` | when the rollback after a failure fails too | No | Read `triggering_error` for the failure, and `rollback_error` for the rollback's |

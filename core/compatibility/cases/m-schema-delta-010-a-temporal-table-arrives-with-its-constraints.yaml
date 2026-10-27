@@ -1,0 +1,30 @@
+# Adding a Bitemporal Entity creates its table with the temporal constraints the
+# layout compiled. PostgreSQL installs the exclusion's prerequisite first, then
+# names the key and spells both interval checks and the exclusion inline. MariaDB
+# spells none of them.
+tags: [m-model-evolution, m-schema-delta, m-storage-layout, evolution, entity, temporal, bitemporal, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-temporal-v1.yaml
+    later: models/evolution-temporal-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      [{ kind: EntityAdded, entity: parallax.compatibility.Tenancy }]
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create extension if not exists btree_gist
+          - create table evolution_tenancy (id bigint not null, rent bigint not null, from_z timestamptz not null, thru_z timestamptz not null, in_z timestamptz not null, out_z timestamptz not null, constraint pxc_pk_evolution_tenancy_57b9d200bd65fe4727806dbc1775c8df primary key (id, thru_z, out_z), constraint pxc_valid_evolution_tenancy_7d80b526226b06583634b8844fae8d6f check (from_z < thru_z), constraint pxc_tx_evolution_tenancy_a2a2936db8fa88e1fcb6084ec2ca91e3 check (in_z < out_z), constraint pxc_excl_evolution_tenancy_3e3572e797459a69bd6b3076629dd50a exclude using gist (id with =, tstzrange(from_z, thru_z) with &&, tstzrange(in_z, out_z) with &&))
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - create table evolution_tenancy (id bigint not null, rent bigint not null, from_z datetime(6) not null, thru_z datetime(6) not null, in_z datetime(6) not null, out_z datetime(6) not null, primary key (id, thru_z, out_z))
+        createdIndices: []

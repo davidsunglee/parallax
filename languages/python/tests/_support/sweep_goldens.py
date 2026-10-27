@@ -290,6 +290,8 @@ _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-temporal-write-042",
         "m-temporal-write-043",
         "m-temporal-write-069",
+        "m-temporal-write-084",
+        "m-temporal-write-085",
     }
 )
 _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(

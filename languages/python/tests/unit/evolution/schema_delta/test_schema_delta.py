@@ -45,8 +45,10 @@ from parallax.evolution.schema_delta import (
     SchemaDelta,
     schema_delta,
 )
+from parallax.evolution.schema_delta._order import order
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
+    CreateExtension,
     CreateIndex,
     CreateTable,
     DropIndex,
@@ -57,6 +59,7 @@ from parallax.evolution.schema_delta._physical import (
     location_of,
     member_key,
 )
+from parallax.evolution.schema_delta._plan import plan
 from parallax.evolution.schema_delta._render import render
 from tests.unit._corpus_model_support import corpus, corpus_records, formed
 from tests.unit._document_layout_support import document_model
@@ -148,18 +151,70 @@ def test_provisioning_temporal_pk_is_business_key_plus_to_columns() -> None:
     assert "primary key (pos_id, thru_z, out_z)" in bitemporal
 
 
-def test_provisioning_checks_each_temporal_axis_inline_in_axis_order() -> None:
+def test_provisioning_constrains_each_temporal_table_inline_in_axis_order() -> None:
     assert _tables(_MODELS["balance"])["balance"] == (
         "create table balance (bal_id bigint not null, acct_num varchar(32) not null, "
         "val numeric(18, 2) not null, in_z timestamptz not null, out_z timestamptz not null, "
-        "primary key (bal_id, out_z), "
-        "constraint pxc_tx_balance_c54215aec2277be436e89b2c6506715d check (in_z < out_z))"
+        "constraint pxc_pk_balance_5a0cda0c63759f8bdf9c06ee122888ed primary key (bal_id, out_z), "
+        "constraint pxc_tx_balance_c54215aec2277be436e89b2c6506715d check (in_z < out_z), "
+        "constraint pxc_excl_balance_d9ac2f7e38d8f4040d3f5ed33ac09a0d "
+        "exclude using gist (bal_id with =, tstzrange(in_z, out_z) with &&))"
     )
     assert _tables(_MODELS["position"])["position"].endswith(
+        "constraint pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d "
         "primary key (pos_id, thru_z, out_z), "
         "constraint pxc_valid_position_9c4697753a4cc41ed976ab6ee1f1f88b check (from_z < thru_z), "
-        "constraint pxc_tx_position_05e7b5d0b3866810c782a91a8d1f7971 check (in_z < out_z))"
+        "constraint pxc_tx_position_05e7b5d0b3866810c782a91a8d1f7971 check (in_z < out_z), "
+        "constraint pxc_excl_position_e5c6616a7f7cfbf6c981cf0ad0f86610 exclude using gist "
+        "(pos_id with =, tstzrange(from_z, thru_z) with &&, tstzrange(in_z, out_z) with &&))"
     )
+
+
+def test_provisioning_installs_the_exclusion_prerequisite_once_before_every_table() -> None:
+    statements = _statements(_MODELS["rate"])
+    assert statements[0] == "create extension if not exists btree_gist"
+    assert statements.count("create extension if not exists btree_gist") == 1
+    assert all(ddl.startswith("create table ") for ddl in statements[1:])
+
+
+def test_a_delta_creating_no_temporal_table_needs_no_prerequisite() -> None:
+    assert not [ddl for ddl in _statements(_MODELS["payment"]) if "extension" in ddl]
+
+
+def test_the_prerequisite_is_caused_by_every_temporal_table_creation() -> None:
+    evolution = evolve(ABSENT, _MODELS["rate"])
+    assert isinstance(evolution, UnilateralEvolution)
+    operations = order(plan(evolution, POSTGRES).operations)
+    extension = operations[0]
+    assert isinstance(extension, CreateExtension)
+    dependents = [
+        operation
+        for operation in operations
+        if isinstance(operation, CreateTable) and operation.exclusion is not None
+    ]
+    assert len(dependents) == 2
+    assert extension.caused_by == tuple(
+        cause
+        for cause in evolution.operations
+        if any(cause in dependent.caused_by for dependent in dependents)
+    )
+    assert location_of(extension) == PhysicalLocation(extension="btree_gist")
+
+
+def test_a_shared_table_excludes_overlap_by_the_root_key_never_the_tag() -> None:
+    (shared,) = [ddl for ddl in _statements(_MODELS["instrument"]) if "create table" in ddl]
+    assert shared.endswith(
+        "exclude using gist (id with =, tstzrange(from_z, thru_z) with &&, "
+        "tstzrange(in_z, out_z) with &&))"
+    )
+    assert "kind with =" not in shared
+
+
+def test_each_concrete_table_excludes_overlap_within_itself() -> None:
+    tables = _tables(_MODELS["rate"])
+    assert "constraint pxc_excl_deposit_rate_" in tables["deposit_rate"]
+    assert "constraint pxc_excl_loan_rate_" in tables["loan_rate"]
+    assert "exclude using gist" not in _tables(_MODELS["payment"])["payment"]
 
 
 def test_provisioning_checks_every_table_a_temporal_family_maps() -> None:
@@ -193,6 +248,10 @@ def test_a_surviving_temporal_table_gains_no_check() -> None:
     assert isinstance(evolution, UnilateralEvolution)
     statements = schema_delta(evolution, POSTGRES).statements
     assert [ddl.split(" ")[2] for ddl in statements if " check (" in ddl] == ["position"]
+    assert [ddl.split(" ")[2] for ddl in statements if " exclude using gist " in ddl] == [
+        "position"
+    ]
+    assert statements[0] == "create extension if not exists btree_gist"
     assert not [ddl for ddl in statements if "balance" in ddl and "create table" in ddl]
     unchanged = evolve(later, later)
     assert isinstance(unchanged, UnilateralEvolution)
@@ -275,7 +334,7 @@ def test_provisioning_tpcs_temporal_pk_includes_the_root_declared_axes() -> None
     (loan,) = [t for t in tables if t.startswith("create table loan_rate ")]
     assert "primary key (id, thru_z, out_z)" in loan
     # Quote (models/quote.yaml): the audit-only (single-axis) TPCS counterpart.
-    (spot,) = _statements(_MODELS["quote"])
+    (spot,) = [t for t in _statements(_MODELS["quote"]) if t.startswith("create table ")]
     assert "primary key (id, out_z)" in spot
 
 
@@ -427,7 +486,7 @@ def test_provisioning_tpcs_key_comes_from_the_tableless_root_derived_index() -> 
     # that derives the Index; the concrete table it maps carries those components
     # as its `primary key (...)` and no `unique (...)` beside it.
     delta = _delta(tpcs_family_with_a_temporal_root())
-    (ddl,) = delta.statements
+    (_, ddl) = delta.statements
     assert "primary key (id, out_z)" in ddl
     assert "unique" not in ddl
     assert delta.created_indices == ()
@@ -538,11 +597,14 @@ def test_a_scalar_multiplicity_change_never_reaches_the_generator() -> None:
         assert isinstance(evolve(earlier, later), CoordinatedEvolution)
 
 
-def test_no_statement_is_idempotent() -> None:
+def test_no_model_statement_is_idempotent() -> None:
     # A delta states what must happen to a database at the earlier edition, so
-    # nothing it emits reconciles an unknown one.
+    # nothing it emits reconciles an unknown one; only the provider-managed
+    # prerequisite of a constrained Table is installed unless already present.
     for model in (_MODELS["error-cases"], _MODELS["storage-layout"], _DOCUMENT):
         for statement in _statements(model):
+            if statement == "create extension if not exists btree_gist":
+                continue
             assert "if exists" not in statement
             assert "if not exists" not in statement
 

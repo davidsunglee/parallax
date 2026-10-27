@@ -488,7 +488,10 @@ class TxnAttempt(_TxnAttemptBase):
         # Every flush of this attempt executes its steps on this connection
         # through this one executor, handing it that flush's own activity.
         self._step_executor = WriteStepExecutor(
-            connection, payloads=write.planner.payloads, meta=write.model.meta
+            connection,
+            payloads=write.planner.payloads,
+            meta=write.model.meta,
+            recoverable=lifetime.recognize_conflict,
         )
         # The invocation's resolved record, shared by reference across every
         # attempt of the invocation: what a joining call is compared against,

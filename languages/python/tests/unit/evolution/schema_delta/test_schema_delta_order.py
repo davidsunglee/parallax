@@ -19,9 +19,11 @@ from parallax.evolution.model_evolution import ABSENT, EntityAdded, UnilateralEv
 from parallax.evolution.schema_delta._order import order, order_key
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
+    CreateExtension,
     CreateIndex,
     CreateTable,
     DropIndex,
+    Exclusion,
     IndexDefinition,
     PhysicalColumn,
     PhysicalOperation,
@@ -38,11 +40,12 @@ _MODELS = corpus()
 def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, ...]:
     """Every dependency rule ``ordered`` breaks, empty when it is executable.
 
-    The invariant ``order_key`` rests on, stated over the three rules
-    themselves so the key can never silently stop being a linear extension of
-    them. A rule is silent about a prerequisite the plan does not contain: an
-    operation on a Table this delta does not create acts on one the earlier
-    edition already had.
+    The invariant ``order_key`` rests on, stated over the rules themselves —
+    the three Table-local ones and a constrained Table's prerequisite — so the
+    key can never silently stop being a linear extension of them. A rule is
+    silent about a prerequisite the plan does not contain: an operation on a
+    Table this delta does not create acts on one the earlier edition already
+    had.
 
     Every prerequisite is keyed by the physical Table beside the member, because
     one logical definition can have a physical projection per Table: a
@@ -50,6 +53,11 @@ def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, .
     create/drop pair on each concrete Table, and each drop's prerequisite is its
     OWN Table's create rather than whichever Table happened to be walked last.
     """
+    extensions = {
+        operation.name: position
+        for position, operation in enumerate(ordered)
+        if isinstance(operation, CreateExtension)
+    }
     tables = {
         table_of(operation).name: position
         for position, operation in enumerate(ordered)
@@ -67,6 +75,16 @@ def _dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, .
     }
     violations: list[str] = []
     for position, operation in enumerate(ordered):
+        if isinstance(operation, CreateExtension):
+            continue
+        if (
+            isinstance(operation, CreateTable)
+            and operation.exclusion is not None
+            and extensions.get("btree_gist", len(ordered)) > position
+        ):
+            violations.append(
+                f"{position}: {operation.table.name} is created before its prerequisite"
+            )
         table = table_of(operation).name
         if tables.get(table, position) > position:
             violations.append(f"{position}: {table} is acted on before it is created")
@@ -158,7 +176,9 @@ def test_within_one_table_the_kind_decides() -> None:
 
 def test_two_operations_of_one_kind_sort_by_the_member_they_address() -> None:
     ordered = order([_create_index("second"), _create_index("first")])
-    assert [member_key(operation) for operation in ordered] == ["pxi_first", "pxi_second"]
+    assert [
+        member_key(operation) for operation in ordered if not isinstance(operation, CreateExtension)
+    ] == ["pxi_first", "pxi_second"]
 
 
 # --- the rules the key must satisfy -------------------------------------------
@@ -240,7 +260,11 @@ def test_one_logical_index_replaced_on_every_concrete_table_breaks_no_rule() -> 
     )
     assert isinstance(evolution, UnilateralEvolution)
     ordered = order(plan(evolution, POSTGRES).operations)
-    assert [(type(operation).__name__, table_of(operation).name) for operation in ordered] == [
+    assert [
+        (type(operation).__name__, table_of(operation).name)
+        for operation in ordered
+        if not isinstance(operation, CreateExtension)
+    ] == [
         ("CreateIndex", "alpha"),
         ("DropIndex", "alpha"),
         ("CreateIndex", "zeta"),
@@ -279,3 +303,32 @@ def test_every_incremental_plan_is_ordered_so_that_no_rule_is_broken() -> None:
         if not isinstance(evolution, UnilateralEvolution):
             continue
         assert _dependency_violations(order(plan(evolution, POSTGRES).operations)) == ()
+
+
+def test_a_prerequisite_precedes_every_table_operation_whatever_their_names() -> None:
+    extension = CreateExtension(name="zzz", caused_by=_CAUSE)
+    other = CreateTable(
+        table=Table(name="aardvark"),
+        columns=(_CODE,),
+        primary_key=(),
+        interval_checks=(),
+        caused_by=_CAUSE,
+    )
+    ordered = order([_create_index("alpha"), _create_table(), extension, other])
+    assert ordered[0] is extension
+    local = [operation for operation in ordered[1:] if not isinstance(operation, CreateExtension)]
+    assert ordered[1:] == tuple(sorted(local, key=order_key))
+
+
+def test_a_constrained_table_created_before_its_prerequisite_breaks_a_rule() -> None:
+    constrained = CreateTable(
+        table=_TABLE,
+        columns=(_CODE,),
+        primary_key=(Column(name="code"),),
+        interval_checks=(),
+        caused_by=_CAUSE,
+        exclusion=Exclusion(name="pxc_excl_widget", equal=(Column(name="code"),), overlapping=()),
+    )
+    assert _dependency_violations([constrained, CreateExtension("btree_gist", _CAUSE)]) == (
+        "0: widget is created before its prerequisite",
+    )

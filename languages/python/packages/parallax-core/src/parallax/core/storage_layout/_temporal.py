@@ -9,6 +9,7 @@ from parallax.core.metamodel import AsOfAxisMetadata, Column, Table, TemporalDim
 from parallax.core.storage_layout._facet import (
     ColumnContributor,
     ColumnSlot,
+    PhysicalIndex,
     PhysicalTemporalAxis,
     TemporalHistoryConstraints,
 )
@@ -27,6 +28,11 @@ _INTERVAL_CHECK_KINDS: Final[Mapping[TemporalDimension, str]] = {
     TemporalDimension.VALID_TIME: "valid",
 }
 _LESS_THAN: Final = "lt"
+_PRIMARY_KEY: Final = "pk"
+_UNIQUE: Final = "unique"
+_EXCLUSION: Final = "excl"
+_EQUAL: Final = "eq"
+_OVERLAP: Final = "overlap"
 
 _UNREADABLE: Final = re.compile(r"[^0-9A-Za-z]+")
 
@@ -88,19 +94,41 @@ def _axis(
 def temporal_history_constraints(
     table: Table,
     axes: Sequence[AsOfAxisMetadata],
+    primary_key: PhysicalIndex | None,
     by_contributor: Mapping[ColumnContributor, ColumnSlot],
 ) -> TemporalHistoryConstraints | None:
     """The constraints ``table`` carries for its family root's declared ``axes``.
 
     Each endpoint resolves through the Table's own contributor lookup, which
-    reaches a root-declared Attribute from every Table its family maps.
+    reaches a root-declared Attribute from every Table its family maps. The
+    logical key is the primary key without the axis ends it derives from them,
+    so it holds the root's key Attributes alone and never the inheritance tag.
     """
     by_dimension = {axis.dimension: axis for axis in axes}
-    transaction_axis = by_dimension.get(TemporalDimension.TRANSACTION_TIME)
-    if transaction_axis is None:
+    transaction_declaration = by_dimension.get(TemporalDimension.TRANSACTION_TIME)
+    if transaction_declaration is None:
         return None
-    valid_axis = by_dimension.get(TemporalDimension.VALID_TIME)
+    if primary_key is None:  # pragma: no cover - validation requires a root key
+        raise RuntimeError(f"Temporal Table {table.name!r} carries no primary key")
+    valid_declaration = by_dimension.get(TemporalDimension.VALID_TIME)
+    transaction_axis = _axis(table, transaction_declaration, by_contributor)
+    valid_axis = (
+        None if valid_declaration is None else _axis(table, valid_declaration, by_contributor)
+    )
+    ranged = tuple(axis for axis in (valid_axis, transaction_axis) if axis is not None)
+    ends = {axis.end for axis in ranged}
+    logical_key = tuple(slot for slot in primary_key.columns if slot not in ends)
+    exclusion_groups: list[OperandGroup] = [(_EQUAL, tuple(slot.column for slot in logical_key))]
+    exclusion_groups.extend((_OVERLAP, (axis.start.column, axis.end.column)) for axis in ranged)
     return TemporalHistoryConstraints(
-        transaction_axis=_axis(table, transaction_axis, by_contributor),
-        valid_axis=None if valid_axis is None else _axis(table, valid_axis, by_contributor),
+        primary_key=primary_key,
+        primary_key_name=constraint_name(
+            table,
+            _PRIMARY_KEY,
+            ((_UNIQUE, tuple(slot.column for slot in primary_key.columns)),),
+        ),
+        logical_key=logical_key,
+        transaction_axis=transaction_axis,
+        valid_axis=valid_axis,
+        exclusion_name=constraint_name(table, _EXCLUSION, exclusion_groups),
     )

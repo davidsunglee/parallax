@@ -570,14 +570,20 @@ def _layout(
         _physical_index(group.table, declaration, by_contributor)
         for declaration in index.family_indices.get(group.root, ())
     )
+    physical_key = (
+        None if primary_key is None else _physical_index(group.table, primary_key, by_contributor)
+    )
     return table_layout(
         group.table,
         columns,
-        None if primary_key is None else _physical_index(group.table, primary_key, by_contributor),
+        physical_key,
         tuple(mapped for mapped in secondary if mapped is not None),
         _placements(group, roles, by_contributor),
         temporal_history_constraints(
-            group.table, _entity(index, group.root).declared_as_of_axes, by_contributor
+            group.table,
+            _entity(index, group.root).declared_as_of_axes,
+            physical_key,
+            by_contributor,
         ),
     )
 

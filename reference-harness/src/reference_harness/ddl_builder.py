@@ -37,7 +37,7 @@ from .storage_layout import (
     derived_primary_key_index,
     is_scalar_collection,
 )
-from .temporality import Axis, temporal_axes
+from .temporality import TEMPORAL_DIMENSION_RANK, Axis, temporal_axes
 
 # m-core neutral type -> Postgres column type.
 _POSTGRES_BASE_TYPES = {
@@ -373,19 +373,31 @@ _CONSTRAINT_VERSION = "pxc-1"
 _CONSTRAINT_NAME_BYTES = 63
 _CONSTRAINT_EMPTY_PREFIX = "table"
 _INTERVAL_CHECK_KIND = {"transaction-time": "tx", "valid-time": "valid"}
+_EXCLUSION_PREREQUISITE = "create extension if not exists btree_gist"
+"""PostgreSQL's GiST equality operators for an exclusion's scalar key columns."""
 
 
-def interval_check_name(table: str, kind: str, start: str, end: str) -> str:
-    """The interval check ``start < end``'s derived name on ``table``.
+def temporal_constraint_name(
+    table: str, kind: str, groups: Sequence[tuple[str, Sequence[str]]]
+) -> str:
+    """A temporal constraint's derived name on ``table``.
 
-    The fingerprint hashes the table, the kind, and one operand group — its
-    ``lt`` semantics and its two ordered columns — each group behind its count.
+    The fingerprint hashes the table, the kind, and each operand group — its
+    semantics and its ordered columns, each group behind its count.
     """
-    fingerprint = _fingerprint([_CONSTRAINT_VERSION, table, kind, "1", "lt", "2", start, end])
+    fields = [_CONSTRAINT_VERSION, table, kind, str(len(groups))]
+    for semantics, columns in groups:
+        fields.extend((semantics, str(len(columns)), *columns))
+    fingerprint = _fingerprint(fields)
     budget = _CONSTRAINT_NAME_BYTES - len(_CONSTRAINT_NAMESPACE) - len(kind) - len(fingerprint) - 3
     prefix = _readable_prefix([table], _CONSTRAINT_EMPTY_PREFIX)
     kept = prefix[:budget].strip("_") or _CONSTRAINT_EMPTY_PREFIX
     return f"{_CONSTRAINT_NAMESPACE}_{kind}_{kept}_{fingerprint}"
+
+
+def interval_check_name(table: str, kind: str, start: str, end: str) -> str:
+    """The interval check ``start < end``'s derived name on ``table``."""
+    return temporal_constraint_name(table, kind, [("lt", [start, end])])
 
 
 @dataclass(frozen=True)
@@ -493,29 +505,63 @@ def _index_columns(layout: TableLayout, owner: str, index: Mapping[str, Any]) ->
     return [slot.column for slot in slots if slot is not None]
 
 
-def _interval_checks(layout: TableLayout, declarations: _Declarations, dialect: str) -> list[str]:
-    """The PostgreSQL interval checks of each As-Of Axis ``layout`` carries.
+def _axis_columns(layout: TableLayout, declarations: _Declarations) -> list[tuple[str, str, str]]:
+    """Each As-Of Axis ``layout`` carries, as its dimension and its start and end
+    columns, in canonical axis order.
 
     The family root declares the axes, and each endpoint resolves through the
     layout's contributor lookup, which reaches a root-declared Attribute from
     every table the family maps.
     """
-    clauses = []
+    resolved = []
     for owner, axes in declarations.temporal_axes:
         for axis in axes:
             start = layout.contribution(AttributeContributor(owner, axis.start.name))
             end = layout.contribution(AttributeContributor(owner, axis.end.name))
             if start is None or end is None:
                 continue
-            name = interval_check_name(
-                layout.table, _INTERVAL_CHECK_KIND[axis.dimension], start.column, end.column
-            )
-            clauses.append(
-                f"constraint {quote_identifier(name, dialect)} check "
-                f"({quote_identifier(start.column, dialect)} < "
-                f"{quote_identifier(end.column, dialect)})"
-            )
+            resolved.append((axis.dimension, start.column, end.column))
+    return sorted(resolved, key=lambda axis: TEMPORAL_DIMENSION_RANK[axis[0]])
+
+
+def _interval_checks(
+    layout: TableLayout, axes: Sequence[tuple[str, str, str]], dialect: str
+) -> list[str]:
+    """The PostgreSQL interval check of each of ``axes``."""
+    clauses = []
+    for dimension, start, end in axes:
+        name = interval_check_name(layout.table, _INTERVAL_CHECK_KIND[dimension], start, end)
+        clauses.append(
+            f"constraint {quote_identifier(name, dialect)} check "
+            f"({quote_identifier(start, dialect)} < {quote_identifier(end, dialect)})"
+        )
     return clauses
+
+
+def _exclusion(
+    layout: TableLayout, key: Sequence[str], axes: Sequence[tuple[str, str, str]], dialect: str
+) -> str:
+    """The PostgreSQL non-overlap exclusion over ``layout``'s logical key.
+
+    The logical key is the primary key without the axis ends it derives from
+    them — the root's key Attributes, never the table-per-hierarchy tag — and
+    each axis contributes one half-open range in canonical axis order.
+    """
+    ends = {end for _, _, end in axes}
+    logical = [column for column in key if column not in ends]
+    name = temporal_constraint_name(
+        layout.table,
+        "excl",
+        [("eq", logical), *(("overlap", [start, end]) for _, start, end in axes)],
+    )
+    operands = [f"{quote_identifier(column, dialect)} with =" for column in logical]
+    operands.extend(
+        f"tstzrange({quote_identifier(start, dialect)}, {quote_identifier(end, dialect)}) with &&"
+        for _, start, end in axes
+    )
+    return (
+        f"constraint {quote_identifier(name, dialect)} exclude using gist ({', '.join(operands)})"
+    )
 
 
 def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str) -> str:
@@ -526,19 +572,29 @@ def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str
     object a violation can report rather than an anonymous table constraint. The
     layout owns the complete slot sequence and effective physical nullability
     (m-storage-layout); this only renders selected values per dialect. Only
-    PostgreSQL carries the interval checks: MariaDB's generated tables enforce
-    no temporal constraint natively.
+    PostgreSQL names a temporal table's primary key and carries its interval
+    checks and non-overlap exclusion: MariaDB's generated tables enforce no
+    temporal constraint natively.
     """
     columns = [_slot_ddl(slot, declarations, dialect) for slot in layout.columns]
+    axes = _axis_columns(layout, declarations)
+    constrained = dialect == "postgres" and bool(axes)
 
+    key: list[str] = []
     for owner, index in declarations.primary_key_indices:
         index_columns = _index_columns(layout, owner, index)
         if index_columns is None:
             continue
+        key = index_columns
         quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)
-        columns.append(f"primary key ({quoted})")
-    if dialect == "postgres":
-        columns.extend(_interval_checks(layout, declarations, dialect))
+        named = ""
+        if constrained:
+            name = temporal_constraint_name(layout.table, "pk", [("unique", index_columns)])
+            named = f"constraint {quote_identifier(name, dialect)} "
+        columns.append(f"{named}primary key ({quoted})")
+    if constrained:
+        columns.extend(_interval_checks(layout, axes, dialect))
+        columns.append(_exclusion(layout, key, axes, dialect))
 
     column_clause = ",\n  ".join(columns)
     return f"create table {quote_identifier(layout.table, dialect)} (\n  {column_clause}\n)"
@@ -571,7 +627,8 @@ def ddl_for(model: Model, dialect: str) -> list[str]:
     One ``CREATE TABLE`` per compiled Table Layout, so a `table-per-hierarchy`
     family's shared table is created once with the whole family's slots and each
     `table-per-concrete-subtype` concrete gets its own ancestry-derived table.
-    Every authored Index follows as its own named statement, after every table,
+    On PostgreSQL the exclusion prerequisite precedes the tables whenever one is
+    temporal. Every authored Index follows as its own named statement, after every table,
     which is the form a generated Schema Delta uses too — the catalogs the two
     leave behind are what a delta cell is graded by. Foreign keys are
     intentionally omitted: relationships are a query concern (navigation/join
@@ -580,8 +637,18 @@ def ddl_for(model: Model, dialect: str) -> list[str]:
     """
     declarations = _declarations(model)
     tables = model.storage_layout.tables
-    return [_create_table(layout, declarations, dialect) for layout in tables] + [
-        statement
-        for layout in tables
-        for statement in _create_indices(layout, declarations, dialect)
-    ]
+    created = [_create_table(layout, declarations, dialect) for layout in tables]
+    prerequisite = (
+        [_EXCLUSION_PREREQUISITE]
+        if dialect == "postgres" and any(_axis_columns(layout, declarations) for layout in tables)
+        else []
+    )
+    return (
+        prerequisite
+        + created
+        + [
+            statement
+            for layout in tables
+            for statement in _create_indices(layout, declarations, dialect)
+        ]
+    )

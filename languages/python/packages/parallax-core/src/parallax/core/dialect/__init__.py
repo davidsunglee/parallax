@@ -36,6 +36,7 @@ __all__ = [
     "DocumentLeafAssignment",
     "DocumentValueAssignment",
     "EncodedJsonKind",
+    "ExclusionDdl",
     "IndexColumnDdl",
     "IntervalCheckDdl",
     "LockMode",
@@ -220,6 +221,20 @@ class IntervalCheckDdl:
     end: str
 
 
+@dataclass(frozen=True, slots=True)
+class ExclusionDdl:
+    """One named constraint that no two rows equal on every ``equal`` Column
+    overlap on every ``overlapping`` half-open interval at once.
+
+    Every identifier is already quoted for the dialect, and each interval is its
+    start Column then its end Column.
+    """
+
+    name: str
+    equal: tuple[str, ...]
+    overlapping: tuple[tuple[str, str], ...]
+
+
 def _column_clause(column: ColumnDdl) -> str:
     """One Column's name, type, and nullability, as every DDL statement spells it."""
     return f"{column.column} {column.type_sql}" + ("" if column.nullable else " not null")
@@ -260,6 +275,10 @@ class Dialect:
     # but left unchanged, which is what lets a matched count prove that an
     # unchanged row still stands as observed (`m-dialect` "Unchanged-row count").
     counts_unchanged_rows: bool = False
+    # The native codes reporting an exclusion constraint's violation, one kind
+    # of the `constraintViolation` category (`m-dialect` "Exclusion
+    # violations").
+    exclusion_violation_codes: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         limit = self.max_bind_parameters
@@ -613,22 +632,44 @@ class Dialect:
         columns: Sequence[ColumnDdl],
         primary_key: Sequence[str],
         interval_checks: Sequence[IntervalCheckDdl] = (),
+        *,
+        primary_key_name: str | None = None,
+        exclusion: ExclusionDdl | None = None,
     ) -> str:
-        """``create table`` for one whole Table, keyed and checked inline.
+        """``create table`` for one whole Table, keyed and constrained inline.
 
         The caller supplies the complete physical column sequence, the key
-        columns, and the interval checks in their own order; all are already
-        quoted. An empty ``primary_key`` emits no key clause, which is the
-        keyless Table a model declaring no primary key produces.
+        columns, the interval checks, and the exclusion in their own order; all
+        are already quoted. An empty ``primary_key`` emits no key clause, which
+        is the keyless Table a model declaring no primary key produces, and a
+        key without ``primary_key_name`` is left for the database to name. The
+        exclusion is immediate and not deferrable: each statement is checked as
+        it runs.
         """
         parts = [_column_clause(column) for column in columns]
         if primary_key:
-            parts.append(f"primary key ({', '.join(primary_key)})")
+            named = "" if primary_key_name is None else f"constraint {primary_key_name} "
+            parts.append(f"{named}primary key ({', '.join(primary_key)})")
         parts.extend(
             f"constraint {check.name} check ({check.start} < {check.end})"
             for check in interval_checks
         )
+        if exclusion is not None:
+            operands = [f"{column} with =" for column in exclusion.equal]
+            operands.extend(
+                f"tstzrange({start}, {end}) with &&" for start, end in exclusion.overlapping
+            )
+            parts.append(f"constraint {exclusion.name} exclude using gist ({', '.join(operands)})")
         return f"create table {table} ({', '.join(parts)})"
+
+    def create_extension(self, name: str) -> str | Unsupported:
+        """Install the provider extension ``name`` unless the database has it.
+
+        ``name`` is already quoted. The one statement a Schema Delta spells
+        idempotently: the extension is a provider-managed prerequisite of the
+        tables a delta creates, not a model-owned object it reconciles.
+        """
+        return f"create extension if not exists {name}"
 
     def add_column(self, table: str, column: ColumnDdl) -> str:
         """``alter table … add column`` for one new physical Column."""
@@ -685,6 +726,10 @@ class Dialect:
     def classify(self, code: str) -> str | None:
         """The neutral m-db-error category for a native code, or ``None``."""
         return self.error_codes.get(code)
+
+    def reports_exclusion_violation(self, code: str | None) -> bool:
+        """Whether native ``code`` reports an exclusion constraint's violation."""
+        return code in self.exclusion_violation_codes
 
 
 _FIXED_COLUMN_TYPES: Final[Mapping[type, str]] = {
@@ -747,4 +792,5 @@ POSTGRES: Final[Dialect] = Dialect(
     max_identifier_bytes=63,
     max_bind_parameters=65_535,
     counts_unchanged_rows=True,
+    exclusion_violation_codes=frozenset({"23P01"}),
 )

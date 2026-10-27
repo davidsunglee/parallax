@@ -709,32 +709,90 @@ identical executions, defaulting to 5. Pass `None` where the same connection may
 see a table's shape change underneath identical query text — a
 schema-reset-per-case harness, never a deployed application.
 
-## Temporal interval checks
+## Temporal constraints
 
-A temporal table that `schema_delta` creates carries one named check per axis:
-`in_z < out_z` on every temporal table, and `from_z < thru_z` too on a Bitemporal
-one. PostgreSQL then refuses an empty or inverted interval from any writer, Parallax
-or not, with a `DatabaseError` whose `category` is `"constraintViolation"`, whose
-`native_code` is `23514`, and whose `constraint_name` names the check. The checks
-judge each row on its own: they don't stop two rows of one object from overlapping.
+A temporal table that `schema_delta` creates carries its constraints inline:
 
-The names are `pxc_tx_<table>_<fingerprint>` and `pxc_valid_<table>_<fingerprint>`,
-derived from the table and its columns. A table that already existed gets no check
-from a later delta, because a delta can't know whether the stored rows satisfy one.
-To adopt them, take the names from the `create table` statement that provisioning
-the same model from `ABSENT` returns, then validate the rows yourself. For a
-Bitemporal `position` table, find the rows each check would refuse:
+- its primary key, named `pxc_pk_<table>_<fingerprint>`, over the same columns as
+  before: the key plus each axis's end column;
+- one check per axis, `pxc_tx_<table>_<fingerprint>` requiring `in_z < out_z` on every
+  temporal table, and `pxc_valid_<table>_<fingerprint>` requiring `from_z < thru_z` too
+  on a Bitemporal one;
+- an exclusion, `pxc_excl_<table>_<fingerprint>`, which refuses a row overlapping
+  another row of the same key in Transaction Time and, on a Bitemporal table, in Valid
+  Time as well. Intervals are half-open, so rows that only meet don't overlap. A shared
+  table-per-hierarchy table compares keys whatever the row's subtype; a
+  table-per-concrete-subtype table compares only its own rows.
+
+PostgreSQL then refuses an empty or inverted interval, and overlapping history, from
+any writer, Parallax or not, with a `DatabaseError` whose `category` is
+`"constraintViolation"`: `native_code` `23514` and the check's name for an interval,
+`23P01` and the exclusion's name for an overlap. The exclusion is checked as each
+statement runs, not at commit, and a statement that conflicts with a row another
+transaction hasn't committed yet waits for that transaction first. The fingerprint is
+derived from the table and its columns, so the names change only when those do; take
+them from the `create table` statement that provisioning the same model from `ABSENT`
+returns.
+
+### The `btree_gist` prerequisite
+
+The exclusion compares the key with `=` inside a GiST index, which needs the
+`btree_gist` extension that ships with PostgreSQL. A delta that creates a temporal table
+begins with `create extension if not exists btree_gist`, the one statement a delta runs
+only if needed. The extension is trusted, so a role with the `CREATE` privilege on the
+database can install it without being a superuser; managed services such as Amazon RDS,
+Google Cloud SQL and Azure Database for PostgreSQL offer it, though some require it to be
+allow-listed first. A delta never upgrades or removes it. A schema reset that drops
+`public` with `cascade` also drops an extension installed there, and the next delta that
+creates a temporal table installs it again.
+
+### Cost
+
+Every row a temporal table stores is an entry in the exclusion's GiST index, which an
+insert, a close, and a revision that moves a row's Valid-Time start all maintain. A
+close already changed an indexed column, the key's `out_z`; a revision moving `from_z`
+now does too, so neither is a HOT update. A write that changes only a payload column
+keeps the update HOT where the page has room. Measure the write rate your tables need
+before relying on these costs.
+
+### Adopting the constraints on an existing table
+
+A table that already existed gets none of the constraints from a later delta, because a
+delta can't know whether the stored rows satisfy them. Migrate it yourself, in this
+order; nothing in Parallax guesses the names your table carries now. For a Bitemporal
+`position` table, first find the rows each check would refuse and every pair of rows
+that overlaps:
 
 ```sql
 select pos_id, in_z, out_z from position where not (in_z < out_z);
 select pos_id, from_z, thru_z from position where not (from_z < thru_z);
+select a.pos_id, a.ctid, b.ctid
+from position a join position b
+  on a.pos_id = b.pos_id and a.ctid < b.ctid
+ and tstzrange(a.in_z, a.out_z) && tstzrange(b.in_z, b.out_z)
+ and tstzrange(a.from_z, a.thru_z) && tstzrange(b.from_z, b.thru_z);
 ```
 
-Correct or remove each one; which is right is a decision about your history, not
-one Parallax can make. Adding a check validates every stored row while it holds an
-`ACCESS EXCLUSIVE` lock, which blocks reads and writes of the table. On a large
-table, add it `NOT VALID` instead, which takes that lock only briefly and checks
-new writes from then on, and validate the stored rows afterwards under a
+On a Transaction-Time-only table leave out the `from_z` and `thru_z` conditions.
+Correct or remove each row they find; which is right is a decision about your history,
+not one Parallax can make. Then rename the primary key, which PostgreSQL named
+`position_pkey` when an earlier release created the table, add the checks, install the
+prerequisite, and add the exclusion:
+
+```sql
+alter table position rename constraint position_pkey to pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d;
+alter table position add constraint pxc_tx_position_05e7b5d0b3866810c782a91a8d1f7971 check (in_z < out_z);
+alter table position add constraint pxc_valid_position_9c4697753a4cc41ed976ab6ee1f1f88b check (from_z < thru_z);
+create extension if not exists btree_gist;
+alter table position add constraint pxc_excl_position_e5c6616a7f7cfbf6c981cf0ad0f86610
+  exclude using gist (pos_id with =, tstzrange(from_z, thru_z) with &&, tstzrange(in_z, out_z) with &&);
+```
+
+The checks come first: an exclusion can't even form the range of an inverted
+interval, and fails with `22000` on one. Adding a check or the exclusion validates every
+stored row while it holds an `ACCESS EXCLUSIVE` lock, which blocks reads and writes of
+the table. A check can be added `NOT VALID` instead, which takes that lock only briefly
+and checks new writes from then on, and its stored rows validated afterwards under a
 `SHARE UPDATE EXCLUSIVE` lock, which lets reads and writes continue:
 
 ```sql
@@ -743,10 +801,10 @@ alter table position validate constraint pxc_tx_position_05e7b5d0b3866810c782a91
 ```
 
 `validate constraint` fails while any stored row breaks the check, and leaves it
-`NOT VALID`; correct the row and validate again. Repeat both statements for the
-`pxc_valid_…` check. Only check constraints, foreign keys and not-null constraints
-can be added `NOT VALID`: PostgreSQL offers no staged validation for an exclusion
-constraint, which validates every row as it is added.
+`NOT VALID`; correct the row and validate again. An exclusion has no such option:
+PostgreSQL refuses `NOT VALID` on one, so adding it scans and indexes every row under
+`ACCESS EXCLUSIVE`. Plan that lock's duration on a large table, and add the exclusion
+only after the queries above find nothing, or it fails with `23P01` and adds nothing.
 
 ## What gets logged, and by whom
 

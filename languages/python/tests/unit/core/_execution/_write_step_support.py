@@ -21,6 +21,7 @@ from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._write_lowering import lowered, stream_physical
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import INFINITY as OPEN
+from parallax.core.db_error import DatabaseError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
@@ -218,13 +219,18 @@ def step_executor(
     port: ScriptedAdapter,
     meta: Metamodel = POSITION_META,
     payloads: WritePayloadPreparer | None = None,
+    recognized: list[DatabaseError] | None = None,
 ) -> WriteStepExecutor:
     """The production executor of an attempt over ``port``, preparing payloads
-    through ``payloads`` or else the planner an attempt adopts."""
+    through ``payloads`` or else the planner an attempt adopts, and appending
+    each statement failure it recognizes as a recoverable conflict to
+    ``recognized`` where given."""
+    held: list[DatabaseError] = [] if recognized is None else recognized
     return WriteStepExecutor(
         port,
         payloads=build_write_planner(meta).payloads if payloads is None else payloads,
         meta=meta,
+        recoverable=held.append,
     )
 
 

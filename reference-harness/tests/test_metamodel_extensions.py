@@ -705,6 +705,6 @@ def test_temporal_key_is_derived_and_emits_no_second_constraint() -> None:
             }
         ),
     )
-    (ddl,) = ddl_for(model, "postgres")
+    _prerequisite, ddl = ddl_for(model, "postgres")
     assert "primary key (id, out_z)" in ddl
     assert "unique" not in ddl

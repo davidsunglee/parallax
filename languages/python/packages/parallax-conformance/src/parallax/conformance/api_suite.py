@@ -729,6 +729,7 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="errors-imports",
         title="Import what Errors uses",
         snippet=(
+            "import datetime as dt\n"
             "from collections.abc import Mapping\n"
             "\n"
             "from pydantic import ValidationError\n"
@@ -792,6 +793,11 @@ RECIPES: Final[list[Recipe]] = [
         recipe_id="add-a-customer-unless-the-id-is-taken",
         title="Tell a duplicate key from other database errors",
         snippet=_sources(guide_error_recipes.add_a_customer_unless_the_id_is_taken),
+    ),
+    Recipe(
+        recipe_id="price-a-window-unless-it-is-priced",
+        title="Tell an insert over existing temporal coverage from other database errors",
+        snippet=_sources(guide_error_recipes.price_a_window_unless_it_is_priced),
     ),
     Recipe(
         recipe_id="add-a-shipment-unless-its-tracking-number-is-taken",
@@ -2520,7 +2526,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
             "m-read-lock-023",
             "m-temporal-write-061",
             "m-temporal-write-062",
-            "m-temporal-write-063",
+            "m-temporal-write-080",
             "m-temporal-write-064",
             "m-temporal-write-065",
             "m-temporal-write-066",
