@@ -170,7 +170,8 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │       ordinals of the row identity, the shared document and each coordinate
    ├ bind(model, result_contract, projection) → a ReadRowConverter per compiled read
    └ ReadPlan: compiled root + fetch work + converters + ViewSchema
-   │ rendered for this query: a stream page's cap and seek coordinate are bound
+   │ rendered for this query: its predicate operands and a stream page's cap and
+   │ seek coordinate are bound
    ▼
  execute_read(connection, CompiledRead, calls)                          _fetch
    LoweredStatement + document-read ordinals → driver SQL → DatabaseConnection.execute
@@ -215,12 +216,13 @@ the case for every standalone and read-only read; inside a writable attempt each
 derives its own lock from its own Entity.
 
 `ReadPlanCache` (owned once by `RootResources`) keeps the reusable planning products
-and nothing else: no Page, result, connection, evidence or publication. Its key is the
-Model Edition, model, dialect, result form and Concurrency Preference together with the
-whole resolved query, literal operands included; only a stream page's cap and seek
-coordinate are left out, and they are bound when a cached plan is rendered. A miss
-whose key differs from a cached plan's only in its page shape reuses that plan's fetch
-work and plans only the root. `UNCACHED_READ_PLANNER` is a zero-capacity cache, so
+and nothing else: no Page, result, connection, evidence or publication. The
+[Python execution binding](../../spec/execution.md#models-roots-and-scopes) defines its
+key. A cached root is planned with the place each predicate operand renders from,
+compiled once as a template, and released from those associations before the plan is
+kept; every delivery renders the template from its own query. A miss whose key differs
+from a cached plan's only in its page shape reuses that plan's fetch work and plans
+only the root. `UNCACHED_READ_PLANNER` is a zero-capacity cache, so
 uncached planning builds the same products through the same code. Validation and read
 admission stay outside the cache.
 

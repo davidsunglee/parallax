@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from itertools import chain
-from typing import Literal, assert_never
+from typing import Final, Literal, assert_never
 
 from parallax.core.base import (
     INFINITY,
@@ -28,7 +29,7 @@ from parallax.core.object_query._resolved import (
     ResolvedObjectQuery,
     ResolvedSeek,
 )
-from parallax.core.predicate._execution_values import ExecutionValueSource
+from parallax.core.predicate._execution_values import ExecutionValueSource, predicate_operands
 from parallax.core.predicate._resolved import disjunctive
 from parallax.core.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
@@ -67,6 +68,7 @@ from parallax.core.sql_gen._planning import plan_statement as _plan_statement
 # context in order.
 from parallax.core.sql_gen._predicate import EntityRowScope as _EntityRowScope
 from parallax.core.sql_gen._predicate import MemberSubject as _MemberSubject
+from parallax.core.sql_gen._predicate import prepared_operand as _prepared_operand
 from parallax.core.sql_gen._predicate import render_predicate as _render_predicate
 from parallax.core.sql_gen._predicate import render_shared_sources as _render_shared_sources
 
@@ -194,10 +196,43 @@ class CompiledTemplate:
         if self._sql_parts:
             sql = ", ".join("?" for _ in _gathered(keys)).join(self._sql_parts)
         rendered = statement.with_execution_values(
-            ((group, _execution_value(group.source, keys, query)) for group in positions),
-            sql=sql,
+            _execution_values(positions, keys, query), sql=sql
         )
         return replace(self.compiled, statement=rendered)
+
+
+_EXHAUSTED: Final = object()
+
+
+def _execution_values(
+    positions: tuple[ExecutionValuePositions, ...],
+    keys: list[ManagedValue] | None,
+    query: ResolvedObjectQuery | None,
+) -> Iterator[tuple[ExecutionValuePositions, object]]:
+    """Each group with its execution value, in the groups' canonical order.
+
+    Authored operands come first, ordinal by ordinal, so one pass over the
+    current predicate reaches each; a source's forms are adjacent and share
+    the operand.
+    """
+    operands: Iterator[object] | None = None
+    ordinal = -1
+    operand: object = _EXHAUSTED
+    for group in positions:
+        match group.source:
+            case ("predicate", wanted):
+                if operands is None:
+                    if query is None:
+                        raise SqlGenError("a template of authored operands requires its query")
+                    operands = predicate_operands(query.predicate)
+                while ordinal < wanted:
+                    operand = next(operands, _EXHAUSTED)
+                    ordinal += 1
+                if operand is _EXHAUSTED:
+                    raise SqlGenError("the query's predicate lacks an operand its template renders")
+                yield group, _prepared_operand(group.form, operand)
+            case source:
+                yield group, _execution_value(source, keys, query)
 
 
 def _gathered(keys: list[ManagedValue] | None) -> list[ManagedValue]:
@@ -226,7 +261,7 @@ def _execution_value(
             if query is None or query.paging is None or query.limit is None:
                 raise SqlGenError("a paged read template requires its current page cap")
             return query.limit
-        case _:  # pragma: no cover - predicate and temporal sources are never deferred
+        case _:  # pragma: no cover - temporal sources are never deferred
             raise SqlGenError(f"no execution value renders from {source!r}")
 
 
@@ -238,8 +273,9 @@ def compile_template(
     result_form: _ResultForm = "row",
     lock: LockMode | None = None,
 ) -> CompiledTemplate:
-    """Compile a read once, deferring its page's cap and seek carriers and its
-    gathered parent keys to rendering."""
+    """Compile a read once, deferring to rendering its page's cap and seek
+    carriers, its gathered parent keys, and the predicate operands its planned
+    query's execution-value sources name."""
     return _template(
         _compile_read(query, model, dialect, result_form=result_form, lock=lock, deferred=True)
     )
@@ -280,8 +316,8 @@ def _compile_read(
     lock: LockMode | None,
     deferred: bool,
 ) -> CompiledRead:
-    """Lower ``query`` once; a ``deferred`` read binds its page's execution
-    values as markers."""
+    """Lower ``query`` once; a ``deferred`` read binds its page's and its
+    predicate's execution values as markers."""
     page_deferred = deferred and query.paging is not None
     storage = _storage_view(model)
     facet = _inheritance_view(model)
@@ -302,6 +338,7 @@ def _compile_read(
         storage=storage,
         read_shape=read_shape,
         order_terms=query.order_by,
+        execution_value_sources=query.execution_value_sources if deferred else None,
     )
     position = tuple(read_shape.concrete_types)
     statement, select_list = _render_read_arm(

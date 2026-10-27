@@ -20,6 +20,11 @@ from parallax.core.object_query._resolved import (
     ResolvedRangeSelection,
     ResolvedTemporalSelection,
 )
+from parallax.core.predicate._execution_values import (
+    NO_EXECUTION_VALUE_SOURCES,
+    ExecutionValueSources,
+    sourced_conjunction,
+)
 from parallax.core.predicate._perspective import (
     AtPerspective,
     AxisPerspective,
@@ -70,6 +75,7 @@ __all__ = [
     "TransactionTimeOnly",
     "UndeclaredAxisError",
     "inject_resolved_as_of",
+    "inject_sourced_as_of",
     "milestone_edge",
     "perspective_terms",
     "propagated_selections",
@@ -429,6 +435,22 @@ def inject_resolved_as_of(
     """Append temporal terms from managed, resolved selections."""
     terms = [term for selection in selections for term in _selection_terms(selection, entity)]
     return predicate if not terms else _conjunction(predicate, *terms)
+
+
+def inject_sourced_as_of(
+    predicate: ResolvedPredicate,
+    sources: ExecutionValueSources,
+    selections: tuple[ResolvedTemporalSelection, ...],
+    entity: EntityMetadata,
+) -> tuple[ResolvedPredicate, ExecutionValueSources]:
+    """:func:`inject_resolved_as_of`, carrying ``predicate``'s execution-value
+    sources to where the appended terms leave its occurrences."""
+    terms = [term for selection in selections for term in _selection_terms(selection, entity)]
+    if not terms:
+        return predicate, sources
+    return sourced_conjunction(
+        (predicate, sources), *((term, NO_EXECUTION_VALUE_SOURCES) for term in terms)
+    )
 
 
 def perspective_terms(

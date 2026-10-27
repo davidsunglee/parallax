@@ -24,16 +24,28 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
-from parallax.core.navigate import PropagatedRootSelections
+from parallax.core.navigate import (
+    NoRootSelections,
+    PropagatedRootSelections,
+    resolve_temporal_visibility,
+)
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
-from parallax.core.predicate._resolved import ResolvedComparison
+from parallax.core.predicate._execution_values import ExecutionValueSources
+from parallax.core.predicate._resolved import ResolvedAnd, ResolvedComparison
 from parallax.core.read_delivery import _read_plan
 from parallax.core.read_delivery._delivery import find
 from parallax.core.read_delivery._page_reader import EMPTY_PAGE_ORIGIN_COLLECTOR
 from parallax.core.read_delivery._read_plan import EMPTY_READ, EmptyRead, ReadPlanCache
 from parallax.core.read_delivery._row_converter import ReadRowConverter
-from parallax.core.sql_gen._compile import CompiledRead, CompiledTemplate
+from parallax.core.sql_gen import _compile as _compile_module
+from parallax.core.sql_gen._compile import (
+    CompiledRead,
+    CompiledTemplate,
+    compile_read,
+    compile_write_predicate,
+)
+from parallax.core.sql_gen._context import LoweredStatement, StatementBuilder
 from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.unit_work import Concurrency
 from parallax.descriptor._records import Entity as DescriptorEntity
@@ -50,12 +62,16 @@ _MODEL = CatalogedModel(_META)
 
 
 def _reaches(root: object, target: object) -> bool:
+    return _reaching(root, lambda value: value is target)
+
+
+def _reaching(root: object, found: Callable[[object], bool]) -> bool:
     atomic = (str, bytes, int, float, bool, type(None), type, types.ModuleType)
     pending = [root]
     seen: set[int] = set()
     while pending:
         value = pending.pop()
-        if value is target:
+        if found(value):
             return True
         identity = id(value)
         if identity in seen or isinstance(value, atomic):
@@ -130,15 +146,28 @@ def _root(plan: _read_plan.ReadPlan) -> tuple[CompiledRead, ReadRowConverter]:
     return root
 
 
-def test_equal_query_values_share_one_read_plan_but_result_forms_do_not() -> None:
+def _shares_preparation(rendered: _read_plan.ReadPlan, prepared: _read_plan.ReadPlan) -> bool:
+    """Whether ``rendered`` reuses everything ``prepared`` prepared but its root."""
+    return (
+        _root(rendered)[1] is _root(prepared)[1]
+        and rendered._schema is prepared._schema
+        and rendered._fetches is prepared._fetches
+        and rendered._fetch_rows is prepared._fetch_rows
+        and rendered._correlations is prepared._correlations
+        and rendered._query_plan is prepared._query_plan
+    )
+
+
+def test_different_query_values_share_one_read_plan_but_result_forms_do_not() -> None:
     planner = ReadPlanCache()
 
-    first = _plan(planner, _query())
-    equal_value = _plan(planner, _query())
-    row_form = _plan(planner, _query(), result_form="row")
+    first = _plan(planner, _query(1))
+    other_value = _plan(planner, _query(2))
+    row_form = _plan(planner, _query(1), result_form="row")
 
-    assert equal_value is first
-    assert row_form is not first
+    assert _shares_preparation(other_value, first)
+    assert (_root(first)[0].statement.binds, _root(other_value)[0].statement.binds) == ((1,), (2,))
+    assert _root(row_form)[1] is not _root(first)[1]
     assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(16, 2, 1, 2, 0)
 
 
@@ -160,17 +189,17 @@ def _match_query(name: str) -> ResolvedObjectQuery:
     )
 
 
-def test_matches_with_different_operands_on_one_relationship_plan_apart() -> None:
+def test_matches_with_different_operands_on_one_relationship_share_one_template() -> None:
     planner = ReadPlanCache()
 
     ada = _plan(planner, _match_query("Ada"))
     bob = _plan(planner, _match_query("Bob"))
 
-    assert _plan(planner, _match_query("Ada")) is ada
-    assert bob is not ada
+    assert _shares_preparation(bob, ada)
     (ada_read, _), (bob_read, _) = _root(ada), _root(bob)
     assert ada_read.statement.sql == bob_read.statement.sql
     assert (ada_read.statement.binds, bob_read.statement.binds) == (("Ada",), ("Bob",))
+    assert planner._statistics() == _read_plan._ReadPlanCacheStatistics(16, 1, 1, 1, 0)
 
 
 def test_equal_dialect_values_with_distinct_identities_do_not_share_a_read_plan() -> None:
@@ -186,14 +215,15 @@ def test_equal_dialect_values_with_distinct_identities_do_not_share_a_read_plan(
     assert planner._statistics().misses == 2
 
 
-def test_operand_key_material_keeps_exact_types_and_decimal_exponents() -> None:
+def test_operand_key_material_keeps_exact_types_and_decimal_exponents_but_not_values() -> None:
     operand_key = cast("Callable[[object], object]", vars(_read_plan)["_operand_key"])
 
     assert operand_key(True) != operand_key(1)
     assert operand_key(1) != operand_key(1.0)
     assert operand_key(Decimal("1.5")) != operand_key(Decimal("1.50"))
-    assert operand_key(Decimal("1.50")) == operand_key(Decimal("1.50"))
-    assert operand_key("1") == operand_key("1")
+    assert operand_key(Decimal("1.50")) == operand_key(Decimal("2.75"))
+    assert operand_key(1) == operand_key(2)
+    assert operand_key("1") == operand_key("2")
 
 
 _ORDERS = corpus_model("orders")
@@ -236,16 +266,46 @@ _ACTIVE_LOCAL = {"eq": {"path": "active", "value": True}}
 _DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, object]], ...] = (
     ("constant", _ORDERS, _order_query({"true": {}}), _order_query({"false": {}})),
     (
-        "range-bound",
+        "comparison-operator",
         _ORDERS,
-        _order_query({"between": {"path": "Order.qty", "lower": 1, "upper": 5}}),
-        _order_query({"between": {"path": "Order.qty", "lower": 1, "upper": 6}}),
+        _order_query({"eq": {"path": "Order.qty", "value": 1}}),
+        _order_query({"lessThan": {"path": "Order.qty", "value": 1}}),
     ),
     (
-        "membership-values",
+        "comparison-member",
+        _ORDERS,
+        _order_query({"eq": {"path": "Order.qty", "value": 1}}),
+        _order_query({"eq": {"path": "Order.id", "value": 1}}),
+    ),
+    (
+        "range-member",
+        _ORDERS,
+        _order_query({"between": {"path": "Order.qty", "lower": 1, "upper": 5}}),
+        _order_query({"between": {"path": "Order.id", "lower": 1, "upper": 5}}),
+    ),
+    (
+        "membership-width",
         _ORDERS,
         _order_query({"in": {"path": "Order.id", "values": [1, 2]}}),
-        _order_query({"in": {"path": "Order.id", "values": [1, 3]}}),
+        _order_query({"in": {"path": "Order.id", "values": [1, 2, 3]}}),
+    ),
+    (
+        "affix-escape",
+        _ORDERS,
+        _order_query({"startsWith": {"path": "Order.name", "value": "ab"}}),
+        _order_query({"startsWith": {"path": "Order.name", "value": "a_b"}}),
+    ),
+    (
+        "affix-operator",
+        _ORDERS,
+        _order_query({"startsWith": {"path": "Order.name", "value": "ab"}}),
+        _order_query({"endsWith": {"path": "Order.name", "value": "ab"}}),
+    ),
+    (
+        "operand-position",
+        _ORDERS,
+        _order_query({"and": {"operands": [_ID_ONE, _NAMED_A]}}),
+        _order_query({"and": {"operands": [_NAMED_A, _ID_ONE]}}),
     ),
     (
         "membership-polarity",
@@ -360,7 +420,7 @@ _DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, obje
         },
     ),
     (
-        "element-operand",
+        "element-operator",
         corpus_model("predicate-collections"),
         {
             "target": "Basket",
@@ -368,7 +428,7 @@ _DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, obje
         },
         {
             "target": "Basket",
-            "predicate": {"any": {"path": "Basket.tags", "where": {"eq": {"value": "b"}}}},
+            "predicate": {"any": {"path": "Basket.tags", "where": {"notEq": {"value": "a"}}}},
         },
     ),
     (
@@ -451,6 +511,71 @@ def test_query_keys_separate_every_sql_relevant_resolved_fact(
     assert key != _resolved_key(meta, second)
 
 
+# Pairs of resolved queries differing only in execution values: one template
+# renders both.
+_SHARED_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, object]], ...] = (
+    (
+        "comparison-value",
+        _ORDERS,
+        _order_query({"eq": {"path": "Order.qty", "value": 1}}),
+        _order_query({"eq": {"path": "Order.qty", "value": 2}}),
+    ),
+    (
+        "range-bound",
+        _ORDERS,
+        _order_query({"between": {"path": "Order.qty", "lower": 1, "upper": 5}}),
+        _order_query({"between": {"path": "Order.qty", "lower": 1, "upper": 6}}),
+    ),
+    (
+        "membership-values",
+        _ORDERS,
+        _order_query({"in": {"path": "Order.id", "values": [1, 2]}}),
+        _order_query({"in": {"path": "Order.id", "values": [1, 3]}}),
+    ),
+    (
+        "unescaped-affixes",
+        _ORDERS,
+        _order_query({"startsWith": {"path": "Order.name", "value": "ab"}}),
+        _order_query({"startsWith": {"path": "Order.name", "value": "cd"}}),
+    ),
+    (
+        "escaped-affixes",
+        _ORDERS,
+        _order_query({"contains": {"path": "Order.name", "value": "a_b"}}),
+        _order_query({"contains": {"path": "Order.name", "value": "c%d"}}),
+    ),
+    (
+        "verbatim-patterns",
+        _ORDERS,
+        _order_query({"like": {"path": "Order.name", "value": "ab"}}),
+        _order_query({"like": {"path": "Order.name", "value": "c_%"}}),
+    ),
+    (
+        "element-operand",
+        corpus_model("predicate-collections"),
+        {
+            "target": "Basket",
+            "predicate": {"any": {"path": "Basket.tags", "where": {"eq": {"value": "a"}}}},
+        },
+        {
+            "target": "Basket",
+            "predicate": {"any": {"path": "Basket.tags", "where": {"eq": {"value": "b"}}}},
+        },
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("meta", "first", "second"),
+    [case[1:] for case in _SHARED_QUERIES],
+    ids=[case[0] for case in _SHARED_QUERIES],
+)
+def test_query_keys_share_queries_differing_only_in_execution_values(
+    meta: Metamodel, first: dict[str, object], second: dict[str, object]
+) -> None:
+    assert _resolved_key(meta, first) == _resolved_key(meta, second)
+
+
 def test_equal_quantifiers_key_alike_however_they_were_spelled() -> None:
     qualified = _customer_query(
         {"any": {"path": "parallax.compatibility.Customer.address.phones", "where": _PHONE_HOME}}
@@ -460,12 +585,18 @@ def test_equal_quantifiers_key_alike_however_they_were_spelled() -> None:
     assert _resolved_key(_CUSTOMER, qualified) == _resolved_key(_CUSTOMER, bare)
 
 
-class _HashCountingString(str):
+class _HashCountingType(type):
+    """Counts hashes of the classes it makes, which an operand key holds."""
+
     hashes = 0
 
-    def __hash__(self) -> int:
-        type(self).hashes += 1
-        return str.__hash__(self)
+    def __hash__(cls) -> int:
+        _HashCountingType.hashes += 1
+        return type.__hash__(cls)
+
+
+class _HashCountingString(str, metaclass=_HashCountingType):
+    pass
 
 
 def _key(query: ResolvedObjectQuery, **fields: Any) -> _read_plan._ReadPlanKey:
@@ -508,17 +639,17 @@ def _counting_family_comparisons(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
 def test_a_read_plan_key_hashes_its_query_key_once() -> None:
     literal = _HashCountingString("counted")
     selected = _name_query(literal)
-    _HashCountingString.hashes = 0
+    _HashCountingType.hashes = 0
 
     key = _key(selected)
-    constructed = _HashCountingString.hashes
+    constructed = _HashCountingType.hashes
     lookups = {key: 1}
     for _ in range(4):
         assert lookups[key] == 1
         hash(key)
 
     assert constructed == 1
-    assert _HashCountingString.hashes == 1
+    assert _HashCountingType.hashes == 1
 
 
 def test_same_family_ignores_only_the_delivery_discriminator() -> None:
@@ -533,8 +664,8 @@ def test_same_family_ignores_only_the_delivery_discriminator() -> None:
     assert after.same_family(null_after)
     assert null_after.same_family(first)
     assert unpaged.same_family(_key(_query()))
+    assert unpaged == _key(_query(2))
     for distinct in (
-        _key(_query(2)),
         _key(_name_query("order-1")),
         _key(_query(), edition="edition-b"),
         _key(_query(), model=CatalogedModel(_META)),
@@ -580,12 +711,12 @@ def test_a_warm_hit_hashes_its_query_key_only_at_key_construction() -> None:
     cache = ReadPlanCache()
     _plan(cache, _name_query(_HashCountingString("counted")))
     warm = _name_query(_HashCountingString("counted"))
-    _HashCountingString.hashes = 0
+    _HashCountingType.hashes = 0
 
     _plan(cache, warm)
 
     assert cache._statistics().hits == 1
-    assert _HashCountingString.hashes == 1
+    assert _HashCountingType.hashes == 1
 
 
 def test_only_an_elected_builder_scans_for_its_family_most_recent_first(
@@ -623,7 +754,7 @@ def test_concurrent_waiters_compare_no_family_keys(
         return uncached(**kwargs)
 
     cache = ReadPlanCache()
-    _plan(cache, _query(2))
+    _plan(cache, _name_query("order-2"))
     verdicts = _counting_family_comparisons(monkeypatch)
     monkeypatch.setattr(_read_plan, "_plan_uncached", delayed_build)
     query = _query()
@@ -639,7 +770,7 @@ def test_concurrent_waiters_compare_no_family_keys(
         release.set()
         prepared = tuple(future.result() for future in futures)
 
-    assert all(value is prepared[0] for value in prepared)
+    assert all(_shares_preparation(value, prepared[0]) for value in prepared)
     assert verdicts == [False]
     assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 2, 7, 2, 0)
 
@@ -828,25 +959,33 @@ def _blocking_renders(
     return rendering
 
 
+_VALUED: Final[Mapping[str, Callable[[int], ResolvedObjectQuery]]] = {
+    "continuation": lambda value: _after(value),
+    "predicate": lambda value: _query(value),
+}
+
+
+@pytest.mark.parametrize("valued", _VALUED.values(), ids=_VALUED.keys())
 def test_cache_hits_render_their_own_values_outside_the_cache_lock(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, valued: Callable[[int], ResolvedObjectQuery]
 ) -> None:
     cache = ReadPlanCache()
-    _plan(cache, _after(1))
+    _plan(cache, valued(1))
     together = threading.Barrier(2, timeout=2)
     rendering = _blocking_renders(monkeypatch, hold=together.wait)
 
-    def plan(carrier: int) -> _read_plan.ReadPlan:
-        return _plan(cache, _after(carrier))
+    def plan(value: int) -> _read_plan.ReadPlan:
+        return _plan(cache, valued(value))
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         plans = tuple(pool.map(plan, (2, 3)))
 
     assert len(rendering) == 2 and rendering[0] is rendering[1]
     uncached = ReadPlanCache(0)
-    for carrier, delivered in zip((2, 3), plans, strict=True):
+    for value, delivered in zip((2, 3), plans, strict=True):
         statement = _root(delivered)[0].statement
-        assert statement == _root(_plan(uncached, _after(carrier)))[0].statement
+        assert statement == _root(_plan(uncached, valued(value)))[0].statement
+        assert value in statement.binds
         assert statement.execution_value_positions() == ()
     assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 1, 2, 1, 0)
 
@@ -875,8 +1014,9 @@ def test_a_hit_renders_after_its_entry_is_evicted(monkeypatch: pytest.MonkeyPatc
     assert rendered._fetches is cached._fetches
 
 
-def test_callers_of_one_pending_key_each_render_their_own_page(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("valued", _VALUED.values(), ids=_VALUED.keys())
+def test_callers_of_one_pending_key_each_render_their_own_values(
+    monkeypatch: pytest.MonkeyPatch, valued: Callable[[int], ResolvedObjectQuery]
 ) -> None:
     uncached = cast("Callable[..., Any]", vars(_read_plan)["_plan_uncached"])
     started = threading.Event()
@@ -891,20 +1031,20 @@ def test_callers_of_one_pending_key_each_render_their_own_page(
     monkeypatch.setattr(_read_plan, "_plan_uncached", delayed_build)
     cache = ReadPlanCache()
 
-    def plan(carrier: int) -> _read_plan.ReadPlan:
+    def plan(value: int) -> _read_plan.ReadPlan:
         callers.wait()
-        return _plan(cache, _after(carrier))
+        return _plan(cache, valued(value))
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = tuple(pool.submit(plan, carrier) for carrier in (10, 20, 30, 40))
+        futures = tuple(pool.submit(plan, value) for value in (10, 20, 30, 40))
         assert started.wait(timeout=2)
         time.sleep(0.05)
         release.set()
         plans = tuple(future.result() for future in futures)
 
     uncached_planner = ReadPlanCache(0)
-    for carrier, delivered in zip((10, 20, 30, 40), plans, strict=True):
-        expected = _root(_plan(uncached_planner, _after(carrier)))[0].statement
+    for value, delivered in zip((10, 20, 30, 40), plans, strict=True):
+        expected = _root(_plan(uncached_planner, valued(value)))[0].statement
         assert _root(delivered)[0].statement == expected
     assert len({id(delivered._schema) for delivered in plans}) == 1
     assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 1, 3, 1, 0)
@@ -934,22 +1074,33 @@ def test_editions_and_exact_models_are_isolated_without_invalidating_each_other(
     next_edition = _plan(cache, query, edition="edition-b")
     next_model = _plan(cache, query, edition="edition-b", model=CatalogedModel(_META))
 
-    assert next_edition is not first
-    assert next_model is not next_edition
-    assert _plan(cache, query) is first
+    assert _root(next_edition)[1] is not _root(first)[1]
+    assert _root(next_model)[1] is not _root(next_edition)[1]
+    assert _shares_preparation(_plan(cache, query), first)
     assert cache._statistics().size == 3
+    assert cache._statistics().hits == 1
+
+
+def _member_query(member: str, value: object) -> ResolvedObjectQuery:
+    return resolve_read_query(
+        deserialize(
+            {"target": "Order", "predicate": {"eq": {"path": f"Order.{member}", "value": value}}}
+        ),
+        model=_META,
+        form="graph",
+    )
 
 
 def test_recent_use_controls_true_lru_eviction() -> None:
     cache = ReadPlanCache(capacity=2)
-    one = _plan(cache, _query(1))
-    two = _plan(cache, _query(2))
+    one = _plan(cache, _member_query("id", 1))
+    two = _plan(cache, _member_query("qty", 2))
 
-    assert _plan(cache, _query(1)) is one
-    _plan(cache, _query(3))
-    two_again = _plan(cache, _query(2))
+    assert _shares_preparation(_plan(cache, _member_query("id", 4)), one)
+    _plan(cache, _member_query("name", "three"))
+    two_again = _plan(cache, _member_query("qty", 5))
 
-    assert two_again is not two
+    assert _root(two_again)[1] is not _root(two)[1]
     assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(2, 2, 1, 4, 2)
 
 
@@ -985,7 +1136,7 @@ def test_concurrent_cold_callers_plan_one_shared_value(
         prepared = tuple(future.result() for future in futures)
 
     assert builds == 1
-    assert all(value is prepared[0] for value in prepared)
+    assert all(_shares_preparation(value, prepared[0]) for value in prepared)
     assert cache._statistics().misses == 1
     assert cache._statistics().hits == 7
 
@@ -1022,16 +1173,16 @@ def test_mixed_cold_keys_and_editions_build_without_global_lock_contention(
 
     monkeypatch.setattr(_read_plan, "_plan_uncached", overlapping_builds)
     cache = ReadPlanCache(capacity=4)
-    requests: tuple[tuple[str, int], ...] = (
-        ("edition-a", 1),
-        ("edition-a", 2),
-        ("edition-b", 1),
-        ("edition-b", 2),
+    requests: tuple[tuple[str, str], ...] = (
+        ("edition-a", "id"),
+        ("edition-a", "qty"),
+        ("edition-b", "id"),
+        ("edition-b", "qty"),
     )
 
-    def plan_request(item: tuple[str, int]) -> _read_plan.ReadPlan:
-        edition, value = item
-        return _plan(cache, _query(value), edition=edition)
+    def plan_request(item: tuple[str, str]) -> _read_plan.ReadPlan:
+        edition, member = item
+        return _plan(cache, _member_query(member, 1), edition=edition)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         prepared = tuple(pool.map(plan_request, requests))
@@ -1113,10 +1264,10 @@ def test_a_warm_hit_repeats_no_planning_compilation_or_binding(
     monkeypatch.setattr(_read_plan, "bind", counting_bind)
     cache = ReadPlanCache()
 
-    cold = _plan(cache, _query())
-    warm = _plan(cache, _query())
+    cold = _plan(cache, _query(1))
+    warm = _plan(cache, _query(2))
 
-    assert warm is cold
+    assert _shares_preparation(warm, cold)
     assert warm.include_tree() is cold.include_tree()
     assert calls == {"plan": 1, "compile": 1, "bind": 1}
 
@@ -1190,20 +1341,22 @@ def test_retained_child_work_is_resolved_and_compiled_once_per_plan_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = {"root": 0, "child": 0, "compile": 0}
-    resolve = cast("Callable[..., Any]", vars(deep_fetch)["resolve_temporal_visibility"])
     compile_template = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
+    for name in ("resolve_temporal_visibility", "resolve_sourced_temporal_visibility"):
+        resolve = cast("Callable[..., Any]", vars(deep_fetch)[name])
 
-    def counting_resolve(*args: Any, **kwargs: Any) -> Any:
-        propagated = isinstance(kwargs["resolution"], PropagatedRootSelections)
-        calls["child" if propagated else "root"] += 1
-        return resolve(*args, **kwargs)
+        def counting_resolve(*args: Any, _resolve: Any = resolve, **kwargs: Any) -> Any:
+            propagated = isinstance(kwargs["resolution"], PropagatedRootSelections)
+            calls["child" if propagated else "root"] += 1
+            return _resolve(*args, **kwargs)
+
+        monkeypatch.setattr(deep_fetch, name, counting_resolve)
 
     def counting_child(query: deep_fetch.PlannedEntityQuery, *args: Any, **kwargs: Any) -> Any:
         if query.entity.identity.name == "OrderItem":
             calls["compile"] += 1
         return compile_template(query, *args, **kwargs)
 
-    monkeypatch.setattr(deep_fetch, "resolve_temporal_visibility", counting_resolve)
     monkeypatch.setattr(_read_plan, "compile_template", counting_child)
     cache = ReadPlanCache()
     pages = continuation.plan(_with_items(), _META)
@@ -1583,3 +1736,359 @@ def test_a_model_composing_a_concrete_under_the_position_plans_it_apart() -> Non
     assert isinstance(earlier_plan.root_read(), EmptyRead)
     assert "where t0.kind = ?" in _root(later_plan)[0].statement.sql
     assert cache._statistics().size == 2
+
+
+_DOCUMENT = corpus_model("document")
+_DOCUMENT_LAYOUT = corpus_model("document-layout")
+
+
+def _carriers(binds: tuple[object, ...]) -> list[tuple[object, ...]]:
+    return [
+        (type(bind), bind, bind.as_tuple()) if isinstance(bind, Decimal) else (type(bind), bind)
+        for bind in binds
+    ]
+
+
+def _in_order(expected: list[tuple[object, ...]], carriers: list[tuple[object, ...]]) -> bool:
+    remaining = iter(carriers)
+    return all(any(carrier == wanted for carrier in remaining) for wanted in expected)
+
+
+def _seeded_render(
+    meta: Metamodel, seed: ResolvedObjectQuery, current: ResolvedObjectQuery
+) -> tuple[CompiledRead, CompiledRead, ReadPlanCache]:
+    """``current`` rendered from a cache ``seed`` prepared, and planned cold."""
+    model = CatalogedModel(meta)
+    cache = ReadPlanCache()
+    _plan(cache, seed, model=model)
+    rendered = _root(_plan(cache, current, model=model))[0]
+    cold = _root(_plan(ReadPlanCache(0), current, model=model))[0]
+    return rendered, cold, cache
+
+
+def _statement_facts(read: CompiledRead) -> tuple[object, ...]:
+    statement = read.statement
+    return (
+        read,
+        _carriers(statement.binds),
+        statement.typed_bind_spans,
+        statement.wire_bind_overrides,
+        statement.wire_binds(),
+    )
+
+
+_D = Decimal
+# Each seed renders the current read of the same structure; the authored
+# operands' carriers appear in the current statement in this order.
+_RENDERED_OPERANDS: tuple[
+    tuple[str, Metamodel, str, dict[str, object], dict[str, object], list[tuple[object, ...]]],
+    ...,
+] = (
+    (
+        "comparison",
+        _ORDERS,
+        "Order",
+        {"eq": {"path": "Order.qty", "value": 1}},
+        {"eq": {"path": "Order.qty", "value": 2}},
+        [(int, 2)],
+    ),
+    (
+        "decimal",
+        _ORDERS,
+        "Order",
+        {"eq": {"path": "Order.price", "value": "1.50"}},
+        {"eq": {"path": "Order.price", "value": "2.25"}},
+        [(_D, _D("2.25"), _D("2.25").as_tuple())],
+    ),
+    (
+        "range",
+        _ORDERS,
+        "Order",
+        {"between": {"path": "Order.qty", "lower": 1, "upper": 5}},
+        {"between": {"path": "Order.qty", "lower": 3, "upper": 7}},
+        [(int, 3), (int, 7)],
+    ),
+    (
+        "membership",
+        _ORDERS,
+        "Order",
+        {"in": {"path": "Order.id", "values": [1, 2]}},
+        {"in": {"path": "Order.id", "values": [5, 6]}},
+        [(int, 5), (int, 6)],
+    ),
+    (
+        "unescaped-affix",
+        _ORDERS,
+        "Order",
+        {"startsWith": {"path": "Order.name", "value": "ab"}},
+        {"startsWith": {"path": "Order.name", "value": "cd"}},
+        [(str, "cd%")],
+    ),
+    (
+        "escaped-affix",
+        _ORDERS,
+        "Order",
+        {"contains": {"path": "Order.name", "value": "a_b"}},
+        {"contains": {"path": "Order.name", "value": "c%d"}},
+        [(str, "%c\\%d%"), (str, "\\")],
+    ),
+    (
+        "folded-affix",
+        _ORDERS,
+        "Order",
+        {"endsWith": {"path": "Order.name", "value": "AB", "caseInsensitive": True}},
+        {"endsWith": {"path": "Order.name", "value": "Cd", "caseInsensitive": True}},
+        [(str, "%cd")],
+    ),
+    (
+        "verbatim-pattern",
+        _ORDERS,
+        "Order",
+        {"like": {"path": "Order.name", "value": "a%"}},
+        {"like": {"path": "Order.name", "value": "b_"}},
+        [(str, "b_")],
+    ),
+    (
+        "constants-in-connectives",
+        _ORDERS,
+        "Order",
+        {
+            "and": {
+                "operands": [
+                    {"true": {}},
+                    _ID_ONE,
+                    {
+                        "or": {
+                            "operands": [{"false": {}}, {"eq": {"path": "Order.qty", "value": 2}}]
+                        }
+                    },
+                ]
+            }
+        },
+        {
+            "and": {
+                "operands": [
+                    {"true": {}},
+                    {"eq": {"path": "Order.id", "value": 3}},
+                    {
+                        "or": {
+                            "operands": [{"false": {}}, {"eq": {"path": "Order.qty", "value": 4}}]
+                        }
+                    },
+                ]
+            }
+        },
+        [(int, 3), (int, 4)],
+    ),
+    (
+        "document-collection",
+        _CUSTOMER,
+        "Customer",
+        {"any": {"path": "Customer.address.phones", "where": _PHONE_HOME}},
+        {
+            "any": {
+                "path": "Customer.address.phones",
+                "where": {"eq": {"path": "type", "value": "work"}},
+            }
+        },
+        [(str, "work")],
+    ),
+    (
+        "relationship-quantifier",
+        _CUSTOMER,
+        "Customer",
+        {"any": {"path": "Customer.locations", "where": {"eq": {"path": "label", "value": "a"}}}},
+        {"any": {"path": "Customer.locations", "where": {"eq": {"path": "label", "value": "b"}}}},
+        [(str, "b")],
+    ),
+    (
+        "shared-relationship",
+        _ORDERS,
+        "OrderStatus",
+        {"eq": {"path": "OrderStatus.order.name", "value": "A"}},
+        {"eq": {"path": "OrderStatus.order.name", "value": "B"}},
+        [(str, "B")],
+    ),
+    (
+        "match-operand",
+        _ORDERS,
+        "OrderItem",
+        {"exists": {"path": "OrderItem.order", "where": _NAMED_LOCAL_A}},
+        {"exists": {"path": "OrderItem.order", "where": {"eq": {"path": "name", "value": "B"}}}},
+        [(str, "B")],
+    ),
+    (
+        "narrowed-operand",
+        _ANIMAL,
+        "Animal",
+        {"narrow": {"to": ["Dog"], "operand": {"eq": {"path": "Dog.name", "value": "rex"}}}},
+        {"narrow": {"to": ["Dog"], "operand": {"eq": {"path": "Dog.name", "value": "fido"}}}},
+        [(str, "fido")],
+    ),
+    (
+        "repeated-inheritance-branches",
+        _DOCUMENT,
+        "Document",
+        {"eq": {"path": "Document.title", "value": "a"}},
+        {"eq": {"path": "Document.title", "value": "b"}},
+        [(str, "b"), (str, "b"), (str, "b")],
+    ),
+    (
+        "comparison-text",
+        _DOCUMENT_LAYOUT,
+        "Traveler",
+        {"eq": {"path": "Traveler.joinedOn", "value": "2024-01-01"}},
+        {"eq": {"path": "Traveler.joinedOn", "value": "2024-01-02"}},
+        [(str, "2024-01-02")],
+    ),
+    (
+        "cast-document-member",
+        _DOCUMENT_LAYOUT,
+        "Traveler",
+        {"eq": {"path": "Traveler.score", "value": 1}},
+        {"eq": {"path": "Traveler.score", "value": 2}},
+        [(int, 2)],
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("meta", "target", "seed", "current", "expected"),
+    [case[1:] for case in _RENDERED_OPERANDS],
+    ids=[case[0] for case in _RENDERED_OPERANDS],
+)
+def test_a_seeded_template_renders_the_current_reads_own_operands(
+    meta: Metamodel,
+    target: str,
+    seed: dict[str, object],
+    current: dict[str, object],
+    expected: list[tuple[object, ...]],
+) -> None:
+    def resolved(predicate: dict[str, object]) -> ResolvedObjectQuery:
+        document = {"target": target, "predicate": predicate}
+        return resolve_read_query(deserialize(document), model=meta, form="graph")
+
+    rendered, cold, cache = _seeded_render(meta, resolved(seed), resolved(current))
+
+    assert (cache._statistics().misses, cache._statistics().hits) == (1, 1)
+    assert _statement_facts(rendered) == _statement_facts(cold)
+    assert _in_order(expected, _carriers(rendered.statement.binds))
+    assert rendered.statement.execution_value_positions() == ()
+
+
+def test_repeated_uses_of_one_predicate_node_render_their_own_operands() -> None:
+    comparison = _query(1).predicate
+    assert isinstance(comparison, ResolvedComparison)
+    seed = replace(_query(), predicate=ResolvedAnd((comparison, comparison)))
+    current = replace(
+        _query(),
+        predicate=ResolvedAnd((replace(comparison, value=2), replace(comparison, value=3))),
+    )
+
+    rendered, cold, cache = _seeded_render(_META, seed, current)
+
+    assert (cache._statistics().misses, cache._statistics().hits) == (1, 1)
+    assert _statement_facts(rendered) == _statement_facts(cold)
+    assert _carriers(rendered.statement.binds)[-2:] == [(int, 2), (int, 3)]
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [(Decimal("1.5"), Decimal("1.50")), (True, 1), (1, 1.0)],
+    ids=["decimal-exponent", "boolean-integer", "integer-float"],
+)
+def test_operands_of_distinct_exact_types_or_exponents_plan_apart_and_keep_their_carriers(
+    first: object, second: object
+) -> None:
+    def priced(value: object) -> ResolvedObjectQuery:
+        query = _member_query("price", "1.50")
+        assert isinstance(query.predicate, ResolvedComparison)
+        return replace(query, predicate=replace(query.predicate, value=value))
+
+    cache = ReadPlanCache()
+    one, other = _plan(cache, priced(first)), _plan(cache, priced(second))
+
+    assert cache._statistics().misses == 2
+    assert _carriers(_root(one)[0].statement.binds) == _carriers((first,))
+    assert _carriers(_root(other)[0].statement.binds) == _carriers((second,))
+
+
+def test_the_cache_retains_neither_later_render_inputs_nor_source_associations() -> None:
+    cache = ReadPlanCache()
+    _plan(cache, _name_query(_TrackedString("cold")))
+    later = _TrackedString("later")
+    retained = weakref.ref(later)
+
+    rendered = _plan(cache, _name_query(later))
+
+    assert cache._statistics().hits == 1
+    assert later in _root(rendered)[0].statement.binds
+    assert not _reaches(cache, later)
+    assert not _reaching(cache, lambda value: isinstance(value, ExecutionValueSources))
+    del later, rendered
+    gc.collect()
+    assert retained() is None
+
+
+def test_direct_compilation_and_write_reads_prepare_no_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("a concrete statement prepared template state")
+
+    for owner, name in (
+        (ExecutionValueSources, "authored"),
+        (ExecutionValueSources, "within"),
+        (ExecutionValueSources, "moved"),
+        (LoweredStatement, "execution_value_positions"),
+        (LoweredStatement, "with_execution_values"),
+        (StatementBuilder, "bind_deferred"),
+        (_compile_module, "_template"),
+    ):
+        monkeypatch.setattr(owner, name, forbidden)
+    order = _CORPUS_ORDERS.entity(EntityIdentity("parallax.compatibility", "Order"))
+    assert order is not None
+    paged = continuation.plan(
+        _corpus_query(_CORPUS_ORDERS, "Order", {"in": {"path": "Order.id", "values": [1, 2]}}),
+        _CORPUS_ORDERS,
+    ).after(ContinuationCoordinate((1,)), limit=2)
+
+    direct = compile_read(
+        deep_fetch.plan(paged, _CORPUS_ORDERS, projection=_ROW_PROJECTION).root,
+        _CORPUS_ORDERS,
+        POSTGRES,
+    )
+    target = compile_read(
+        deep_fetch.plan_target_read(order, model=_CORPUS_ORDERS, key="id", key_value=7),
+        _CORPUS_ORDERS,
+        POSTGRES,
+        result_form="row",
+        lock="locking",
+    )
+    written = compile_write_predicate(
+        resolve_temporal_visibility(
+            paged.predicate,
+            target=order,
+            model=_CORPUS_ORDERS,
+            resolution=NoRootSelections(),
+        ),
+        _CORPUS_ORDERS,
+        POSTGRES,
+        order,
+    )
+
+    assert direct.statement.binds == (1, 2, 1, 1, 2, 1, 2, 2, 2)
+    assert 7 in target.statement.binds
+    assert written.binds == (1, 2)
+
+
+_CORPUS_ORDERS = corpus_model("orders")
+_ROW_PROJECTION = deep_fetch.ReadProjectionRequest("none", False)
+
+
+def _corpus_query(
+    meta: Metamodel, target: str, predicate: Mapping[str, object]
+) -> ResolvedObjectQuery:
+    return resolve_read_query(
+        deserialize({"target": target, "predicate": dict(predicate)}), model=meta, form="rows"
+    )

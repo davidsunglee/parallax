@@ -257,23 +257,69 @@ def disjunctive(predicate: ResolvedPredicate) -> bool:
     return False
 
 
+type OccurrencePath = tuple[int, ...]
+"""An occurrence within a predicate: the child slots from its root, an operand
+index of `and`/`or` and ``0`` for any other node's one operand or body."""
+
+type OccurrenceMove = tuple[OccurrencePath, OccurrencePath]
+"""Every occurrence of a composed term under the first path is under the second
+in the composition."""
+
+
 def conjunction(*terms: ResolvedPredicate) -> ResolvedPredicate:
     """Compose resolved terms without resolving any of them again."""
+    return _conjoined(terms, None)
+
+
+def tracked_conjunction(
+    terms: tuple[ResolvedPredicate, ...],
+) -> tuple[ResolvedPredicate, tuple[tuple[OccurrenceMove, ...], ...]]:
+    """:func:`conjunction` of ``terms``, and where each term's occurrences moved."""
+    moves: list[list[OccurrenceMove]] = []
+    return _conjoined(terms, moves), tuple(tuple(term) for term in moves)
+
+
+def _conjoined(
+    terms: tuple[ResolvedPredicate, ...], moves: list[list[OccurrenceMove]] | None
+) -> ResolvedPredicate:
     flattened: list[ResolvedPredicate] = []
     for term in terms:
+        at = len(flattened)
         if isinstance(term, ResolvedConstant) and term.truth:
-            continue
-        if disjunctive(term):
+            spliced: tuple[ResolvedPredicate, ...] = ()
+        elif disjunctive(term):
             flattened.append(ResolvedGroup(term))
+            spliced = ()
         elif isinstance(term, ResolvedAnd):
-            flattened.extend(term.operands)
+            spliced = term.operands
+            flattened.extend(spliced)
         else:
             flattened.append(term)
+            spliced = ()
+        if moves is not None:
+            moves.append(_moved(term, flattened, at, spliced))
     if not flattened:
         raise ValueError("a resolved conjunction requires at least one term")
     if len(flattened) == 1:
+        if moves is not None:
+            for moved in moves:
+                moved[:] = [(source, target[1:]) for source, target in moved]
         return flattened[0]
     return ResolvedAnd(tuple(flattened))
+
+
+def _moved(
+    term: ResolvedPredicate,
+    flattened: list[ResolvedPredicate],
+    at: int,
+    spliced: tuple[ResolvedPredicate, ...],
+) -> list[OccurrenceMove]:
+    """Where ``term``'s occurrences went when it was composed from ``at`` on."""
+    if spliced:
+        return [((index,), (at + index,)) for index in range(len(spliced))]
+    if len(flattened) == at:
+        return []
+    return [((), (at,) if flattened[at] is term else (at, 0))]
 
 
 def disjunction(first: ResolvedPredicate, *rest: ResolvedPredicate) -> ResolvedPredicate:

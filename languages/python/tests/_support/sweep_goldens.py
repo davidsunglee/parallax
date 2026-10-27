@@ -1,7 +1,7 @@
 """The corpus cases the compile and run sweeps grade against authored goldens.
 
 Membership of a set here is the claim that the named cases' emitted SQL and binds
-equal the case's own ``postgres`` golden byte for byte; the two readers below are
+equal the case's own ``postgres`` golden byte for byte; the readers below are
 how both sweeps read that golden. Both sweeps grade the same claim, so the sets
 and the readers are surface-neutral rather than owned by either.
 """
@@ -334,6 +334,19 @@ def assert_wire_binds(
     observed, expected = wire_binds(observed_binds), wire_binds(golden_binds)
     assert observed == expected, (golden_sql, observed, expected)
     assert_zero_signs(observed, expected, statement_bind_positions(model, golden_sql, golden_binds))
+
+
+def read_golden_statements(case: case_format.Case) -> list[tuple[str, list[object]]]:
+    """A read case's ordered ``postgres`` golden statements, which a read of a
+    position with no concrete subtype authors none of."""
+    then = cast("dict[str, Any]", case_document(case).get("then", {}))
+    statements = cast("list[dict[str, Any]]", then.get("statements", []))
+    out: list[tuple[str, list[object]]] = []
+    for entry in statements:
+        sql: Any = entry["sql"]
+        text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
+        out.append((cast("str", text), _entry_binds(entry)))
+    return out
 
 
 def write_golden_statements(case: case_format.Case) -> list[tuple[str, list[object]]]:

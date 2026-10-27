@@ -21,6 +21,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import ResolvedOrderTerm
+from parallax.core.predicate._execution_values import ExecutionValueSources
 from parallax.core.predicate._perspective import TemporalPerspective
 from parallax.core.predicate._resolved import (
     CurrentObject,
@@ -409,7 +410,9 @@ class LexicalScopePlan:
     """The planned evaluation of one lexical predicate root at one row.
 
     ``placements`` holds every placement-bearing occurrence the plan renders;
-    Boolean composition and constants hold none.
+    Boolean composition and constants hold none. ``execution_value_sources``,
+    present only while a template is compiled, says where the plan's
+    occurrences obtain their deferred execution values.
     """
 
     scope_id: LexicalScopeId
@@ -417,6 +420,7 @@ class LexicalScopePlan:
     placements: Mapping[PredicatePath, PredicatePlacement]
     sources: tuple[SharedSourcePlan, ...]
     owner_results: tuple[OwnerResultsPlan, ...]
+    execution_value_sources: ExecutionValueSources | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -450,6 +454,7 @@ def plan_statement(
     storage: StorageLayoutFacet,
     read_shape: _ReadShape | None = None,
     order_terms: Sequence[ResolvedOrderTerm] = (),
+    execution_value_sources: ExecutionValueSources | None = None,
 ) -> StatementPlan:
     """Plan ``predicate`` over ``entity``'s rows before anything renders.
 
@@ -460,6 +465,8 @@ def plan_statement(
     partition by concrete: sharing one physical record with standalone and
     one-concrete table-per-concrete-subtype reads does not make those
     table-per-hierarchy. Planning allocates no alias and binds nothing.
+    ``execution_value_sources`` follows the predicate's occurrences into every
+    lexical plan; each physical root shares them.
     """
     planner = _StatementPlanner(meta, facet, storage)
     root = predicate.predicate
@@ -475,7 +482,9 @@ def plan_statement(
         and planner.partitions(predicate, entity, order_terms)
     )
     roots = {
-        concrete: planner.scope(root, row, shares=sharing, sharing=sharing)
+        concrete: planner.scope(
+            root, row, shares=sharing, sharing=sharing, sources=execution_value_sources
+        )
         for concrete, row in _root_rows(entity, read_shape, tph, partition, facet, storage)
     }
     return planner.sealed(predicate, roots, partition, None)
@@ -531,21 +540,31 @@ class _StatementPlanner:
         self._scopes: list[LexicalScopePlan | None] = []
 
     def scope(
-        self, predicate: ResolvedPredicate, row: _Row, *, shares: bool, sharing: bool
+        self,
+        predicate: ResolvedPredicate,
+        row: _Row,
+        *,
+        shares: bool,
+        sharing: bool,
+        sources: ExecutionValueSources | None,
     ) -> LexicalScopeId:
         """Plan ``predicate`` at ``row``: sharing sources there where ``shares``,
         and letting the candidate operands it opens share theirs where
         ``sharing``."""
         construction = _ScopeConstruction(
-            self, self._reserve(), row, shares=shares, sharing=sharing
+            self, self._reserve(), row, shares=shares, sharing=sharing, values=sources
         )
         construction.place(predicate)
         return self._seal(construction, predicate)
 
-    def cell(self, quantifier: ResolvedQuantifier, row: _Row) -> LexicalScopeId:
+    def cell(
+        self, quantifier: ResolvedQuantifier, row: _Row, sources: ExecutionValueSources | None
+    ) -> LexicalScopeId:
         """Plan one owner-result cell: ``quantifier`` evaluated at the owner
         ``row`` itself, whatever position the quantifier reached it from."""
-        construction = _ScopeConstruction(self, self._reserve(), row, shares=False, sharing=False)
+        construction = _ScopeConstruction(
+            self, self._reserve(), row, shares=False, sharing=False, values=sources
+        )
         construction.place_at_row(quantifier)
         return self._seal(construction, quantifier)
 
@@ -555,12 +574,16 @@ class _StatementPlanner:
         """Plan a write filter's one root in the form its root sharing selects,
         planning nested evaluations for that form alone."""
         scope_id = self._reserve()
-        construction = _ScopeConstruction(self, scope_id, row, shares=True, sharing=True)
+        construction = _ScopeConstruction(
+            self, scope_id, row, shares=True, sharing=True, values=None
+        )
         construction.decide(predicate)
         form = WriteFilterForm.PRIMARY_KEY_SUBQUERY
         if not construction.shares():
             form = WriteFilterForm.DIRECT_PREDICATE
-            construction = _ScopeConstruction(self, scope_id, row, shares=False, sharing=False)
+            construction = _ScopeConstruction(
+                self, scope_id, row, shares=False, sharing=False, values=None
+            )
         construction.place(predicate)
         return self._seal(construction, predicate), form
 
@@ -691,6 +714,7 @@ class _ScopeConstruction:
         "_sharing",
         "_source_refs",
         "_sources",
+        "_values",
     )
 
     def __init__(
@@ -701,8 +725,10 @@ class _ScopeConstruction:
         *,
         shares: bool,
         sharing: bool,
+        values: ExecutionValueSources | None,
     ) -> None:
         self._planner = planner
+        self._values = values
         self._scope_id = scope_id
         self._row = row
         self._shares = shares
@@ -735,7 +761,13 @@ class _ScopeConstruction:
             MappingProxyType(self._placements),
             tuple(self._sources),
             tuple(results),
+            self._values,
         )
+
+    def _nested(self, path: PredicatePath) -> ExecutionValueSources | None:
+        """The execution-value sources of a lexical plan rooted at ``path``."""
+        values = self._values
+        return None if values is None else values.within(path)
 
     # ----------------------------------------------------------------------- #
     # Shared sources                                                           #
@@ -1008,7 +1040,7 @@ class _ScopeConstruction:
 
     def place_at_row(self, quantifier: ResolvedQuantifier) -> None:
         """Place ``quantifier`` as evaluated at this row, at the plan's root."""
-        terminal = self._collection_terminal(quantifier, sharing=False)
+        terminal = self._collection_terminal(quantifier, (), sharing=False)
         self._placements[()] = _here(terminal)
         self._place_body(quantifier, (), terminal)
         self._place_presences()
@@ -1071,16 +1103,18 @@ class _ScopeConstruction:
             case _Collected(results=results, cell=cell):
                 open_results = self._results[results]
                 owner = self._source_row(open_results.owner)
-                open_results.scopes[cell] = self._planner.cell(quantifier, owner)
+                open_results.scopes[cell] = self._planner.cell(
+                    quantifier, owner, self._nested(path)
+                )
                 self._placements[path] = OwnerResultEvaluation(self._results_refs[results], cell)
                 return
             case _Joined(source=source):
-                terminal = self._collection_terminal(quantifier, sharing=self._sharing)
+                terminal = self._collection_terminal(quantifier, path, sharing=self._sharing)
                 placement: PredicatePlacement = SharedRowEvaluation(
                     self._source_refs[source], terminal
                 )
             case _Confined(source=source, hops=hops):
-                terminal = self._collection_terminal(quantifier, sharing=False)
+                terminal = self._collection_terminal(quantifier, path, sharing=False)
                 placement = ConfinedScalarEvaluation(
                     self._source_refs[source], self._uniform(hops, terminal)
                 )
@@ -1089,12 +1123,12 @@ class _ScopeConstruction:
                 if isinstance(position, RelatedObject):
                     continuation = self._reached(
                         _hops(position),
-                        lambda: self._collection_terminal(quantifier, sharing=False),
+                        lambda: self._collection_terminal(quantifier, path, sharing=False),
                     )
                     terminal = continuation.terminals[0]
                     placement = UnsharedEvaluation(continuation)
                 else:
-                    terminal = self._collection_terminal(quantifier, sharing=self._sharing)
+                    terminal = self._collection_terminal(quantifier, path, sharing=self._sharing)
                     placement = _here(terminal)
         self._placements[path] = placement
         self._place_body(quantifier, path, terminal)
@@ -1116,27 +1150,32 @@ class _ScopeConstruction:
                     None
                     if where is None
                     else self._planner.scope(
-                        where, self._source_row(target), shares=False, sharing=self._sharing
+                        where,
+                        self._source_row(target),
+                        shares=False,
+                        sharing=self._sharing,
+                        sources=self._nested((*path, 0)),
                     )
                 )
                 return SharedRowEvaluation(self._source_refs[target], JoinedTargetMatch(operand))
             case _Joined(source=source):
                 return SharedRowEvaluation(
                     self._source_refs[source],
-                    self._presence_terminal(presence, sharing=self._sharing),
+                    self._presence_terminal(presence, path, sharing=self._sharing),
                 )
             case _Confined(source=source, hops=hops):
                 return ConfinedScalarEvaluation(
                     self._source_refs[source],
-                    self._uniform(hops, self._presence_terminal(presence, sharing=False)),
+                    self._uniform(hops, self._presence_terminal(presence, path, sharing=False)),
                 )
             case _:
                 position = presence.position
                 if not isinstance(position, RelatedObject):
-                    return _here(self._presence_terminal(presence, sharing=self._sharing))
+                    return _here(self._presence_terminal(presence, path, sharing=self._sharing))
                 return UnsharedEvaluation(
                     self._reached(
-                        _hops(position), lambda: self._presence_terminal(presence, sharing=False)
+                        _hops(position),
+                        lambda: self._presence_terminal(presence, path, sharing=False),
                     )
                 )
 
@@ -1156,18 +1195,18 @@ class _ScopeConstruction:
         match self._shared.get(path):
             case _Joined(source=source):
                 selection = self._target_selection(
-                    narrow, self._source_row(source), sharing=self._sharing, joined=True
+                    narrow, path, self._source_row(source), sharing=self._sharing, joined=True
                 )
                 placement = SharedRowEvaluation(self._source_refs[source], selection)
             case _Confined(source=source, hops=hops):
                 placement = ConfinedScalarEvaluation(
-                    self._source_refs[source], self._per_branch(hops, narrow)
+                    self._source_refs[source], self._per_branch(hops, narrow, path)
                 )
             case _:
                 hops = _hops(target)
                 empty = self._first_empty(hops)
                 continuation = (
-                    self._per_branch(hops, narrow)
+                    self._per_branch(hops, narrow, path)
                     if empty is None
                     else self._uniform(hops[:empty], NO_CANDIDATE)
                 )
@@ -1195,7 +1234,7 @@ class _ScopeConstruction:
         return Continuation(planned, (terminal,) * count)
 
     def _per_branch(
-        self, hops: tuple[ResolvedRelationship, ...], narrow: ResolvedNarrow
+        self, hops: tuple[ResolvedRelationship, ...], narrow: ResolvedNarrow, path: PredicatePath
     ) -> Continuation:
         """``hops`` to ``narrow``'s target, its selection decided at each
         candidate of the last, inside a correlated subquery."""
@@ -1204,6 +1243,7 @@ class _ScopeConstruction:
         terminals = tuple(
             self._target_selection(
                 narrow,
+                path,
                 self._candidate_row(last.relationship, branch),
                 sharing=False,
                 joined=False,
@@ -1219,7 +1259,9 @@ class _ScopeConstruction:
         """The first hop whose target has no concrete subtype."""
         return next((index for index, hop in enumerate(hops) if self._reaches_nothing(hop)), None)
 
-    def _collection_terminal(self, quantifier: ResolvedQuantifier, *, sharing: bool) -> Terminal:
+    def _collection_terminal(
+        self, quantifier: ResolvedQuantifier, path: PredicatePath, *, sharing: bool
+    ) -> Terminal:
         """A quantifier's evaluation at the row holding its collection.
 
         An ``any`` or ``none`` whose ``where`` is itself a narrowing of the
@@ -1240,20 +1282,26 @@ class _ScopeConstruction:
             and isinstance(where.target, CurrentObject)
             else None
         )
+        body = (*path, 0)
         if narrowed is None:
-            return self._existence(collection, where, None, sharing=sharing)
-        return self._existence(collection, narrowed.operand, narrowed.selection, sharing=sharing)
+            return self._existence(collection, where, body, None, sharing=sharing)
+        return self._existence(
+            collection, narrowed.operand, (*body, 0), narrowed.selection, sharing=sharing
+        )
 
-    def _presence_terminal(self, presence: ResolvedPresence, *, sharing: bool) -> Terminal:
+    def _presence_terminal(
+        self, presence: ResolvedPresence, path: PredicatePath, *, sharing: bool
+    ) -> Terminal:
         target = presence.target
         if isinstance(target, ResolvedRelationship):
-            return self._existence(target, presence.where, None, sharing=sharing)
+            return self._existence(target, presence.where, (*path, 0), None, sharing=sharing)
         return REACHED_ROW
 
     def _existence(
         self,
         relationship: ResolvedRelationship,
         operand: ResolvedPredicate | None,
+        operand_path: PredicatePath,
         position: tuple[EntityIdentity, ...] | None,
         *,
         sharing: bool,
@@ -1273,6 +1321,7 @@ class _ScopeConstruction:
                         self._candidate_row(relationship, branch),
                         shares=sharing,
                         sharing=sharing,
+                        sources=self._nested(operand_path),
                     ),
                 )
                 for branch in self._candidates(relationship, position=position).branches
@@ -1280,7 +1329,13 @@ class _ScopeConstruction:
         )
 
     def _target_selection(
-        self, narrow: ResolvedNarrow, row: _Row, *, sharing: bool, joined: bool
+        self,
+        narrow: ResolvedNarrow,
+        path: PredicatePath,
+        row: _Row,
+        *,
+        sharing: bool,
+        joined: bool,
     ) -> TargetSelection:
         """``narrow``'s selection at one ``row`` of its target: a tag guard in a
         hierarchy table, the branch's own answer in a concrete table. A joined
@@ -1302,7 +1357,9 @@ class _ScopeConstruction:
         scope = (
             None
             if operand is None or (selection is False and not joined)
-            else self._planner.scope(operand, row, shares=False, sharing=sharing)
+            else self._planner.scope(
+                operand, row, shares=False, sharing=sharing, sources=self._nested((*path, 0))
+            )
         )
         return TargetSelection(selection, scope)
 

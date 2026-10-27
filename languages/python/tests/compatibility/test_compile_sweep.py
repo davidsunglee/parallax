@@ -33,6 +33,7 @@ from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
     assert_wire_binds,
+    read_golden_statements,
     write_golden_statements,
 )
 from tests.compatibility._float_zero_support import spell_float_zero_negative
@@ -68,22 +69,6 @@ class _RefusingPort(ConnectsAsItself):
         access_mode: str | None = None,
     ) -> TransactionOutcome[T]:
         raise AssertionError("a lane-dispatched run must not open a transaction")
-
-
-def golden(case: case_format.Case) -> list[tuple[str, list[object]]]:
-    """The case's ordered ``postgres`` golden statements, which a read of a
-    position with no concrete subtype authors none of."""
-    then = cast("dict[str, Any]", case_document(case).get("then", {}))
-    statements = cast("list[dict[str, Any]]", then.get("statements", []))
-    ordered: list[tuple[str, list[object]]] = []
-    for entry in statements:
-        sql: Any = entry["sql"]
-        text: str = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
-        binds: Any = entry.get("binds", [])
-        if isinstance(binds, dict):
-            binds = cast("dict[str, list[object]]", binds)["postgres"]
-        ordered.append((text, list(cast("list[object]", binds))))
-    return ordered
 
 
 def _skip_reason(case: case_format.Case, envelope: dict[str, Any]) -> str:
@@ -207,7 +192,7 @@ def test_compile_sweep(case: case_format.Case) -> None:
         pytest.skip(_skip_reason(case, envelope))
 
     assert envelope["status"] == "ok", envelope
-    goldens = golden(case)
+    goldens = read_golden_statements(case)
     emissions = envelope["emissions"]
     assert envelope["databaseCalls"] == len(goldens)
     assert [emission["sql"] for emission in emissions] == [sql for sql, _binds in goldens]

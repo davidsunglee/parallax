@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Final, Literal, NamedTuple
+from dataclasses import dataclass, field, replace
+from typing import Final, Literal, NamedTuple, TypeGuard
 
 from parallax.core import inheritance, relationship
 from parallax.core.base import INFINITY, ManagedValue
@@ -28,6 +28,7 @@ from parallax.core.navigate import (
     PropagatedRootSelections,
     RootSelections,
     TemporallyResolvedPredicate,
+    resolve_sourced_temporal_visibility,
     resolve_temporal_visibility,
 )
 from parallax.core.object_query._resolved import (
@@ -42,6 +43,7 @@ from parallax.core.object_query._resolved import (
     ResolvedTemporalSelection,
     resolved_order_term,
 )
+from parallax.core.predicate._execution_values import ExecutionValueSources
 from parallax.core.predicate._resolved import (
     ResolvedPredicate,
 )
@@ -80,6 +82,7 @@ __all__ = [
     "plan_coverage_read",
     "plan_root",
     "plan_target_read",
+    "release_execution_value_sources",
 ]
 
 
@@ -165,6 +168,8 @@ class PlannedEntityQuery:
     ``position`` is the inheritance owner's view of the concrete types the read
     can return: the target's own view, or the view its narrowing resolves to.
     ``projection`` was resolved against that same view.
+    ``execution_value_sources`` is present only while a template is prepared
+    from this read: where its predicate's occurrences obtain execution values.
     """
 
     target: EntityIdentity
@@ -176,6 +181,9 @@ class PlannedEntityQuery:
     order_by: tuple[ResolvedOrderTerm, ...] = ()
     limit: int | None = None
     paging: Paging | None = None
+    execution_value_sources: ExecutionValueSources | None = field(
+        default=None, compare=False, repr=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,11 +227,16 @@ def plan(
     model: Metamodel,
     *,
     projection: ReadProjectionRequest,
+    defer_execution_values: bool = False,
 ) -> ObjectQueryPlan:
-    """Plan validated Includes and resolve the caller's projection request."""
+    """Plan validated Includes and resolve the caller's projection request;
+    a plan that will ``defer_execution_values`` to a template carries their
+    sources until :func:`release_execution_value_sources`."""
     entity = query.root
     families = inheritance.view(model)
-    root = plan_root(query, model, projection=projection)
+    root = plan_root(
+        query, model, projection=projection, defer_execution_values=defer_execution_values
+    )
     builder = _PlanBuilder(model=model, families=families, root_selections=query.temporal)
     builder.seed_root(entity)
     for path in query.includes:
@@ -244,6 +257,7 @@ def plan_root(
     model: Metamodel,
     *,
     projection: ReadProjectionRequest,
+    defer_execution_values: bool = False,
 ) -> PlannedEntityQuery:
     """The root read :func:`plan` plans for ``query``, without planning its
     Includes."""
@@ -252,19 +266,53 @@ def plan_root(
         None if query.narrow_to is None else tuple(item.identity for item in query.narrow_to)
     )
     position = _effective_position(inheritance.view(model), entity, narrow_to)
+    resolution = RootSelections(query.temporal)
+    sources: ExecutionValueSources | None = None
+    if defer_execution_values:
+        predicate, sources = resolve_sourced_temporal_visibility(
+            query.predicate,
+            ExecutionValueSources.authored(query.predicate),
+            target=entity,
+            model=model,
+            resolution=resolution,
+        )
+    else:
+        predicate = resolve_temporal_visibility(
+            query.predicate, target=entity, model=model, resolution=resolution
+        )
     return PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         position=position,
-        predicate=resolve_temporal_visibility(
-            query.predicate, target=entity, model=model, resolution=RootSelections(query.temporal)
-        ),
+        predicate=predicate,
         narrow_to=narrow_to,
         order_by=query.order_by,
         projection=_resolve_projection(position, projection),
         limit=query.limit,
         paging=query.paging,
+        execution_value_sources=sources,
     )
+
+
+def release_execution_value_sources(planned: ObjectQueryPlan) -> ObjectQueryPlan:
+    """``planned`` without the execution-value sources its template
+    preparation consumed."""
+    steps = planned.fetch_steps
+    if any(_sourced(step) for step in steps):
+        steps = tuple(
+            replace(step, query=_released(step.query)) if _sourced(step) else step for step in steps
+        )
+    elif planned.root.execution_value_sources is None:
+        return planned
+    return ObjectQueryPlan(_released(planned.root), planned.includes, steps)
+
+
+def _sourced(step: FetchStep) -> TypeGuard[QueryFetchStep]:
+    return isinstance(step, QueryFetchStep) and step.query.execution_value_sources is not None
+
+
+def _released(query: PlannedEntityQuery) -> PlannedEntityQuery:
+    return replace(query, execution_value_sources=None)
 
 
 def plan_coverage_read(

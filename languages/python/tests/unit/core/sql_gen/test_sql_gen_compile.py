@@ -27,7 +27,9 @@ import pytest
 from parallax.core import deep_fetch, inheritance, relationship, storage_layout, temporal_read
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, ManagedValue
+from parallax.core._execution._read_query import resolve_read_query
+from parallax.core.base import DATE as DATE_TYPE
+from parallax.core.base import INFINITY, INT64, STRING, ManagedValue
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.inheritance import _compile as inheritance_compile
@@ -47,7 +49,7 @@ from parallax.core.navigate import (
 )
 from parallax.core.object_query import TemporalSelection
 from parallax.core.object_query._nodes import TemporalDimension
-from parallax.core.object_query._resolved import ResolvedLatestSelection
+from parallax.core.object_query._resolved import ResolvedLatestSelection, ResolvedObjectQuery
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate._resolved import (
     ResolvedComparison,
@@ -67,7 +69,15 @@ from parallax.core.sql_gen._compile import (
     CompiledRead,
 )
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
-from parallax.core.sql_gen._context import EXPANDING_PLACEHOLDER
+from parallax.core.sql_gen._context import (
+    EXPANDING_PLACEHOLDER,
+    AffixForm,
+    ComparisonTextForm,
+    ExecutionValueForm,
+    ManagedOperandForm,
+)
+from parallax.core.sql_gen._predicate import affix_needs_escape
+from parallax.core.sql_gen._predicate import prepared_operand as prepare_operand
 from parallax.core.storage_layout import _compile as storage_layout_compile
 from parallax.core.temporal_read import _compile as temporal_read_compile
 from parallax.descriptor._records import Attribute, Entity, Inheritance
@@ -1005,3 +1015,119 @@ def test_propagating_to_a_non_temporal_target_adds_no_term_or_grouping() -> None
         "where (t0.card_network = ? or t0.card_network = ?) and t0.kind = ?"
     )
     assert propagated.binds == none.binds == ("Visa", "Amex", "card")
+
+
+_TRAVELERS = model("document-layout")
+
+
+def _traveler_query(predicate: Mapping[str, object]) -> ResolvedObjectQuery:
+    document = {"target": "Traveler", "predicate": dict(predicate)}
+    return resolve_read_query(oq.deserialize(document), model=_TRAVELERS, form="rows")
+
+
+def _traveler_predicate(display: str, score: int, note: str) -> Mapping[str, object]:
+    return {
+        "and": {
+            "operands": [
+                {"eq": {"path": "Traveler.displayName", "value": display}},
+                {"greaterThan": {"path": "Traveler.score", "value": score}},
+                {"startsWith": {"path": "Traveler.note", "value": note, "caseInsensitive": True}},
+            ]
+        }
+    }
+
+
+def _sourced_root(query: ResolvedObjectQuery) -> deep_fetch.PlannedEntityQuery:
+    return deep_fetch.plan_root(
+        query,
+        _TRAVELERS,
+        projection=deep_fetch.ReadProjectionRequest("none", False),
+        defer_execution_values=True,
+    )
+
+
+def test_a_deferred_root_binds_each_authored_operand_under_the_form_its_subject_selects() -> None:
+    cold = _traveler_query(_traveler_predicate("Ada", 1, "x_Y"))
+    template = sql_compile.compile_template(_sourced_root(cold), _TRAVELERS, POSTGRES)
+
+    positions = template.compiled.statement.execution_value_positions()
+
+    assert [(group.source, group.form) for group in positions] == [
+        (("predicate", 0), ComparisonTextForm(STRING)),
+        (("predicate", 1), ManagedOperandForm(INT64)),
+        (("predicate", 2), AffixForm("startsWith", True)),
+    ]
+    assert template.compiled.statement.sql.endswith("like lower(?) escape ?")
+    assert template.compiled.statement.binds[-1] == "\\"
+
+
+def test_a_deferred_root_renders_the_current_operands_as_direct_compilation_binds_them() -> None:
+    template = sql_compile.compile_template(
+        _sourced_root(_traveler_query(_traveler_predicate("Ada", 1, "x_Y"))), _TRAVELERS, POSTGRES
+    )
+    current = _traveler_query(_traveler_predicate("Bo", 7, "P%q"))
+
+    rendered = template.render(query=current)
+
+    concrete = sql_compile.compile_read(
+        deep_fetch.plan_root(
+            current, _TRAVELERS, projection=deep_fetch.ReadProjectionRequest("none", False)
+        ),
+        _TRAVELERS,
+        POSTGRES,
+    )
+    assert rendered == concrete
+    assert [type(bind) for bind in rendered.statement.binds] == [
+        type(bind) for bind in concrete.statement.binds
+    ]
+    assert rendered.statement.binds == ("displayName", "Bo", "score", 7, "note", "p\\%q%", "\\")
+    assert rendered.statement.typed_bind_spans is template.compiled.statement.typed_bind_spans
+
+
+def test_direct_compilation_of_a_sourced_query_binds_its_operands_concretely() -> None:
+    sourced = _sourced_root(_traveler_query(_traveler_predicate("Ada", 1, "ab")))
+
+    statement = sql_compile.compile_read(sourced, _TRAVELERS, POSTGRES).statement
+
+    assert statement.binds == ("displayName", "Ada", "score", 1, "note", "ab%")
+    assert statement.execution_value_positions() == ()
+
+
+def test_a_template_of_authored_operands_requires_a_query_holding_each_of_them() -> None:
+    template = sql_compile.compile_template(
+        _sourced_root(_traveler_query(_traveler_predicate("Ada", 1, "ab"))), _TRAVELERS, POSTGRES
+    )
+    fewer = _traveler_query({"eq": {"path": "Traveler.displayName", "value": "Ada"}})
+
+    with pytest.raises(SqlGenError, match="requires its query"):
+        template.render()
+    with pytest.raises(SqlGenError, match="lacks an operand"):
+        template.render(query=fewer)
+
+
+@pytest.mark.parametrize(
+    ("literal", "escaped"),
+    [("ab", False), ("a_b", True), ("a%", True), ("a\\b", True), ("", False)],
+)
+def test_an_affix_carries_its_escape_clause_exactly_when_its_literal_escapes_a_character(
+    literal: str, escaped: bool
+) -> None:
+    assert affix_needs_escape(literal) is escaped
+    assert affix_needs_escape(literal.upper()) is escaped
+
+
+@pytest.mark.parametrize(
+    ("form", "value", "prepared"),
+    [
+        (ManagedOperandForm(INT64), 7, 7),
+        (ComparisonTextForm(DATE_TYPE), dt.date(2024, 1, 2), "2024-01-02"),
+        (AffixForm("contains", True), "A_b", "%a\\_b%"),
+        (AffixForm("endsWith", False), "A\\b", "%A\\\\b"),
+        (AffixForm("like", True), "A_%", "A_%"),
+    ],
+    ids=["managed", "comparison-text", "folded-affix", "escaped-affix", "verbatim"],
+)
+def test_an_authored_operand_is_prepared_as_its_form_selects(
+    form: ExecutionValueForm, value: object, prepared: object
+) -> None:
+    assert prepare_operand(form, value) == prepared
