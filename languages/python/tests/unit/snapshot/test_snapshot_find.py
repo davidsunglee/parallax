@@ -47,7 +47,7 @@ from parallax.core import (
 )
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -106,6 +106,7 @@ from parallax.core.read_delivery._page_reader import (
 )
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanCache, ReadPlanner
 from parallax.core.read_delivery._row_lane import find_rows
+from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.temporal_read import Pin, valid_time_coverage
 from parallax.core.unit_work import ReadEvidence
@@ -121,6 +122,7 @@ from parallax.snapshot import (
     SnapshotMaterializationError,
     TooManyResultsFound,
     WireEntity,
+    pin_of,
 )
 from parallax.snapshot._handle import _database, _read
 from parallax.snapshot._publication._classify import NonConformingRoot, classify_roots
@@ -2445,3 +2447,110 @@ def test_typed_and_wire_reads_share_resolved_include_work_within_each_delivery_m
     assert child_compiles[1] == eager_child
     statistics = root._resources.planner._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
     assert (statistics.misses, statistics.hits) == (3, 3)
+
+
+_MILESTONE_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+
+def _milestoned(row: dict[str, object]) -> dict[str, object]:
+    start, open_end = _MILESTONE_START, dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
+    return {**row, "from_z": start, "thru_z": open_end, "in_z": start, "out_z": open_end}
+
+
+_POLICY_PAGE: Final = (
+    Read(rows=[_milestoned({"id": 1, "name": "Auto"})]),
+    Read(rows=[_milestoned({"id": 10, "policy_id": 1, "amount": Decimal("700.00")})]),
+)
+
+
+def _delivered(surface: Any, query: Any, delivery: str) -> list[Any]:
+    """Every root ``surface`` delivers for ``query``, eagerly or streamed."""
+    if delivery == "find":
+        return list(surface.find(query).results())
+    with surface.stream(query, batch_size=10) as stream:
+        return list(stream)
+
+
+@pytest.mark.parametrize("delivery", ["find", "stream"])
+def test_temporal_reads_reuse_one_preparation_and_render_their_own_coordinates(
+    monkeypatch: pytest.MonkeyPatch, delivery: str
+) -> None:
+    earlier = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+    later = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+    port = ScriptedAdapter(*_POLICY_PAGE * 3)
+    root = own_root(Database.connect(port, POLICY_MODEL))
+    db = root.using_database_login()
+
+    def read(surface: Any, at: dt.datetime) -> list[Any]:
+        query = (
+            Policy.where(Policy.id == 1).as_of(valid_time=at, tx_time=at).include(Policy.coverages)
+        )
+        return _delivered(surface, query, delivery)
+
+    read(db, earlier)
+
+    def forbidden(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("a read of the same structure prepares nothing again")
+
+    for owner, name in (
+        (_read_plan, "compile_read"),
+        (_read_plan, "compile_template"),
+        (_read_plan, "bind"),
+        (deep_fetch, "plan"),
+        (deep_fetch, "plan_root"),
+    ):
+        monkeypatch.setattr(owner, name, forbidden)
+    traversed: list[object] = []
+    operands = cast("Callable[[Any], Any]", vars(sql_compile)["predicate_operands"])
+
+    def counted(predicate: Any) -> Any:
+        traversed.append(predicate)
+        return operands(predicate)
+
+    monkeypatch.setattr(sql_compile, "predicate_operands", counted)
+    typed = read(db, later)
+    wire = read(db.wire, later)
+
+    statistics = root._resources.planner._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
+    assert (statistics.misses, statistics.hits) == (1, 2)
+    assert len(traversed) == 2
+    assert [policy.coverages[0].id for policy in typed] == [10]
+    assert [node["coverages"][0]["id"] for node in wire] == [10]
+    assert pin_of(typed[0]) == pin_of(typed[0].coverages[0]) == Pin(tx_time=later, valid_time=later)
+    reads = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert len(reads) == 6
+    for call in reads[2:]:
+        assert call.binds.count(later) == 4
+        assert earlier not in call.binds
+
+
+@pytest.mark.parametrize("delivery", ["find", "stream"])
+def test_a_document_layout_temporal_read_renders_its_own_operand_and_coordinates(
+    delivery: str,
+) -> None:
+    earlier = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+    later = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+    stored = Read(rows=[_milestoned({"id": 1, "payload": PresentDocument({"route": "North"})})])
+    port = ScriptedAdapter(stored, stored, stored)
+    root = own_root(Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL))
+    db = root.using_database_login()
+
+    def read(surface: Any, route: str, at: dt.datetime) -> list[Any]:
+        query = mm.Charter.where(mm.Charter.route == route).as_of(valid_time=at, tx_time=at)
+        return _delivered(surface, query, delivery)
+
+    read(db, "South", earlier)
+    typed = read(db, "North", later)
+    wire = read(db.wire, "North", later)
+
+    statistics = root._resources.planner._statistics()  # pyright: ignore[reportPrivateUsage] - the cache's own census
+    assert (statistics.misses, statistics.hits) == (1, 2)
+    assert [charter.route for charter in typed] == [node["route"] for node in wire] == ["North"]
+    assert pin_of(typed[0]) == Pin(tx_time=later, valid_time=later)
+    first, *rendered = [call for call in port.calls if isinstance(call, ReadCall)]
+    assert "South" in first.binds
+    for call in rendered:
+        assert call.sql == first.sql
+        assert call.binds.count(later) == 4
+        assert "North" in call.binds
+        assert earlier not in call.binds and "South" not in call.binds

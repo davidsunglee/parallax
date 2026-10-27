@@ -22,6 +22,7 @@ from parallax.core.object_query._resolved import (
 )
 from parallax.core.predicate._execution_values import (
     NO_EXECUTION_VALUE_SOURCES,
+    ExecutionValueSource,
     ExecutionValueSources,
     sourced_conjunction,
 )
@@ -83,6 +84,7 @@ __all__ = [
     "resolve_perspective",
     "resolved_query_pin",
     "scans_resolved_axis",
+    "sourced_perspective_terms",
     "valid_time_coverage",
     "view",
 ]
@@ -444,13 +446,16 @@ def inject_sourced_as_of(
     entity: EntityMetadata,
 ) -> tuple[ResolvedPredicate, ExecutionValueSources]:
     """:func:`inject_resolved_as_of`, carrying ``predicate``'s execution-value
-    sources to where the appended terms leave its occurrences."""
-    terms = [term for selection in selections for term in _selection_terms(selection, entity)]
+    sources to where the appended terms leave its occurrences, and sourcing each
+    appended finite term from the selection bound it compares."""
+    terms = [
+        (term, _generated(source))
+        for selection in selections
+        for term, source in _sourced_selection_terms(selection, entity)
+    ]
     if not terms:
         return predicate, sources
-    return sourced_conjunction(
-        (predicate, sources), *((term, NO_EXECUTION_VALUE_SOURCES) for term in terms)
-    )
+    return sourced_conjunction((predicate, sources), *terms)
 
 
 def perspective_terms(
@@ -466,6 +471,22 @@ def perspective_terms(
         term
         for axis_perspective in perspective.ranked_perspectives()
         for term in _selection_terms(_selection_of(axis_perspective), target)
+    )
+
+
+def sourced_perspective_terms(
+    perspective: TemporalPerspective, target: EntityMetadata
+) -> tuple[tuple[ResolvedComparison, ExecutionValueSource | None], ...]:
+    """:func:`perspective_terms`, each beside the execution value a template
+    renders it from, if any.
+
+    Every perspective of a read is resolved from its root's selections, so an
+    instant renders from the root's As-Of coordinate in its dimension.
+    """
+    return tuple(
+        sourced
+        for axis_perspective in perspective.ranked_perspectives()
+        for sourced in _sourced_selection_terms(_selection_of(axis_perspective), target)
     )
 
 
@@ -493,6 +514,37 @@ def _selection_terms(
             )
         case _:
             assert_never(selection)
+
+
+def _selection_sources(
+    selection: ResolvedTemporalSelection,
+) -> tuple[ExecutionValueSource | None, ...]:
+    """The execution value each of :func:`_selection_terms` compares, in its
+    order: none for Latest's open bound, the coordinate for both As-Of terms,
+    and a range's end before its start."""
+    dimension = selection.axis.dimension
+    match selection:
+        case ResolvedHistorySelection():
+            return ()
+        case ResolvedLatestSelection():
+            return (None,)
+        case ResolvedAsOfSelection():
+            coordinate: ExecutionValueSource = ("temporal", dimension, "coordinate")
+            return coordinate, coordinate
+        case ResolvedRangeSelection():
+            return (("temporal", dimension, "end"), ("temporal", dimension, "start"))
+        case _:  # pragma: no cover - exhaustiveness guard
+            assert_never(selection)
+
+
+def _sourced_selection_terms(
+    selection: ResolvedTemporalSelection, entity: EntityMetadata
+) -> Iterable[tuple[ResolvedComparison, ExecutionValueSource | None]]:
+    return zip(_selection_terms(selection, entity), _selection_sources(selection), strict=True)
+
+
+def _generated(source: ExecutionValueSource | None) -> ExecutionValueSources:
+    return NO_EXECUTION_VALUE_SOURCES if source is None else ExecutionValueSources.generated(source)
 
 
 def resolved_query_pin(selections: tuple[ResolvedTemporalSelection, ...]) -> Pin:

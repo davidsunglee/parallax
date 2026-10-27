@@ -43,7 +43,10 @@ from parallax.core.object_query._resolved import (
     ResolvedTemporalSelection,
     resolved_order_term,
 )
-from parallax.core.predicate._execution_values import ExecutionValueSources
+from parallax.core.predicate._execution_values import (
+    NO_EXECUTION_VALUE_SOURCES,
+    ExecutionValueSources,
+)
 from parallax.core.predicate._resolved import (
     ResolvedPredicate,
 )
@@ -237,7 +240,12 @@ def plan(
     root = plan_root(
         query, model, projection=projection, defer_execution_values=defer_execution_values
     )
-    builder = _PlanBuilder(model=model, families=families, root_selections=query.temporal)
+    builder = _PlanBuilder(
+        model=model,
+        families=families,
+        root_selections=query.temporal,
+        defer_execution_values=defer_execution_values,
+    )
     builder.seed_root(entity)
     for path in query.includes:
         builder.add_path(path)
@@ -498,6 +506,7 @@ class _PlanBuilder:
     families: InheritanceFacet
     # Every level's visibility propagates from the original root's selections.
     root_selections: tuple[ResolvedTemporalSelection, ...]
+    defer_execution_values: bool = False
     steps: list[FetchStep] = field(default_factory=_new_steps)
     positions: list[PositionSeed] = field(default_factory=_new_positions)
     _children: dict[_TrieKey, int] = field(default_factory=_new_children)
@@ -603,6 +612,7 @@ class _PlanBuilder:
             )
             child_narrow = position if len(position) > 1 and narrowed else None
             child_position = _effective_position(self.families, child, child_narrow)
+            predicate, sources = self._child_predicate(child, related.member)
             step = QueryFetchStep(
                 position=position_id,
                 parent=parent_ref,
@@ -612,17 +622,13 @@ class _PlanBuilder:
                     target=child.identity,
                     entity=child,
                     position=child_position,
-                    predicate=resolve_temporal_visibility(
-                        _deferred_membership(member=related.member),
-                        target=child,
-                        model=self.model,
-                        resolution=PropagatedRootSelections(self.root_selections),
-                    ),
+                    predicate=predicate,
                     narrow_to=child_narrow,
                     order_by=_resolved_order_terms(direction, child, self.families),
                     projection=_resolve_projection(
                         child_position, ReadProjectionRequest("all", True)
                     ),
+                    execution_value_sources=sources,
                 ),
             )
 
@@ -641,6 +647,29 @@ class _PlanBuilder:
         self._arrivals[index] = direction
         self._owners[index] = related_entity
         return index
+
+    def _child_predicate(
+        self, child: EntityMetadata, member: AttributeMetadata
+    ) -> tuple[TemporallyResolvedPredicate, ExecutionValueSources | None]:
+        """A child read of the gathered keys of ``member``, restricted to the
+        selections the root's propagate to ``child``; a deferring plan sources
+        each propagated coordinate from the root selection it came from."""
+        keyed = _deferred_membership(member=member)
+        resolution = PropagatedRootSelections(self.root_selections)
+        if not self.defer_execution_values:
+            return (
+                resolve_temporal_visibility(
+                    keyed, target=child, model=self.model, resolution=resolution
+                ),
+                None,
+            )
+        return resolve_sourced_temporal_visibility(
+            keyed,
+            NO_EXECUTION_VALUE_SOURCES,
+            target=child,
+            model=self.model,
+            resolution=resolution,
+        )
 
 
 def _effective_position(

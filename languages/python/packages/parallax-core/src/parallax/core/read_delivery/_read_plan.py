@@ -280,11 +280,10 @@ def _read_plan_key(
 def _query_key(query: ResolvedObjectQuery) -> tuple[object, ...]:
     """Everything about ``query`` its compiled plan depends on.
 
-    The predicate's operands, a page's cap, and its seek coordinate are
-    execution values its template renders, so only their structure is part of
-    the key; a finite temporal selection's values are still bound when its plan
-    compiles, so they are too. Members and positions are named by identity: the
-    model the key also names fixes the metadata behind each.
+    The predicate's operands, a finite temporal selection's bounds, a page's
+    cap, and its seek coordinate are execution values its templates render, so
+    only their structure is part of the key. Members and positions are named by
+    identity: the model the key also names fixes the metadata behind each.
     """
     return (
         query.root.identity,
@@ -312,12 +311,6 @@ def _operand_key(value: object) -> object:
     if isinstance(value, Decimal):
         return Decimal, value.as_tuple().exponent
     return type(value)
-
-
-def _temporal_value_key(value: object) -> object:
-    """A finite temporal coordinate's exact type and value, which its plan
-    still binds when it compiles."""
-    return _operand_key(value), value
 
 
 def _predicate_key(predicate: ResolvedPredicate) -> object:  # noqa: C901 - exhaustive dispatcher
@@ -417,14 +410,9 @@ def _temporal_key(selection: ResolvedTemporalSelection) -> object:
         case ResolvedLatestSelection(axis=axis) | ResolvedHistorySelection(axis=axis):
             return type(selection), axis.dimension
         case ResolvedAsOfSelection(axis=axis, coordinate=coordinate):
-            return ResolvedAsOfSelection, axis.dimension, _temporal_value_key(coordinate)
+            return ResolvedAsOfSelection, axis.dimension, _operand_key(coordinate)
         case ResolvedRangeSelection(axis=axis, start=start, end=end):
-            return (
-                ResolvedRangeSelection,
-                axis.dimension,
-                _temporal_value_key(start),
-                _temporal_value_key(end),
-            )
+            return ResolvedRangeSelection, axis.dimension, _operand_key(start), _operand_key(end)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(selection)
 

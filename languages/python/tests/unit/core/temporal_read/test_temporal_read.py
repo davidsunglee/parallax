@@ -15,7 +15,7 @@ import dataclasses
 import datetime as dt
 import gc
 from collections.abc import Iterator
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 
@@ -45,6 +45,7 @@ from parallax.core.object_query._resolved import (
     ResolvedTemporalSelection,
 )
 from parallax.core.predicate import ModelRejectedError
+from parallax.core.predicate._execution_values import ExecutionValueSource, ExecutionValueSources
 from parallax.core.predicate._perspective import (
     AtPerspective,
     AxisPerspective,
@@ -64,12 +65,14 @@ from parallax.core.temporal_read import (
     TemporalShape,
     TimeInterval,
     inject_resolved_as_of,
+    inject_sourced_as_of,
     milestone_edge,
     perspective_terms,
     propagated_selections,
     resolve_perspective,
     resolved_query_pin,
     scans_resolved_axis,
+    sourced_perspective_terms,
     valid_time_coverage,
 )
 from parallax.core.temporal_read import view as temporal_view
@@ -1440,3 +1443,66 @@ def test_root_selections_lower_to_injected_terms_and_propagate_to_hop_terms(
     )
     assert _terms(inject_resolved_as_of(ResolvedConstant(True), propagated, hop), hop) == hop_terms
     assert _comparisons(perspective_terms(perspective, hop), hop) == hop_terms
+
+
+_VALID: Final[ExecutionValueSource] = ("temporal", TemporalDimension.VALID_TIME, "coordinate")
+_TRANSACTION: Final[ExecutionValueSource] = (
+    "temporal",
+    TemporalDimension.TRANSACTION_TIME,
+    "coordinate",
+)
+
+
+@pytest.mark.parametrize(
+    ("temporal", "generated"),
+    [
+        pytest.param(
+            _bitemporal(_B, _P), (_VALID, _VALID, _TRANSACTION, _TRANSACTION), id="instants"
+        ),
+        pytest.param(
+            {
+                "valid-time": oq.AsOfRange(start=_RANGE[0], end=_RANGE[1]),
+                "transaction-time": oq.AsOf("latest"),
+            },
+            (
+                ("temporal", TemporalDimension.VALID_TIME, "end"),
+                ("temporal", TemporalDimension.VALID_TIME, "start"),
+                None,
+            ),
+            id="range-and-latest",
+        ),
+        pytest.param(
+            {"valid-time": oq.History(), "transaction-time": oq.History()}, (), id="scans"
+        ),
+    ],
+)
+def test_sourced_injection_sources_each_generated_term_from_its_selection_bound(
+    temporal: dict[QueryTemporalDimension, oq.TemporalSelection],
+    generated: tuple[ExecutionValueSource | None, ...],
+) -> None:
+    # The authored operand equals the valid-time instant the generated terms
+    # compare, yet keeps its own source.
+    authored = oa.Comparison(op="eq", subject=oa.FieldSubject("Position.validStart"), value=_B)
+    query = _validated(POSITION, temporal, authored)
+
+    injected, sources = inject_sourced_as_of(
+        query.predicate, ExecutionValueSources.authored(query.predicate), query.temporal, POSITION
+    )
+
+    assert injected == inject_resolved_as_of(query.predicate, query.temporal, POSITION)
+    occurrences = injected.operands if isinstance(injected, ResolvedAnd) else (injected,)
+    assert len(occurrences) == 1 + len(generated)
+    assert sources.operand((0,) if generated else ()) == ("predicate", 0)
+    assert tuple(sources.operand((index,)) for index in range(1, len(occurrences))) == generated
+
+
+def test_a_perspective_sources_each_instant_from_the_roots_coordinate_in_its_dimension() -> None:
+    selections = _validated(POSITION, _bitemporal(_B, "latest")).temporal
+    perspective = resolve_perspective(
+        POSITION, model=_ACCEPTED["Position"], root_selections=selections
+    )
+
+    sourced = sourced_perspective_terms(perspective, POSITION)
+
+    assert tuple(term for term, _ in sourced) == perspective_terms(perspective, POSITION)
+    assert tuple(source for _, source in sourced) == (_VALID, _VALID, None)

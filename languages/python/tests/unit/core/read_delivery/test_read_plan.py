@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import gc
 import threading
 import time
@@ -20,6 +21,7 @@ from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMN
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import continuation, deep_fetch
 from parallax.core._execution._read_query import resolve_read_query
+from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -45,7 +47,7 @@ from parallax.core.sql_gen._compile import (
     compile_read,
     compile_write_predicate,
 )
-from parallax.core.sql_gen._context import LoweredStatement, StatementBuilder
+from parallax.core.sql_gen._context import LoweredStatement, SqlGenError, StatementBuilder
 from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.unit_work import Concurrency
 from parallax.descriptor._records import Entity as DescriptorEntity
@@ -230,6 +232,8 @@ _ORDERS = corpus_model("orders")
 _CUSTOMER = corpus_model("customer")
 _ANIMAL = corpus_model("animal")
 _BALANCE = corpus_model("balance")
+_POLICY = corpus_model("policy")
+_RATE = corpus_model("rate")
 _LATEST: dict[str, object] = {"transaction-time": {"asOf": "latest"}}
 
 
@@ -252,6 +256,10 @@ def _animal_query(predicate: Mapping[str, object], **clauses: object) -> dict[st
 
 def _balance_query(temporal: Mapping[str, object]) -> dict[str, object]:
     return {"target": "Balance", "predicate": {"true": {}}, "temporal": temporal}
+
+
+def _policy_query(temporal: Mapping[str, object]) -> dict[str, object]:
+    return {"target": "Policy", "predicate": {"true": {}}, "temporal": temporal}
 
 
 _PHONE_HOME = {"eq": {"path": "type", "value": "home"}}
@@ -446,14 +454,9 @@ _DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, obje
         _balance_query({"transaction-time": {"history": {}}}),
     ),
     (
-        "temporal-coordinate",
+        "finite-temporal-kind",
         _BALANCE,
         _balance_query({"transaction-time": {"asOf": "2024-06-15T00:00:00.000000Z"}}),
-        _balance_query({"transaction-time": {"asOf": "2024-06-16T00:00:00.000000Z"}}),
-    ),
-    (
-        "temporal-window",
-        _BALANCE,
         _balance_query(
             {
                 "transaction-time": {
@@ -464,14 +467,20 @@ _DISTINCT_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, obje
                 }
             }
         ),
-        _balance_query(
+    ),
+    (
+        "temporal-axis",
+        _POLICY,
+        _policy_query(
             {
-                "transaction-time": {
-                    "asOfRange": {
-                        "start": "2024-06-15T00:00:00.000000Z",
-                        "end": "2024-07-02T00:00:00.000000Z",
-                    }
-                }
+                "valid-time": {"asOf": "2024-06-15T00:00:00.000000Z"},
+                "transaction-time": {"asOf": "latest"},
+            }
+        ),
+        _policy_query(
+            {
+                "valid-time": {"asOf": "latest"},
+                "transaction-time": {"asOf": "2024-06-15T00:00:00.000000Z"},
             }
         ),
     ),
@@ -561,6 +570,52 @@ _SHARED_QUERIES: tuple[tuple[str, Metamodel, dict[str, object], dict[str, object
             "target": "Basket",
             "predicate": {"any": {"path": "Basket.tags", "where": {"eq": {"value": "b"}}}},
         },
+    ),
+    (
+        "temporal-coordinate",
+        _BALANCE,
+        _balance_query({"transaction-time": {"asOf": "2024-06-15T00:00:00.000000Z"}}),
+        _balance_query({"transaction-time": {"asOf": "2024-06-16T00:00:00.000000Z"}}),
+    ),
+    (
+        "temporal-window",
+        _BALANCE,
+        _balance_query(
+            {
+                "transaction-time": {
+                    "asOfRange": {
+                        "start": "2024-06-15T00:00:00.000000Z",
+                        "end": "2024-07-01T00:00:00.000000Z",
+                    }
+                }
+            }
+        ),
+        _balance_query(
+            {
+                "transaction-time": {
+                    "asOfRange": {
+                        "start": "2024-06-15T00:00:00.000000Z",
+                        "end": "2024-07-02T00:00:00.000000Z",
+                    }
+                }
+            }
+        ),
+    ),
+    (
+        "temporal-coordinates-on-both-axes",
+        _POLICY,
+        _policy_query(
+            {
+                "valid-time": {"asOf": "2024-06-15T00:00:00.000000Z"},
+                "transaction-time": {"asOf": "2024-06-16T00:00:00.000000Z"},
+            }
+        ),
+        _policy_query(
+            {
+                "valid-time": {"asOf": "2024-07-15T00:00:00.000000Z"},
+                "transaction-time": {"asOf": "2024-07-16T00:00:00.000000Z"},
+            }
+        ),
     ),
 )
 
@@ -959,34 +1014,51 @@ def _blocking_renders(
     return rendering
 
 
-_VALUED: Final[Mapping[str, Callable[[int], ResolvedObjectQuery]]] = {
-    "continuation": lambda value: _after(value),
-    "predicate": lambda value: _query(value),
+def _balance_as_of(day: int) -> ResolvedObjectQuery:
+    instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC) + dt.timedelta(days=day)
+    return resolve_read_query(
+        deserialize(
+            _balance_query(
+                {"transaction-time": {"asOf": instant.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}}
+            )
+        ),
+        model=_BALANCE,
+        form="graph",
+    )
+
+
+_BALANCE_MODEL = CatalogedModel(_BALANCE)
+_VALUED: Final[Mapping[str, tuple[CatalogedModel, Callable[[int], ResolvedObjectQuery]]]] = {
+    "continuation": (_MODEL, lambda value: _after(value)),
+    "predicate": (_MODEL, lambda value: _query(value)),
+    "temporal": (_BALANCE_MODEL, _balance_as_of),
 }
 
 
-@pytest.mark.parametrize("valued", _VALUED.values(), ids=_VALUED.keys())
+@pytest.mark.parametrize(("model", "valued"), _VALUED.values(), ids=_VALUED.keys())
 def test_cache_hits_render_their_own_values_outside_the_cache_lock(
-    monkeypatch: pytest.MonkeyPatch, valued: Callable[[int], ResolvedObjectQuery]
+    monkeypatch: pytest.MonkeyPatch,
+    model: CatalogedModel,
+    valued: Callable[[int], ResolvedObjectQuery],
 ) -> None:
     cache = ReadPlanCache()
-    _plan(cache, valued(1))
+    _plan(cache, valued(1), model=model)
     together = threading.Barrier(2, timeout=2)
     rendering = _blocking_renders(monkeypatch, hold=together.wait)
 
     def plan(value: int) -> _read_plan.ReadPlan:
-        return _plan(cache, valued(value))
+        return _plan(cache, valued(value), model=model)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         plans = tuple(pool.map(plan, (2, 3)))
 
     assert len(rendering) == 2 and rendering[0] is rendering[1]
     uncached = ReadPlanCache(0)
-    for value, delivered in zip((2, 3), plans, strict=True):
-        statement = _root(delivered)[0].statement
-        assert statement == _root(_plan(uncached, valued(value)))[0].statement
-        assert value in statement.binds
+    statements = [_root(delivered)[0].statement for delivered in plans]
+    for value, statement in zip((2, 3), statements, strict=True):
+        assert statement == _root(_plan(uncached, valued(value), model=model))[0].statement
         assert statement.execution_value_positions() == ()
+    assert statements[0].binds != statements[1].binds
     assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 1, 2, 1, 0)
 
 
@@ -1014,9 +1086,11 @@ def test_a_hit_renders_after_its_entry_is_evicted(monkeypatch: pytest.MonkeyPatc
     assert rendered._fetches is cached._fetches
 
 
-@pytest.mark.parametrize("valued", _VALUED.values(), ids=_VALUED.keys())
+@pytest.mark.parametrize(("model", "valued"), _VALUED.values(), ids=_VALUED.keys())
 def test_callers_of_one_pending_key_each_render_their_own_values(
-    monkeypatch: pytest.MonkeyPatch, valued: Callable[[int], ResolvedObjectQuery]
+    monkeypatch: pytest.MonkeyPatch,
+    model: CatalogedModel,
+    valued: Callable[[int], ResolvedObjectQuery],
 ) -> None:
     uncached = cast("Callable[..., Any]", vars(_read_plan)["_plan_uncached"])
     started = threading.Event()
@@ -1033,7 +1107,7 @@ def test_callers_of_one_pending_key_each_render_their_own_values(
 
     def plan(value: int) -> _read_plan.ReadPlan:
         callers.wait()
-        return _plan(cache, valued(value))
+        return _plan(cache, valued(value), model=model)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = tuple(pool.submit(plan, value) for value in (10, 20, 30, 40))
@@ -1044,7 +1118,7 @@ def test_callers_of_one_pending_key_each_render_their_own_values(
 
     uncached_planner = ReadPlanCache(0)
     for value, delivered in zip((10, 20, 30, 40), plans, strict=True):
-        expected = _root(_plan(uncached_planner, valued(value)))[0].statement
+        expected = _root(_plan(uncached_planner, valued(value), model=model))[0].statement
         assert _root(delivered)[0].statement == expected
     assert len({id(delivered._schema) for delivered in plans}) == 1
     assert cache._statistics() == _read_plan._ReadPlanCacheStatistics(16, 1, 3, 1, 0)
@@ -1992,6 +2066,189 @@ def test_repeated_uses_of_one_predicate_node_render_their_own_operands() -> None
     assert _carriers(rendered.statement.binds)[-2:] == [(int, 2), (int, 3)]
 
 
+def _at(day: int) -> str:
+    return f"2024-06-{day:02d}T00:00:00.000000Z"
+
+
+def _instant(day: int) -> tuple[object, ...]:
+    return dt.datetime, dt.datetime.fromisoformat(_at(day))
+
+
+def _resolved_read(meta: Metamodel, document: Mapping[str, object]) -> ResolvedObjectQuery:
+    return resolve_read_query(deserialize(dict(document)), model=meta, form="graph")
+
+
+def test_an_authored_operand_equal_to_a_temporal_coordinate_renders_apart_from_it() -> None:
+    def read(authored: int, coordinate: int) -> ResolvedObjectQuery:
+        return _resolved_read(
+            _BALANCE,
+            {
+                "target": "Balance",
+                "predicate": {
+                    "greaterThanEquals": {"path": "Balance.txStart", "value": _at(authored)}
+                },
+                "temporal": {"transaction-time": {"asOf": _at(coordinate)}},
+            },
+        )
+
+    rendered, cold, cache = _seeded_render(_BALANCE, read(15, 15), read(16, 17))
+
+    assert (cache._statistics().misses, cache._statistics().hits) == (1, 1)
+    assert _statement_facts(rendered) == _statement_facts(cold)
+    assert _carriers(rendered.statement.binds)[-3:] == [_instant(16), _instant(17), _instant(17)]
+
+
+def test_a_range_selection_renders_its_current_end_and_start_in_their_overlap_roles() -> None:
+    def read(start: int, end: int) -> ResolvedObjectQuery:
+        window = {"start": _at(start), "end": _at(end)}
+        return _resolved_read(_BALANCE, _balance_query({"transaction-time": {"asOfRange": window}}))
+
+    rendered, cold, cache = _seeded_render(_BALANCE, read(10, 20), read(12, 25))
+
+    assert (cache._statistics().misses, cache._statistics().hits) == (1, 1)
+    assert _statement_facts(rendered) == _statement_facts(cold)
+    assert _carriers(rendered.statement.binds)[-2:] == [_instant(25), _instant(12)]
+
+
+def test_an_inherited_root_renders_its_coordinate_into_every_branch() -> None:
+    def read(day: int) -> ResolvedObjectQuery:
+        return _resolved_read(
+            _RATE,
+            {
+                "target": "Rate",
+                "predicate": {"true": {}},
+                "temporal": {
+                    "valid-time": {"asOf": _at(day)},
+                    "transaction-time": {"asOf": "latest"},
+                },
+            },
+        )
+
+    rendered, cold, cache = _seeded_render(_RATE, read(1), read(2))
+
+    assert (cache._statistics().misses, cache._statistics().hits) == (1, 1)
+    assert _statement_facts(rendered) == _statement_facts(cold)
+    instants = [
+        carrier for carrier in _carriers(rendered.statement.binds) if carrier[0] is dt.datetime
+    ]
+    assert instants == [_instant(2)] * 4
+
+
+def _policy_read(
+    valid: Mapping[str, object], transaction: Mapping[str, object], *, includes: bool = True
+) -> ResolvedObjectQuery:
+    document: dict[str, object] = {
+        "target": "Policy",
+        "predicate": {
+            "any": {
+                "path": "Policy.coverages",
+                "where": {"greaterThanEquals": {"path": "amount", "value": "600.00"}},
+            }
+        },
+        "temporal": {"valid-time": dict(valid), "transaction-time": dict(transaction)},
+    }
+    if includes:
+        document["includes"] = [
+            {"segments": [{"rel": "Policy.coverages"}, {"rel": "Coverage.claims"}]}
+        ]
+    return _resolved_read(_POLICY, document)
+
+
+def _seeded_policy(
+    seed: ResolvedObjectQuery, current: ResolvedObjectQuery
+) -> tuple[_read_plan.ReadPlan, _read_plan.ReadPlan]:
+    """``current`` planned from a cache ``seed`` prepared, and planned cold."""
+    model = CatalogedModel(_POLICY)
+    cache = ReadPlanCache()
+    _plan(cache, seed, model=model)
+    rendered = _plan(cache, current, model=model)
+    assert (cache._statistics().misses, cache._statistics().hits) == (1, 1)
+    return rendered, _plan(ReadPlanCache(0), current, model=model)
+
+
+def _rendered_children(
+    rendered: _read_plan.ReadPlan, cold: _read_plan.ReadPlan, current: ResolvedObjectQuery
+) -> list[CompiledRead]:
+    """Every child level of ``rendered`` rendered for two key sets, each
+    checked against ``cold``'s own child read of the same keys."""
+    children: list[CompiledRead] = []
+    for index in range(rendered.fetch_count):
+        prepared, fresh = rendered.prepared_fetch(index), cold.prepared_fetch(index)
+        assert isinstance(prepared, tuple) and isinstance(fresh, tuple)
+        for keys in ([1, 2], [3]):
+            child = prepared[0].render(list(keys), query=current)
+            assert _statement_facts(child) == _statement_facts(
+                fresh[0].render(list(keys), query=current)
+            )
+            children.append(child)
+    return children
+
+
+def test_bitemporal_coordinates_render_into_relationship_perspectives_and_every_child_level(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _policy_read({"asOf": _at(20)}, {"asOf": _at(21)})
+    rendered, cold = _seeded_policy(_policy_read({"asOf": _at(10)}, {"asOf": _at(11)}), current)
+
+    root = _root(rendered)[0]
+    assert _statement_facts(root) == _statement_facts(_root(cold)[0])
+    coordinates = [_instant(20), _instant(20), _instant(21), _instant(21)]
+    amount = Decimal("600.00")
+    assert _carriers(root.statement.binds) == [
+        (Decimal, amount, amount.as_tuple()),
+        *coordinates,
+        *coordinates,
+    ]
+
+    def forbidden(_predicate: object) -> object:
+        raise AssertionError("a child read renders without traversing the root predicate")
+
+    monkeypatch.setattr(_compile_module, "predicate_operands", forbidden)
+    children = _rendered_children(rendered, cold, current)
+    assert len(children) == 4
+    assert all(_carriers(child.statement.binds)[-4:] == coordinates for child in children)
+
+
+def test_a_temporal_template_refuses_a_query_without_its_finite_selection() -> None:
+    cache = ReadPlanCache()
+    plan = _plan(
+        cache, _policy_read({"asOf": _at(20)}, {"asOf": _at(21)}), model=CatalogedModel(_POLICY)
+    )
+    prepared = plan.prepared_fetch(0)
+    assert isinstance(prepared, tuple)
+    (entry,) = cache._entries.values()
+    assert entry.root_template is not None
+    latest = _policy_read({"asOf": "latest"}, {"asOf": "latest"})
+
+    for query in (None, latest):
+        with pytest.raises(SqlGenError, match="requires its current finite coordinate"):
+            prepared[0].render([1], query=query)
+    with pytest.raises(SqlGenError, match="requires its current finite coordinate"):
+        entry.root_template.render(query=latest)
+
+
+def test_a_scanned_root_axis_leaves_relationship_perspectives_at_latest_on_it() -> None:
+    def read(day: int) -> ResolvedObjectQuery:
+        window = {"start": _at(day), "end": _at(day + 4)}
+        return _policy_read({"asOf": _at(day + 10)}, {"asOfRange": window}, includes=False)
+
+    rendered, cold = _seeded_policy(read(1), read(2))
+
+    root = _root(rendered)[0]
+    assert _statement_facts(root) == _statement_facts(_root(cold)[0])
+    amount = Decimal("600.00")
+    assert _carriers(root.statement.binds) == [
+        (Decimal, amount, amount.as_tuple()),
+        _instant(12),
+        _instant(12),
+        (TemporalBound, INFINITY),
+        _instant(12),
+        _instant(12),
+        _instant(6),
+        _instant(2),
+    ]
+
+
 @pytest.mark.parametrize(
     ("first", "second"),
     [(Decimal("1.5"), Decimal("1.50")), (True, 1), (1, 1.0)],
@@ -2028,6 +2285,26 @@ def test_the_cache_retains_neither_later_render_inputs_nor_source_associations()
     del later, rendered
     gc.collect()
     assert retained() is None
+
+
+def test_the_cache_retains_no_later_temporal_query_or_its_coordinates() -> None:
+    model = CatalogedModel(_POLICY)
+    cache = ReadPlanCache()
+    _plan(cache, _policy_read({"asOf": _at(10)}, {"asOf": _at(11)}), model=model)
+    later = _policy_read({"asOf": _at(20)}, {"asOf": _at(21)})
+    coordinates = [cast("Any", selection).coordinate for selection in later.temporal]
+
+    rendered = _plan(cache, later, model=model)
+    prepared = rendered.prepared_fetch(0)
+    assert isinstance(prepared, tuple)
+    child = prepared[0].render([1], query=later)
+
+    assert cache._statistics().hits == 1
+    assert all(
+        any(bind is coordinate for bind in child.statement.binds) for coordinate in coordinates
+    )
+    assert not _reaches(cache, later)
+    assert not any(_reaches(cache, coordinate) for coordinate in coordinates)
 
 
 def test_direct_compilation_and_write_reads_prepare_no_template(

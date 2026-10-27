@@ -170,8 +170,8 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │       ordinals of the row identity, the shared document and each coordinate
    ├ bind(model, result_contract, projection) → a ReadRowConverter per compiled read
    └ ReadPlan: compiled root + fetch work + converters + ViewSchema
-   │ rendered for this query: its predicate operands and a stream page's cap and
-   │ seek coordinate are bound
+   │ rendered for this query: its predicate operands, finite temporal bounds, and a
+   │ stream page's cap and seek coordinate are bound
    ▼
  execute_read(connection, CompiledRead, calls)                          _fetch
    LoweredStatement + document-read ordinals → driver SQL → DatabaseConnection.execute
@@ -185,7 +185,7 @@ An eager graph read, from the lane's entry point to the sealed Page:
    the origin collector observes each projection
    ▼
  each round of ready fetch steps (ReadPlan.ready_fetches):
-   guarded_parents → gather_keys → CompiledTemplate.render(keys)
+   guarded_parents → gather_keys → CompiledTemplate.render(keys, query=query)
    one statement: execute_read; several: DatabaseConnection.execute_pipeline
    convert rows → attach_children / attach_back_reference / attach_empty
    ▼
@@ -218,9 +218,11 @@ derives its own lock from its own Entity.
 `ReadPlanCache` (owned once by `RootResources`) keeps the reusable planning products
 and nothing else: no Page, result, connection, evidence or publication. The
 [Python execution binding](../../spec/execution.md#models-roots-and-scopes) defines its
-key. A cached root is planned with the place each predicate operand renders from,
-compiled once as a template, and released from those associations before the plan is
-kept; every delivery renders the template from its own query. A miss whose key differs
+key. A cached plan is planned with the place each predicate operand and finite
+temporal bound renders from, compiled once into templates, and released from those
+associations before the plan is kept. Every delivery renders the root template from its
+own query, and each child level it executes from that query and the level's gathered
+keys, so a propagated As-Of coordinate is the current one. A miss whose key differs
 from a cached plan's only in its page shape reuses that plan's fetch work and plans
 only the root. `UNCACHED_READ_PLANNER` is a zero-capacity cache, so
 uncached planning builds the same products through the same code. Validation and read
