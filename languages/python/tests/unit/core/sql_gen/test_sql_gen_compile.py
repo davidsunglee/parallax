@@ -67,6 +67,7 @@ from parallax.core.sql_gen._compile import (
     CompiledRead,
 )
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.sql_gen._context import EXPANDING_PLACEHOLDER
 from parallax.core.storage_layout import _compile as storage_layout_compile
 from parallax.core.temporal_read import _compile as temporal_read_compile
 from parallax.descriptor._records import Attribute, Entity, Inheritance
@@ -74,7 +75,7 @@ from parallax.descriptor._records import Metamodel as Records
 from tests._support import fake_metamodel
 from tests._support.binary32 import narrowed
 from tests._support.sql import compile_read, read_position, resolved_as_stated
-from tests.unit._corpus_model_support import formed, model, target
+from tests.unit._corpus_model_support import formed, model, records, target
 from tests.unit.core.sql_gen._delivery_support import deliver
 from tests.unit.core.sql_gen._plan_reuse_support import (
     assert_planned_once,
@@ -622,6 +623,43 @@ def test_a_template_deferring_nothing_renders_its_compiled_read_without_inputs(
     assert template.render([1]) is template.compiled
 
 
+def _orders_with_item_table(table: str) -> Metamodel:
+    orders = records("orders")
+    return formed(
+        dataclasses.replace(
+            orders,
+            entities=tuple(
+                dataclasses.replace(entity, table=table) if entity.name == "OrderItem" else entity
+                for entity in orders.entities
+            ),
+        )
+    )
+
+
+@pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
+def test_a_template_discovers_no_expanding_placeholder_in_identifier_text(
+    dialect: Dialect,
+) -> None:
+    table = "item__parallax_deferred_keys__"
+    meta = _orders_with_item_table(table)
+    entity = target(meta, "OrderItem")
+    root = deep_fetch.PlannedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        position=read_position(meta, entity),
+        predicate=resolved_as_stated(ResolvedConstant(True), meta, entity),
+        projection=deep_fetch.ResolvedReadProjection((), False),
+    )
+
+    root_template = sql_compile.compile_template(root, meta, dialect)
+    child = _child_template(dialect, meta).render([1, 42]).statement
+
+    assert root_template.render() == sql_compile.compile_read(root, meta, dialect)
+    assert f"from {table} t0" in child.sql
+    membership = "= any(?)" if dialect.name == "postgres" else "in (?, ?)"
+    assert child.sql.endswith(f"where t0.order_id {membership}")
+
+
 def _two_key_sets(members: tuple[str, str]) -> deep_fetch.PlannedEntityQuery:
     entity = target(ORDERS, "OrderItem")
     first, second = (entity.attribute(name) for name in members)
@@ -722,7 +760,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         )
         assert rendered.statement.sql.count(membership) == branches
         assert rendered.statement.sql.count("union all") == branches - 1
-        assert "__parallax_deferred_keys__" not in rendered.statement.sql
+        assert EXPANDING_PLACEHOLDER not in rendered.statement.sql
         assert rendered.statement.is_compiler_proven
         assert rendered.result_contract is template.compiled.result_contract
         assert rendered.projection is template.compiled.projection
