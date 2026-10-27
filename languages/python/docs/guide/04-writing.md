@@ -247,9 +247,11 @@ very instant it was terminated succeeds.
 The refusal reaches you only when retries can't fix it: as the `cause` of an
 `ExecutionFailure`, a `DatabaseError` whose `category` is `"constraintViolation"` and
 whose `constraint_name` is the table's exclusion, with a note counting the attempts. An
-insert over a key's current coverage is such a case; [Errors](08-errors.md#failures-the-database-reports)
-shows how to tell it apart. A table Parallax didn't create, such as one from before this
-release that you haven't migrated, refuses none of this.
+insert over a key's current coverage is such a case, and so is an insert by a clock that
+stays behind the history it overlaps. The two are refused alike, so
+[Errors](08-errors.md#failures-the-database-reports) reads the coverage before inserting
+over it. A table Parallax didn't create, such as one from before this release that you
+haven't migrated, refuses none of this.
 
 <!-- example: change-a-credit-limit -->
 ```python

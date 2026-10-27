@@ -363,13 +363,14 @@ tracking number is taken. A duplicate shipment id is a `"uniqueViolation"` too, 
 PostgreSQL reports it against the key's own index, `shipment_pkey`, so it passes
 through. So does a `"uniqueViolation"` that names no index, and every other failure.
 
-A temporal table answers an insert over coverage the key already has the same way. A
-temporal table Parallax creates on PostgreSQL refuses a row overlapping another row of
-the same key on every axis at once: an insert ending where the stored row ends breaks
-the key, a `"uniqueViolation"`, and one ending elsewhere breaks the table's exclusion, a
-`"constraintViolation"`. Parallax retries the exclusion's refusal, because a concurrent
-writer or a lagging clock can cause one that a re-run fixes, so an overlap that can't go
-away arrives only after every retry. A caller with an answer for it makes one attempt:
+A temporal table refuses an insert over coverage the key already has too, but the
+refusal alone doesn't say that coverage is current. A temporal table Parallax creates on
+PostgreSQL refuses a row overlapping another row of the same key on every axis at once:
+an insert ending where a current row ends breaks the key, a `"uniqueViolation"`, and one
+ending elsewhere breaks the table's exclusion, a `"constraintViolation"`. The exclusion
+also refuses a row overlapping closed history, as an insert by a clock behind a
+termination's does, so Parallax retries its refusal at a fresh instant. To answer for
+coverage that is already current, read it before inserting:
 
 <!-- example: price-a-window-unless-it-is-priced -->
 ```python
@@ -377,20 +378,31 @@ def price_a_window_unless_it_is_priced(
     db: ScopedDatabase, price: Price, start: dt.datetime, end: dt.datetime
 ) -> bool:
     """Price ``price.sku`` over ``[start, end)``, or answer False where it already has one."""
+
+    def price_unless_priced(tx: TxnContext) -> bool:
+        priced = Price.where(Price.sku == price.sku).as_of_range(valid_time=(start, end))
+        if tx.find(priced).results():
+            return False
+        tx.insert(price, valid_from=start, until=end)
+        return True
+
     try:
-        db.transact(lambda tx: tx.insert(price, valid_from=start, until=end), max_retries=0)
+        return db.transact(price_unless_priced)
     except ExecutionFailure as failure:
         cause = failure.cause
-        overlapping = isinstance(cause, DatabaseError) and cause.category in (
-            "uniqueViolation",
-            "constraintViolation",
-        )
-        if not overlapping:
+        if not (isinstance(cause, DatabaseError) and cause.category == "uniqueViolation"):
             raise
         return False
-    return True
 ```
 <!-- /example -->
+
+The read finds a price in effect anywhere in the window, so an insert over current
+coverage is never sent. A price another transaction commits after the read reaches the
+insert instead. One ending elsewhere is the exclusion's refusal, which is retried, and the
+re-run's read finds the price. One ending at the same instant breaks the key, which isn't
+retried, so the handler answers that `"uniqueViolation"`. Every other failure passes
+through, including an exclusion's refusal that outlasts every retry because a clock
+stayed behind.
 
 Of the categories, Parallax retries only `"deadlock"`, so you see one only once retries
 run out. A `"uniqueViolation"` asks you to choose another key or treat the object as
@@ -438,7 +450,7 @@ of an `ExecutionFailure`:
 | `TemporalConflictError` | when the transaction sends its writes | Yes, up to `max_retries` | If retries run out: synchronize the clocks of the servers that write the database |
 | `WritePreconditionError` | when the transaction sends its writes, or at the call under locking | No | Read the current value and let the user decide again |
 | A `DatabaseError` whose `category` is `"uniqueViolation"` | when the insert is sent, usually at commit | No | Choose another key, or treat the object as already there |
-| A `DatabaseError` whose `category` is `"constraintViolation"`, naming the exclusion of the temporal table the failing statement wrote | when the transaction sends its writes | Yes, up to `max_retries` | If retries run out, the row overlaps history the key already has: write where the key has no coverage, or change that coverage instead |
+| A `DatabaseError` whose `category` is `"constraintViolation"`, naming the exclusion of the temporal table the failing statement wrote | when the transaction sends its writes | Yes, up to `max_retries` | If retries run out, the row overlaps current coverage, or closed history a clock stayed behind: read the coverage before writing over it, and synchronize the clocks of the servers that write the database |
 | Any other `DatabaseError` whose `category` is `"constraintViolation"` | at the statement | No | Read `constraint_name` to find the constraint, and correct the row that broke it |
 | A `DatabaseError` whose `category` is `"lockWaitTimeout"` or `None` | at the statement | No | Read `native_code` and `message`; fix the schema or privilege, or try later |
 | `ConnectionAcquisitionError` | before an attempt begins | No | Check the database and the pool |

@@ -40,6 +40,8 @@ from parallax.conformance.guide_models import (
     Product,
     Shipment,
 )
+from parallax.conformance.scripted_clock import ScriptedClock
+from parallax.core.base import INFINITY
 from parallax.core.db_error import Category, DatabaseError, PhysicalIndexName
 from parallax.core.db_port import Password
 from parallax.core.dialect import POSTGRES
@@ -47,7 +49,7 @@ from parallax.core.entity import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.evolution import ABSENT, SchemaDelta, evolve, schema_delta
 from parallax.postgres import PostgresAdapter
-from parallax.snapshot import Database, ScopedDatabase, connect
+from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
 from tests._support.root_ownership import own_root
 
@@ -207,6 +209,42 @@ def test_an_unpriced_window_is_priced(profile_run: Any) -> None:
 
     assert priced is True
     assert [row[0] for row in _prices(profile_run)] == [Decimal("4.00"), Decimal("5.00")]
+
+
+def test_a_window_priced_only_in_terminated_history_is_priced_past_a_lagging_clock(
+    profile_run: Any,
+) -> None:
+    # Known from January until its termination in May, the price is no longer
+    # current. A clock at April overlaps that history, so storage refuses the
+    # first attempt; the retry prices the window in June.
+    jan, apr, may = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 4, 5))
+    profile_run.reset(model_of(SHOP_MODEL), {})
+    seeded = own_root(
+        connect(profile_run.port, SHOP_MODEL, clock=ScriptedClock([jan, may]))
+    ).using_database_login()
+    seeded.transact(
+        lambda tx: tx.insert(
+            Price(sku="TEA-1", amount=Decimal("4.00")), valid_from=_MAR, until=_SEP
+        )
+    )
+
+    def terminate(tx: TxnContext) -> None:
+        tx.terminate(tx.find(Price.where(Price.sku == "TEA-1").as_of(valid_time=_MAR)).result())
+
+    seeded.transact(terminate)
+    lagging = own_root(
+        connect(profile_run.port, SHOP_MODEL, clock=ScriptedClock([apr, _JUN]))
+    ).using_database_login()
+
+    priced = price_a_window_unless_it_is_priced(
+        lagging, Price(sku="TEA-1", amount=Decimal("5.00")), _JUN, _DEC
+    )
+
+    assert priced is True
+    assert _prices(profile_run) == [
+        (Decimal("4.00"), _MAR, _SEP, jan, may),
+        (Decimal("5.00"), _JUN, _DEC, _JUN, INFINITY),
+    ]
 
 
 def test_an_uncategorized_database_failure_passes_through(profile_run: Any) -> None:
@@ -410,37 +448,47 @@ def test_any_other_failure_passes_through_the_tracking_number_handler(
         )
 
 
+_PRICE_ROW: Mapping[str, object] = {
+    "sku": "TEA-1",
+    "amount": Decimal("4.00"),
+    "from_z": _MAR,
+    "thru_z": _SEP,
+    "in_z": _MAR,
+    "out_z": INFINITY,
+}
+_TEA = Price(sku="TEA-1", amount=Decimal("5.00"))
+
+
+@pytest.mark.parametrize(
+    ("script", "priced"),
+    [
+        pytest.param(Transact(Read(), Write()), True, id="unpriced"),
+        pytest.param(Transact(Read(rows=[_PRICE_ROW])), False, id="priced"),
+        pytest.param(
+            Transact(Read(), Write(raises=_database_error("uniqueViolation", "23505"))),
+            False,
+            id="priced-concurrently-to-the-same-end",
+        ),
+    ],
+)
+def test_pricing_a_window_runs_through_the_shipped_surface(script: Transact, priced: bool) -> None:
+    with ScriptedAdapter(script) as adapter:
+        assert price_a_window_unless_it_is_priced(_scripted(adapter), _TEA, _JUN, _DEC) is priced
+
+
 @pytest.mark.parametrize(
     "error",
     [
-        pytest.param(_database_error("constraintViolation", "23P01"), id="overlap"),
-        pytest.param(_database_error("uniqueViolation", "23505"), id="same-end"),
+        pytest.param(_database_error("constraintViolation", "23P01"), id="unrecognized-overlap"),
+        pytest.param(_database_error(None, "42P01"), id="uncategorized"),
     ],
 )
-def test_an_overlap_answers_false_after_one_attempt(error: DatabaseError) -> None:
-    with ScriptedAdapter(Transact(Write(raises=error))) as adapter:
-        priced = price_a_window_unless_it_is_priced(
-            _scripted(adapter), Price(sku="TEA-1", amount=Decimal("5.00")), _JUN, _DEC
-        )
-    assert priced is False
-
-
-def test_an_unpriced_window_answers_true_after_one_insert() -> None:
-    with ScriptedAdapter(Transact(Write())) as adapter:
-        priced = price_a_window_unless_it_is_priced(
-            _scripted(adapter), Price(sku="TEA-1", amount=Decimal("5.00")), _JUN, _DEC
-        )
-    assert priced is True
-
-
-def test_any_other_failure_passes_through_the_overlap_handler() -> None:
+def test_any_other_failure_passes_through_the_pricing_handler(error: DatabaseError) -> None:
     with (
-        ScriptedAdapter(Transact(Write(raises=_database_error(None, "42P01")))) as adapter,
+        ScriptedAdapter(Transact(Read(), Write(raises=error))) as adapter,
         pytest.raises(ExecutionFailure),
     ):
-        price_a_window_unless_it_is_priced(
-            _scripted(adapter), Price(sku="TEA-1", amount=Decimal("5.00")), _JUN, _DEC
-        )
+        price_a_window_unless_it_is_priced(_scripted(adapter), _TEA, _JUN, _DEC)
 
 
 def test_a_unique_violation_naming_no_index_surfaces_without_one() -> None:

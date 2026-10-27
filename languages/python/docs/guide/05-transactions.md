@@ -437,8 +437,10 @@ is usually permanent, such as an insert over coverage that is already current: e
 attempt is refused again, so the error arrives only after every retry and the waits
 between them. The waits grow with how long the attempts take, up to a second each, so at
 the default that is a fraction of a second for quick attempts and can reach several
-seconds for slow ones. A transaction that expects
-such a refusal, and has its own answer for it, passes a lower `max_retries`, as
+seconds for slow ones. A transaction that expects such a refusal can pass a lower
+`max_retries` to see it sooner, but can't take it to mean the coverage is current: an
+insert by a clock behind closed history is refused the same way, and only a retry
+recovers it. To answer for current coverage, read it before inserting, as
 [Errors](08-errors.md#failures-the-database-reports) shows.
 `max_retries=0` turns retries off, and the callback runs once:
 
