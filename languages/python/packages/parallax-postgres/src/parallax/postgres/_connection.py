@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, LiteralString, cast
 
 import psycopg
+from psycopg import postgres
 from psycopg.abc import AdaptContext, Buffer
 from psycopg.adapt import Dumper
 from psycopg.errors import error_from_result
@@ -14,6 +15,7 @@ from psycopg.pq import DiagnosticField, ExecStatus
 from psycopg.pq.abc import PGresult
 from psycopg.rows import RowMaker, TupleRow, tuple_row
 from psycopg.sql import SQL, Literal
+from psycopg.types.array import ListBinaryDumper
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
 from parallax.core.base import TemporalBound
@@ -178,16 +180,57 @@ def translating_driver_errors(dialect: Dialect) -> Generator[None]:
         raise translate_driver_error(dialect, exc) from exc
 
 
+class _Int8Array(list[int]):
+    """A nonempty list of exact ``int`` values, bound as one binary ``int8[]``."""
+
+    __slots__ = ()
+
+
+class _Int8ArrayBinaryDumper(ListBinaryDumper):
+    """Dumps an :class:`_Int8Array` without inspecting its elements first.
+
+    psycopg's own list dumper scans every list it binds to choose ``int2[]``,
+    ``int4[]``, ``int8[]`` or ``numeric[]`` by magnitude. A fixed type skips that
+    scan, and the statement's array cast (`m-dialect` array parameter cast form)
+    keeps the comparison in the subject's own type whatever the array arrives as.
+    """
+
+    oid = postgres.types["int8"].array_oid
+    element_oid = postgres.types["int8"].oid
+
+
+_INT8_BOUNDS = (-(2**63), 2**63 - 1)
+
+
+def _int8_array(values: list[object]) -> _Int8Array:
+    # The int8 element dumper would bind ``True`` as 1 and ``None`` as a NULL
+    # element, so anything but an exact in-range ``int`` is refused here.
+    if {*map(type, values)} != {int}:
+        raise TypeError("an integer array bind holds an element that is not an exact int")
+    integers = cast("list[int]", values)
+    if min(integers) < _INT8_BOUNDS[0] or max(integers) > _INT8_BOUNDS[1]:
+        raise ValueError("an integer array bind holds an element outside the int8 range")
+    return _Int8Array(integers)
+
+
 def adapt_binds(binds: Sequence[object]) -> list[object]:
     """Adapt neutral binds to psycopg's driver bind types at the adapter boundary.
 
     A :class:`~parallax.core.db_port.JsonDocument` (the neutral ``json`` /
-    value-object carrier) becomes a psycopg ``Jsonb``; every other bind passes
-    through unchanged. This keeps the psycopg bind mechanics internal to the
-    adapter — no driver type is exported to the developer surface (m-db-port).
+    value-object carrier) becomes a psycopg ``Jsonb``. A nonempty list whose
+    first element is an exact ``int`` becomes an :class:`_Int8Array`, bound as
+    binary ``int8[]`` on a connection :func:`initialize_connection` prepared; an
+    element of any other type, or outside the int8 range, is refused rather than
+    converted. Every other bind passes through unchanged. This keeps the psycopg
+    bind mechanics internal to the adapter — no driver type is exported to the
+    developer surface (m-db-port).
     """
     return [
-        Jsonb(bind.value, dumps=dump_document) if isinstance(bind, JsonDocument) else bind
+        Jsonb(bind.value, dumps=dump_document)
+        if isinstance(bind, JsonDocument)
+        else _int8_array(cast("list[object]", bind))
+        if type(bind) is list and bind and type(cast("list[object]", bind)[0]) is int
+        else bind
         for bind in binds
     ]
 
@@ -308,10 +351,11 @@ def initialize_connection(connection: psycopg.Connection[TupleRow]) -> None:
     """Prepare one newly created physical connection, or refuse it.
 
     Called once per connection, before anything may use it, and for every way
-    one comes into existence. It installs the loaders the read path depends on
-    and the open upper bound's dumper, on the connection's own adapter map so
-    that psycopg's process-wide defaults stay untouched, and then checks the
-    two effective session settings those loaders cannot work without that a
+    one comes into existence. It installs the loaders the read path depends on,
+    the open upper bound's dumper and the integer array dumper, on the
+    connection's own adapter map so that psycopg's process-wide defaults stay
+    untouched, and then checks the two effective session settings those
+    loaders cannot work without that a
     connection reports — the client encoding and the date style — reading both
     off the established connection's own parameters rather than by running SQL,
     so the check costs no round trip on any creation path.
@@ -328,6 +372,7 @@ def initialize_connection(connection: psycopg.Connection[TupleRow]) -> None:
     connection.adapters.register_loader("jsonb", _DocumentJsonbLoader)
     connection.adapters.register_loader("jsonb", _DocumentJsonbBinaryLoader)
     connection.adapters.register_dumper(TemporalBound, _NativeInfinityDumper)
+    connection.adapters.register_dumper(_Int8Array, _Int8ArrayBinaryDumper)
     _require_supported_session(connection)
 
 
