@@ -1061,6 +1061,22 @@ def test_a_deferred_root_binds_each_authored_operand_under_the_form_its_subject_
     assert template.compiled.statement.binds[-1] == "\\"
 
 
+def test_deferred_operands_of_one_classification_share_one_form_across_templates() -> None:
+    def membership(values: list[int]) -> deep_fetch.PlannedEntityQuery:
+        return _sourced_root(_traveler_query({"in": {"path": "Traveler.score", "values": values}}))
+
+    wide = sql_compile.compile_template(membership([1, 2, 3, 4]), _TRAVELERS, POSTGRES)
+    narrow = sql_compile.compile_template(membership([5, 6]), _TRAVELERS, POSTGRES)
+
+    forms = [
+        group.form
+        for template in (wide, narrow)
+        for group in template.compiled.statement.execution_value_positions()
+    ]
+    assert len(forms) == 6
+    assert {id(form) for form in forms} == {id(forms[0])}
+
+
 def test_a_deferred_root_renders_the_current_operands_as_direct_compilation_binds_them() -> None:
     template = sql_compile.compile_template(
         _sourced_root(_traveler_query(_traveler_predicate("Ada", 1, "x_Y"))), _TRAVELERS, POSTGRES

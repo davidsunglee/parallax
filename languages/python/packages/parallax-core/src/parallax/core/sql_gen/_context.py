@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from bisect import bisect_left
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
+from functools import cache
 from itertools import islice
 from typing import ClassVar, Final, Literal, Protocol, cast
 
@@ -346,6 +347,17 @@ class GatheredKeysForm:
     @property
     def expands(self) -> bool:
         return not self.array
+
+
+# Forms are stateless, so equivalent ones are shared: a template retains one
+# form per distinct classification rather than one per bound operand.
+managed_operand_form: Final[Callable[[NeutralType], ManagedOperandForm]] = cache(ManagedOperandForm)
+comparison_text_form: Final[Callable[[NeutralType], ComparisonTextForm]] = cache(ComparisonTextForm)
+affix_form: Final[Callable[[StringOp, bool], AffixForm]] = cache(AffixForm)
+continuation_carrier_form: Final[
+    Callable[[NeutralType, _ScalarBindForm], ContinuationCarrierForm]
+] = cache(ContinuationCarrierForm)
+gathered_keys_form: Final[Callable[[NeutralType, bool], GatheredKeysForm]] = cache(GatheredKeysForm)
 
 
 type ExecutionValueForm = (

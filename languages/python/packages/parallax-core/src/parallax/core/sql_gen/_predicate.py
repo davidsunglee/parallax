@@ -48,10 +48,12 @@ from parallax.core.sql_gen._context import (
     AffixForm,
     ComparisonTextForm,
     ExecutionValueForm,
-    GatheredKeysForm,
-    ManagedOperandForm,
     SqlGenError,
     StatementBuilder,
+    affix_form,
+    comparison_text_form,
+    gathered_keys_form,
+    managed_operand_form,
 )
 from parallax.core.sql_gen._context import table_layout as _table_layout
 
@@ -781,7 +783,7 @@ def _render_membership(
         if tag != "in":  # pragma: no cover - generated child reads are positive
             raise SqlGenError("a deferred key set supports only positive membership")
         array = scope.dialect.name == "postgres"
-        scope.ctx.bind_deferred(("keys",), GatheredKeysForm(values.neutral_type, array))
+        scope.ctx.bind_deferred(("keys",), gathered_keys_form(values.neutral_type, array))
         if array:
             return f"{subject.compared} = any(?)"
         return f"{subject.compared} in ({EXPANDING_PLACEHOLDER})"
@@ -815,9 +817,9 @@ def _bind_operand(
         if framework:  # pragma: no cover - only generated comparisons bind a framework value
             raise SqlGenError("a framework operand is never an authored execution value")
         form: ExecutionValueForm = (
-            ComparisonTextForm(subject.type)
+            comparison_text_form(subject.type)
             if subject.document_resident and subject.text_compared
-            else ManagedOperandForm(subject.type)
+            else managed_operand_form(subject.type)
         )
         scope.ctx.bind_deferred(source, form)
     elif not subject.document_resident:
@@ -867,7 +869,7 @@ def _render_like(
     """
     needs_escape = kind not in ("like", "notLike") and affix_needs_escape(value)
     if source is not None:
-        scope.ctx.bind_deferred(source, AffixForm(kind, case_insensitive))
+        scope.ctx.bind_deferred(source, affix_form(kind, case_insensitive))
     else:
         scope.ctx.bind_comparison_text(_pattern(kind, value, case_insensitive), STRING)
     subject_expr = f"lower({subject_sql})" if case_insensitive else subject_sql
