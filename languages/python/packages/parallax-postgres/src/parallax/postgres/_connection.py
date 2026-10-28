@@ -725,15 +725,16 @@ def _write_in_order(
 def _displaced_control_flow(
     escaped: Exception, ambient: BaseException | None
 ) -> BaseException | None:
-    """The control-flow exception raised during the write that ``escaped``
+    """The control-flow exception raised during an operation that ``escaped``
     took the place of, if any.
 
     Psycopg answers an interrupt while it waits by cancelling the statement and
-    collecting what remains. A count cursor records the cancellation rather
-    than raising it, so a failure later in that collection, such as aborted
-    prepared-cache maintenance, escapes instead and carries the interrupt only
-    as context. ``ambient`` is the exception already being handled when the
-    write began; its context chain predates the write.
+    collecting what remains, so a failure in that collection — a session lost
+    meanwhile, or, under a count cursor that records the cancellation rather
+    than raising it, aborted prepared-cache maintenance — escapes instead and
+    carries the interrupt only as context. ``ambient`` is the exception already
+    being handled when the operation began; its context chain predates the
+    operation.
     """
     context = escaped.__context__
     while context is not None and context is not ambient:

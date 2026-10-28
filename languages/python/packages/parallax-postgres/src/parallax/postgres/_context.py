@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from time import monotonic
 from types import TracebackType
@@ -29,7 +30,11 @@ from parallax.postgres._authorization import (
     _role_statement,  # pyright: ignore[reportPrivateUsage] - the one role installation, run as the lease's first send
 )
 from parallax.postgres._authorization import restore_role as _restore_role
-from parallax.postgres._connection import ConnectionEstablishment, PostgresConnection
+from parallax.postgres._connection import (
+    ConnectionEstablishment,
+    PostgresConnection,
+    _displaced_control_flow,  # pyright: ignore[reportPrivateUsage] - the adapter's one reading of an interrupt a driver failure displaced
+)
 
 if TYPE_CHECKING:
     from parallax.postgres._connection import (
@@ -405,12 +410,16 @@ class PostgresConnectionContext:
         submission was in progress, a connection the driver now reports closed
         — which a broken one is — and an operation whose repetition can have no
         effect. An error's code, a suspect mark, and the shape of a result grant
-        nothing. The opportunity is spent before anything else happens, by a
-        failure as by a return, so the second invocation can never earn
+        nothing. A driver failure that took the place of an interrupt raised
+        while the submission waited grants nothing either: that interrupt
+        propagates as itself, rather than being answered by a resubmission that
+        could succeed. The opportunity is spent before anything else happens,
+        by a failure as by a return, so the second invocation can never earn
         another; and that invocation runs outside the failure it answers, so
         whatever it raises is its own.
         """
         native = self._current_native()
+        ambient = sys.exception()
         try:
             result = operation(native, self, *prepared)
         except BaseException as failure:
@@ -418,16 +427,17 @@ class PostgresConnectionContext:
             if submitting:
                 self._first_send_state = "spent"
             if not (
-                submitting
-                and replay_safe
-                and isinstance(failure, psycopg.Error)
-                and native.closed
-                and self._replace_native()
+                submitting and replay_safe and isinstance(failure, psycopg.Error) and native.closed
             ):
+                raise
+            displaced = _displaced_control_flow(failure, ambient)
+            if displaced is None and not self._replace_native():
                 raise
         else:
             self._complete_first_send()
             return result
+        if displaced is not None:
+            raise displaced
         return operation(self._current_native(), self, *prepared)
 
     def _replace_native(self) -> bool:
