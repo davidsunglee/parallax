@@ -17,7 +17,6 @@ from parallax.core._execution._unit_work.non_temporal_settlement import (
     VersionOverlay,
     non_temporal_step,
 )
-from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.ranges import (
     DeferredTemporalRange,
     settle_opening,
@@ -152,8 +151,7 @@ class WritePlanCompiler:
     claims, and proposed effects.
 
     Constructed once per accepted Metamodel by the planner that owns it, with
-    that model, its write preparation, the Inheritance and Temporal facets it
-    compiled, the
+    that model, the Inheritance and Temporal facets it compiled, the
     concurrency and audit strategies the composition layer wired, and the
     model's write payload preparer, which judges whether produced temporal
     rows merge.
@@ -167,7 +165,6 @@ class WritePlanCompiler:
         "_families",
         "_model",
         "_payloads",
-        "_preparation",
         "_settled",
         "_temporal_facet",
     )
@@ -175,7 +172,6 @@ class WritePlanCompiler:
     def __init__(
         self,
         model: Metamodel,
-        preparation: WritePreparation,
         families: InheritanceFacet,
         temporal_facet: TemporalFacet,
         *,
@@ -185,7 +181,6 @@ class WritePlanCompiler:
         payloads: WritePayloadPreparer,
     ) -> None:
         self._model = model
-        self._preparation = preparation
         self._families = families
         self._temporal_facet = temporal_facet
         self._concurrency = concurrency

@@ -13,7 +13,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
     derive_keyed_instruction,
 )
-from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
@@ -97,10 +96,9 @@ class WritePlanner:
     write's one statement. No caller sequences coalescing, batching, ordering, temporal
     expansion, observation validation, instant acquisition, or audit by hand.
 
-    The compiler it constructs here is its own, built over the same model,
-    write preparation, and compiled facets and living exactly as long: a
-    prepared Model Selection carries a mutually consistent model, preparation,
-    codec, planner, and compiler, and
+    The compiler it constructs here is its own, built over the same model and
+    compiled facets and living exactly as long: a prepared Model Selection
+    carries a mutually consistent model, codec, planner, and compiler, and
     publication replaces the whole selection rather than rebinding any of
     them. So does the write payload preparer it is wired with, which every plan
     it answers is lowered through (:attr:`payloads`).
@@ -114,7 +112,6 @@ class WritePlanner:
         "_families",
         "_model",
         "_payloads",
-        "_preparation",
         "_relationships",
         "_settled",
         "_temporal_facet",
@@ -124,16 +121,12 @@ class WritePlanner:
         self,
         model: Metamodel,
         *,
-        preparation: WritePreparation,
         batching: BatchingStrategy,
         concurrency: ConcurrencyStrategy,
         audit: AuditStrategy,
         payloads: WritePayloadPreparer,
     ) -> None:
-        if preparation.meta is not model:
-            raise ValueError("a Write Planner plans the writes its own model's preparation admits")
         self._model = model
-        self._preparation = preparation
         self._families = inheritance.view(model)
         self._temporal_facet = temporal_read.view(model)
         self._relationships = relationship.view(model)
@@ -148,7 +141,6 @@ class WritePlanner:
         )
         self._compiler = WritePlanCompiler(
             model,
-            preparation,
             self._families,
             self._temporal_facet,
             concurrency=concurrency,

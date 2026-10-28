@@ -521,8 +521,12 @@ def typed_converter(declared: NeutralType) -> ScalarConverter:
     An exact built-in carrier takes its type's own rule directly; every other
     input, a subclass or an excluded carrier included, takes the general rule.
     """
-    factory = _TYPED_CONVERTERS.get(type(declared))
-    return _general_typed_converter(declared) if factory is None else factory(declared)
+    shared = _NULLARY_TYPED_CONVERTERS.get(type(declared))
+    if shared is not None:
+        return shared
+    if isinstance(declared, Decimal):
+        return _typed_decimal(declared)
+    return _general_typed_converter(declared)
 
 
 def _general_typed_converter(declared: NeutralType) -> ScalarConverter:
@@ -632,39 +636,36 @@ def _typed_timestamp(declared: Timestamp) -> ScalarConverter:
     return convert
 
 
-def _typed_json(declared: Json) -> ScalarConverter:
+def _typed_json(value: object) -> object:
     # The package defines the frozen carriers after importing this module.
     from parallax.core.base import adopt_frozen_map
 
-    def convert(value: object) -> object:
-        if value is not None:
-            try:
-                return normalize_json_carrier(
-                    value,
-                    normalize_scalar=_json_membership_scalar,
-                    seal_list=tuple,
-                    seal_dict=adopt_frozen_map,
-                )
-            except JsonCarrierFailure:
-                pass
-        raise _typed_mismatch(value, declared)
-
-    return convert
+    if value is not None:
+        try:
+            return normalize_json_carrier(
+                value,
+                normalize_scalar=_json_membership_scalar,
+                seal_list=tuple,
+                seal_dict=adopt_frozen_map,
+            )
+        except JsonCarrierFailure:
+            pass
+    raise _typed_mismatch(value, JSON)
 
 
-_TYPED_CONVERTERS: Final[_Mapping[type[NeutralType], _Callable[[Any], ScalarConverter]]] = {
-    Boolean: _typed_boolean,
-    Int32: _typed_integer,
-    Int64: _typed_integer,
-    Float32: _typed_float,
-    Float64: _typed_float,
-    Decimal: _typed_decimal,
-    String: _typed_string,
-    Bytes: _typed_exact(bytes),
-    Date: _typed_exact(_dt.date),
-    Time: _typed_time,
-    Timestamp: _typed_timestamp,
-    Uuid: _typed_exact(_uuid.UUID),
+# Every variant but Decimal is nullary, so one converter serves each wherever it is declared.
+_NULLARY_TYPED_CONVERTERS: Final[_Mapping[type[NeutralType], ScalarConverter]] = {
+    Boolean: _typed_boolean(BOOLEAN),
+    Int32: _typed_integer(INT32),
+    Int64: _typed_integer(INT64),
+    Float32: _typed_float(FLOAT32),
+    Float64: _typed_float(FLOAT64),
+    String: _typed_string(STRING),
+    Bytes: _typed_exact(bytes)(BYTES),
+    Date: _typed_exact(_dt.date)(DATE),
+    Time: _typed_time(TIME),
+    Timestamp: _typed_timestamp(TIMESTAMP),
+    Uuid: _typed_exact(_uuid.UUID)(UUID),
     Json: _typed_json,
 }
 

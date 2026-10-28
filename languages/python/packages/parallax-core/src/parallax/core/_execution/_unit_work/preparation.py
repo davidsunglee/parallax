@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
+from typing import Final
 
 from parallax.core import inheritance
 from parallax.core.base import typed_converter
@@ -10,6 +10,7 @@ from parallax.core.document_codec._plan import (
     BORROWED_DOCUMENTS,
     MAPPING_DOCUMENTS,
     AuthoringCatalog,
+    AuthoringLane,
     AuthoringPlan,
 )
 from parallax.core.metamodel import (
@@ -21,22 +22,30 @@ from parallax.core.metamodel import (
 from parallax.core.wire._codec import wire_converter
 from parallax.core.write_plan.managed_row import RowSelection
 
-__all__ = ["EntityPreparation", "WritePreparation"]
+__all__ = ["TYPED_LANE", "WIRE_LANE", "EntityPreparation", "WritePreparation"]
+
+TYPED_LANE: Final = 0
+"""The authoring lane of a developer's native carriers."""
+WIRE_LANE: Final = 1
+"""The authoring lane of serialized Wire literals."""
+_LANES: Final = (
+    AuthoringLane(typed_converter, BORROWED_DOCUMENTS),
+    AuthoringLane(wire_converter, MAPPING_DOCUMENTS),
+)
 
 
 @dataclass(frozen=True, slots=True)
 class EntityPreparation:
     """What every write of one Entity is prepared against.
 
-    ``typed`` and ``wire`` walk the Entity's member shape against each lane's
-    converters. ``insert_required`` marks the members an opening row must
+    ``plan`` walks the Entity's member shape against each lane's converters.
+    ``insert_required`` marks the members an opening row must
     state with a value, and ``framework_owned`` the members the framework
     supplies, which a Typed row never authors.
     """
 
     selection: RowSelection
-    typed: AuthoringPlan
-    wire: AuthoringPlan
+    plan: AuthoringPlan
     insert_required: int
     framework_owned: int
 
@@ -56,15 +65,14 @@ class WritePreparation:
         self.meta = meta
         self.absent = absent
         families = inheritance.view(meta)
-        typed = AuthoringCatalog(typed_converter, BORROWED_DOCUMENTS, absent=absent)
-        wire = AuthoringCatalog(wire_converter, MAPPING_DOCUMENTS, absent=absent)
+        catalog = AuthoringCatalog(_LANES, absent=absent)
         entities: dict[EntityIdentity, EntityPreparation] = {}
         for entity in meta.entities:
             view = families.entity(entity.identity)
             if view is None:  # pragma: no cover - the facet covers every accepted Entity
                 raise ValueError(f"{entity.identity.canonical}: no Inheritance Facet view")
-            entities[entity.identity] = _entity_preparation(view, typed, wire, absent)
-        self._entities: Mapping[EntityIdentity, EntityPreparation] = MappingProxyType(entities)
+            entities[entity.identity] = _entity_preparation(view, catalog, absent)
+        self._entities: Mapping[EntityIdentity, EntityPreparation] = entities
 
     def entity(self, identity: EntityIdentity) -> EntityPreparation:
         return self._entities[identity]
@@ -72,8 +80,7 @@ class WritePreparation:
 
 def _entity_preparation(
     view: inheritance.InheritanceEntityView,
-    typed: AuthoringCatalog,
-    wire: AuthoringCatalog,
+    catalog: AuthoringCatalog,
     absent: object,
 ) -> EntityPreparation:
     selection = view.member_selection
@@ -87,8 +94,7 @@ def _entity_preparation(
             required |= 1 << position
     return EntityPreparation(
         selection=RowSelection(selection, absent),
-        typed=typed.plan(selection.shape),
-        wire=wire.plan(selection.shape),
+        plan=catalog.plan(selection.shape),
         insert_required=required,
         framework_owned=framework_owned,
     )
