@@ -35,8 +35,11 @@ from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import (
     DRIVER_MANAGED,
     RESOURCE_LOGGER_NAME,
+    BeginFailed,
+    Committed,
     ConnectionAcquisitionError,
     CredentialResolutionError,
+    DatabaseConnection,
     DatabaseStartupError,
     Invalidated,
     OrderedWriteResult,
@@ -45,6 +48,7 @@ from parallax.core.db_port import (
     Password,
     ReleaseUnconfirmed,
     Returned,
+    Row,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresRole
 from parallax.postgres._connection import ConnectionEstablishment, IncompatibleSessionError
@@ -115,6 +119,28 @@ class _FakePgConn:
         return int(self._connection.status)
 
 
+class _FakeTransaction:
+    """A driver transaction context whose entry raises the connection's begin
+    failure, leaving the session idle as a server-refused ``BEGIN`` does."""
+
+    def __init__(self, connection: _FakeConnection) -> None:
+        self._connection = connection
+
+    def __enter__(self) -> _FakeTransaction:
+        connection = self._connection
+        connection.statements.append("BEGIN")
+        if connection.begin_error is not None:
+            raise connection.begin_error
+        connection.status = TransactionStatus.INTRANS
+        return self
+
+    def __exit__(self, exc_type: object, exc: BaseException | None, tb: object) -> bool:
+        del exc_type, tb
+        self._connection.statements.append("COMMIT" if exc is None else "ROLLBACK")
+        self._connection.status = TransactionStatus.IDLE
+        return False
+
+
 class _FakeConnection:
     """One physical connection: the state cleanup inspects and the failures it meets."""
 
@@ -127,8 +153,11 @@ class _FakeConnection:
         close_error: Exception | None = None,
         execute_error: BaseException | None = None,
         reset_error: Exception | None = None,
+        begin_error: Exception | None = None,
     ) -> None:
         self.rows = rows if rows is not None else [dict(_PROBE_ROW)]
+        self.begin_error = begin_error
+        self.characteristics: list[tuple[str, object]] = []
         self.status = status
         self.status_error = status_error
         self.close_error = close_error
@@ -153,6 +182,28 @@ class _FakeConnection:
         cursor = self.cursor()
         cursor.execute(sql, binds)
         return cursor
+
+    @property
+    def isolation_level(self) -> object:
+        return None
+
+    @isolation_level.setter
+    def isolation_level(self, value: object) -> None:
+        self.characteristics.append(("isolation_level", value))
+
+    @property
+    def read_only(self) -> object:
+        return None
+
+    @read_only.setter
+    def read_only(self, value: object) -> None:
+        self.characteristics.append(("read_only", value))
+
+    def transaction(self) -> _FakeTransaction:
+        return _FakeTransaction(self)
+
+    def rollback(self) -> None:
+        return
 
     def close(self) -> None:
         self.closes += 1
@@ -675,6 +726,46 @@ def test_leaving_a_scope_revokes_the_execution_it_yielded() -> None:
     with pytest.raises(RuntimeError, match="scope has ended"):
         scoped.execute("select 1", [])
     assert connection.statements == ["select 1"]
+
+
+def test_a_refused_begin_disposes_of_its_session_and_later_work_takes_a_fresh_one() -> None:
+    # The server refused the command and reports the session idle, but the
+    # driver still counts the context that failed to enter, so the session is
+    # disposed of rather than reset or offered for reuse; the next acquisition
+    # runs on another physical connection.
+    refused = _FakeConnection(begin_error=psycopg.errors.SyntaxError("syntax error"))
+    fresh = _FakeConnection(rows=[])
+    pool = _pool(refused, fresh)
+    ran: list[str] = []
+
+    def never_runs(_port: DatabaseConnection) -> None:
+        ran.append("body")
+
+    def reads(port: DatabaseConnection) -> list[Row]:
+        return port.execute("select 1", [])
+
+    first = _context(pool)
+    with first as scoped:
+        outcome = scoped.transaction(never_runs, isolation="serializable", access_mode="read_only")
+    second = _context(pool)
+    with second as scoped:
+        assert scoped.transaction(reads) == Committed([])
+
+    assert isinstance(outcome, BeginFailed)
+    assert ran == []
+    assert refused.status == TransactionStatus.IDLE
+    assert refused.characteristics == [
+        ("isolation_level", psycopg.IsolationLevel.SERIALIZABLE),
+        ("read_only", True),
+    ]
+    assert isinstance(first.cleanup_result, Invalidated)
+    assert [(issue.phase, issue.code) for issue in first.cleanup_result.issues] == [
+        ("inspect", "suspect")
+    ]
+    assert refused.closes == 1
+    assert fresh.statements == ["BEGIN", "select 1", "COMMIT"]
+    assert second.cleanup_result == Returned()
+    assert pool.returned == [refused, fresh]
 
 
 def test_each_acquisition_yields_fresh_execution_access() -> None:
