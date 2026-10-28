@@ -1310,6 +1310,21 @@ def _planned_marker(
     )
 
 
+def _row_markers(
+    entity: EntityMetadata,
+    position: inheritance.InheritanceEntityView,
+    context: _MarkerContext | None,
+    converter: _LeafConverter,
+    row: Mapping[str, object],
+) -> _RowMarkers | None:
+    """The marker judgment for ``row``, or ``None`` where no member it states
+    is shaped as a DB-computed marker."""
+    for value in row.values():
+        if _is_root_marker(value):
+            return _RowMarkers(entity, position, context, converter)
+    return None
+
+
 class _RowMarkers:
     """The planned values one name-keyed row's DB-computed markers stand for,
     each judged at its member's judgment point.
@@ -1816,7 +1831,7 @@ def _prepare_target_payload(
             identity.value,
             model,
             known_failures=identity.failures,
-            markers=_RowMarkers(entity, position, None, converter),
+            markers=_row_markers(entity, position, None, converter, identity.value),
         )
         return identity.value, False
     prepared = _assigned_row(
@@ -1885,7 +1900,6 @@ def _assigned_row(
     """
     selection = position.member_selection
     key = position.primary_key.identity.name
-    markers = _RowMarkers(entity, position, _assignment_context(model, entity), converter)
     transformed = _transform_row(
         selection,
         entity,
@@ -1895,6 +1909,9 @@ def _assigned_row(
         fill_missing_many=replaces,
     )
     prepared = _completed(entity, position, transformed.value) if replaces else transformed.value
+    markers = _row_markers(
+        entity, position, _assignment_context(model, entity), converter, prepared
+    )
     for name, value in prepared.items():
         if name != key:
             failure = _member_failure(selection, name, transformed.failures)
@@ -1905,13 +1922,14 @@ def _assigned_row(
                 known_violation=failure,
                 known_value_valid=failure is None,
             )
-        markers.judged(name, value)
+        if markers is not None:
+            markers.judged(name, value)
     if transformed.failures:
         # Every other check a sparse row's validation makes is one the
         # judgement above already made, since no `many` member is nullable;
         # an authoring failure, the key's included, is what is left to report.
         validate_write(entity, prepared, model, known_failures=transformed.failures)
-    return markers.row(prepared)
+    return prepared if markers is None else markers.row(prepared)
 
 
 def _completed(
@@ -2044,7 +2062,41 @@ def _prepare_keyed_payload(
             tuple(projected_row(row_selection, row) for row in replaced),
             valid_time_window,
         )
-    transformed = tuple(
+    rows_by_name = _addressed_rows(
+        instruction.rows,
+        model,
+        entity,
+        position,
+        mutation,
+        converter=converter,
+        source_access=source_access,
+        authored_members=authored_members,
+    )
+    return _prepared_keyed_instruction(
+        mutation,
+        _states_beside(key, rows_by_name),
+        entity,
+        tuple(projected_row(row_selection, row) for row in rows_by_name),
+        valid_time_window,
+    )
+
+
+def _addressed_rows(
+    rows: tuple[Mapping[str, object], ...],
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    position: inheritance.InheritanceEntityView,
+    mutation: KeyedMutation,
+    *,
+    converter: _LeafConverter,
+    source_access: SourceAccess,
+    authored_members: Set[str] | None,
+) -> tuple[Mapping[str, object], ...]:
+    """An amendment's or destruction's rows, each judged as the sparse row it
+    is, every assigned member of a single explicit row judged as an
+    assignment first."""
+    selection = position.member_selection
+    transformed = [
         _transform_row(
             selection,
             entity,
@@ -2053,16 +2105,19 @@ def _prepare_keyed_payload(
             source_access=source_access,
             fill_missing_many=False,
         )
-        for row in instruction.rows
-    )
+        for row in rows
+    ]
     context = None if mutation in DESTRUCTIVE_MUTATIONS else _assignment_context(model, entity)
-    markers = tuple(_RowMarkers(entity, position, context, converter) for _ in transformed)
+    markers = [
+        _row_markers(entity, position, context, converter, result.value) for result in transformed
+    ]
     if authored_members is not None:
         if len(transformed) != 1:
             raise WriteInstructionError(
                 "a keyed assignment set applies only to one addressed write row"
             )
         (only,) = transformed
+        (only_markers,) = markers
         for name in authored_members:
             failure = _member_failure(selection, name, only.failures)
             _judge_prepared_assignment(
@@ -2072,25 +2127,17 @@ def _prepare_keyed_payload(
                 known_violation=failure,
                 known_value_valid=failure is None,
             )
-            markers[0].judged(name, only.value[name])
+            if only_markers is not None:
+                only_markers.judged(name, only.value[name])
     for result, row_markers in zip(transformed, markers, strict=True):
         validate_write(
-            entity,
-            result.value,
-            model,
-            known_failures=result.failures,
-            markers=row_markers,
+            entity, result.value, model, known_failures=result.failures, markers=row_markers
         )
-    rows_by_name = tuple(
-        row_markers.row(result.value)
-        for result, row_markers in zip(transformed, markers, strict=True)
-    )
-    return _prepared_keyed_instruction(
-        mutation,
-        _states_beside(key, rows_by_name),
-        entity,
-        tuple(projected_row(row_selection, row) for row in rows_by_name),
-        valid_time_window,
+    return tuple(
+        [
+            result.value if row_markers is None else row_markers.row(result.value)
+            for result, row_markers in zip(transformed, markers, strict=True)
+        ]
     )
 
 
