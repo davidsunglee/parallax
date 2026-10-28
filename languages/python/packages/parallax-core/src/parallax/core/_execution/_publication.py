@@ -4,6 +4,7 @@ import threading
 from dataclasses import dataclass
 from typing import NoReturn
 
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.strategy import EvidencePolicyLookup
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
@@ -71,15 +72,17 @@ class SelectedReadModel:
 class SelectedWriteModel:
     """The write projection of one Model Selection: the same edition and the
     exact same cataloged model as its read projection, with the Entity Row
-    Codec every write derives its rows through, the Write Planner every flush
-    plans through, and the write-evidence policy every keyed write is admitted
-    under — all derived from that one model — and the same borrowed class index
-    as its read projection.
+    Codec a Typed write acquires the rows it has not yet authored through, the
+    Write Preparation every write is admitted against, the Write Planner every
+    flush plans through, and the write-evidence policy every keyed write is
+    admitted under — all derived from that one model — and the same borrowed
+    class index as its read projection.
     """
 
     edition: str
     model: CatalogedModel
     codec: EntityRowCodec
+    preparation: WritePreparation
     planner: WritePlanner
     evidence_policy_for: EvidencePolicyLookup
     classes: ClassIndex | None
@@ -138,6 +141,7 @@ def select_model(
     classes: ClassIndex | None,
     construction: EntityGraphConstruction | None,
     codec: EntityRowCodec,
+    preparation: WritePreparation,
     planner: WritePlanner,
     evidence_policy_for: EvidencePolicyLookup,
 ) -> ModelSelection:
@@ -162,6 +166,7 @@ def select_model(
         edition=checked,
         model=catalog,
         codec=codec,
+        preparation=preparation,
         planner=planner,
         evidence_policy_for=evidence_policy_for,
         classes=classes,

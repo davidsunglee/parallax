@@ -36,7 +36,7 @@ from parallax.snapshot._handle._wire_writes import (
 )
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
-from tests._support.model_capabilities import cataloged_for
+from tests._support.model_capabilities import cataloged_for, preparation_for
 from tests.unit._transact_support import (
     ACCOUNT,
     db_for,
@@ -134,7 +134,9 @@ def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
     source.capture("amend")
 
     resolved = source.resolve(_meta(ACCOUNT), "amend")
-    prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
+    prepared = source.prepare(
+        preparation_for(_meta(ACCOUNT)), "amend", resolved, valid_from=None, until=None
+    )
 
     assert resolved.entity.identity == mm.Account.identity
     assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
@@ -150,7 +152,9 @@ def test_the_node_an_insert_answered_names_the_object_its_authority_opened() -> 
     source.capture("amend")
 
     resolved = source.resolve(_meta(ACCOUNT), "amend")
-    prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
+    prepared = source.prepare(
+        preparation_for(_meta(ACCOUNT)), "amend", resolved, valid_from=None, until=None
+    )
 
     assert resolved.entity.identity == mm.Account.identity
     assert prepared.rows[0] == {"id": 7, "balance": Decimal("6.00")}
@@ -165,7 +169,9 @@ def test_prepare_states_every_authored_member_as_its_literal_assignment() -> Non
     source.capture("amend")
     resolved = source.resolve(_meta(ACCOUNT), "amend")
 
-    prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
+    prepared = source.prepare(
+        preparation_for(_meta(ACCOUNT)), "amend", resolved, valid_from=None, until=None
+    )
 
     assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigns
@@ -176,7 +182,9 @@ def test_a_member_equal_to_what_the_source_published_is_still_assigned() -> None
     source.capture("amend")
     resolved = source.resolve(_meta(ACCOUNT), "amend")
 
-    prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
+    prepared = source.prepare(
+        preparation_for(_meta(ACCOUNT)), "amend", resolved, valid_from=None, until=None
+    )
 
     assert prepared.rows[0] == {"id": 1, "balance": Decimal("100.00")}
     assert prepared.assigns
@@ -189,7 +197,9 @@ def test_a_stated_key_naming_the_published_object_addresses_rather_than_assigns(
     source.capture("amend")
     resolved = source.resolve(_meta(ACCOUNT), "amend")
 
-    prepared = source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
+    prepared = source.prepare(
+        preparation_for(_meta(ACCOUNT)), "amend", resolved, valid_from=None, until=None
+    )
 
     assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigns
@@ -201,7 +211,9 @@ def test_a_stated_key_naming_another_object_is_refused_while_preparing() -> None
     resolved = source.resolve(_meta(ACCOUNT), "amend")
 
     with pytest.raises(instructions.WriteInstructionError, match="another object"):
-        source.prepare(_meta(ACCOUNT), "amend", resolved, valid_from=None, until=None)
+        source.prepare(
+            preparation_for(_meta(ACCOUNT)), "amend", resolved, valid_from=None, until=None
+        )
 
 
 def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> None:
@@ -209,7 +221,9 @@ def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> No
     source.capture("delete")
     resolved = source.resolve(_meta(ACCOUNT), "delete")
 
-    prepared = source.prepare(_meta(ACCOUNT), "delete", resolved, valid_from=None, until=None)
+    prepared = source.prepare(
+        preparation_for(_meta(ACCOUNT)), "delete", resolved, valid_from=None, until=None
+    )
 
     assert prepared.rows[0] == {"id": 1}
     assert not prepared.assigns
@@ -232,7 +246,7 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
     source.capture("insert")
 
     prepared = source.prepare(
-        _meta(ACCOUNT),
+        preparation_for(_meta(ACCOUNT)),
         "insert",
         source.resolve(_meta(ACCOUNT), "insert"),
         valid_from=None,
@@ -250,14 +264,24 @@ def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
     stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
 
     prepared = source.prepare(
-        _meta(WHERE_POSITION_META), "insert", resolved, valid_from=stated, until=None
+        preparation_for(_meta(WHERE_POSITION_META)),
+        "insert",
+        resolved,
+        valid_from=stated,
+        until=None,
     )
 
     assert prepared.valid_time_window == TimeInterval(_TX_START, INFINITY)
     with pytest.raises(
         instructions.WriteInstructionError, match="a bitemporal 'insert' requires valid_from"
     ):
-        source.prepare(_meta(WHERE_POSITION_META), "insert", resolved, valid_from=None, until=None)
+        source.prepare(
+            preparation_for(_meta(WHERE_POSITION_META)),
+            "insert",
+            resolved,
+            valid_from=None,
+            until=None,
+        )
 
 
 def test_an_insert_source_refuses_a_framework_owned_member_before_it_authors() -> None:
@@ -268,4 +292,6 @@ def test_an_insert_source_refuses_a_framework_owned_member_before_it_authors() -
     resolved = source.resolve(_meta(ACCOUNT), "insert")
 
     with pytest.raises(instructions.WriteInstructionError, match="framework-owned"):
-        source.prepare(_meta(ACCOUNT), "insert", resolved, valid_from=None, until=None)
+        source.prepare(
+            preparation_for(_meta(ACCOUNT)), "insert", resolved, valid_from=None, until=None
+        )

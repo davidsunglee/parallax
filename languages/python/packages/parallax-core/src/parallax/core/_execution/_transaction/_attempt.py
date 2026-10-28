@@ -575,7 +575,9 @@ class TxnAttempt(_TxnAttemptBase):
         Validation Order, its ``until`` selecting the bounded verb as
         :meth:`target_write`'s does."""
         mutation, bound = _bounded_mutation(verb, until)
-        keyed_write(self._write.model, self._uow, self._lifecycle, source, mutation, until=bound)
+        keyed_write(
+            self._write.preparation, self._uow, self._lifecycle, source, mutation, until=bound
+        )
 
     def keyed_insert(
         self,
@@ -590,7 +592,7 @@ class TxnAttempt(_TxnAttemptBase):
         the bounded insert."""
         mutation, bound = _window_mutation("insert", "insertUntil", until)
         return keyed_insert(
-            self._write.model,
+            self._write.preparation,
             self._uow,
             self._lifecycle,
             source,

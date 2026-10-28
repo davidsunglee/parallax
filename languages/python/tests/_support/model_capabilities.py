@@ -1,6 +1,6 @@
 """The model-bound collaborators, built directly over a Domain Model.
 
-Production derives all three inside ``prepare_model`` and retains them on a
+Production derives each of these inside ``prepare_model`` and retains them on a
 Model Selection. A suite grading one collaborator on its own — the layouts, the
 row codec, or the graph construction — wants that one over a model it names,
 without a selection, an edition, or the composition root in reach; these build
@@ -9,11 +9,19 @@ exactly what preparation builds, from the same two accessors, and nothing else.
 
 from __future__ import annotations
 
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
+from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index, model_of
+from parallax.core.metamodel import Metamodel
 
-__all__ = ["cataloged_for", "graph_construction_for", "row_codec_for"]
+__all__ = [
+    "cataloged_for",
+    "graph_construction_for",
+    "preparation_for",
+    "row_codec_for",
+]
 
 
 def cataloged_for(model: DomainModel) -> CatalogedModel:
@@ -32,3 +40,9 @@ def graph_construction_for(model: DomainModel) -> EntityGraphConstruction:
     if classes is None:
         raise ValueError("a descriptor-backed Domain Model composed no class to construct with")
     return EntityGraphConstruction(cataloged_for(model), classes)
+
+
+def preparation_for(model: DomainModel | Metamodel) -> WritePreparation:
+    """The write preparation over ``model``'s accepted Metamodel."""
+    meta = model_of(model) if isinstance(model, DomainModel) else model
+    return WritePreparation(meta, absent=ABSENT)

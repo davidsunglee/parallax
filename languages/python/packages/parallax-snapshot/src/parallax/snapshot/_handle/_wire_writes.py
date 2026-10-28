@@ -32,6 +32,7 @@ from parallax.core._execution._unit_work.instructions import (
     TargetMutation,
     WriteAssignment,
 )
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core.execution_lifecycle._activity import refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.object_query._fluent import ObjectQuery
@@ -478,7 +479,7 @@ class WireKeyedWriteSource:
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedWriteSource,
         /,
@@ -496,6 +497,7 @@ class WireKeyedWriteSource:
         replacement handed no document states the source's published writable
         state instead, which stands alone exactly as a stated document does.
         """
+        model = preparation.meta
         node = retained(self._source)
         entity = resolved.entity
         object_key = resolved.object_key
@@ -570,7 +572,7 @@ class WireKeyedInsertSource:
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedInsert,
         /,
@@ -583,7 +585,7 @@ class WireKeyedInsertSource:
         interval bounds are stamped at flush from the Clock Strategy and the
         version is derived."""
         return _prepared_wire_write(
-            model,
+            preparation.meta,
             mutation,
             resolved.entity,
             self._payload,

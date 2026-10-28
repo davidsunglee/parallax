@@ -66,6 +66,7 @@ from parallax.conformance import case_format, engine
 from parallax.core._execution import _planning, _write_lowering
 from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work.instructions import PreparedPredicateInstruction
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.strategy import (
     AuditStrategy,
     BatchingStrategy,
@@ -227,13 +228,19 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     def construct(
         model: Metamodel,
         *,
+        preparation: WritePreparation,
         batching: BatchingStrategy,
         concurrency: ConcurrencyStrategy,
         audit: AuditStrategy,
         payloads: WritePayloadPreparer,
     ) -> WritePlanner:
         planner = WritePlanner(
-            model, batching=batching, concurrency=concurrency, audit=audit, payloads=payloads
+            model,
+            preparation=preparation,
+            batching=batching,
+            concurrency=concurrency,
+            audit=audit,
+            payloads=payloads,
         )
         seen.built.append(_Built(planner=planner, audit=audit))
         return planner

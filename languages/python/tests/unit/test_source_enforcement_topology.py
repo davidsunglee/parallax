@@ -214,7 +214,6 @@ def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() ->
 # resolves Python member names through.
 ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.core._execution._transaction._attempt", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.core._execution._keyed_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core._execution._page_origins", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.core._execution._planning", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core._execution._planning", "_model"): frozenset({"class_index", "model_of"}),
