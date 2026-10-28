@@ -23,7 +23,7 @@ from parallax.core.base import (
     coerce_neutral_input,
     normalize_instant,
 )
-from parallax.core.document_codec._plan import AuthoringRefusal, MemberCheck, RootPolicy
+from parallax.core.document_codec._plan import AuthoringRefusal, RootPolicy
 from parallax.core.metamodel import (
     AttributeMetadata,
     AuthoringViolation,
@@ -1171,7 +1171,7 @@ def prepare_typed_keyed_write(
         )
         if target.inheritance is not None:
             _judge_subtype_shape(model, target, _named_pairs(entry, (*addressed, *assigned_pairs)))
-        row = _assigned_row(model, entry, target, assigned_pairs, addressed, lane=TYPED_LANE)
+        row = _assigned_row(model, entry, target, (*assigned_pairs, *addressed), lane=TYPED_LANE)
     else:
         stated_pairs = tuple(pairs)
         if target.inheritance is not None:
@@ -1296,7 +1296,7 @@ def _opened_row(
 def _sparse_row(
     entry: EntityPreparation,
     entity: EntityMetadata,
-    pairs: Iterable[tuple[int, object]],
+    pairs: Sequence[tuple[int, object]],
     *,
     lane: int,
     context: _MarkerContext | None,
@@ -1315,7 +1315,9 @@ def _sparse_row(
         prepared = entry.plan.partial_row(
             pairs,
             lane=lane,
-            root=None if context is None else _marker_planning(entity, shape, context),
+            root=None
+            if context is None or not _marked(value for _position, value in pairs)
+            else _marker_planning(entity, shape, context),
             addressing=1 << entry.key,
         )
     except AuthoringRefusal as refusal:
@@ -1328,34 +1330,33 @@ def _assigned_row(
     model: AcceptedMetamodel,
     entry: EntityPreparation,
     entity: EntityMetadata,
-    assigned: Iterable[tuple[int, object]],
-    addressed: Iterable[tuple[int, object]],
+    pairs: Sequence[tuple[int, object]],
     *,
     lane: int,
 ) -> ManagedRow:
-    """The row assigning one existing object each member ``assigned``
-    positions, judged as an assignment in that order, then stating the
-    ``addressed`` members that name it, judged as content.
+    """The row assigning one existing object the members ``pairs`` positions,
+    each beside the key judged as an assignment in that order, the key
+    addressing the object.
 
     A DB-computed marker plans in the context the assignment writes in
     (:func:`_assignment_context`), judged where its member is.
     """
     shape = entry.selection.members.shape
-    assigned = tuple(assigned)
-    mask = 0
-    for position, _value in assigned:
-        mask |= 1 << position
     try:
         prepared = entry.plan.partial_row(
-            (*assigned, *addressed),
+            pairs,
             lane=lane,
-            root=_marker_planning(entity, shape, _assignment_context(model, entity)),
-            addressing=~mask,
-            check=_assignment_rules(entry, entity, mask),
+            root=_marker_planning(entity, shape, _assignment_context(model, entity))
+            if _marked(value for _position, value in pairs)
+            else None,
+            addressing=1 << entry.key,
+            check=entry.assignment_rules,
         )
+    except WriteAssignmentError as error:
+        raise WriteInstructionError(f"{entity.identity.canonical}.{error}") from error
     except AuthoringRefusal as refusal:
-        error = _assignment_refusal(entry, entity, refusal, mask)
-        raise error from error.__cause__
+        refused = _assignment_refusal(entry, entity, refusal)
+        raise refused from refused.__cause__
     return managed_row(entry.selection, prepared.cells, prepared.presence)
 
 
@@ -1379,7 +1380,6 @@ def _replacement_row(
     ``omitted`` is read as unstated, and neither completed nor refused.
     """
     shape = entry.selection.members.shape
-    assigned = ~(1 << entry.key)
     try:
         prepared = entry.plan.complete_row(
             raws,
@@ -1389,11 +1389,13 @@ def _replacement_row(
             nulled=entry.replace_nulled,
             root=_marker_planning(entity, shape, _assignment_context(model, entity)),
             addressing=1 << entry.key,
-            check=_assignment_rules(entry, entity, assigned),
+            check=entry.assignment_rules,
         )
+    except WriteAssignmentError as error:
+        raise WriteInstructionError(f"{entity.identity.canonical}.{error}") from error
     except AuthoringRefusal as refusal:
-        error = _replacement_refusal(entry, entity, refusal)
-        raise error from error.__cause__
+        refused = _replacement_refusal(entry, entity, refusal)
+        raise refused from refused.__cause__
     return managed_row(entry.selection, prepared.cells, prepared.presence)
 
 
@@ -1414,14 +1416,14 @@ def _row_refusal(
 
 
 def _assignment_refusal(
-    entry: EntityPreparation, entity: EntityMetadata, refusal: AuthoringRefusal, assigned: int
+    entry: EntityPreparation, entity: EntityMetadata, refusal: AuthoringRefusal
 ) -> Exception:
-    """``refusal`` worded as the refusal of an assignment where it refuses
-    a member in ``assigned``, caused by the assignment rule's verdict, and as
-    a stated row's elsewhere."""
+    """``refusal`` worded as the refusal of an assignment where it refuses a
+    member beside the key, caused by the assignment rule's verdict, and as a
+    stated row's at the key."""
     position = refusal.position
     shape = entry.selection.members.shape
-    if not assigned >> position & 1 or isinstance(refusal.cause, WireDecodingError):
+    if position == entry.key or isinstance(refusal.cause, WireDecodingError):
         return _row_refusal(entity, shape, refusal)
     member = entry.selection.members.bindings[position]
     violation = refusal.violation
@@ -1458,26 +1460,7 @@ def _replacement_refusal(
             f"{entity.identity.name}.{name}: a replacement states every required member, and "
             "this one is absent",
         )
-    return _assignment_refusal(entry, entity, refusal, ~(1 << entry.key))
-
-
-def _assignment_rules(
-    entry: EntityPreparation, entity: EntityMetadata, assigned: int
-) -> MemberCheck:
-    """Judge each stated member in ``assigned`` by the assignment rules its
-    designation and nullability fix, before its value."""
-    bindings = entry.selection.members.bindings
-    canonical = entity.identity.canonical
-
-    def judged(position: int, raw: object) -> None:
-        if not assigned >> position & 1:
-            return
-        try:
-            judge_assignment(bindings[position], raw, known_violation=None, known_value_valid=True)
-        except WriteAssignmentError as error:
-            raise WriteInstructionError(f"{canonical}.{error}") from error
-
-    return judged
+    return _assignment_refusal(entry, entity, refusal)
 
 
 def _decoding_refusal(
@@ -1560,6 +1543,19 @@ def _marker_planning(
         return _planned_marker(entity, shape.members[position].name, marker, context)
 
     return planned
+
+
+def _marked(values: Iterable[object]) -> bool:
+    """Whether some value of ``values`` is shaped as a DB-computed marker."""
+    for value in values:
+        if isinstance(value, Mapping) and len(cast("Mapping[object, object]", value)) == 1:
+            (key,) = cast("Mapping[object, object]", value)
+            if key in _MARKER_KEYS:
+                return True
+    return False
+
+
+_MARKER_KEYS: Final = frozenset({"computed", "increment"})
 
 
 def _stated_names(
@@ -2063,7 +2059,7 @@ def _prepare_target_payload(
         return _replacement_row(
             model, entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
         )
-    return _assignment_payload(model, entry, entity, row, row.keys() - {key}, lane=lane)
+    return _assignment_payload(model, entry, entity, row, lane=lane)
 
 
 def _assignment_payload(
@@ -2071,22 +2067,24 @@ def _assignment_payload(
     entry: EntityPreparation,
     entity: EntityMetadata,
     row: Mapping[str, object],
-    assigned: Set[str],
     *,
     lane: int,
 ) -> ManagedRow:
-    """``row`` as the row assigning each member in ``assigned``, in the order
-    ``row`` states them, beside the members that address its object."""
-    pairs = _positioned(entry, row)
-    names = entry.selection.members.shape.members
-    return _assigned_row(
-        model,
-        entry,
-        entity,
-        [(position, value) for position, value in pairs if names[position].name in assigned],
-        [(position, value) for position, value in pairs if names[position].name not in assigned],
-        lane=lane,
-    )
+    """``row`` as the row assigning one existing object every member it
+    states beside the key, in the order ``row`` states them, its key
+    addressing that object."""
+    shape = entry.selection.members.shape
+    key = entry.key
+    pairs: list[tuple[int, object]] = []
+    addressed: tuple[tuple[int, object], ...] = ()
+    for name, value in row.items():
+        position = cast("int", shape.position(name))
+        if position == key:
+            addressed = ((position, value),)
+        else:
+            pairs.append((position, value))
+    pairs.extend(addressed)
+    return _assigned_row(model, entry, entity, pairs, lane=lane)
 
 
 def _judge_row_members(
@@ -2200,9 +2198,7 @@ def _prepare_keyed_payload(
                 )
             )
         elif authored_members is not None:
-            judged.append(
-                _assignment_payload(model, entry, entity, row, authored_members, lane=lane)
-            )
+            judged.append(_assignment_payload(model, entry, entity, row, lane=lane))
         else:
             judged.append(
                 _sparse_row(entry, entity, _positioned(entry, row), lane=lane, context=context)
@@ -2270,7 +2266,7 @@ def _prepare_predicate_payload(
     row = instruction.row
     if row is None:
         assigned = _row_from_assignments(model, entity, position, instruction.assignments)
-        managed = _assignment_payload(model, entry, entity, assigned, assigned.keys(), lane=lane)
+        managed = _assignment_payload(model, entry, entity, assigned, lane=lane)
     else:
         _judge_row_members(model, entity, position.member_selection, row, None, "predicate")
         managed = _replacement_row(

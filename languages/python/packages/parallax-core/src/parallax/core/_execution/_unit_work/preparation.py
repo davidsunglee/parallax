@@ -18,6 +18,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     Metamodel,
     Multiplicity,
+    judge_assignment,
 )
 from parallax.core.wire._codec import wire_converter
 from parallax.core.write_plan.managed_row import RowSelection
@@ -59,6 +60,22 @@ class EntityPreparation:
     replace_required: int
     replace_nulled: int
     typed_class: type | None
+
+    def assignment_rules(self, position: int, raw: object) -> None:
+        """Judge stating ``raw`` at ``position`` beside the key by the
+        assignment rules the member's designation and nullability fix, before
+        its value is converted; the key addresses its object and assigns
+        nothing.
+
+        Raises :class:`~parallax.core.metamodel.WriteAssignmentError`.
+        """
+        if position != self.key:
+            judge_assignment(
+                self.selection.members.bindings[position],
+                raw,
+                known_violation=None,
+                known_value_valid=True,
+            )
 
 
 class WritePreparation:
