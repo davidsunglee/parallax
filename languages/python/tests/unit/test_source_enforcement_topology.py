@@ -271,7 +271,6 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ),
     ("parallax.snapshot._publication._wire", "_instance_state"): frozenset(
         {
-            "ABSENT_DECLARED_VALUE",
             "declared_values",
             "is_published",
             "named_state_value",

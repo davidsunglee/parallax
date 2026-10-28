@@ -52,6 +52,7 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._entity import (
     CHANGE_RECORD_SLOT,
     ChangeRecord,
@@ -59,7 +60,6 @@ from parallax.core.entity._entity import (
     lifecycle_state,
 )
 from parallax.core.entity._instance_state import (
-    ABSENT_DECLARED_VALUE,
     declared_values,
     is_published,
     named_state_value,
@@ -203,7 +203,7 @@ def _site() -> Site:
 def test_declared_values_preserve_absence_on_ordinary_backing() -> None:
     value = _ordinary(Depot, id=1, label="A", capacity=None)
 
-    assert tuple(declared_values(value)) == (1, "A", None, ABSENT_DECLARED_VALUE)
+    assert tuple(declared_values(value)) == (1, "A", None, ABSENT)
 
 
 def test_the_two_arms_agree_about_what_the_value_holds_and_what_it_populated() -> None:

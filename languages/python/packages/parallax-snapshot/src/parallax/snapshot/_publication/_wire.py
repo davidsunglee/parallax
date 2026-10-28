@@ -26,7 +26,6 @@ from parallax.core.entity._declaration import wire_names_of
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
 from parallax.core.entity._graph_construction import require_correspondence
 from parallax.core.entity._instance_state import (
-    ABSENT_DECLARED_VALUE,
     declared_values,
     is_published,
     named_state_value,
@@ -615,10 +614,7 @@ class EntityReader:
 
     def member_values(self, node: object) -> Iterable[object]:
         self._required(node)
-        return (
-            ABSENT if value is ABSENT_DECLARED_VALUE else value
-            for value in declared_values(cast("Any", node))
-        )
+        return declared_values(cast("Any", node))
 
     def relationship(self, node: object, view: RelationshipViewKey) -> object:
         state = self._required(node)
@@ -912,10 +908,7 @@ def _authored_values(record: object, shape: MemberShape) -> Iterable[object]:
 
 def _live_values(record: object, shape: MemberShape) -> Iterable[object]:
     del shape
-    return (
-        ABSENT if value is ABSENT_DECLARED_VALUE else value
-        for value in declared_values(cast("Any", record))
-    )
+    return declared_values(cast("Any", record))
 
 
 _STORED: Final = OccurrenceCarrier(ABSENT, _stored_values, _tuple_elements)
