@@ -10,25 +10,55 @@ from sqlglot.expressions.core import Expr
 
 _PLACEHOLDER_PREFIX = "__parallax_bind_"
 
-# One array parameter, bare or cast to an array type (`?`, `cast(? as bigint[])`).
-_ARRAY_PARAMETER = r"(?:\?|cast\s*\(\s*\?\s+as\s+[a-z ]+\[\s*\]\s*\))"
-
-# The array parameters passed as one array each: compared through `any`, or read
-# apart as the column arrays of `unnest`.
-_ARRAY_PARAMETERS = re.compile(
-    rf"\b(?:any\s*\(\s*{_ARRAY_PARAMETER}|unnest\s*\(\s*{_ARRAY_PARAMETER}"
-    rf"(?:\s*,\s*{_ARRAY_PARAMETER})*)\s*\)",
+# One array parameter compared through `any`, bare or cast to an array type
+# (`any(?)`, `any(cast(? as bigint[]))`).
+_ANY_ARRAY_PARAMETER = re.compile(
+    r"\bany\s*\(\s*(?:\?|cast\s*\(\s*\?\s+as\s+[a-z ]+\[\s*\]\s*\))\s*\)",
     flags=re.IGNORECASE,
 )
 
+_UNNEST = re.compile(r"\bunnest\s*\(", flags=re.IGNORECASE)
+
 
 def array_bind_indexes(statement: str) -> frozenset[int]:
-    """The positional indexes of the binds *statement* passes as one array each."""
-    indexes: set[int] = set()
-    for match in _ARRAY_PARAMETERS.finditer(statement):
-        first = statement[: match.start()].count("?")
-        indexes.update(range(first, first + match.group().count("?")))
+    """The positional indexes of the binds the PostgreSQL *statement* passes as one
+    array each: compared through ``any``, or read apart as an ``unnest`` argument
+    that binds one placeholder through casts and parentheses alone, as the
+    column-array INSERT recognizer reads it."""
+    indexes = {
+        statement[: match.start()].count("?") for match in _ANY_ARRAY_PARAMETER.finditer(statement)
+    }
+    tree = parse_indexed_statement(statement, "postgres") if _UNNEST.search(statement) else None
+    if tree is not None:
+        indexes.update(
+            index
+            for unnest in tree.find_all(exp.Unnest)
+            for argument in unnest.expressions
+            if (index := bound_placeholder_index(argument)) is not None
+        )
     return frozenset(indexes)
+
+
+def bound_placeholder_index(expression: Expr) -> int | None:
+    """The index of the one placeholder *expression* binds, seen through casts
+    and parentheses alone."""
+    placeholders = tuple(expression.find_all(exp.Placeholder))
+    if isinstance(expression, exp.Placeholder):
+        placeholders = (expression,)
+    if len(placeholders) != 1 or not transparent_placeholder(expression, placeholders[0]):
+        return None
+    return placeholder_index(placeholders[0])
+
+
+def transparent_placeholder(expression: Expr, placeholder: exp.Placeholder) -> bool:
+    """Whether *expression* is *placeholder* wrapped in casts and parentheses alone."""
+    current: Expr = placeholder
+    while current is not expression:
+        parent = current.parent
+        if parent is None or not isinstance(parent, (exp.Cast, exp.Paren)):
+            return False
+        current = parent
+    return True
 
 
 def parse_indexed_statement(statement: str, dialect: str) -> Expr | None:

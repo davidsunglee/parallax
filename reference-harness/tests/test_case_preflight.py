@@ -1161,3 +1161,45 @@ def test_preflight_refuses_a_column_array_document_its_own_rows_tag_declares_oth
 ) -> None:
     with pytest.raises(CaseFailure, match=rf"binds\.postgres{location}\.detail: .* for {declared}"):
         preflight_case_literals(_payment_column_arrays(kinds, details))
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        pytest.param("(cast(? as bigint[]))", id="parenthesized-argument"),
+        pytest.param("?::bigint[]", id="operator-cast"),
+    ],
+)
+def test_preflight_reads_a_column_array_spelled_through_casts_and_parentheses(
+    spelling: str,
+) -> None:
+    statement = _PAYMENT_COLUMN_ARRAYS.replace("cast(? as bigint[])", spelling, 1)
+    documents = [{"detail": "12.50"}, {"detail": "visa-4242"}]
+    preflight_case_literals(
+        _payment_write("postgres", statement, [[2, 3], ["cash", "card"], documents])
+    )
+
+    documents = [{"detail": -0.0}, {"detail": "visa-4242"}]
+    with pytest.raises(CaseFailure, match=r"\[2\]\[0\]\.detail: .* for decimal\(18,2\)"):
+        preflight_case_literals(
+            _payment_write("postgres", statement, [[2, 3], ["cash", "card"], documents])
+        )
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        pytest.param(" u", id="aliased"),
+        pytest.param(" as u(id, kind, payload)", id="aliased-columns"),
+        pytest.param(" with ordinality", id="with-ordinality"),
+    ],
+)
+def test_preflight_refuses_an_insert_reading_unnest_outside_the_column_array_form(
+    suffix: str,
+) -> None:
+    documents = [{"detail": -0.0}, {"detail": "visa-4242"}]
+    case = _payment_write(
+        "postgres", _PAYMENT_COLUMN_ARRAYS + suffix, [[2, 3], ["cash"], documents]
+    )
+    with pytest.raises(CaseFailure, match="outside the column-array form"):
+        preflight_case_literals(case)
