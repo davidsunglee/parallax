@@ -37,7 +37,12 @@ class _AccountPort(ConnectsAsItself):
         self.writes: list[str] = []
 
     def execute(
-        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[object] = ()
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[object] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [(2, "Linus", Decimal("250.00"), 1)]
 

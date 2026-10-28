@@ -65,6 +65,8 @@ class FakeDbPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         self.executed.append((sql, list(binds)))
         if self._read_script is None:
@@ -135,6 +137,8 @@ class FakeWritePort(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         self.reads.append((sql, list(binds)))
         if self._read_script is not None:
@@ -187,6 +191,8 @@ class QueueDbPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [projected_row(sql, row, document_reads) for row in self._responses.pop(0)]
 

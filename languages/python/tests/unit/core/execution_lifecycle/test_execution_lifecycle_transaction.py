@@ -1049,6 +1049,8 @@ class _DrainingFaultPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del sql, binds, document_reads
         if self._read_faults:
@@ -1152,6 +1154,8 @@ class _AbandoningPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del sql, binds, document_reads
         raise AssertionError("no read expected")

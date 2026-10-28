@@ -449,7 +449,9 @@ def test_a_control_flow_exception_still_finishes_every_open_activity() -> None:
     class _Interrupting(ConnectsAsItself):
         dialect = POSTGRES
 
-        def execute(self, sql: str, binds: Any, document_reads: Any = ()) -> list[Any]:
+        def execute(
+            self, sql: str, binds: Any, document_reads: Any = (), *, read_only: bool = False
+        ) -> list[Any]:
             del sql, binds, document_reads
             raise KeyboardInterrupt
 
@@ -661,8 +663,10 @@ class _ReturningPort(ScriptedAdapter):
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
-        rows = super().execute(sql, binds, document_reads)
+        rows = super().execute(sql, binds, document_reads, read_only=read_only)
         self.returned.append(rows)
         return rows
 

@@ -374,16 +374,30 @@ class DatabaseConnection(Protocol):
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         """Run a row-returning statement and return managed rows.
 
         Each document-read pair is folded into one :class:`DocumentRead` under
         the document cell's result key before the row crosses this boundary.
+
+        ``read_only`` is the caller's read intent (m-db-port): an assertion that
+        the submission has no write effect, never a request for a database
+        access mode. Row-producing DML is submitted without it.
         """
         ...
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
-        """Run independent row reads in one transport round trip, preserving order."""
+    def execute_pipeline(
+        self,
+        statements: Sequence[PipelineStatement],
+        *,
+        read_only: bool = False,
+    ) -> list[list[Row]]:
+        """Run independent row reads in one transport round trip, preserving order.
+
+        ``read_only`` is the read intent of the whole batch, never of one member.
+        """
         ...
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:

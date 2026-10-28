@@ -225,9 +225,9 @@ def execute_read(
         driver_sql = port.dialect.to_driver_sql(statement.sql)
         binds = list(statement.binds)
         rows = (
-            port.execute(driver_sql, binds, document_reads)
+            port.execute(driver_sql, binds, document_reads, read_only=True)
             if document_reads
-            else port.execute(driver_sql, binds)
+            else port.execute(driver_sql, binds, read_only=True)
         )
         call.read_completed(rows)
     return rows

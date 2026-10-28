@@ -970,6 +970,28 @@ def test_execute_and_execute_pipeline_return_the_same_rows_for_the_same_result()
     assert pipelined == ordinary
 
 
+def test_a_designated_read_submits_and_answers_exactly_what_an_undesignated_one_does() -> None:
+    def result() -> _Result:
+        return _Result(3, [(1, False, None), (2, True, {"a": 1})])
+
+    def submitted(read_only: bool) -> tuple[object, list[str]]:
+        single = _ResultConnection(result())
+        batch = _ResultConnection(result(), result())
+        rows = (
+            _direct_execution(single).execute("select", [7], ((1, 2),), read_only=read_only),
+            _direct_execution(batch).execute_pipeline(
+                (
+                    PipelineStatement("select", (7,), ((1, 2),)),
+                    PipelineStatement("select", (8,), ((1, 2),)),
+                ),
+                read_only=read_only,
+            ),
+        )
+        return rows, single.pipeline_events + batch.pipeline_events
+
+    assert submitted(read_only=True) == submitted(read_only=False)
+
+
 def test_execute_pipeline_returns_an_empty_result_for_a_statement_without_rows() -> None:
     assert _direct_execution(_ResultConnection(None)).execute_pipeline(
         (PipelineStatement("set local application_name = 'parallax'"),)

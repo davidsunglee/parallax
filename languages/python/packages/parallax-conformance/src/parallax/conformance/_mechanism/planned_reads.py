@@ -41,8 +41,10 @@ class _EmptyDatabase(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
-        del sql, binds, document_reads
+        del sql, binds, document_reads, read_only
         return []
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover

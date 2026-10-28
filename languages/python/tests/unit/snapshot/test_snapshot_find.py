@@ -285,21 +285,25 @@ def _find_history(
 class QueuePort(ConnectsAsItself):
     """A fake `m-db-port` returning one canned response per `execute()` call,
     in call order — enough to drive the executor's own per-level loop without
-    a real database."""
+    a real database. ``read_only`` records each call's read intent."""
 
     dialect: Dialect = POSTGRES
 
     def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
         self._responses = list(responses)
         self.executed: list[tuple[str, list[object]]] = []
+        self.read_only: list[bool] = []
 
     def execute(
         self,
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         self.executed.append((sql, list(binds)))
+        self.read_only.append(read_only)
         return fold_mapping_rows(self._responses.pop(0), document_reads, sql)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
@@ -367,11 +371,15 @@ class PipelineQueuePort(QueuePort):
     def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
         super().__init__(responses)
         self.pipelines: list[tuple[PipelineStatement, ...]] = []
+        self.pipeline_read_only: list[bool] = []
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
         batch = tuple(statements)
         self.pipelines.append(batch)
-        return super().execute_pipeline(batch)
+        self.pipeline_read_only.append(read_only)
+        return super().execute_pipeline(batch, read_only=read_only)
 
 
 def test_find_issues_one_statement_per_non_empty_level() -> None:
@@ -491,6 +499,70 @@ def test_dependency_ready_sibling_levels_share_one_pipeline_batch() -> None:
     root = _root(result)
     assert len(_refs(_view(rows, root, "items"))) == 1
     assert len(_refs(_view(rows, root, "tags"))) == 1
+
+
+def test_the_root_read_and_the_child_pipeline_each_carry_read_intent() -> None:
+    port = PipelineQueuePort(
+        [
+            [{**_ORDER_ROW, "id": 1}],
+            [{"id": 11, "order_id": 1, "sku": "x", "quantity": 1, "shipped_on": None}],
+            [{"id": 21, "order_id": 1, "label": "urgent", "priority": 2}],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Order",
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
+            "includes": [
+                {"segments": [{"rel": "Order.items"}]},
+                {"segments": [{"rel": "Order.tags"}]},
+            ],
+        }
+    )
+
+    _find(query, ORDERS, port)
+
+    assert port.pipeline_read_only == [True]
+    assert port.read_only == [True, True, True]
+
+
+def test_a_single_child_fetch_carries_read_intent_through_the_single_read() -> None:
+    port = PipelineQueuePort(
+        [
+            [{**_ORDER_ROW, "id": 1}],
+            [{"id": 11, "order_id": 1, "sku": "x", "quantity": 1, "shipped_on": None}],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Order",
+            "predicate": {"eq": {"path": "Order.id", "value": 1}},
+            "includes": [{"segments": [{"rel": "Order.items"}]}],
+        }
+    )
+
+    _find(query, ORDERS, port)
+
+    assert port.pipelines == []
+    assert port.read_only == [True, True]
+
+
+def test_a_read_folding_documents_carries_read_intent_beside_its_ordinals() -> None:
+    meta = model_of(_PROFILE_OWNER_MODEL)
+    port = QueuePort([[{"id": 1, "profile": {"label": "ready"}}]])
+
+    find(
+        resolve_read_query(
+            deserialize_query({"target": "ProfileOwner", "predicate": {"true": {}}}),
+            model=meta,
+            form="graph",
+        ),
+        _cataloged(meta),
+        port,
+        origin_collector=EMPTY_PAGE_ORIGIN_COLLECTOR,
+    )
+
+    assert port.read_only == [True]
 
 
 def test_find_empty_root_short_circuits_with_no_child_statement() -> None:

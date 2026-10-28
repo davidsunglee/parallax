@@ -392,11 +392,15 @@ class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed la
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
-        return self._session.execute(sql, binds, document_reads)
+        return self._session.execute(sql, binds, document_reads, read_only=read_only)
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
-        return self._session.execute_pipeline(statements)
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
+        return self._session.execute_pipeline(statements, read_only=read_only)
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return self._session.execute_write(sql, binds)

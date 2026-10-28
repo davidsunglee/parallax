@@ -62,7 +62,12 @@ class _StandInPort(ConnectsAsItself):
     dialect: Dialect = BACKTICKED
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         raise AssertionError(f"the stand-in port executes nothing: {sql!r}")
 

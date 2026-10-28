@@ -507,7 +507,12 @@ class _FakePort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         if "from balance" in sql:
             return [
@@ -702,7 +707,12 @@ class _WritePort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [
             projected_row(
@@ -730,7 +740,12 @@ class _AccountWritePort(_WritePort):
     resolves, which is the value its keyed write is addressed and licensed by."""
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [(2, "Linus", decimal.Decimal("250.00"), 1)]
 
@@ -841,7 +856,12 @@ class _ManagedPort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [
             (
@@ -921,7 +941,12 @@ class _PositionPort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [
             (
@@ -991,7 +1016,12 @@ class _BalancePort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [
             (
@@ -1129,7 +1159,12 @@ class _TriggerPort(ConnectsAsItself):
         self.writes = 0
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:  # pragma: no cover
         raise NotImplementedError
 
@@ -1247,7 +1282,12 @@ class _NeverCalledPort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         raise AssertionError("a rejected-case run must not execute SQL")
 
@@ -1335,7 +1375,12 @@ class _QueuePort(ConnectsAsItself):
         self._responses = list(responses)
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [projected_row(sql, row, document_reads) for row in self._responses.pop(0)]
 
@@ -1565,7 +1610,12 @@ class _WriteAndReadBackPort(ConnectsAsItself):
         self._rows = list(rows)
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [projected_row(sql, row, document_reads) for row in self._rows]
 
@@ -1650,7 +1700,12 @@ class _AccountPort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [(3, "Grace", Decimal("10.00"), 1)]
 
@@ -1808,7 +1863,12 @@ class _OrderWithItemsPort(ConnectsAsItself):
         ]
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return [projected_row(sql, row, document_reads) for row in self._responses.pop(0)]
 

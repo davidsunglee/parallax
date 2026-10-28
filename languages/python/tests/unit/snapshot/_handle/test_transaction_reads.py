@@ -234,7 +234,7 @@ def test_find_force_flushes_pending_writes_first() -> None:
     assert port.calls == [
         BeginCall(),
         WriteCall(INSERT_SQL, (7, "Newton", 5.00, 1)),
-        ReadCall(FIND_SQL_UNLOCKED, (7,)),
+        ReadCall(FIND_SQL_UNLOCKED, (7,), read_only=True),
         CommitCall(),
     ]
 
@@ -251,7 +251,11 @@ def test_an_explicit_optimistic_preference_reads_a_versioned_entity_lock_free() 
     account_db(port).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)), concurrency="optimistic"
     )
-    assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (7,)), CommitCall()]
+    assert port.calls == [
+        BeginCall(),
+        ReadCall(FIND_SQL_UNLOCKED, (7,), read_only=True),
+        CommitCall(),
+    ]
 
 
 def test_the_locking_preference_reads_a_versioned_entity_under_the_shared_lock() -> None:
@@ -261,7 +265,11 @@ def test_the_locking_preference_reads_a_versioned_entity_under_the_shared_lock()
     account_db(port).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)), concurrency="locking"
     )
-    assert port.calls == [BeginCall(), ReadCall(FIND_SQL_LOCKED, (7,)), CommitCall()]
+    assert port.calls == [
+        BeginCall(),
+        ReadCall(FIND_SQL_LOCKED, (7,), read_only=True),
+        CommitCall(),
+    ]
 
 
 def test_a_default_preference_read_of_an_unversioned_entity_takes_the_shared_lock() -> None:
@@ -279,6 +287,7 @@ def test_a_default_preference_read_of_an_unversioned_entity_takes_the_shared_loc
                 "where t0.id = ? for share of t0"
             ),
             (1,),
+            read_only=True,
         ),
         CommitCall(),
     ]
@@ -345,6 +354,7 @@ def test_a_standalone_find_never_locks_whatever_the_entity_declares() -> None:
                 "where t0.id = ?"
             ),
             (1,),
+            read_only=True,
         )
     ]
 

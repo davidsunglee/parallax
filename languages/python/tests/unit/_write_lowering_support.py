@@ -762,6 +762,8 @@ class AcceptingPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del binds
         rows = (cast("Mapping[str, object]", _composed(row)) for row in self._stored)
@@ -772,9 +774,13 @@ class AcceptingPort(ConnectsAsItself):
         serialize(binds)
         return 1
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
         return [
-            self.execute(statement.sql, statement.binds, statement.document_reads)
+            self.execute(
+                statement.sql, statement.binds, statement.document_reads, read_only=read_only
+            )
             for statement in statements
         ]
 
@@ -1343,6 +1349,8 @@ class SpanAcceptingPort(OrderedAcceptingPort):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         if " t0.from_z < " in sql:
             self.coverage_reads += 1

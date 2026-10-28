@@ -111,6 +111,25 @@ def test_scripted_pipeline_returns_one_ordered_batch_per_statement() -> None:
     assert port.calls == [ReadCall("select id"), ReadCall("select name")]
 
 
+def test_the_recording_keeps_each_submissions_read_intent_through_a_scoped_connection() -> None:
+    port = ScriptedAdapter(Read(), Read(), Read(), Read())
+    context = port.open().login_execution().new_context()
+
+    with context as connection:
+        connection.execute("select 1", (), read_only=True)
+        connection.execute("insert into t values (1) returning id", ())
+        connection.execute_pipeline(
+            (PipelineStatement("select id"), PipelineStatement("select name")), read_only=True
+        )
+
+    assert port.calls == [
+        ReadCall("select 1", read_only=True),
+        ReadCall("insert into t values (1) returning id"),
+        ReadCall("select id", read_only=True),
+        ReadCall("select name", read_only=True),
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Nesting states the scope, which a flat sequence of answers cannot.          #
 # --------------------------------------------------------------------------- #

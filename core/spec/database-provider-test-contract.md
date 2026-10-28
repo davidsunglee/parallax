@@ -57,6 +57,10 @@ For every supported adapter, the smoke suite covers:
   handles, return their row batches in statement order, and complete in one
   pipeline synchronization; array-valued child keys cross the adapter as one
   bound parameter
+- a single read and a pipeline of reads each submitted with read intent
+  (`m-db-port`), answering exactly what the same submission answers without it,
+  and row-producing DML through `execute`, whose submission carries no read
+  intent unless its caller asserts one
 - an adapter that answers `orderedWriteTransport` absent proves only that it does.
   One that holds the operation (`m-db-port`) proves, against the real driver:
   each presented statement converted from canonical SQL once and executed in

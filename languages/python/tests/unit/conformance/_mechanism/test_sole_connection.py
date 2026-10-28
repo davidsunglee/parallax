@@ -22,6 +22,8 @@ class _NoRows(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del sql, binds, document_reads
         return []

@@ -116,10 +116,12 @@ _RETURNED: Final[CleanupResult] = Returned()
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class ReadCall:
-    """A row-returning statement, as the port received it."""
+    """A row-returning statement, as the port received it, including whether
+    its submission was designated read-only."""
 
     sql: str
     binds: tuple[Bind, ...] = ()
+    read_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,8 +338,10 @@ class _ScriptedConnection:
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
-        return self._script().execute(sql, binds, document_reads)
+        return self._script().execute(sql, binds, document_reads, read_only=read_only)
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return self._script().execute_write(sql, binds)
@@ -345,8 +349,10 @@ class _ScriptedConnection:
     def _ordered(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:
         return self._script().execute_ordered(statements)
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
-        return self._script().execute_pipeline(statements)
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
+        return self._script().execute_pipeline(statements, read_only=read_only)
 
     def transaction[T](
         self,
@@ -551,9 +557,11 @@ class ScriptedAdapter:
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         entry = self._scopes[-1].take(Read, sql)
-        self.calls.append(ReadCall(sql, tuple(binds)))
+        self.calls.append(ReadCall(sql, tuple(binds), read_only))
         if entry.raises is not None:
             raise entry.raises
         return [projected_row(sql, row, document_reads) for row in entry.rows]
@@ -582,9 +590,13 @@ class ScriptedAdapter:
             raise entry.raises
         return cast("OrderedWriteResult", entry.result)
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
         return [
-            self.execute(statement.sql, statement.binds, statement.document_reads)
+            self.execute(
+                statement.sql, statement.binds, statement.document_reads, read_only=read_only
+            )
             for statement in statements
         ]
 
@@ -698,16 +710,20 @@ class RefusingAdapter:
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
-        del sql, binds, document_reads
+        del sql, binds, document_reads, read_only
         raise AssertionError("no read expected — this port refuses the database")
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         del sql, binds
         raise AssertionError("no write expected — this port refuses the database")
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
-        del statements
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
+        del statements, read_only
         raise AssertionError("no pipeline expected — this port refuses the database")
 
     def transaction[T](

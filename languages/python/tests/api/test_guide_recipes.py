@@ -1507,7 +1507,12 @@ class _ScriptedPort(ConnectsAsItself):
         self.affected = affected
 
     def execute(
-        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         answered = self.reads.pop(0) if self.reads else ()
         return [projected_row(sql, row, document_reads) for row in answered]

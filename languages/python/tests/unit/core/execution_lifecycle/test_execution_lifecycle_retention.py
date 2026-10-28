@@ -1134,6 +1134,8 @@ class _CountingPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del sql, binds, document_reads
         raise AssertionError("no read expected — this workload reads nothing")
@@ -1329,6 +1331,8 @@ class _ReleasingCommitFailurePort(ConnectsAsItself):
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del sql, binds, document_reads
         raise AssertionError("no read expected — this workload only writes")

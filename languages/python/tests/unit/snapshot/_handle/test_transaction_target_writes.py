@@ -192,7 +192,7 @@ def test_a_locking_target_write_reads_its_row_under_the_shared_lock_once() -> No
 
     account_db(port).transact(fn, concurrency="locking")
     assert _calls(port) == [
-        ReadCall(FIND_SQL_LOCKED, (1,)),
+        ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
         WriteCall(
             POSTGRES.to_driver_sql(
                 "update account set owner = ?, balance = ?, version = ? where id = ?"
@@ -212,7 +212,7 @@ def test_a_locking_target_write_reuses_a_held_read_of_exactly_its_state() -> Non
 
     account_db(port).transact(fn, concurrency="locking")
     assert _calls(port) == [
-        ReadCall(FIND_SQL_LOCKED, (1,)),
+        ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
         WriteCall(_UNGATED_BALANCE, (Decimal("150.00"), 4, 1)),
     ]
 
@@ -246,7 +246,7 @@ def test_a_locking_target_write_reuses_a_pending_observed_write_of_its_state() -
 
     account_db(port).transact(fn, concurrency="locking")
     assert _calls(port) == [
-        ReadCall(FIND_SQL_LOCKED, (1,)),
+        ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
         WriteCall(
             POSTGRES.to_driver_sql(
                 "update account set owner = ?, balance = ?, version = ? where id = ?"
@@ -278,8 +278,8 @@ def test_a_spent_read_never_stands_in_for_a_locking_acquisition_and_a_fresh_one_
 
     account_db(port).transact(fn, concurrency="locking")
     assert _calls(port)[2:] == [
-        ReadCall(FIND_SQL_LOCKED, (1,)),
-        ReadCall(FIND_SQL_LOCKED, (1,)),
+        ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
+        ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
         WriteCall(_UNGATED_BALANCE, (Decimal("150.00"), 5, 1)),
     ]
 
@@ -294,8 +294,8 @@ def test_a_released_read_leaves_a_locking_target_write_to_acquire_its_row() -> N
 
     account_db(port).transact(fn, concurrency="locking")
     assert _calls(port) == [
-        ReadCall(FIND_SQL_LOCKED, (1,)),
-        ReadCall(FIND_SQL_LOCKED, (1,)),
+        ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
+        ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
         WriteCall(_UNGATED_BALANCE, (Decimal("150.00"), 4, 1)),
     ]
 
@@ -310,7 +310,10 @@ def test_a_read_of_another_version_does_not_stand_in_for_the_callers() -> None:
         assert held.version == 2
 
     account_db(port).transact(fn, concurrency="locking")
-    assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,)), ReadCall(FIND_SQL_LOCKED, (1,))]
+    assert _calls(port) == [
+        ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
+        ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
+    ]
 
 
 @_REPRESENTATIONS
@@ -321,10 +324,13 @@ def test_a_locking_deletion_reads_its_row_under_the_shared_lock_and_deletes_unga
 
     def fn(tx: TxnContext) -> None:
         _delete(tx, representation)
-        assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,))]
+        assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,), read_only=True)]
 
     account_db(port).transact(fn, concurrency="locking")
-    assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,)), WriteCall(_UNGATED_DELETE, (1,))]
+    assert _calls(port) == [
+        ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
+        WriteCall(_UNGATED_DELETE, (1,)),
+    ]
 
 
 @pytest.mark.parametrize("stored", [[_row(version=2)], []], ids=["another-revision", "no-row"])
@@ -339,7 +345,7 @@ def test_a_locking_deletion_refuses_a_stale_or_missing_start_at_the_call(
         assert (dict(refused.value.key), refused.value.expected) == ({"id": 1}, 3)
 
     account_db(port).transact(fn, concurrency="locking")
-    assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,))]
+    assert _calls(port) == [ReadCall(FIND_SQL_LOCKED, (1,), read_only=True)]
 
 
 # --------------------------------------------------------------------------- #
@@ -527,7 +533,7 @@ def test_a_second_stated_revision_of_one_object_is_refused_and_the_first_still_r
         [WriteCall(_GATED_BALANCE, (Decimal("150.00"), 4, 1, 3))]
         if concurrency == "optimistic"
         else [
-            ReadCall(FIND_SQL_LOCKED, (1,)),
+            ReadCall(FIND_SQL_LOCKED, (1,), read_only=True),
             WriteCall(_UNGATED_BALANCE, (Decimal("150.00"), 4, 1)),
         ]
     )
@@ -660,7 +666,7 @@ def test_a_typed_replacement_of_a_read_value_is_addressed_by_its_key_alone() -> 
 
     account_db(port).transact(fn)
     assert _calls(port) == [
-        ReadCall(FIND_SQL_UNLOCKED, (1,)),
+        ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True),
         WriteCall(_GATED, ("Bo", Decimal("100.00"), 8, 1, 7)),
     ]
 
