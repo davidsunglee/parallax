@@ -240,6 +240,9 @@ def test_row_i_of_a_column_array_insert_is_element_i_of_every_array() -> None:
             "carries 2 bind",
             id="array-expression",
         ),
+        pytest.param(
+            f"{_COLUMN_ARRAYS} u", [[1], ["x"], [{}]], "outside the column-array form", id="aliased"
+        ),
     ],
 )
 def test_a_column_array_insert_not_binding_one_equal_length_array_per_column_is_refused(

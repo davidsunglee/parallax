@@ -9,7 +9,12 @@ from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
 from ._postgres_arrays import column_array_element
-from ._sql_placeholders import parse_indexed_statement, placeholder_index
+from ._sql_placeholders import (
+    bound_placeholder_index,
+    parse_indexed_statement,
+    placeholder_index,
+    transparent_placeholder,
+)
 from .case import Case
 from .ddl_builder import declared_contributors, slot_neutral_type
 from .storage_layout import (
@@ -54,18 +59,25 @@ def column_array_rows(statement: str, binds: Sequence[object]) -> list[list[obje
     order, each aligned with its column list; ``None`` for any other statement.
 
     PostgreSQL pads shorter ``unnest`` arguments with ``NULL``, so arrays of unequal
-    length are refused rather than read as the rows the database would store.
+    length are refused rather than read as the rows the database would store. An
+    INSERT reading ``unnest`` in any other shape is refused rather than left
+    ungraded, since its ``unnest`` arguments still bind as arrays.
     """
     tree = parse_indexed_statement(statement, "postgres")
     found = None if tree is None else _column_arrays(tree)
     if found is None:
+        if isinstance(tree, exp.Insert) and tree.find(exp.Unnest) is not None:
+            raise ColumnArrayShapeError(
+                "reads unnest outside the column-array form "
+                "insert into t(…) select * from unnest(…)"
+            )
         return None
     columns, arrays = found
     if len(arrays) != len(columns):
         raise ColumnArrayShapeError(
             f"renders {len(arrays)} column array(s) for {len(columns)} column(s)"
         )
-    if [_bound_index(array) for array in arrays] != list(range(len(binds))):
+    if [bound_placeholder_index(array) for array in arrays] != list(range(len(binds))):
         raise ColumnArrayShapeError(
             f"carries {len(binds)} bind(s) for {len(arrays)} column array(s), each of which "
             f"binds exactly one array in column order"
@@ -129,7 +141,7 @@ def _value_row_targets(
         cells = dict(zip(columns, row.expressions, strict=False))
         known = {column: _operand_value(cell, binds) for column, cell in cells.items()}
         for column_name, expression in cells.items():
-            index = _bound_index(expression)
+            index = bound_placeholder_index(expression)
             slot = layout.column(column_name)
             if index is not None and slot is not None:
                 targets[index] = _slot_target(case, slot, known)
@@ -151,7 +163,7 @@ def _column_array_targets(
     known = {column: _operand_value(array, binds) for column, array in cells.items()}
     targets: dict[int, CanonicalBindTarget] = {}
     for column_name, array in cells.items():
-        index = _bound_index(array)
+        index = bound_placeholder_index(array)
         slot = layout.column(column_name)
         if index is None or slot is None:
             continue
@@ -214,17 +226,6 @@ def _column_arrays(tree: Expr) -> tuple[tuple[str, ...], tuple[Expr, ...]] | Non
     return _insert_columns(tree), tuple(unnest.expressions)
 
 
-def _bound_index(expression: Expr) -> int | None:
-    """The index of the one placeholder ``expression`` binds, seen through casts
-    and parentheses alone."""
-    placeholders = tuple(expression.find_all(exp.Placeholder))
-    if isinstance(expression, exp.Placeholder):
-        placeholders = (expression,)
-    if len(placeholders) != 1 or not _transparent_placeholder(expression, placeholders[0]):
-        return None
-    return placeholder_index(placeholders[0])
-
-
 def _update_targets(
     case: Case, tree: Expr, binds: Sequence[object]
 ) -> dict[int, CanonicalBindTarget]:
@@ -238,7 +239,7 @@ def _update_targets(
         placeholders = tuple(assignment.expression.find_all(exp.Placeholder))
         if isinstance(assignment.expression, exp.Placeholder):
             placeholders = (assignment.expression,)
-        if len(placeholders) == 1 and _transparent_placeholder(
+        if len(placeholders) == 1 and transparent_placeholder(
             assignment.expression, placeholders[0]
         ):
             index = placeholder_index(placeholders[0])
@@ -399,16 +400,6 @@ def _operand_value(expression: Expr | None, binds: Sequence[object]) -> object:
     if isinstance(expression, exp.Literal) and expression.is_string:
         return expression.this
     return None
-
-
-def _transparent_placeholder(expression: Expr, placeholder: exp.Placeholder) -> bool:
-    current: Expr = placeholder
-    while current is not expression:
-        parent = current.parent
-        if parent is None or not isinstance(parent, (exp.Cast, exp.Paren)):
-            return False
-        current = parent
-    return True
 
 
 def _compared_operand(placeholder: exp.Placeholder) -> Expr | None:
