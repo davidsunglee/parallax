@@ -3,9 +3,11 @@
 Each replaces a module attribute of the Wire codec, so every caller resolving it
 at call time sees the fault. ``_canonical_spelling`` spells a document leaf's
 driver value (through ``encode_leaf``) and every reported Wire bind alike;
-``_decode_float32`` and ``_decode_float64`` are how a Wire number reaches a
-float member, so their fault reaches a scalar driver bind while the reported
-bind, re-encoded, still reads ``0.0``.
+``_decode_float32`` and ``_decode_float64`` are how a decoded Wire number
+reaches a float member, and the Wire lane's float converters how an authored
+row's does, so their fault reaches a scalar driver bind while the reported
+bind, re-encoded, still reads ``0.0``. A converter is resolved when a model's
+write preparation is built, so the fault precedes the run it reaches.
 
 Exported names carry no leading underscore: privacy is this module's.
 """
@@ -14,12 +16,13 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable
+from types import MappingProxyType
 from typing import Any
 
 import pytest
 
 import parallax.core.wire._codec as wire_codec
-from parallax.core.base import Float32, Float64, NeutralType
+from parallax.core.base import FLOAT32, FLOAT64, Float32, Float64, NeutralType, ScalarConverter
 from parallax.core.wire import WireValue
 
 __all__ = ["project_float_zero_negative", "spell_float_zero_negative"]
@@ -39,6 +42,18 @@ def spell_float_zero_negative(monkeypatch: pytest.MonkeyPatch) -> None:
 def project_float_zero_negative(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("_decode_float32", "_decode_float64"):
         monkeypatch.setattr(wire_codec, name, _negating_zero(getattr(wire_codec, name)))
+    converters = dict(wire_codec._NULLARY_WIRE_CONVERTERS)  # pyright: ignore[reportPrivateUsage]
+    for declared in (FLOAT32, FLOAT64):
+        converters[type(declared)] = _negating_converted_zero(converters[type(declared)])
+    monkeypatch.setattr(wire_codec, "_NULLARY_WIRE_CONVERTERS", MappingProxyType(converters))
+
+
+def _negating_converted_zero(convert: ScalarConverter) -> ScalarConverter:
+    def converted(value: object) -> object:
+        managed = convert(value)
+        return -0.0 if managed == 0.0 else managed
+
+    return converted
 
 
 def _negating_zero(decode: Callable[[object, NeutralType], Any]) -> Callable[..., Any]:
