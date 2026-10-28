@@ -275,7 +275,15 @@ then is the payload judged — a keyed row's subtype shape, members, and values,
 a predicate-selected write's predicate, family refusal, and payload: an
 amendment's every assignment member resolved, in authored order, before any
 value is judged, and a replacement's row naming declared members only, then
-completed and judged as every replacement is (*Source-authorized replacement*). `prepareWireWrite` applies the serialized decoding above;
+completed and judged as every replacement is (*Source-authorized replacement*).
+An opening's rows (`insert`, `insertUntil`) are judged one row at a time, so an
+instruction carrying several is refused at its first refused row. Within a row
+its member names — its subtype shape, then an authored framework-owned or an
+undeclared member — are judged before any of its values, and its values are then
+judged in declaration order, a missing required member and an inadmissible
+value found in one pass and the first one met refused. Both producers judge an
+opening in that order, whatever order the row states its members in.
+`prepareWireWrite` applies the serialized decoding above;
 `prepareTypedWrite` applies `m-core.coerceNeutralInput` followed by managed
 membership and retains developer-facing mismatch errors. Neither consumer may
 choose the other policy from the runtime carrier it happens to receive.
