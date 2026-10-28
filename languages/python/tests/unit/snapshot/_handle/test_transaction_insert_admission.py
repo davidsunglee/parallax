@@ -372,3 +372,44 @@ def test_a_later_rows_failure_is_heard_once_every_earlier_row_is_admitted(
             KeyedWriteInstruction("insert", _PARCEL, (first, second)),
             write_preparation_of(_META),
         )
+
+
+# --------------------------------------------------------------------------- #
+# What the buffered opening composes with, and what it never buffers.          #
+# --------------------------------------------------------------------------- #
+def test_an_amendment_of_a_pending_opening_folds_into_the_one_insert() -> None:
+    def typed(tx: TxnContext) -> None:
+        opened = _parcel()
+        tx.insert(opened)
+        tx.amend(opened.edit(label="M", memo="m"))
+
+    def wire(tx: TxnContext) -> None:
+        tx.wire.amend(tx.wire.insert("Parcel", _payload()), {"label": "M", "memo": "m"})
+
+    for write in (typed, wire):
+        binds = _flushed(write)
+        assert (binds["label"], binds["memo"], binds["version"]) == ("M", "m", 1)
+
+
+@pytest.mark.parametrize(
+    ("marker", "refusal"),
+    [
+        ({"increment": 1}, r"a 'increment' marker is not recognized for insert planning$"),
+        ({"computed": "next"}, r"'next' is not a recognized `computed` strategy \(m-pk-gen\)$"),
+    ],
+    ids=["wrong-context", "unknown-strategy"],
+)
+def test_a_wire_opening_refuses_an_unplannable_marker_before_buffering(
+    marker: dict[str, object], refusal: str
+) -> None:
+    port = ScriptedAdapter(Transact())
+
+    def fn(tx: TxnContext) -> None:
+        with pytest.raises(
+            instructions.WriteInstructionError,
+            match=rf"^unsupported DB-computed marker on 'Parcel'\.count: {refusal}",
+        ):
+            tx.wire.insert("Parcel", _payload(count=marker))
+
+    db_for(_MODEL, port).transact(fn)
+    assert not [call for call in port.calls if isinstance(call, WriteCall)]
