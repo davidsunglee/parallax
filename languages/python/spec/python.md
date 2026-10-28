@@ -659,11 +659,12 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   reaching the `m-sql` write-step compiler. The case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so
   case ingress needs no private token-inspection reach. Case ingress does reach
-  `parallax.core.document_codec._authoring` for exactly `prepare_authoring` and
-  `MAPPING_SOURCE_ACCESS`: a stored-state row a case states is decoded through the
-  codec's one authored-document traversal, the one Unit Work and Entity editing
-  share, rather than through a second decoder, and the canonical `ScalarDefinition` that
-  traversal hands its normalizer is what identifies a declared axis end. The
+  `parallax.core.document_codec._plan` for exactly `AuthoringPlan` and
+  `AuthoringRefusal`: a stored-state row a case states is decoded through the
+  codec's one authored-document traversal, the compiled plan Unit Work and Entity
+  editing share, rather than through a second decoder, and the canonical
+  `ScalarDefinition` the plan chooses a converter by is what identifies a declared
+  axis end. The
   traversal stays out of `parallax.core.document_codec`'s package interface, since
   no developer-facing surface needs it. The case lanes build instructions and
   case-state row acquisitions through the unit of work's implementation leaves

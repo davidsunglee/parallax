@@ -4,7 +4,7 @@ import datetime as dt
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import cast, overload
+from typing import Final, cast, overload
 
 from parallax.conformance._case_literal import normalize_case_bound, normalize_case_literal
 from parallax.core import inheritance, predicate, temporal_read
@@ -18,17 +18,23 @@ from parallax.core.base import (
     INFINITY,
     INFINITY_LITERAL,
     NeutralType,
+    ScalarConverter,
     Timestamp,
+    adopt_frozen_map,
     coerce_neutral_input,
     matches_neutral_type,
+    retain_document_value,
 )
-from parallax.core.document_codec._authoring import MAPPING_SOURCE_ACCESS, prepare_authoring
+from parallax.core.document_codec._plan import AuthoringPlan, AuthoringRefusal
 from parallax.core.metamodel import (
     AttributeMetadata,
     DefiningRelationshipDeclaration,
     EntityIdentity,
     EntityMetadata,
+    MemberDefinition,
+    MemberShape,
     Multiplicity,
+    OccurrenceDefinition,
     OccurrenceMetadata,
     RelationshipDeclaration,
     ScalarDefinition,
@@ -123,15 +129,112 @@ def decode_case_row(
             f"{entity.identity.canonical}: a case row names {undeclared!r}, which the "
             "Entity's family declares no member of"
         )
-    return prepare_authoring(
-        shape,
-        row,
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=_CaseRowLeaves(_temporal_ends(model, entity)).normalize,
-        path=entity.identity.canonical,
-        fill_missing_many=False,
-        allow_root_markers=True,
-    ).value
+    reading = _StateReading(
+        AuthoringPlan.compile(
+            shape,
+            _case_converter,
+            absent=_ABSENT,
+            definition_converter=_axis_end_converter(_temporal_ends(model, entity)),
+        ),
+        root=True,
+    )
+    return reading.document(row, entity.identity.canonical)
+
+
+_ABSENT: Final = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _StateReading:
+    """A stated document read member by member through ``plan``.
+
+    Stated state is weighed by nothing, so a member the plan refuses for its
+    structure is read where it can be and kept as stated where it cannot: a
+    document member by member, a ``many`` occurrence element by element, and
+    anything else as the value it is. Only a value its declared type cannot
+    decode is refused. Only the root reads a stored DB-computed marker, which
+    it keeps as the document it spells.
+    """
+
+    plan: AuthoringPlan
+    root: bool
+
+    def document(self, source: Mapping[str, object], path: str) -> Mapping[str, object]:
+        shape = self.plan.shape
+        read: dict[str, object] = {}
+        for name, value in source.items():
+            position = shape.position(name)
+            if position is not None:
+                read[name] = self._member(position, value, f"{path}.{name}")
+        return adopt_frozen_map(read)
+
+    def _member(self, position: int, value: object, path: str) -> object:
+        member = self.plan.shape.members[position]
+        try:
+            authored = self.plan.partial_row(
+                ((position, value),), lane=0, root=_kept_marker if self.root else None
+            )
+        except AuthoringRefusal as refusal:
+            cause = refusal.cause
+            if isinstance(cause, WireDecodingError):
+                raise instructions.InstructionRejectedError(
+                    f"neutral-literal-{cause.reason}",
+                    f"{_joined(path, refusal.violation.path)}: {cause}",
+                ) from cause
+            return self._kept(member, value, path)
+        (cell,) = authored.cells
+        return _named_member(member, cell)
+
+    def _kept(self, member: MemberDefinition, value: object, path: str) -> object:
+        if not isinstance(member, OccurrenceDefinition):
+            return retain_document_value(value)
+        nested = _StateReading(
+            AuthoringPlan.compile(member.shape, _case_converter, absent=_ABSENT), root=False
+        )
+        if member.multiplicity is Multiplicity.ONE:
+            return nested._document_or_kept(value, path)
+        if not isinstance(value, list):
+            return retain_document_value(value)
+        return tuple(
+            nested._document_or_kept(element, f"{path}[{index}]")
+            for index, element in enumerate(cast("list[object]", value))
+        )
+
+    def _document_or_kept(self, value: object, path: str) -> object:
+        if isinstance(value, Mapping):
+            return self.document(cast("Mapping[str, object]", value), path)
+        return retain_document_value(value)
+
+
+def _kept_marker(_position: int, marker: Mapping[str, object]) -> object:
+    """A stored DB-computed marker, kept as the document it spells."""
+    return retain_document_value(marker)
+
+
+def _named_member(member: MemberDefinition, cell: object) -> object:
+    if not isinstance(member, OccurrenceDefinition) or cell is None:
+        return cell
+    if member.multiplicity is Multiplicity.MANY:
+        return tuple(
+            _named_document(member.shape, element) for element in cast("tuple[object, ...]", cell)
+        )
+    return _named_document(member.shape, cell)
+
+
+def _named_document(shape: MemberShape, cells: object) -> Mapping[str, object]:
+    return adopt_frozen_map(
+        {
+            member.name: _named_member(member, cell)
+            for member, cell in zip(shape.members, cast("tuple[object, ...]", cells), strict=True)
+            if cell is not _ABSENT
+        }
+    )
+
+
+def _joined(base: str, path: str) -> str:
+    if not path:
+        return base
+    return f"{base}{path}" if path.startswith("[") else f"{base}.{path}"
 
 
 def _temporal_ends(
@@ -160,29 +263,40 @@ def _temporal_ends(
     return tuple(ends)
 
 
-@dataclass(frozen=True, slots=True)
-class _CaseRowLeaves:
-    ends: tuple[ScalarDefinition, ...]
+def _case_converter(declared: NeutralType) -> ScalarConverter:
+    """A case's stored scalar of ``declared``: a native Timestamp naming an
+    instant taken to UTC, and anything else decoded from its case spelling."""
 
-    def normalize(self, leaf: ScalarDefinition, value: object, path: str) -> tuple[object, bool]:
-        if (value is INFINITY or value == INFINITY_LITERAL) and any(
-            leaf is end for end in self.ends
-        ):
-            return INFINITY, True
-        neutral_type = leaf.type
-        if isinstance(neutral_type, Timestamp) and isinstance(value, dt.datetime):
-            managed = coerce_neutral_input(value, neutral_type)
-            if matches_neutral_type(managed, neutral_type):
-                return managed, True
-        try:
-            decoded = decode_wire(
-                neutral_type, cast("WireValue", normalize_case_literal(neutral_type, value))
-            )
-        except WireDecodingError as error:
-            raise instructions.InstructionRejectedError(
-                f"neutral-literal-{error.reason}", f"{path}: {error}"
-            ) from error
-        return freeze_retained_value(decoded), True
+    def converted(value: object) -> object:
+        if isinstance(declared, Timestamp) and isinstance(value, dt.datetime):
+            managed = coerce_neutral_input(value, declared)
+            if matches_neutral_type(managed, declared):
+                return managed
+        decoded = decode_wire(declared, cast("WireValue", normalize_case_literal(declared, value)))
+        return freeze_retained_value(decoded)
+
+    return converted
+
+
+def _axis_end_converter(
+    ends: tuple[ScalarDefinition, ...],
+) -> Callable[[ScalarDefinition], ScalarConverter | None]:
+    """The converter of a declared axis end, which also holds the open bound,
+    recognized by definition identity; ``None`` for every other definition."""
+
+    def converter_of(member: ScalarDefinition) -> ScalarConverter | None:
+        if not any(member is end for end in ends):
+            return None
+        finite = _case_converter(member.type)
+
+        def converted(value: object) -> object:
+            if value is INFINITY or value == INFINITY_LITERAL:
+                return INFINITY
+            return finite(value)
+
+        return converted
+
+    return converter_of
 
 
 def normalize_case_query(query: ObjectQueryNode, model: AcceptedMetamodel) -> ObjectQueryNode:
