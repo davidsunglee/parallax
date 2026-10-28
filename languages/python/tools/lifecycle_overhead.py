@@ -255,6 +255,8 @@ class _MemoryPort:
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         self.statements += 1
         return [tuple(ROW.values())]
@@ -263,9 +265,13 @@ class _MemoryPort:
         self.statements += 1
         return 1
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
         return [
-            self.execute(statement.sql, statement.binds, statement.document_reads)
+            self.execute(
+                statement.sql, statement.binds, statement.document_reads, read_only=read_only
+            )
             for statement in statements
         ]
 

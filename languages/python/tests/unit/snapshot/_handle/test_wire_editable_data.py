@@ -75,7 +75,7 @@ def test_editable_data_holds_the_key_and_writable_members_but_no_revision() -> N
     (data,) = copies
     assert data == {"id": 1, "owner": "Ada", "balance": "100.00"}
     assert type(data) is dict
-    assert _calls(port) == [ReadCall(FIND_SQL_UNLOCKED, (1,))]
+    assert _calls(port) == [ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True)]
 
 
 def test_editable_data_is_independent_of_the_node_at_every_depth() -> None:
@@ -125,7 +125,7 @@ def test_editable_data_serves_a_target_replacement_and_an_insertion() -> None:
 
     account_db(port).transact(fn)
     assert _calls(port) == [
-        ReadCall(FIND_SQL_UNLOCKED, (1,)),
+        ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True),
         WriteCall(_INSERT, (9, "Ada", Decimal("100.00"), 1)),
         WriteCall(_GATED_FULL, ("Bo", Decimal("100.00"), 4, 1, 3)),
     ]
@@ -185,7 +185,7 @@ def test_a_node_stated_replacement_takes_neither_data_nor_its_source_authority()
             tx.wire.amend_if(cast("Any", node), {"owner": "Bo"}, version=3)
 
     account_db(port).transact(fn)
-    assert _calls(port) == [ReadCall(FIND_SQL_UNLOCKED, (1,))]
+    assert _calls(port) == [ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True)]
 
 
 def test_editable_data_amends_every_member_it_holds_and_is_no_source() -> None:

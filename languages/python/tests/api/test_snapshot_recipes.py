@@ -366,7 +366,12 @@ class _CannedPort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def execute(
-        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         return []
 
@@ -400,7 +405,12 @@ class _CannedAccountPort(ConnectsAsItself):
         self.rows = [_ACCOUNT_ROW]
 
     def execute(
-        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         answered, self.rows = self.rows, []
         return [projected_row(sql, row) for row in answered]
@@ -454,7 +464,12 @@ class _CannedOrderPort(ConnectsAsItself):
         self.scripted = [[_ORDER_ROW], [_ORDER_ITEM_ROW], [_ORDER_ROW]]
 
     def execute(
-        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         answered = self.scripted.pop(0) if self.scripted else []
         return [projected_row(sql, row) for row in answered]
@@ -492,7 +507,12 @@ class _CannedBalancePort(ConnectsAsItself):
         self.scripted = [[_BALANCE_ROW], [_BALANCE_ROW]]
 
     def execute(
-        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         answered = self.scripted.pop(0) if self.scripted else []
         return [projected_row(sql, row) for row in answered]

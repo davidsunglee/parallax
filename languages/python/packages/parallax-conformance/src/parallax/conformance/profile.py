@@ -70,8 +70,10 @@ class _NoProvisioningPort:
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:  # pragma: no cover
-        del binds, document_reads
+        del binds, document_reads, read_only
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
@@ -82,9 +84,9 @@ class _NoProvisioningPort:
         return None
 
     def execute_pipeline(
-        self, statements: Sequence[PipelineStatement]
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
     ) -> list[list[Row]]:  # pragma: no cover
-        del statements
+        del statements, read_only
         raise AssertionError("a rejected-case run must not execute a pipeline")
 
     def transaction[T](

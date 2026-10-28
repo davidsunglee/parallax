@@ -236,6 +236,8 @@ class CatalogPort:
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del document_reads
         if "order_item t0" in sql:
@@ -258,9 +260,13 @@ class CatalogPort:
         self._delivered += taken - 1 if taken == size and limited else taken
         return projected_rows(sql, (_order_row(row) for row in selected))
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
         return [
-            self.execute(statement.sql, statement.binds, statement.document_reads)
+            self.execute(
+                statement.sql, statement.binds, statement.document_reads, read_only=read_only
+            )
             for statement in statements
         ]
 

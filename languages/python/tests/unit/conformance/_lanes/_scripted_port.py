@@ -65,7 +65,12 @@ class ScriptedPort(ConnectsAsItself):
         self.closed = False
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         if self._raise_on_read is not None:
             raise self._raise_on_read

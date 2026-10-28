@@ -156,9 +156,11 @@ def test_the_offloaded_operation_runs_on_a_thread_that_is_not_the_event_loop_s()
             sql: str,
             binds: Sequence[Bind],
             document_reads: Sequence[DocumentReadOrdinals] = (),
+            *,
+            read_only: bool = False,
         ) -> list[Row]:
             issued.append(threading.get_ident())
-            return super().execute(sql, binds, document_reads)
+            return super().execute(sql, binds, document_reads, read_only=read_only)
 
     adapter = _Recording(Read(rows=[_ROW]))
 

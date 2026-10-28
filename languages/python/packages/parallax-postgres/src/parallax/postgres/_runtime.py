@@ -404,7 +404,7 @@ def _probe(runtime: PostgresRuntime, deadline: float) -> str:
             cleanup_result=resource.cleanup_result,
         ) from exc
     try:
-        login = _check_probe(connection.execute(PROBE_SQL, []))
+        login = _check_probe(connection.execute(PROBE_SQL, [], read_only=True))
     except BaseException as exc:
         resource.__exit__(type(exc), exc, exc.__traceback__)
         report_resource_issues("startup", resource.cleanup_result)

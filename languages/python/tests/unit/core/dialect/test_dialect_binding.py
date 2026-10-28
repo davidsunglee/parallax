@@ -50,6 +50,8 @@ class _SpellingPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del binds, document_reads
         self.statements.append(sql)

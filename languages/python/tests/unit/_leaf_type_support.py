@@ -455,6 +455,8 @@ class LeafPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del binds
         return projected_rows(sql, self.rows(), document_reads)
@@ -473,8 +475,12 @@ class LeafPort(ConnectsAsItself):
         del body, isolation, access_mode
         raise NotImplementedError
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
         return [
-            self.execute(statement.sql, statement.binds, statement.document_reads)
+            self.execute(
+                statement.sql, statement.binds, statement.document_reads, read_only=read_only
+            )
             for statement in statements
         ]

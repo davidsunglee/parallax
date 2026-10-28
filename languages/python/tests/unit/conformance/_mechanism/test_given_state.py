@@ -74,7 +74,12 @@ class _CorruptionPort:
         self.writes: list[tuple[str, list[object]]] = []
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         self.reads.append((sql, list(binds)))
         return [(copy.deepcopy(self._stored),)]
@@ -83,9 +88,13 @@ class _CorruptionPort:
         self.writes.append((sql, list(binds)))
         return 1
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
         return [
-            self.execute(statement.sql, statement.binds, statement.document_reads)
+            self.execute(
+                statement.sql, statement.binds, statement.document_reads, read_only=read_only
+            )
             for statement in statements
         ]
 
@@ -287,7 +296,12 @@ def test_given_corrupt_reports_how_many_rows_its_key_answered_with() -> None:
     # "the fixtures do not hold it" for either would misdescribe one of them.
     class _Empty(_CorruptionPort):
         def execute(
-            self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+            self,
+            sql: str,
+            binds: Sequence[object],
+            document_reads: Sequence[tuple[int, int]] = (),
+            *,
+            read_only: bool = False,
         ) -> list[Row]:
             return []
 

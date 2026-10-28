@@ -858,10 +858,15 @@ class _TableReadPort(ScriptedPort):
         self.delivered_at_read: list[list[int]] = []
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         self.delivered_at_read.append([len(session.writes) for session in self._sessions])
-        return super().execute(sql, binds, document_reads)
+        return super().execute(sql, binds, document_reads, read_only=read_only)
 
 
 def test_a_race_stating_its_final_tables_reads_them_once_after_both_groups_joined() -> None:

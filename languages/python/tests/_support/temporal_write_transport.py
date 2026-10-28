@@ -208,14 +208,21 @@ class CountingConnection:
         return self._dialect
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[DocumentReadOrdinals] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         self._tally.reads += 1
-        return self._inner.execute(sql, binds, document_reads)
+        return self._inner.execute(sql, binds, document_reads, read_only=read_only)
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
         self._tally.reads += len(statements)
-        return self._inner.execute_pipeline(statements)
+        return self._inner.execute_pipeline(statements, read_only=read_only)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         tally = self._tally

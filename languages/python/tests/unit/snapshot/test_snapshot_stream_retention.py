@@ -271,6 +271,8 @@ class _GeneratingPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del document_reads
         if "order_item t0" in sql:
@@ -330,6 +332,8 @@ class _WritingPort(_GeneratingPort):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del document_reads
         return [

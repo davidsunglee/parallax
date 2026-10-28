@@ -54,7 +54,12 @@ class _RefusingPort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         raise AssertionError(f"a lane-dispatched run must not execute SQL: {sql!r}")
 

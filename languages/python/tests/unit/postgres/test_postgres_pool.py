@@ -325,6 +325,33 @@ def test_startup_probes_a_real_connection_and_gives_it_back(
     assert runtime.login_identity == "runtime-login"
 
 
+def test_the_startup_probe_is_submitted_as_a_designated_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from parallax.postgres import _connection as connection_module
+
+    intents: list[bool] = []
+    execute = connection_module.PostgresConnection.execute
+
+    def recording(
+        execution: connection_module.PostgresConnection,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
+    ) -> list[Row]:
+        intents.append(read_only)
+        return execute(execution, sql, binds, document_reads, read_only=read_only)
+
+    monkeypatch.setattr(connection_module.PostgresConnection, "execute", recording)
+    _opened(monkeypatch, _pool())
+
+    open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+
+    assert intents == [True]
+
+
 def test_a_zero_minimum_and_on_demand_wait_for_nothing_and_still_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

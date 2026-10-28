@@ -338,9 +338,14 @@ class _KeyedSeedPort(ConnectsAsItself):
         self._counts = list(counts)
 
     def execute(
-        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
-        self.calls.append(ReadCall(sql, tuple(binds)))
+        self.calls.append(ReadCall(sql, tuple(binds), read_only))
         if self._scripted:
             return fold_mapping_rows(self._scripted.pop(0), document_reads)
         matched = [row for row in self._rows if next(iter(row.values())) in binds]

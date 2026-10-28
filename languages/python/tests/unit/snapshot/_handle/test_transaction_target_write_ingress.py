@@ -375,7 +375,7 @@ def test_explicit_source_assignments_write_exactly_what_they_name() -> None:
         edited
         == explicit
         == [
-            ReadCall(FIND_SQL_UNLOCKED, (1,)),
+            ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True),
             WriteCall(_GATED_BALANCE, (Decimal("100.00"), 4, 1, 3)),
         ]
     )
@@ -424,7 +424,7 @@ def test_assignments_beside_any_edit_history_are_refused(
         with pytest.raises(WriteInstructionError, match="one write has one author"):
             tx.amend(edit(found), mm.Account.balance.set(Decimal("5.00")))
 
-    assert _read_then(write) == [ReadCall(FIND_SQL_UNLOCKED, (1,))]
+    assert _read_then(write) == [ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True)]
 
 
 def test_a_source_replacement_writes_the_whole_state_of_an_unedited_value() -> None:
@@ -473,7 +473,7 @@ def test_wire_replacement_data_stands_alone(
     if isinstance(outcome, tuple):
         assert _calls(port)[-1] == WriteCall(_GATED_FULL, (*outcome, 4, 1, 3))
     else:
-        assert _calls(port) == [ReadCall(FIND_SQL_UNLOCKED, (1,))]
+        assert _calls(port) == [ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True)]
 
 
 @pytest.mark.parametrize(
@@ -493,7 +493,7 @@ def test_a_wire_source_amendment_sets_a_matching_key_aside(
         tx.wire.amend(tx.wire.find({"target": "Account", "predicate": _ONE}).result(), changes)
 
     account_db(port).transact(fn)
-    expected: list[PortCall] = [ReadCall(FIND_SQL_UNLOCKED, (1,))]
+    expected: list[PortCall] = [ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True)]
     if written is not None:
         expected.append(WriteCall(_GATED_BALANCE, (written, 4, 1, 3)))
     assert _calls(port) == expected
@@ -508,7 +508,7 @@ def test_a_wire_source_key_that_is_no_key_value_is_refused() -> None:
             tx.wire.amend(node, {"id": "one", "balance": "5.00"})
 
     account_db(port).transact(fn)
-    assert _calls(port) == [ReadCall(FIND_SQL_UNLOCKED, (1,))]
+    assert _calls(port) == [ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True)]
 
 
 # --------------------------------------------------------------------------- #

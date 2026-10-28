@@ -130,7 +130,11 @@ def test_a_participating_row_read_publishes_the_rows_it_materialized() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW])))
     rows = _run(port, lambda tx: tx.read_rows(_account_query()).rows)
     assert list(rows) == [ACCOUNT_ROW]
-    assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (3,)), CommitCall()]
+    assert port.calls == [
+        BeginCall(),
+        ReadCall(FIND_SQL_UNLOCKED, (3,), read_only=True),
+        CommitCall(),
+    ]
 
 
 def test_a_published_row_is_detached_from_the_mapping_it_was_built_from() -> None:
@@ -144,7 +148,7 @@ def test_a_published_row_is_detached_from_the_mapping_it_was_built_from() -> Non
 def test_a_standalone_wire_read_takes_no_lock_and_files_no_record() -> None:
     port = ScriptedAdapter(Read(rows=[ACCOUNT_ROW]))
     account_db(port).wire.find(_account_query())
-    assert port.calls == [ReadCall(FIND_SQL_UNLOCKED, (3,))]
+    assert port.calls == [ReadCall(FIND_SQL_UNLOCKED, (3,), read_only=True)]
 
 
 def test_a_participating_wire_read_answers_the_state_the_unit_of_work_retained() -> None:
@@ -159,7 +163,11 @@ def test_a_participating_wire_read_answers_the_state_the_unit_of_work_retained()
         return claims[0].key
 
     assert cast("ObjectStateKey", _run(port, fn)) == _account_state()
-    assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (3,)), CommitCall()]
+    assert port.calls == [
+        BeginCall(),
+        ReadCall(FIND_SQL_UNLOCKED, (3,), read_only=True),
+        CommitCall(),
+    ]
 
 
 def test_a_wire_read_answers_the_claim_of_every_node_it_published() -> None:

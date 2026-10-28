@@ -91,8 +91,8 @@ def test_typed_and_wire_reads_share_one_read_only_boundary_and_take_no_lock() ->
     assert db.read_only(read) == ("Newton", "Newton")
     assert port.calls == [
         BeginCall("read_committed", "read_only"),
-        ReadCall(FIND_SQL_UNLOCKED, (7,)),
-        ReadCall(FIND_SQL_UNLOCKED, (7,)),
+        ReadCall(FIND_SQL_UNLOCKED, (7,), read_only=True),
+        ReadCall(FIND_SQL_UNLOCKED, (7,), read_only=True),
         CommitCall(),
     ]
 

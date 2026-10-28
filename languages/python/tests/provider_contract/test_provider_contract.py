@@ -200,6 +200,23 @@ def test_pipeline_preserves_statement_results_and_one_array_bind(profile_run: An
         session.close()
 
 
+def test_designated_reads_answer_exactly_what_undesignated_ones_do(profile_run: Any) -> None:
+    sql = "select unnest(%s::bigint[]), true, '{\"a\": 1}'::jsonb"
+    statements = (
+        PipelineStatement(sql, ([1, 2],), ((1, 2),)),
+        PipelineStatement("select %s::text", ("second",)),
+    )
+    expected_rows = [(1, PresentDocument({"a": 1})), (2, PresentDocument({"a": 1}))]
+
+    assert profile_run.port.execute(sql, [[1, 2]], ((1, 2),), read_only=True) == expected_rows
+    assert profile_run.port.execute(sql, [[1, 2]], ((1, 2),)) == expected_rows
+    assert profile_run.port.execute_pipeline(statements, read_only=True) == [
+        expected_rows,
+        [("second",)],
+    ]
+    assert profile_run.port.execute_pipeline(statements) == [expected_rows, [("second",)]]
+
+
 def test_a_document_bind_stores_every_number_with_its_exact_meaning(profile_run: Any) -> None:
     # Read the way a stored predecessor is, then bound back: PostgreSQL stores
     # each number with the meaning it was read with, not a binary64 projection.

@@ -42,12 +42,19 @@ class _Inner:
         return ("result", len(statements))
 
     def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[object] = ()
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[object] = (),
+        *,
+        read_only: bool = False,
     ) -> list[object]:
         self.calls.append(("read", sql))
         return [(1,)]
 
-    def execute_pipeline(self, statements: Sequence[object]) -> list[list[object]]:
+    def execute_pipeline(
+        self, statements: Sequence[object], *, read_only: bool = False
+    ) -> list[list[object]]:
         self.calls.append(("pipeline", len(statements)))
         return [[] for _ in statements]
 

@@ -1359,10 +1359,15 @@ class _StatementCapturePort(ConnectsAsItself):
         return cast("Dialect", self._inner.dialect)
 
     def execute(
-        self, sql: str, binds: Any, document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Any,
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[dict[str, Any]]:
         self.statements.append((sql, tuple(binds)))
-        return self._inner.execute(sql, binds, document_reads=document_reads)
+        return self._inner.execute(sql, binds, document_reads=document_reads, read_only=read_only)
 
     def execute_write(self, sql: str, binds: Any) -> int:
         return self._inner.execute_write(sql, binds)
@@ -1381,7 +1386,12 @@ class _StatementCapturePort(ConnectsAsItself):
 def test_statement_capture_forwards_document_read_metadata() -> None:
     class _Inner:
         def execute(
-            self, sql: str, binds: Any, document_reads: Sequence[tuple[int, int]] = ()
+            self,
+            sql: str,
+            binds: Any,
+            document_reads: Sequence[tuple[int, int]] = (),
+            *,
+            read_only: bool = False,
         ) -> list[dict[str, Any]]:
             assert (sql, tuple(binds), tuple(document_reads)) == (
                 "select false, payload",

@@ -157,7 +157,7 @@ def test_update_lowers_to_its_keyed_dml() -> None:
     account_db(port).transact(fn)
     assert port.calls == [
         BeginCall(),
-        ReadCall(FIND_SQL_UNLOCKED, (1,)),
+        ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True),
         WriteCall(
             POSTGRES.to_driver_sql(
                 "update account set balance = ?, version = ? where id = ? and version = ?"
@@ -226,7 +226,7 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
     account_db(port).transact(fn, concurrency="locking")
     assert port.calls == [
         BeginCall(),
-        ReadCall(FIND_SQL_LOCKED, (3,)),
+        ReadCall(FIND_SQL_LOCKED, (3,), read_only=True),
         WriteCall(POSTGRES.to_driver_sql("delete from account where id = ?"), (3,)),
         CommitCall(),
     ]
@@ -330,6 +330,7 @@ def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversi
                 "select t0.id, t0.total, t0.version from consignment t0 where t0.id = ?"
             ),
             (1,),
+            read_only=True,
         ),
         ReadCall(
             POSTGRES.to_driver_sql(
@@ -337,6 +338,7 @@ def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversi
                 "where t0.consignment_id = any(cast(? as bigint[])) for share of t0"
             ),
             ([1],),
+            read_only=True,
         ),
         WriteCall(
             POSTGRES.to_driver_sql(
@@ -457,7 +459,11 @@ def test_update_of_a_copy_expressing_no_member_issues_no_dml() -> None:
 
     account_db(port).transact(fn)
     # The read happened; the write never did.
-    assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (1,)), CommitCall()]
+    assert port.calls == [
+        BeginCall(),
+        ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True),
+        CommitCall(),
+    ]
 
 
 @pytest.mark.parametrize("representation", ["typed", "wire"])
@@ -1788,7 +1794,11 @@ def test_update_of_an_unedited_node_buffers_nothing() -> None:
         tx.amend(tx.find(mm.Account.where(mm.Account.id == 1)).result())
 
     account_db(port).transact(fn)
-    assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (1,)), CommitCall()]
+    assert port.calls == [
+        BeginCall(),
+        ReadCall(FIND_SQL_UNLOCKED, (1,), read_only=True),
+        CommitCall(),
+    ]
 
 
 def test_a_terminate_takes_no_position_on_a_values_provenance() -> None:

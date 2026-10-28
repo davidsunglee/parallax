@@ -13,8 +13,8 @@ maps to it; the port is proven by each language's
 
 The port names a
 `dialect` /
-`execute(sql, binds, documentReads) → rows` /
-`executePipeline(statements) → row batches` /
+`execute(sql, binds, documentReads, readOnly?) → rows` /
+`executePipeline(statements, readOnly?) → row batches` /
 `executeWrite(sql, binds) → affected-row count` /
 optional `orderedWriteTransport(statements) → ordered write result` /
 `transaction(body, isolation?, accessMode?)` contract and nothing more. `execute` and
@@ -58,6 +58,19 @@ cannot be consumed through another's. The operation is transport batching, not
 a transaction boundary; it neither begins nor commits a transaction. Execution
 lifecycle accounting remains one Database Call per statement rather than one
 call for the pipeline as a whole.
+
+`readOnly` is the caller's **read intent** for one `execute` or
+`executePipeline` invocation, absent by default. A caller asserts it only for a
+submission that has no write effect, so submitting it again could change no
+stored state; for `executePipeline` it covers the whole batch, never a single
+member. An adapter infers nothing of the kind itself: a statement's verb, its
+result shape, and whether it returns rows grant nothing, and row-producing DML
+is submitted without read intent. Read intent requests no database enforcement:
+it is not an Access Mode, which remains the boundary's own independent request.
+It changes no submission's rows, error, Database Call accounting, or transaction
+ownership. An adapter MUST NOT submit an invocation without read intent more
+than once; whether it ever resubmits a designated one is its own documented
+behavior, not a requirement of this port.
 
 `dialect` is the concrete `m-dialect` strategy every statement crossing this
 port is spelled in — read-only, and answerable at any time. The port is the

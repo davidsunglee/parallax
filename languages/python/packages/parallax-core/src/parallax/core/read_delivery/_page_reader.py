@@ -268,7 +268,8 @@ def _pipelined_rows(
                     fetch.compiled.document_reads,
                 )
                 for fetch in pending
-            )
+            ),
+            read_only=True,
         )
         for call, rows in zip(call_contexts, batches, strict=True):
             call.read_completed(rows)

@@ -502,10 +502,12 @@ class _CountingPort(lowering_support.AcceptingPort):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         serialize(binds)
         self.counter.reads += 1
-        return super().execute(sql, binds, document_reads)
+        return super().execute(sql, binds, document_reads, read_only=read_only)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         del sql
@@ -539,6 +541,8 @@ class _PagedReadPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         serialize(binds)
         self.counter.reads += 1
@@ -557,9 +561,13 @@ class _PagedReadPort(ConnectsAsItself):
         del sql, binds
         raise AssertionError("a read workload writes nothing")
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
         return [
-            self.execute(statement.sql, statement.binds, statement.document_reads)
+            self.execute(
+                statement.sql, statement.binds, statement.document_reads, read_only=read_only
+            )
             for statement in statements
         ]
 
@@ -591,6 +599,8 @@ class _ScriptedPort(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         serialize(binds)
         self.counter.reads += 1
@@ -604,9 +614,13 @@ class _ScriptedPort(ConnectsAsItself):
         self.counter.statements += 1
         return 1
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement], *, read_only: bool = False
+    ) -> list[list[Row]]:
         return [
-            self.execute(statement.sql, statement.binds, statement.document_reads)
+            self.execute(
+                statement.sql, statement.binds, statement.document_reads, read_only=read_only
+            )
             for statement in statements
         ]
 

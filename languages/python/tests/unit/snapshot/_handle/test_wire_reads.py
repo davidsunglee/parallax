@@ -147,6 +147,8 @@ class QueuePort(ConnectsAsItself):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         self.executed.append((sql, list(binds)))
         return fold_mapping_rows(self._responses.pop(0), document_reads, sql)

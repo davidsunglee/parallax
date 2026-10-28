@@ -189,9 +189,11 @@ class _ChronologyPort(lowering_support.AcceptingPort):
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         self.events.append("read")
-        return super().execute(sql, binds, document_reads)
+        return super().execute(sql, binds, document_reads, read_only=read_only)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         self.events.append("write")
@@ -1215,9 +1217,11 @@ def _observed_flush(
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         events.append("read")
-        return execute(port, sql, binds, document_reads)
+        return execute(port, sql, binds, document_reads, read_only=read_only)
 
     def writing(
         port: lowering_support.OrderedAcceptingPort, sql: str, binds: Sequence[object]

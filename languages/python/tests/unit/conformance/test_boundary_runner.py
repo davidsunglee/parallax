@@ -247,6 +247,8 @@ class _FakePort(ConnectsAsItself):
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del sql, binds, document_reads
         self.ops.append("read")

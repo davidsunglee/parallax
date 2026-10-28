@@ -74,7 +74,7 @@ def test_a_predicate_write_executes_what_is_buffered_before_it_then_itself_at_th
     db_for(_MODEL, port).transact(fn)
     assert at_the_call == [
         [
-            ReadCall(_WALLET_FIND, (1,)),
+            ReadCall(_WALLET_FIND, (1,), read_only=True),
             WriteCall(_WALLET_BALANCE, (Decimal("1.00"), 1)),
             WriteCall(_LOW, ("Low", Decimal("2.00"))),
         ]
@@ -93,7 +93,7 @@ def test_writes_of_one_state_after_a_predicate_write_still_coalesce() -> None:
 
     db_for(_MODEL, port).transact(fn)
     assert _calls(port) == [
-        ReadCall(_WALLET_FIND, (1,)),
+        ReadCall(_WALLET_FIND, (1,), read_only=True),
         WriteCall(_LOW, ("Low", Decimal("2.00"))),
         WriteCall(
             POSTGRES.to_driver_sql("update wallet set owner = ?, balance = ? where id = ?"),
@@ -119,7 +119,7 @@ def test_a_versioned_source_after_a_predicate_write_continues_from_the_version_i
 
     db_for(_MODEL, port).transact(fn, concurrency=concurrency)
     assert _calls(port) == [
-        ReadCall(find, (1,)),
+        ReadCall(find, (1,), read_only=True),
         WriteCall(
             _account_update("balance", gated=gated),
             (Decimal("1.00"), 4, 1, 3) if gated else (Decimal("1.00"), 4, 1),

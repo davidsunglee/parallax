@@ -236,7 +236,12 @@ class _CannedPort(ConnectsAsItself):
         self.writes: list[tuple[str, list[Bind]]] = []
 
     def execute(
-        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         response = self._responses.pop(0) if self._responses else []
         self.delivered.append(response)
@@ -300,13 +305,17 @@ class _ResponseRecordingConnection:
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
-        rows = self._inner.execute(sql, binds, document_reads)
+        rows = self._inner.execute(sql, binds, document_reads, read_only=read_only)
         self._responses.append(list(rows))
         return rows
 
-    def execute_pipeline(self, statements: Sequence[Any]) -> list[list[Row]]:
-        responses = self._inner.execute_pipeline(statements)
+    def execute_pipeline(
+        self, statements: Sequence[Any], *, read_only: bool = False
+    ) -> list[list[Row]]:
+        responses = self._inner.execute_pipeline(statements, read_only=read_only)
         self._responses.extend(list(rows) for rows in responses)
         return responses
 
@@ -366,6 +375,8 @@ class _ReplayPort(_TransactingCannedPort):
         sql: str,
         binds: Sequence[Bind],
         document_reads: Sequence[tuple[int, int]] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
         del sql, binds, document_reads
         return self._recorded.pop(0) if self._recorded else []

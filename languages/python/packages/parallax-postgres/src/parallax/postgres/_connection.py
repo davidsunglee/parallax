@@ -781,14 +781,23 @@ class PostgresConnection:
         sql: str,
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
     ) -> list[Row]:
+        del read_only
         connection = self._native()
         rows = _document_read_rows(self.dialect, document_reads)
         with translating_driver_errors(self.dialect), _cursor(connection, rows) as cursor:
             cursor.execute(sql.encode(), adapt_binds(binds))
             return _fetch(cursor, rows)
 
-    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+    def execute_pipeline(
+        self,
+        statements: Sequence[PipelineStatement],
+        *,
+        read_only: bool = False,
+    ) -> list[list[Row]]:
+        del read_only
         connection = self._native()
         with translating_driver_errors(self.dialect), contextlib.ExitStack() as cursors:
             pending: list[tuple[psycopg.Cursor[Row], _DocumentReadRows | None]] = []
