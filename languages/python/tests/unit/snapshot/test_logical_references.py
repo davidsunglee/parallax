@@ -17,10 +17,18 @@ from parallax.core import (
     rel,
 )
 from parallax.core.entity import model_of
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import validate_object_query
 from parallax.core.object_query.serde import deserialize
 from parallax.core.read_delivery._fetch import attach_children
-from parallax.core.read_delivery._page import Page, page_rows, release_page_rows, root_last_uses
+from parallax.core.read_delivery._page import (
+    Page,
+    PageSchedule,
+    page_rows,
+    page_schedule,
+    release_finished_rows,
+    release_page_rows,
+)
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import SnapshotConsistencyError
 from parallax.snapshot._publication._root import RootView
@@ -75,6 +83,18 @@ def test_forward_fanback_preserves_same_logical_concrete_witnesses(
     assert conflict.value.occurrences == ((0, 1), (0, 2))
 
 
+def _every_family_versioned(_entity: EntityIdentity) -> bool:
+    return True
+
+
+def _releasing_at_last_use(page: Page) -> PageSchedule:
+    """``page``'s atomic schedule with every root family deferring its states,
+    which releases each projection at its last use."""
+    schedule = page_schedule(page, _every_family_versioned, atomic=True)
+    assert schedule.last_uses is not None
+    return schedule
+
+
 _PARENT_KEY = "InverseLink.parentId"
 _BOTH_PARENTS = {"InverseLink.parent": ("InverseAlpha", "InverseBeta")}
 
@@ -111,17 +131,18 @@ def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime()
     fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
     page = fixture.page(alpha, beta)
     rows = page_rows(page)
-    last_uses = root_last_uses(page)
-    assert tuple(last_uses[0]) == (1, 1, 1)
+    schedule = _releasing_at_last_use(page)
+    assert schedule.last_uses is not None
+    assert tuple(schedule.last_uses[0]) == (1, 1, 1)
     first = RootView(page, 0)
     slot = first.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
     assert first.view(1, slot) == 0
-    first.release_finished_page_rows(0, last_uses)
+    release_finished_rows(page, schedule, 0, first.reached)
     assert rows.view_rows[link]
     second = RootView(page, 1)
     assert second.order[0].name == "InverseBeta"
     assert second.view(1, slot) == 0
-    second.release_finished_page_rows(1, last_uses)
+    release_finished_rows(page, schedule, 1, second.reached)
     assert all(not row for row in rows.member_rows)
     assert not rows.view_rows[beta] and not rows.view_rows[link]
     assert all(rows.judged_states.singleton(logical) is None for logical in range(len(rows.claims)))
@@ -140,11 +161,11 @@ def test_a_later_root_resolves_an_inverse_to_a_released_claim_to_null() -> None:
     page = fixture.page(released, other)
     rows = page_rows(page)
     logical = rows.logical_ids[released]
-    last_uses = root_last_uses(page)
+    schedule = _releasing_at_last_use(page)
     first = RootView(page, 0)
     slot = first.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
     assert first.view(1, slot) == 0
-    first.release_finished_page_rows(0, last_uses)
+    release_finished_rows(page, schedule, 0, first.reached)
     assert rows.claims[logical] == other
     second = RootView(page, 1)
     assert [entity.name for entity in second.order] == ["InverseBeta", "InverseLink"]

@@ -4,7 +4,7 @@ import datetime as dt
 import decimal
 import uuid
 from array import array
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Final, Literal, NamedTuple, Protocol, cast
 
@@ -31,6 +31,7 @@ __all__ = [
     "Page",
     "PageBuilder",
     "PageRows",
+    "PageSchedule",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
     "attribute_state",
@@ -40,9 +41,11 @@ __all__ = [
     "layout_order_key",
     "page_edges",
     "page_rows",
+    "page_schedule",
     "push_edges",
+    "reach_into",
+    "release_finished_rows",
     "release_page_rows",
-    "root_last_uses",
     "same_witness",
     "state_for",
     "stored_order_key",
@@ -543,29 +546,129 @@ def release_page_rows(page: Page) -> None:
     rows.judged_states.release()
 
 
-def root_last_uses(page: Page) -> tuple[array[int], array[int]]:
-    """Return each projection's and logical state's last reaching root position."""
+class PageSchedule(NamedTuple):
+    """How one publication over a Page judges its roots' states and releases
+    its rows.
+
+    ``last_uses`` is each projection's and each logical state's last reaching
+    root position, present exactly when release at last use applies.
+    ``defers_states`` judges each root's states only after that root's claims
+    compare. ``PageSchedule(None, False)`` releases only the raw member rows a
+    root reached.
+    """
+
+    last_uses: tuple[array[int], array[int]] | None
+    defers_states: bool
+
+
+_RAW_ROWS: Final = PageSchedule(None, False)
+
+
+def page_schedule(
+    page: Page, carries_write_evidence: Callable[[EntityIdentity], bool], *, atomic: bool
+) -> PageSchedule:
+    """``page``'s schedule for one publication of its roots.
+
+    A non-atomic publication drops its Page whole, so it neither defers states
+    nor releases at last use. An atomic one defers states exactly when every
+    root's family carries write evidence, which holds vacuously for no roots,
+    and releases at last use when it defers or the Page holds a grouped claim.
+    Scheduling judges no state.
+    """
+    if not atomic:
+        return _RAW_ROWS
     rows = page_rows(page)
+    layouts = rows.layouts
+    defers_states = all(carries_write_evidence(layouts[root].concrete) for root in rows.roots)
+    if defers_states or any(not isinstance(claim, int) for claim in rows.claims):
+        return PageSchedule(_last_uses(rows), defers_states)
+    return PageSchedule(None, defers_states)
+
+
+def _last_uses(rows: PageRows) -> tuple[array[int], array[int]]:
     typecode = "h" if len(rows.roots) <= 32_768 else "i"
     projection_last = array(typecode, [-1]) * len(rows.layouts)
     logical_last = array(typecode, [-1]) * len(rows.claims)
+    logical_ids = rows.logical_ids
+    claims = rows.claims
+    reached: list[int] = []
     for position, root in enumerate(rows.roots):
-        pending = [root]
-        seen: set[int] = set()
-        while pending:
-            projection = pending.pop()
-            if projection in seen:
-                continue
-            seen.add(projection)
+        reach_into(rows, root, reached)
+        for projection in reached:
             projection_last[projection] = position
-            logical = rows.logical_ids[projection]
+            logical = logical_ids[projection]
             logical_last[logical] = position
-            claim = rows.claims[logical]
+            claim = claims[logical]
             if not isinstance(claim, int):
-                for witness in claim:
-                    projection_last[witness] = position
-            push_edges(rows, projection, pending)
+                for claimant in claim:
+                    projection_last[claimant] = position
     return projection_last, logical_last
+
+
+def reach_into(rows: PageRows, root: int, reached: list[int]) -> None:
+    """Refill ``reached`` with ``root``'s reach in projection preorder, each
+    projection once, following :func:`push_edges`. A root with no view row and
+    no overwritten edge reaches only itself, with no walk."""
+    reached.clear()
+    if not rows.view_rows[root] and not rows.overwritten_edges[root]:
+        reached.append(root)
+        return
+    seen: set[int] = set()
+    pending = [root]
+    while pending:
+        projection = pending.pop()
+        if projection in seen:
+            continue
+        seen.add(projection)
+        reached.append(projection)
+        push_edges(rows, projection, pending)
+
+
+def release_finished_rows(
+    page: Page, schedule: PageSchedule, position: int, reached: Sequence[int]
+) -> None:
+    """Release the Page storage the root at ``position`` has finished with
+    among the projections it ``reached``.
+
+    Every reached raw member row goes, except a keyless claim's still-pending
+    one, whose payload a later root judges again. With last uses, a projection
+    no later root reaches releases all its storage, and a logical state goes
+    once the last root sharing it has been judged. Releasing again changes
+    nothing.
+    """
+    rows = page_rows(page)
+    member_rows = rows.member_rows
+    if not isinstance(member_rows, list):  # pragma: no cover - a sealed Page holds lists
+        return
+    keys = cast("list[LogicalKey | None]", rows.keys)
+    decoders = rows.decoders
+    last_uses = schedule.last_uses
+    if last_uses is None:
+        for projection in reached:
+            if keys[projection] is not None or not decoders.pending(projection):
+                member_rows[projection] = ()
+        return
+    projection_last, logical_last = last_uses
+    view_rows = cast("list[Sequence[object]]", rows.view_rows)
+    witnesses = cast("list[object]", rows.witnesses)
+    logical_ids = cast("list[int]", rows.logical_ids)
+    for projection in reached:
+        if projection_last[projection] != position:
+            if keys[projection] is not None or not decoders.pending(projection):
+                member_rows[projection] = ()
+            continue
+        member_rows[projection] = ()
+        logical = logical_ids[projection]
+        rows.issues.release(projection)
+        keys[projection] = None
+        view_rows[projection] = ()
+        rows.overwritten_edges.release(projection)
+        witnesses[projection] = None
+        decoders.release(projection)
+        logical_ids[projection] = 0
+        if logical_last[logical] == position:
+            rows.judged_states.release_logical(logical)
+            logical_last[logical] = -1
 
 
 def push_edges(rows: PageRows, projection: int, pending: list[int]) -> None:

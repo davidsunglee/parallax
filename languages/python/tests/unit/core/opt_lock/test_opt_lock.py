@@ -204,3 +204,22 @@ def test_the_keys_keep_their_value_equality_and_family_sharing() -> None:
     ) is opt_lock.view(_MODELS["appliance"]).required_key(
         EntityIdentity("parallax.compatibility", "Appliance")
     )
+
+
+@pytest.mark.parametrize(
+    ("stem", "entity", "carries"),
+    [
+        ("animal", "Person", False),
+        ("account", "Account", True),
+        ("balance", "Balance", True),
+        ("appliance", "Oven", True),
+        ("account", "Undeclared", False),
+    ],
+    ids=["unversioned", "explicit-version", "transaction-time-derived", "descendant", "unknown"],
+)
+def test_write_evidence_answers_whether_a_family_supplies_a_version_source(
+    stem: str, entity: str, carries: bool
+) -> None:
+    carries_write_evidence = opt_lock.write_evidence(_MODELS[stem])
+
+    assert carries_write_evidence(EntityIdentity("parallax.compatibility", entity)) is carries

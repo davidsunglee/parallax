@@ -12,13 +12,14 @@ from parallax.core.base import SQL_NULL
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import RelationshipIdentity
+from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 from parallax.core.read_delivery._page import (
     ROOT_LEVEL,
     PageBuilder,
     ViewSchema,
     page_rows,
-    root_last_uses,
+    page_schedule,
+    release_finished_rows,
 )
 from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
@@ -37,6 +38,10 @@ from tests.unit.snapshot._snapshot_page_support import (
 
 _ENCODED = model_of(ENCODED_ORDERS)
 _ANIMAL = corpus_model("animal")
+
+
+def _every_family_versioned(_entity: EntityIdentity) -> bool:
+    return True
 
 
 def _order(order_id: object, name: str = "Ada") -> dict[str, object]:
@@ -161,17 +166,26 @@ def test_page_storage_reports_projection_width_and_handles_a_view_cycle() -> Non
     assert len(rows.issues) == 2
     assert len(rows.decoders) == 2
     assert len(rows.overwritten_edges) == 2
-    projection_last, logical_last = root_last_uses(page)
+    last_uses = page_schedule(page, _every_family_versioned, atomic=True).last_uses
+    assert last_uses is not None
+    projection_last, logical_last = last_uses
     assert tuple(projection_last) == (0, 0)
     assert tuple(logical_last) == (0, 0)
 
 
-def test_releasing_a_root_view_twice_is_idempotent() -> None:
+def test_releasing_a_finished_root_twice_is_idempotent() -> None:
     page, _roots = _page(((ROOT_LEVEL, _encoded_order("01")),))
+    rows = page_rows(cast("Any", page))
+    schedule = page_schedule(cast("Any", page), _every_family_versioned, atomic=True)
     root = RootView(cast("Any", page), 0)
 
-    root.release_finished_page_rows(0, root_last_uses(cast("Any", page)))
-    root.release_finished_page_rows(0, root_last_uses(cast("Any", page)))
+    release_finished_rows(cast("Any", page), schedule, 0, root.reached)
+    released = (list(rows.member_rows), list(rows.keys), list(rows.logical_ids))
+    release_finished_rows(cast("Any", page), schedule, 0, root.reached)
+
+    assert released == ([()], [None], [0])
+    assert (list(rows.member_rows), list(rows.keys), list(rows.logical_ids)) == released
+    assert rows.judged_states.singleton(0) is None
 
 
 def _published_positions(page: Any) -> Iterator[object]:
