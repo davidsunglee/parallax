@@ -621,12 +621,22 @@ values differ only in those supplied operations: occurrence recursion, required
 nested members, `many` normalization, canonical member order, immutable output,
 and structural finding paths are one implementation.
 
-Preparation writes successful output directly into the recursively owned
-`FrozenMap` / tuple representation. It performs no preliminary recursive render
-and no later deep-freeze pass. Already-owned leaves and subtrees are retained by
-identity; mutable input containers are detached once at the boundary. Root
-computed markers are admitted only when the resolved top-level Attribute role
-allows them and are never interpreted inside an occurrence.
+Preparation writes successful output directly into a recursively owned
+positional representation in `MemberShape` order. A complete document's stated
+top-level members are packed in that order beside a presence mask with one bit
+per stated member, an explicit null included, so an omitted member occupies no
+position. Each nested occurrence takes the same form a read's accepted Entity
+State gives it: a full-width positional tuple in its own shape's order holding
+the absence marker for an omitted member, and a `many` occurrence a tuple of
+those. It performs no preliminary recursive render and no later deep-freeze
+pass. Already-owned leaves and subtrees are retained by identity; mutable input
+containers are detached once at the boundary.
+
+A complete document is judged in `MemberShape` order: a missing required member
+and an inadmissible value are found in the one pass, and the first one met is
+the document's finding. Root computed markers are admitted only when the
+resolved top-level Attribute role allows them, at that member's judgment point,
+and are never interpreted inside an occurrence.
 
 The same traversal has a validation-only mode. That mode walks and normalizes the
 same source under the same shape but constructs no success-sized document tree.

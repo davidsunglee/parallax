@@ -17,6 +17,7 @@ judges nothing at all, because a Typed value's shape is fixed by its class.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterator
 from decimal import Decimal
 from typing import Final, cast
 
@@ -30,6 +31,8 @@ from parallax.conformance.vo_models import (
     ContactPoint,
 )
 from parallax.core import Attr, DomainModel, attr
+from parallax.core._execution._planning import prepare_model
+from parallax.core._execution._publication import write_projection
 from parallax.core.base import INFINITY, DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
@@ -240,6 +243,43 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
         "owner": "Newton",
         "balance": Decimal("5.00"),
     }
+
+
+class _ReadRecordingCodec(EntityRowCodec):
+    """A codec recording which of its two insert readers a source asks."""
+
+    __slots__ = ("reads",)
+
+    def __init__(self, codec_of: DomainModel) -> None:
+        super().__init__(cataloged_for(codec_of))
+        self.reads: list[str] = []
+
+    def declared_values(self, value: EntityBase) -> Iterator[object]:
+        self.reads.append("positional")
+        return super().declared_values(value)
+
+    def full_row(self, value: object) -> dict[str, object]:
+        self.reads.append("by-name")
+        return super().full_row(value)
+
+
+def test_an_insert_source_reads_a_proven_class_by_position_and_any_other_by_name() -> None:
+    # The model a selection prepares proves its own classes positional; one
+    # prepared from the bare Metamodel proves none.
+    codec = _ReadRecordingCodec(ACCOUNT)
+    meta = cataloged_for(ACCOUNT).meta
+    proven = write_projection(prepare_model(ACCOUNT, edition="e1")).preparation
+    for preparation in (proven, preparation_for(meta)):
+        source = TypedKeyedInsertSource(new_account(), codec)
+        prepared = source.prepare(
+            preparation, "insert", source.resolve(meta, "insert"), valid_from=None, until=None
+        )
+        assert named_members(prepared.rows[0]) == {
+            "id": 7,
+            "owner": "Newton",
+            "balance": Decimal("5.00"),
+        }
+    assert codec.reads == ["positional", "by-name"]
 
 
 def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
