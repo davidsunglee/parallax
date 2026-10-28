@@ -5,13 +5,10 @@ from __future__ import annotations
 
 from typing import Final
 
-import pytest
-
 from parallax.core import inheritance
-from parallax.core._execution._planning import build_write_planner, prepare_model
+from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._publication import write_projection
 from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core.entity._model import model_of
 from tests._support.mirrored_models import ACCOUNT_MODEL
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
@@ -29,8 +26,7 @@ def test_every_entity_is_prepared_once_over_its_member_selection() -> None:
 
     assert prepared.selection.members is view.member_selection
     assert prepared.selection.absent is _ABSENT
-    assert prepared.typed.shape is view.member_selection.shape
-    assert prepared.wire.shape is view.member_selection.shape
+    assert prepared.plan.shape is view.member_selection.shape
     assert preparation.entity(branch.identity) is prepared
 
 
@@ -52,10 +48,3 @@ def test_a_prepared_model_prepares_writes_against_its_own_model() -> None:
     write = write_projection(selection)
 
     assert write.preparation.meta is write.model.meta
-
-
-def test_a_planner_refuses_another_models_preparation() -> None:
-    other = WritePreparation(model_of(ACCOUNT_MODEL), absent=_ABSENT)
-
-    with pytest.raises(ValueError, match="its own model's preparation"):
-        build_write_planner(_BRANCH, preparation=other)

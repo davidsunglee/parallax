@@ -11,8 +11,18 @@ from types import MappingProxyType
 from typing import Any, Final, Literal, NoReturn, assert_never, cast
 
 from parallax.core.base import (
+    BOOLEAN,
+    BYTES,
+    DATE,
+    FLOAT32,
+    FLOAT64,
+    INT32,
+    INT64,
     JSON,
     STRING,
+    TIME,
+    TIMESTAMP,
+    UUID,
     Boolean,
     Bytes,
     Date,
@@ -120,6 +130,11 @@ def wire_converter(neutral_type: NeutralType) -> ScalarConverter:
     """The Wire lane's conversion for ``neutral_type``: :func:`decode_wire`
     resolved once to its type's own decoder, with the owned form of a Json
     value, raising :class:`WireDecodingError`."""
+    shared = _NULLARY_WIRE_CONVERTERS.get(type(neutral_type))
+    return _wire_converter(neutral_type) if shared is None else shared
+
+
+def _wire_converter(neutral_type: NeutralType) -> ScalarConverter:
     if isinstance(neutral_type, Json):
         return _decode_owned_json
     decode = _WIRE_DECODERS[type(neutral_type)]
@@ -730,4 +745,24 @@ _WIRE_DECODERS: Final[Mapping[type[NeutralType], Callable[[object, Any], _Decode
             Uuid: _decode_uuid,
         }
     )
+)
+# Every variant but Decimal is nullary, so one converter serves each wherever it is declared.
+_NULLARY_WIRE_CONVERTERS: Final[Mapping[type[NeutralType], ScalarConverter]] = MappingProxyType(
+    {
+        type(declared): _wire_converter(declared)
+        for declared in (
+            BOOLEAN,
+            INT32,
+            INT64,
+            FLOAT32,
+            FLOAT64,
+            STRING,
+            BYTES,
+            DATE,
+            TIME,
+            TIMESTAMP,
+            UUID,
+            JSON,
+        )
+    }
 )

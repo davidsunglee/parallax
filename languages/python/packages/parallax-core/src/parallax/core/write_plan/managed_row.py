@@ -39,10 +39,15 @@ class RowSelection:
 
     members: EntityMemberSelection
     absent: object
-    full_presence: int = field(init=False, repr=False, compare=False)
+    width: int = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "full_presence", (1 << len(self.members.shape.members)) - 1)
+        object.__setattr__(self, "width", len(self.members.shape.members))
+
+    @property
+    def full_presence(self) -> int:
+        """The presence of a row stating every member."""
+        return (1 << self.width) - 1
 
     def position(self, member: MemberIdentity) -> int:
         return self.members.index[member]
@@ -81,9 +86,10 @@ class ManagedRow:
         presence = self.presence
         if not presence >> position & 1:
             return self.selection.absent
-        if presence == self.selection.full_presence:
-            return self.cells[position]
-        return self.cells[(presence & ((1 << position) - 1)).bit_count()]
+        cells = self.cells
+        if len(cells) == self.selection.width:
+            return cells[position]
+        return cells[(presence & ((1 << position) - 1)).bit_count()]
 
     def cell(self, member: MemberIdentity) -> object:
         """``member``'s cell, or ``selection.absent`` when unstated."""
