@@ -133,17 +133,19 @@ those instead. Integer input cannot lose precision. Direct construction runs
 application Pydantic validators. Database materialization does not run those
 validators or authored constructors.
 
-Constructing a scalar collection checks only that each element has a carrier
-this table admits for the element type. It refuses input Pydantic would
-otherwise convert: a `bool` for an Integer, a `float` or a string for a Decimal,
-an integer the declared float width does not represent exactly, or a
-non-canonical UUID string. The element's value space — the declared width,
+Constructing a scalar collection checks that each element has a carrier this
+table admits for the element type, then validates each element as Pydantic
+validates an ordinary scalar of that type. The carrier check refuses input
+Pydantic would otherwise convert: a `bool` for an Integer, a `float` or a string
+for a Decimal, an integer the declared float width does not represent exactly,
+or a non-canonical UUID string. The element's value space — the declared width,
 precision and scale, finiteness, Float32 exactness, UTF-8 encodability, a time
 zone, and a representable UTC instant — is judged where an ordinary scalar's is:
 by the write, which refuses an element outside it with
 `write-value-type-mismatch` at its position, and by an `edit(...)` or
-`.set(...)` that assigns the collection. An edit carrying an unchanged
-collection checks only its carriers.
+`.set(...)` that assigns the collection. Construction still refuses what
+Pydantic refuses for that ordinary scalar, such as a non-finite `Decimal`. An
+edit carrying an unchanged collection checks only its carriers.
 
 ## Editing, presence, and serialization
 
