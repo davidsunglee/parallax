@@ -31,6 +31,7 @@ from parallax.core.base import (
     Float32,
     Int32,
     NeutralType,
+    coerce_neutral_input,
     matches_typed_carrier,
 )
 from parallax.core.base import infer_neutral_type as _infer_neutral_type
@@ -2181,8 +2182,10 @@ def _scalar_collection_validator(py_name: str, leaf: ScalarDefinition) -> Any:
     integer, a ``float`` into a ``Decimal`` — erasing them before any write
     admission sees them. So the exact immutable carrier and each element's
     carrier are required here, before Pydantic's own element validation runs.
-    Each element's value space is judged by the write that admits it, and by an
-    edit or ``.set(...)`` that assigns the collection.
+    That validation refuses only what it refuses for an ordinary scalar, such as
+    a non-finite ``Decimal``; the rest of each element's value space is judged
+    by the write that admits it, and by an edit or ``.set(...)`` that assigns
+    the collection.
     """
     declared = leaf.type
 
@@ -2197,8 +2200,9 @@ def _scalar_collection_validator(py_name: str, leaf: ScalarDefinition) -> Any:
             )
         for index, element in enumerate(cast("tuple[object, ...]", value)):
             if not matches_typed_carrier(element, declared):
+                coerced = coerce_neutral_input(element, declared)
                 raise ValueError(
-                    f"{py_name}[{index}]: value {element!r} does not match the "
+                    f"{py_name}[{index}]: value {coerced!r} does not match the "
                     f"declared element type {declared}"
                 )
         return value

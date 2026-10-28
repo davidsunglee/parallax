@@ -14,6 +14,7 @@ import re
 import uuid
 from collections.abc import Callable
 from decimal import Decimal
+from enum import IntEnum, StrEnum
 from typing import Any, cast
 
 import pytest
@@ -156,6 +157,23 @@ def test_construction_refuses_an_element_carrier_pydantic_would_convert(
         Order(id=1, **{member: authored})
 
     assert refusal in str(constructed.value)
+
+
+class _Spelling(StrEnum):
+    MALFORMED = "not-a-uuid"
+
+
+class _Count(IntEnum):
+    BEYOND_BINARY32 = 2**24 + 1
+
+
+def test_a_carrier_refusal_reports_a_subclass_element_as_its_base_value() -> None:
+    with pytest.raises(ValidationError) as constructed:
+        Order(id=1, tokens=cast("Any", (_Spelling.MALFORMED,)))
+    assert "tokens[0]: value 'not-a-uuid' does not match" in str(constructed.value)
+
+    with pytest.raises(ValidationError, match=r"weights\[0\]: value 16777217 does not match"):
+        Detail(weights=(_Count.BEYOND_BINARY32,))
 
 
 def test_value_object_construction_refuses_each_element_carrier() -> None:
