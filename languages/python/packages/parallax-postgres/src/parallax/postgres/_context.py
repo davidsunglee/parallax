@@ -83,10 +83,10 @@ def checkout(
 ) -> psycopg.Connection[TupleRow]:
     """Take a connection out of ``pool`` within ``deadline``, or raise.
 
-    The remaining budget is what the native checkout is given, so its own
-    health-check recovery spends the caller's time rather than an additional
-    allowance. Native failures map to the checkout-reachable acquisition reasons
-    and keep their cause; authorization setup is classified later, after checkout.
+    The remaining budget is what the native checkout is given, so its wait
+    spends the caller's time rather than an additional allowance. Native
+    failures map to the checkout-reachable acquisition reasons and keep their
+    cause; authorization setup is classified later, after checkout.
 
     An expiry is reported as the refusal currently on record rather than as a
     ``timeout``: a configuration every new connection is refused under is what
@@ -250,10 +250,10 @@ class PostgresConnectionContext:
     The context is the only holder of the physical connection for the whole
     lease: execution borrows the current one for each operation. That is what
     lets the lease's actual first submission — its role installation, an outer
-    ``BEGIN``, or a read its caller designated — run once more if it meets a
-    broken session: the connection is disposed of and handed back, another is
-    taken within the original deadline, and the same prepared submission is
-    made on it, all inside this one acquisition. Any other submission, the
+    ``BEGIN``, or a read or batch of reads its caller designated — run once
+    more if it meets a broken session: the connection is disposed of and
+    handed back, another is taken within the original deadline, and the same
+    prepared submission is made on it, all inside this one acquisition. Any other submission, the
     second attempt itself, and a write never are. Once no connection can be
     kept, the slot holds the cleanup that ended it instead, and that is what
     leaving reports.

@@ -910,8 +910,8 @@ class PostgresConnection:
 
         Under a connection context, a ``read_only`` submission that is the
         lease's first and meets a broken session is submitted once more,
-        unchanged, on the connection the context replaces it with; nothing else
-        is ever resubmitted.
+        unchanged, on the connection the context replaces it with; an
+        undesignated one never is.
         """
         query = sql.encode()
         adapted = adapt_binds(binds)
@@ -926,7 +926,13 @@ class PostgresConnection:
         *,
         read_only: bool = False,
     ) -> list[list[Row]]:
-        del read_only
+        """Run ``statements`` in one pipeline and return each one's rows.
+
+        Under a connection context, a ``read_only`` batch that is the lease's
+        first submission and meets a broken session before its pipeline has
+        synchronized is submitted once more, whole and unchanged, on the
+        connection the context replaces it with; no row is fetched before that.
+        """
         if not statements:
             self._current_native()
             return []
@@ -935,7 +941,9 @@ class PostgresConnection:
             for statement in statements
         )
         with translating_driver_errors(self.dialect):
-            return self._invoke_native(_execute_pipeline, self.dialect, prepared, replay_safe=False)
+            return self._invoke_native(
+                _execute_pipeline, self.dialect, prepared, replay_safe=read_only
+            )
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         query = sql.encode()

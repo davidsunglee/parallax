@@ -11,26 +11,48 @@ participating work uses its attempt's connection.
 from __future__ import annotations
 
 import asyncio
+import operator
 import threading
-import time
 import uuid
+from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
 import pytest
 
+import parallax.postgres._connection as connection_module
 from parallax.conformance import database_pooling_stories, engine, provision
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
+from parallax.core import (
+    ONE_TO_MANY,
+    Attr,
+    Document,
+    DomainModel,
+    Entity,
+    Rel,
+    ValueObject,
+    attr,
+    rel,
+)
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ConnectionAcquisitionError
+from parallax.core.dialect import POSTGRES
+from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     ExecutionFailure,
     ServingModel,
     prepare_model,
 )
+from parallax.core.read_delivery._read_plan import ReadPlanCache
+from parallax.core.sql_gen._compile import CompiledTemplate
 from parallax.postgres import OnDemandOptions, PoolOptions
 from parallax.snapshot import TxnContext, connect
+from tests._support.ended_sessions import end_backend, named_backend
+from tests._support.query_probes import canonical_document
 
 _ACCOUNT = MODELS["account"]
 
@@ -263,17 +285,75 @@ def test_a_committed_transaction_keeps_its_value_across_the_release(profile_run:
         assert any(int(account.id) == new_id for account in _accounts(db))
 
 
-class _EndingAtAcquisition:
-    """A lifecycle provider that, once armed, ends the backend of the next
-    connection an operation acquires — from an independent session, between
-    the acquisition and the operation's first statement — and records every
-    event it hears by kind."""
+# --------------------------------------------------------------------------- #
+# A connection the server ended while idle, replaced at its first use.         #
+# --------------------------------------------------------------------------- #
 
-    def __init__(self, profile_run: Any, application_name: str) -> None:
-        self._profile_run = profile_run
-        self._application_name = application_name
-        self.armed = False
-        self.ended: list[int] = []
+_FIRST_USE = "first.use"
+
+
+class Memo(ValueObject):
+    text: Attr[str]
+
+
+class Ledger(Entity, table="fu_ledger", namespace=_FIRST_USE):
+    id: Attr[int] = attr(primary_key=True)
+    memo: Attr[Memo]
+    entries: Rel[tuple[Entry, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "ledger"))
+    holds: Rel[tuple[Hold, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "ledger"))
+
+
+class Entry(Entity, table="fu_entry", namespace=_FIRST_USE):
+    id: Attr[int] = attr(primary_key=True)
+    ledger: Attr[int]
+    amount: Attr[int]
+
+
+class Hold(Entity, table="fu_hold", namespace=_FIRST_USE):
+    id: Attr[int] = attr(primary_key=True)
+    ledger: Attr[int]
+    reason: Attr[str]
+
+
+class Folio(Entity, table="fu_folio", namespace=_FIRST_USE, layout=Document()):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str]
+
+
+_FIRST_USE_MODEL = DomainModel(Ledger, Entry, Hold, Folio)
+
+# Membership over the root and two sibling includes: the root read submits one
+# array carrier, and its children are fetched together in one read pipeline,
+# each with the child-key array the root gathered.
+_LAYOUT_QUERIES: dict[str, Any] = {
+    "columns": Ledger.where(Ledger.id.in_([1, 2]))
+    .include(Ledger.entries, Ledger.holds)
+    .order_by(Ledger.id.asc()),
+    "documents": Folio.where(Folio.id.in_([1, 2])).order_by(Folio.id.asc()),
+}
+
+
+def _drained(stream: Any) -> list[Any]:
+    with stream as opened:
+        return list(opened)
+
+
+_READERS: dict[str, Callable[[Any, Any], list[Any]]] = {
+    "typed-eager": lambda db, query: list(db.find(query).results()),
+    "typed-stream": lambda db, query: _drained(db.stream(query, batch_size=10)),
+    "wire-eager": lambda db, query: list(
+        db.wire.find(canonical_document(query, _FIRST_USE_MODEL)).results()
+    ),
+    "wire-stream": lambda db, query: _drained(
+        db.wire.stream(canonical_document(query, _FIRST_USE_MODEL), batch_size=10)
+    ),
+}
+
+
+class _Heard:
+    """A lifecycle provider recording each event it hears by kind."""
+
+    def __init__(self) -> None:
         self.events: list[str] = []
 
     def open(self, execution: Any, /) -> Any:
@@ -284,66 +364,177 @@ class _EndingAtAcquisition:
         raise AssertionError(f"no handler failure expected: {error.diagnostic.message}")
 
     def handle(self, event: Any, /) -> None:
-        kind = type(event).__name__
-        self.events.append(kind)
-        if self.armed and kind == "AcquisitionFinished":
-            self.armed = False
-            self._end_the_acquired_backend()
+        self.events.append(type(event).__name__)
 
     def heard(self) -> list[str]:
         heard, self.events = self.events, []
         return heard
 
-    def _end_the_acquired_backend(self) -> None:
-        executioner = self._profile_run.control()
-        try:
-            ((pid,),) = executioner.execute(
-                "select pid from pg_stat_activity where application_name = %s",
-                [self._application_name],
-            )
-            executioner.execute("select pg_terminate_backend(%s) as ended", [pid])
-            give_up = time.monotonic() + 10.0
-            while executioner.execute(
-                "select count(*) as listed from pg_stat_activity where pid = %s", [pid]
-            ) != [(0,)]:
-                assert time.monotonic() < give_up, "the ended backend never left"
-                time.sleep(0.01)
-            self.ended.append(pid)
-        finally:
-            executioner.close()
+
+type _Submission = tuple[object, tuple[bytes, ...], tuple[list[object], ...]]
+"""The connection a native submission reached, its SQL, and its bind objects."""
 
 
-def test_a_read_whose_session_ended_after_acquisition_is_still_one_lease_and_one_call(
-    profile_run: Any,
-) -> None:
-    # The read's backend is ended after its connection was acquired and before
-    # its first statement. The statement runs again on a replacement inside
-    # the same lease, so what the operation reports — its one acquisition and
-    # release, its one Database Call per statement, and its rows, membership
-    # values included — is exactly what the same read reports undisturbed.
-    _seeded(profile_run)
+@dataclass
+class _Preparation:
+    """What the read path did before and at the port, counted from outside it."""
+
+    counts: Counter[str] = field(default_factory=Counter[str])
+    submissions: list[_Submission] = field(default_factory=list[_Submission])
+
+    def taken(self) -> tuple[Counter[str], list[_Submission]]:
+        taken = (self.counts, self.submissions)
+        self.counts, self.submissions = Counter[str](), []
+        return taken
+
+
+def _observed_preparation(monkeypatch: pytest.MonkeyPatch) -> _Preparation:
+    """Count planning, rendering, driver-SQL conversion and bind adaptation, and
+    record every native submission: which connection it reached, its SQL, and
+    the very bind objects it handed the driver."""
+    preparation = _Preparation()
+
+    def counted(owner: Any, name: str, key: str) -> None:
+        original = getattr(owner, name)
+
+        def spied(*args: Any, **kwargs: Any) -> Any:
+            preparation.counts[key] += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(owner, name, spied)
+
+    counted(ReadPlanCache, "plan", "plan")
+    counted(CompiledTemplate, "render", "render")
+    counted(type(POSTGRES), "to_driver_sql", "to_driver_sql")
+    counted(connection_module, "adapt_binds", "adapt_binds")
+    rows, pipeline = connection_module._execute_rows, connection_module._execute_pipeline  # pyright: ignore[reportPrivateUsage] - the native submissions this proof observes
+
+    def single(native: Any, context: Any, dialect: Any, sql: bytes, binds: Any, reads: Any) -> Any:
+        preparation.submissions.append((native, (sql,), (binds,)))
+        return rows(native, context, dialect, sql, binds, reads)
+
+    def batch(native: Any, context: Any, dialect: Any, statements: Any) -> Any:
+        preparation.submissions.append(
+            (native, tuple(sql for sql, _, _ in statements), tuple(b for _, b, _ in statements))
+        )
+        return pipeline(native, context, dialect, statements)
+
+    monkeypatch.setattr(connection_module, "_execute_rows", single)
+    monkeypatch.setattr(connection_module, "_execute_pipeline", batch)
+    return preparation
+
+
+def _end_the_session(profile_run: Any, application_name: str) -> None:
+    end_backend(profile_run, named_backend(profile_run, application_name))
+
+
+def _first_use_database(profile_run: Any, provider: _Heard) -> tuple[Any, Any, str]:
+    profile_run.reset(model_of(_FIRST_USE_MODEL), {})
     application_name = f"parallax_first_use_{uuid.uuid4().hex[:12]}"
-    provider = _EndingAtAcquisition(profile_run, application_name)
-    configured = profile_run.configured(
-        pool=PoolOptions(min_size=1, max_size=1),
-        settings={"application_name": application_name},
+    root = connect(
+        profile_run.configured(
+            pool=PoolOptions(min_size=1, max_size=1),
+            settings={"application_name": application_name},
+        ),
+        _FIRST_USE_MODEL,
+        lifecycle_provider=provider,
     )
-    with connect(configured, _ACCOUNT, lifecycle_provider=provider) as _root_db:
-        db = _root_db.using_database_login()
-        ids = sorted(int(account.id) for account in _accounts(db))[:2]
-        query = Account.where(Account.id.in_(list[object](ids)))
-        provider.heard()
-        undisturbed = [int(account.id) for account in db.find(query).results()]
-        expected = provider.heard()
-        provider.armed = True
-        replaced = [int(account.id) for account in db.find(query).results()]
-        observed = provider.heard()
+    db = root.using_database_login()
+    db.transact(
+        lambda tx: (
+            tx.insert(Ledger(id=1, memo=Memo(text="first"))),
+            tx.insert(Ledger(id=2, memo=Memo(text="second"))),
+            tx.insert(Ledger(id=3, memo=Memo(text="unread"))),
+            tx.insert(Entry(id=10, ledger=1, amount=5)),
+            tx.insert(Entry(id=11, ledger=2, amount=7)),
+            tx.insert(Hold(id=20, ledger=2, reason="review")),
+            tx.insert(Folio(id=1, title="one")),
+            tx.insert(Folio(id=2, title="two")),
+            tx.insert(Folio(id=3, title="three")),
+        )
+    )
+    return root, db, application_name
 
-    assert len(provider.ended) == 1
-    assert replaced == undisturbed and sorted(replaced) == ids
-    assert observed == expected
-    assert observed.count("AcquisitionStarted") == observed.count("ReleaseFinished") == 1
-    assert observed.count("DatabaseCallStarted") == 1
+
+@pytest.mark.parametrize("reader", sorted(_READERS))
+@pytest.mark.parametrize("layout", sorted(_LAYOUT_QUERIES))
+def test_a_read_over_a_session_ended_while_idle_is_replaced_without_preparing_it_again(
+    profile_run: Any, monkeypatch: pytest.MonkeyPatch, layout: str, reader: str
+) -> None:
+    # The retained session is ended while it sits idle, and nothing validates
+    # it on the way out of the pool, so the read's first statement meets it.
+    # That statement is submitted again on a replacement inside the same
+    # lease, with the very SQL and bind objects — membership array included —
+    # it was prepared with: nothing is planned, rendered, converted, or
+    # adapted again, and its children follow on the replacement. What the
+    # operation reports — rows, one Acquisition and Release per lease, one
+    # Database Call per statement — is exactly what the same read reports
+    # undisturbed.
+    query, read = _LAYOUT_QUERIES[layout], _READERS[reader]
+    provider = _Heard()
+    root, db, application_name = _first_use_database(profile_run, provider)
+    with root:
+        read(db, query)
+        preparation = _observed_preparation(monkeypatch)
+        provider.heard()
+        undisturbed = read(db, query)
+        expected_events = provider.heard()
+        expected_counts, expected_submissions = preparation.taken()
+        _end_the_session(profile_run, application_name)
+        preparation.taken()
+        replaced = read(db, query)
+        observed_events = provider.heard()
+        counts, submissions = preparation.taken()
+
+    assert len(undisturbed) == 2
+    assert replaced == undisturbed
+    assert observed_events == expected_events
+    assert observed_events.count("AcquisitionStarted") == observed_events.count("ReleaseFinished")
+    assert counts == expected_counts
+    (lost, repeated, *rest) = submissions
+    assert lost[0] is not repeated[0]
+    assert lost[1] == repeated[1] and all(map(operator.is_, lost[2], repeated[2]))
+    assert [bind for bind in repeated[2][0] if isinstance(bind, list)] == [[1, 2]]
+    assert [sql for _, sql, _ in [repeated, *rest]] == [sql for _, sql, _ in expected_submissions]
+    if layout == "columns":
+        (children,) = (submission for submission in rest if len(submission[1]) == 2)
+        assert children[0] is repeated[0]
+        assert all(any(isinstance(bind, list) for bind in binds) for binds in children[2])
+
+
+def test_a_child_pipeline_cannot_claim_the_opportunity_its_root_read_spent(
+    profile_run: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The root read was the lease's first submission and it was answered, so a
+    # session lost before its children are fetched fails the read: the batch
+    # of child reads, designated as reads, is submitted once and never again.
+    provider = _Heard()
+    root, db, application_name = _first_use_database(profile_run, provider)
+    query = _LAYOUT_QUERIES["columns"]
+    with root:
+        children = connection_module._execute_pipeline  # pyright: ignore[reportPrivateUsage] - the native submission this proof interrupts
+        batches: list[int] = []
+
+        def ending_first(native: Any, context: Any, dialect: Any, statements: Any) -> Any:
+            batches.append(len(statements))
+            _end_the_session(profile_run, application_name)
+            return children(native, context, dialect, statements)
+
+        monkeypatch.setattr(connection_module, "_execute_pipeline", ending_first)
+        provider.heard()
+        with pytest.raises(ExecutionFailure) as failed:
+            db.find(query).results()
+        events = provider.heard()
+
+        assert _ledger_ids(db) == [1, 2, 3]
+
+    assert isinstance(failed.value.__cause__, DatabaseError)
+    assert batches == [2]
+    assert events.count("AcquisitionStarted") == events.count("ReleaseFinished") == 1
+
+
+def _ledger_ids(db: Any) -> list[int]:
+    return sorted(int(ledger.id) for ledger in db.find(Ledger.where(Ledger.all)).results())
 
 
 # --------------------------------------------------------------------------- #
