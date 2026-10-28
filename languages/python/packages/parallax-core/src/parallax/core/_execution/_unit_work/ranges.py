@@ -65,7 +65,6 @@ from parallax.core.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
-from parallax.core.write_plan.planned_rows import planned_cells
 from parallax.core.write_plan.predecessor_rows import PredecessorRows
 from parallax.core.write_plan.steps import KeyTarget, PlannedStep
 
@@ -683,11 +682,10 @@ def settle_opening(
     window = insert.valid_time_window
     assert window is not None  # a Bitemporal opening states its window
     key_attribute = view.primary_key.identity
-    (row,) = insert.rows
+    (seed,) = insert.rows
     facts = TemporalFacts(
-        entity=entity, view=view, shape=shape, instant=instant, selection=row.selection
+        entity=entity, view=view, shape=shape, instant=instant, selection=seed.selection
     )
-    seed = planned_cells(entity, row, "insert")
     key_value = seed.cell(key_attribute)
     transform = opening.transform
     if opening.beyond is None:

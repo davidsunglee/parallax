@@ -250,13 +250,19 @@ class TypedKeyedInsertSource:
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> PreparedKeyedInstruction:
-        return prepared_typed_write(
-            preparation,
-            mutation,
-            resolved.entity,
-            self._codec.full_row(self._instance),
-            valid_from=valid_from,
-            until=until,
+        """The row this instance opens, read by position when its class is
+        the one the model proved lays its members out in member order, and by
+        name through the codec's refusals otherwise."""
+        instance = self._instance
+        entity = resolved.entity
+        prepared = preparation.entity(entity.identity)
+        values = (
+            self._codec.declared_values(instance)
+            if type(instance) is prepared.typed_class
+            else prepared.plan.authored_values(self._codec.full_row(instance))
+        )
+        return instructions.prepare_typed_insert(
+            preparation, mutation, entity, values, valid_from=valid_from, until=until
         )
 
 

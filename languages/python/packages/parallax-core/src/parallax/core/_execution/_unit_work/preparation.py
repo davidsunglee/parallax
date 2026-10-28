@@ -41,13 +41,16 @@ class EntityPreparation:
     ``plan`` walks the Entity's member shape against each lane's converters.
     ``insert_required`` marks the members an opening row must
     state with a value, and ``framework_owned`` the members the framework
-    supplies, which a Typed row never authors.
+    supplies, which a Typed row never authors. ``typed_class`` is the Entity
+    Class whose instances hold their members in ``selection``'s order, proven
+    so when the model was prepared, or ``None`` where no class was.
     """
 
     selection: RowSelection
     plan: AuthoringPlan
     insert_required: int
     framework_owned: int
+    typed_class: type | None
 
 
 class WritePreparation:
@@ -56,12 +59,20 @@ class WritePreparation:
 
     ``absent`` is the marker the model's accepted Entity State spells an
     omitted member with; every row selection and nested occurrence cell the
-    plans author carries that same object.
+    plans author carries that same object. ``positional`` names, by Entity,
+    the class each one's instances are proven to hold their members in member
+    order.
     """
 
     __slots__ = ("_entities", "absent", "meta")
 
-    def __init__(self, meta: Metamodel, *, absent: object) -> None:
+    def __init__(
+        self,
+        meta: Metamodel,
+        *,
+        absent: object,
+        positional: Mapping[EntityIdentity, type] | None = None,
+    ) -> None:
         self.meta = meta
         self.absent = absent
         families = inheritance.view(meta)
@@ -71,7 +82,12 @@ class WritePreparation:
             view = families.entity(entity.identity)
             if view is None:  # pragma: no cover - the facet covers every accepted Entity
                 raise ValueError(f"{entity.identity.canonical}: no Inheritance Facet view")
-            entities[entity.identity] = _entity_preparation(view, catalog, absent)
+            entities[entity.identity] = _entity_preparation(
+                view,
+                catalog,
+                absent,
+                None if positional is None else positional.get(entity.identity),
+            )
         self._entities: Mapping[EntityIdentity, EntityPreparation] = entities
 
     def entity(self, identity: EntityIdentity) -> EntityPreparation:
@@ -82,6 +98,7 @@ def _entity_preparation(
     view: inheritance.InheritanceEntityView,
     catalog: AuthoringCatalog,
     absent: object,
+    typed_class: type | None,
 ) -> EntityPreparation:
     selection = view.member_selection
     required = 0
@@ -97,4 +114,5 @@ def _entity_preparation(
         plan=catalog.plan(selection.shape),
         insert_required=required,
         framework_owned=framework_owned,
+        typed_class=typed_class,
     )

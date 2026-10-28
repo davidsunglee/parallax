@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from parallax.core import batch_write, opt_lock
@@ -13,7 +13,7 @@ from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index, model_of
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.read_delivery._page import ABSENT
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan.managed_row import ManagedRow
@@ -31,17 +31,33 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         )
     catalog = CatalogedModel(model_of(model))
     classes = class_index(model)
+    if classes is None:
+        construction = None
+        positional = None
+    else:
+        construction = EntityGraphConstruction(catalog, classes)
+        positional = _proven_classes(classes.by_identity, construction)
     return select_model(
         model,
         edition=edition,
         catalog=catalog,
         classes=classes,
-        construction=(None if classes is None else EntityGraphConstruction(catalog, classes)),
+        construction=construction,
         codec=EntityRowCodec(catalog),
-        preparation=build_write_preparation(catalog.meta),
+        preparation=build_write_preparation(catalog.meta, positional=positional),
         planner=build_write_planner(catalog.meta),
         evidence_policy_for=opt_lock.view(catalog.meta).required_key,
     )
+
+
+def _proven_classes(
+    classes: Mapping[EntityIdentity, type], construction: EntityGraphConstruction
+) -> dict[EntityIdentity, type]:
+    """Each Entity's class whose member order ``construction`` proved equal to
+    its Entity's own."""
+    return {
+        identity: cls for identity, cls in classes.items() if construction.proves(cls, identity)
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,15 +85,21 @@ def _by_name(row: ManagedRow) -> dict[str, object]:
     return {members[position].name: cell for position, cell in row.stated_cells()}
 
 
-def build_write_preparation(model: Metamodel) -> WritePreparation:
+def build_write_preparation(
+    model: Metamodel, *, positional: Mapping[EntityIdentity, type] | None = None
+) -> WritePreparation:
     """The one ``WritePreparation`` every write of ``model`` is admitted
     against, its rows marking an omitted member as accepted Entity State does.
+
+    ``positional`` names the Entity Classes whose correspondence with their
+    Entity's member order the caller has proven, so their instances are read
+    by position.
 
     Called once per prepared model selection (:func:`prepare_model`) and
     identically by the conformance engine's case lanes, so both lanes judge
     and represent a write through the same preparation.
     """
-    return WritePreparation(model, absent=ABSENT)
+    return WritePreparation(model, absent=ABSENT, positional=positional)
 
 
 def build_write_planner(model: Metamodel) -> WritePlanner:

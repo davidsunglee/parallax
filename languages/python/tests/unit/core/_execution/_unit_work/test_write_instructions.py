@@ -98,16 +98,14 @@ _ACCOUNT = _MODELS["account"]
 class _OnePassMapping(Mapping[str, object]):
     def __init__(self, values: Mapping[str, object]) -> None:
         self._values = dict(values)
-        self.iterations = 0
+        self.reads: dict[str, int] = {}
 
     def __getitem__(self, key: str) -> object:
+        self.reads[key] = self.reads.get(key, 0) + 1
         return self._values[key]
 
     def __iter__(self) -> Iterator[str]:
-        self.iterations += 1
-        if self.iterations > 1:
-            raise AssertionError("nested write input was traversed more than once")
-        return iter(self._values)
+        raise AssertionError("a nested write input is read by its declared members")
 
     def __len__(self) -> int:
         return len(self._values)
@@ -1085,7 +1083,8 @@ def test_preparation_transforms_freezes_and_validates_a_nested_document_in_one_p
         write_preparation_of(_MODELS["customer"]),
     )
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    assert address.iterations == 1
+    # Each declared member is looked up once, the omitted ones included.
+    assert address.reads == {"street": 1, "city": 1, "geo": 1, "phones": 1}
 
 
 def test_wire_preparation_owns_recursive_value_object_decoding() -> None:
