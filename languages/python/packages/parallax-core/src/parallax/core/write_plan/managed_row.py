@@ -49,12 +49,6 @@ class RowSelection:
         """The presence of a row stating every member."""
         return (1 << self.width) - 1
 
-    def position(self, member: MemberIdentity) -> int:
-        return self.members.index[member]
-
-    def name_position(self, name: str) -> int | None:
-        return self.members.shape.position(name)
-
 
 @dataclass(frozen=True, slots=True)
 class ManagedRow:

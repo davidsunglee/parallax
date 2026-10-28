@@ -135,3 +135,27 @@ def test_a_trusted_row_adopts_its_cells_by_reference() -> None:
     cells = (7,)
 
     assert managed_row(_SELECTION, cells, 1 << _ID).cells is cells
+
+
+def test_an_overlay_of_another_selection_is_refused() -> None:
+    other = RowSelection(_SELECTION.members, object())
+
+    with pytest.raises(ValueError, match="same selection"):
+        _row(id=7).with_members_of(ManagedRow(other, (8,), 1 << _ID))
+
+
+def test_identity_views_answer_only_their_own_stated_members() -> None:
+    row = _row(id=7, name="Ada")
+    occurrence = ValueObjectIdentity(_BRANCH.identity, ("address",))
+
+    assert len(row.attributes) == 2
+    assert occurrence not in row.attributes
+    assert _identity("id") not in row.value_objects
+    with pytest.raises(KeyError):
+        row.value_objects[occurrence]
+
+
+def test_a_projected_positional_occurrence_is_kept() -> None:
+    nested = ("Main", _ABSENT, _ABSENT, ())
+
+    assert projected_row(_SELECTION, {"address": nested}).at(_ADDRESS) is nested

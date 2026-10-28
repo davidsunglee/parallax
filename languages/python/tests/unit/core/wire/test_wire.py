@@ -1314,3 +1314,13 @@ def test_a_wire_converter_judges_with_its_types_own_rule(monkeypatch: pytest.Mon
             (TIMESTAMP, '"2026-01-15T09:30:00Z"'),
         )
     ] == [7, decimal.Decimal("1.50"), "text", _INSTANT.replace(hour=9)]
+
+
+@pytest.mark.parametrize("declared", [STRING, JSON], ids=repr)
+def test_a_wire_converter_refuses_an_excluded_carrier(declared: NeutralType) -> None:
+    class _Excluded(str, ManagedValueExclusion):
+        pass
+
+    with pytest.raises(wire.WireDecodingError) as refused:
+        wire_codec.wire_converter(declared)(_Excluded("text"))
+    assert refused.value.reason == "type-mismatch"

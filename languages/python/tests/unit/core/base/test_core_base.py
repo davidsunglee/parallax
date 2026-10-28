@@ -687,6 +687,8 @@ def test_an_unknown_variant_has_no_carrier_member_or_input_form() -> None:
     assert base.matches_typed_carrier(1, unknown) is False
     assert base.matches_neutral_type(1, unknown) is False
     assert base.coerce_neutral_input(1, unknown) == 1
+    with pytest.raises(base.NeutralTypeMismatch):
+        base.typed_converter(unknown)(1)
 
 
 @pytest.mark.parametrize(
