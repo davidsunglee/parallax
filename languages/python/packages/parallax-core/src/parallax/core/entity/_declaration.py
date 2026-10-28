@@ -33,8 +33,15 @@ from parallax.core.base import (
     NeutralType,
     coerce_neutral_input,
     matches_typed_carrier,
+    typed_converter,
 )
 from parallax.core.base import infer_neutral_type as _infer_neutral_type
+from parallax.core.document_codec._plan import (
+    BORROWED_DOCUMENTS,
+    AuthoringCatalog,
+    AuthoringLane,
+)
+from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._errors import EntityDefinitionError
 from parallax.core.entity._expressions import (
     EXPRESSION_OPERATION_NAMES,
@@ -65,6 +72,7 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     AttributeReference,
+    AuthoringViolation,
     Column,
     DerivedAxis,
     EntityIdentity,
@@ -72,6 +80,7 @@ from parallax.core.metamodel import (
     ExactEntityReference,
     IndexIdentity,
     IndexMetadata,
+    MemberDefinition,
     MemberShape,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
@@ -181,6 +190,7 @@ _DECLARATION: Final = "__parallax_declaration__"
 _MEMBERS: Final = "__parallax_members__"
 _WIRE_NAMES: Final = "__parallax_wire_names__"
 _SHAPE: Final = "__parallax_shape__"
+_VALIDATION: Final = "__parallax_member_validation__"
 
 LIFECYCLE_STATE_SLOT: Final = "__parallax_lifecycle__"
 """The one per-instance slot a materialized node's lifecycle state occupies.
@@ -568,6 +578,36 @@ def shape_of(cls: type) -> ValueObjectShape:
             message=f"{cls.__name__} is not a Parallax Value Object Class",
         )
     return shape
+
+
+class MemberValidation:
+    """One declared class's model-free judgment of a member value: the Typed
+    lane of the authoring plans a write is prepared through, in their
+    validation-only mode, compiled on first use and held for the class's
+    lifetime."""
+
+    __slots__ = ("_catalog",)
+
+    def __init__(self) -> None:
+        self._catalog: AuthoringCatalog | None = None
+
+    def __call__(self, member: MemberDefinition, value: object) -> AuthoringViolation | None:
+        catalog = self._catalog
+        if catalog is None:
+            lane = AuthoringLane(typed_converter, BORROWED_DOCUMENTS)
+            catalog = self._catalog = AuthoringCatalog((lane,), absent=ABSENT)
+        return catalog.violation(member, value, lane=0)
+
+
+def member_validation(cls: type) -> MemberValidation:
+    """The member judgment ``cls``'s edits and assignments share."""
+    validation = getattr(cls, _VALIDATION, None)
+    if not isinstance(validation, MemberValidation):
+        raise EntityDefinitionError(
+            code="entity-base-invalid",
+            message=f"{cls.__name__} is not a Parallax Entity or Value Object Class",
+        )
+    return validation
 
 
 def is_declared_class(candidate: object, kind: DeclarationKind) -> bool:
@@ -1119,6 +1159,7 @@ def _build_value_object(
     )
     declared_attributes = tuple(attributes)
     declared_nested = tuple(nested)
+    ns[_VALIDATION] = MemberValidation()
     ns[_SHAPE] = ValueObjectShape(
         shape=ValueObjectShapeDeclaration(
             key=ValueObjectShapeKey(),
@@ -1286,6 +1327,7 @@ def _build_entity(
         vo_classes=MappingProxyType(vo_classes),
     )
     family, ns[_WIRE_NAMES] = _family_facts(bases[0], ns)
+    validation = ns[_VALIDATION] = MemberValidation()
     cls = _pydantic_class(mcs, cls_name, bases, ns)
     plan = install_publication_plan(
         cls,
@@ -1306,6 +1348,7 @@ def _build_entity(
                 AttributeRef(identity.canonical, canonical),
                 plan.indexes[py_name],
                 members[canonical],
+                validation,
                 None if py_name not in vo_classes else shape_of(vo_classes[py_name]),
             ),
         )

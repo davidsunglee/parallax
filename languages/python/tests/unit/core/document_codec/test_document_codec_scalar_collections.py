@@ -13,7 +13,7 @@ import decimal
 import math
 import uuid
 from collections.abc import Iterable, Mapping
-from typing import cast
+from typing import Final, cast
 
 import pytest
 
@@ -37,9 +37,8 @@ from parallax.core.base import (
     ManagedValue,
     NeutralType,
     PresentDocument,
-    coerce_neutral_input,
-    matches_neutral_type,
-    retain_document_value,
+    ScalarConverter,
+    typed_converter,
 )
 from parallax.core.document_codec import (
     MISSING,
@@ -64,14 +63,16 @@ from parallax.core.document_codec import (
     prepared_raw_member_classifier,
     reduce_declared_members,
 )
-from parallax.core.document_codec._authoring import (
-    BORROWED_SOURCE_ACCESS,
-    MAPPING_SOURCE_ACCESS,
-    prepare_authoring,
-    validate_member_authoring,
-)
 from parallax.core.document_codec._document import encode_managed_document
 from parallax.core.document_codec._leaf import LeafEncodingError, encode_managed_scalar_many
+from parallax.core.document_codec._plan import (
+    BORROWED_DOCUMENTS,
+    MAPPING_DOCUMENTS,
+    AuthoringCatalog,
+    AuthoringLane,
+    AuthoringRefusal,
+    DocumentAccess,
+)
 from parallax.core.metamodel import AuthoringViolation, Multiplicity
 
 _MANY = Multiplicity.MANY
@@ -91,18 +92,25 @@ _SHAPE = MemberShape(
 )
 
 
-def _normalize(leaf: ScalarDefinition, value: object, _path: str) -> tuple[object, bool]:
-    managed = coerce_neutral_input(value, leaf.type)
-    return retain_document_value(managed), matches_neutral_type(managed, leaf.type)
+_ABSENT: Final = object()
 
 
-class _CountingNormalizer:
+class _CountingConverter:
     def __init__(self) -> None:
-        self.paths: list[str] = []
+        self.converted: list[object] = []
 
-    def __call__(self, leaf: ScalarDefinition, value: object, path: str) -> tuple[object, bool]:
-        self.paths.append(path)
-        return _normalize(leaf, value, path)
+    def __call__(self, declared: NeutralType) -> ScalarConverter:
+        convert = typed_converter(declared)
+
+        def counted(value: object) -> object:
+            self.converted.append(value)
+            return convert(value)
+
+        return counted
+
+
+def _catalog(access: DocumentAccess = MAPPING_DOCUMENTS) -> AuthoringCatalog:
+    return AuthoringCatalog((AuthoringLane(typed_converter, access),), absent=_ABSENT)
 
 
 # --------------------------------------------------------------------------- #
@@ -110,33 +118,24 @@ class _CountingNormalizer:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_produced_collection_is_one_ordered_tuple_keeping_normalized_duplicates() -> None:
-    prepared = prepare_authoring(
-        MemberShape(members=(_AMOUNTS,)),
-        {"amounts": (decimal.Decimal("1.5"), 7, decimal.Decimal("1.50"))},
-        source_access=BORROWED_SOURCE_ACCESS,
-        normalize_leaf=_normalize,
+def test_a_produced_collection_is_one_ordered_tuple_keeping_converted_duplicates() -> None:
+    row = (
+        _catalog(BORROWED_DOCUMENTS)
+        .plan(MemberShape(members=(_AMOUNTS,)))
+        .partial_row(((0, (decimal.Decimal("1.5"), 7, decimal.Decimal("1.50"))),), lane=0)
     )
 
-    assert prepared.failures == {}
-    amounts = prepared.value["amounts"]
+    (amounts,) = row.cells
     assert amounts == (decimal.Decimal("1.5"), decimal.Decimal(7), decimal.Decimal("1.50"))
     assert type(amounts) is tuple
 
 
-def test_validation_alone_normalizes_every_element_and_builds_no_collection() -> None:
-    normalizer = _CountingNormalizer()
+def test_validation_alone_converts_every_element_and_builds_no_collection() -> None:
+    counting = _CountingConverter()
+    catalog = AuthoringCatalog((AuthoringLane(counting, MAPPING_DOCUMENTS),), absent=_ABSENT)
 
-    failure = validate_member_authoring(
-        _TAGS,
-        ["a", "b"],
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=normalizer,
-        path="Order.tags",
-    )
-
-    assert failure is None
-    assert normalizer.paths == ["Order.tags[0]", "Order.tags[1]"]
+    assert catalog.violation(_TAGS, ["a", "b"], lane=0) is None
+    assert counting.converted == ["a", "b"]
 
 
 @pytest.mark.parametrize(
@@ -152,56 +151,45 @@ def test_validation_alone_normalizes_every_element_and_builds_no_collection() ->
 def test_a_collection_reports_its_first_shape_or_element_violation(
     source: object, violation: AuthoringViolation
 ) -> None:
-    for produce in (True, False):
-        failure = (
-            prepare_authoring(
-                MemberShape(members=(_TAGS,)),
-                {"tags": source},
-                source_access=MAPPING_SOURCE_ACCESS,
-                normalize_leaf=_normalize,
-            ).failures.get(0)
-            if produce
-            else validate_member_authoring(
-                _TAGS, source, source_access=MAPPING_SOURCE_ACCESS, normalize_leaf=_normalize
-            )
-        )
-        assert failure == violation
+    catalog = _catalog()
+    with pytest.raises(AuthoringRefusal) as refused:
+        catalog.plan(MemberShape(members=(_TAGS,))).partial_row(((0, source),), lane=0)
+
+    assert refused.value.violation == violation
+    assert catalog.violation(_TAGS, source, lane=0) == violation
 
 
-def test_a_null_collection_is_left_to_the_callers_nullability_judgement() -> None:
-    assert (
-        validate_member_authoring(
-            _TAGS, None, source_access=MAPPING_SOURCE_ACCESS, normalize_leaf=_normalize
-        )
-        is None
-    )
+def test_a_null_collection_is_never_a_stated_one() -> None:
+    with pytest.raises(AuthoringRefusal) as refused:
+        _catalog().plan(MemberShape(members=(_TAGS,))).partial_row(((0, None),), lane=0)
+
+    assert refused.value.violation == AuthoringViolation("", "attribute-missing")
 
 
 def test_document_authoring_fills_an_unnamed_collection_and_refuses_a_null_one() -> None:
-    prepared = prepare_authoring(
-        _SHAPE,
-        {"tags": ["b", "a", "b"], "detail": {}, "lines": [{"sku": "x"}]},
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=_normalize,
+    plan = _catalog().plan(_SHAPE)
+
+    row = plan.complete_row(
+        (_ABSENT, ["b", "a", "b"], _ABSENT, {}, [{"sku": "x"}]), lane=0, required=0
     )
 
-    assert prepared.failures == {}
-    assert prepared.value == {
-        "tags": ("b", "a", "b"),
-        "detail": {"labels": ()},
-        "lines": ({"sku": "x", "marks": ()},),
-        "amounts": (),
-    }
-    nested = prepare_authoring(
-        _SHAPE,
-        {"detail": {"labels": None}, "lines": [{"sku": "x", "marks": [1, "2"]}]},
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=_normalize,
+    assert row.cells == (("b", "a", "b"), (), ((),), (("x", ()),))
+    with pytest.raises(AuthoringRefusal) as refused:
+        plan.complete_row((_ABSENT, _ABSENT, _ABSENT, {"labels": None}, []), lane=0, required=0)
+    assert (refused.value.position, refused.value.violation) == (
+        3,
+        AuthoringViolation("labels", "attribute-missing"),
     )
-    assert dict(nested.failures) == {
-        3: AuthoringViolation("labels", "attribute-missing"),
-        4: AuthoringViolation("[0].marks[1]", "type-mismatch", "2", INT32),
-    }
+    with pytest.raises(AuthoringRefusal) as refused:
+        plan.complete_row(
+            (_ABSENT, _ABSENT, _ABSENT, _ABSENT, [{"sku": "x", "marks": [1, "2"]}]),
+            lane=0,
+            required=0,
+        )
+    assert (refused.value.position, refused.value.violation) == (
+        4,
+        AuthoringViolation("[0].marks[1]", "type-mismatch", "2", INT32),
+    )
 
 
 # --------------------------------------------------------------------------- #

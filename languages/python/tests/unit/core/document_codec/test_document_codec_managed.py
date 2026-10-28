@@ -15,13 +15,12 @@ import datetime as dt
 import decimal
 import random
 import struct
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, cast
 
 import pytest
 
-import parallax.core.document_codec._authoring as authoring
 from parallax.core.base import (
     BOOLEAN,
     BYTES,
@@ -31,10 +30,7 @@ from parallax.core.base import (
     JSON,
     STRING,
     Decimal,
-    FrozenMap,
     NeutralType,
-    coerce_neutral_input,
-    matches_neutral_type,
     retain_document_value,
 )
 from parallax.core.document_codec import (
@@ -47,12 +43,6 @@ from parallax.core.document_codec import (
 from parallax.core.document_codec import _document as document_codec_document
 from parallax.core.document_codec import _leaf as document_codec_leaf
 from parallax.core.document_codec import _managed as managed
-from parallax.core.document_codec._authoring import (
-    BORROWED_SOURCE_ACCESS,
-    MAPPING_SOURCE_ACCESS,
-    prepare_authoring,
-    validate_member_authoring,
-)
 from parallax.core.document_codec._managed import EffectiveChangeSet
 from parallax.core.metamodel import MemberDefinition, Multiplicity
 from parallax.core.write_plan import EntityStateRow
@@ -83,229 +73,6 @@ _SHAPE = MemberShape(
         OccurrenceDefinition("entries", Multiplicity.MANY, False, _ENTRY),
     )
 )
-
-
-def _normalize(leaf: ScalarDefinition, value: object, _path: str) -> tuple[object, bool]:
-    managed = coerce_neutral_input(value, leaf.type)
-    return retain_document_value(managed), matches_neutral_type(managed, leaf.type)
-
-
-class _Borrowed:
-    def __init__(self, values: Mapping[str, object]) -> None:
-        self.values = values
-        self.name_reads = 0
-
-    def __parallax_authoring_names__(self) -> Iterable[str]:
-        self.name_reads += 1
-        return self.values.keys()
-
-    def __parallax_authoring_member__(self, name: str, /) -> object:
-        return self.values[name]
-
-
-def test_authoring_prepares_borrowed_and_mapping_sources_into_one_owned_tree() -> None:
-    origin = _Borrowed({"city": "Oslo", "geo": None})
-    entries = [{"kind": "home", "price": decimal.Decimal("1.20")}]
-
-    prepared = prepare_authoring(
-        _SHAPE,
-        {"flag": True, "origin": origin, "entries": entries},
-        source_access=BORROWED_SOURCE_ACCESS,
-        normalize_leaf=_normalize,
-    )
-
-    assert prepared.failures == {}
-    value = prepared.value
-    assert type(cast("object", value)) is FrozenMap
-    assert value == {
-        "flag": True,
-        "origin": {"city": "Oslo", "geo": None, "zones": ()},
-        "entries": ({"kind": "home", "price": decimal.Decimal("1.20")},),
-    }
-    assert origin.name_reads == 1
-    entries[0]["kind"] = "changed"
-    assert cast("Sequence[Mapping[str, object]]", value["entries"])[0]["kind"] == "home"
-
-
-def test_authoring_reports_sparse_canonical_failures() -> None:
-    failures = prepare_authoring(
-        _SHAPE,
-        {
-            "flag": "not-bool",
-            "origin": {"city": "Oslo", "zones": None},
-            "entries": [],
-        },
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=_normalize,
-    ).failures
-
-    assert tuple(failures) == (0, 4)
-    assert failures[0].reason == "type-mismatch"
-    assert failures[4].reason == "value-object-missing"
-    assert failures[4].path == "zones"
-
-
-def test_occurrence_validation_never_adopts_a_success_document(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def reject_adoption(_values: object) -> object:
-        raise AssertionError("validation-only traversal constructed output")
-
-    monkeypatch.setattr(authoring, "adopt_frozen_map", reject_adoption)
-
-    failure = validate_member_authoring(
-        OccurrenceDefinition("document", Multiplicity.ONE, False, _SHAPE),
-        {"flag": True, "origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]},
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=_normalize,
-    )
-
-    assert failure is None
-
-
-def test_member_validation_covers_null_marker_valid_and_invalid_leaves() -> None:
-    flag = cast("ScalarDefinition", _SHAPE.members[0])
-    marker = {"computed": "server"}
-
-    assert (
-        prepare_authoring(
-            MemberShape(members=(flag,)),
-            {"flag": marker},
-            source_access=MAPPING_SOURCE_ACCESS,
-            normalize_leaf=_normalize,
-            allow_root_markers=True,
-        ).value["flag"]
-        == marker
-    )
-    assert (
-        validate_member_authoring(
-            flag,
-            None,
-            source_access=MAPPING_SOURCE_ACCESS,
-            normalize_leaf=_normalize,
-        )
-        is None
-    )
-    assert (
-        validate_member_authoring(
-            flag,
-            marker,
-            source_access=MAPPING_SOURCE_ACCESS,
-            normalize_leaf=_normalize,
-            allow_marker=True,
-        )
-        is None
-    )
-    assert (
-        validate_member_authoring(
-            flag,
-            True,
-            source_access=MAPPING_SOURCE_ACCESS,
-            normalize_leaf=_normalize,
-        )
-        is None
-    )
-    failure = validate_member_authoring(
-        flag,
-        "not-boolean",
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=_normalize,
-    )
-    assert failure is not None
-    assert failure.reason == "type-mismatch"
-
-
-def test_both_traversal_modes_hand_the_normalizer_the_shapes_own_leaves() -> None:
-    # A normalizer can recognize a leaf by the definition the shape holds, which
-    # a structurally equal leaf elsewhere in the document is not.
-    twin = MemberShape(members=(ScalarDefinition("label", STRING, True),))
-    shape = MemberShape(
-        members=(
-            ScalarDefinition("label", STRING, True),
-            OccurrenceDefinition("twin", Multiplicity.ONE, True, twin),
-        )
-    )
-    seen: list[tuple[ScalarDefinition, str]] = []
-
-    def recording(leaf: ScalarDefinition, value: object, path: str) -> tuple[object, bool]:
-        seen.append((leaf, path))
-        return _normalize(leaf, value, path)
-
-    source = {"label": "a", "twin": {"label": "b"}}
-    prepare_authoring(
-        shape, source, source_access=MAPPING_SOURCE_ACCESS, normalize_leaf=recording, path="Doc"
-    )
-    validate_member_authoring(
-        OccurrenceDefinition("document", Multiplicity.ONE, True, shape),
-        source,
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=recording,
-        path="Doc",
-    )
-    validate_member_authoring(
-        shape.members[0],
-        "c",
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=recording,
-        path="Doc.label",
-    )
-
-    top, nested = shape.members[0], twin.members[0]
-    assert top == nested
-    assert [(leaf is top, leaf is nested, path) for leaf, path in seen] == [
-        (True, False, "Doc.label"),
-        (False, True, "Doc.twin.label"),
-        (True, False, "Doc.label"),
-        (False, True, "Doc.twin.label"),
-        (True, False, "Doc.label"),
-    ]
-
-
-def test_preparation_rejects_a_root_without_named_member_access() -> None:
-    with pytest.raises(TypeError, match="must expose named members"):
-        prepare_authoring(
-            _SHAPE,
-            object(),
-            source_access=MAPPING_SOURCE_ACCESS,
-            normalize_leaf=_normalize,
-        )
-
-
-def test_preparation_records_root_leaf_and_explicit_nested_null_failures() -> None:
-    prepared = prepare_authoring(
-        _SHAPE,
-        {
-            "flag": "not-boolean",
-            "origin": {"city": "Oslo"},
-            "entries": [],
-        },
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=_normalize,
-    )
-    required_child = MemberShape(members=(ScalarDefinition("required", STRING, False),))
-    nested = prepare_authoring(
-        MemberShape(
-            members=(OccurrenceDefinition("child", Multiplicity.ONE, False, required_child),)
-        ),
-        {"child": {"required": None}},
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=_normalize,
-    )
-
-    assert prepared.failures[0].reason == "type-mismatch"
-    assert nested.failures[0].path == "required"
-
-
-def test_authoring_preserves_explicit_null_many_until_policy_rejects_it() -> None:
-    prepared = prepare_authoring(
-        _SHAPE,
-        {"entries": None},
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=_normalize,
-    )
-
-    assert prepared.value["entries"] is None
-    assert prepared.failures == {}
 
 
 def _classify(authored: dict[str, object], originals: dict[str, object]) -> EffectiveChangeSet:

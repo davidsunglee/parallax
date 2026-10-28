@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn, cast
@@ -13,18 +13,15 @@ from parallax.core.base import (
     coerce_neutral_input,
     matches_neutral_type,
 )
-from parallax.core.document_codec._authoring import (
-    BORROWED_SOURCE_ACCESS,
-    validate_member_authoring,
-)
 from parallax.core.entity._errors import EDIT_CODE_BY_RULE, EditError, EditViolation
 from parallax.core.metamodel import (
     AttributeLocation,
     AttributeMetadata,
+    AuthoringViolation,
     EntityIdentity,
+    MemberDefinition,
     ModelLocation,
     Multiplicity,
-    ScalarDefinition,
     ValueObjectAttributeDeclaration,
     ValueObjectLocation,
     ValueObjectMetadata,
@@ -90,6 +87,7 @@ __all__ = [
     "ManyRelationshipExpr",
     "ManyScalarExpr",
     "ManyValueObjectExpr",
+    "MemberValidator",
     "Predicate",
     "PreparedOperation",
     "RelationshipExpr",
@@ -751,12 +749,15 @@ class AssignableScalarExpr[E, T](ScalarExpr[E, T]):
     """A top-level Entity scalar attribute: a field that also orders results and
     takes a whole-member ``.set(...)`` assignment."""
 
-    __slots__ = ("_member", "_ref")
+    __slots__ = ("_member", "_ref", "_validate")
 
-    def __init__(self, ref: AttributeRef, member: AttributeMetadata) -> None:
+    def __init__(
+        self, ref: AttributeRef, member: AttributeMetadata, validate: MemberValidator
+    ) -> None:
         super().__init__(AuthoredPath(_entity_identity(ref.entity), (ref.attribute,)), member)
         self._ref = ref
         self._member = member
+        self._validate = validate
 
     def asc(self) -> SortKey[E]:
         """An ascending order-by key over this attribute.
@@ -774,7 +775,7 @@ class AssignableScalarExpr[E, T](ScalarExpr[E, T]):
 
     def set(self, value: T) -> AttributeAssignment[E]:
         """A set-based ``_where``-verb assignment (``Account.balance.set(0)``)."""
-        _reject_unassignable(self._ref, self._member, value)
+        _reject_unassignable(self._ref, self._member, value, self._validate)
         return AttributeAssignment(attr=self._ref, value=value)
 
     def __hash__(self) -> int:  # pragma: no cover - expressions are not dict keys
@@ -914,16 +915,19 @@ class ManyScalarExpr[S, T](_NotOneValue):
 class AssignableManyScalarExpr[E, T](ManyScalarExpr[E, T]):
     """A top-level Entity scalar collection, assignable whole."""
 
-    __slots__ = ("_member", "_ref")
+    __slots__ = ("_member", "_ref", "_validate")
 
-    def __init__(self, ref: AttributeRef, member: AttributeMetadata) -> None:
+    def __init__(
+        self, ref: AttributeRef, member: AttributeMetadata, validate: MemberValidator
+    ) -> None:
         super().__init__(AuthoredPath(_entity_identity(ref.entity), (ref.attribute,)), member)
         self._ref = ref
         self._member = member
+        self._validate = validate
 
     def set(self, value: tuple[T, ...]) -> AttributeAssignment[E]:
         """A whole-collection ``_where``-verb assignment; ``()`` clears it."""
-        _reject_unassignable(self._ref, self._member, value)
+        _reject_unassignable(self._ref, self._member, value, self._validate)
         return AttributeAssignment(attr=self._ref, value=value)
 
 
@@ -980,18 +984,23 @@ class ValueObjectExpr[E, V](_NotOneValue):
 class AssignableValueObjectExpr[E, V](ValueObjectExpr[E, V]):
     """A top-level Entity Value Object occurrence, assignable whole."""
 
-    __slots__ = ("_member", "_ref")
+    __slots__ = ("_member", "_ref", "_validate")
 
     def __init__(
-        self, ref: AttributeRef, member: ValueObjectMetadata, shape: ValueObjectShape
+        self,
+        ref: AttributeRef,
+        member: ValueObjectMetadata,
+        shape: ValueObjectShape,
+        validate: MemberValidator,
     ) -> None:
         super().__init__(AuthoredPath(_entity_identity(ref.entity), (ref.attribute,)), shape)
         self._ref = ref
         self._member = member
+        self._validate = validate
 
     def set(self, value: V) -> AttributeAssignment[E]:
         """A whole-occurrence ``_where``-verb assignment."""
-        _reject_unassignable(self._ref, self._member, value)
+        _reject_unassignable(self._ref, self._member, value, self._validate)
         return AttributeAssignment(attr=self._ref, value=value)
 
 
@@ -1030,23 +1039,31 @@ class ManyValueObjectExpr[E, V](_NotOneValue):
 class AssignableManyValueObjectExpr[E, V](ManyValueObjectExpr[E, V]):
     """A top-level Entity ``many`` Value Object occurrence, assignable whole."""
 
-    __slots__ = ("_member", "_ref")
+    __slots__ = ("_member", "_ref", "_validate")
 
     def __init__(
-        self, ref: AttributeRef, member: ValueObjectMetadata, shape: ValueObjectShape
+        self,
+        ref: AttributeRef,
+        member: ValueObjectMetadata,
+        shape: ValueObjectShape,
+        validate: MemberValidator,
     ) -> None:
         super().__init__(AuthoredPath(_entity_identity(ref.entity), (ref.attribute,)), shape)
         self._ref = ref
         self._member = member
+        self._validate = validate
 
     def set(self, value: tuple[V, ...]) -> AttributeAssignment[E]:
         """A whole-collection ``_where``-verb assignment; ``()`` clears it."""
-        _reject_unassignable(self._ref, self._member, value)
+        _reject_unassignable(self._ref, self._member, value, self._validate)
         return AttributeAssignment(attr=self._ref, value=value)
 
 
 def _reject_unassignable(
-    ref: AttributeRef, member: AttributeMetadata | ValueObjectMetadata, value: object
+    ref: AttributeRef,
+    member: AttributeMetadata | ValueObjectMetadata,
+    value: object,
+    validate: MemberValidator,
 ) -> None:
     """Apply the shared assignment rule family to one whole-member value.
 
@@ -1056,7 +1073,7 @@ def _reject_unassignable(
     installed is the whole input, so this states its rule with no model.
     """
     violation = judged_edit_violation(
-        member, value, owner=ref.entity, location=member_location(member)
+        member, value, owner=ref.entity, location=member_location(member), validate=validate
     )
     if violation is not None:
         raise EditError([violation]) from None
@@ -1082,12 +1099,18 @@ def member_canonical_name(member: AttributeMetadata | ValueObjectMetadata) -> st
     return member.identity.path[-1]
 
 
+type MemberValidator = Callable[[MemberDefinition, object], AuthoringViolation | None]
+"""What authoring one non-null value as a member refuses first, or ``None``:
+the validation-only judgment of the class that installed the member."""
+
+
 def judged_edit_violation(
     member: AttributeMetadata | ValueObjectMetadata,
     value: object,
     *,
     owner: str,
     location: ModelLocation,
+    validate: MemberValidator,
 ) -> EditViolation | None:
     """The shared judgement's verdict on ``value``, as a located violation.
 
@@ -1099,25 +1122,17 @@ def judged_edit_violation(
     ``location`` is the caller's, because where a refusal lands is a fact about
     the surface rather than about the verdict: a member of a model's Entity
     locates at :func:`member_location`, while a Value Object Class's own member
-    belongs to no model position at all.
+    belongs to no model position at all. ``validate`` is the value's own
+    judgment, which the assignment rules consume rather than repeat.
     """
     try:
-        known_violation = (
-            validate_member_authoring(
-                member.definition,
-                value,
-                source_access=BORROWED_SOURCE_ACCESS,
-                normalize_leaf=typed_authoring_leaf,
-                path=owner,
-            )
-            if value is not None
-            and (
-                not isinstance(member, AttributeMetadata)
-                or member.multiplicity is Multiplicity.MANY
-            )
-            else None
+        known_violation = None if value is None else validate(member.definition, value)
+        judge_assignment(
+            member,
+            value,
+            known_violation=known_violation,
+            known_value_valid=known_violation is None,
         )
-        judge_assignment(member, value, known_violation=known_violation)
     except WriteAssignmentError as error:
         return EditViolation(
             code=EDIT_CODE_BY_RULE[error.rule],
@@ -1126,12 +1141,6 @@ def judged_edit_violation(
             message=f"{owner}.{error}",
         )
     return None
-
-
-def typed_authoring_leaf(leaf: ScalarDefinition, value: object, _path: str) -> tuple[object, bool]:
-    neutral_type = leaf.type
-    managed = coerce_neutral_input(value, neutral_type)
-    return managed, matches_neutral_type(managed, neutral_type)
 
 
 # Relationships and Include paths

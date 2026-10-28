@@ -17,6 +17,7 @@ from parallax.core.entity._expressions import (
     ManyRelationshipExpr,
     ManyScalarExpr,
     ManyValueObjectExpr,
+    MemberValidator,
     RelationshipExpr,
     RelationshipRef,
     ScalarExpr,
@@ -465,20 +466,22 @@ class Attr[T]:
     :class:`ElementAttr` and type through the Value Object overloads.
     """
 
-    __slots__ = ("_expression", "_index", "_member", "_ref", "_vo_shape")
+    __slots__ = ("_expression", "_index", "_member", "_ref", "_validate", "_vo_shape")
 
     def __init__(
         self,
         ref: AttributeRef,
         index: int,
         member: AttributeMetadata | ValueObjectMetadata,
+        validate: MemberValidator,
         vo_shape: ValueObjectShape | None = None,
     ) -> None:
         self._ref = ref
         self._index = index
         self._member = member
+        self._validate = validate
         self._vo_shape = vo_shape
-        self._expression = _entity_member_expression(ref, member, vo_shape)
+        self._expression = _entity_member_expression(ref, member, validate, vo_shape)
 
     def rebound(self, index: int) -> Attr[T]:
         """This member's descriptor, addressing ``index`` instead.
@@ -489,7 +492,7 @@ class Attr[T]:
         own is what keeps the reference it hands out — which names the DECLARING
         Entity — the same one at every depth.
         """
-        return Attr(self._ref, index, self._member, self._vo_shape)
+        return Attr(self._ref, index, self._member, self._validate, self._vo_shape)
 
     @overload
     def __get__[E: Entity, V: ValueObject](
@@ -548,18 +551,19 @@ class Attr[T]:
 def _entity_member_expression(
     ref: AttributeRef,
     member: AttributeMetadata | ValueObjectMetadata,
+    validate: MemberValidator,
     vo_shape: ValueObjectShape | None,
 ) -> object:
     many = member.multiplicity is Multiplicity.MANY
     if isinstance(member, AttributeMetadata):
         if many:
-            return AssignableManyScalarExpr[Any, Any](ref, member)
-        return AssignableScalarExpr[Any, Any](ref, member)
+            return AssignableManyScalarExpr[Any, Any](ref, member, validate)
+        return AssignableScalarExpr[Any, Any](ref, member, validate)
     if vo_shape is None:  # pragma: no cover - every installed occurrence descriptor has its class
         raise ValueError(f"{ref}: a Value Object member descriptor needs its Value Object Class")
     if many:
-        return AssignableManyValueObjectExpr[Any, Any](ref, member, vo_shape)
-    return AssignableValueObjectExpr[Any, Any](ref, member, vo_shape)
+        return AssignableManyValueObjectExpr[Any, Any](ref, member, vo_shape, validate)
+    return AssignableValueObjectExpr[Any, Any](ref, member, vo_shape, validate)
 
 
 class ElementAttr[T]:
