@@ -405,6 +405,18 @@ def test_preflight_requires_canonical_elements_of_each_column_array(
             id="modified-decimal",
         ),
         pytest.param(
+            "cast(? as decimal[])",
+            "cast((?) as decimal(12, 1)[])",
+            "its decimal column amount",
+            id="modified-decimal-of-a-parenthesized-placeholder",
+        ),
+        pytest.param(
+            "cast(? as decimal[])",
+            "cast(cast(? as decimal(12, 1)[]) as decimal[])",
+            "its decimal column amount",
+            id="modified-decimal-inside-the-column-type",
+        ),
+        pytest.param(
             "cast(? as date[]), cast(? as jsonb[])",
             "cast(? as date[]), cast(? as text[])",
             "its jsonb column profile",
