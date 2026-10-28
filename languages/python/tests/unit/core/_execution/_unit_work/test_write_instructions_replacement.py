@@ -150,3 +150,20 @@ def test_a_required_member_stated_null_is_refused_as_an_assignment(
     del addressed, empty
     with pytest.raises(wi.WriteInstructionError, match=r"owner: required attribute is absent"):
         prepare(form({"id": 1, "owner": None}), write_preparation_of(_MODEL))
+
+
+@_LANES
+@pytest.mark.parametrize("mutation", ["replace", "amend"])
+def test_an_earlier_rows_value_failure_wins_over_a_later_rows_name_failure(
+    prepare: _Prepare, empty: object, mutation: wi.KeyedMutation
+) -> None:
+    del empty
+    first = {"id": 1, "owner": 7}
+    second = {"id": 2, "owner": "B", "bogus": 1}
+    with pytest.raises(ValueError, match=r"Ledger\.owner: ") as refused:
+        prepare(
+            wi.KeyedWriteInstruction(mutation, f"{_NS}.Ledger", (first, second)),
+            write_preparation_of(_MODEL),
+        )
+
+    assert "bogus" not in str(refused.value)
