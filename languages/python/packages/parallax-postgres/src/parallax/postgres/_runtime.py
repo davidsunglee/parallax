@@ -289,6 +289,11 @@ def _build_pool(
     after that decision rather than instead of it — so it could not prevent an
     unexpected transaction being rolled back for reuse, which is exactly the
     outcome this adapter refuses by disposing of such a connection itself.
+
+    No ``check`` callback is configured either, so a checkout costs no round
+    trip. A connection the server ended while it sat idle is found by its first
+    submission instead, which the connection context replaces where that
+    submission can be repeated.
     """
     base: dict[str, object] = {**CONNECT_KWARGS, "prepare_threshold": prepare_threshold}
     kwargs: KwargsParam = (
@@ -296,7 +301,6 @@ def _build_pool(
         if isinstance(credentials, DriverManaged)
         else establishment.connect_kwargs(base, credentials)
     )
-    check = psycopg_pool.ConnectionPool.check_connection if options.validate_on_checkout else None
     pool: NativePool
     if isinstance(options, PoolOptions):
         pool = psycopg_pool.ConnectionPool(
@@ -304,7 +308,6 @@ def _build_pool(
             kwargs=kwargs,
             open=False,
             configure=establishment,
-            check=check,
             min_size=options.min_size,
             max_size=options.max_size,
             timeout=options.acquire_timeout,
@@ -320,7 +323,6 @@ def _build_pool(
             kwargs=kwargs,
             open=False,
             configure=establishment,
-            check=check,
             max_size=options.max_size,
             timeout=options.acquire_timeout,
             max_waiting=options.max_waiting,

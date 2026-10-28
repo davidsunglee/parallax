@@ -16,7 +16,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any
+import uuid
+from typing import Any, cast
 
 import pytest
 
@@ -29,12 +30,15 @@ from parallax.core.db_port import (
     CredentialResolutionError,
     DatabaseStartupError,
     Invalidated,
+    OrderedWriteResultInterrupted,
+    PipelineStatement,
     PoolAvailable,
     PoolDetached,
     PoolUnavailable,
     Returned,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions
+from tests._support.ended_sessions import end_backend, named_backend
 
 _BACKEND = "select pg_backend_pid() as pid"
 _SESSION_USER = "select session_user as login_identity"
@@ -440,17 +444,13 @@ def test_a_connection_the_server_ended_is_authenticated_again_when_it_is_replace
     # The replacement is a physical connection the runtime created on its own,
     # so it crosses the credential seam exactly as the first one did.
     runtime, source = _counted(profile_run, pool=PoolOptions(min_size=1, max_size=1))
-    executioner = profile_run.control()
     try:
-        with _context(runtime) as first:
-            retained = _backend_pid(first)
-        executioner.execute("select pg_terminate_backend(%s) as ended", [retained])
+        retained = _over_an_ended_session(profile_run, runtime)
 
         with _context(runtime) as replacement:
-            assert _backend_pid(replacement) != retained
+            assert _first_backend_pid(replacement) != retained
         assert source.calls == 2
     finally:
-        executioner.close()
         runtime.close()
 
 
@@ -552,19 +552,27 @@ def test_a_retained_runtime_that_cannot_replace_a_connection_reports_the_refusal
     profile_run: Any,
 ) -> None:
     # The source authenticates initial capacity and refuses afterwards, so the
-    # runtime is healthy until the server ends its one connection. The
-    # replacement it then tries to open is what meets the refusal, and the
-    # acquisition waiting on it says so instead of timing out.
+    # runtime is healthy until the server ends its one connection. The first
+    # read over that connection finds it broken, and the replacement the pool
+    # then tries to open is what meets the refusal: the read keeps its own
+    # failure, and the next acquisition waiting on capacity names the refusal
+    # instead of timing out.
     source = _RefusingAfter(profile_run.credentials, successes=1)
     runtime = profile_run.configured(
         credentials=source,
         pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=2.0),
     ).open()
-    executioner = profile_run.control()
     try:
-        with _context(runtime) as first:
-            retained = _backend_pid(first)
-        executioner.execute("select pg_terminate_backend(%s) as ended", [retained])
+        _over_an_ended_session(profile_run, runtime)
+        context = _context(runtime)
+        target = context.__enter__()
+        try:
+            with pytest.raises(DatabaseError) as lost:
+                target.execute(_BACKEND, [], read_only=True)
+        finally:
+            context.__exit__(None, None, None)
+        assert lost.value.__cause__ is not None
+        assert isinstance(context.cleanup_result, Invalidated)
 
         with pytest.raises(ConnectionAcquisitionError) as refused:
             _context(runtime).__enter__()
@@ -572,7 +580,6 @@ def test_a_retained_runtime_that_cannot_replace_a_connection_reports_the_refusal
         assert refused.value.reason == "credentials_refused"
         assert refused.value.__cause__ is source.error
     finally:
-        executioner.close()
         runtime.close()
 
 
@@ -597,78 +604,100 @@ def test_an_on_demand_runtime_meets_the_refusal_on_its_own_thread_and_does_not_w
     assert source.calls == 1
 
 
-@pytest.mark.adapter_smoke
-def test_a_connection_the_server_ended_is_replaced_at_checkout(profile_run: Any) -> None:
-    # The checkout health check spends a round trip proving a connection still
-    # works, which is what turns one the server closed while it was idle into a
-    # REPLACEMENT rather than a failed statement. The replacement is a physical
-    # connection the runtime created on its own, so it also has to decode.
-    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
-    executioner = profile_run.control()
-    try:
-        with _context(runtime) as first:
-            retained = _backend_pid(first)
-        executioner.execute("select pg_terminate_backend(%s) as ended", [retained])
-
-        with _context(runtime) as replacement:
-            assert _backend_pid(replacement) != retained
-            (row,) = replacement.execute(_CODEC_PROBE, [])
-        assert row == (INFINITY, {"present": None}, None, None, 42)
-    finally:
-        executioner.close()
-        runtime.close()
+# --------------------------------------------------------------------------- #
+# A connection the server ended is found, and replaced, at its first use.      #
+# --------------------------------------------------------------------------- #
 
 
-def _ended(profile_run: Any, pid: int) -> None:
-    """End backend ``pid`` from an independent session, and wait until the
-    server no longer lists it, so what reaches it next meets a session that is
-    already gone rather than one still on its way out."""
-    executioner = profile_run.control()
-    try:
-        executioner.execute("select pg_terminate_backend(%s) as ended", [pid])
-        give_up = time.monotonic() + 10.0
-        while executioner.execute(
-            "select count(*) as listed from pg_stat_activity where pid = %s", [pid]
-        ) != [(0,)]:
-            assert time.monotonic() < give_up, "the ended backend never left"
-            time.sleep(0.01)
-    finally:
-        executioner.close()
+def _first_backend_pid(connection: Any) -> int:
+    """The backend ``connection`` runs on, asked by a designated read, which is
+    therefore safe to be its lease's first submission."""
+    (row,) = connection.execute(_BACKEND, [], read_only=True)
+    return int(row[0])
 
 
-def _entered_over_an_ended_session(profile_run: Any, runtime: Any) -> tuple[Any, Any, int]:
-    """A context entered over the runtime's one retained session, whose
-    backend is then ended before anything is submitted on it.
+def _over_an_ended_session(profile_run: Any, runtime: Any) -> int:
+    """End the backend of the one session ``runtime`` retains while it sits
+    idle, answering that backend's pid.
 
-    The backend is identified in an EARLIER scope and ended from an independent
-    session: asking the target for its own backend would be its first
-    submission. It is ended after entry because checkout still validates the
-    connection it hands over.
+    The session is identified in a scope of its own and ended from an
+    independent one, so the next acquisition is handed exactly the connection
+    the server ended: nothing validates it on the way out of the pool.
     """
     with _context(runtime) as earlier:
         retained = _backend_pid(earlier)
-    context = _context(runtime)
-    target = context.__enter__()
-    _ended(profile_run, retained)
-    return context, target, retained
+    end_backend(profile_run, retained)
+    return retained
+
+
+def _sampled_around(runtime: Any, operation: Any) -> tuple[Any, Any, Any]:
+    """``operation``'s result, with the pool's readings before and after it."""
+    before = _measurements(runtime)
+    result = operation()
+    return result, before, _measurements(runtime)
+
+
+def _disposed_once(before: Any, after: Any, *, checkouts: int) -> None:
+    """A borrower found one connection broken and disposed of it: the native
+    pool counts that as a bad return rather than as a connection it lost, and
+    counts every physical checkout, the replacement's included."""
+    assert after.returns_bad == before.returns_bad + 1
+    assert after.connections_lost == before.connections_lost
+    assert after.requests_num == before.requests_num + checkouts
 
 
 @pytest.mark.adapter_smoke
-def test_a_first_designated_read_over_an_ended_session_runs_on_a_replacement(
+def test_a_connection_the_server_ended_while_idle_is_replaced_at_its_first_use(
     profile_run: Any,
+) -> None:
+    # The replacement is a physical connection the runtime created on its own,
+    # so it also has to decode.
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    try:
+        retained = _over_an_ended_session(profile_run, runtime)
+
+        with _context(runtime) as replacement:
+            assert _first_backend_pid(replacement) != retained
+            (row,) = replacement.execute(_CODEC_PROBE, [])
+        assert row == (INFINITY, {"present": None}, None, None, 42)
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+@pytest.mark.parametrize("submission", ["read", "read-pipeline"])
+def test_a_first_designated_read_over_an_ended_session_runs_on_a_replacement(
+    profile_run: Any, submission: str
 ) -> None:
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
     try:
-        context, target, retained = _entered_over_an_ended_session(profile_run, runtime)
-        try:
-            (row,) = target.execute(_BACKEND, [], read_only=True)
-            assert context.cleanup_result is None
-        finally:
-            context.__exit__(None, None, None)
-        assert row[0] != retained
+        retained = _over_an_ended_session(profile_run, runtime)
+        context = _context(runtime)
+
+        def read() -> int:
+            target = context.__enter__()
+            try:
+                if submission == "read":
+                    pid = _first_backend_pid(target)
+                else:
+                    [(backend,)], [(two,)] = target.execute_pipeline(
+                        (PipelineStatement(_BACKEND), PipelineStatement("select 2 as n")),
+                        read_only=True,
+                    )
+                    assert two == 2
+                    pid = int(backend)
+                assert context.cleanup_result is None
+            finally:
+                context.__exit__(None, None, None)
+            return pid
+
+        pid, before, after = _sampled_around(runtime, read)
+
+        assert pid != retained
         assert context.cleanup_result == Returned()
+        _disposed_once(before, after, checkouts=2)
         with _context(runtime) as later:
-            assert _backend_pid(later) == row[0]
+            assert _backend_pid(later) == pid
     finally:
         runtime.close()
 
@@ -691,31 +720,140 @@ def test_a_first_boundary_over_an_ended_session_opens_once_on_a_replacement(
         return characteristics
 
     try:
-        context, target, retained = _entered_over_an_ended_session(profile_run, runtime)
-        try:
-            outcome = target.transaction(body, isolation="serializable", access_mode="read_only")
-        finally:
-            context.__exit__(None, None, None)
+        retained = _over_an_ended_session(profile_run, runtime)
+        context = _context(runtime)
+
+        def boundary() -> object:
+            with context as target:
+                return target.transaction(body, isolation="serializable", access_mode="read_only")
+
+        outcome, before, after = _sampled_around(runtime, boundary)
+
         assert outcome == Committed(("serializable", "on"))
         assert len(ran) == 1 and ran[0] != retained
         assert context.cleanup_result == Returned()
+        _disposed_once(before, after, checkouts=2)
+        with _context(runtime) as later:
+            assert _backend_pid(later) == ran[0]
+    finally:
+        runtime.close()
+
+
+def _undesignated_read(target: Any) -> object:
+    return target.execute(_BACKEND, [])
+
+
+def _undesignated_pipeline(target: Any) -> object:
+    return target.execute_pipeline((PipelineStatement(_BACKEND),))
+
+
+_GRADE_WRITE = 'insert into grade (id, "order", label) values (%s, %s, %s)'
+
+
+def _count_only_write(target: Any) -> object:
+    return target.execute_write(_GRADE_WRITE, [97, 97, "z"])
+
+
+def _row_producing_write(target: Any) -> object:
+    return target.execute(f"{_GRADE_WRITE} returning id", [97, 97, "z"])
+
+
+def _ordered_write(target: Any) -> object:
+    transport = target.ordered_write_transport
+    assert transport is not None
+    statement = _CanonicalWrite('insert into grade (id, "order", label) values (?, ?, ?)')
+    result = transport((statement,))
+    assert isinstance(result, OrderedWriteResultInterrupted)
+    raise result.error
+
+
+class _CanonicalWrite:
+    def __init__(self, sql: str) -> None:
+        self.sql = sql
+        self.binds = (97, 97, "z")
+
+
+@pytest.mark.adapter_smoke
+@pytest.mark.parametrize(
+    "first",
+    [
+        _undesignated_read,
+        _undesignated_pipeline,
+        _count_only_write,
+        _row_producing_write,
+        _ordered_write,
+    ],
+    ids=["read", "pipeline", "count-only", "row-producing", "ordered"],
+)
+def test_an_undesignated_first_submission_over_an_ended_session_is_never_sent_again(
+    profile_run: Any, first: Any
+) -> None:
+    # Without read intent a submission may have had an effect, so whatever
+    # happens to it happens once: no replacement is taken for it, and no row
+    # the write would have made exists afterwards.
+    profile_run.reset(*_grade_model())
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    try:
+        _over_an_ended_session(profile_run, runtime)
+        context = _context(runtime)
+
+        def submitted() -> None:
+            target = context.__enter__()
+            try:
+                with pytest.raises(DatabaseError):
+                    first(target)
+            finally:
+                context.__exit__(None, None, None)
+
+        _, before, after = _sampled_around(runtime, submitted)
+
+        assert isinstance(context.cleanup_result, Invalidated)
+        _disposed_once(before, after, checkouts=1)
+        assert profile_run.port.execute("select id from grade where id = 97", []) == []
+        with _context(runtime) as later:
+            assert _backend_pid(later)
     finally:
         runtime.close()
 
 
 @pytest.mark.adapter_smoke
-def test_an_undesignated_first_read_over_an_ended_session_fails_as_it_always_has(
-    profile_run: Any,
+@pytest.mark.parametrize("submission", ["read", "boundary"])
+def test_an_on_demand_first_submission_over_an_ended_session_runs_on_a_replacement(
+    profile_run: Any, submission: str
 ) -> None:
-    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    # An on-demand runtime retains nothing between scopes, so the session is
+    # ended after this scope acquired it: found by its name from an independent
+    # session, since asking the scope for its own backend would be its first
+    # submission. Handing the broken connection back releases its capacity.
+    application_name = f"parallax_first_use_{uuid.uuid4().hex[:12]}"
+    runtime = _runtime(
+        profile_run,
+        pool=OnDemandOptions(max_size=1),
+        settings={"application_name": application_name},
+    )
     try:
-        context, target, _retained = _entered_over_an_ended_session(profile_run, runtime)
+        context = _context(runtime)
+        target = context.__enter__()
         try:
-            with pytest.raises(DatabaseError):
-                target.execute(_BACKEND, [])
+            ended = named_backend(profile_run, application_name)
+            end_backend(profile_run, ended)
+
+            def first() -> int:
+                if submission == "read":
+                    return _first_backend_pid(target)
+                outcome = target.transaction(_backend_pid, access_mode="read_only")
+                assert isinstance(outcome, Committed)
+                return cast("Committed[int]", outcome).value
+
+            pid, before, after = _sampled_around(runtime, first)
         finally:
             context.__exit__(None, None, None)
-        assert isinstance(context.cleanup_result, Invalidated)
+
+        assert pid != ended
+        assert context.cleanup_result == Returned()
+        _disposed_once(before, after, checkouts=1)
+        with _context(runtime) as later:
+            assert _backend_pid(later) != ended
     finally:
         runtime.close()
 
@@ -732,23 +870,6 @@ def test_a_finite_timestamp_still_decodes_beside_the_unbounded_one(profile_run: 
             )
         assert row[1] is INFINITY
         assert row[0].year == 2026
-    finally:
-        runtime.close()
-
-
-@pytest.mark.adapter_smoke
-def test_checkout_validation_can_be_opted_out_of_without_changing_what_executes(
-    profile_run: Any,
-) -> None:
-    # The health check spends a round trip proving a connection still works.
-    # Turning it off changes what the runtime does before handing a connection
-    # over and nothing about what the caller may then run on it.
-    runtime = _runtime(
-        profile_run, pool=PoolOptions(min_size=1, max_size=1, validate_on_checkout=False)
-    )
-    try:
-        with _context(runtime) as scoped:
-            assert scoped.execute("select 1 as n", []) == [(1,)]
     finally:
         runtime.close()
 

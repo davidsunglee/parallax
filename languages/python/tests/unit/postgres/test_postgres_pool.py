@@ -406,8 +406,6 @@ def test_a_pool_that_will_not_open_fails_startup_at_the_open_phase(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             super().__init__()
 
-        check_connection = staticmethod(psycopg_pool.ConnectionPool.check_connection)
-
         def open(self) -> None:
             raise psycopg_pool.PoolTimeout("the pool would not open")
 
@@ -1087,6 +1085,58 @@ def test_a_broken_first_begin_opens_once_more_and_runs_its_callback_once() -> No
     assert resource.cleanup_result == Returned()
 
 
+def test_a_broken_first_read_pipeline_is_submitted_once_more_whole_on_a_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The batch is the protected submission, not its first member: the
+    # replacement receives every statement with the binds adapted once for
+    # the original, and the original is handed back before it is asked for.
+    from parallax.postgres import _connection as connection_module
+
+    adaptations: list[Sequence[object]] = []
+    adapt = connection_module.adapt_binds
+
+    def counted(binds: Sequence[object]) -> list[object]:
+        adaptations.append(binds)
+        return adapt(binds)
+
+    monkeypatch.setattr(connection_module, "adapt_binds", counted)
+    broken = _FakeConnection(lost=_lost())
+    fresh = _FakeConnection(rows=[{"id": 1}])
+    pool = _pool(broken, fresh)
+    resource = _context(pool)
+    batch = (
+        PipelineStatement("select id from a where id = any(%s)", ([1, 2],)),
+        PipelineStatement("select id from b where id = %s", (3,)),
+    )
+
+    with resource as scoped:
+        rows = scoped.execute_pipeline(batch, read_only=True)
+        assert resource.cleanup_result is None
+        assert pool.returned == [broken]
+
+    assert rows == [[(1,)], [(1,)]]
+    assert len(adaptations) == 2
+    assert broken.statements == ["select id from a where id = any(%s)"]
+    assert fresh.statements == [statement.sql for statement in batch]
+    assert fresh.binds[0] is broken.binds[0]
+    assert len(pool.checkouts) == 2
+    assert pool.returned == [broken, fresh]
+    assert resource.cleanup_result == Returned()
+
+
+def test_a_replaced_read_pipeline_that_breaks_again_reports_its_own_failure() -> None:
+    second = _lost("the replacement was lost too")
+    pool = _pool(_FakeConnection(lost=_lost()), _FakeConnection(lost=second), _FakeConnection())
+    resource = _context(pool)
+
+    with resource as scoped, pytest.raises(DatabaseError) as failed:
+        _read_pipeline(scoped)
+
+    assert failed.value.__cause__ is second
+    assert len(pool.checkouts) == 2
+
+
 def _read(port: DatabaseConnection) -> object:
     return port.execute("select 1", [], read_only=True)
 
@@ -1103,21 +1153,25 @@ def _read_pipeline(port: DatabaseConnection) -> object:
     return port.execute_pipeline((PipelineStatement("select 1"),), read_only=True)
 
 
+def _undesignated_pipeline(port: DatabaseConnection) -> object:
+    return port.execute_pipeline((PipelineStatement("select 1"),))
+
+
 def _began(port: DatabaseConnection) -> object:
     return port.transaction(_read)
 
 
 @pytest.mark.parametrize(
     "submit",
-    [_row_producing, _count_only, _read_pipeline],
-    ids=["row-producing-dml", "count-only", "read-pipeline"],
+    [_row_producing, _count_only, _undesignated_pipeline],
+    ids=["row-producing-dml", "count-only", "undesignated-pipeline"],
 )
 def test_a_broken_first_submission_that_is_not_replay_safe_is_never_resubmitted(
     submit: Callable[[DatabaseConnection], object],
 ) -> None:
-    # A defaulted row-producing statement and a write are never repeated, and a
-    # read pipeline is not yet protected: each spends the opportunity and fails
-    # as it always has.
+    # A defaulted row-producing statement, a write, and a batch submitted
+    # without read intent are never repeated: each spends the opportunity and
+    # fails as it always has.
     broken = _FakeConnection(lost=_lost())
     pool = _pool(broken, _FakeConnection())
     resource = _context(pool)
@@ -1892,8 +1946,6 @@ def test_the_on_demand_policy_selects_the_native_null_pool(
             assert "min_size" not in kwargs
             assert "max_idle" not in kwargs
 
-        check_connection = staticmethod(psycopg_pool.ConnectionPool.check_connection)
-
         def open(self) -> None:
             return
 
@@ -1902,6 +1954,37 @@ def test_the_on_demand_policy_selects_the_native_null_pool(
         "", OnDemandOptions(), 5, _establishment(), DRIVER_MANAGED
     )
     assert built == ["_Null"]
+
+
+@pytest.mark.parametrize(
+    ("options", "native"),
+    [(PoolOptions(), "ConnectionPool"), (OnDemandOptions(), "NullConnectionPool")],
+    ids=["retaining", "on-demand"],
+)
+def test_neither_native_pool_is_given_a_check_to_run_at_checkout(
+    monkeypatch: pytest.MonkeyPatch, options: Any, native: str
+) -> None:
+    # A checkout hands over what the pool holds without a round trip; a
+    # connection that broke while idle is found by its first submission.
+    from parallax.postgres import _runtime as runtime_module
+
+    configured: list[dict[str, object]] = []
+
+    class _Recording(_FakePool):
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            super().__init__()
+            configured.append(kwargs)
+
+        def open(self) -> None:
+            return
+
+    monkeypatch.setattr(psycopg_pool, native, _Recording)
+    runtime_module._build_pool(  # pyright: ignore[reportPrivateUsage] - the module-private pool builder is this test's subject
+        "", options, 5, _establishment(), DRIVER_MANAGED
+    )
+    (kwargs,) = configured
+    assert "check" not in kwargs
+    assert kwargs["configure"] is not None
 
 
 def test_a_probe_that_answers_more_than_one_row_fails_startup(
@@ -2066,8 +2149,6 @@ def _built_kwargs(monkeypatch: pytest.MonkeyPatch, credentials: Any) -> Any:
         def __init__(self, *_args: object, **kwargs: object) -> None:
             super().__init__()
             recorded.append(kwargs["kwargs"])
-
-        check_connection = staticmethod(psycopg_pool.ConnectionPool.check_connection)
 
         def open(self) -> None:
             return

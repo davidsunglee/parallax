@@ -261,7 +261,6 @@ is already waiting for one. Omitting `pool` takes the retaining defaults.
 | `acquire_timeout` | 15.0 s | 15.0 s |
 | `startup_timeout` | 30.0 s | 30.0 s |
 | `max_waiting` | 0 (uncounted) | 0 (uncounted) |
-| `validate_on_checkout` | `True` | `True` |
 | `max_idle` | 600.0 s | — (no inventory to retire) |
 | `max_lifetime` | 3600.0 s | 3600.0 s |
 | `reconnect_timeout` | 300.0 s | 300.0 s |
@@ -316,6 +315,18 @@ A caller needing one database snapshot across all pages uses a participating
 delivery inside `db.transact`, whose pages inherit the attempt's connection. A
 connection lost while a page is running fails that page rather than reconnecting
 and continuing.
+
+**Handing a connection over sends nothing.** There is no validation query at
+checkout, so a connection the server or network ended while it sat idle is found
+by the first request an operation sends on it. When that request can be sent
+again without effect — a transaction's `BEGIN` before any of your code has run,
+a principal's `SET ROLE`, a read or batch of reads, or the startup probe — the
+broken connection is disposed of and the same request is sent once more on
+another one, taken within what remains of the operation's own
+`acquire_timeout` (or of `startup_timeout`, for the probe). That stays inside
+the operation's one Acquisition and Release and adds no Database Call. Nothing
+else is sent again: a write, any request after the first one answered, and a
+second failure each fail exactly as they would have.
 
 If a connection string already points at a reader endpoint, that is where its
 connections go; Parallax adds no replica routing and no second runtime to route
@@ -603,12 +614,13 @@ sample instead, and ask again on your next cadence.
 | `pool_size` | Capacity the pool manages, INCLUDING connections reserved but not finished preparing |
 | `pool_available` | Idle and immediately takeable. Zero for an on-demand pool by design |
 | `requests_waiting` | Queue length. May include entries whose own wait has already expired and that have not been removed |
-| `requests_num` | Checkout CALLS, startup's own included |
-| `requests_queued`, `requests_wait_ms` | Queue entries, and the milliseconds those queued waits took — not whole acquisition time, and not health-check time |
+| `requests_num` | Checkout CALLS, startup's own included. A connection replaced at its first use costs one more — it is not a count of operations |
+| `requests_queued`, `requests_wait_ms` | Queue entries, and the milliseconds those queued waits took — not whole acquisition time |
 | `requests_errors` | Checkout calls the pool reported an error for. Not every acquisition failure |
 | `connections_num`, `connections_ms` | Connection attempts, and the time successful attempts took to ESTABLISH — excluding the initialization after |
 | `connections_errors` | Failed attempts, excluding a configure-callback refusal |
-| `connections_lost`, `returns_bad` | Connections found broken, and connections handed back unusable — a deliberate Parallax invalidation contributes to the latter |
+| `connections_lost` | Connections the pool's own checks found broken. This runtime asks the pool for no checkout check, so a connection that broke while idle is not counted here |
+| `returns_bad` | Connections handed back unusable: every one Parallax disposed of, a connection found broken at its first use included — not only network failures |
 
 Three caveats an exporter must not paper over. **There is no active-connection
 gauge**: `pool_size - pool_available` is not one, and the hold duration a Release
@@ -626,12 +638,14 @@ connections keep being ATTEMPTED, which is not the same as being replaced: the
 counter is incremented before each attempt, so establishment that keeps failing
 climbs it exactly as replacement does, and a connection refused in preparation
 for a wrong `client_encoding` or `DateStyle` counts as an attempt rather than as
-an error. Read it against `connections_errors`, `connections_lost` and
-`returns_bad`: errors climbing with it is establishment failing,
-`connections_lost` climbing with it is the pool finding connections broken, and
-`returns_bad` climbing with it is connections handed back unusable, a Parallax
-invalidation included. Quiet counters do not narrow the climb. They rule those
-three causes out and leave the ones no counter records and a reading cannot
+an error. Read it against `connections_errors` and `returns_bad`: errors
+climbing with it is establishment failing, and `returns_bad` climbing with it is
+connections handed back unusable — a connection found broken at its first use,
+or any other Parallax invalidation. No counter, alone or summed with others, is
+a total of network failures or of connections successfully replaced: a quiet
+`connections_lost` says nothing about how many connections broke. Quiet
+counters do not narrow the climb either. They rule those two causes out and
+leave the ones no counter records and a reading cannot
 tell apart — a connection refused in preparation, a healthy connection retired
 at `max_lifetime`, and, on an on-demand pool, the connection every acquisition
 creates and closes. A climb beside quiet counters is a question for the logs,

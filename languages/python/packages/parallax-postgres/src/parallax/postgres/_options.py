@@ -50,12 +50,6 @@ def _set_normalized_fields(options: object, **normalized: object) -> None:
         object.__setattr__(options, name, value)
 
 
-def _flag(name: str, value: object) -> bool:
-    if not isinstance(value, bool):
-        raise TypeError(f"{name} takes a bool (got {value!r})")
-    return value
-
-
 def _capacity(value: object) -> int:
     capacity = _integer("max_size", value)
     if capacity < 1:
@@ -89,7 +83,6 @@ class _SharedRetention:
     acquire_timeout: float = 15.0
     startup_timeout: float = 30.0
     max_waiting: int = 0
-    validate_on_checkout: bool = True
     max_lifetime: float = 3600.0
     reconnect_timeout: float = 300.0
     num_workers: int = 3
@@ -100,7 +93,6 @@ class _SharedRetention:
             max_size=_capacity(self.max_size),
             max_waiting=_waiting(self.max_waiting),
             num_workers=_workers(self.num_workers),
-            validate_on_checkout=_flag("validate_on_checkout", self.validate_on_checkout),
             acquire_timeout=_duration("acquire_timeout", self.acquire_timeout),
             startup_timeout=_duration("startup_timeout", self.startup_timeout),
             max_lifetime=_duration("max_lifetime", self.max_lifetime),

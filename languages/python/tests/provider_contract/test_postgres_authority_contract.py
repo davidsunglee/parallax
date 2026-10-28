@@ -7,8 +7,9 @@ from typing import Any
 import pytest
 
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import ConnectionAcquisitionError
+from parallax.core.db_port import ConnectionAcquisitionError, Invalidated, PoolAvailable
 from parallax.postgres import PoolOptions, PostgresRole
+from tests._support.ended_sessions import end_backend
 
 
 def _identity(connection: Any) -> tuple[int, str, str]:
@@ -112,6 +113,73 @@ def test_server_role_refusal_disposes_the_session_before_login_execution_resumes
         assert replacement_pid != first_pid
         assert session_user == runtime.login_identity == profile_run.login_identity
         assert current_user == default_role == profile_run.default_role.name
+    finally:
+        runtime.close()
+
+
+def _measurements(runtime: Any) -> Any:
+    sample = runtime.pool_metrics.sample()
+    assert isinstance(sample, PoolAvailable), sample
+    return sample.measurements
+
+
+@pytest.mark.adapter_smoke
+def test_a_principal_s_first_role_installation_over_an_ended_session_runs_on_a_replacement(
+    profile_run: Any,
+) -> None:
+    # SET ROLE is the principal's first submission, so a retained session the
+    # server ended while it sat idle is replaced during acquisition: the
+    # principal is installed on the replacement, and the scope that follows
+    # executes as it.
+    role = profile_run.authorization("role-a")
+    runtime = profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)).open()
+    try:
+        with runtime.login_execution().new_context() as earlier:
+            retained, _, _ = _identity(earlier)
+        end_backend(profile_run, retained)
+        before = _measurements(runtime)
+
+        with runtime.principal_execution(role).new_context() as authorized:
+            after = _measurements(runtime)
+            pid, session_user, current_user = _identity(authorized)
+
+        assert pid != retained
+        assert (session_user, current_user) == (profile_run.login_identity, role.name)
+        assert after.returns_bad == before.returns_bad + 1
+        assert after.connections_lost == before.connections_lost
+        assert after.requests_num == before.requests_num + 2
+        with runtime.login_execution().new_context() as later:
+            assert _identity(later) == (
+                pid,
+                profile_run.login_identity,
+                profile_run.default_role.name,
+            )
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_a_session_lost_after_its_role_was_installed_is_not_replaced(profile_run: Any) -> None:
+    # The installed role was the lease's first submission and it was answered,
+    # so even a read designated as one meets the loss as its own failure.
+    role = profile_run.authorization("role-a")
+    runtime = profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)).open()
+    try:
+        with runtime.login_execution().new_context() as earlier:
+            retained, _, _ = _identity(earlier)
+        context = runtime.principal_execution(role).new_context()
+        authorized = context.__enter__()
+        try:
+            end_backend(profile_run, retained)
+            before = _measurements(runtime)
+            with pytest.raises(DatabaseError):
+                authorized.execute("select 1 as n", [], read_only=True)
+            after = _measurements(runtime)
+        finally:
+            context.__exit__(None, None, None)
+
+        assert isinstance(context.cleanup_result, Invalidated)
+        assert after.requests_num == before.requests_num
     finally:
         runtime.close()
 

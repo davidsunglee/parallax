@@ -34,8 +34,8 @@ def test_the_retaining_defaults_are_the_documented_starting_point() -> None:
     options = PoolOptions()
     assert (options.min_size, options.max_size) == (1, 10)
     assert (options.acquire_timeout, options.startup_timeout) == (15.0, 30.0)
-    assert (options.max_waiting, options.validate_on_checkout) == (0, True)
-    assert (options.max_idle, options.max_lifetime) == (600.0, 3600.0)
+    assert (options.max_waiting, options.max_idle) == (0, 600.0)
+    assert options.max_lifetime == 3600.0
     assert (options.reconnect_timeout, options.num_workers) == (300.0, 3)
 
 
@@ -132,14 +132,16 @@ def test_on_demand_validates_the_controls_it_keeps() -> None:
         OnDemandOptions(reconnect_timeout=0)
     with pytest.raises(TypeError, match="num_workers"):
         OnDemandOptions(num_workers=cast("Any", True))
-    with pytest.raises(TypeError, match="validate_on_checkout"):
-        OnDemandOptions(validate_on_checkout=cast("Any", 1))
 
 
-def test_checkout_validation_takes_a_boolean_alone() -> None:
-    assert PoolOptions(validate_on_checkout=False).validate_on_checkout is False
+@pytest.mark.parametrize("policy", [PoolOptions, OnDemandOptions])
+def test_neither_policy_offers_a_checkout_validation_control(policy: Any) -> None:
+    # A checkout sends nothing, and a connection that broke while idle is
+    # replaced at its first use instead, so there is no setting to turn a
+    # validation query back on.
+    assert "validate_on_checkout" not in {field.name for field in dataclasses.fields(policy)}
     with pytest.raises(TypeError, match="validate_on_checkout"):
-        PoolOptions(validate_on_checkout=cast("Any", "yes"))
+        policy(validate_on_checkout=True)
 
 
 def test_no_relationship_is_invented_between_independent_controls() -> None:

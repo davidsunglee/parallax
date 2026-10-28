@@ -16,6 +16,7 @@ from __future__ import annotations
 import decimal
 import gc
 import json
+import operator
 import struct
 from collections.abc import Callable, Sequence
 from time import monotonic
@@ -739,9 +740,10 @@ class _ResultCursor(_FakeCursor):
         self._connection = connection
         self._ordinal = len(connection.result_cursors)
         self._result = result
-        self._row_factory = row_factory
         self._make_row: Callable[[tuple[object, ...]], object] | None = None
+        self.row_factory = row_factory
         self.row_factory_kind = "folding" if row_factory is not None else "default"
+        self.submitted: tuple[object, object] | None = None
 
     def _event(self, name: str) -> None:
         self._connection.pipeline_events.append(f"cursor-{self._ordinal}-{name}")
@@ -759,6 +761,9 @@ class _ResultCursor(_FakeCursor):
     ) -> None:
         del prepare
         self._event(f"execute:{sql!r}:{binds!r}")
+        self.submitted = (sql, binds)
+        if self._connection.cursor_error is not None:
+            raise self._connection.cursor_error
         if self._connection.in_pipeline:
             self._connection.unsynced.append(self)
         else:
@@ -772,11 +777,13 @@ class _ResultCursor(_FakeCursor):
             else tuple(SimpleNamespace(name=f"c{index}") for index in range(result.width))
         )
         self._event("attach")
-        if self._row_factory is not None:
-            self._make_row = self._row_factory(self)
+        if self.row_factory is not None:
+            self._make_row = self.row_factory(self)
 
     def fetchall(self) -> list[tuple[object, ...]]:
         self._event("fetch")
+        if self._connection.fetch_error is not None:
+            raise self._connection.fetch_error
         records = [] if self._result is None else self._result.records
         make_row = self._make_row
         if make_row is None:
@@ -785,8 +792,11 @@ class _ResultCursor(_FakeCursor):
 
 
 class _SyncingPipeline(_FakePipeline):
+    """A pipeline whose synchronization attaches every queued result, unless
+    it fails, in which case none is."""
+
     def __init__(self, connection: _ResultConnection) -> None:
-        super().__init__(connection.pipeline_events)
+        super().__init__(connection.pipeline_events, connection.sync_error)
         self._connection = connection
 
     def __enter__(self) -> _SyncingPipeline:
@@ -796,8 +806,9 @@ class _SyncingPipeline(_FakePipeline):
 
     def __exit__(self, *_: object) -> bool:
         self._connection.in_pipeline = False
-        for cursor in self._connection.unsynced:
-            cursor.attach()
+        if self._connection.sync_error is None:
+            for cursor in self._connection.unsynced:
+                cursor.attach()
         self._connection.unsynced.clear()
         return super().__exit__()
 
@@ -809,6 +820,7 @@ class _ResultConnection(_FakeConnection):
         self.result_cursors: list[_ResultCursor] = []
         self.unsynced: list[_ResultCursor] = []
         self.in_pipeline = False
+        self.fetch_error: psycopg.Error | None = None
 
     def cursor(self, **options: object) -> _ResultCursor:
         row_factory = cast(
@@ -1607,25 +1619,94 @@ def test_a_read_whose_rows_fail_after_it_was_answered_has_spent_the_opportunity(
     assert pool.checkouts == 1
 
 
+def _document_batch() -> tuple[_Result, _Result]:
+    return _Result(2, [(True, {"a": 1}), (False, None)]), _Result(1, [(7,)])
+
+
+_DOCUMENT_BATCH = (
+    PipelineStatement("select present, document where id = any(%s)", ([1, 2],), ((0, 1),)),
+    PipelineStatement("select 7"),
+)
+
+
 @pytest.mark.parametrize("failing", ["queueing", "synchronization"])
-def test_a_read_pipeline_that_fails_in_transport_spends_the_opportunity_unrepeated(
+def test_a_read_pipeline_broken_in_transport_is_submitted_once_more_whole_on_a_replacement(
     failing: str,
 ) -> None:
-    connection = _FakeConnection()
-    context, pool = _leased(connection, _FakeConnection())
+    # Until the pipeline has synchronized nothing has been answered, so either
+    # failure leaves the whole batch to repeat: every statement, with the SQL
+    # and binds prepared once, through cursors and document-read state made
+    # for the replacement. The broken session's results are never fetched.
+    broken, fresh = _ResultConnection(*_document_batch()), _ResultConnection(*_document_batch())
+    context, pool = _leased(broken, fresh)
 
     with context as scoped:
-        _break(connection)
+        _break(broken)
         if failing == "synchronization":
-            connection.cursor_error = None
-        with pytest.raises(DatabaseError):
-            scoped.execute_pipeline(
-                (PipelineStatement("select 1"), PipelineStatement("select 2")), read_only=True
-            )
+            broken.cursor_error = None
+        rows = scoped.execute_pipeline(_DOCUMENT_BATCH, read_only=True)
         assert _first_send(context) == "spent"
 
-    expected = ["select 1"] if failing == "queueing" else ["select 1", "select 2"]
-    assert _sent_sql(connection) == expected
+    assert rows == [[(PresentDocument({"a": 1}),), (SQL_NULL,)], [(7,)]]
+    assert pool.checkouts == 2
+    assert pool.returned == [broken, fresh]
+    assert not any(event.endswith(("-attach", "-fetch")) for event in broken.pipeline_events)
+    assert [event for event in fresh.pipeline_events if "-execute:" not in event] == [
+        "pipeline-enter",
+        "cursor-0-enter",
+        "cursor-1-enter",
+        "cursor-0-attach",
+        "cursor-1-attach",
+        "pipeline-exit",
+        "cursor-0-fetch",
+        "cursor-1-fetch",
+        "cursor-1-exit",
+        "cursor-0-exit",
+    ]
+    sent = broken.result_cursors[: 1 if failing == "queueing" else 2]
+    for original, repeated in zip(sent, fresh.result_cursors, strict=False):
+        assert original.submitted is not None and repeated.submitted is not None
+        assert all(map(operator.is_, original.submitted, repeated.submitted))
+    assert fresh.result_cursors[0].row_factory is not None
+    assert fresh.result_cursors[0].row_factory is not broken.result_cursors[0].row_factory
+
+
+def test_a_read_pipeline_refused_on_a_healthy_connection_is_not_resubmitted() -> None:
+    connection = _ResultConnection(*_document_batch())
+    connection.sync_error = errors.SyntaxError("syntax error at or near")
+    context, pool = _leased(connection, _ResultConnection(*_document_batch()))
+
+    with context as scoped:
+        with pytest.raises(DatabaseError) as failed:
+            scoped.execute_pipeline(_DOCUMENT_BATCH, read_only=True)
+        assert _first_send(context) == "spent"
+
+    assert failed.value.native_code == "42601"
+    assert pool.checkouts == 1
+
+
+@pytest.mark.parametrize("failing", ["decoding", "driver"])
+def test_a_read_pipeline_whose_rows_fail_after_it_synchronized_is_not_resubmitted(
+    failing: str,
+) -> None:
+    # Synchronization answered the batch, so what fetching meets afterwards —
+    # rows that will not decode, or a session lost while they are read — is
+    # never one a replacement could repair.
+    present, plain = _document_batch()
+    connection = _ResultConnection(_Result(2, present.records), plain)
+    batch = _DOCUMENT_BATCH
+    if failing == "decoding":
+        batch = (PipelineStatement("select", document_reads=((0, 2),)), _DOCUMENT_BATCH[1])
+    else:
+        connection.fetch_error = errors.OperationalError("server closed the connection")
+        connection.closed = True
+    context, pool = _leased(connection, _ResultConnection(*_document_batch()))
+
+    with context as scoped:
+        with pytest.raises(ValueError if failing == "decoding" else DatabaseError):
+            scoped.execute_pipeline(batch, read_only=True)
+        assert _first_send(context) == "spent"
+
     assert pool.checkouts == 1
 
 
