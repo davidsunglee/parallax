@@ -15,6 +15,7 @@ from parallax.core._execution._unit_work.instructions import (
     KeyedWriteInstruction,
     PreparedKeyedInstruction,
     WriteInstructionError,
+    prepare_typed_insert,
     prepare_typed_write,
     prepare_wire_write,
 )
@@ -164,3 +165,29 @@ def test_a_key_an_existing_object_is_addressed_by_is_never_a_marker(
     with pytest.raises(refusal, match=r"Attendee\.id: ") as refused:
         prepare(instruction, write_preparation_of(_PK_MAX))
     assert "type-mismatch" in getattr(refused.value, "rule", "")
+
+
+@pytest.mark.parametrize("prepare", _PREPARERS, ids=_LANES)
+def test_a_replacement_and_an_explicit_assignment_plan_where_each_member_is_judged(
+    prepare: Callable[..., object],
+) -> None:
+    preparation = write_preparation_of(_PK_SEQUENCE)
+    row = {"name": "badge_seq", "nextVal": {"increment": 3}}
+    replaced = prepare(KeyedWriteInstruction("replace", "PkSequence", (row,)), preparation)
+    assigned = prepare(
+        KeyedWriteInstruction("amend", "PkSequence", (row,)),
+        preparation,
+        authored_members={"nextVal"},
+    )
+    for prepared in (replaced, assigned):
+        assert isinstance(prepared, PreparedKeyedInstruction)
+        (planned,) = prepared.rows
+        assert _named(planned)["nextVal"] == SelfIncrement(amount=3)
+
+
+def test_only_an_opening_is_prepared_as_one() -> None:
+    entity = _PK_MAX.entities[0]
+    with pytest.raises(ValueError, match=r"^'amend' opens no row$"):
+        prepare_typed_insert(
+            write_preparation_of(_PK_MAX), "amend", entity, (), valid_from=None, until=None
+        )
