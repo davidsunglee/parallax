@@ -14,7 +14,16 @@ from typing import Any, Final
 
 import pytest
 
-from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
+from parallax.core import (
+    AbstractRoot,
+    Attr,
+    ConcreteSubtype,
+    DomainModel,
+    Entity,
+    TablePerHierarchy,
+    ValueObject,
+    attr,
+)
 from parallax.core import predicate as predicate_algebra
 from parallax.core._execution._unit_work import instructions as wi
 from parallax.core.base import Int32
@@ -167,3 +176,66 @@ def test_an_earlier_rows_value_failure_wins_over_a_later_rows_name_failure(
         )
 
     assert "bogus" not in str(refused.value)
+
+
+class Meter(
+    Entity,
+    table="meter",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    owner: Attr[str]
+
+
+class Gauge(Meter, namespace=_NS, inheritance=ConcreteSubtype(tag_value="gauge")):
+    span: Attr[int | None]
+
+
+_FAMILY: Final = model_of(DomainModel(Meter, Gauge))
+
+
+def _gauge_target() -> Any:
+    target = _FAMILY.entity(Gauge.identity)
+    assert target is not None
+    return target
+
+
+def test_a_typed_keyed_replacement_of_a_subtype_states_its_whole_family_state() -> None:
+    preparation = write_preparation_of(_FAMILY)
+    target = _gauge_target()
+    entry = preparation.entity(target.identity)
+    values = Gauge(id=1, owner="A", span=2).__parallax_row_values__(
+        entry.selection.members.shape, target.identity
+    )
+
+    prepared = wi.prepare_typed_keyed_write(
+        preparation, "replace", target, values=values, valid_from=None, until=None
+    )
+
+    assert named_members(_row(prepared)) == {"id": 1, "owner": "A", "span": 2}
+
+
+def test_a_typed_keyed_amendment_of_a_subtype_judges_its_explicit_assignments() -> None:
+    preparation = write_preparation_of(_FAMILY)
+    target = _gauge_target()
+    key = preparation.entity(target.identity).key
+
+    prepared = wi.prepare_typed_keyed_write(
+        preparation,
+        "amend",
+        target,
+        pairs=((key, 1),),
+        members=lambda: {"span": 3},
+        valid_from=None,
+        until=None,
+    )
+
+    assert named_members(_row(prepared)) == {"id": 1, "span": 3}
+
+
+def test_a_typed_keyed_write_of_an_existing_object_opens_no_row() -> None:
+    with pytest.raises(ValueError, match="opens a row"):
+        wi.prepare_typed_keyed_write(
+            write_preparation_of(_FAMILY), "insert", _gauge_target(), valid_from=None, until=None
+        )

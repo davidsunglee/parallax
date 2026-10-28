@@ -1948,3 +1948,47 @@ def _prepare_case_write(
     instruction: WriteInstruction, model: Metamodel
 ) -> PreparedInstruction | PreparedTargetInstruction:
     return _case_ingress.prepare_case_write(instruction, model, case_wire_preparer(model))
+
+
+_LEDGER = models.accepted_model(
+    {
+        "entity": {
+            "name": "Ledger",
+            "namespace": "parallax.compatibility",
+            "table": "ledger",
+            "attributes": [
+                {"name": "id", "type": "int64", "primaryKey": True},
+                {"name": "tags", "type": "string", "multiplicity": "many"},
+            ],
+            "valueObjects": [
+                {
+                    "name": "lines",
+                    "multiplicity": "many",
+                    "attributes": [{"name": "sku", "type": "string"}],
+                }
+            ],
+        }
+    }
+)
+_LEDGER_ENTITY = model_facts.case_entity(_LEDGER, "parallax.compatibility.Ledger")
+
+
+def test_case_row_decoding_keeps_stated_state_its_structure_refuses_as_stated() -> None:
+    # Stated state is weighed by nothing: a member the plan refuses for its
+    # structure is read where it can be, element by element, and kept as stated
+    # where it cannot, while a stored DB-computed marker keeps its document.
+    decoded = _case_ingress.decode_case_row(
+        {
+            "id": {"computed": "maxPlusOne"},
+            "tags": "untagged",
+            "lines": [{"sku": "a"}, "loose", {}],
+        },
+        _LEDGER,
+        _LEDGER_ENTITY,
+    )
+
+    assert decoded == {
+        "id": {"computed": "maxPlusOne"},
+        "tags": "untagged",
+        "lines": ({"sku": "a"}, "loose", {}),
+    }

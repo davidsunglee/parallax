@@ -22,7 +22,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core.base import NeutralType, ScalarConverter, typed_converter
-from parallax.core.entity import EditError
+from parallax.core.entity import EditError, EntityDefinitionError
 from parallax.core.entity._declaration import member_validation
 
 _NS = "member.validation"
@@ -119,3 +119,8 @@ def test_an_edit_judges_only_the_members_it_changes(monkeypatch: pytest.MonkeyPa
 
     assert edited.counts == (_OUT_OF_RANGE,)
     assert converted == ["probe"]
+
+
+def test_a_class_no_declaration_built_holds_no_member_validation() -> None:
+    with pytest.raises(EntityDefinitionError, match="not a Parallax Entity or Value Object Class"):
+        member_validation(object)
