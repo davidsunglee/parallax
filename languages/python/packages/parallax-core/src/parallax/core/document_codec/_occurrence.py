@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TypeVar, cast
 
 from parallax.core.base import NeutralType
-from parallax.core.document_codec._shape import Leaf, MemberShape
+from parallax.core.document_codec._shape import MemberShape, ScalarDefinition
 from parallax.core.metamodel import Multiplicity
 
 Encoded = TypeVar("Encoded")
@@ -71,7 +71,7 @@ def _encode_object[Encoded](
                 if member.multiplicity is Multiplicity.MANY:
                     yield member.name, build_array(())
                 continue
-            if isinstance(member, Leaf):
+            if isinstance(member, ScalarDefinition):
                 if member.multiplicity is Multiplicity.MANY:
                     element_type = member.type
                     yield (

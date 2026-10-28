@@ -20,14 +20,14 @@ from parallax.core.base import INFINITY, normalize_instant
 from parallax.core.inheritance import EntityMemberSelection
 from parallax.core.metamodel import (
     AttributeIdentity,
-    DocumentMember,
     EntityIdentity,
     EntityMetadata,
-    Leaf,
+    MemberDefinition,
     MemberShape,
     Metamodel,
     Multiplicity,
     PrimaryKey,
+    ScalarDefinition,
     TemporalDimension,
     ValueObjectIdentity,
 )
@@ -736,8 +736,8 @@ def _positional(shape: MemberShape, members: Mapping[str, object]) -> tuple[obje
     )
 
 
-def _positional_cell(member: DocumentMember, value: object) -> object:
-    if isinstance(member, Leaf) or value is None:
+def _positional_cell(member: MemberDefinition, value: object) -> object:
+    if isinstance(member, ScalarDefinition) or value is None:
         return value
     if member.multiplicity is Multiplicity.MANY:
         return tuple(

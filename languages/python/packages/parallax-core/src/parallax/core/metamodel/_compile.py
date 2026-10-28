@@ -12,7 +12,12 @@ from parallax.core.metamodel._identities import (
     ValueObjectIdentity,
 )
 from parallax.core.metamodel._issues import METAMODEL_MODULE
-from parallax.core.metamodel._shape import BoundShape, Leaf, MemberShape, Occurrence
+from parallax.core.metamodel._shape import (
+    BoundShape,
+    MemberShape,
+    OccurrenceDefinition,
+    ScalarDefinition,
+)
 from parallax.core.metamodel._states import (
     CandidateMetamodel,
     CompiledMetadata,
@@ -53,7 +58,7 @@ __all__ = [
 @dataclass(frozen=True, slots=True)
 class _ValueObjectAttributeMetadata:
     identity: ValueObjectAttributeIdentity
-    definition: Leaf
+    definition: ScalarDefinition
 
     @property
     def type(self) -> NeutralType:
@@ -80,7 +85,7 @@ class _OccurrenceMetadata:
     """
 
     identity: ValueObjectIdentity
-    definition: Occurrence
+    definition: OccurrenceDefinition
     bound: BoundShape[ValueObjectAttributeMetadata, NestedValueObjectMetadata]
 
     @property
@@ -97,7 +102,7 @@ class _OccurrenceMetadata:
 
     @property
     def attributes(self) -> Sequence[ValueObjectAttributeMetadata]:
-        return self.bound.leaves
+        return self.bound.scalars
 
     @property
     def value_objects(self) -> Sequence[NestedValueObjectMetadata]:
@@ -108,7 +113,7 @@ class _OccurrenceMetadata:
         return self.bound.shape
 
     def attribute(self, name: str) -> ValueObjectAttributeMetadata | None:
-        return self.bound.leaf(name)
+        return self.bound.scalar(name)
 
     def value_object(self, name: str) -> NestedValueObjectMetadata | None:
         return self.bound.occurrence(name)

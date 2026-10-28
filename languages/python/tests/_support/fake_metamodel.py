@@ -45,12 +45,11 @@ from parallax.core.metamodel import (
     IndexIdentity,
     IndexMetadata,
     InheritanceMetadata,
-    Leaf,
     MemberShape,
     Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
-    Occurrence,
+    OccurrenceDefinition,
     PersistenceMode,
     PkGeneration,
     PrimaryKey,
@@ -59,6 +58,7 @@ from parallax.core.metamodel import (
     RelationshipJoin,
     RelationshipOrder,
     ReverseRelationshipDeclaration,
+    ScalarDefinition,
     SortDirection,
     StorageContainer,
     StorageLayout,
@@ -88,7 +88,7 @@ class FakeValueObjectAttribute:
         self.type = type
         self.nullable = nullable
         self.multiplicity = multiplicity
-        self.definition = Leaf(identity.name, type, nullable, multiplicity)
+        self.definition = ScalarDefinition(identity.name, type, nullable, multiplicity)
 
 
 class FakeNestedValueObject:
@@ -109,7 +109,9 @@ class FakeNestedValueObject:
         self.attributes = tuple(attributes)
         self.value_objects = tuple(value_objects)
         self.document_shape = MemberShape.of(self.attributes, self.value_objects)
-        self.definition = Occurrence(identity.path[-1], multiplicity, nullable, self.document_shape)
+        self.definition = OccurrenceDefinition(
+            identity.path[-1], multiplicity, nullable, self.document_shape
+        )
         self.members = (*self.attributes, *self.value_objects)
         self._attributes = {member.identity.name: member for member in self.attributes}
         self._value_objects = {member.identity.path[-1]: member for member in self.value_objects}
@@ -141,7 +143,9 @@ class FakeValueObject:
         self.attributes = tuple(attributes)
         self.value_objects = tuple(value_objects)
         self.document_shape = MemberShape.of(self.attributes, self.value_objects)
-        self.definition = Occurrence(identity.path[-1], multiplicity, nullable, self.document_shape)
+        self.definition = OccurrenceDefinition(
+            identity.path[-1], multiplicity, nullable, self.document_shape
+        )
         self.members = (*self.attributes, *self.value_objects)
         self._attributes = {member.identity.name: member for member in self.attributes}
         self._value_objects = {member.identity.path[-1]: member for member in self.value_objects}

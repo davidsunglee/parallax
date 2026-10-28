@@ -1,18 +1,23 @@
 """m-metamodel: document-shape values and lookup."""
 
 from parallax.core.base import STRING
-from parallax.core.metamodel import Leaf, MemberShape, Multiplicity, Occurrence
+from parallax.core.metamodel import (
+    MemberShape,
+    Multiplicity,
+    OccurrenceDefinition,
+    ScalarDefinition,
+)
 
 
 def test_a_document_shape_indexes_the_same_members_as_a_linear_scan() -> None:
-    first = Leaf(name="repeated", type=STRING, nullable=True)
-    later = Occurrence(
+    first = ScalarDefinition(name="repeated", type=STRING, nullable=True)
+    later = OccurrenceDefinition(
         name="repeated",
         multiplicity=Multiplicity.MANY,
         nullable=False,
         shape=MemberShape(members=()),
     )
-    last = Leaf(name="last", type=STRING, nullable=False)
+    last = ScalarDefinition(name="last", type=STRING, nullable=False)
     shape = MemberShape(members=(first, later, last))
 
     for name in ("repeated", "last"):

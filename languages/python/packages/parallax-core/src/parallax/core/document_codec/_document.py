@@ -27,12 +27,12 @@ from parallax.core.document_codec._shape import (
     MISSING,
     NULL,
     ExplicitNull,
-    Leaf,
     MemberShape,
     Missing,
-    Occurrence,
+    OccurrenceDefinition,
     Presence,
     Present,
+    ScalarDefinition,
     resolve,
 )
 from parallax.core.metamodel import Multiplicity
@@ -219,7 +219,7 @@ def prepared_raw_member_classifier(
     if member is None:  # pragma: no cover - compiled callers resolve declared members
         raise KeyError(f"{member_name!r} names no member of the shape")
     path = (member_name,)
-    if isinstance(member, Leaf):
+    if isinstance(member, ScalarDefinition):
         if member.multiplicity is Multiplicity.MANY:
             return _PreparedRawScalarManyClassifier(member, path)
         return _PreparedRawLeafClassifier(member, path)
@@ -245,7 +245,7 @@ def prepared_raw_member_classifier(
 
 @dataclass(frozen=True, slots=True)
 class _PreparedRawLeafClassifier:
-    member: Leaf
+    member: ScalarDefinition
     path: tuple[str]
 
     def __call__(
@@ -280,7 +280,7 @@ class _PreparedRawLeafClassifier:
 
 @dataclass(frozen=True, slots=True)
 class _PreparedRawScalarManyClassifier:
-    member: Leaf
+    member: ScalarDefinition
     path: tuple[str]
 
     def __call__(
@@ -295,7 +295,7 @@ class _PreparedRawScalarManyClassifier:
 
 
 def decode_scalar_many_classified(
-    member: Leaf, located: SqlNull | PresentDocument
+    member: ScalarDefinition, located: SqlNull | PresentDocument
 ) -> tuple[object, tuple[DocumentFinding, ...]]:
     """Classify one scalar collection stored in a Structured Column of its own.
 
@@ -309,7 +309,7 @@ def decode_scalar_many_classified(
 
 
 def _interpreted_scalar_many(
-    member: Leaf, raw: object, path: tuple[DocumentPathSegment, ...]
+    member: ScalarDefinition, raw: object, path: tuple[DocumentPathSegment, ...]
 ) -> tuple[object, tuple[DocumentFinding, ...]]:
     """The one interpretation of a reachable stored scalar collection.
 
@@ -353,7 +353,7 @@ def decode_occurrence_classified(
     canonical shape order. They choose only the output carrier; classification,
     recursive decoding, and finding paths remain this module's one traversal.
     """
-    member = Occurrence("", multiplicity, nullable, shape)
+    member = OccurrenceDefinition("", multiplicity, nullable, shape)
     raw = MISSING if isinstance(located, SqlNull) else located.document
     classified = _classify_member(member, raw, (), isolate=False)
     if not isinstance(classified.presence, Present):
@@ -369,13 +369,13 @@ def decode_occurrence_classified(
 
 
 def _classify_member(
-    member: Leaf | Occurrence,
+    member: ScalarDefinition | OccurrenceDefinition,
     raw: object | Missing,
     path: tuple[DocumentPathSegment, ...],
     *,
     isolate: bool = True,
 ) -> DecodedMember:
-    if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
+    if isinstance(member, OccurrenceDefinition) and member.multiplicity is Multiplicity.MANY:
         if isinstance(raw, Missing) or raw is None:
             return DecodedMember(Present([]))
         if not _is_document_array(raw) or not all(_is_document_object(item) for item in raw):
@@ -391,7 +391,7 @@ def _classify_member(
             (DocumentFinding("required-member-null", path, raw),) if not member.nullable else ()
         )
         return DecodedMember(NULL, findings)
-    if isinstance(member, Occurrence):
+    if isinstance(member, OccurrenceDefinition):
         if not _is_document_object(raw):
             return DecodedMember(MISSING, (DocumentFinding("one-wrong-kind", path, raw),))
         return DecodedMember(Present(_isolated_document_container(raw) if isolate else raw))
@@ -455,7 +455,7 @@ def _interpreted_members(
     for member in shape.members:
         name = member.name
         raw = source.get(name, MISSING)
-        if isinstance(member, Leaf):
+        if isinstance(member, ScalarDefinition):
             if member.multiplicity is Multiplicity.MANY:
                 value, many_findings = _interpreted_scalar_many(member, raw, (name,))
                 findings.extend(many_findings)
@@ -480,7 +480,7 @@ def _interpreted_members(
 
 
 def _interpreted_occurrence(
-    member: Occurrence,
+    member: OccurrenceDefinition,
     raw: object | Missing,
     source: Mapping[str, object],
     findings: list[DocumentFinding],
@@ -571,7 +571,7 @@ def encode_managed_document(
         value = values[member.name]
         if value is None:
             document[member.name] = () if _is_many(member) else None
-        elif isinstance(member, Leaf):
+        elif isinstance(member, ScalarDefinition):
             document[member.name] = (
                 encode_scalar_many(member.type, cast("Iterable[object]", value))
                 if member.multiplicity is Multiplicity.MANY
@@ -656,11 +656,11 @@ def prepare_patches(
         member = resolve(shape, patch.path)
         dotted = ".".join(patch.path)
         if isinstance(patch, SetValueObject):
-            if not isinstance(member, Occurrence):
+            if not isinstance(member, OccurrenceDefinition):
                 raise ValueError(f"{dotted!r} names a leaf; use SetScalar")
             prepared.append(PreparedPatch(patch.path, retain_document_value(patch.document), None))
             continue
-        if not isinstance(member, Leaf):
+        if not isinstance(member, ScalarDefinition):
             raise ValueError(f"{dotted!r} names an occurrence; use SetValueObject")
         presence = patch.value
         if isinstance(presence, Missing):
@@ -874,13 +874,15 @@ def reduce_declared_members(
     return reduced
 
 
-def _reduced_member(member: Leaf | Occurrence, raw: object, *, preserve_presence: bool) -> object:
+def _reduced_member(
+    member: ScalarDefinition | OccurrenceDefinition, raw: object, *, preserve_presence: bool
+) -> object:
     """``raw`` reduced as ``member`` declares it, failing relative to the member."""
-    if isinstance(member, Leaf) and member.multiplicity is not Multiplicity.MANY:
+    if isinstance(member, ScalarDefinition) and member.multiplicity is not Multiplicity.MANY:
         return None if raw is None else decode_leaf(member.type, raw)
     if member.multiplicity is not Multiplicity.MANY:
         return reduce_declared_members(
-            cast("Occurrence", member).shape, raw, preserve_presence=preserve_presence
+            cast("OccurrenceDefinition", member).shape, raw, preserve_presence=preserve_presence
         )
     if raw is None:
         values: Sequence[object] = ()
@@ -888,7 +890,7 @@ def _reduced_member(member: Leaf | Occurrence, raw: object, *, preserve_presence
         values = cast("Sequence[object]", raw)
     else:
         raise LeafEncodingError(f"expected array, got {type(raw).__name__}")
-    if isinstance(member, Leaf):
+    if isinstance(member, ScalarDefinition):
         return [decode_leaf(member.type, value) for value in values]
     return [
         reduce_declared_members(member.shape, value, preserve_presence=preserve_presence)
@@ -896,5 +898,5 @@ def _reduced_member(member: Leaf | Occurrence, raw: object, *, preserve_presence
     ]
 
 
-def _is_many(member: Leaf | Occurrence) -> bool:
+def _is_many(member: ScalarDefinition | OccurrenceDefinition) -> bool:
     return member.multiplicity is Multiplicity.MANY

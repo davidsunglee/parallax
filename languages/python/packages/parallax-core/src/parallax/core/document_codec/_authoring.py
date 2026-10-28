@@ -8,10 +8,10 @@ from typing import Protocol, cast, runtime_checkable
 from parallax.core.base import adopt_frozen_map, retain_document_value
 from parallax.core.metamodel import (
     AuthoringViolation,
-    Leaf,
     MemberShape,
     Multiplicity,
-    Occurrence,
+    OccurrenceDefinition,
+    ScalarDefinition,
 )
 
 __all__ = [
@@ -24,7 +24,7 @@ __all__ = [
 ]
 
 
-type LeafNormalizer = Callable[[Leaf, object, str], tuple[object, bool]]
+type LeafNormalizer = Callable[[ScalarDefinition, object, str], tuple[object, bool]]
 """Normalize one scalar value of ``leaf.type`` at ``path``, answering the managed
 value and whether it is valid. A ``many`` leaf's normalizer is called once per
 element with that same leaf, so it never reads the leaf's multiplicity."""
@@ -142,7 +142,7 @@ def prepare_authoring(
 
 
 def validate_member_authoring(
-    member: Leaf | Occurrence,
+    member: ScalarDefinition | OccurrenceDefinition,
     source: object,
     *,
     source_access: SourceAccess,
@@ -151,7 +151,7 @@ def validate_member_authoring(
     allow_marker: bool = False,
 ) -> AuthoringViolation | None:
     """Validate one already-resolved member without constructing its output."""
-    if isinstance(member, Leaf):
+    if isinstance(member, ScalarDefinition):
         if member.multiplicity is Multiplicity.MANY:
             _value, failure = _author_scalar_many(
                 member,
@@ -213,7 +213,7 @@ def _author_document(
         if raw is None:
             nulls |= 1 << position
         member_path = _joined(path, name)
-        if isinstance(member, Leaf):
+        if isinstance(member, ScalarDefinition):
             managed, violation = _author_leaf(
                 member,
                 raw,
@@ -254,7 +254,7 @@ def _author_document(
 
 
 def _author_leaf(
-    leaf: Leaf,
+    leaf: ScalarDefinition,
     source: object,
     *,
     source_access: SourceAccess,
@@ -283,7 +283,7 @@ def _author_leaf(
 
 
 def _author_scalar_many(
-    leaf: Leaf,
+    leaf: ScalarDefinition,
     source: object,
     *,
     source_access: SourceAccess,
@@ -319,7 +319,7 @@ def _author_scalar_many(
 
 
 def _author_occurrence(
-    occurrence: Occurrence,
+    occurrence: OccurrenceDefinition,
     source: object,
     *,
     source_access: SourceAccess,
@@ -406,7 +406,11 @@ def _first_document_violation(
             if failure is not None:
                 return _prefixed(member.name, failure)
         elif not member.nullable and (present & bit or not _is_many(member)):
-            reason = "attribute-missing" if isinstance(member, Leaf) else "value-object-missing"
+            reason = (
+                "attribute-missing"
+                if isinstance(member, ScalarDefinition)
+                else "value-object-missing"
+            )
             return AuthoringViolation(member.name, reason)
     return None
 
@@ -425,7 +429,7 @@ def _joined(base: str, name: str) -> str:
     return name if not base else f"{base}.{name}"
 
 
-def _is_many(member: Leaf | Occurrence) -> bool:
+def _is_many(member: ScalarDefinition | OccurrenceDefinition) -> bool:
     return member.multiplicity is Multiplicity.MANY
 
 

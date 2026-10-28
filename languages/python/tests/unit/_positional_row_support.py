@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from parallax.core.metamodel import DocumentMember, Leaf, MemberShape, Multiplicity
+from parallax.core.metamodel import MemberDefinition, MemberShape, Multiplicity, ScalarDefinition
 
 __all__ = ["positional_row"]
 
@@ -27,8 +27,8 @@ def positional_row(
     )
 
 
-def _cell(member: DocumentMember, value: object, absent: object) -> object:
-    if isinstance(member, Leaf) or value is None or value is absent:
+def _cell(member: MemberDefinition, value: object, absent: object) -> object:
+    if isinstance(member, ScalarDefinition) or value is None or value is absent:
         return value
     if member.multiplicity is Multiplicity.MANY:
         return tuple(

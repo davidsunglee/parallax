@@ -10,7 +10,7 @@ from parallax.core.metamodel._identities import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.metamodel._shape import Leaf, MemberShape, Occurrence
+from parallax.core.metamodel._shape import MemberShape, OccurrenceDefinition, ScalarDefinition
 from parallax.core.metamodel._values import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -144,7 +144,7 @@ class ValueObjectAttributeMetadata(Protocol):
     @property
     def identity(self) -> ValueObjectAttributeIdentity: ...
     @property
-    def definition(self) -> Leaf: ...
+    def definition(self) -> ScalarDefinition: ...
     @property
     def type(self) -> NeutralType: ...
     @property
@@ -166,7 +166,7 @@ class OccurrenceMetadata(Protocol):
     @property
     def identity(self) -> ValueObjectIdentity: ...
     @property
-    def definition(self) -> Occurrence: ...
+    def definition(self) -> OccurrenceDefinition: ...
     @property
     def multiplicity(self) -> Multiplicity: ...
     @property

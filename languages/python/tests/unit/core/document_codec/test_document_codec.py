@@ -46,11 +46,11 @@ from parallax.core.document_codec import (
     DecodedMember,
     DocumentFinding,
     DocumentPatch,
-    Leaf,
     MemberShape,
-    Occurrence,
     OccurrenceCarrier,
+    OccurrenceDefinition,
     Present,
+    ScalarDefinition,
     SetScalar,
     SetValueObject,
     apply_prepared_patches,
@@ -218,7 +218,7 @@ def test_a_canonical_float32_number_need_not_be_exactly_a_binary32_value() -> No
 
 
 def test_decode_reads_a_float32_leaf_at_its_declared_width() -> None:
-    shape = MemberShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
+    shape = MemberShape(members=(ScalarDefinition(name="ratio", type=FLOAT32, nullable=True),))
     stored = encode_managed_document(shape, {"ratio": 1048576.25})
     assert stored == {"ratio": 1048576.2}
     assert _read_member(shape, stored, "ratio") == (1048576.25, ())
@@ -263,16 +263,16 @@ def test_an_integer_stored_leaf_spells_the_same_number_a_float_carrier_would() -
 
 
 def _one_leaf(neutral_type: NeutralType) -> MemberShape:
-    return MemberShape(members=(Leaf(name="leaf", type=neutral_type, nullable=True),))
+    return MemberShape(members=(ScalarDefinition(name="leaf", type=neutral_type, nullable=True),))
 
 
 def test_classified_member_variants_report_each_detection_without_inventing_values() -> None:
-    nested = MemberShape(members=(Leaf("required", INT32, False),))
+    nested = MemberShape(members=(ScalarDefinition("required", INT32, False),))
     shape = MemberShape(
         members=(
-            Leaf("leaf", INT32, False),
-            Occurrence("one", Multiplicity.ONE, False, nested),
-            Occurrence("many", Multiplicity.MANY, False, nested),
+            ScalarDefinition("leaf", INT32, False),
+            OccurrenceDefinition("one", Multiplicity.ONE, False, nested),
+            OccurrenceDefinition("many", Multiplicity.MANY, False, nested),
         )
     )
     leaf = prepared_raw_member_classifier(shape, "leaf")
@@ -297,7 +297,7 @@ def test_classified_member_variants_report_each_detection_without_inventing_valu
 
 def test_raw_member_location_preserves_missing_null_and_present_states() -> None:
     classify = prepared_raw_member_classifier(
-        MemberShape(members=(Leaf("leaf", INT32, False),)), "leaf"
+        MemberShape(members=(ScalarDefinition("leaf", INT32, False),)), "leaf"
     )
 
     assert locate_raw_entity_member([], "leaf") is MISSING
@@ -309,11 +309,11 @@ def test_raw_member_location_preserves_missing_null_and_present_states() -> None
 
 
 def test_classified_paths_cover_non_object_and_nested_occurrence_states() -> None:
-    nested = MemberShape(members=(Leaf("required", INT32, False),))
+    nested = MemberShape(members=(ScalarDefinition("required", INT32, False),))
     shape = MemberShape(
         members=(
-            Occurrence("one", Multiplicity.ONE, True, nested),
-            Occurrence("many", Multiplicity.MANY, False, nested),
+            OccurrenceDefinition("one", Multiplicity.ONE, True, nested),
+            OccurrenceDefinition("many", Multiplicity.MANY, False, nested),
         )
     )
 
@@ -333,12 +333,12 @@ def test_classified_paths_cover_non_object_and_nested_occurrence_states() -> Non
 def test_classified_reduction_preserves_member_names_and_integer_array_positions() -> None:
     shape = MemberShape(
         members=(
-            Leaf("0", INT32, True),
-            Occurrence(
+            ScalarDefinition("0", INT32, True),
+            OccurrenceDefinition(
                 "many",
                 Multiplicity.MANY,
                 False,
-                MemberShape(members=(Leaf("12", INT32, False),)),
+                MemberShape(members=(ScalarDefinition("12", INT32, False),)),
             ),
         )
     )
@@ -349,13 +349,13 @@ def test_classified_reduction_preserves_member_names_and_integer_array_positions
 
 def test_classified_decoding_constructs_positional_output_during_the_shared_walk() -> None:
     unavailable = object()
-    element = MemberShape(members=(Leaf("required", INT32, False),))
+    element = MemberShape(members=(ScalarDefinition("required", INT32, False),))
     shape = MemberShape(
         members=(
-            Leaf("omitted", INT32, True),
-            Leaf("bad", INT32, True),
-            Occurrence("one", Multiplicity.ONE, False, element),
-            Occurrence("many", Multiplicity.MANY, False, element),
+            ScalarDefinition("omitted", INT32, True),
+            ScalarDefinition("bad", INT32, True),
+            OccurrenceDefinition("one", Multiplicity.ONE, False, element),
+            OccurrenceDefinition("many", Multiplicity.MANY, False, element),
         )
     )
     stored: DocumentValue = {
@@ -403,26 +403,31 @@ def test_classified_decoding_constructs_positional_output_during_the_shared_walk
 
 
 def test_every_member_state_reaches_the_builders_as_one_stream_with_one_finding_order() -> None:
-    element = MemberShape(members=(Leaf("required", INT32, False), Leaf("optional", INT32, True)))
+    element = MemberShape(
+        members=(
+            ScalarDefinition("required", INT32, False),
+            ScalarDefinition("optional", INT32, True),
+        )
+    )
     shape = MemberShape(
         members=(
-            Leaf("omittedNullable", INT32, True),
-            Leaf("omittedRequired", INT32, False),
-            Leaf("nullNullable", INT32, True),
-            Leaf("nullRequired", INT32, False),
-            Leaf("undecodable", INT32, True),
-            Leaf("decoded", INT32, False),
-            Occurrence("omittedNullableOne", Multiplicity.ONE, True, element),
-            Occurrence("omittedRequiredOne", Multiplicity.ONE, False, element),
-            Occurrence("nullNullableOne", Multiplicity.ONE, True, element),
-            Occurrence("nullRequiredOne", Multiplicity.ONE, False, element),
-            Occurrence("wrongKindOne", Multiplicity.ONE, True, element),
-            Occurrence("presentOne", Multiplicity.ONE, False, element),
-            Occurrence("emptyMany", Multiplicity.MANY, False, element),
-            Occurrence("omittedMany", Multiplicity.MANY, False, element),
-            Occurrence("nullMany", Multiplicity.MANY, False, element),
-            Occurrence("wrongKindMany", Multiplicity.MANY, False, element),
-            Occurrence("presentMany", Multiplicity.MANY, False, element),
+            ScalarDefinition("omittedNullable", INT32, True),
+            ScalarDefinition("omittedRequired", INT32, False),
+            ScalarDefinition("nullNullable", INT32, True),
+            ScalarDefinition("nullRequired", INT32, False),
+            ScalarDefinition("undecodable", INT32, True),
+            ScalarDefinition("decoded", INT32, False),
+            OccurrenceDefinition("omittedNullableOne", Multiplicity.ONE, True, element),
+            OccurrenceDefinition("omittedRequiredOne", Multiplicity.ONE, False, element),
+            OccurrenceDefinition("nullNullableOne", Multiplicity.ONE, True, element),
+            OccurrenceDefinition("nullRequiredOne", Multiplicity.ONE, False, element),
+            OccurrenceDefinition("wrongKindOne", Multiplicity.ONE, True, element),
+            OccurrenceDefinition("presentOne", Multiplicity.ONE, False, element),
+            OccurrenceDefinition("emptyMany", Multiplicity.MANY, False, element),
+            OccurrenceDefinition("omittedMany", Multiplicity.MANY, False, element),
+            OccurrenceDefinition("nullMany", Multiplicity.MANY, False, element),
+            OccurrenceDefinition("wrongKindMany", Multiplicity.MANY, False, element),
+            OccurrenceDefinition("presentMany", Multiplicity.MANY, False, element),
         )
     )
     stored: DocumentValue = {
@@ -520,7 +525,7 @@ def test_every_member_state_reaches_the_builders_as_one_stream_with_one_finding_
 
 
 def test_top_level_occurrence_classification_uses_the_sql_null_aware_carrier() -> None:
-    shape = MemberShape(members=(Leaf("required", INT32, False),))
+    shape = MemberShape(members=(ScalarDefinition("required", INT32, False),))
     absent = decode_occurrence_classified(
         shape, SQL_NULL, multiplicity=Multiplicity.ONE, nullable=False
     )
@@ -536,7 +541,7 @@ def test_top_level_occurrence_classification_uses_the_sql_null_aware_carrier() -
 
 
 def test_document_classification_rejects_container_subclasses() -> None:
-    shape = MemberShape(members=(Leaf("required", INT32, False),))
+    shape = MemberShape(members=(ScalarDefinition("required", INT32, False),))
     tuple_subclass = type("TupleSubclass", (tuple,), {})
     dict_subclass = type("DictSubclass", (dict,), {})
 
@@ -686,10 +691,10 @@ decides whether a member's presence rule holds at depth."""
 
 def test_a_declared_shape_names_leaves_then_occurrences_in_declaration_order() -> None:
     assert [member.name for member in _SHAPE.members] == ["flag", "day", "origin", "entries"]
-    assert _SHAPE.member("flag") == Leaf(name="flag", type=BOOLEAN, nullable=True)
+    assert _SHAPE.member("flag") == ScalarDefinition(name="flag", type=BOOLEAN, nullable=True)
     assert _SHAPE.member("absent") is None
     entries = _SHAPE.member("entries")
-    assert isinstance(entries, Occurrence)
+    assert isinstance(entries, OccurrenceDefinition)
     assert entries.multiplicity is Multiplicity.MANY
 
 
@@ -703,7 +708,7 @@ def test_encode_emits_the_presence_table() -> None:
 
 def test_occurrence_encoding_gives_an_absent_many_its_zero_value() -> None:
     absent = object()
-    shape = MemberShape((Occurrence("many", Multiplicity.MANY, False, MemberShape(())),))
+    shape = MemberShape((OccurrenceDefinition("many", Multiplicity.MANY, False, MemberShape(())),))
     carrier = OccurrenceCarrier(
         absent,
         lambda _record, _shape: (absent,),
@@ -790,11 +795,13 @@ def test_decode_distinguishes_absent_from_explicitly_null_and_collapses_a_many()
     # nothing about a subtree the row never wrote.
     required_city = MemberShape(
         members=(
-            Occurrence(
+            OccurrenceDefinition(
                 name="origin",
                 multiplicity=Multiplicity.ONE,
                 nullable=True,
-                shape=MemberShape(members=(Leaf(name="city", type=STRING, nullable=False),)),
+                shape=MemberShape(
+                    members=(ScalarDefinition(name="city", type=STRING, nullable=False),)
+                ),
             ),
         )
     )
@@ -817,8 +824,8 @@ def test_stored_data_that_contradicts_its_shape_is_classified_and_never_answered
     # value, because inventing one turns corrupt storage into a plausible row.
     required = MemberShape(
         members=(
-            Leaf(name="label", type=STRING, nullable=False),
-            Occurrence(
+            ScalarDefinition(name="label", type=STRING, nullable=False),
+            OccurrenceDefinition(
                 name="entries",
                 multiplicity=Multiplicity.MANY,
                 nullable=False,
@@ -858,7 +865,7 @@ def test_a_required_intermediate_occurrence_is_a_missing_required_member() -> No
     # below it being absent.
     shape = MemberShape(
         members=(
-            Occurrence(
+            OccurrenceDefinition(
                 name="origin",
                 multiplicity=Multiplicity.ONE,
                 nullable=False,
@@ -942,7 +949,7 @@ def test_both_cardinalities_replace_their_subtree_and_null_stores_json_null() ->
 def test_replacement_reaches_every_depth_of_the_subtree_it_names() -> None:
     wrapper = MemberShape(
         (
-            Occurrence(
+            OccurrenceDefinition(
                 name="profile",
                 shape=_SHAPE,
                 multiplicity=Multiplicity.ONE,
@@ -1337,12 +1344,14 @@ def test_a_compiled_occurrence_yields_the_same_shape_as_its_declaration() -> Non
     assert occurrence_shape(occurrence) is occurrence.document_shape
     assert occurrence_shape(occurrence) == MemberShape(
         members=(
-            Leaf(name="flag", type=BOOLEAN, nullable=True),
-            Occurrence(
+            ScalarDefinition(name="flag", type=BOOLEAN, nullable=True),
+            OccurrenceDefinition(
                 name="origin",
                 multiplicity=Multiplicity.ONE,
                 nullable=True,
-                shape=MemberShape(members=(Leaf(name="city", type=STRING, nullable=True),)),
+                shape=MemberShape(
+                    members=(ScalarDefinition(name="city", type=STRING, nullable=True),)
+                ),
             ),
         )
     )

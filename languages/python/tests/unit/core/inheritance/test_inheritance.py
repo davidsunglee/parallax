@@ -57,11 +57,11 @@ from parallax.core.metamodel import (
     EntityMetadata,
     ExactEntityReference,
     IssueCode,
-    Leaf,
     MetamodelIssue,
     PersistenceMode,
     RelationshipIdentity,
     RelationshipLocation,
+    ScalarDefinition,
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
@@ -314,7 +314,7 @@ def _member(name: str) -> AttributeMetadata | ValueObjectMetadata:
 def _assignment(name: str, value: object) -> None:
     member = _member(name)
 
-    def normalize(leaf: Leaf, value: object, _path: str) -> tuple[object, bool]:
+    def normalize(leaf: ScalarDefinition, value: object, _path: str) -> tuple[object, bool]:
         managed = coerce_neutral_input(value, leaf.type)
         return managed, matches_neutral_type(managed, leaf.type)
 

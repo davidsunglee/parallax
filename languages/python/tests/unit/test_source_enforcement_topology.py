@@ -632,7 +632,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.models", "parallax.core.entity._model"): frozenset({"model_of"}),
     # Case ingress decodes stored state through the codec's one authored-document
     # traversal (`m-document-codec`), which Unit Work and Entity editing already
-    # share. Its leaf normalizer receives the canonical Leaf, so a declared axis
+    # share. Its leaf normalizer receives the canonical ScalarDefinition, so a declared axis
     # end is recognized by definition identity rather than by its diagnostic path.
     (
         "parallax.conformance._case_ingress",

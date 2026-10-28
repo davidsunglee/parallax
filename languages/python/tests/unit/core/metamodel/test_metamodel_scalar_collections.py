@@ -1,7 +1,7 @@
 """m-metamodel: scalar multiplicity on the canonical member definition.
 
 A ``MANY`` Attribute or Value Object Attribute keeps its scalar element type and
-carries the multiplicity on the one ``Leaf`` every consumer reads. Its role and
+carries the multiplicity on the one ``ScalarDefinition`` every consumer reads. Its role and
 option refusals belong to the existing construction invariants, the foundational
 resolver, and the owning Rule Sets; assignment judgement consumes the codec's
 authoring verdict for it exactly as it does for a Value Object occurrence.
@@ -21,10 +21,10 @@ from parallax.core.metamodel import (
     AuthoringViolation,
     Column,
     EntityIdentity,
-    Leaf,
     MemberShape,
     Multiplicity,
     PrimaryKey,
+    ScalarDefinition,
     TemporalDimension,
     ValueObjectAttributeDeclaration,
     WriteAssignmentError,
@@ -50,7 +50,7 @@ def _tags(**options: object) -> AttributeMetadata:
 def test_a_collection_attribute_defines_one_many_leaf_of_its_element_type() -> None:
     attribute = _tags(read_only=True)
 
-    assert attribute.definition == Leaf("tags", STRING, False, _MANY)
+    assert attribute.definition == ScalarDefinition("tags", STRING, False, _MANY)
     assert attribute.type == STRING
     assert MemberShape.of((attribute,), ()).member("tags") == attribute.definition
 
@@ -59,13 +59,13 @@ def test_a_single_attribute_keeps_its_single_leaf() -> None:
     attribute = AttributeMetadata(AttributeIdentity(_ORDER, "name"), STRING, Column("name"))
 
     assert attribute.multiplicity is Multiplicity.ONE
-    assert attribute.definition == Leaf("name", STRING, False)
+    assert attribute.definition == ScalarDefinition("name", STRING, False)
 
 
 def test_a_nullable_many_leaf_is_unconstructible() -> None:
-    assert Leaf("note", STRING, True).nullable
+    assert ScalarDefinition("note", STRING, True).nullable
     with pytest.raises(ValueError, match="never nullable"):
-        Leaf("tags", STRING, True, _MANY)
+        ScalarDefinition("tags", STRING, True, _MANY)
 
 
 @pytest.mark.parametrize(
@@ -88,7 +88,7 @@ def test_a_collection_attribute_refuses_every_role_and_option_it_cannot_hold(
 def test_a_value_object_collection_leaf_is_never_nullable() -> None:
     declared = ValueObjectAttributeDeclaration("labels", STRING, multiplicity=_MANY)
 
-    assert declared.definition == Leaf("labels", STRING, False, _MANY)
+    assert declared.definition == ScalarDefinition("labels", STRING, False, _MANY)
     with pytest.raises(ValueError, match="never nullable"):
         ValueObjectAttributeDeclaration("labels", STRING, nullable=True, multiplicity=_MANY)
 

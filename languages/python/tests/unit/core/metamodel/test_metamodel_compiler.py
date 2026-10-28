@@ -27,7 +27,7 @@ from parallax.core.metamodel import (
     Multiplicity,
     NestedValueObjectMetadata,
     NestedValueObjectOccurrenceDeclaration,
-    Occurrence,
+    OccurrenceDefinition,
     OccurrenceMetadata,
     PersistenceMode,
     RelationshipIdentity,
@@ -229,7 +229,7 @@ def test_value_object_occurrences_expand_into_path_identities() -> None:
     assert nested.nullable is False
     assert nested.value_object("absent") is None
     nested_member = ship_to.document_shape.member("geo")
-    assert isinstance(nested_member, Occurrence)
+    assert isinstance(nested_member, OccurrenceDefinition)
     assert nested_member.shape is nested.document_shape
     assert nested.document_shape == MemberShape.of(nested.attributes, nested.value_objects)
 

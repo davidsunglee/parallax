@@ -32,9 +32,9 @@ from parallax.core.metamodel import (
     AuthoringViolation,
     EntityIdentity,
     EntityMetadata,
-    Leaf,
     PersistenceMode,
     PrimaryKey,
+    ScalarDefinition,
     ValueObjectMetadata,
     WriteAssignmentError,
     entity_by_name,
@@ -2008,7 +2008,7 @@ def coerce_typed_row(
     ).value
 
 
-type _LeafConverter = Callable[[Leaf, object, str], tuple[object, bool]]
+type _LeafConverter = Callable[[ScalarDefinition, object, str], tuple[object, bool]]
 type _DeclaredMember = AttributeMetadata | ValueObjectMetadata
 
 
@@ -2071,13 +2071,13 @@ def _member_failure(
     return None if position is None else failures.get(position)
 
 
-def _coerce_typed_leaf(leaf: Leaf, value: object, path: str) -> tuple[object, bool]:
+def _coerce_typed_leaf(leaf: ScalarDefinition, value: object, path: str) -> tuple[object, bool]:
     neutral_type = leaf.type
     managed = coerce_neutral_input(value, neutral_type)
     return freeze_retained_value(managed), matches_neutral_type(managed, neutral_type)
 
 
-def _decode_wire_leaf(leaf: Leaf, value: object, path: str) -> tuple[object, bool]:
+def _decode_wire_leaf(leaf: ScalarDefinition, value: object, path: str) -> tuple[object, bool]:
     return _decoded_wire(leaf.type, value, path), True
 
 

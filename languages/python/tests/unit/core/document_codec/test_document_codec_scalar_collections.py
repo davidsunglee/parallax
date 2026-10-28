@@ -46,11 +46,11 @@ from parallax.core.document_codec import (
     NULL,
     UNAVAILABLE,
     DocumentFinding,
-    Leaf,
     MemberShape,
-    Occurrence,
     OccurrenceCarrier,
+    OccurrenceDefinition,
     Present,
+    ScalarDefinition,
     SetScalar,
     apply_prepared_patches,
     classify_effective_change,
@@ -75,23 +75,23 @@ from parallax.core.document_codec._leaf import LeafEncodingError, encode_managed
 from parallax.core.metamodel import AuthoringViolation, Multiplicity
 
 _MANY = Multiplicity.MANY
-_TAGS = Leaf("tags", STRING, False, _MANY)
-_AMOUNTS = Leaf("amounts", Decimal(6, 2), False, _MANY)
-_MARKS = Leaf("marks", INT32, False, _MANY)
-_LINE = MemberShape(members=(Leaf("sku", STRING, False), _MARKS))
-_DETAIL = MemberShape(members=(Leaf("labels", STRING, False, _MANY),))
+_TAGS = ScalarDefinition("tags", STRING, False, _MANY)
+_AMOUNTS = ScalarDefinition("amounts", Decimal(6, 2), False, _MANY)
+_MARKS = ScalarDefinition("marks", INT32, False, _MANY)
+_LINE = MemberShape(members=(ScalarDefinition("sku", STRING, False), _MARKS))
+_DETAIL = MemberShape(members=(ScalarDefinition("labels", STRING, False, _MANY),))
 _SHAPE = MemberShape(
     members=(
-        Leaf("label", STRING, True),
+        ScalarDefinition("label", STRING, True),
         _TAGS,
         _AMOUNTS,
-        Occurrence("detail", Multiplicity.ONE, True, _DETAIL),
-        Occurrence("lines", _MANY, False, _LINE),
+        OccurrenceDefinition("detail", Multiplicity.ONE, True, _DETAIL),
+        OccurrenceDefinition("lines", _MANY, False, _LINE),
     )
 )
 
 
-def _normalize(leaf: Leaf, value: object, _path: str) -> tuple[object, bool]:
+def _normalize(leaf: ScalarDefinition, value: object, _path: str) -> tuple[object, bool]:
     managed = coerce_neutral_input(value, leaf.type)
     return retain_document_value(managed), matches_neutral_type(managed, leaf.type)
 
@@ -100,7 +100,7 @@ class _CountingNormalizer:
     def __init__(self) -> None:
         self.paths: list[str] = []
 
-    def __call__(self, leaf: Leaf, value: object, path: str) -> tuple[object, bool]:
+    def __call__(self, leaf: ScalarDefinition, value: object, path: str) -> tuple[object, bool]:
         self.paths.append(path)
         return _normalize(leaf, value, path)
 

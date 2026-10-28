@@ -35,7 +35,7 @@ from parallax.core.metamodel import (
     Column,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
-    Occurrence,
+    OccurrenceDefinition,
     ValueObjectAttributeDeclaration,
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
@@ -363,7 +363,7 @@ def test_a_value_object_class_retains_its_document_shape_with_nested_identity() 
 
     assert address.document_shape == address.shape.member_shape
     nested = address.document_shape.member("geo")
-    assert isinstance(nested, Occurrence)
+    assert isinstance(nested, OccurrenceDefinition)
     assert nested.shape is geo.document_shape
 
 

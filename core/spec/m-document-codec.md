@@ -37,12 +37,12 @@ Document                                  # a portable JSON value
 
 LogicalJudgingRoot
   position: EntityIdentity | top-level ValueObjectIdentity
-  members: immutable sequence<DocumentMember>
+  members: immutable sequence<MemberDefinition>
 
 LogicalJudgingCursor
   root: LogicalJudgingRoot
   prefix: sequence<MemberName>
-  members: immutable sequence<DocumentMember>
+  members: immutable sequence<MemberDefinition>
 
 Presence =
     Present(value: MemberValue)
@@ -50,11 +50,13 @@ Presence =
   | Missing
 
 MemberValue =
-    NeutralValue     # a `One` Leaf member's value, in the member's declared type
-  | ScalarSequence   # a `Many` Leaf member's value: an ordered sequence of
-                     # non-null NeutralValues of the member's declared type
-  | Document         # an Occurrence member's own document: one object for
-                     # `One`, an ordered array of objects for `Many`
+    NeutralValue     # a `One` ScalarDefinition member's value, in the member's
+                     # declared type
+  | ScalarSequence   # a `Many` ScalarDefinition member's value: an ordered
+                     # sequence of non-null NeutralValues of the member's
+                     # declared type
+  | Document         # an OccurrenceDefinition member's own document: one
+                     # object for `One`, an ordered array of objects for `Many`
 ```
 
 A `MemberShape` is the `m-metamodel` value naming only members applicable to
@@ -78,12 +80,12 @@ top-level root and records the logical prefix used for findings. A `One` has one
 cursor over its object; a `Many` has one cursor over each visited element object.
 Creating a cursor neither inspects nor judges any sibling member.
 
-A scalar collection is a `Leaf` with `Many` multiplicity, never a synthetic
-occurrence: its stored form is one JSON array whose elements are, in order, the
-canonical leaf spellings below of its declared Neutral Type. Every operation
-below that encodes, decodes, patches, reduces, or compares a leaf applies the
-same rule to each element of a scalar collection and composes the ordered array
-around them.
+A scalar collection is a `ScalarDefinition` with `Many` multiplicity, never a
+synthetic occurrence: its stored form is one JSON array whose elements are, in
+order, the canonical leaf spellings below of its declared Neutral Type. Every
+operation below that encodes, decodes, patches, reduces, or compares a leaf
+applies the same rule to each element of a scalar collection and composes the
+ordered array around them.
 
 A `Document` is `m-core`'s portable `DocumentValue` — object, array, string,
 number, boolean, or null — and nothing else. Its object and array nodes may be
@@ -107,10 +109,11 @@ replacement of the stored document; the raw carrier remains unchanged for
 observation and writing.
 
 A `Presence` is always classified against one member of a shape, and the member's
-own kind fixes what a `Present` carries. A `One` `Leaf` member carries a
-`NeutralValue` of its declared Neutral Type, and a `Many` `Leaf` member — a scalar
-collection — carries its ordered `ScalarSequence`, duplicates included. An `Occurrence` member carries that occurrence's
-own `Document` — one object for `One`, an ordered array of objects for `Many` —
+own kind fixes what a `Present` carries. A `One` `ScalarDefinition` member carries
+a `NeutralValue` of its declared Neutral Type, and a `Many` `ScalarDefinition`
+member — a scalar collection — carries its ordered `ScalarSequence`, duplicates
+included. An `OccurrenceDefinition` member carries that occurrence's own
+`Document` — one object for `One`, an ordered array of objects for `Many` —
 and that document is always a codec product: a consumer obtains a `One`'s object
 from `encode` and a `Many`'s array from `encodeMany`, never by assembling a
 host-language value graph or a JSON array of its own. Nesting is therefore
@@ -191,13 +194,13 @@ PreparedPatches: nonempty ordered sequence of
 value per applicable member. Its result is the whole bind a consumer stores: an
 insert, a fresh Value Object column value, and a fixture document all come from
 here. Members are emitted in the shape's own order, so one set of values always
-produces one document. An `Occurrence` member's value is written in place as the
-occurrence's own document, which `encode` (for a `One`) or `encodeMany` (for a
-`Many`) produced from that occurrence's shape, so one complete document is
-composed from the leaves up. `encode`, `encodeMany`, and `encodeCandidate`
-return recursively immutable owned containers. They compose recognized owned
-children by reference and establish ownership of any untrusted composite leaf
-without constructing a second complete mutable output tree.
+produces one document. An `OccurrenceDefinition` member's value is written in
+place as the occurrence's own document, which `encode` (for a `One`) or
+`encodeMany` (for a `Many`) produced from that occurrence's shape, so one complete
+document is composed from the leaves up. `encode`, `encodeMany`, and
+`encodeCandidate` return recursively immutable owned containers. They compose
+recognized owned children by reference and establish ownership of any untrusted
+composite leaf without constructing a second complete mutable output tree.
 
 `encodeMany` builds the one document a `Many` occurrence stores: the ordered JSON
 array whose elements are, in the sequence's own order, the `encode` of each
@@ -213,22 +216,21 @@ occurrences composes to any depth through these two operations and no other.
 
 `decode` reads one known path and answers with its presence. The path is resolved
 against the shape, so the declared Neutral Type comes from the model rather than
-from the caller: a `Leaf` path answers with that leaf's value decoded by its
-declared type rather than by the JSON value's own shape, and an `Occurrence` path
-answers with that occurrence's own document exactly as stored, unknown keys
-included — which is what carrying an UNASSIGNED occurrence forward across a
-temporal successor needs (`m-unit-work`), since an assignment supplies its own
-document and reads no stored state at all. A path naming no member of the shape
-is a caller error, not an
-absence. Decoding is per path rather than whole-document because a row-form read
-needs only the members its consumer asked for and never pays to decode the rest;
-a consumer that wants an occurrence's members decodes them against that
-occurrence's shape and its returned document. For a `Many` that returned document
-is the array, and **each of its elements is itself a document over that same
-shape**: the elements are decoded one at a time, in order, by passing an element
-back to `decode` with the occurrence's shape. That is what makes a `many`
-traversable without an element index — a `path` stays a sequence of member names
-and never addresses an array position.
+from the caller: a `ScalarDefinition` path answers with that scalar's value
+decoded by its declared type rather than by the JSON value's own shape, and an
+`OccurrenceDefinition` path answers with that occurrence's own document exactly as
+stored, unknown keys included — which is what carrying an UNASSIGNED occurrence
+forward across a temporal successor needs (`m-unit-work`), since an assignment
+supplies its own document and reads no stored state at all. A path naming no
+member of the shape is a caller error, not an absence. Decoding is per path rather
+than whole-document because a row-form read needs only the members its consumer
+asked for and never pays to decode the rest; a consumer that wants an occurrence's
+members decodes them against that occurrence's shape and its returned document.
+For a `Many` that returned document is the array, and **each of its elements is
+itself a document over that same shape**: the elements are decoded one at a time,
+in order, by passing an element back to `decode` with the occurrence's shape. That
+is what makes a `many` traversable without an element index — a `path` stays a
+sequence of member names and never addresses an array position.
 
 `locateEntityMember` is the only operation that accepts a raw Entity document
 carrier. `root` MUST be the Entity's Logical Judging Root and `member` MUST name
@@ -358,15 +360,15 @@ exact digit string `"1.50"`. What containment needs is each constrained leaf's o
 consumer's to spell or to wrap a literal in.
 
 A candidate is a probe, never a document a row holds, and that is where its rules
-part from `encode`'s. A path the constraints do not name is left
-**unconstrained** rather than absent, so it contributes no key at all — including
-a `Many` member, which therefore contributes no `[]`. Each named path MUST reach a
-`Leaf` of `shape`, and a path that descends through a `One` occurrence nests
-inside the candidate exactly as the stored document nests. The result is never
-written, never patched, never decoded, and never compared structurally, so the
-presence table and the encode/decode inverse below say nothing about it. That is
-why it is its own operation rather than an `encode` over a partial mapping, whose
-`Missing` means the opposite thing.
+part from `encode`'s. A path the constraints do not name is left **unconstrained**
+rather than absent, so it contributes no key at all — including a `Many` member,
+which therefore contributes no `[]`. Each named path MUST reach a
+`ScalarDefinition` of `shape`, and a path that descends through a `One` occurrence
+nests inside the candidate exactly as the stored document nests. The result is
+never written, never patched, never decoded, and never compared structurally, so
+the presence table and the encode/decode inverse below say nothing about it. That
+is why it is its own operation rather than an `encode` over a partial mapping,
+whose `Missing` means the opposite thing.
 
 The constraints are **keyed by path**, and that is a precondition on the caller,
 not a convenience: a candidate object holds one value per key, so **one constrained
@@ -508,13 +510,13 @@ comparison's operands are not.
 
 A key the shape does not name is an **unknown key**: valid data written by some
 other version of an application. Decoding never fails on one and never turns one
-into a member value: a `Leaf` path answers only for the member the shape names,
-so an unknown key is never a result member and never reaches an Entity member. An
-`Occurrence` path answers with the stored subtree as it is, unknown keys and all,
-because a consumer carrying that occurrence forward unassigned must see the state
-it is preserving in order to preserve it. That subtree is a carrier, exactly like
-the raw Structured Column document, and is never a member value or a result
-field.
+into a member value: a `ScalarDefinition` path answers only for the member the
+shape names, so an unknown key is never a result member and never reaches an
+Entity member. An `OccurrenceDefinition` path answers with the stored subtree as
+it is, unknown keys and all, because a consumer carrying that occurrence forward
+unassigned must see the state it is preserving in order to preserve it. That
+subtree is a carrier, exactly like the raw Structured Column document, and is
+never a member value or a result field.
 
 ## Patching, unknown keys, and occurrence assignments
 
