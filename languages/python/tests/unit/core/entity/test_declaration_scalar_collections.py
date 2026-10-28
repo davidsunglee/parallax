@@ -2,14 +2,17 @@
 
 This module omits ``from __future__ import annotations`` so the engine sees live
 annotation objects. Element-shaping options shape each element, the empty tuple
-is the default, and an exact tuple is the only carrier. Every refusal belongs to
-an existing owner: annotation shape at class creation, Attribute invariants as
-option-context errors, role rules at model formation, and value rules through
-the shared assignment judgement.
+is the default, and an exact tuple of the element type's carriers is the only
+input. Every refusal belongs to an existing owner: annotation shape and element
+carriers at class creation and construction, Attribute invariants as
+option-context errors, role rules at model formation, and element value spaces
+through the shared assignment judgement and the write.
 """
 
 import datetime as dt
+import re
 import uuid
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, cast
 
@@ -33,10 +36,15 @@ from parallax.core.base import FLOAT32, INT32, STRING, Float32, Int32
 from parallax.core.base import Decimal as NeutralDecimal
 from parallax.core.entity._declaration import declaration_of, shape_of
 from parallax.core.entity._errors import EditError
+from parallax.core.execution import ExecutionFailure
 from parallax.core.metamodel import Multiplicity, ScalarDefinition
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.predicate import serialize
+from parallax.core.unit_work import WriteRejectedError
+from parallax.snapshot import TxnContext, connect
+from tests._support.db_port import ScriptedAdapter, Transact
 from tests._support.query_probes import predicate_node
+from tests._support.root_ownership import own_root
 
 _NS = "scalar.collection.typed"
 _MANY = Multiplicity.MANY
@@ -96,27 +104,131 @@ def test_construction_requires_an_exact_tuple() -> None:
 
 
 @pytest.mark.parametrize(
-    ("member", "authored", "location"),
+    ("member", "authored", "refusal"),
     [
-        ("marks", (1, True), r"marks\[1\]"),
-        ("marks", (2**40,), r"marks\[0\]"),
-        ("amounts", (Decimal("1.50"), 1.5), r"amounts\[1\]"),
+        (
+            "marks",
+            (1, True),
+            "marks[1]: value True does not match the declared element type Int32()",
+        ),
+        (
+            "amounts",
+            (Decimal("1.50"), 1.5),
+            "amounts[1]: value 1.5 does not match the declared element type "
+            "Decimal(precision=12, scale=2)",
+        ),
+        (
+            "tokens",
+            ("123E4567-E89B-12D3-A456-426614174000",),
+            "tokens[0]: value '123E4567-E89B-12D3-A456-426614174000' does not match the "
+            "declared element type Uuid()",
+        ),
+        (
+            "instants",
+            ("2026-01-01T00:00:00Z",),
+            "instants[0]: value '2026-01-01T00:00:00Z' does not match the declared element "
+            "type Timestamp()",
+        ),
+        (
+            "tags",
+            (b"raw",),
+            "tags[0]: value b'raw' does not match the declared element type String()",
+        ),
+        (
+            "tags",
+            ("a", None),
+            "tags[1]: value None does not match the declared element type String()",
+        ),
     ],
-    ids=["bool-integer", "out-of-width", "float-decimal"],
+    ids=[
+        "bool-integer",
+        "float-decimal",
+        "noncanonical-uuid",
+        "spelled-instant",
+        "bytes-text",
+        "null-element",
+    ],
 )
-def test_construction_judges_each_element_as_an_edit_does(
-    member: str, authored: tuple[object, ...], location: str
+def test_construction_refuses_an_element_carrier_pydantic_would_convert(
+    member: str, authored: tuple[object, ...], refusal: str
 ) -> None:
-    with pytest.raises(ValidationError, match=location):
+    with pytest.raises(ValidationError) as constructed:
         Order(id=1, **{member: authored})
-    with pytest.raises(EditError, match=location):
-        Order(id=1).edit(**{member: authored})
+
+    assert refusal in str(constructed.value)
 
 
-def test_value_object_construction_judges_each_element() -> None:
+def test_value_object_construction_refuses_each_element_carrier() -> None:
     with pytest.raises(ValidationError, match=r"weights\[0\]"):
         Detail(weights=cast("Any", ("heavy",)))
+    with pytest.raises(ValidationError, match=r"weights\[0\]: value 16777217"):
+        Detail(weights=(2**24 + 1,))
     assert Detail(weights=(1, 2.5)).weights == (1.0, 2.5)
+
+
+# Each value lies outside its element's value space but in a carrier Pydantic keeps as is.
+_OUT_OF_SPACE: list[tuple[str, tuple[object, ...], str]] = [
+    ("marks", (1, 2**40), "Order.marks[1]: value 1099511627776 does not match the declared type"),
+    (
+        "amounts",
+        (Decimal("1.234"),),
+        "Order.amounts[0]: value Decimal('1.234') does not match the declared type",
+    ),
+    (
+        "instants",
+        (dt.datetime(2026, 1, 1),),
+        "Order.instants[0]: value datetime.datetime(2026, 1, 1, 0, 0) does not match the "
+        "declared type",
+    ),
+]
+
+
+def _write_refusal(work: Callable[[TxnContext], object]) -> BaseException:
+    port = ScriptedAdapter(Transact())
+    database = own_root(connect(port, DomainModel(Order))).using_database_login()
+    with pytest.raises(ExecutionFailure) as caught:
+        database.transact(work)
+    return caught.value.__cause__ or caught.value
+
+
+@pytest.mark.parametrize(
+    ("member", "authored", "refusal"), _OUT_OF_SPACE, ids=["width", "scale", "naive-instant"]
+)
+def test_an_out_of_space_element_constructs_and_the_write_refuses_it(
+    member: str, authored: tuple[object, ...], refusal: str
+) -> None:
+    order = Order(id=1, **{member: authored})
+
+    assert getattr(order, member) == authored
+    refused = _write_refusal(lambda tx: tx.insert(order))
+    assert isinstance(refused, WriteRejectedError)
+    assert refused.rule == "write-value-type-mismatch"
+    assert str(refused).startswith(refusal)
+
+
+@pytest.mark.parametrize(
+    ("member", "authored", "refusal"), _OUT_OF_SPACE, ids=["width", "scale", "naive-instant"]
+)
+def test_an_edit_judges_a_changed_element_and_carries_an_unchanged_one(
+    member: str, authored: tuple[object, ...], refusal: str
+) -> None:
+    order = Order(id=1, **{member: authored})
+    location = refusal.removeprefix("Order.").partition(":")[0]
+
+    with pytest.raises(EditError, match=re.escape(location)):
+        Order(id=1).edit(**{member: authored})
+    with pytest.raises(EditError, match=re.escape(location)):
+        order.edit(**{member: authored})
+    assert getattr(order.edit(tags=("carried",)), member) == authored
+
+
+def test_a_value_object_element_outside_its_space_constructs() -> None:
+    detail = Detail(weights=(1e39,))
+
+    assert detail.weights == (1e39,)
+    assert detail.edit(labels=("x",)).weights == (1e39,)
+    with pytest.raises(EditError, match=r"Detail\.weights\[0\]"):
+        Detail().edit(weights=(1e39,))
 
 
 @pytest.mark.parametrize(

@@ -37,6 +37,7 @@ from parallax.core.base import (
     BOOLEAN,
     BYTES,
     DATE,
+    FLOAT32,
     FLOAT64,
     INT32,
     INT64,
@@ -418,6 +419,97 @@ def test_value_conformance_over_the_full_neutral_type_vocabulary(
 def test_string_accepts_text_and_rejects_others() -> None:
     _accept(_row(label="x"))
     assert _rejects(_row(label=5)).rule == "write-value-type-mismatch"
+
+
+# --------------------------------------------------------------------------- #
+# Scalar collections: construction checks only each element's carrier, so an #
+# element outside its value space reaches the write, which refuses it at its  #
+# position with the post-coercion value.                                      #
+# --------------------------------------------------------------------------- #
+_BUNDLE = identity("Bundle")
+
+
+def _collection(name: str, neutral: NeutralType) -> AttributeMetadata:
+    return AttributeMetadata(
+        identity=AttributeIdentity(_BUNDLE, name),
+        type=neutral,
+        storage=Column(name),
+        multiplicity=Multiplicity.MANY,
+    )
+
+
+_BUNDLE_MODEL = form_metamodel(
+    source(
+        Declaration(
+            identity=_BUNDLE,
+            container=Table("bundle"),
+            attributes=(
+                key(_BUNDLE),
+                _collection("marks", INT32),
+                _collection("amounts", _MONEY),
+                _collection("weights", FLOAT32),
+                _collection("instants", TIMESTAMP),
+            ),
+        )
+    )
+)
+
+
+@pytest.mark.parametrize(
+    ("member", "elements", "message"),
+    [
+        (
+            "marks",
+            (1, 2**31),
+            "Bundle.marks[1]: value 2147483648 does not match the declared type Int32()",
+        ),
+        (
+            "amounts",
+            (Decimal("1.00"), Decimal("1.234")),
+            "Bundle.amounts[1]: value Decimal('1.234') does not match the declared type "
+            "Decimal(precision=18, scale=2)",
+        ),
+        (
+            "amounts",
+            (10**17,),
+            "Bundle.amounts[0]: value Decimal('100000000000000000') does not match the declared "
+            "type Decimal(precision=18, scale=2)",
+        ),
+        (
+            "weights",
+            (1e39,),
+            "Bundle.weights[0]: value 1e+39 does not match the declared type Float32()",
+        ),
+        (
+            "instants",
+            (dt.datetime(2026, 1, 1),),
+            "Bundle.instants[0]: value datetime.datetime(2026, 1, 1, 0, 0) does not match the "
+            "declared type Timestamp()",
+        ),
+    ],
+    ids=["width", "scale", "coerced-precision", "float32-range", "naive-instant"],
+)
+def test_the_write_refuses_a_collection_element_outside_its_value_space(
+    member: str, elements: tuple[object, ...], message: str
+) -> None:
+    error = _refused(_BUNDLE_MODEL, "Bundle", {"id": 1, member: elements})
+
+    assert error.rule == "write-value-type-mismatch"
+    assert str(error) == message
+
+
+def test_the_write_admits_collection_elements_inside_their_value_spaces() -> None:
+    _prepare(
+        _BUNDLE_MODEL,
+        "Bundle",
+        {
+            "id": 1,
+            "marks": (2**31 - 1,),
+            "amounts": (3, Decimal("1.50")),
+            "weights": (1.5, 2),
+            "instants": (dt.datetime(2026, 1, 1, tzinfo=dt.UTC),),
+        },
+    )
 
 
 # --------------------------------------------------------------------------- #
