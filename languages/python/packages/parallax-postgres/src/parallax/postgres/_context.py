@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from time import monotonic
 from types import TracebackType
+from typing import TYPE_CHECKING, Literal
 
 import psycopg
 import psycopg_pool
@@ -22,9 +23,18 @@ from parallax.core.db_port import (
     Returned,
 )
 from parallax.core.diagnostics import diagnostic_for
-from parallax.postgres._authorization import PostgresRole, install_role
+from parallax.postgres._authorization import (
+    PostgresRole,
+    _install_role,  # pyright: ignore[reportPrivateUsage] - the one role installation, run as the lease's first send
+    _role_statement,  # pyright: ignore[reportPrivateUsage] - the one role installation, run as the lease's first send
+)
 from parallax.postgres._authorization import restore_role as _restore_role
 from parallax.postgres._connection import ConnectionEstablishment, PostgresConnection
+
+if TYPE_CHECKING:
+    from parallax.postgres._connection import (
+        _NativeOperation,  # pyright: ignore[reportPrivateUsage] - the runner's operation shape
+    )
 
 __all__ = ["NativePool", "PostgresConnectionContext"]
 
@@ -41,6 +51,12 @@ between them.
 
 _ENTER_ONCE = "a database connection context is entered exactly once"
 _SPENT = "this database connection context has already been used"
+_LOST = (
+    "this database connection was lost and could not be replaced, so this scope executes "
+    "nothing further; acquire another one through the Database that owns the runtime"
+)
+
+type _FirstSend = Literal["available", "submitting", "spent"]
 
 
 class _Condition(Exception):
@@ -225,6 +241,17 @@ class PostgresConnectionContext:
     a failed entry has already run cleanup over whatever it took and left what
     that established on :attr:`cleanup_result`, so a second attempt would be a
     second acquisition wearing the first one's identity.
+
+    The context is the only holder of the physical connection for the whole
+    lease: execution borrows the current one for each operation. That is what
+    lets the lease's actual first submission — its role installation, an outer
+    ``BEGIN``, or a read its caller designated — run once more if it meets a
+    broken session: the connection is disposed of and handed back, another is
+    taken within the original deadline, and the same prepared submission is
+    made on it, all inside this one acquisition. Any other submission, the
+    second attempt itself, and a write never are. Once no connection can be
+    kept, the slot holds the cleanup that ended it instead, and that is what
+    leaving reports.
     """
 
     __slots__ = (
@@ -234,10 +261,12 @@ class PostgresConnectionContext:
         "_deadline",
         "_establishment",
         "_execution",
-        "_native",
+        "_first_send_state",
         "_pool",
+        "_resource",
         "_role",
-        "_spent",
+        "_suspect",
+        "_used",
     )
 
     def __init__(
@@ -253,9 +282,11 @@ class PostgresConnectionContext:
         self._deadline = deadline
         self._establishment = establishment
         self._role = role
-        self._spent = False
+        self._used = False
         self._authorized = False
-        self._native: psycopg.Connection[TupleRow] | None = None
+        self._suspect = False
+        self._first_send_state: _FirstSend = "available"
+        self._resource: psycopg.Connection[TupleRow] | CleanupResult | None = None
         self._execution: PostgresConnection | None = None
         self._cleanup_result: CleanupResult | None = None
 
@@ -264,26 +295,26 @@ class PostgresConnectionContext:
         return self._cleanup_result
 
     def __enter__(self) -> DatabaseConnection:
-        if self._spent:
-            raise RuntimeError(_SPENT if self._native is None else _ENTER_ONCE)
-        self._spent = True
-        connection = checkout(self._pool, self._deadline, self._establishment)
+        if self._used:
+            raise RuntimeError(_ENTER_ONCE if self._execution is not None else _SPENT)
+        self._used = True
+        self._resource = checkout(self._pool, self._deadline, self._establishment)
         try:
-            self._require_idle(connection)
+            self._require_idle(self._current_native())
             self._admit(self._deadline)
         except BaseException:
             # Nothing modeled has run, so what was taken is given back through
             # the same path a completed scope uses: an idle connection returns
             # and a non-idle one is disposed of, without either decision being
             # made twice.
-            self._cleanup_result = release(self._pool, connection, suspect=False)
+            self._cleanup_result = self._settled(suspect=False)
             raise
         role = self._role
         if role is not None:
             try:
-                install_role(connection, role)
+                self._run_native(_install_role, _role_statement(role), replay_safe=True)
             except BaseException as exc:
-                self._cleanup_result = release(self._pool, connection, suspect=True)
+                self._cleanup_result = self._settled(suspect=True)
                 if not isinstance(exc, Exception):
                     raise
                 raise ConnectionAcquisitionError(
@@ -294,16 +325,10 @@ class PostgresConnectionContext:
             try:
                 self._admit(self._deadline)
             except BaseException:
-                self._cleanup_result = release(
-                    self._pool,
-                    connection,
-                    suspect=False,
-                    restore_role=True,
-                )
+                self._cleanup_result = self._settled(suspect=False, restore_role=True)
                 self._authorized = False
                 raise
-        self._native = connection
-        execution = PostgresConnection(connection)
+        execution = PostgresConnection._from_context(self)  # pyright: ignore[reportPrivateUsage] - the facade borrowing this owner's connection
         self._execution = execution
         return execution
 
@@ -315,13 +340,11 @@ class PostgresConnectionContext:
         /,
     ) -> None:
         del exc_type, exc, traceback
-        connection = self._native
         execution = self._execution
-        if connection is None or execution is None:
+        if execution is None:
             return
         # Revoked before anything else, so the caller's own reference cannot
-        # reach a connection this is about to hand to somebody else — and so the
-        # native reference cleanup needs is held here rather than through it.
+        # reach a connection this is about to hand to somebody else.
         #
         # Release is what the exit exists for, so it runs even if
         # revocation does not complete: this is the only path back to the pool,
@@ -329,19 +352,112 @@ class PostgresConnectionContext:
         # no-op over a connection nothing ever gave back. A revocation that did
         # not complete leaves a scope that may still reach the connection, so
         # what is given back is treated as suspect and disposed of.
-        suspect = True
+        revoked = False
         try:
-            suspect = execution.revoke()
+            execution.revoke()
+            revoked = True
         finally:
-            self._native = None
             self._execution = None
-            self._cleanup_result = release(
-                self._pool,
-                connection,
-                suspect=suspect,
-                restore_role=self._authorized,
+            self._cleanup_result = self._settled(
+                suspect=self._suspect or not revoked, restore_role=self._authorized
             )
             self._authorized = False
+
+    def _settled(self, *, suspect: bool, restore_role: bool = False) -> CleanupResult | None:
+        """End ownership of whatever the slot holds and answer what that established.
+
+        A connection still held is released once; a slot already holding the
+        cleanup that ended its connection answers that result without another
+        close or handoff. The slot is emptied BEFORE a release begins, so a
+        release that does not return — a fatal exception inside it — leaves
+        nothing a later exit could release a second time.
+        """
+        resource = self._resource
+        self._resource = None
+        if resource is None or isinstance(resource, Returned | Invalidated | ReleaseUnconfirmed):
+            return resource
+        return release(self._pool, resource, suspect=suspect, restore_role=restore_role)
+
+    def _current_native(self) -> psycopg.Connection[TupleRow]:
+        resource = self._resource
+        if resource is None or isinstance(resource, Returned | Invalidated | ReleaseUnconfirmed):
+            raise RuntimeError(_LOST)
+        return resource
+
+    def _mark_suspect(self) -> None:
+        self._suspect = True
+
+    def _start_first_send(self) -> None:
+        if self._first_send_state == "available":
+            self._first_send_state = "submitting"
+
+    def _complete_first_send(self) -> None:
+        if self._first_send_state == "submitting":
+            self._first_send_state = "spent"
+
+    def _run_native[T, *P](
+        self, operation: _NativeOperation[T, *P], /, *prepared: *P, replay_safe: bool
+    ) -> T:
+        """Run ``operation`` on the current connection, replacing that connection
+        once if this was the lease's first submission and it met a broken session.
+
+        Replacement needs all three of: a raw driver failure while the first
+        submission was in progress, a connection the driver now reports closed
+        — which a broken one is — and an operation whose repetition can have no
+        effect. An error's code, a suspect mark, and the shape of a result grant
+        nothing. The opportunity is spent before anything else happens, by a
+        failure as by a return, so the second invocation can never earn
+        another; and that invocation runs outside the failure it answers, so
+        whatever it raises is its own.
+        """
+        native = self._current_native()
+        try:
+            result = operation(native, self, *prepared)
+        except BaseException as failure:
+            submitting = self._first_send_state == "submitting"
+            if submitting:
+                self._first_send_state = "spent"
+            if not (
+                submitting
+                and replay_safe
+                and isinstance(failure, psycopg.Error)
+                and native.closed
+                and self._replace_native()
+            ):
+                raise
+        else:
+            self._complete_first_send()
+            return result
+        return operation(self._current_native(), self, *prepared)
+
+    def _replace_native(self) -> bool:
+        """Dispose of the current connection and hold a usable replacement in its
+        place, answering whether one is now held.
+
+        The broken connection is disposed of and handed back first, through the
+        ordinary release, so its capacity returns before another is asked for;
+        a release that could not be confirmed ends replacement, because nothing
+        then vouches for what was handed back. The replacement is taken within
+        what remains of this lease's own deadline — no new allowance, and no
+        admission decision of its own — and must arrive idle like any
+        checkout. When no usable replacement is held, the slot keeps the result
+        of the last release, and the failure that asked for replacement stands.
+        """
+        disposed = self._settled(suspect=True)
+        self._resource = disposed
+        if isinstance(disposed, ReleaseUnconfirmed):
+            return False
+        try:
+            self._resource = checkout(self._pool, self._deadline, self._establishment)
+        except ConnectionAcquisitionError:
+            return False
+        try:
+            self._require_idle(self._current_native())
+        except ConnectionAcquisitionError:
+            self._resource = self._settled(suspect=False)
+            return False
+        self._suspect = False
+        return True
 
     def _require_idle(self, connection: psycopg.Connection[TupleRow]) -> None:
         """Refuse a checkout that did not hand over an idle connection.

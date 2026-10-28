@@ -197,7 +197,7 @@ def test_each_statement_answers_its_own_count_across_kinds_and_tables(profile_ru
 
             def body(port: Any) -> OrderedWriteResult:
                 result = _ordered(facade)(statements)
-                native = cast("PostgresConnection", facade)._native()  # pyright: ignore[reportPrivateUsage] - the session's own pipeline state
+                native = cast("PostgresConnection", facade)._current_native()  # pyright: ignore[reportPrivateUsage] - the session's own pipeline state
                 assert native.pgconn.pipeline_status == psycopg.pq.PipelineStatus.OFF
                 assert port.execute("select count(*) from policy where out_z = %s", [_NOW]) == [
                     (1,)

@@ -18,6 +18,7 @@ import gc
 import json
 import struct
 from collections.abc import Callable, Sequence
+from time import monotonic
 from types import FrameType, FunctionType, ModuleType, SimpleNamespace
 from typing import Any, cast
 
@@ -87,6 +88,7 @@ from parallax.postgres._connection import (
     translate_driver_error,
     translating_driver_errors,
 )
+from parallax.postgres._context import PostgresConnectionContext
 from tests.unit.postgres._native_pipeline_support import (
     Result,
     Server,
@@ -358,8 +360,12 @@ class _FakeTxn:
 
 
 class _FakePipeline:
-    def __init__(self, events: list[str]) -> None:
+    """A driver pipeline whose exit is its one synchronization, raising
+    ``sync_error`` there when it is given one."""
+
+    def __init__(self, events: list[str], sync_error: psycopg.Error | None = None) -> None:
         self._events = events
+        self._sync_error = sync_error
 
     def __enter__(self) -> _FakePipeline:
         self._events.append("pipeline-enter")
@@ -367,6 +373,8 @@ class _FakePipeline:
 
     def __exit__(self, *_: object) -> bool:
         self._events.append("pipeline-exit")
+        if self._sync_error is not None:
+            raise self._sync_error
         return False
 
 
@@ -455,6 +463,7 @@ class _FakeConnection:
         self.begin_error = begin_error
         self.commit_error = commit_error
         self.rollback_error = rollback_error
+        self.sync_error: psycopg.Error | None = None
         self.refuse_assignment: Callable[[str, object], BaseException | None] = (
             lambda _name, _value: None
         )
@@ -503,7 +512,7 @@ class _FakeConnection:
         return _FakeTxn(self)
 
     def pipeline(self) -> _FakePipeline:
-        return _FakePipeline(self.pipeline_events)
+        return _FakePipeline(self.pipeline_events, self.sync_error)
 
     def rollback(self) -> None:
         self.rollbacks += 1
@@ -1490,6 +1499,154 @@ def test_a_saved_ordered_write_operation_runs_nothing_once_its_scope_is_revoked(
     assert server.sent == []
 
 
+# --------------------------------------------------------------------------- #
+# Where a lease's first submission starts and ends. What replacement does with #
+# it is test_postgres_pool.py's; these pin the boundaries the facade marks.    #
+# --------------------------------------------------------------------------- #
+
+
+class _FakePool:
+    """The native pool one connection context draws from, handing over each
+    connection in turn."""
+
+    def __init__(self, *connections: _FakeConnection) -> None:
+        self._connections = list(connections)
+        self.checkouts = 0
+        self.returned: list[_FakeConnection] = []
+
+    def getconn(self, timeout: float | None = None) -> _FakeConnection:
+        del timeout
+        self.checkouts += 1
+        return self._connections.pop(0)
+
+    def putconn(self, connection: _FakeConnection) -> None:
+        self.returned.append(connection)
+
+
+def _admitted(_deadline: float) -> None:
+    return
+
+
+def _leased(*connections: _FakeConnection) -> tuple[PostgresConnectionContext, _FakePool]:
+    """A connection context over ``connections``, each initialized as a pool
+    initializes every connection it creates."""
+    for connection in connections:
+        initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
+    pool = _FakePool(*connections)
+    context = PostgresConnectionContext(
+        cast("Any", pool), _admitted, monotonic() + 5.0, ConnectionEstablishment(), None
+    )
+    return context, pool
+
+
+def _break(connection: _FakeConnection) -> None:
+    """End ``connection``'s session as a server ends an idle one: whatever is
+    submitted next fails, and the driver reports the connection closed."""
+    lost = errors.OperationalError("server closed the connection unexpectedly")
+    connection.cursor_error = lost
+    connection.begin_error = lost
+    connection.sync_error = lost
+    connection.closed = True
+
+
+def _first_send(context: PostgresConnectionContext) -> str:
+    return context._first_send_state  # pyright: ignore[reportPrivateUsage] - the lease's opportunity is what these boundaries decide
+
+
+def test_direct_execution_never_replaces_a_broken_connection() -> None:
+    connection = _FakeConnection()
+    execution = _direct_execution(connection)
+    _break(connection)
+
+    with pytest.raises(DatabaseError):
+        execution.execute("select 1", [], read_only=True)
+
+    assert _sent_sql(connection) == ["select 1"]
+
+
+def test_a_refused_assignment_before_begin_leaves_the_opportunity_open() -> None:
+    # Assigning characteristics is local setup: nothing was submitted, so the
+    # lease's first submission is still to come, and it is the one protected.
+    refusing, healthy = _FakeConnection(), _FakeConnection()
+    refusing.refuse_assignment = lambda _name, value: (
+        errors.ProgrammingError("refused") if value is not None else None
+    )
+    context, pool = _leased(refusing, healthy)
+
+    with context as scoped:
+        outcome = scoped.transaction(lambda _port: None, isolation="serializable")
+        assert _first_send(context) == "available"
+        _break(refusing)
+        assert scoped.execute("select 1", [], read_only=True) == []
+
+    assert isinstance(outcome, BeginFailed)
+    assert pool.checkouts == 2
+    assert _sent_sql(healthy) == ["select 1"]
+
+
+def test_a_boundary_has_spent_the_opportunity_before_its_callback_runs() -> None:
+    context, _pool = _leased(_FakeConnection())
+    seen: list[str] = []
+
+    with context as scoped:
+        scoped.transaction(lambda _port: seen.append(_first_send(context)))
+
+    assert seen == ["spent"]
+
+
+def test_a_read_whose_rows_fail_after_it_was_answered_has_spent_the_opportunity() -> None:
+    # Fetching and decoding come after the submission answered, so their
+    # failure is never one a replacement could repair.
+    context, pool = _leased(_ResultConnection(_Result(3, [(True, True, True)])))
+
+    with context as scoped:
+        with pytest.raises(ValueError, match="adjacent, zero-based"):
+            scoped.execute("select", [], ((0, 2),), read_only=True)
+        assert _first_send(context) == "spent"
+
+    assert pool.checkouts == 1
+
+
+@pytest.mark.parametrize("failing", ["queueing", "synchronization"])
+def test_a_read_pipeline_that_fails_in_transport_spends_the_opportunity_unrepeated(
+    failing: str,
+) -> None:
+    connection = _FakeConnection()
+    context, pool = _leased(connection, _FakeConnection())
+
+    with context as scoped:
+        _break(connection)
+        if failing == "synchronization":
+            connection.cursor_error = None
+        with pytest.raises(DatabaseError):
+            scoped.execute_pipeline(
+                (PipelineStatement("select 1"), PipelineStatement("select 2")), read_only=True
+            )
+        assert _first_send(context) == "spent"
+
+    expected = ["select 1"] if failing == "queueing" else ["select 1", "select 2"]
+    assert _sent_sql(connection) == expected
+    assert pool.checkouts == 1
+
+
+def test_a_saved_scope_reaches_nothing_its_lease_held_once_revoked() -> None:
+    # The context and the facade it yielded refer to each other while the
+    # lease lasts; leaving breaks both references without waiting for a
+    # collector, so neither a saved facade nor its saved ordered-write
+    # operation keeps the context, its pool, or the connection alive.
+    connection = _FakeConnection()
+    context, pool = _leased(connection)
+
+    with context as scoped:
+        transport = scoped.ordered_write_transport
+
+    for saved in (scoped, transport):
+        assert not any(_reaches(saved, held) for held in (context, pool, connection))
+    assert not _reaches(context, scoped)
+    with pytest.raises(RuntimeError, match="scope has ended"):
+        scoped.execute("select 1", [])
+
+
 class _BodyFailure(Exception):
     """A transaction body's own error — what makes the boundary roll back."""
 
@@ -1787,6 +1944,18 @@ def test_a_session_whose_state_became_unreadable_is_not_reset() -> None:
 
     assert execution.transaction(body, access_mode="read_only") == Committed("kept")
     assert execution.suspect
+    assert connection.boundary[-1] == "COMMIT"
+
+
+def test_a_scope_revoked_while_its_boundary_ran_has_nothing_left_to_clear() -> None:
+    connection = _FakeConnection()
+    execution = _direct_execution(connection)
+
+    def body(_port: object) -> str:
+        execution.revoke()
+        return "kept"
+
+    assert execution.transaction(body, access_mode="read_only") == Committed("kept")
     assert connection.boundary[-1] == "COMMIT"
 
 

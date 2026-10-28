@@ -21,14 +21,18 @@ from typing import Any
 import pytest
 
 from parallax.core.base import INFINITY
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     DRIVER_MANAGED,
+    Committed,
     ConnectionAcquisitionError,
     CredentialResolutionError,
     DatabaseStartupError,
+    Invalidated,
     PoolAvailable,
     PoolDetached,
     PoolUnavailable,
+    Returned,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions
 
@@ -36,7 +40,7 @@ _BACKEND = "select pg_backend_pid() as pid"
 _SESSION_USER = "select session_user as login_identity"
 
 
-def _pid(connection: Any) -> int:
+def _backend_pid(connection: Any) -> int:
     (row,) = connection.execute(_BACKEND, [])
     return int(row[0])
 
@@ -70,9 +74,9 @@ def test_a_retaining_runtime_reuses_the_connection_it_kept(profile_run: Any) -> 
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
     try:
         with _context(runtime) as first:
-            first_pid = _pid(first)
+            first_pid = _backend_pid(first)
         with _context(runtime) as second:
-            assert _pid(second) == first_pid
+            assert _backend_pid(second) == first_pid
     finally:
         runtime.close()
 
@@ -84,13 +88,13 @@ def test_capacity_bounds_how_many_scopes_are_open_at_once(profile_run: Any) -> N
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=2, acquire_timeout=1.0))
     try:
         with _context(runtime) as first, _context(runtime) as second:
-            assert _pid(first) != _pid(second)
+            assert _backend_pid(first) != _backend_pid(second)
             with pytest.raises(ConnectionAcquisitionError) as refused:
                 _context(runtime).__enter__()
         assert refused.value.reason == "timeout"
         # The ceiling is not a leak: capacity is available again afterwards.
         with _context(runtime) as third:
-            assert _pid(third)
+            assert _backend_pid(third)
     finally:
         runtime.close()
 
@@ -149,11 +153,11 @@ def test_two_runtimes_from_one_configuration_are_independent(profile_run: Any) -
     second = configured.open()
     try:
         with _context(first) as one, _context(second) as two:
-            assert _pid(one) != _pid(two)
+            assert _backend_pid(one) != _backend_pid(two)
         first.close()
         # Closing one leaves the other working.
         with _context(second) as still_working:
-            assert _pid(still_working)
+            assert _backend_pid(still_working)
     finally:
         first.close()
         second.close()
@@ -172,9 +176,9 @@ def test_an_on_demand_runtime_keeps_no_idle_connection(profile_run: Any) -> None
     runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=2))
     try:
         with _context(runtime) as first:
-            first_pid = _pid(first)
+            first_pid = _backend_pid(first)
         with _context(runtime) as second:
-            assert _pid(second) != first_pid
+            assert _backend_pid(second) != first_pid
     finally:
         runtime.close()
 
@@ -209,7 +213,7 @@ def test_on_demand_establishment_takes_its_limit_from_the_acquisition_budget(
     runtime = configured.open()
     try:
         with _context(runtime) as scoped:
-            assert _pid(scoped)
+            assert _backend_pid(scoped)
     finally:
         runtime.close()
 
@@ -228,12 +232,12 @@ def test_an_on_demand_release_goes_straight_to_a_borrower_already_waiting(
 
     def wait_for_the_handoff() -> None:
         with _context(runtime) as scoped:
-            handed.append(_pid(scoped))
+            handed.append(_backend_pid(scoped))
 
     try:
         waiter = threading.Thread(target=wait_for_the_handoff)
         with _context(runtime) as held:
-            held_pid = _pid(held)
+            held_pid = _backend_pid(held)
             waiter.start()
             _wait_until_queued(runtime)
         waiter.join(timeout=15.0)
@@ -316,7 +320,7 @@ def test_a_grown_connection_decodes_exactly_as_the_first_one_does(profile_run: A
             _context(runtime) as third,
         ):
             grown = [first, second, third]
-            assert len({_pid(scoped) for scoped in grown}) == 3
+            assert len({_backend_pid(scoped) for scoped in grown}) == 3
             for scoped in grown:
                 (row,) = scoped.execute(_CODEC_PROBE, [])
                 assert row == (INFINITY, {"present": None}, None, None, 42)
@@ -362,9 +366,9 @@ def test_the_retained_minimum_is_authenticated_once_and_reuse_asks_for_nothing(
     try:
         assert source.calls == 1
         with _context(runtime) as first:
-            original = _pid(first)
+            original = _backend_pid(first)
         with _context(runtime) as second:
-            assert _pid(second) == original
+            assert _backend_pid(second) == original
         assert source.calls == 1
     finally:
         runtime.close()
@@ -381,7 +385,7 @@ def test_growth_authenticates_each_connection_it_creates(profile_run: Any) -> No
             _context(runtime) as second,
             _context(runtime) as third,
         ):
-            assert len({_pid(scoped) for scoped in (first, second, third)}) == 3
+            assert len({_backend_pid(scoped) for scoped in (first, second, third)}) == 3
         assert source.calls == 3
     finally:
         runtime.close()
@@ -398,9 +402,9 @@ def test_on_demand_establishment_authenticates_on_the_acquiring_thread_each_time
     try:
         established = source.calls
         with _context(runtime) as first:
-            first_pid = _pid(first)
+            first_pid = _backend_pid(first)
         with _context(runtime) as second:
-            assert _pid(second) != first_pid
+            assert _backend_pid(second) != first_pid
         assert source.calls == established + 2
     finally:
         runtime.close()
@@ -418,12 +422,12 @@ def test_a_connection_retired_by_its_maximum_lifetime_is_authenticated_anew(
     )
     try:
         with _context(runtime) as first:
-            original = _pid(first)
+            original = _backend_pid(first)
         time.sleep(1.5)
         with _context(runtime) as aged:
-            assert _pid(aged) == original
+            assert _backend_pid(aged) == original
         with _context(runtime) as replacement:
-            assert _pid(replacement) != original
+            assert _backend_pid(replacement) != original
         assert source.calls == 2
     finally:
         runtime.close()
@@ -439,11 +443,11 @@ def test_a_connection_the_server_ended_is_authenticated_again_when_it_is_replace
     executioner = profile_run.control()
     try:
         with _context(runtime) as first:
-            retained = _pid(first)
+            retained = _backend_pid(first)
         executioner.execute("select pg_terminate_backend(%s) as ended", [retained])
 
         with _context(runtime) as replacement:
-            assert _pid(replacement) != retained
+            assert _backend_pid(replacement) != retained
         assert source.calls == 2
     finally:
         executioner.close()
@@ -559,7 +563,7 @@ def test_a_retained_runtime_that_cannot_replace_a_connection_reports_the_refusal
     executioner = profile_run.control()
     try:
         with _context(runtime) as first:
-            retained = _pid(first)
+            retained = _backend_pid(first)
         executioner.execute("select pg_terminate_backend(%s) as ended", [retained])
 
         with pytest.raises(ConnectionAcquisitionError) as refused:
@@ -603,15 +607,116 @@ def test_a_connection_the_server_ended_is_replaced_at_checkout(profile_run: Any)
     executioner = profile_run.control()
     try:
         with _context(runtime) as first:
-            retained = _pid(first)
+            retained = _backend_pid(first)
         executioner.execute("select pg_terminate_backend(%s) as ended", [retained])
 
         with _context(runtime) as replacement:
-            assert _pid(replacement) != retained
+            assert _backend_pid(replacement) != retained
             (row,) = replacement.execute(_CODEC_PROBE, [])
         assert row == (INFINITY, {"present": None}, None, None, 42)
     finally:
         executioner.close()
+        runtime.close()
+
+
+def _ended(profile_run: Any, pid: int) -> None:
+    """End backend ``pid`` from an independent session, and wait until the
+    server no longer lists it, so what reaches it next meets a session that is
+    already gone rather than one still on its way out."""
+    executioner = profile_run.control()
+    try:
+        executioner.execute("select pg_terminate_backend(%s) as ended", [pid])
+        give_up = time.monotonic() + 10.0
+        while executioner.execute(
+            "select count(*) as listed from pg_stat_activity where pid = %s", [pid]
+        ) != [(0,)]:
+            assert time.monotonic() < give_up, "the ended backend never left"
+            time.sleep(0.01)
+    finally:
+        executioner.close()
+
+
+def _entered_over_an_ended_session(profile_run: Any, runtime: Any) -> tuple[Any, Any, int]:
+    """A context entered over the runtime's one retained session, whose
+    backend is then ended before anything is submitted on it.
+
+    The backend is identified in an EARLIER scope and ended from an independent
+    session: asking the target for its own backend would be its first
+    submission. It is ended after entry because checkout still validates the
+    connection it hands over.
+    """
+    with _context(runtime) as earlier:
+        retained = _backend_pid(earlier)
+    context = _context(runtime)
+    target = context.__enter__()
+    _ended(profile_run, retained)
+    return context, target, retained
+
+
+@pytest.mark.adapter_smoke
+def test_a_first_designated_read_over_an_ended_session_runs_on_a_replacement(
+    profile_run: Any,
+) -> None:
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    try:
+        context, target, retained = _entered_over_an_ended_session(profile_run, runtime)
+        try:
+            (row,) = target.execute(_BACKEND, [], read_only=True)
+            assert context.cleanup_result is None
+        finally:
+            context.__exit__(None, None, None)
+        assert row[0] != retained
+        assert context.cleanup_result == Returned()
+        with _context(runtime) as later:
+            assert _backend_pid(later) == row[0]
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_a_first_boundary_over_an_ended_session_opens_once_on_a_replacement(
+    profile_run: Any,
+) -> None:
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    ran: list[int] = []
+
+    def body(port: Any) -> object:
+        (row,) = port.execute(_BACKEND, [])
+        ran.append(row[0])
+        (characteristics,) = port.execute(
+            "select current_setting('transaction_isolation'), "
+            "current_setting('transaction_read_only')",
+            [],
+        )
+        return characteristics
+
+    try:
+        context, target, retained = _entered_over_an_ended_session(profile_run, runtime)
+        try:
+            outcome = target.transaction(body, isolation="serializable", access_mode="read_only")
+        finally:
+            context.__exit__(None, None, None)
+        assert outcome == Committed(("serializable", "on"))
+        assert len(ran) == 1 and ran[0] != retained
+        assert context.cleanup_result == Returned()
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_an_undesignated_first_read_over_an_ended_session_fails_as_it_always_has(
+    profile_run: Any,
+) -> None:
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    try:
+        context, target, _retained = _entered_over_an_ended_session(profile_run, runtime)
+        try:
+            with pytest.raises(DatabaseError):
+                target.execute(_BACKEND, [])
+        finally:
+            context.__exit__(None, None, None)
+        assert isinstance(context.cleanup_result, Invalidated)
+    finally:
         runtime.close()
 
 
@@ -822,7 +927,7 @@ def test_sampling_takes_no_connection_and_runs_no_statement(profile_run: Any) ->
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=1.0))
     try:
         with _context(runtime) as held:
-            assert _pid(held)
+            assert _backend_pid(held)
             before = _measurements(runtime)
             after = _measurements(runtime)
             assert before.pool_available == 0
@@ -838,7 +943,7 @@ def test_the_counters_follow_the_work_the_runtime_actually_did(profile_run: Any)
         before = _measurements(runtime)
         for _ in range(3):
             with _context(runtime) as scoped:
-                assert _pid(scoped)
+                assert _backend_pid(scoped)
         after = _measurements(runtime)
     finally:
         runtime.close()
@@ -857,7 +962,7 @@ def test_an_on_demand_runtime_keeps_no_idle_inventory_to_report(profile_run: Any
     runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=2))
     try:
         with _context(runtime) as scoped:
-            assert _pid(scoped)
+            assert _backend_pid(scoped)
         measurements = _measurements(runtime)
     finally:
         runtime.close()
@@ -888,11 +993,11 @@ def test_a_queued_borrower_is_visible_as_queue_depth(profile_run: Any) -> None:
     contended: list[str] = []
     try:
         with _context(runtime) as held:
-            assert _pid(held)
+            assert _backend_pid(held)
 
             def contend() -> None:
                 with _context(runtime) as second:
-                    contended.append(str(_pid(second)))
+                    contended.append(str(_backend_pid(second)))
 
             waiter = threading.Thread(target=contend)
             waiter.start()

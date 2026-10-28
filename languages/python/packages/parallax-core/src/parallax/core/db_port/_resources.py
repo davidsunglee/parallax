@@ -232,6 +232,11 @@ class ConnectionContext(Protocol):
     execution access even where the physical connection is reused, so a
     reference kept past the exit executes nothing and holds nothing.
 
+    One context is one lease rather than one physical session: an adapter that
+    replaces the connection beneath it does so inside this acquisition
+    (``m-db-port``), and the cleanup it reports describes the ownership the
+    context ended with, never an intermediate handoff.
+
     It is deliberately not a context manager over a transaction: entering opens
     no boundary and leaving neither commits nor rolls back. Transaction outcomes
     stay the execution Interface's, authoritative and unchanged.
@@ -244,7 +249,8 @@ class ConnectionContext(Protocol):
         ``None`` before entry, during use, and after an acquisition failure that
         never reached Parallax ownership — absence, never success. Stable once
         set: an exited context does not revise its own report, and nothing
-        inspects a connection already handed off in order to refine it.
+        inspects a connection already handed off in order to refine it. A
+        handoff made while the context is in use is never published here.
         """
         ...
 

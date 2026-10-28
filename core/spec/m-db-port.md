@@ -70,7 +70,8 @@ it is not an Access Mode, which remains the boundary's own independent request.
 It changes no submission's rows, error, Database Call accounting, or transaction
 ownership. An adapter MUST NOT submit an invocation without read intent more
 than once; whether it ever resubmits a designated one is its own documented
-behavior, not a requirement of this port.
+behavior, not a requirement of this port, and any resubmission stays inside the
+invocation's own acquisition (see physical replacement below).
 
 `dialect` is the concrete `m-dialect` strategy every statement crossing this
 port is spelled in — read-only, and answerable at any time. The port is the
@@ -292,6 +293,23 @@ retains nothing.
 
 Entering opens no transaction and leaving neither commits nor rolls back:
 transaction outcomes stay the execution interface's, authoritative and unchanged.
+
+**Physical replacement stays inside the logical acquisition.** An entered
+context is one lease, not a promise of one physical session. An adapter MAY
+dispose of the physical connection beneath it and take another, but only to
+submit again work whose repetition can have no effect — an invocation carrying
+read intent, or setup the context or a boundary performs before any callback
+runs — and never a callback, a write, or an invocation without read intent. The
+replacement is taken within the acquisition's own budget and carries the same
+bound authorization. It is not another acquisition: the context still yields one
+execution access, reports one cleanup result, and adds no Database Call. Each
+intermediate handoff follows the release rule below and is attempted once; one
+whose disposal or accounting was not established ends replacement rather than
+licensing another checkout. The context's cleanup result describes the
+ownership it ended with — the connection it held at release, or the result of
+the last handoff when no replacement was obtained — never an intermediate
+handoff or a history of them, and it stays absent until the context's entry
+fails or its exit completes.
 
 **Admission decides what may finish.** Starting an acquisition reserves no right
 to execute. Expiry and closure are decided together immediately before the

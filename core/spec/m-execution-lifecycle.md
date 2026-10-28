@@ -502,7 +502,10 @@ asked to begin, so an acquisition that granted nothing is the begin failure abov
 each standalone Stream Batch acquires after the batch opens and releases before that
 batch finishes. Root publication happens after the batch and therefore after release.
 Work that INHERITS a connection emits neither: a participating read, flush,
-stream batch, or joined invocation runs on the attempt's connection.
+stream batch, or joined invocation runs on the attempt's connection. Nor does a
+physical connection an adapter replaces beneath the lease (`m-db-port`): the
+replacement happens inside the owner's one hold, and a statement submitted again
+on it is still one Database Call.
 
 `reason` is the `m-db-port` acquisition-failure vocabulary — `timeout`,
 `queue-rejected`, `closed`, `preparation-failed`, `authorization-failed`,
