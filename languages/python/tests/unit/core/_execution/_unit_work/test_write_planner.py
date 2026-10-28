@@ -980,6 +980,7 @@ def test_object_key_is_none_for_a_marker_shaped_primary_key_value() -> None:
         "insert", "Attendee", ({"id": {"computed": "maxPlusOne"}, "name": "Ada"},)
     )
     assert object_key(marker_insert, _PK_MAX) is None
+    assert object_key(_prepared_keyed(marker_insert, _PK_MAX), _PK_MAX) is None
     # And it must not crash any planning stage that keys off it.
     plan = _plan([marker_insert], _PK_MAX)
     (step,) = plan_steps(plan)

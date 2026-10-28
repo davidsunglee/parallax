@@ -969,6 +969,21 @@ def test_a_destructive_write_after_the_insert_flushed_cancels_nothing() -> None:
     assert _kinds(simulated) == ["insert", "delete"]
 
 
+def test_an_insert_whose_key_the_database_allocates_opens_no_insertion() -> None:
+    pk_max = _MODELS["pk-max"]
+    allocated = KeyedWriteInstruction(
+        "insert", "Attendee", ({"id": {"computed": "maxPlusOne"}, "name": "Ada"},)
+    )
+
+    def body(uow: UnitOfWork) -> None:
+        assert uow.buffer_insert(_inserted(pk_max, allocated), insertion_advice=None) is None
+        assert uow.buffer_insert(_inserted(pk_max, allocated), insertion_advice=None) is None
+        raise _Abandoned
+
+    with pytest.raises(_Abandoned):
+        _run(body, meta=pk_max)
+
+
 # --------------------------------------------------------------------------- #
 # Settled writes: completion, ownership, freshness and failure containment.   #
 # --------------------------------------------------------------------------- #
