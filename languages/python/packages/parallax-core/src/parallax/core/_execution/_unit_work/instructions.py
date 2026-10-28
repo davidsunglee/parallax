@@ -2,15 +2,25 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Callable, Mapping, Sequence, Set
+from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Final, Literal, cast, overload
 
 from parallax.core import inheritance, temporal_read
 from parallax.core import predicate as predicate_algebra
-from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core._execution._unit_work.write_validate import WriteRejectedError, validate_write
+from parallax.core._execution._unit_work.preparation import (
+    TYPED_LANE,
+    WIRE_LANE,
+    EntityPreparation,
+    WritePreparation,
+)
+from parallax.core._execution._unit_work.write_validate import (
+    WriteRejectedError,
+    authoring_refusal_error,
+    joined_path,
+    validate_write,
+)
 from parallax.core.base import (
     INFINITY,
     TIMESTAMP,
@@ -27,11 +37,14 @@ from parallax.core.document_codec._authoring import (
     SourceAccess,
     prepare_authoring,
 )
+from parallax.core.document_codec._plan import AuthoringRefusal, RootPolicy
 from parallax.core.metamodel import (
     AttributeMetadata,
     AuthoringViolation,
     EntityIdentity,
     EntityMetadata,
+    MemberShape,
+    Multiplicity,
     PersistenceMode,
     PrimaryKey,
     ScalarDefinition,
@@ -50,9 +63,15 @@ from parallax.core.write_plan.managed_row import (
     ManagedRow,
     RowSelection,
     empty_row,
+    managed_row,
     projected_row,
 )
-from parallax.core.write_plan.steps import ResolvedMutationSelection
+from parallax.core.write_plan.steps import (
+    MAX_PLUS_ONE,
+    PlannedValue,
+    ResolvedMutationSelection,
+    SelfIncrement,
+)
 
 __all__ = [
     "AMEND_MUTATIONS",
@@ -85,7 +104,9 @@ __all__ = [
     "derive_keyed_instruction",
     "deserialize",
     "keyed_instruction_from_target",
+    "prepare_typed_insert",
     "prepare_typed_write",
+    "prepare_wire_insert",
     "prepare_wire_write",
     "resolve_target",
     "serialize",
@@ -236,18 +257,21 @@ class KeyedWriteInstruction:
     until: dt.datetime | None = None
 
     def __post_init__(self) -> None:
-        row_names = {name for row in self.rows for name in row}
-        forbidden = sorted(row_names & _FORBIDDEN_ROW_KEYS)
-        if forbidden:
-            raise WriteInstructionError(
-                f"keyed write: row carries forbidden observation control key(s) {forbidden} "
-                "(the transaction observation is attached at flush, never on the instruction)"
-            )
+        _refuse_observation_keys({name for row in self.rows for name in row})
         frozen = tuple(
             row if isinstance(row, MappingProxyType) else MappingProxyType(dict(row))
             for row in self.rows
         )
         object.__setattr__(self, "rows", frozen)
+
+
+def _refuse_observation_keys(names: Set[str]) -> None:
+    forbidden = sorted(_FORBIDDEN_ROW_KEYS.intersection(names))
+    if forbidden:
+        raise WriteInstructionError(
+            f"keyed write: row carries forbidden observation control key(s) {forbidden} "
+            "(the transaction observation is attached at flush, never on the instruction)"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -977,6 +1001,7 @@ def prepare_typed_write(
     return _prepare_write(
         instruction,
         preparation,
+        lane=TYPED_LANE,
         converter=_coerce_typed_leaf,
         source_access=BORROWED_SOURCE_ACCESS,
         authored_members=authored_members,
@@ -1035,6 +1060,7 @@ def prepare_wire_write(
     return _prepare_write(
         instruction,
         preparation,
+        lane=WIRE_LANE,
         converter=_decode_wire_leaf,
         source_access=MAPPING_SOURCE_ACCESS,
         authored_members=authored_members,
@@ -1046,6 +1072,7 @@ def _prepare_write(
     instruction: WriteInstruction,
     preparation: WritePreparation,
     *,
+    lane: int,
     converter: _LeafConverter,
     source_access: SourceAccess,
     authored_members: Set[str] | None,
@@ -1067,7 +1094,8 @@ def _prepare_write(
     )
     position = _inheritance_entity_view(model, entity)
     _judge_write_persistence(entity, position)
-    row_selection = preparation.entity(entity.identity).selection
+    entry = preparation.entity(entity.identity)
+    row_selection = entry.selection
     if isinstance(instruction, TargetWriteInstruction):
         return _prepare_target_write(
             instruction,
@@ -1086,7 +1114,8 @@ def _prepare_write(
             model,
             entity,
             position,
-            row_selection,
+            entry,
+            lane=lane,
             converter=converter,
             source_access=source_access,
             authored_members=authored_members,
@@ -1104,6 +1133,250 @@ def _prepare_write(
         converter=converter,
         source_access=source_access,
     )
+
+
+def prepare_typed_insert(
+    preparation: WritePreparation,
+    mutation: KeyedMutation,
+    target: EntityMetadata,
+    values: Iterable[object],
+    *,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
+) -> PreparedKeyedInstruction:
+    """Judge one Typed opening of ``target``: its verb and window, then its
+    row in member order.
+
+    ``values`` holds one developer value per member of ``target``'s member
+    selection, in that order, and the preparation's ``absent`` where the
+    instance holds none. A framework-owned member is read as unstated, since
+    the framework supplies it.
+    """
+    entry, position, window = _judged_opening(preparation, mutation, target, valid_from, until)
+    if target.inheritance is not None:
+        values = tuple(values)
+        _judge_subtype_shape(preparation.meta, target, _stated_names(entry, values))
+    row = _opened_row(entry, target, values, lane=TYPED_LANE)
+    return _prepared_keyed_instruction(
+        mutation, _assigns_beside_key((row,), position), target, (row,), window
+    )
+
+
+def prepare_wire_insert(
+    preparation: WritePreparation,
+    mutation: KeyedMutation,
+    target: EntityMetadata,
+    payload: Mapping[str, object],
+    *,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
+) -> PreparedKeyedInstruction:
+    """Judge one Wire opening of ``target`` from its captured Create Payload:
+    its observation keys, its verb and window, its member names, then its
+    values in member order.
+
+    Every payload key is the caller's authoring, so a framework-owned member
+    is refused before any value is decoded.
+    """
+    _refuse_observation_keys(payload.keys())
+    entry, position, window = _judged_opening(preparation, mutation, target, valid_from, until)
+    _judge_row_members(
+        preparation.meta, target, position.member_selection, payload, payload.keys(), "keyed"
+    )
+    row = _opened_row(entry, target, entry.plan.authored_values(payload), lane=WIRE_LANE)
+    return _prepared_keyed_instruction(
+        mutation, _assigns_beside_key((row,), position), target, (row,), window
+    )
+
+
+def _judged_opening(
+    preparation: WritePreparation,
+    mutation: KeyedMutation,
+    target: EntityMetadata,
+    valid_from: dt.datetime | None,
+    until: dt.datetime | None,
+) -> tuple[EntityPreparation, inheritance.InheritanceEntityView, TimeInterval | None]:
+    """An opening's target judgments, in `m-unit-work`'s order: persistence,
+    then the verb and window."""
+    if mutation not in INSERT_MUTATIONS:
+        raise ValueError(f"{mutation!r} opens no row")
+    model = preparation.meta
+    position = _inheritance_entity_view(model, target)
+    _judge_write_persistence(target, position)
+    shape = temporal_read.view(model).shape(target.identity)
+    window = _judge_applicability(
+        model, target, shape, mutation, valid_from, until, surface="keyed"
+    )
+    return preparation.entity(target.identity), position, window
+
+
+def _opened_row(
+    entry: EntityPreparation,
+    entity: EntityMetadata,
+    raws: Iterable[object],
+    *,
+    lane: int,
+) -> ManagedRow:
+    """The row an opening states, ``raws`` judged in member order through
+    ``lane``'s plan, a refusal worded as a validated row's is.
+
+    A framework-owned member is read as unstated whatever ``raws`` holds
+    there: the framework supplies it when the row settles.
+    """
+    shape = entry.selection.members.shape
+    try:
+        prepared = entry.plan.complete_row(
+            raws,
+            lane=lane,
+            required=entry.insert_required,
+            omitted=entry.framework_owned,
+            root=_opening_markers(entity, shape),
+        )
+    except AuthoringRefusal as refusal:
+        raise _opening_refusal(entity, shape, refusal) from refusal.cause
+    return managed_row(entry.selection, prepared.cells, prepared.presence)
+
+
+def _opening_refusal(
+    entity: EntityMetadata, shape: MemberShape, refusal: AuthoringRefusal
+) -> Exception:
+    member = shape.members[refusal.position]
+    cause = refusal.cause
+    if isinstance(cause, WireDecodingError):
+        path = joined_path(f"{entity.identity.canonical}.{member.name}", refusal.violation.path)
+        return InstructionRejectedError(f"neutral-literal-{cause.reason}", f"{path}: {cause}")
+    return authoring_refusal_error(entity.identity.name, member, refusal.violation)
+
+
+def _opening_markers(entity: EntityMetadata, shape: MemberShape) -> RootPolicy:
+    def planned(position: int, marker: Mapping[str, object]) -> object:
+        return _planned_marker(entity, shape.members[position].name, marker, "insert")
+
+    return planned
+
+
+def _stated_names(entry: EntityPreparation, values: tuple[object, ...]) -> dict[str, object]:
+    """The members ``values`` states beside the framework's, by name."""
+    absent = entry.selection.absent
+    owned = entry.framework_owned
+    return {
+        member.name: None
+        for position, (member, value) in enumerate(
+            zip(entry.selection.members.shape.members, values, strict=True)
+        )
+        if value is not absent and not owned >> position & 1
+    }
+
+
+def _assigns_beside_key(
+    rows: tuple[ManagedRow, ...], position: inheritance.InheritanceEntityView
+) -> bool:
+    key = position.member_selection.index[position.primary_key.identity]
+    beside = ~(1 << key)
+    return any(row.presence & beside for row in rows)
+
+
+type _MarkerContext = Literal["insert", "update"]
+
+
+def _assignment_context(model: AcceptedMetamodel, entity: EntityMetadata) -> _MarkerContext:
+    """The planning context an assignment to ``entity`` writes in: a temporal
+    one feeds the successor row it opens, any other revises the stored row."""
+    return "insert" if _is_temporal(temporal_read.view(model).shape(entity.identity)) else "update"
+
+
+def _planned_marker(
+    entity: EntityMetadata, name: str, marker: Mapping[str, object], context: _MarkerContext
+) -> PlannedValue:
+    """The generated-value expression ``marker`` names in ``context``.
+
+    Each `m-pk-gen` allocation is legal only where the statement that renders
+    it can express it: `max` folds into the row an insert opens, and the
+    registry advance reads the very row an update revises.
+    """
+    ((kind, payload),) = marker.items()
+    if kind == "computed" and context == "insert":
+        if payload != "maxPlusOne":
+            raise WriteInstructionError(
+                f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: "
+                f"{payload!r} is not a recognized `computed` strategy (m-pk-gen)"
+            )
+        return MAX_PLUS_ONE
+    if kind == "increment" and context == "update":
+        return SelfIncrement(amount=cast("int", payload))
+    raise WriteInstructionError(
+        f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: a {kind!r} "
+        f"marker is not recognized for {context} planning"
+    )
+
+
+class _RowMarkers:
+    """The planned values one name-keyed row's DB-computed markers stand for,
+    each judged at its member's judgment point.
+
+    A marker plans only at a top-level scalar Attribute the row assigns in
+    ``context``; the key the row addresses by, and every member of a row
+    assigning nothing (``context`` ``None``), is judged as the ordinary value
+    it is instead.
+    """
+
+    __slots__ = ("_context", "_converter", "_entity", "_position", "planned")
+
+    def __init__(
+        self,
+        entity: EntityMetadata,
+        position: inheritance.InheritanceEntityView,
+        context: _MarkerContext | None,
+        converter: _LeafConverter,
+    ) -> None:
+        self._entity = entity
+        self._position = position
+        self._context: _MarkerContext | None = context
+        self._converter = converter
+        self.planned: dict[str, PlannedValue] = {}
+
+    def __call__(self, name: str, marker: Mapping[str, object]) -> None:
+        context = self._context
+        if context is None or name == self._position.primary_key.identity.name:
+            raise self._addressing_refusal(name, marker)
+        self.planned[name] = _planned_marker(self._entity, name, marker, context)
+
+    def judged(self, name: str, value: object) -> None:
+        attribute = self._position.member_selection.attribute(name)
+        if (
+            attribute is not None
+            and attribute.multiplicity is Multiplicity.ONE
+            and _is_root_marker(value)
+        ):
+            self(name, cast("Mapping[str, object]", value))
+
+    def row(self, row: Mapping[str, object]) -> Mapping[str, object]:
+        return row if not self.planned else {**row, **self.planned}
+
+    def _addressing_refusal(self, name: str, marker: Mapping[str, object]) -> Exception:
+        attribute = self._position.member_selection.attribute(name)
+        assert attribute is not None  # only a scalar Attribute's marker is judged
+        entity = self._entity
+        managed, _valid = self._converter(
+            attribute.definition, marker, f"{entity.identity.canonical}.{name}"
+        )
+        return WriteRejectedError(
+            "write-value-type-mismatch",
+            f"{entity.identity.name}.{name}: value {managed!r} does not match the declared "
+            f"type {attribute.type!r}",
+        )
+
+
+def _is_root_marker(value: object) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    return frozenset(cast("Mapping[object, object]", value)) in _MARKER_KEYS
+
+
+_MARKER_KEYS: Final[tuple[frozenset[str], ...]] = (
+    frozenset({"computed"}),
+    frozenset({"increment"}),
+)
 
 
 def _judge_write_persistence(
@@ -1124,8 +1397,9 @@ def _prepare_keyed_write(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
-    row_selection: RowSelection,
+    entry: EntityPreparation,
     *,
+    lane: int,
     converter: _LeafConverter,
     source_access: SourceAccess,
     authored_members: Set[str] | None,
@@ -1134,7 +1408,15 @@ def _prepare_keyed_write(
     """Judge a keyed write: its verb and window against its target, then its
     row count, then its rows' subtype shape, members, and values."""
     shape = temporal_read.view(model).shape(entity.identity)
-    window = _judge_applicability(model, entity, shape, instruction, surface="keyed")
+    window = _judge_applicability(
+        model,
+        entity,
+        shape,
+        instruction.mutation,
+        instruction.valid_from,
+        instruction.until,
+        surface="keyed",
+    )
     if _is_temporal(shape):
         plural = _temporal_singleton_refusal(entity.identity.name, instruction)
         if plural is not None:
@@ -1149,8 +1431,9 @@ def _prepare_keyed_write(
         model,
         entity,
         position,
-        row_selection,
+        entry,
         window,
+        lane=lane,
         converter=converter,
         source_access=source_access,
         authored_members=authored_members,
@@ -1239,7 +1522,9 @@ def _judge_applicability(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     shape: temporal_read.TemporalShape | None,
-    instruction: KeyedWriteInstruction | TargetWriteInstruction,
+    mutation: str,
+    valid_from: object,
+    until: object,
     *,
     surface: _WriteSurface,
 ) -> TimeInterval | None:
@@ -1257,18 +1542,12 @@ def _judge_applicability(
     name = entity.identity.name
     temporal = _is_temporal(shape)
     if temporal:
-        refusal = _temporal_delete_refusal(name, instruction.mutation, surface=surface)
+        refusal = _temporal_delete_refusal(name, mutation, surface=surface)
         if refusal is not None:
             raise WriteInstructionError(refusal)
-    window = _judge_window(
-        _family_root(model, entity),
-        shape,
-        instruction.mutation,
-        instruction.valid_from,
-        instruction.until,
-    )
+    window = _judge_window(_family_root(model, entity), shape, mutation, valid_from, until)
     if not temporal:
-        refusal = _non_temporal_milestone_refusal(name, instruction.mutation, surface=surface)
+        refusal = _non_temporal_milestone_refusal(name, mutation, surface=surface)
         if refusal is not None:
             raise WriteInstructionError(refusal)
     return window
@@ -1366,7 +1645,15 @@ def _prepare_target_write(
     is weighed.
     """
     shape = temporal_read.view(model).shape(entity.identity)
-    window = _judge_applicability(model, entity, shape, instruction, surface="target")
+    window = _judge_applicability(
+        model,
+        entity,
+        shape,
+        instruction.mutation,
+        instruction.valid_from,
+        instruction.until,
+        surface="target",
+    )
     expectation = _judge_target_expectation(position.root, shape, position, instruction)
     if members is not None:
         instruction = replace(instruction, row={**instruction.row, **members()})
@@ -1528,8 +1815,8 @@ def _prepare_target_payload(
             entity,
             identity.value,
             model,
-            mutation=instruction.mutation,
             known_failures=identity.failures,
+            markers=_RowMarkers(entity, position, None, converter),
         )
         return identity.value, False
     prepared = _assigned_row(
@@ -1555,10 +1842,7 @@ def _judge_row_members(
     """Refuse a row whose members its target's family cannot write: a
     sibling-branch or derived member first, then an authored framework-owned
     one, then an undeclared one."""
-    try:
-        inheritance.validate_subtype_write(model, entity, row)
-    except inheritance.InheritanceError as error:
-        raise WriteRejectedError(error.rule, str(error)) from error
+    _judge_subtype_shape(model, entity, row)
     if authored_members is not None:
         _refuse_framework_owned(entity, selection, authored_members)
     members = selection.shape.by_name
@@ -1567,6 +1851,15 @@ def _judge_row_members(
         raise WriteInstructionError(
             f"{entity.identity.name}: {described} write row names undeclared member(s) {unknown}"
         )
+
+
+def _judge_subtype_shape(
+    model: AcceptedMetamodel, entity: EntityMetadata, row: Mapping[str, object]
+) -> None:
+    try:
+        inheritance.validate_subtype_write(model, entity, row)
+    except inheritance.InheritanceError as error:
+        raise WriteRejectedError(error.rule, str(error)) from error
 
 
 def _assigned_row(
@@ -1586,9 +1879,13 @@ def _assigned_row(
     authorized it: an omitted required member is refused, an omitted nullable
     one is written empty, and an omitted ``many`` the empty collection, so no
     value is ever carried forward from the state it replaces.
+
+    A DB-computed marker plans in the context the assignment writes in
+    (:func:`_assignment_context`), judged where its member is.
     """
     selection = position.member_selection
     key = position.primary_key.identity.name
+    markers = _RowMarkers(entity, position, _assignment_context(model, entity), converter)
     transformed = _transform_row(
         selection,
         entity,
@@ -1599,24 +1896,22 @@ def _assigned_row(
     )
     prepared = _completed(entity, position, transformed.value) if replaces else transformed.value
     for name, value in prepared.items():
-        if name == key:
-            continue
-        failure = _member_failure(selection, name, transformed.failures)
-        _judge_prepared_assignment(
-            entity,
-            _declared_member(selection, name),
-            value,
-            known_violation=failure,
-            known_value_valid=failure is None,
-        )
+        if name != key:
+            failure = _member_failure(selection, name, transformed.failures)
+            _judge_prepared_assignment(
+                entity,
+                _declared_member(selection, name),
+                value,
+                known_violation=failure,
+                known_value_valid=failure is None,
+            )
+        markers.judged(name, value)
     if transformed.failures:
         # Every other check a sparse row's validation makes is one the
         # judgement above already made, since no `many` member is nullable;
         # an authoring failure, the key's included, is what is left to report.
-        validate_write(
-            entity, prepared, model, mutation="amend", known_failures=transformed.failures
-        )
-    return prepared
+        validate_write(entity, prepared, model, known_failures=transformed.failures)
+    return markers.row(prepared)
 
 
 def _completed(
@@ -1688,9 +1983,10 @@ def _prepare_keyed_payload(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
-    row_selection: RowSelection,
+    entry: EntityPreparation,
     valid_time_window: TimeInterval | None,
     *,
+    lane: int,
     converter: _LeafConverter,
     source_access: SourceAccess,
     authored_members: Set[str] | None,
@@ -1703,27 +1999,32 @@ def _prepare_keyed_payload(
     declared. Sibling-branch and framework-owned-metadata fields are classified
     more specifically, and first, by ``inheritance.validate_subtype_write``.
 
-    An explicit Wire insert payload may name an application-assigned primary key
-    but never a framework-owned member: the interval bounds are stamped from the
-    Clock Strategy and the version is derived. A neutral instruction row states
-    content rather than authorship, so it carries such cells unjudged here. An
-    explicit amendment judges each assigned member as an assignment, and a
-    replacement completes and judges the object's whole writable state exactly
-    as a caller-conditioned one does.
+    An opening's rows are judged one at a time, each row's names before its
+    values, so the first refused row is the one reported. An explicit Wire
+    insert payload may name an application-assigned primary key but never a
+    framework-owned member: the interval bounds are stamped from the Clock
+    Strategy and the version is derived. A neutral instruction row states
+    content rather than authorship, so a framework-owned cell it carries is
+    read as unstated rather than refused. An explicit amendment judges each
+    assigned member as an assignment, and a replacement completes and judges
+    the object's whole writable state exactly as a caller-conditioned one does.
     """
     selection = position.member_selection
     key = position.primary_key.identity.name
-    inserting = instruction.mutation in INSERT_MUTATIONS
-    for row in instruction.rows:
-        _judge_row_members(
-            model,
-            entity,
-            selection,
-            row,
-            authored_members if inserting else None,
-            "keyed",
+    mutation = instruction.mutation
+    if mutation in INSERT_MUTATIONS:
+        opened: list[ManagedRow] = []
+        for row in instruction.rows:
+            _judge_row_members(model, entity, selection, row, authored_members, "keyed")
+            opened.append(_opened_row(entry, entity, entry.plan.authored_values(row), lane=lane))
+        rows = tuple(opened)
+        return _prepared_keyed_instruction(
+            mutation, _assigns_beside_key(rows, position), entity, rows, valid_time_window
         )
-    if instruction.mutation in REPLACE_MUTATIONS:
+    for row in instruction.rows:
+        _judge_row_members(model, entity, selection, row, None, "keyed")
+    row_selection = entry.selection
+    if mutation in REPLACE_MUTATIONS:
         replaced = tuple(
             _assigned_row(
                 model,
@@ -1737,7 +2038,7 @@ def _prepare_keyed_payload(
             for row in instruction.rows
         )
         return _prepared_keyed_instruction(
-            instruction.mutation,
+            mutation,
             _states_beside(key, replaced),
             entity,
             tuple(projected_row(row_selection, row) for row in replaced),
@@ -1750,11 +2051,13 @@ def _prepare_keyed_payload(
             row,
             converter=converter,
             source_access=source_access,
-            fill_missing_many=inserting,
+            fill_missing_many=False,
         )
         for row in instruction.rows
     )
-    if authored_members is not None and not inserting:
+    context = None if mutation in DESTRUCTIVE_MUTATIONS else _assignment_context(model, entity)
+    markers = tuple(_RowMarkers(entity, position, context, converter) for _ in transformed)
+    if authored_members is not None:
         if len(transformed) != 1:
             raise WriteInstructionError(
                 "a keyed assignment set applies only to one addressed write row"
@@ -1769,20 +2072,24 @@ def _prepare_keyed_payload(
                 known_violation=failure,
                 known_value_valid=failure is None,
             )
-    for result in transformed:
+            markers[0].judged(name, only.value[name])
+    for result, row_markers in zip(transformed, markers, strict=True):
         validate_write(
             entity,
             result.value,
             model,
-            mutation=instruction.mutation,
             known_failures=result.failures,
+            markers=row_markers,
         )
-    rows = tuple(result.value for result in transformed)
+    rows_by_name = tuple(
+        row_markers.row(result.value)
+        for result, row_markers in zip(transformed, markers, strict=True)
+    )
     return _prepared_keyed_instruction(
-        instruction.mutation,
-        _states_beside(key, rows),
+        mutation,
+        _states_beside(key, rows_by_name),
         entity,
-        tuple(projected_row(row_selection, row) for row in rows),
+        tuple(projected_row(row_selection, row) for row in rows_by_name),
         valid_time_window,
     )
 

@@ -44,7 +44,6 @@ from parallax.core.write_plan.plan import (
     TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
-from parallax.core.write_plan.planned_rows import planned_cells
 from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
     NEW_LINEAGE,
@@ -213,7 +212,7 @@ class PredecessorExpander:
         self._ownership = ownership
         self._audit = audit
         self._payloads = payloads
-        self._resolved: list[tuple[ManagedRow, ManagedRow, ExecutedMembers]] = []
+        self._resolved: list[tuple[ManagedRow, ExecutedMembers]] = []
         self._comparisons: list[tuple[ManagedRow, AssignedComparison]] = []
 
     def expand(
@@ -300,17 +299,16 @@ class PredecessorExpander:
         self._comparisons.append((assigned, comparison))
         return comparison
 
-    def _resolution(self, assigned: ManagedRow) -> tuple[ManagedRow, ExecutedMembers]:
-        for row, planned, executed in self._resolved:
+    def _executed(self, assigned: ManagedRow) -> ExecutedMembers:
+        for row, executed in self._resolved:
             if row is assigned:
-                return planned, executed
-        planned = planned_cells(self._facts.entity, assigned, "insert")
-        identities = planned.selection.members.identities
+                return executed
+        identities = assigned.selection.members.identities
         executed = cast(
-            "ExecutedMembers", tuple(identities[position] for position in planned.positions())
+            "ExecutedMembers", tuple(identities[position] for position in assigned.positions())
         )
-        self._resolved.append((assigned, planned, executed))
-        return planned, executed
+        self._resolved.append((assigned, executed))
+        return executed
 
     def _candidate(self, predecessor: PredecessorRow, successor: Successor) -> WriteRow:
         """``successor`` of ``predecessor`` as the finalized row it produces."""
@@ -323,9 +321,13 @@ class PredecessorExpander:
         if assigned is None:
             row = _successor_row(self._facts, predecessor, start, end)
         else:
-            planned, executed = self._resolution(assigned)
             row = _successor_row(
-                self._facts, predecessor, start, end, assigned=planned, executed=executed
+                self._facts,
+                predecessor,
+                start,
+                end,
+                assigned=assigned,
+                executed=self._executed(assigned),
             )
         return self._audit.finalize_row(row)
 
@@ -338,7 +340,7 @@ class PredecessorExpander:
         """A new lineage over ``coverage`` carrying ``seed`` with ``assigned``
         overlaid, finalized once."""
         start, end = (None, None) if coverage is None else (coverage.start, coverage.end)
-        state = seed if assigned is None else seed.with_members_of(self._resolution(assigned)[0])
+        state = seed if assigned is None else seed.with_members_of(assigned)
         return self._audit.finalize_row(_represented(self._facts, state, start, end, NEW_LINEAGE))
 
     def settle(

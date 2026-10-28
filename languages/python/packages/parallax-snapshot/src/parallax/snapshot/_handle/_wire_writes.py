@@ -587,12 +587,11 @@ class WireKeyedInsertSource:
         caller's authoring: a framework-owned member is refused, because the
         interval bounds are stamped at flush from the Clock Strategy and the
         version is derived."""
-        return _prepared_wire_write(
+        return instructions.prepare_wire_insert(
             preparation,
             mutation,
             resolved.entity,
             self._payload,
-            self._payload.keys(),
             valid_from=valid_from,
             until=until,
         )

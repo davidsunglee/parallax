@@ -26,8 +26,8 @@ from parallax.conformance._mechanism import model_facts
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.profile import Profile, profile_for
 from parallax.conformance.provision import Provisioner
-from parallax.core import inheritance, wire
-from parallax.core._execution._unit_work import instructions
+from parallax.core import inheritance
+from parallax.core._execution._unit_work import instructions, preparation
 from parallax.core._execution._unit_work.instructions import (
     PreparedInstruction,
     PreparedKeyedInstruction,
@@ -35,10 +35,11 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedTargetInstruction,
     WriteInstruction,
 )
-from parallax.core.base import INFINITY, PresentDocument
+from parallax.core.base import INFINITY, NeutralType, PresentDocument, ScalarConverter
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.document_codec._plan import AuthoringLane
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import AsOfRange, object_query, validate_object_query
 from parallax.core.object_query import deserialize as deserialize_query
@@ -46,6 +47,7 @@ from parallax.core.predicate import And, Comparison, FieldSubject, ModelRejected
 from parallax.core.predicate import serialize as serialize_predicate
 from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.core.temporal_read import TimeInterval
+from parallax.core.wire._codec import wire_converter
 from parallax.core.write_plan.managed_row import named_members
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests._support.repo import canonical_snapshot_claim, validate_adapter_envelope
@@ -192,10 +194,23 @@ rows:
     assert isinstance(instruction, instructions.KeyedWriteInstruction)
     authored = instruction.rows[0][member]
 
-    with mock.patch.object(instructions, "decode_wire", wraps=wire.decode_wire) as decode_wire:
+    decoded_inputs: list[object] = []
+
+    def recording(declared: NeutralType) -> ScalarConverter:
+        convert = wire_converter(declared)
+
+        def recorded(value: object) -> object:
+            decoded_inputs.append(value)
+            return convert(value)
+
+        return recorded
+
+    typed_lane, wire_lane = preparation._LANES  # pyright: ignore[reportPrivateUsage]
+    lanes = (typed_lane, AuthoringLane(recording, wire_lane.access))
+    with mock.patch.object(preparation, "_LANES", lanes):
         prepared = _prepare_case_write(instruction, models.load_models()["writable-scalars"])
 
-    assert any(call.args[1] is authored for call in decode_wire.call_args_list)
+    assert any(value is authored for value in decoded_inputs)
     assert isinstance(prepared, PreparedKeyedInstruction)
     decoded = named_members(prepared.rows[0])[member]
     assert (decoded, math.copysign(1.0, cast("float", decoded))) == (0.0, 1.0)

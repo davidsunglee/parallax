@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, cast
@@ -19,7 +19,12 @@ from parallax.core.entity._errors import (
     ENTITY_ROW_TARGET_NOT_IN_MODEL,
     EntityRowError,
 )
-from parallax.core.entity._instance_state import is_present, named_state, plan_of
+from parallax.core.entity._instance_state import (
+    declared_values,
+    is_present,
+    named_state,
+    plan_of,
+)
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.metamodel import EntityIdentity
 
@@ -130,6 +135,16 @@ class EntityRowCodec:
         )
         self._require_declared(facts, selected, "full_row")
         return self._serialized(facts, names, value, selected, "full_row")
+
+    def declared_values(self, value: Entity) -> Iterator[object]:
+        """Every member ``value`` declares, in its class's own member order,
+        with the Entity State absence marker where it holds none.
+
+        Positional against this model only for a class proven to lay its
+        members out in its Entity's member order; any other value is read by
+        name through :meth:`full_row`.
+        """
+        return declared_values(value)
 
     def writable_row(self, value: object) -> dict[str, object]:
         """:meth:`full_row` without the read-only members outside the primary

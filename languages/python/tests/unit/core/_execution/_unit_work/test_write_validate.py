@@ -239,9 +239,10 @@ def test_entity_attribute_type_mismatch() -> None:
 
 def test_scalar_write_marker_exempts_type_checking() -> None:
     # A DB-computed marker on a scalar attribute column binds verbatim
-    # regardless of its declared neutral type (m-value-object "Writing").
+    # regardless of its declared neutral type (m-value-object "Writing"), in
+    # the context its strategy plans in.
     _accept(_row(marker={"computed": "maxPlusOne"}))
-    _accept(_row(marker={"increment": 1}))
+    _accept({"id": 1, "marker": {"increment": 1}}, mutation="amend")
 
 
 def test_sparse_update_does_not_require_an_absent_entity_attribute() -> None:

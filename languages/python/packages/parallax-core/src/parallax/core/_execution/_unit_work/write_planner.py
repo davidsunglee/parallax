@@ -386,7 +386,7 @@ def _predicate_step(
         PlannedUpdate(
             entity=entity.identity,
             target=target,
-            assignments=planned_assignments(entity, instruction.row),
+            assignments=planned_assignments(instruction.row),
             concurrency=UNVERSIONED,
             affected_rows=ANY_COUNT,
         )

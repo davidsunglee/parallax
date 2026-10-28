@@ -80,7 +80,6 @@ from parallax.core.write_plan.planned_rows import (
     WritePlanningError,
     entity_view,
     planned_assignments,
-    planned_cells,
     planned_row,
 )
 from parallax.core.write_plan.steps import (
@@ -495,9 +494,7 @@ class WritePlanCompiler:
             else (facts.version_attribute, self._concurrency.version_arithmetic().initial)
         )
         entries = tuple(
-            audit.finalize_row(
-                WriteRow(row=planned_row(facts.entity, row, version), origin=NEW_LINEAGE)
-            )
+            audit.finalize_row(WriteRow(row=planned_row(row, version), origin=NEW_LINEAGE))
             for row in instruction.rows
         )
         return PlannedInsert(entity=facts.entity.identity, entries=entries)
@@ -578,7 +575,6 @@ class WritePlanCompiler:
             instant=tx_instant.value(),
             selection=row.selection,
         )
-        row = planned_cells(entity, row, "insert")
         allocated = _with_returned_key(facts, row)
         inserts = (
             PlannedInsert(
@@ -832,7 +828,7 @@ def _addressed_assignments(
     keys = 0
     for attribute in addressed.key_attributes:
         keys |= 1 << index[attribute]
-    return planned_assignments(facts.entity, row, without=keys)
+    return planned_assignments(row, without=keys)
 
 
 def _decorated(audit: AuditDecoration, step: PlannedStep) -> PlannedStep:

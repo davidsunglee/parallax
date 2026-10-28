@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Final, cast
 
 from parallax.core import inheritance
@@ -8,20 +8,24 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     AuthoringViolation,
     EntityMetadata,
+    MemberDefinition,
     Metamodel,
     Multiplicity,
+    ScalarDefinition,
     ValueObjectMetadata,
 )
 
-__all__ = ["WriteRejectedError", "validate_write"]
+__all__ = [
+    "MarkerJudgment",
+    "WriteRejectedError",
+    "authoring_refusal_error",
+    "joined_path",
+    "validate_write",
+]
 
-# The full-document mutations: every declared member must be present, except a
-# `many` member — a scalar collection or Value Object occurrence — which has no
-# absent state to require. Every
-# other keyed mutation carries a SPARSE row (the primary key plus whichever
-# members the caller actually touched) -- an absent top-level member there is
-# untouched, never a violation.
-_FULL_DOCUMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
+type MarkerJudgment = Callable[[str, Mapping[str, object]], None]
+"""Judges the DB-computed marker a row states at one top-level scalar
+Attribute, named by its canonical name, at that member's judgment point."""
 
 _MarkerKeys: Final[tuple[frozenset[str], ...]] = (frozenset({"computed"}), frozenset({"increment"}))
 
@@ -42,22 +46,22 @@ def validate_write(
     row: Mapping[str, object],
     model: Metamodel,
     *,
-    mutation: str,
     known_failures: Mapping[int, AuthoringViolation],
+    markers: MarkerJudgment | None = None,
 ) -> None:
     """Validate ``row`` (a neutral write row targeting ``entity``) pre-SQL.
 
     Raises :class:`WriteRejectedError` naming the violated rule. The caller has
     already applied the Inheritance payload-shape and target rules, and
     ``known_failures`` is the authoring walk's evidence for ``row``, keyed by
-    member position. Inserts require a full document; other mutations admit sparse
-    top-level rows, while every present Value Object remains a whole document.
+    member position. The row is sparse — the primary key plus whichever members
+    the caller touched — so an absent top-level member is untouched, never a
+    violation, while every present Value Object remains a whole document.
 
-    The required-attribute / required-value-object / value-type walk runs over
+    The null / value-type walk runs over
     ``entity``'s FAMILY-EFFECTIVE member set (`m-inheritance` "Inherited
-    members"), so an inherited required member is required of a subtype write
-    and an inherited Attribute's declared type is enforced — a standalone entity
-    contributes only its own declarations.
+    members"), so an inherited Attribute's declared type is enforced — a
+    standalone entity contributes only its own declarations.
 
     A framework-owned Attribute is outside that walk entirely: the framework
     supplies its value, so its absence from a write row is not a caller omission
@@ -69,31 +73,32 @@ def validate_write(
     derives rather than reads off the row (ADR 0013). The designation reaches an
     inherited bound because the applicable-member set carries the root's own
     Attributes, and root-owned axis metadata is exactly what designated them.
+
+    A DB-computed marker a top-level scalar Attribute states is judged by
+    ``markers`` where that member is checked; without one it is left unjudged.
     """
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    full_document = mutation in _FULL_DOCUMENT_MUTATIONS
     owner = entity.identity.name
     for attribute in view.applicable_attributes:
-        if attribute.framework_owned or not (full_document or attribute.identity.name in row):
+        if attribute.framework_owned or attribute.identity.name not in row:
             continue
         _check_entity_attribute(
             row,
             attribute,
-            required=full_document,
             owner=owner,
             known_failure=known_failures.get(view.member_selection.position(attribute.identity))
             if known_failures
             else None,
+            markers=markers,
         )
     for value_object in view.applicable_value_objects:
-        if not (full_document or value_object.identity.path[-1] in row):
+        if value_object.identity.path[-1] not in row:
             continue
         _check_value_object_member(
             row,
             value_object,
-            required=full_document,
             owner=owner,
             known_violation=known_failures.get(
                 view.member_selection.position(value_object.identity)
@@ -110,28 +115,23 @@ def _check_entity_attribute(
     row: Mapping[str, object],
     attribute: AttributeMetadata,
     *,
-    required: bool,
     owner: str,
     known_failure: AuthoringViolation | None,
+    markers: MarkerJudgment | None,
 ) -> None:
     name = attribute.identity.name
-    value = row.get(name)
+    value = row[name]
     many = attribute.multiplicity is Multiplicity.MANY
-    if name not in row or value is None:
+    if value is None:
         if many:
-            if name in row:
-                raise WriteRejectedError(
-                    "write-required-attribute-missing",
-                    f"{owner}.{name}: a `many` attribute is never null",
-                )
-            return
-        if required and not attribute.nullable:
             raise WriteRejectedError(
                 "write-required-attribute-missing",
-                f"{owner}.{name}: required attribute is absent (or null)",
+                f"{owner}.{name}: a `many` attribute is never null",
             )
         return
-    if _is_scalar_write_marker(value):
+    if not many and _is_scalar_write_marker(value):
+        if markers is not None:
+            markers(name, cast("Mapping[str, object]", value))
         return
     if known_failure is not None:
         if many:
@@ -151,24 +151,15 @@ def _check_value_object_member(
     row: Mapping[str, object],
     vo: ValueObjectMetadata,
     *,
-    required: bool,
     owner: str,
     known_violation: AuthoringViolation | None,
 ) -> None:
     name = vo.identity.path[-1]
-    value = row.get(name)
-    if name not in row or value is None:
+    if row[name] is None:
         if vo.multiplicity is Multiplicity.MANY:
-            if name in row:
-                raise WriteRejectedError(
-                    "write-required-value-object-missing",
-                    f"{owner}.{name}: a `many` value object is never null",
-                )
-            return
-        if required and not vo.nullable:
             raise WriteRejectedError(
                 "write-required-value-object-missing",
-                f"{owner}.{name}: required value object is absent (or null)",
+                f"{owner}.{name}: a `many` value object is never null",
             )
         return
     if known_violation is not None:
@@ -176,10 +167,29 @@ def _check_value_object_member(
 
 
 # error-neutral document-codec finding, which owns no policy text of its own. #
+def authoring_refusal_error(
+    owner: str, member: MemberDefinition, violation: AuthoringViolation
+) -> WriteRejectedError:
+    """The refusal of a row's top-level ``member`` for ``violation``, worded
+    as this module words the same finding of a validated row."""
+    base = f"{owner}.{member.name}"
+    scalar = isinstance(member, ScalarDefinition)
+    many = member.multiplicity is Multiplicity.MANY
+    if not violation.path and violation.reason in ("attribute-missing", "value-object-missing"):
+        rule = (
+            "write-required-attribute-missing" if scalar else "write-required-value-object-missing"
+        )
+        kind = "attribute" if scalar else "value object"
+        if many:
+            return WriteRejectedError(rule, f"{base}: a `many` {kind} is never null")
+        return WriteRejectedError(rule, f"{base}: required {kind} is absent (or null)")
+    return _rejected_error(violation, base=base, many_scalar=scalar and many)
+
+
 def _rejected_error(
     violation: AuthoringViolation, *, base: str, many_scalar: bool = False
 ) -> WriteRejectedError:
-    path = _joined(base, violation.path)
+    path = joined_path(base, violation.path)
     if violation.reason == "not-a-list":
         expected = "a list of scalar values" if many_scalar else "a list of documents"
         kind = "attribute" if many_scalar else "value object"
@@ -208,7 +218,7 @@ def _rejected_error(
     )
 
 
-def _joined(base: str, path: str) -> str:
+def joined_path(base: str, path: str) -> str:
     """``base`` plus a shared-walk violation's own relative ``path`` — a nested
     member dot-joins, a ``many`` element index attaches bracket-first (no dot,
     matching this module's OWN owner-string convention, e.g.

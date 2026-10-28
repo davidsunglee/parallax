@@ -16,9 +16,9 @@ the settled ``StaleWrite`` versus ``OptimisticConflict`` shortfall tag—are pin
 in ``tests/unit/core/_execution/_unit_work/test_temporal_write_lowering.py``. The
 predicate-selected and multi-row batch forms use the same lowering seam. Planning
 refuses a materializing predicate write that reaches it, a mixed-shape multi-row
-instruction, a milestone verb on a non-temporal entity, and an unsupported
-DB-computed marker with a loud
-``WritePlanningError``, and payload preparation refuses a target with no
+instruction, and a milestone verb on a non-temporal entity with a loud
+``WritePlanningError``, preparation refuses an unsupported DB-computed marker
+before anything is buffered, and payload preparation refuses a target with no
 effective table the same way — each a forward-error posture, never a wrong
 emission, mirroring the read compiler's own.
 
@@ -59,7 +59,12 @@ from parallax.core import (
 )
 from parallax.core import predicate as oa
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._unit_work.instructions import WriteInstruction
+from parallax.core._execution._unit_work.instructions import (
+    WriteInstruction,
+    WriteInstructionError,
+    prepare_typed_write,
+    prepare_wire_write,
+)
 from parallax.core._execution._write_lowering import (
     lowered,
     lowered_within,
@@ -152,6 +157,7 @@ from tests._support.db_port import ScriptedAdapter, Write, WriteCall
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._corpus_model_support import model as corpus_model
@@ -660,28 +666,54 @@ def test_pk_gen_increment_marker_self_references_the_column() -> None:
     assert statement.binds == (1, "badge_seq")
 
 
+def _refused_at_preparation(
+    instruction: KeyedWriteInstruction, model: Metamodel, match: str
+) -> None:
+    """``instruction`` is refused by both preparation lanes, before any write
+    exists to buffer, settle, or lower."""
+    preparation = write_preparation_of(model)
+    for prepare in (prepare_typed_write, prepare_wire_write):
+        with pytest.raises(WriteInstructionError, match=match) as refused:
+            prepare(instruction, preparation)
+        assert not isinstance(refused.value, WritePlanningError)
+    with pytest.raises(WriteInstructionError, match=match):
+        _lower(instruction, model)
+
+
 def test_increment_marker_reaching_an_insert_is_refused() -> None:
     insert = KeyedWriteInstruction(
         "insert", "PkSequence", ({"name": "badge_seq", "nextVal": {"increment": 1}},)
     )
-    with pytest.raises(WritePlanningError, match=r"unsupported DB-computed marker.*'increment'"):
-        _lower(insert, PK_SEQUENCE)
+    _refused_at_preparation(
+        insert,
+        PK_SEQUENCE,
+        r"^unsupported DB-computed marker on 'PkSequence'\.nextVal: a 'increment' marker is "
+        r"not recognized for insert planning$",
+    )
 
 
 def test_computed_marker_reaching_an_update_is_refused() -> None:
     update = KeyedWriteInstruction(
         "amend", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne"}},)
     )
-    with pytest.raises(WritePlanningError, match=r"unsupported DB-computed marker.*'computed'"):
-        _lower(update, PK_MAX)
+    _refused_at_preparation(
+        update,
+        PK_MAX,
+        r"^unsupported DB-computed marker on 'Attendee'\.name: a 'computed' marker is not "
+        r"recognized for update planning$",
+    )
 
 
 def test_unrecognized_computed_strategy_is_refused() -> None:
     insert = KeyedWriteInstruction(
         "insert", "Attendee", ({"id": {"computed": "somethingElse"}, "name": "Ada"},)
     )
-    with pytest.raises(WritePlanningError, match="not a recognized `computed` strategy"):
-        _lower(insert, PK_MAX)
+    _refused_at_preparation(
+        insert,
+        PK_MAX,
+        r"^unsupported DB-computed marker on 'Attendee'\.id: 'somethingElse' is not a "
+        r"recognized `computed` strategy \(m-pk-gen\)$",
+    )
 
 
 def test_a_mapping_outside_the_marker_shape_is_not_a_string_literal() -> None:

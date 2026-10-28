@@ -131,10 +131,11 @@ INSTANCE_STATE_SITES_REACHING_PRESENCE: dict[str, frozenset[str]] = {
 # class's plan and hands each descriptor its ordinal; `_members` addresses the
 # row from those ordinals; both frontends extend the root that answers Pydantic
 # for a value's state; `_edit` partitions state and derives edited copies;
-# `_row_codec` selects by presence and reads the provenance
-# slot; `_graph_construction` allocates a shell, attaches one whole row to it from
-# positional rows, attributes a misshapen row, reads a relationship position
-# back, and checks the class's own plan against the model's layout. Delete the
+# `_row_codec` selects by presence, reads a proven class's members in order,
+# and reads the provenance slot; `_graph_construction` allocates a shell,
+# attaches one whole row to it from positional rows, attributes a misshapen
+# row, reads a relationship position back, and checks the class's own plan
+# against the model's layout. Delete the
 # Module and the tuple, the bitmap, and the ordinal arithmetic reappear at all
 # eight.
 INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
@@ -154,7 +155,9 @@ INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
         }
     ),
     "parallax.core.entity._members": frozenset({"COMPACT_STATE_SLOT", "plan_of"}),
-    "parallax.core.entity._row_codec": frozenset({"is_present", "named_state", "plan_of"}),
+    "parallax.core.entity._row_codec": frozenset(
+        {"declared_values", "is_present", "named_state", "plan_of"}
+    ),
     "parallax.core.entity._value_object": frozenset({"BackedModel", "is_present", "plan_of"}),
     "parallax.snapshot._publication._wire": frozenset(
         {
