@@ -17,10 +17,10 @@ from typing import Final
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core._execution._unit_work import preparation as preparation_module
 from parallax.core.entity import DomainModel
 from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity import _layout as layout_module
-from parallax.core.entity import _row_codec as row_codec_module
 from parallax.core.metamodel import UnresolvedEntityDeclaration
 from parallax.snapshot import Database, SnapshotConnectionError, TxnContext, connect
 from tests._support import mirrored_models as mm
@@ -51,7 +51,7 @@ def _refuse_every_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("a per-Entity derivation ran after preparation")
 
     monkeypatch.setattr(layout_module.LayoutCatalog, "_build", refuse)
-    monkeypatch.setattr(row_codec_module, "_row_facts", refuse)
+    monkeypatch.setattr(preparation_module, "_entity_preparation", refuse)
     monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse)
 
 

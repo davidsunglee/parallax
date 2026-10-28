@@ -19,7 +19,7 @@ query shape retained PER EXECUTION.
 **Preparation is entered whole.** Every arm derives its cataloged model from
 ``prepare_model``, and the closure is taken over the selection that answers rather
 than over the catalog inside it, so the read and write projections, the Entity
-Graph Construction, the row codec, and the write planner are all state a reading
+Graph Construction, the write preparation, and the write planner are all state a reading
 can reach. A catalog constructed directly would leave everything else preparation
 composed outside the claim.
 
@@ -119,7 +119,7 @@ def _prepared(layout: Layout) -> ModelSelection:
     The measured seams enter through this rather than through a bare
     :class:`CatalogedModel`, because everything preparation composed — the read
     and write projections, the exact-model layouts, the Entity Graph
-    Construction, the row codec, and the write planner — is state a later
+    Construction, the write preparation, and the write planner — is state a later
     preparation change could grow per row or per execution, and only what a
     reading can reach can be graded.
     """

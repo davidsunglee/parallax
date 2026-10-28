@@ -2,8 +2,8 @@
 stamps.
 
 What that record then MEANS to a write — the effective change set, the derived
-row, and the refusals of a value carrying none — is the Entity Row Codec's, and
-is pinned in ``test_row_codec.py``. Here the record is read straight out of the
+row, and the refusals of a value carrying none — is the Typed write source's, and
+is pinned in ``test_typed_write_source.py``. Here the record is read straight out of the
 private slot the edit surface owns, because what this suite proves is what
 ``edit`` wrote. The version column's own advance is framework-owned end to end at
 the write seam (`m-opt-lock`); see ``test_write_lowering.py`` /
@@ -121,7 +121,7 @@ def test_copies_of_copies_merge_records_keeping_the_earliest_original() -> None:
 
 def test_a_net_zero_chain_still_records_the_touch() -> None:
     # The record keeps the touch whatever the values net to; whether that touch
-    # reaches a row is the codec's question, not the record's.
+    # reaches a row is the write source's question, not the record's.
     original = _account(balance="100.00")
     round_tripped = original.edit(balance=Decimal("200.00")).edit(balance=Decimal("100.00"))
     changes = _record(round_tripped)

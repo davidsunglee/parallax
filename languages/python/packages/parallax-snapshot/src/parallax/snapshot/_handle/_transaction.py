@@ -5,7 +5,7 @@ from typing import Any
 
 from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
-from parallax.core.entity import AttributeAssignment, EntityRowCodec
+from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, typed_read_query
@@ -74,17 +74,15 @@ class TxnContext:
     its key under the revision its caller states.
     """
 
-    __slots__ = ("_attempt", "_codec")
+    __slots__ = ("_attempt",)
 
-    def __init__(self, attempt: TxnAttempt, codec: EntityRowCodec) -> None:
+    def __init__(self, attempt: TxnAttempt) -> None:
         # The attempt is this transaction's every read and write: its reads
         # participate in its unit of work on its connection, its keyed,
         # predicate, and target verbs admit into that unit of work,
         # and its own installed lifecycle is what makes "the originating Handle
-        # or Transaction" one re-entry refusal rather than two. The codec is the
-        # adopted selection's, which every Typed verb derives its rows through.
+        # or Transaction" one re-entry refusal rather than two.
         self._attempt = attempt
-        self._codec = codec
 
     @property
     def edition(self) -> str:
@@ -148,7 +146,7 @@ class TxnContext:
         call, before any buffering. Both bounds come from these arguments, never
         from instance fields: an As-Of Axis endpoint is framework-owned."""
         opened = self._attempt.keyed_insert(
-            TypedKeyedInsertSource(instance, self._codec), valid_from=valid_from, until=until
+            TypedKeyedInsertSource(instance), valid_from=valid_from, until=until
         )
         bind_insertion(instance, opened.authority)
 
@@ -189,9 +187,7 @@ class TxnContext:
         read at Valid-Time ``LATEST`` names no start and is refused. ``until``
         follows :meth:`insert`'s rules, and is judged at THIS call even when
         nothing is assigned."""
-        self._attempt.keyed_write(
-            TypedKeyedWriteSource(source, self._codec, assignments), "amend", until=until
-        )
+        self._attempt.keyed_write(TypedKeyedWriteSource(source, assignments), "amend", until=until)
 
     def amend_if[E: EntityBase](
         self,
@@ -261,9 +257,7 @@ class TxnContext:
         scheduled termination included, reading the later coverage its window
         reaches at flush. Failed authority never licenses it to open coverage:
         a replacement is no upsert. ``until`` follows :meth:`insert`'s rules."""
-        self._attempt.keyed_write(
-            TypedKeyedWriteSource(source, self._codec), "replace", until=until
-        )
+        self._attempt.keyed_write(TypedKeyedWriteSource(source), "replace", until=until)
 
     def replace_if(
         self,
@@ -375,7 +369,7 @@ class TxnContext:
         ``delete`` physically removes the row and carries no temporal meaning, so
         a target that milestones its rows refuses it at this call and names
         :meth:`terminate`, which closes the row's history instead."""
-        self._attempt.keyed_write(TypedKeyedWriteSource(node_or_instance, self._codec), "delete")
+        self._attempt.keyed_write(TypedKeyedWriteSource(node_or_instance), "delete")
 
     def terminate(
         self, node_or_instance: EntityBase, *, until: dt.datetime | Omitted = OMITTED
@@ -389,9 +383,7 @@ class TxnContext:
         every interval of current coverage from there — through infinity when
         ``until`` is omitted, or up to the exclusive ``until``; history and
         coverage outside that window survive."""
-        self._attempt.keyed_write(
-            TypedKeyedWriteSource(node_or_instance, self._codec), "terminate", until=until
-        )
+        self._attempt.keyed_write(TypedKeyedWriteSource(node_or_instance), "terminate", until=until)
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         """Run a participating read for ``query`` and return ``Snapshot[S]``:
@@ -532,8 +524,8 @@ class TxnContext:
 
 def transaction_for(attempt: TxnAttempt) -> TxnContext:
     """The Snapshot transaction one fully constructed attempt is handed to its
-    callback as, deriving rows through the codec that attempt adopted."""
-    return TxnContext(attempt, attempt.codec)
+    callback as."""
+    return TxnContext(attempt)
 
 
 class ReadOnlyTxnContext:

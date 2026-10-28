@@ -365,7 +365,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     ),
     # Execution names the Entity frontend directly: model preparation reads the
     # accepted Metamodel and class index a Domain Model carries, and a prepared
-    # selection retains the row codec and graph construction derived over them.
+    # selection retains the write preparation and graph construction derived over them.
     "parallax.core._execution": frozenset({"parallax.core.entity"}),
     # The two public facades re-export what their implementation owners define
     # and are granted exactly those owners. No production scope is granted a

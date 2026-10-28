@@ -63,7 +63,7 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     ValueObjectIdentity,
 )
-from tests._support.model_capabilities import graph_construction_for, row_codec_for
+from tests._support.model_capabilities import graph_construction_for, preparation_for
 from tests.unit.core.entity._compact_support import carries_instance_storage, layout_slots, raw_row
 from tests.unit.core.entity._value_object_document_support import inserted_document
 from tests.unit.memory_instruments import (
@@ -373,9 +373,12 @@ def test_no_framework_read_of_a_published_graph_creates_its_storage() -> None:
         return state
 
     root = _published(state_factory=factory)
-    codec = row_codec_for(PARCELS)
+    entry = preparation_for(PARCELS).entity(Parcel.identity)
+    shape = entry.selection.members.shape
 
-    assert codec.full_row(root)
+    assert tuple(root.__parallax_member_values__())
+    assert root.__parallax_row_values__(shape, Parcel.identity)
+    assert root.__parallax_authored_pairs__(shape, Parcel.identity, entry.key) is None
     assert inserted_document(PARCELS, Parcel(id=2, label="south", tag=root.tag))
     assert root.model_dump() == {
         "id": 1,

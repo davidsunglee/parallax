@@ -853,8 +853,8 @@ def test_a_hydrated_framework_owned_value_is_readable_and_survives_an_edit() -> 
 
 def test_an_edited_copy_records_its_earliest_original() -> None:
     # What that record then means to a write — the effective change set and the
-    # derived row — is the Entity Row Codec's, and is pinned in
-    # ``test_row_codec.py``.
+    # derived row — is the Typed write source's, and is pinned in
+    # ``test_typed_write_source.py``.
     order = _order()
     assert CHANGE_RECORD_SLOT not in order.__dict__
     once = order.edit(qty=5)

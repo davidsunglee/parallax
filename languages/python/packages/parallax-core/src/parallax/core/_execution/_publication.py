@@ -7,7 +7,7 @@ from typing import NoReturn
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.strategy import EvidencePolicyLookup
 from parallax.core._execution._unit_work.write_planner import WritePlanner
-from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
+from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import ClassIndex
 
@@ -49,11 +49,11 @@ class SelectedReadModel:
     carries the record adopted for THIS operation, and a stream keeps the one it
     opened under through all of its pages.
 
-    The write codec is deliberately absent. A read never derives a row, so a
-    record carrying one would offer the write half to every read composition
+    The write preparation is deliberately absent. A read prepares no write, so
+    a record carrying one would offer the write half to every read composition
     that holds it. The construction is the only half that can be missing at
-    all: a member layout and a row are both derived from accepted metadata, so
-    a descriptor-backed model prepares a fully functional catalog while
+    all: a member layout is derived from accepted metadata, so a
+    descriptor-backed model prepares a fully functional catalog while
     preparing no materializer, and a publication that needs one refuses on
     that absence before any I/O.
 
@@ -71,9 +71,8 @@ class SelectedReadModel:
 @dataclass(frozen=True, slots=True)
 class SelectedWriteModel:
     """The write projection of one Model Selection: the same edition and the
-    exact same cataloged model as its read projection, with the Entity Row
-    Codec a Typed write acquires the rows it has not yet authored through, the
-    Write Preparation every write is admitted against, the Write Planner every
+    exact same cataloged model as its read projection, with the Write
+    Preparation every write is admitted against, the Write Planner every
     flush plans through, and the write-evidence policy every keyed write is
     admitted under — all derived from that one model — and the same borrowed
     class index as its read projection.
@@ -81,7 +80,6 @@ class SelectedWriteModel:
 
     edition: str
     model: CatalogedModel
-    codec: EntityRowCodec
     preparation: WritePreparation
     planner: WritePlanner
     evidence_policy_for: EvidencePolicyLookup
@@ -140,7 +138,6 @@ def select_model(
     catalog: CatalogedModel,
     classes: ClassIndex | None,
     construction: EntityGraphConstruction | None,
-    codec: EntityRowCodec,
     preparation: WritePreparation,
     planner: WritePlanner,
     evidence_policy_for: EvidencePolicyLookup,
@@ -165,7 +162,6 @@ def select_model(
     write = SelectedWriteModel(
         edition=checked,
         model=catalog,
-        codec=codec,
         preparation=preparation,
         planner=planner,
         evidence_policy_for=evidence_policy_for,

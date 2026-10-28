@@ -58,7 +58,6 @@ from parallax.core.base import ManagedValue
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.deep_fetch import PlannedEntityQuery
 from parallax.core.dialect import LockMode
-from parallax.core.entity import EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
@@ -539,11 +538,6 @@ class TxnAttempt(_TxnAttemptBase):
     def model(self) -> CatalogedModel:
         """The cataloged model every write of this attempt names its Entities in."""
         return self._write.model
-
-    @property
-    def codec(self) -> EntityRowCodec:
-        """The Entity Row Codec the adopted selection derives write rows through."""
-        return self._write.codec
 
     def complete(self) -> None:
         """Flush what is still buffered as the boundary's pre-commit flush, while

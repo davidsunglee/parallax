@@ -98,7 +98,7 @@ class WritePlanner:
 
     The compiler it constructs here is its own, built over the same model and
     compiled facets and living exactly as long: a prepared Model Selection
-    carries a mutually consistent model, codec, planner, and compiler, and
+    carries a mutually consistent model, preparation, planner, and compiler, and
     publication replaces the whole selection rather than rebinding any of
     them. So does the write payload preparer it is wired with, which every plan
     it answers is lowered through (:attr:`payloads`).

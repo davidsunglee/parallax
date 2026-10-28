@@ -23,8 +23,6 @@ __all__ = [
     "ENTITY_ROW_CODES",
     "ENTITY_ROW_MALFORMED_PROVENANCE",
     "ENTITY_ROW_MEMBER_MISSING",
-    "ENTITY_ROW_NOT_AN_ENTITY",
-    "ENTITY_ROW_TARGET_NOT_IN_MODEL",
     "GRAPH_CONSTRUCTION_CODES",
     "METAMODEL_DEFINITION_CODES",
     "METAMODEL_DUPLICATE_ENTITY_CLASS",
@@ -187,10 +185,6 @@ class GraphConstructionError(RuntimeError):
         self.cause = cause
 
 
-ENTITY_ROW_NOT_AN_ENTITY: Final = "entity-row-not-an-entity"
-"""A row was asked for a value that is no Entity at all."""
-ENTITY_ROW_TARGET_NOT_IN_MODEL: Final = "entity-row-target-not-in-model"
-"""The value's Entity Identity resolves to no Entity of the codec's model."""
 ENTITY_ROW_MEMBER_MISSING: Final = "entity-row-member-missing"
 """An operation selected a member it cannot emit: either the resolved identity
 does not declare it, or the value's class carries no attribute for one it does."""
@@ -199,30 +193,27 @@ ENTITY_ROW_MALFORMED_PROVENANCE: Final = "entity-row-malformed-provenance"
 
 ENTITY_ROW_CODES: Final[frozenset[str]] = frozenset(
     {
-        ENTITY_ROW_NOT_AN_ENTITY,
-        ENTITY_ROW_TARGET_NOT_IN_MODEL,
         ENTITY_ROW_MEMBER_MISSING,
         ENTITY_ROW_MALFORMED_PROVENANCE,
     }
 )
-"""The complete Entity Row Codec refusal vocabulary. Every code names an input
-the codec's own contract rejects, so no misuse of it surfaces as an
+"""The complete refusal vocabulary of a value read as a Typed write's source.
+Every code names a value its write could not read, so no misuse surfaces as an
 :class:`AttributeError`, a :class:`KeyError`, or a partially keyed row."""
 
 
 class EntityRowError(RuntimeError):
-    """The Entity Row Codec was asked for a row it cannot derive.
+    """A value cannot be read as the row its Typed write resolved.
 
     A ``RuntimeError`` for :class:`GraphConstructionError`'s reason: every code
     describes first-party misuse or an implementation defect rather than rejected
-    developer input. The codec knows only that it received a value its operation
-    does not accept; the developer-facing steering for handing a persistence verb
-    an unedited value belongs to that verb, which knows what the developer
-    called.
+    developer input. The reading knows only that it received a value its
+    operation does not accept; the developer-facing steering for handing a
+    persistence verb an unedited value belongs to that verb, which knows what the
+    developer called.
 
-    ``identity`` is the resolved Entity Identity the refusal is about, absent
-    only when the value carried none to resolve. Neither the value, its class,
-    nor any partially built row is ever retained here.
+    ``identity`` is the resolved Entity Identity the refusal is about. Neither
+    the value, its class, nor any partially built row is ever retained here.
     """
 
     def __init__(self, *, code: str, message: str, identity: EntityIdentity | None = None) -> None:

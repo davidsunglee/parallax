@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, cast
 
 from parallax.core._execution._family import family_view
@@ -25,8 +25,8 @@ from parallax.core._execution._unit_work.instructions import (
     TargetMutation,
     WriteAssignment,
 )
-from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core.entity import AttributeAssignment, EntityRowCodec
+from parallax.core._execution._unit_work.preparation import EntityPreparation, WritePreparation
+from parallax.core.entity import AttributeAssignment
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._authored_resolver import typed_interpretation
 from parallax.core.entity._declaration import declaration_of
@@ -98,6 +98,42 @@ def prepared_typed_write(
     return prepared
 
 
+def declared_values(
+    prepared: EntityPreparation, entity: EntityMetadata, instance: EntityBase
+) -> Iterable[object]:
+    """Each member of ``entity`` ``instance`` holds, in member order, and the
+    preparation's ``absent`` where it holds none.
+
+    Read by position when ``instance``'s class is the one the model proved
+    lays its members out in member order, and by name otherwise, refusing a
+    member the instance populated that ``entity`` does not declare.
+    """
+    if type(instance) is prepared.typed_class:
+        return instance.__parallax_member_values__()
+    return instance.__parallax_row_values__(prepared.selection.members.shape, entity.identity)
+
+
+def writable_row(
+    prepared: EntityPreparation, entity: EntityMetadata, instance: EntityBase
+) -> dict[str, object]:
+    """Every member ``instance`` populated that a replacement writes, by name:
+    neither a framework-owned member nor a read-only one outside the key, both
+    of which no replacement states."""
+    absent = prepared.selection.absent
+    omitted = prepared.framework_owned | prepared.read_only
+    members = prepared.selection.members.shape.members
+    return {
+        members[position].name: value
+        for position, value in enumerate(declared_values(prepared, entity, instance))
+        if value is not absent and not omitted >> position & 1
+    }
+
+
+def _named(prepared: EntityPreparation, pairs: Iterable[tuple[int, object]]) -> dict[str, object]:
+    members = prepared.selection.members.shape.members
+    return {members[position].name: value for position, value in pairs}
+
+
 def typed_selection(
     query: ObjectQuery[Any, Any], write_model: SelectedWriteModel
 ) -> PredicateSelection:
@@ -138,20 +174,18 @@ class TypedKeyedWriteSource:
     authored history, which would give one write two authors.
     """
 
-    __slots__ = ("_assignments", "_codec", "_value")
+    __slots__ = ("_assignments", "_value")
 
     def __init__(
         self,
         value: EntityBase,
-        codec: EntityRowCodec,
         assignments: Sequence[AttributeAssignment[Any]] = (),
     ) -> None:
         self._value = value
-        self._codec = codec
         self._assignments = assignments
 
     def capture(self, mutation: KeyedMutation, /) -> None:
-        if self._assignments and self._codec.has_edit_history(self._value):
+        if self._assignments and self._value.__parallax_edit_history__():
             raise instructions.WriteInstructionError(
                 f"`{mutation}` was handed explicit assignments beside a value whose edit chain "
                 "already authored changes, and one write has one author: pass the edited value "
@@ -184,7 +218,7 @@ class TypedKeyedWriteSource:
         authors its identity row alone, and so does an amendment off a value
         whose chain touched nothing — the empty write the ingress drops.
         """
-        row, explicit = self._authored(preparation.meta, mutation, resolved.entity)
+        row, explicit = self._authored(preparation, mutation, resolved.entity)
         return prepared_typed_write(
             preparation,
             mutation,
@@ -196,25 +230,33 @@ class TypedKeyedWriteSource:
         )
 
     def _authored(
-        self, meta: Metamodel, mutation: KeyedMutation, entity: EntityMetadata
+        self, preparation: WritePreparation, mutation: KeyedMutation, entity: EntityMetadata
     ) -> tuple[Mapping[str, object], Callable[[], Mapping[str, object]] | None]:
         """The row this value authors, and the explicit assignments preparation
         judges into that row once the target and window admit the write."""
-        value, codec = self._value, self._codec
+        value = self._value
+        prepared = preparation.entity(entity.identity)
+        shape = prepared.selection.members.shape
         if mutation in REPLACE_MUTATIONS:
-            return codec.writable_row(value), None
+            return writable_row(prepared, entity, value), None
         if mutation not in ASSIGNMENT_MUTATIONS:
-            return codec.identity_row(value), None
+            return _named(
+                prepared, value.__parallax_identity_pairs__(shape, entity.identity, prepared.key)
+            ), None
         if self._assignments:
             assignments = write_assignments(self._assignments)
+            meta = preparation.meta
             return (
-                codec.identity_row(value),
+                _named(
+                    prepared,
+                    value.__parallax_identity_pairs__(shape, entity.identity, prepared.key),
+                ),
                 lambda: instructions.assigned_members(meta, entity, assignments),
             )
-        authored = codec.authored_row(value)
+        authored = value.__parallax_authored_pairs__(shape, entity.identity, prepared.key)
         if authored is None:
-            return codec.identity_row(value), None
-        return authored.row, None
+            authored = value.__parallax_identity_pairs__(shape, entity.identity, prepared.key)
+        return _named(prepared, authored), None
 
 
 class TypedKeyedInsertSource:
@@ -228,11 +270,10 @@ class TypedKeyedInsertSource:
     against.
     """
 
-    __slots__ = ("_codec", "_instance")
+    __slots__ = ("_instance",)
 
-    def __init__(self, instance: EntityBase, codec: EntityRowCodec) -> None:
+    def __init__(self, instance: EntityBase) -> None:
         self._instance = instance
-        self._codec = codec
 
     def capture(self, mutation: KeyedMutation, /) -> None:
         return None
@@ -250,17 +291,9 @@ class TypedKeyedInsertSource:
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> PreparedKeyedInstruction:
-        """The row this instance opens, read by position when its class is
-        the one the model proved lays its members out in member order, and by
-        name through the codec's refusals otherwise."""
-        instance = self._instance
+        """The row this instance opens (:func:`declared_values`)."""
         entity = resolved.entity
-        prepared = preparation.entity(entity.identity)
-        values = (
-            self._codec.declared_values(instance)
-            if type(instance) is prepared.typed_class
-            else prepared.plan.authored_values(self._codec.full_row(instance))
-        )
+        values = declared_values(preparation.entity(entity.identity), entity, self._instance)
         return instructions.prepare_typed_insert(
             preparation, mutation, entity, values, valid_from=valid_from, until=until
         )
@@ -320,7 +353,7 @@ def _replacement_row(
             f"`replace_where` over {selection.entity} states a whole state of that Entity, and "
             f"this payload is a {entity.identity.canonical}"
         )
-    return write_model.codec.writable_row(payload)
+    return writable_row(write_model.preparation.entity(entity.identity), entity, payload)
 
 
 class TypedInstanceTargetWriteAdapter:
@@ -332,8 +365,8 @@ class TypedInstanceTargetWriteAdapter:
     instance is not asked: the write addresses the object its key names, under
     the revision its caller states, so neither a read's evidence nor an
     insertion's authority the instance carries is consulted — which is what
-    lets a historical observation supply a replacement's state. The row comes
-    through the codec of the write projection the attempt lends.
+    lets a historical observation supply a replacement's state. The row is
+    read against the preparation of the write projection the attempt lends.
     """
 
     __slots__ = ("_instance",)
@@ -345,9 +378,8 @@ class TypedInstanceTargetWriteAdapter:
         self, write_model: SelectedWriteModel, mutation: TargetMutation
     ) -> TargetWriteInput:
         entity = metadata_of_instance(write_model.model.meta, self._instance)
-        return TargetWriteInput(
-            entity.identity.canonical, write_model.codec.writable_row(self._instance), "typed"
-        )
+        row = writable_row(write_model.preparation.entity(entity.identity), entity, self._instance)
+        return TargetWriteInput(entity.identity.canonical, row, "typed")
 
 
 class TypedKeyTargetWriteAdapter:

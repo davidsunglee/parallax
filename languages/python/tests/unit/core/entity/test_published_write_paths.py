@@ -468,7 +468,7 @@ def test_no_framework_read_of_a_published_value_writes_its_storage() -> None:
 
 
 def test_nor_does_a_framework_read_that_wants_the_whole_of_a_value_s_named_state() -> None:
-    # Edit, pickle, and the Row Codec's provenance read each want everything a
+    # Edit, pickle, and the write source's provenance read each want everything a
     # value holds under a name rather than one member, and ordinary backing keeps
     # all of that in the instance dictionary. Reaching for the dictionary on a
     # published value would answer "nothing" AND create one — losing the row's
