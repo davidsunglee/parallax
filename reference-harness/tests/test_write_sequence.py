@@ -116,6 +116,58 @@ def test_a_value_object_document_shaped_like_a_marker_still_owes_its_read() -> N
     assert unit_resolving_reads(case, [marker_entry]) == 0
 
 
+_WALLET_COLUMN_ARRAYS = (
+    "insert into wallet(id, owner, balance) select * from "
+    "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
+)
+
+
+def _collapsed_batch_as_column_arrays(arrays: list[list[Any]]) -> Case:
+    case = copy.deepcopy(
+        next(
+            c
+            for c in discover_cases(COMPATIBILITY_ROOT)
+            if c.path.stem.startswith("m-batch-write-001")
+        )
+    )
+    batch = case.then["statements"][0]
+    batch["sql"]["postgres"] = _WALLET_COLUMN_ARRAYS
+    batch["binds"] = arrays
+    return case
+
+
+def test_a_collapsed_batch_bound_as_column_arrays_is_graded_row_by_row() -> None:
+    arrays: list[list[Any]] = [[10, 11, 12], ["Mira", "Omar", "Nell"], ["100.00", "20.00", "30.00"]]
+    _assert_write_input_columns(_collapsed_batch_as_column_arrays(arrays), "postgres")
+
+
+@pytest.mark.parametrize(
+    ("arrays", "refusal"),
+    [
+        pytest.param(
+            [[10, 11, 12], ["Mira", "Nell", "Omar"], ["100.00", "20.00", "30.00"]],
+            "!= golden bind",
+            id="rows-misaligned-across-arrays",
+        ),
+        pytest.param(
+            [[10, 11], ["Mira", "Omar"], ["100.00", "20.00"]],
+            "write value",
+            id="row-missing-from-every-array",
+        ),
+        pytest.param(
+            [[10, 11, 12], ["Mira", "Omar"], ["100.00", "20.00", "30.00"]],
+            "unequal lengths",
+            id="unequal-lengths",
+        ),
+    ],
+)
+def test_a_collapsed_batch_whose_column_arrays_disagree_with_its_rows_is_refused(
+    arrays: list[list[Any]], refusal: str
+) -> None:
+    with pytest.raises(CaseFailure, match=refusal):
+        _assert_write_input_columns(_collapsed_batch_as_column_arrays(arrays), "postgres")
+
+
 def _account_case(raw: dict) -> Case:
     """A DB-free Case bound to the versioned account model."""
     return Case(

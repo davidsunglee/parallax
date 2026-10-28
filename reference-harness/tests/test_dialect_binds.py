@@ -26,21 +26,25 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
+from psycopg.types.json import Jsonb
 
 from reference_harness._case_execution import CaseExecution
+from reference_harness._declared_contributor import TEMPORAL_INFINITY
 from reference_harness._sql_placeholders import array_bind_indexes
-from reference_harness.case import Case, Model, discover_cases
+from reference_harness.case import Case, Model, discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
     _assert_binds_dialect_keys,
     _assert_reference_sql_dialect_keys,
 )
+from reference_harness.providers.postgres import _statement_binds as postgres_statement_binds
 from reference_harness.schemas import build_registry, load_schemas
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -229,6 +233,76 @@ def test_an_array_bind_is_found_bare_or_cast_to_an_array_type() -> None:
     )
 
     assert array_bind_indexes(statement) == {1, 2, 3}
+
+
+def test_every_column_array_an_insert_reads_apart_is_an_array_bind() -> None:
+    statement = (
+        "insert into item(a, b, c) select * from "
+        "unnest(cast(? as bigint[]), ?, cast(? as double precision[]))"
+    )
+
+    assert array_bind_indexes(statement) == {0, 1, 2}
+    assert array_bind_indexes("insert into item(a, b) values (?, ?), (?, ?)") == frozenset()
+
+
+_POSITION_COLUMN_ARRAYS = (
+    "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) select * from "
+    "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), "
+    "cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), "
+    "cast(? as timestamptz[]))"
+)
+
+
+def test_case_execution_converts_each_element_of_each_column_array_by_its_column() -> None:
+    model = load_model(_COMPATIBILITY_ROOT, "models/position.yaml")
+    case = Case(Path("synthetic.yaml"), {"shape": "scenario", "then": {}}, model)
+    binds = [
+        [1, 2],
+        ["A", None],
+        ["100.00", "2.50"],
+        ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"],
+        ["infinity", "2024-09-01T00:00:00.000000Z"],
+        ["2024-01-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z"],
+        ["infinity", "infinity"],
+    ]
+
+    provider = _RecordingExecutor()
+    CaseExecution(case, provider).execute(_POSITION_COLUMN_ARRAYS, binds)
+
+    january = datetime(2024, 1, 1, tzinfo=UTC)
+    (_sql, sent), *_ = provider.executed
+    assert sent == (
+        [1, 2],
+        ["A", None],
+        [Decimal("100.00"), Decimal("2.50")],
+        [january, datetime(2024, 3, 1, tzinfo=UTC)],
+        [TEMPORAL_INFINITY, datetime(2024, 9, 1, tzinfo=UTC)],
+        [january, january],
+        [TEMPORAL_INFINITY, TEMPORAL_INFINITY],
+    )
+
+
+def test_postgres_adapts_each_column_array_element_as_it_would_bind_alone() -> None:
+    statement = (
+        "insert into t(id, doc, opened) select * from "
+        "unnest(cast(? as bigint[]), cast(? as jsonb[]), cast(? as timestamptz[]))"
+    )
+    instant = datetime(2024, 1, 1, tzinfo=UTC)
+    documents = [{"kind": "object", "empty": None}, ["nested", None], [], None]
+
+    ids, sent_documents, opened = postgres_statement_binds(
+        statement, [[1, 2, 3, 4], documents, [instant, TEMPORAL_INFINITY, None, instant]]
+    )
+
+    # A document element is one `jsonb` value whatever its own JSON shape, and a
+    # `None` element is SQL NULL as a lone `None` bind is.
+    assert ids == [1, 2, 3, 4]
+    assert [type(element) for element in sent_documents] == [Jsonb, Jsonb, Jsonb, type(None)]
+    assert [element.obj for element in sent_documents[:3]] == documents[:3]
+    # One Python type per array: beside the open bound, every instant is text.
+    assert opened == [instant.isoformat(), "infinity", None, instant.isoformat()]
+    (_ids, _documents, finite) = postgres_statement_binds(statement, [[1], [{}], [instant]])
+    assert finite == [instant]
 
 
 def test_reference_sql_for_string_is_dialect_neutral() -> None:

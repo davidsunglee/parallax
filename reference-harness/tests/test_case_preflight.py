@@ -344,6 +344,113 @@ def test_preflight_refuses_an_array_not_cast_to_the_type_its_operand_compares_in
         preflight_case_literals(_array_statement(sql, binds))
 
 
+_READING_COLUMN_ARRAYS = (
+    "insert into reading(id, amount, day, profile, visits) select * from unnest("
+    "cast(? as bigint[]), cast(? as decimal[]), cast(? as date[]), cast(? as jsonb[]), "
+    "cast(? as jsonb[]))"
+)
+
+
+def _reading_column_arrays(**damaged: object) -> list[object]:
+    arrays: dict[str, object] = {
+        "id": [1, 2],
+        "amount": ["10.50", None],
+        "day": ["2026-01-15", "2026-01-16"],
+        "profile": [{"expires": "2026-01-15"}, None],
+        "visits": [[{"on": "2026-01-15"}, {"on": "2026-01-16"}], []],
+    }
+    return list((arrays | damaged).values())
+
+
+def test_preflight_accepts_canonical_column_arrays() -> None:
+    preflight_case_literals(_array_statement(_READING_COLUMN_ARRAYS, _reading_column_arrays()))
+
+
+@pytest.mark.parametrize(
+    ("damaged", "location"),
+    [
+        pytest.param({"amount": ["10.50", "10.5"]}, r"binds\[1\]\[1\]", id="scalar-element"),
+        pytest.param({"day": ["2026-1-15", "2026-01-16"]}, r"binds\[2\]\[0\]", id="date-element"),
+        pytest.param(
+            {"profile": [None, {"expires": "2026-1-15"}]},
+            r"binds\[3\]\[1\]\.expires",
+            id="value-object-element",
+        ),
+        pytest.param(
+            {"visits": [[], [{"on": "2026-01-15"}, {"on": "15.01.2026"}]]},
+            r"binds\[4\]\[1\]\[1\]\.on",
+            id="many-value-object-element",
+        ),
+    ],
+)
+def test_preflight_requires_canonical_elements_of_each_column_array(
+    damaged: dict[str, list[object]], location: str
+) -> None:
+    case = _array_statement(_READING_COLUMN_ARRAYS, _reading_column_arrays(**damaged))
+    with pytest.raises(CaseFailure, match=rf"then\.statements\[0\]\.{location}"):
+        preflight_case_literals(case)
+
+
+@pytest.mark.parametrize(
+    ("cast", "replacement", "expected"),
+    [
+        pytest.param("cast(? as bigint[])", "?", "its bigint column id", id="uncast"),
+        pytest.param(
+            "cast(? as bigint[])", "cast(? as int[])", "its bigint column id", id="narrower"
+        ),
+        pytest.param(
+            "cast(? as decimal[])",
+            "cast(? as decimal(12, 2)[])",
+            "its decimal column amount",
+            id="modified-decimal",
+        ),
+        pytest.param(
+            "cast(? as date[]), cast(? as jsonb[])",
+            "cast(? as date[]), cast(? as text[])",
+            "its jsonb column profile",
+            id="document-as-text",
+        ),
+    ],
+)
+def test_preflight_refuses_a_column_array_not_cast_to_its_columns_element_type(
+    cast: str, replacement: str, expected: str
+) -> None:
+    statement = _READING_COLUMN_ARRAYS.replace(cast, replacement, 1)
+    case = _array_statement(statement, _reading_column_arrays())
+    with pytest.raises(CaseFailure, match=f"inserted into {expected}"):
+        preflight_case_literals(case)
+
+
+@pytest.mark.parametrize(
+    ("statement", "binds", "refusal"),
+    [
+        pytest.param(
+            _READING_COLUMN_ARRAYS,
+            _reading_column_arrays(day=["2026-01-15"]),
+            "unequal lengths",
+            id="unequal-lengths",
+        ),
+        pytest.param(
+            _READING_COLUMN_ARRAYS,
+            _reading_column_arrays(id=1),
+            "not an array",
+            id="scalar-bind",
+        ),
+        pytest.param(
+            _READING_COLUMN_ARRAYS.replace("visits)", "visits, note)"),
+            _reading_column_arrays(),
+            "5 column array",
+            id="fewer-arrays-than-columns",
+        ),
+    ],
+)
+def test_preflight_refuses_column_arrays_not_one_equal_length_array_per_column(
+    statement: str, binds: list[object], refusal: str
+) -> None:
+    with pytest.raises(CaseFailure, match=refusal):
+        preflight_case_literals(_array_statement(statement, binds))
+
+
 def test_preflight_excludes_untyped_statement_control_binds() -> None:
     case = _case()
     case.then["statements"] = [
@@ -1012,3 +1119,45 @@ def test_preflight_leaves_a_shared_document_untyped_by_a_tag_that_pins_another_r
     dialect: str, where: str, binds: list[object]
 ) -> None:
     preflight_case_literals(_payment_detail_read(dialect, where, binds))
+
+
+_PAYMENT_COLUMN_ARRAYS = (
+    "insert into payment_document(id, kind, payload) select * from "
+    "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
+)
+
+
+def _payment_column_arrays(kinds: list[str], details: list[object]) -> Case:
+    documents = [{"detail": detail} for detail in details]
+    return _payment_write("postgres", _PAYMENT_COLUMN_ARRAYS, [[2, 3], kinds, documents])
+
+
+@pytest.mark.parametrize(
+    ("kinds", "details"),
+    [
+        (["cash", "card"], ["12.50", "visa-4242"]),
+        (["card", "cash"], ["visa-4242", "12.50"]),
+    ],
+)
+def test_preflight_types_each_document_of_a_column_array_by_its_own_rows_tag(
+    kinds: list[str], details: list[object]
+) -> None:
+    # Siblings sharing the table reuse `detail` with different declarations, so
+    # the document column cannot be typed once for the whole array: each element
+    # is checked against the members its own row's tag selects.
+    preflight_case_literals(_payment_column_arrays(kinds, details))
+
+
+@pytest.mark.parametrize(
+    ("kinds", "details", "location", "declared"),
+    [
+        (["cash", "card"], [-0.0, "visa-4242"], r"\[2\]\[0\]", r"decimal\(18,2\)"),
+        (["cash", "card"], ["12.50", 12.5], r"\[2\]\[1\]", "string"),
+        (["card", "cash"], ["visa-4242", -0.0], r"\[2\]\[1\]", r"decimal\(18,2\)"),
+    ],
+)
+def test_preflight_refuses_a_column_array_document_its_own_rows_tag_declares_otherwise(
+    kinds: list[str], details: list[object], location: str, declared: str
+) -> None:
+    with pytest.raises(CaseFailure, match=rf"binds\.postgres{location}\.detail: .* for {declared}"):
+        preflight_case_literals(_payment_column_arrays(kinds, details))

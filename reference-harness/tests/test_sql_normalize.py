@@ -148,6 +148,33 @@ def test_accepts_insert_values_placeholders_in_multi_row_insert() -> None:
     assert is_canonical("insert into account(id, owner) values (?, ?), (?, ?)")
 
 
+_COLUMN_ARRAY_INSERT = (
+    "insert into account(id, owner, balance, opened_at, profile) select * from "
+    "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), "
+    "cast(? as timestamptz[]), cast(? as jsonb[]))"
+)
+
+
+def test_a_column_array_insert_is_a_normalization_fixed_point() -> None:
+    assert is_canonical(_COLUMN_ARRAY_INSERT)
+    assert normalize(_COLUMN_ARRAY_INSERT) == _COLUMN_ARRAY_INSERT
+
+
+def test_a_column_array_insert_normalizes_to_its_tight_lowercase_spelling() -> None:
+    spaced = (
+        "INSERT INTO account (id, owner, balance, opened_at, profile) SELECT * FROM "
+        "UNNEST ( CAST(? AS BIGINT [ ]), CAST(? AS TEXT [ ]), CAST(? AS DECIMAL [ ]), "
+        "CAST(? AS TIMESTAMPTZ [ ]), CAST(? AS JSONB [ ]) )"
+    )
+    assert normalize(spaced) == _COLUMN_ARRAY_INSERT
+
+
+def test_rejects_a_literal_column_array() -> None:
+    assert not is_canonical(
+        "insert into account(id, owner) select * from unnest(cast(? as bigint[]), array [ 'x' ])"
+    )
+
+
 # Structural literals are NOT parameters — they are part of the canonical form
 # and must stay accepted.
 

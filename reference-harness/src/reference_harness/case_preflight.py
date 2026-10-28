@@ -16,9 +16,12 @@ from . import portable_literal
 from ._sql_placeholders import array_bind_indexes
 from ._statement_bind_inference import (
     CanonicalBindTarget,
+    ColumnArrayShapeError,
+    DocumentArrayBindTarget,
     DocumentBindTarget,
     LiteralBindTarget,
     array_cast_mismatches,
+    column_array_rows,
     infer_statement_bind_targets,
 )
 from .case import Case, Entity
@@ -671,20 +674,38 @@ def _statement_entry(
     arrays = array_bind_indexes(statement) if dialect == "postgres" else frozenset()
     if dialect == "postgres":
         for mismatch in array_cast_mismatches(case, statement, binds):
+            operand = (
+                f"a {mismatch.expected} operand"
+                if mismatch.column is None
+                else f"its {mismatch.expected} column {mismatch.column}"
+            )
             raise CaseFailure(
                 f"{case.path.name}: {where}[{mismatch.index}]: a Postgres array parameter "
-                f"compared with a {mismatch.expected} operand is cast to "
-                f"{mismatch.expected}[], not "
+                f"{'compared with' if mismatch.column is None else 'inserted into'} {operand} "
+                f"is cast to {mismatch.expected}[], not "
                 f"{'nothing' if mismatch.cast is None else mismatch.cast + '[]'} "
                 f"(m-dialect array parameter cast form)"
             )
+        try:
+            column_array_rows(statement, binds)
+        except ColumnArrayShapeError as exc:
+            raise CaseFailure(
+                f"{case.path.name}: {where}: the column-array INSERT {statement!r} {exc}."
+            ) from exc
     for index, target in infer_statement_bind_targets(case, statement, binds, dialect).items():
         if index >= len(binds):
             continue
         value = binds[index]
         if index in arrays and isinstance(value, list):
             for position, element in enumerate(value):
-                _canonical_target_value(case, target, element, f"{where}[{index}][{position}]")
+                element_target = (
+                    target.elements[position]
+                    if isinstance(target, DocumentArrayBindTarget)
+                    else target
+                )
+                _canonical_target_value(
+                    case, element_target, element, f"{where}[{index}][{position}]"
+                )
         else:
             _canonical_target_value(case, target, value, f"{where}[{index}]")
 
@@ -701,6 +722,8 @@ def _canonical_target_value(
             _document_member_value(case, target, value, where)
     elif isinstance(target, DocumentBindTarget):
         _relational_document(case, target.members, value, where)
+    elif isinstance(target, DocumentArrayBindTarget):
+        return
     else:
         _declared_member_literal(case, target.contributor, value, where)
 
