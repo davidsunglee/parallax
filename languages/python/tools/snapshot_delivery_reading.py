@@ -36,6 +36,7 @@ from parallax.core._execution._publication import read_projection
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.db_port import (
     DRIVER_MANAGED,
+    ArrayBind,
     CleanupResult,
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -241,7 +242,7 @@ class CatalogPort:
     ) -> list[Row]:
         del document_reads
         if "order_item t0" in sql:
-            parents = cast("list[int]", binds[0])
+            parents = cast("list[int]", cast("ArrayBind", binds[0]).values)
             first_id = cast("int", self._orders[0]["id"])
             return projected_rows(
                 sql,

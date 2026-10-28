@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Final, Literal, assert_never, cast
 
 from parallax.core.base import STRING, ManagedValue, NeutralType
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import Dialect, ScalarResult
 from parallax.core.document_codec import comparison_text, is_text_compared
 from parallax.core.inheritance import InheritanceFacet, root_metadata
@@ -782,14 +783,14 @@ def _render_membership(
 ) -> str:
     """A membership over its already resolved ``subject``.
 
-    Postgres binds a list as one array cast to the type ``subject`` compares in,
-    which keeps the text of the statement independent of the list's length;
-    another dialect lists one placeholder per element, which a deferred list
-    expands into when its template renders. An empty authored list keeps its
+    A dialect that binds arrays binds a list as one array cast to the type
+    ``subject`` compares in, which keeps the text of the statement independent
+    of the list's length; another dialect lists one placeholder per element,
+    which a deferred list expands into when its template renders. An empty authored list keeps its
     literal `in ()` on every dialect: an empty array would answer a negated
     membership true even for a null subject.
     """
-    array = scope.dialect.name == "postgres"
+    array = scope.dialect.binds_arrays
     if isinstance(values, DeferredKeySet):
         if tag != "in":  # pragma: no cover - generated child reads are positive
             raise SqlGenError("a deferred key set supports only positive membership")
@@ -936,11 +937,14 @@ def prepared_operand(form: ExecutionValueForm, value: object) -> object:
             return comparison_text(neutral_type, value)
         case AffixForm(op=op, case_insensitive=folded):
             return _pattern(op, cast("str", value), folded)
-        case MembershipForm(neutral_type=neutral_type, comparison_text=True):
-            return [
+        case MembershipForm(neutral_type=neutral_type, comparison_text=True, array=array):
+            texts: list[object] = [
                 comparison_text(neutral_type, element)
                 for element in cast("tuple[object, ...]", value)
             ]
+            return ArrayBind(STRING, texts) if array else texts
+        case MembershipForm(neutral_type=neutral_type, array=True):
+            return ArrayBind(neutral_type, list(cast("tuple[object, ...]", value)))
         case MembershipForm():
             return list(cast("tuple[object, ...]", value))
         case _:

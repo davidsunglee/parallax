@@ -11,6 +11,7 @@ from parallax.core.base import (
     DocumentReadOrdinals,
     ManagedValue,
 )
+from parallax.core.db_port import ArrayBind
 from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.document_codec import is_text_compared
@@ -38,6 +39,7 @@ from parallax.core.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
     PAGE_CAP,
     ExecutionValuePositions,
+    GatheredKeysForm,
     LoweredStatement,
     SqlGenError,
     StatementBuilder,
@@ -190,8 +192,8 @@ class CompiledTemplate:
         """This read with its execution values taken from ``query`` and the
         gathered ``keys``, or :attr:`compiled` itself when it defers none.
 
-        A Postgres key-set bind is the ``keys`` list itself, so the caller hands
-        it over and must not mutate it afterwards.
+        An array key-set bind holds the ``keys`` list itself, so the caller
+        hands it over and must not mutate it afterwards.
         """
         positions = self._positions
         if not positions:
@@ -271,7 +273,11 @@ def _execution_value(
         case ("temporal", dimension, bound):
             return _prepared_operand(group.form, _temporal_bound(query, dimension, bound))
         case ("keys",):
-            return _gathered(keys)
+            match group.form:
+                case GatheredKeysForm(neutral_type=neutral_type, array=True):
+                    return ArrayBind(neutral_type, cast("list[object]", _gathered(keys)))
+                case _:
+                    return _gathered(keys)
         case ("paging", at):
             seek = None if query is None or query.paging is None else query.paging.seek
             if seek is None:

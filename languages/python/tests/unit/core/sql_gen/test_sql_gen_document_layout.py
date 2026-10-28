@@ -31,6 +31,7 @@ from parallax.core.base import (
     TIMESTAMP,
     DocumentValue,
 )
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.navigate import (
@@ -209,7 +210,7 @@ def test_an_entity_document_classifies_each_requested_member() -> None:
             oa.Membership(op="in", subject=oa.FieldSubject("Person.score"), values=(1, 2)),
             "where cast(jsonb_extract_path_text(t0.payload, ?) as bigint)"
             " = any(cast(? as bigint[]))",
-            ("score", [1, 2]),
+            ("score", ArrayBind(INT64, [1, 2])),
         ),
         (
             oa.NullCheck(op="isNull", subject=oa.FieldSubject("Person.displayName")),
@@ -492,12 +493,9 @@ def test_an_include_child_binds_its_retained_perspective_after_its_keys() -> Non
     assert statement.sql.endswith(
         f"from ship t0 where t0.fleet_id = any(cast(? as bigint[])) and {_visible('t0.')}"
     )
-    assert statement.binds == ([1, 2], *_PINNED_BINDS)
+    assert statement.binds == (ArrayBind(INT64, [1, 2]), *_PINNED_BINDS)
     assert statement.wire_binds() == ([1, 2], *_PINNED_WIRE)
-    assert _spans(statement) == [
-        (range(1), INT64, "MANAGED_ARRAY"),
-        (range(1, 5), TIMESTAMP, "MANAGED"),
-    ]
+    assert _spans(statement) == [(range(1, 5), TIMESTAMP, "MANAGED")]
 
 
 @pytest.mark.parametrize(

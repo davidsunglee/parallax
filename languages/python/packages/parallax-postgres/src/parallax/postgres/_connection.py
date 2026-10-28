@@ -1,26 +1,45 @@
 from __future__ import annotations
 
 import contextlib
+import struct
 import sys
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, cast
 
 import psycopg
 from psycopg import postgres
-from psycopg.abc import AdaptContext, Buffer
-from psycopg.adapt import Dumper
+from psycopg.abc import AdaptContext, Buffer, DumperKey
+from psycopg.abc import Dumper as ElementDumper
+from psycopg.adapt import Dumper, PyFormat, RecursiveDumper
 from psycopg.errors import error_from_result
-from psycopg.pq import DiagnosticField, ExecStatus, TransactionStatus
+from psycopg.pq import DiagnosticField, ExecStatus, Format, TransactionStatus
 from psycopg.pq.abc import PGresult
 from psycopg.rows import RowMaker, TupleRow, tuple_row
 from psycopg.types.array import ListBinaryDumper
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
-from parallax.core.base import TemporalBound
+from parallax.core.base import (
+    INFINITY,
+    Boolean,
+    Bytes,
+    Date,
+    Decimal,
+    Float32,
+    Float64,
+    Int32,
+    Int64,
+    NeutralType,
+    String,
+    TemporalBound,
+    Time,
+    Timestamp,
+    Uuid,
+)
 from parallax.core.db_error import DatabaseError, classify_error
 from parallax.core.db_port import (
     AccessMode,
+    ArrayBind,
     BeginFailed,
     CallbackRaised,
     CanonicalWriteStatement,
@@ -181,57 +200,106 @@ def translating_driver_errors(dialect: Dialect) -> Generator[None]:
         raise translate_driver_error(dialect, exc) from exc
 
 
-class _Int8Array(list[int]):
-    """A nonempty list of exact ``int`` values, bound as one binary ``int8[]``."""
+# The PostgreSQL type an array element of each declared Neutral Type binds as;
+# its array type is the one `m-dialect`'s array parameter cast form names for a
+# column of that type.
+_ARRAY_ELEMENT_TYPES: Final[Mapping[type[NeutralType], str]] = {
+    Boolean: "bool",
+    Int32: "int4",
+    Int64: "int8",
+    Float32: "float4",
+    Float64: "float8",
+    Decimal: "numeric",
+    String: "text",
+    Bytes: "bytea",
+    Date: "date",
+    Time: "time",
+    Timestamp: "timestamptz",
+    Uuid: "uuid",
+}
 
-    __slots__ = ()
+_TIMESTAMPTZ_OID: Final = postgres.types["timestamptz"].oid
+
+# PostgreSQL's binary timestamp `infinity`: the largest int64 microsecond count.
+_BINARY_INFINITY: Final = struct.pack("!q", 2**63 - 1)
 
 
-class _Int8ArrayBinaryDumper(ListBinaryDumper):
-    """Dumps an :class:`_Int8Array` without inspecting its elements first.
+class _TimestampBinaryDumper(Dumper):
+    """Dumps an admitted instant, or the m-core open upper bound as native
+    ``infinity``, as one binary ``timestamptz``."""
 
-    psycopg's own list dumper scans every list it binds to choose ``int2[]``,
-    ``int4[]``, ``int8[]`` or ``numeric[]`` by magnitude. A fixed type skips that
-    scan, and the statement's array cast (`m-dialect` array parameter cast form)
-    keeps the comparison in the subject's own type whatever the array arrives as.
+    format = Format.BINARY
+    oid = _TIMESTAMPTZ_OID
+
+    def __init__(self, cls: type, context: AdaptContext | None = None) -> None:
+        super().__init__(cls, context)
+        adapters = postgres.adapters if context is None else context.adapters
+        finite = adapters.get_dumper_by_oid(_TIMESTAMPTZ_OID, Format.BINARY)
+        self._finite = finite(cls, context)
+
+    def dump(self, obj: object) -> Buffer | None:
+        return _BINARY_INFINITY if obj is INFINITY else self._finite.dump(obj)
+
+
+class _ArrayElementsDumper(ListBinaryDumper):
+    """Dumps an :class:`ArrayBind`'s own value list as a one-dimensional binary
+    array of a fixed element dumper's type, without inspecting the elements to
+    choose one."""
+
+    def __init__(
+        self, element: ElementDumper, array_oid: int, context: AdaptContext | None
+    ) -> None:
+        super().__init__(list, context)
+        self.sub_dumper = element
+        self.oid = array_oid
+
+    def dump(self, obj: ArrayBind) -> Buffer | None:  # pyright: ignore[reportIncompatibleMethodOverride] - psycopg hands this dumper only the carrier it was upgraded for
+        return super().dump(obj.values)
+
+
+class _ArrayBindDumper(RecursiveDumper):
+    """Binds an :class:`ArrayBind` as a binary array of its declared element
+    type.
+
+    psycopg asks for a dumper per carrier and upgrades it per element type, so
+    each statement resolves one element dumper per type it binds. Because the
+    element type is declared rather than inferred, an integer array's type never
+    varies with the magnitudes it holds.
     """
 
-    oid = postgres.types["int8"].array_oid
-    element_oid = postgres.types["int8"].oid
+    format = Format.BINARY
 
+    def get_key(self, obj: ArrayBind, format: PyFormat) -> DumperKey:
+        del format
+        return (ArrayBind, type(obj.element_type))
 
-_INT8_BOUNDS = (-(2**63), 2**63 - 1)
+    def upgrade(self, obj: ArrayBind, format: PyFormat) -> Dumper:
+        del format
+        element_type = type(obj.element_type)
+        info = self._tx.adapters.types[_ARRAY_ELEMENT_TYPES[element_type]]
+        if element_type is Timestamp:
+            element: ElementDumper = _TimestampBinaryDumper(type(None), self._tx)
+        else:
+            dumper = self._tx.adapters.get_dumper_by_oid(info.oid, Format.BINARY)
+            element = dumper(type(None), self._tx)
+        return _ArrayElementsDumper(element, info.array_oid, self._tx)
 
-
-def _int8_array(values: list[object]) -> _Int8Array:
-    # The int8 element dumper would bind ``True`` as 1 and ``None`` as a NULL
-    # element, so anything but an exact in-range ``int`` is refused here.
-    if {*map(type, values)} != {int}:
-        raise TypeError("an integer array bind holds an element that is not an exact int")
-    integers = cast("list[int]", values)
-    if min(integers) < _INT8_BOUNDS[0] or max(integers) > _INT8_BOUNDS[1]:
-        raise ValueError("an integer array bind holds an element outside the int8 range")
-    return _Int8Array(integers)
+    def dump(self, obj: object) -> Buffer | None:  # pragma: no cover - only upgrades dump
+        raise TypeError("an array bind dumps through the dumper of its element type")
 
 
 def adapt_binds(binds: Sequence[object]) -> list[object]:
     """Adapt neutral binds to psycopg's driver bind types at the adapter boundary.
 
     A :class:`~parallax.core.db_port.JsonDocument` (the neutral ``json`` /
-    value-object carrier) becomes a psycopg ``Jsonb``. A nonempty list whose
-    first element is an exact ``int`` becomes an :class:`_Int8Array`, bound as
-    binary ``int8[]`` on a connection :func:`initialize_connection` prepared; an
-    element of any other type, or outside the int8 range, is refused rather than
-    converted. Every other bind passes through unchanged. This keeps the psycopg
-    bind mechanics internal to the adapter — no driver type is exported to the
-    developer surface (m-db-port).
+    value-object carrier) becomes a psycopg ``Jsonb``. An
+    :class:`~parallax.core.db_port.ArrayBind` passes through unchanged to the
+    dumper :func:`initialize_connection` registers for it, as does every other
+    bind. This keeps the psycopg bind mechanics internal to the adapter — no
+    driver type is exported to the developer surface (m-db-port).
     """
     return [
-        Jsonb(bind.value, dumps=dump_document)
-        if isinstance(bind, JsonDocument)
-        else _int8_array(cast("list[object]", bind))
-        if type(bind) is list and bind and type(cast("list[object]", bind)[0]) is int
-        else bind
+        Jsonb(bind.value, dumps=dump_document) if isinstance(bind, JsonDocument) else bind
         for bind in binds
     ]
 
@@ -432,7 +500,7 @@ def initialize_connection(connection: psycopg.Connection[TupleRow]) -> None:
 
     Called once per connection, before anything may use it, and for every way
     one comes into existence. It installs the loaders the read path depends on,
-    the open upper bound's dumper and the integer array dumper, on the
+    the open upper bound's dumper and the array dumper, on the
     connection's own adapter map so that psycopg's process-wide defaults stay
     untouched, and then checks the two effective session settings those
     loaders cannot work without that a
@@ -452,7 +520,7 @@ def initialize_connection(connection: psycopg.Connection[TupleRow]) -> None:
     connection.adapters.register_loader("jsonb", _DocumentJsonbLoader)
     connection.adapters.register_loader("jsonb", _DocumentJsonbBinaryLoader)
     connection.adapters.register_dumper(TemporalBound, _NativeInfinityDumper)
-    connection.adapters.register_dumper(_Int8Array, _Int8ArrayBinaryDumper)
+    connection.adapters.register_dumper(ArrayBind, _ArrayBindDumper)
     _require_supported_session(connection)
 
 

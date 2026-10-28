@@ -18,6 +18,8 @@ from __future__ import annotations
 import pytest
 
 from parallax.core import predicate as oa
+from parallax.core.base import STRING
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import History
 from parallax.core.predicate import ModelRejectedError
@@ -46,7 +48,7 @@ def test_dotted_null_check_and_membership() -> None:
     assert membership.statement.sql.endswith(
         "jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))"
     )
-    assert membership.statement.binds == ("city", ["Oslo", "Boston"])
+    assert membership.statement.binds == ("city", ArrayBind(STRING, ["Oslo", "Boston"]))
 
 
 def test_a_dotted_range_lowers_to_one_between_with_the_typed_cast() -> None:
@@ -86,7 +88,14 @@ def test_dotted_negated_membership_lowers_to_a_leading_not_with_no_extra_bind() 
     where = "where jsonb_extract_path_text(t0.address, ?) = any(cast(? as text[]))"
     assert positive.statement.sql.endswith(where)
     assert negated.statement.sql.endswith(f"where not {where.removeprefix('where ')}")
-    assert negated.statement.binds == positive.statement.binds == ("city", ["Oslo"])
+    assert (
+        negated.statement.binds
+        == positive.statement.binds
+        == (
+            "city",
+            ArrayBind(STRING, ["Oslo"]),
+        )
+    )
 
 
 def test_a_range_inside_a_quantifier_binds_one_element() -> None:
@@ -146,7 +155,7 @@ def test_range_and_negated_membership_lower_inside_a_quantifier() -> None:
         "555-9000",
         "555-9999",
         "type",
-        ["work"],
+        ArrayBind(STRING, ["work"]),
     )
 
 

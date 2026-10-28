@@ -22,7 +22,8 @@ import pytest
 
 from parallax.core import deep_fetch, inheritance, storage_layout
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY
+from parallax.core.base import INFINITY, STRING
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.navigate import _closed  # pyright: ignore[reportPrivateUsage]
@@ -693,7 +694,7 @@ def test_every_scalar_operation_reads_a_shared_join() -> None:
         "t1.sku = any(cast(? as text[])) and "
         "t1.quantity between ? and ? and t1.sku like ? and not t1.shipped_on is null"
     )
-    assert compiled.statement.binds == (["A"], 1, 9, "S%")
+    assert compiled.statement.binds == (ArrayBind(STRING, ["A"]), 1, 9, "S%")
 
 
 def test_distinct_relationships_to_one_entity_open_their_own_joins() -> None:

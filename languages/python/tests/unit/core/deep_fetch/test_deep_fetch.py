@@ -31,7 +31,8 @@ from parallax.conformance.read_models import (
     WildBoar,
 )
 from parallax.core import DomainModel, deep_fetch, inheritance, relationship
-from parallax.core.base import INFINITY, ManagedValue
+from parallax.core.base import INFINITY, INT64, ManagedValue
+from parallax.core.db_port import ArrayBind
 from parallax.core.deep_fetch._include_tree import EMPTY_RENDER, IncludePosition
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
@@ -454,7 +455,7 @@ def test_child_query_is_a_plain_in_membership() -> None:
         EntityIdentity("parallax.compatibility", "OrderStatus"), "orderId"
     )
     assert isinstance(query.predicate.predicate.values, DeferredKeySet)
-    assert _rendered_keys(ORDERS, step, [1, 2, 3]) == [1, 2, 3]
+    assert _rendered_keys(ORDERS, step, [1, 2, 3]) == ArrayBind(INT64, [1, 2, 3])
 
 
 def test_child_query_carries_declared_relationship_order_by() -> None:
@@ -505,7 +506,7 @@ def test_child_query_injects_the_propagated_root_selections_after_the_in_members
     assert isinstance(membership, ResolvedMembership)
     assert isinstance(membership.values, DeferredKeySet)
     assert _child_terms(child_query) == _injected(POLICY, "Coverage", _VALID, _TX)
-    assert _rendered_keys(POLICY, step, [1, 2]) == [1, 2]
+    assert _rendered_keys(POLICY, step, [1, 2]) == ArrayBind(INT64, [1, 2])
 
 
 def test_a_back_reference_step_exposes_no_query_construction() -> None:

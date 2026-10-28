@@ -275,6 +275,9 @@ class Dialect:
     # but left unchanged, which is what lets a matched count prove that an
     # unchanged row still stands as observed (`m-dialect` "Unchanged-row count").
     counts_unchanged_rows: bool = False
+    # Whether one bind may carry a whole array, cast through
+    # :meth:`array_parameter` (`m-dialect` "Array parameter cast form").
+    binds_arrays: bool = False
     # The native codes reporting an exclusion constraint's violation, one kind
     # of the `constraintViolation` category (`m-dialect` "Exclusion
     # violations").
@@ -792,5 +795,6 @@ POSTGRES: Final[Dialect] = Dialect(
     max_identifier_bytes=63,
     max_bind_parameters=65_535,
     counts_unchanged_rows=True,
+    binds_arrays=True,
     exclusion_violation_codes=frozenset({"23P01"}),
 )

@@ -39,7 +39,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import ConnectionAcquisitionError
+from parallax.core.db_port import ArrayBind, ConnectionAcquisitionError
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
@@ -494,12 +494,12 @@ def test_a_read_over_a_session_ended_while_idle_is_replaced_without_preparing_it
     (lost, repeated, *rest) = submissions
     assert lost[0] is not repeated[0]
     assert lost[1] == repeated[1] and all(map(operator.is_, lost[2], repeated[2]))
-    assert [bind for bind in repeated[2][0] if isinstance(bind, list)] == [[1, 2]]
+    assert [bind.values for bind in repeated[2][0] if isinstance(bind, ArrayBind)] == [[1, 2]]
     assert [sql for _, sql, _ in [repeated, *rest]] == [sql for _, sql, _ in expected_submissions]
     if layout == "columns":
         (children,) = (submission for submission in rest if len(submission[1]) == 2)
         assert children[0] is repeated[0]
-        assert all(any(isinstance(bind, list) for bind in binds) for binds in children[2])
+        assert all(any(isinstance(bind, ArrayBind) for bind in binds) for binds in children[2])
 
 
 def test_a_child_pipeline_cannot_claim_the_opportunity_its_root_read_spent(

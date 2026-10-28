@@ -24,7 +24,7 @@ from tests.unit.core.read_delivery._read_plan_differential import (
 
 _READ_CASES = [case for case in cases() if case.shape == "read"]
 _CORPUS_READS = [corpus_read(case) for case in _READ_CASES]
-_MARIADB = replace(POSTGRES, name="mariadb")
+_MARIADB = replace(POSTGRES, name="mariadb", binds_arrays=False)
 _DIALECTS = pytest.mark.parametrize("dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"])
 
 

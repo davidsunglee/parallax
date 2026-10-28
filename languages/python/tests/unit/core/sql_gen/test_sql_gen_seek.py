@@ -862,7 +862,7 @@ def test_both_continuing_arms_of_a_union_render_its_branch_roots_through_fresh_b
             builder.source_binding(SharedSourceRef(sibling, 0))
 
 
-_MARIADB: Final = replace(POSTGRES, name="mariadb")
+_MARIADB: Final = replace(POSTGRES, name="mariadb", binds_arrays=False)
 _ORDER_SHIPPED = "parallax.compatibility.OrderItem.shippedOn"
 _ORDER_ORDERED_ON = "parallax.compatibility.Order.orderedOn"
 _POSITION_VALUE = "parallax.compatibility.Position.value"

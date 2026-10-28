@@ -21,7 +21,8 @@ from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMN
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import continuation, deep_fetch
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INFINITY, TemporalBound
+from parallax.core.base import INFINITY, INT64, TemporalBound
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -1087,7 +1088,9 @@ def test_cache_hits_render_their_own_values_outside_the_cache_lock(
 
 
 @pytest.mark.parametrize(
-    "dialect", [POSTGRES, replace(POSTGRES, name="mariadb")], ids=["postgres", "mariadb"]
+    "dialect",
+    [POSTGRES, replace(POSTGRES, name="mariadb", binds_arrays=False)],
+    ids=["postgres", "mariadb"],
 )
 def test_memberships_of_every_width_share_one_entry_and_render_their_own_elements(
     dialect: Dialect,
@@ -1106,14 +1109,16 @@ def test_memberships_of_every_width_share_one_entry_and_render_their_own_element
     if dialect is POSTGRES:
         assert first.sql == widest.sql
         assert first.sql.endswith("where t0.id = any(cast(? as bigint[]))")
-        assert widest.binds == (list(range(1, 1001)),)
+        assert widest.binds == (ArrayBind(INT64, list(range(1, 1001))),)
     else:
         assert first.sql.endswith("where t0.id in (?)")
         assert widest.binds == tuple(range(1, 1001))
 
 
 @pytest.mark.parametrize(
-    "dialect", [POSTGRES, replace(POSTGRES, name="mariadb")], ids=["postgres", "mariadb"]
+    "dialect",
+    [POSTGRES, replace(POSTGRES, name="mariadb", binds_arrays=False)],
+    ids=["postgres", "mariadb"],
 )
 def test_a_wide_membership_template_retains_one_position_group_per_rendering(
     dialect: Dialect,
@@ -1153,7 +1158,7 @@ def test_an_empty_membership_compiles_its_literal_list_on_every_dialect() -> Non
     assert isinstance(membership, ResolvedMembership)
     empty = replace(nonempty, predicate=replace(membership, values=()))
 
-    for dialect in (POSTGRES, replace(POSTGRES, name="mariadb")):
+    for dialect in (POSTGRES, replace(POSTGRES, name="mariadb", binds_arrays=False)):
         cache = ReadPlanCache()
         _plan(cache, nonempty, dialect=dialect)
         statement = _root(_plan(cache, empty, dialect=dialect))[0].statement
@@ -1933,8 +1938,8 @@ def _carriers(binds: Sequence[object]) -> list[tuple[object, ...]]:
 def _carrier(bind: object) -> tuple[object, ...]:
     if isinstance(bind, Decimal):
         return type(bind), bind, bind.as_tuple()
-    if isinstance(bind, list):
-        return list, tuple(_carriers(cast("list[object]", bind)))
+    if isinstance(bind, ArrayBind):
+        return ArrayBind, bind.element_type, tuple(_carriers(bind.values))
     return type(bind), bind
 
 
@@ -2003,7 +2008,7 @@ _RENDERED_OPERANDS: tuple[
         "Order",
         {"in": {"path": "Order.id", "values": [1, 2]}},
         {"in": {"path": "Order.id", "values": [5, 6, 7]}},
-        [(list, ((int, 5), (int, 6), (int, 7)))],
+        [(ArrayBind, INT64, ((int, 5), (int, 6), (int, 7)))],
     ),
     (
         "unescaped-affix",
@@ -2469,9 +2474,10 @@ def test_direct_compilation_and_write_reads_prepare_no_template(
         order,
     )
 
-    assert direct.statement.binds == ([1, 2], 1, 1, 2, [1, 2], 2, 2)
+    keys = ArrayBind(INT64, [1, 2])
+    assert direct.statement.binds == (keys, 1, 1, 2, keys, 2, 2)
     assert 7 in target.statement.binds
-    assert written.binds == ([1, 2],)
+    assert written.binds == (keys,)
 
 
 _CORPUS_ORDERS = corpus_model("orders")

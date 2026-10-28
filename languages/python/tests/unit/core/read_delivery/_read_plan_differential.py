@@ -22,6 +22,7 @@ from parallax.core.base import ManagedValue, NeutralType, matches_neutral_type
 from parallax.core.base import String as StringType
 from parallax.core.base import Timestamp as TimestampType
 from parallax.core.base import Uuid as UuidType
+from parallax.core.db_port import ArrayBind
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import deserialize
 from parallax.core.object_query._resolved import (
@@ -253,8 +254,8 @@ def observed(read: CompiledRead) -> tuple[object, ...]:
 
 
 def _carrier(bind: object) -> tuple[object, ...]:
-    if isinstance(bind, list):
-        return list, tuple(_carrier(element) for element in cast("list[object]", bind))
+    if isinstance(bind, ArrayBind):
+        return ArrayBind, bind.element_type, tuple(_carrier(element) for element in bind.values)
     if isinstance(bind, Decimal):
         return Decimal, bind, bind.as_tuple()
     if isinstance(bind, float):

@@ -1,9 +1,10 @@
 """A delivered child level's key array, as the server plans it.
 
-The adapter binds every integer array as ``bigint[]``, so keys would reach a
-narrower key column cross-typed. Each level is planned by the server with the
-binds the read delivered, and again with the cast removed, which shows what the
-cast is holding the comparison against.
+The level binds its gathered keys as one array carrier of the key's declared
+type, and its statement casts that array to the key column's type. Each level is
+planned by the server with the binds the read delivered, and again with the
+cast removed, which shows that the bound array already arrives in the key's own
+type rather than one its magnitudes would choose.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ import pytest
 
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, attr, rel
+from parallax.core.base import INT32, INT64, NeutralType
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.sql_gen import LoweredStatement
@@ -76,22 +79,23 @@ def _planned_array(profile_run: Any, sql: str, binds: tuple[object, ...]) -> str
 
 
 @pytest.mark.parametrize(
-    ("holder", "element", "planned"),
+    ("holder", "declared", "element", "planned"),
     [
-        pytest.param(WideHolder, "bigint", "::bigint[])", id="int64"),
-        pytest.param(NarrowHolder, "int", "::integer[])", id="int32"),
+        pytest.param(WideHolder, INT64, "bigint", "::bigint[])", id="int64"),
+        pytest.param(NarrowHolder, INT32, "int", "::integer[])", id="int32"),
     ],
 )
 def test_a_child_level_compares_small_keys_as_an_array_of_the_key_type(
-    profile_run: Any, holder: type[Any], element: str, planned: str
+    profile_run: Any, holder: type[Any], declared: NeutralType, element: str, planned: str
 ) -> None:
     statement = _child_level(profile_run, holder)
     cast_array = f"cast(? as {element}[])"
     assert f"t0.holder_id = any({cast_array})" in statement.sql
     (keys,) = statement.binds
-    assert isinstance(keys, list)
-    assert sorted(cast("list[int]", keys)) == [1, 2]
+    assert isinstance(keys, ArrayBind)
+    assert keys.element_type == declared
+    assert sorted(cast("list[int]", keys.values)) == [1, 2]
 
     assert _planned_array(profile_run, statement.sql, statement.binds).endswith(planned)
     uncast = statement.sql.replace(cast_array, "?")
-    assert _planned_array(profile_run, uncast, statement.binds).endswith("::bigint[])")
+    assert _planned_array(profile_run, uncast, statement.binds).endswith(planned)

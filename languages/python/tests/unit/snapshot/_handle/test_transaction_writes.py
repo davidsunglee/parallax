@@ -32,8 +32,8 @@ from parallax.conformance.vo_models import (
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr, unit_work
 from parallax.core._execution._options import OMITTED
 from parallax.core._execution._unit_work import instructions
-from parallax.core.base import DocumentValue, InstantError, PresentDocument
-from parallax.core.db_port import MappingRow
+from parallax.core.base import INT64, DocumentValue, InstantError, PresentDocument
+from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import EntityGraphWriter, NodeHandle
 from parallax.core.entity._errors import EntityRowError
@@ -337,7 +337,7 @@ def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversi
                 "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
                 "where t0.consignment_id = any(cast(? as bigint[])) for share of t0"
             ),
-            ([1],),
+            (ArrayBind(INT64, [1]),),
             read_only=True,
         ),
         WriteCall(

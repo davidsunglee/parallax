@@ -36,7 +36,7 @@ _MODEL: Final = corpus_model("wallet")
 _WALLET: Final = target(_MODEL, "Wallet")
 # Postgres binds a membership as one array; a dialect without arrays expands it
 # into one same-type bind per element.
-_ARRAYLESS: Final = dataclasses.replace(POSTGRES, name="mariadb")
+_ARRAYLESS: Final = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
 # Every count is past CPython's small-integer cache, so the span bound each one
 # ends at is an integer the statement allocates at every count rather than at
 # some.

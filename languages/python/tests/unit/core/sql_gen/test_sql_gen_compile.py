@@ -30,6 +30,7 @@ from parallax.core import predicate as oa
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import DATE as DATE_TYPE
 from parallax.core.base import INFINITY, INT64, STRING, ManagedValue
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.inheritance import _compile as inheritance_compile
@@ -537,7 +538,7 @@ def test_an_encoded_result_key_an_authored_column_also_spells_refuses_the_read(
         compile_read(oa.TrueNode(), meta, POSTGRES, target(meta, "Item"), result_form=result_form)
 
 
-_MARIADB = dataclasses.replace(POSTGRES, name="mariadb")
+_MARIADB = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
 
 
 def _child_template(
@@ -563,8 +564,8 @@ def test_postgres_child_template_keeps_one_array_bind_for_every_key_count() -> N
 
     assert first.statement.sql == several.statement.sql
     assert first.statement.sql.endswith("where t0.order_id = any(cast(? as bigint[]))")
-    assert first.statement.binds == ([1],)
-    assert several.statement.binds == ([1, 42],)
+    assert first.statement.binds == (ArrayBind(INT64, [1]),)
+    assert several.statement.binds == (ArrayBind(INT64, [1, 42]),)
     assert several.statement.wire_binds() == ([1, 42],)
 
 
@@ -610,7 +611,9 @@ def test_postgres_child_template_binds_the_gathered_list_under_the_template_meta
 
     rendered = template.render(keys).statement
 
-    assert rendered.binds[0] is keys
+    (bind,) = rendered.binds
+    assert bind == ArrayBind(INT64, cast("list[object]", keys))
+    assert cast("ArrayBind", bind).values is keys
     assert rendered.typed_bind_spans is template.compiled.statement.typed_bind_spans
     assert rendered.wire_bind_overrides is template.compiled.statement.wire_bind_overrides
 
@@ -733,7 +736,8 @@ def test_a_template_renders_every_key_occurrence_of_one_form_from_one_gathered_s
     statement = rendered.render(keys).statement
 
     if dialect.name == "postgres":
-        assert statement.binds == (keys, keys)
+        assert statement.binds == (ArrayBind(INT64, cast("list[object]", keys)),) * 2
+        assert statement.binds[0] is statement.binds[1]
         assert statement.sql.endswith(
             "where t0.order_id = any(cast(? as bigint[])) and t0.id = any(cast(? as bigint[]))"
         )
@@ -798,9 +802,14 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         original_keys = tuple(keys)
         gathered = cast("list[ManagedValue]", keys)
         rendered = template.render(gathered)
-        key_binds: tuple[object, ...] = (keys,) if dialect.name == "postgres" else tuple(keys)
+        key_binds: tuple[object, ...] = (
+            (ArrayBind(INT64, cast("list[object]", keys)),)
+            if dialect.name == "postgres"
+            else tuple(keys)
+        )
+        key_wires: tuple[object, ...] = (keys,) if dialect.name == "postgres" else tuple(keys)
         assert rendered.statement.binds == ("before", *key_binds, "after") * branches + (7,)
-        assert rendered.statement.wire_binds() == rendered.statement.binds
+        assert rendered.statement.wire_binds() == ("before", *key_wires, "after") * branches + (7,)
         membership = (
             "t0.folder_id = any(cast(? as bigint[]))"
             if dialect.name == "postgres"
@@ -816,7 +825,10 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         assert rendered.resolved_position == template.compiled.resolved_position
         assert rendered.statement.sql.endswith("limit ?")
         if dialect.name == "postgres":
-            assert all(rendered.statement.binds[1 + 3 * index] is keys for index in range(branches))
+            assert all(
+                cast("ArrayBind", rendered.statement.binds[1 + 3 * index]).values is keys
+                for index in range(branches)
+            )
             assert rendered.statement.typed_bind_spans is original.typed_bind_spans
         assert tuple(keys) == original_keys
     assert template.compiled.statement is original

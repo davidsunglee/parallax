@@ -13,11 +13,13 @@ lifetimes in ``test_postgres_pool.py``.
 
 from __future__ import annotations
 
+import datetime as dt
 import decimal
 import gc
 import json
 import operator
 import struct
+import uuid
 from collections.abc import Callable, Sequence
 from time import monotonic
 from types import FrameType, FunctionType, ModuleType, SimpleNamespace
@@ -31,22 +33,36 @@ from psycopg.adapt import AdaptersMap, PyFormat, Transformer
 from psycopg.pq import ExecStatus, Format, TransactionStatus
 from psycopg.rows import TupleRow
 from psycopg.sql import Composable
+from psycopg.types.array import BaseListDumper, ListBinaryDumper
 from psycopg.types.json import Jsonb, JsonbLoader
 
 import parallax.postgres
 import parallax.postgres._connection as connection_module
 from parallax.core.base import (
+    BOOLEAN,
+    BYTES,
+    DATE,
+    FLOAT32,
+    FLOAT64,
     INFINITY,
+    INT32,
+    INT64,
     SQL_NULL,
     STRING,
+    TIME,
+    TIMESTAMP,
+    UUID,
     FrozenMap,
+    NeutralType,
     PresentDocument,
     TemporalBound,
 )
+from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
     AccessMode,
+    ArrayBind,
     BeginFailed,
     CallbackRaised,
     CanonicalWriteStatement,
@@ -106,10 +122,6 @@ from tests.unit.postgres._native_pipeline_support import (
 # own internals, so grading them under any other dialect would grade something
 # the adapter never runs.
 _DIALECT = PostgresAdapter.dialect
-
-
-class _IntSubclass(int):
-    """An ``int`` that is not exactly one."""
 
 
 def test_public_surface_is_the_adapter_its_options_and_this_engines_isolation_spelling() -> None:
@@ -559,7 +571,7 @@ def test_adapter_registers_boundary_value_adapters() -> None:
         ("jsonb", connection_module._DocumentJsonbLoader),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
         ("jsonb", connection_module._DocumentJsonbBinaryLoader),  # pyright: ignore[reportPrivateUsage] - the registered loader is this test's subject
         (TemporalBound, connection_module._NativeInfinityDumper),  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
-        (connection_module._Int8Array, connection_module._Int8ArrayBinaryDumper),  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
+        (ArrayBind, connection_module._ArrayBindDumper),  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
     ]
 
 
@@ -594,82 +606,171 @@ def test_the_open_bound_dumper_is_registered_on_the_connection_alone() -> None:
     assert AdaptersMap(postgres.adapters).get_dumper(TemporalBound, PyFormat.AUTO) is not dumper
 
 
-def _int8_array(values: Sequence[int]) -> bytes:
-    """The binary ``int8[]`` wire form of a one-dimensional array without nulls."""
-    head = struct.pack("!IIIII", 1, 0, 20, len(values), 1)
-    return head + b"".join(struct.pack("!iq", 8, value) for value in values)
+def _binary_array(element_oid: int, elements: Sequence[bytes | None]) -> bytes:
+    """The binary wire form of a one-dimensional array of encoded ``elements``,
+    ``None`` standing for an array NULL."""
+    if not elements:
+        return struct.pack("!III", 0, 0, element_oid)
+    head = struct.pack("!IIIII", 1, int(None in elements), element_oid, len(elements), 1)
+    return head + b"".join(
+        struct.pack("!i", -1) if item is None else struct.pack("!i", len(item)) + item
+        for item in elements
+    )
 
 
-@pytest.mark.parametrize(
-    "values",
-    [
-        pytest.param([7], id="one"),
-        pytest.param([1, 2, 42], id="small"),
-        pytest.param([-1, 0, 2**31, -(2**31) - 1], id="negative-and-beyond-int32"),
-        pytest.param([-(2**63), 2**63 - 1], id="int8-bounds"),
-    ],
-)
-def test_an_integer_list_binds_as_one_binary_int8_array_whatever_its_magnitudes(
-    values: list[int],
-) -> None:
+@pytest.fixture
+def no_element_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse psycopg's list element inference, which chooses an array's type
+    by visiting every element."""
+
+    def refused(*_: object) -> object:
+        raise AssertionError("an array bind's elements were scanned for its type")
+
+    monkeypatch.setattr(BaseListDumper, "_find_list_element", refused)
+    monkeypatch.setattr(BaseListDumper, "_flatiter", refused)
+
+
+def _initialized() -> AdaptersMap:
     connection = _FakeConnection()
     _direct_execution(connection)
+    return connection.adapters
 
-    (adapted,) = adapt_binds([values])
-    assert type(adapted) is connection_module._Int8Array  # pyright: ignore[reportPrivateUsage] - the bound carrier is this test's subject
-    assert adapted == values
-    assert adapted is not values
-    assert _dumped(connection.adapters, values) == (_int8_array(values), 1016, Format.BINARY)
+
+@pytest.mark.usefixtures("no_element_scan")
+@pytest.mark.parametrize(
+    ("element_type", "values", "array_oid"),
+    [
+        pytest.param(BOOLEAN, [True, None, False], 1000, id="boolean"),
+        pytest.param(INT32, [-(2**31), None, 2**31 - 1], 1007, id="int32"),
+        pytest.param(INT64, [1, None, 2**40], 1016, id="int64"),
+        pytest.param(FLOAT32, [1.5, None, -0.25], 1021, id="float32"),
+        pytest.param(FLOAT64, [0.1, None, 1e300], 1022, id="float64"),
+        pytest.param(
+            DecimalType(10, 2),
+            [decimal.Decimal("1.50"), None, decimal.Decimal("-0.01")],
+            1231,
+            id="decimal",
+        ),
+        pytest.param(STRING, ["a", None, "", "NULL", "{,}"], 1009, id="string"),
+        pytest.param(BYTES, [b"\x00\xff", None, b""], 1001, id="bytes"),
+        pytest.param(DATE, [dt.date(2024, 1, 5), None], 1182, id="date"),
+        pytest.param(TIME, [dt.time(1, 2, 3, 4), None], 1183, id="time"),
+        pytest.param(
+            TIMESTAMP,
+            [dt.datetime(2024, 1, 5, 6, 7, 8, 9, tzinfo=dt.UTC), None],
+            1185,
+            id="timestamp",
+        ),
+        pytest.param(
+            UUID, [uuid.UUID("12345678-1234-5678-1234-567812345678"), None], 2951, id="uuid"
+        ),
+    ],
+)
+def test_an_array_bind_dumps_as_a_binary_array_of_its_declared_element_type(
+    element_type: NeutralType, values: list[object], array_oid: int
+) -> None:
+    adapters = _initialized()
+
+    dumped, oid, format_ = _dumped(adapters, ArrayBind(element_type, values))
+
+    assert (oid, format_) == (array_oid, Format.BINARY)
+    assert dumped is not None
+    loader = Transformer(adapters).get_loader(array_oid, Format.BINARY)
+    assert loader.load(dumped) == values
+
+
+@pytest.mark.usefixtures("no_element_scan")
+def test_an_integer_array_keeps_its_declared_type_whatever_its_magnitudes() -> None:
+    adapters = _initialized()
+
+    assert _dumped(adapters, ArrayBind(INT64, [7]))[1:] == (1016, Format.BINARY)
+    assert _dumped(adapters, ArrayBind(INT32, [7]))[1:] == (1007, Format.BINARY)
+    assert _dumped(adapters, ArrayBind(INT64, [-(2**63), None, 2**63 - 1])) == (
+        _binary_array(20, [struct.pack("!q", -(2**63)), None, struct.pack("!q", 2**63 - 1)]),
+        1016,
+        Format.BINARY,
+    )
+
+
+@pytest.mark.usefixtures("no_element_scan")
+def test_an_empty_or_all_null_array_keeps_its_declared_element_type() -> None:
+    adapters = _initialized()
+
+    assert _dumped(adapters, ArrayBind(INT64, [])) == (
+        _binary_array(20, []),
+        1016,
+        Format.BINARY,
+    )
+    assert _dumped(adapters, ArrayBind(STRING, [None, None])) == (
+        _binary_array(25, [None, None]),
+        1009,
+        Format.BINARY,
+    )
+
+
+@pytest.mark.usefixtures("no_element_scan")
+def test_a_timestamp_array_binds_the_open_bound_as_native_infinity() -> None:
+    adapters = _initialized()
+    epoch = dt.datetime(2000, 1, 1, tzinfo=dt.UTC)
+
+    assert _dumped(adapters, ArrayBind(TIMESTAMP, [INFINITY, epoch, None])) == (
+        _binary_array(1184, [struct.pack("!q", 2**63 - 1), struct.pack("!q", 0), None]),
+        1185,
+        Format.BINARY,
+    )
+
+
+def test_an_array_bind_reaches_the_driver_as_its_own_value_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapters = _initialized()
+    values: list[object] = [3, 1, 2]
+    bind = ArrayBind(INT64, values)
+    dumped_lists: list[object] = []
+    dump = ListBinaryDumper.dump
+
+    def recording(self: ListBinaryDumper, obj: list[Any]) -> object:
+        dumped_lists.append(obj)
+        return dump(self, obj)
+
+    monkeypatch.setattr(ListBinaryDumper, "dump", recording)
+
+    (adapted,) = adapt_binds([bind])
+    assert adapted is bind
+    _dumped(adapters, bind)
+    assert len(dumped_lists) == 1
+    assert dumped_lists[0] is values
+    assert values == [3, 1, 2]
+
+
+def test_the_array_dumper_is_registered_on_the_connection_alone() -> None:
+    adapters = _initialized()
+    dumper = connection_module._ArrayBindDumper  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
+    bind = ArrayBind(TIMESTAMP, [INFINITY])
+
+    assert adapters.get_dumper(ArrayBind, PyFormat.AUTO) is dumper
+    for unprepared in (postgres.adapters, AdaptersMap(postgres.adapters)):
+        with pytest.raises(psycopg.ProgrammingError, match="cannot adapt type 'ArrayBind'"):
+            Transformer(unprepared).dump_sequence([bind], [PyFormat.AUTO])
 
 
 @pytest.mark.parametrize(
     "bind",
     [
+        pytest.param([1, 2], id="int-list"),
         pytest.param([True, False], id="bool-list"),
-        pytest.param([1.5, 2.0], id="float-list"),
-        pytest.param([decimal.Decimal(1)], id="decimal-list"),
         pytest.param(["1", "2"], id="string-list"),
         pytest.param([], id="empty-list"),
         pytest.param((1, 2), id="int-tuple"),
+        pytest.param(ArrayBind(INT64, [1, 2]), id="array-bind"),
         pytest.param(1, id="int"),
         pytest.param(True, id="bool"),
         pytest.param(None, id="null"),
     ],
 )
-def test_every_other_bind_passes_through_bind_adaptation_unchanged(bind: object) -> None:
+def test_every_bind_but_a_document_passes_through_bind_adaptation_unchanged(bind: object) -> None:
     (adapted,) = adapt_binds([bind])
     assert adapted is bind
-
-
-@pytest.mark.parametrize(
-    ("values", "refusal"),
-    [
-        pytest.param([1, True], TypeError, id="bool"),
-        pytest.param([1, None], TypeError, id="null"),
-        pytest.param([1, 2.0], TypeError, id="float"),
-        pytest.param([1, decimal.Decimal(2)], TypeError, id="decimal"),
-        pytest.param([1, "2"], TypeError, id="string"),
-        pytest.param([1, _IntSubclass(2)], TypeError, id="int-subclass"),
-        pytest.param([1, 2**63], ValueError, id="above-int8"),
-        pytest.param([-(2**63) - 1, 1], ValueError, id="below-int8"),
-    ],
-)
-def test_an_integer_list_refuses_an_element_it_cannot_bind_as_int8(
-    values: list[object], refusal: type[Exception]
-) -> None:
-    with pytest.raises(refusal, match="integer array bind"):
-        adapt_binds([values])
-
-
-def test_the_integer_array_dumper_is_registered_on_the_connection_alone() -> None:
-    connection = _FakeConnection()
-    _direct_execution(connection)
-    carrier = connection_module._Int8Array  # pyright: ignore[reportPrivateUsage] - the bound carrier is this test's subject
-    dumper = connection_module._Int8ArrayBinaryDumper  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
-
-    assert connection.adapters.get_dumper(carrier, PyFormat.AUTO) is dumper
-    assert postgres.adapters.get_dumper(carrier, PyFormat.AUTO) is not dumper
-    assert AdaptersMap(postgres.adapters).get_dumper(carrier, PyFormat.AUTO) is not dumper
 
 
 @pytest.mark.parametrize(
