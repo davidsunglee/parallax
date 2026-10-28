@@ -1220,6 +1220,69 @@ def test_a_fatal_first_submission_spends_the_opportunity_and_propagates_as_itsel
     assert len(pool.checkouts) == 1
 
 
+def _lost_while_draining(interrupt: BaseException) -> psycopg.Error:
+    # Psycopg answers an interrupt during a wait by cancelling and draining the
+    # statement; a session that breaks during the drain raises its driver
+    # failure in the interrupt's place, carrying the interrupt as context.
+    lost = _lost()
+    lost.__context__ = interrupt
+    return lost
+
+
+@pytest.mark.parametrize("first", [_read, _began], ids=["read", "begin"])
+@pytest.mark.parametrize("interrupted", [KeyboardInterrupt, SystemExit])
+def test_an_interrupt_a_broken_first_submission_displaced_propagates_and_is_not_replaced(
+    first: Callable[[DatabaseConnection], object], interrupted: type[BaseException]
+) -> None:
+    interrupt = interrupted()
+    broken = _FakeConnection(lost=_lost_while_draining(interrupt))
+    pool = _pool(broken, _FakeConnection())
+    resource = _context(pool)
+
+    with resource as scoped:
+        with pytest.raises(interrupted) as raised:
+            first(scoped)
+        assert raised.value is interrupt
+        broken.lost = _lost_while_draining(KeyboardInterrupt())
+        with pytest.raises(DatabaseError):
+            scoped.execute("select 2", [], read_only=True)
+
+    assert len(pool.checkouts) == 1
+    assert pool.returned == [broken]
+
+
+def test_an_interrupt_a_broken_role_installation_displaced_propagates_and_is_not_replaced() -> None:
+    interrupt = KeyboardInterrupt()
+    broken = _FakeConnection(lost=_lost_while_draining(interrupt))
+    pool = _pool(broken, _FakeConnection())
+    resource = _context(pool, role=PostgresRole("tenant_reader"))
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        resource.__enter__()
+
+    assert raised.value is interrupt
+    assert len(pool.checkouts) == 1
+    assert pool.returned == [broken]
+
+
+def test_an_interrupt_already_being_handled_is_not_one_the_failure_displaced() -> None:
+    # Work run while an earlier interrupt is handled inherits it as context
+    # without the submission having been interrupted, so replacement proceeds.
+    broken = _FakeConnection(lost=_lost())
+    fresh = _FakeConnection(rows=[{"n": 1}])
+    pool = _pool(broken, fresh)
+
+    try:
+        raise KeyboardInterrupt
+    except KeyboardInterrupt:
+        with _context(pool) as scoped:
+            rows = scoped.execute("select 1", [], read_only=True)
+
+    assert rows == [(1,)]
+    assert len(pool.checkouts) == 2
+    assert pool.returned == [broken, fresh]
+
+
 def test_a_replacement_that_also_breaks_reports_its_own_failure_and_is_not_replaced() -> None:
     first, second = _lost("the first session is gone"), _lost("the second session is gone")
     broken = _FakeConnection(lost=first)
