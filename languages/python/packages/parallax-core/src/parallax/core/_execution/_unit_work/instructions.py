@@ -19,7 +19,6 @@ from parallax.core.base import (
     coerce_neutral_input,
     matches_neutral_type,
     normalize_instant,
-    retain_document_value,
 )
 from parallax.core.document_codec._authoring import (
     BORROWED_SOURCE_ACCESS,
@@ -47,6 +46,12 @@ from parallax.core.predicate import PredicateInterpretation, PredicateNode
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.core.write_plan.columns import freeze_retained_value
+from parallax.core.write_plan.managed_row import (
+    ManagedRow,
+    RowSelection,
+    empty_row,
+    projected_row,
+)
 from parallax.core.write_plan.steps import ResolvedMutationSelection
 
 __all__ = [
@@ -367,7 +372,7 @@ class PreparedKeyedInstruction:
     mutation: KeyedMutation
     assigns: bool
     target: EntityMetadata
-    rows: tuple[Mapping[str, object], ...]
+    rows: tuple[ManagedRow, ...]
     valid_time_window: TimeInterval | None
 
 
@@ -384,11 +389,11 @@ class PreparedPredicateInstruction:
 
     mutation: PredicateMutation
     selection: ResolvedMutationSelection
-    row: Mapping[str, object]
+    row: ManagedRow
 
     @property
     def assigns(self) -> bool:
-        return bool(self.row)
+        return self.row.presence != 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -427,7 +432,7 @@ class PreparedTargetInstruction:
     mutation: TargetMutation
     assigns: bool
     target: EntityMetadata
-    row: Mapping[str, object]
+    row: ManagedRow
     valid_time_window: TimeInterval | None
     expectation: TargetExpectation
 
@@ -441,7 +446,7 @@ def _prepared_keyed_instruction(
     mutation: KeyedMutation,
     assigns: bool,
     target: EntityMetadata,
-    rows: tuple[Mapping[str, object], ...],
+    rows: tuple[ManagedRow, ...],
     valid_time_window: TimeInterval | None,
 ) -> PreparedKeyedInstruction:
     prepared = object.__new__(PreparedKeyedInstruction)
@@ -456,7 +461,7 @@ def _prepared_keyed_instruction(
 def _prepared_predicate_instruction(
     mutation: PredicateMutation,
     selection: ResolvedMutationSelection,
-    row: Mapping[str, object],
+    row: ManagedRow,
 ) -> PreparedPredicateInstruction:
     prepared = object.__new__(PreparedPredicateInstruction)
     object.__setattr__(prepared, "mutation", mutation)
@@ -469,7 +474,7 @@ def _prepared_target_instruction(
     mutation: TargetMutation,
     assigns: bool,
     target: EntityMetadata,
-    row: Mapping[str, object],
+    row: ManagedRow,
     valid_time_window: TimeInterval | None,
     expectation: TargetExpectation,
 ) -> PreparedTargetInstruction:
@@ -502,23 +507,22 @@ def keyed_instruction_from_target(prepared: PreparedTargetInstruction) -> Prepar
 
 def derive_keyed_instruction(
     prepared: PreparedKeyedInstruction,
-    rows: tuple[Mapping[str, object], ...],
+    rows: tuple[ManagedRow, ...],
     *,
     mutation: KeyedMutation | None = None,
     assigns: bool | None = None,
 ) -> PreparedKeyedInstruction:
-    """Derive a keyed prepared product while retaining owned values by identity,
-    under ``mutation`` where composition changed the verb over the same window.
+    """Derive a keyed prepared product over already-managed ``rows``, under
+    ``mutation`` where composition changed the verb over the same window.
 
     ``rows`` keep ``prepared``'s ``assigns`` unless ``assigns`` states another:
     a derivation keeping or splitting its assigning rows keeps it, and one
     overlaying another write's members states whether either assigns."""
-    sealed = tuple(cast("Mapping[str, object]", retain_document_value(row)) for row in rows)
     return _prepared_keyed_instruction(
         prepared.mutation if mutation is None else mutation,
         prepared.assigns if assigns is None else assigns,
         prepared.target,
-        sealed,
+        rows,
         prepared.valid_time_window,
     )
 
@@ -1063,12 +1067,14 @@ def _prepare_write(
     )
     position = _inheritance_entity_view(model, entity)
     _judge_write_persistence(entity, position)
+    row_selection = preparation.entity(entity.identity).selection
     if isinstance(instruction, TargetWriteInstruction):
         return _prepare_target_write(
             instruction,
             model,
             entity,
             position,
+            row_selection,
             converter=converter,
             source_access=source_access,
             authored_members=authored_members,
@@ -1080,6 +1086,7 @@ def _prepare_write(
             model,
             entity,
             position,
+            row_selection,
             converter=converter,
             source_access=source_access,
             authored_members=authored_members,
@@ -1089,7 +1096,13 @@ def _prepare_write(
     # declares no framework-owned member for an authored one to name.
     assert members is None
     return _prepare_predicate_write(
-        instruction, model, entity, position, converter=converter, source_access=source_access
+        instruction,
+        model,
+        entity,
+        position,
+        row_selection,
+        converter=converter,
+        source_access=source_access,
     )
 
 
@@ -1111,6 +1124,7 @@ def _prepare_keyed_write(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
+    row_selection: RowSelection,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1135,6 +1149,7 @@ def _prepare_keyed_write(
         model,
         entity,
         position,
+        row_selection,
         window,
         converter=converter,
         source_access=source_access,
@@ -1147,6 +1162,7 @@ def _prepare_predicate_write(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
+    row_selection: RowSelection,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1159,6 +1175,7 @@ def _prepare_predicate_write(
         model,
         entity,
         position,
+        row_selection,
         converter=converter,
         source_access=source_access,
     )
@@ -1331,6 +1348,7 @@ def _prepare_target_write(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
+    row_selection: RowSelection,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1362,7 +1380,12 @@ def _prepare_target_write(
         authored_members=authored_members,
     )
     return _prepared_target_instruction(
-        instruction.mutation, assigns, entity, row, window, expectation
+        instruction.mutation,
+        assigns,
+        entity,
+        projected_row(row_selection, row),
+        window,
+        expectation,
     )
 
 
@@ -1665,6 +1688,7 @@ def _prepare_keyed_payload(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
+    row_selection: RowSelection,
     valid_time_window: TimeInterval | None,
     *,
     converter: _LeafConverter,
@@ -1716,7 +1740,7 @@ def _prepare_keyed_payload(
             instruction.mutation,
             _states_beside(key, replaced),
             entity,
-            replaced,
+            tuple(projected_row(row_selection, row) for row in replaced),
             valid_time_window,
         )
     transformed = tuple(
@@ -1755,7 +1779,11 @@ def _prepare_keyed_payload(
         )
     rows = tuple(result.value for result in transformed)
     return _prepared_keyed_instruction(
-        instruction.mutation, _states_beside(key, rows), entity, rows, valid_time_window
+        instruction.mutation,
+        _states_beside(key, rows),
+        entity,
+        tuple(projected_row(row_selection, row) for row in rows),
+        valid_time_window,
     )
 
 
@@ -1783,6 +1811,7 @@ def _prepare_predicate_payload(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
+    row_selection: RowSelection,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1814,7 +1843,9 @@ def _prepare_predicate_payload(
     inheritance.reject_predicate_write(entity)
     selection = ResolvedMutationSelection(entity, validated)
     if instruction.mutation not in ASSIGNMENT_MUTATIONS:
-        return _prepared_predicate_instruction(instruction.mutation, selection, _NO_ROW)
+        return _prepared_predicate_instruction(
+            instruction.mutation, selection, empty_row(row_selection)
+        )
     row = instruction.row
     if row is None:
         row = _row_from_assignments(model, entity, position, instruction.assignments)
@@ -1834,10 +1865,9 @@ def _prepare_predicate_payload(
         assigned = MappingProxyType(
             {name: value for name, value in assigned.items() if name != key}
         )
-    return _prepared_predicate_instruction(instruction.mutation, selection, assigned)
-
-
-_NO_ROW: Final[Mapping[str, object]] = MappingProxyType({})
+    return _prepared_predicate_instruction(
+        instruction.mutation, selection, projected_row(row_selection, assigned)
+    )
 
 
 def _row_from_assignments(

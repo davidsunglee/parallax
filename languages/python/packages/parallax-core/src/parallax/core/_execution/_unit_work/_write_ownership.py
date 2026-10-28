@@ -4,7 +4,7 @@ import bisect
 import datetime as dt
 import weakref
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Final, Literal, final
 
@@ -33,6 +33,7 @@ from parallax.core.write_plan.keys import (
     ObjectStateKey,
     VersionedObjectStateKey,
 )
+from parallax.core.write_plan.managed_row import ManagedRow, full_width
 from parallax.core.write_plan.observe import PredecessorRow
 from parallax.core.write_plan.plan import (
     CurrentRowOutput,
@@ -253,6 +254,26 @@ class _Origin(weakref.ref[RetainedObservation]):
         del observation, callback
 
 
+@dataclass(slots=True)
+class _HeldRow:
+    """One held current row's complete persisted state and stored document,
+    viewed as a predecessor once a continuation first reads it, so a sparse
+    row is held at its own width until then."""
+
+    state: ManagedRow
+    document: object | None
+    viewed: PredecessorRow | None = None
+
+    def predecessor(self) -> PredecessorRow:
+        viewed = self.viewed
+        if viewed is None:
+            selection = self.state.selection
+            viewed = self.viewed = PredecessorRow.over_row(
+                selection.members, full_width(self.state), self.document, selection.absent
+            )
+        return viewed
+
+
 class _HeldCurrentRows:
     """The current rows of one object the attempt's completed writes produced
     and still hold for some source's continuation, in Valid-Time order: each
@@ -263,7 +284,7 @@ class _HeldCurrentRows:
     __slots__ = ("held", "rows", "starts")
 
     def __init__(self) -> None:
-        self.rows: list[tuple[TemporalRowCoordinates, TimeInterval | None, PredecessorRow]] = []
+        self.rows: list[tuple[TemporalRowCoordinates, TimeInterval | None, _HeldRow]] = []
         self.starts: list[dt.datetime] = []
         self.held: dict[TemporalRowCoordinates, dt.datetime] = {}
 
@@ -271,7 +292,7 @@ class _HeldCurrentRows:
         self,
         coordinates: TemporalRowCoordinates,
         coverage: TimeInterval | None,
-        row: PredecessorRow,
+        row: _HeldRow,
     ) -> None:
         self.drop(coordinates)
         start = _start_key(coverage)
@@ -295,13 +316,13 @@ class _HeldCurrentRows:
         its start."""
         rows = self.rows
         if window is None:
-            return [row for _coordinates, _coverage, row in rows]
+            return [row.predecessor() for _coordinates, _coverage, row in rows]
         starts = self.starts
         first = max(bisect.bisect_right(starts, window.start) - 1, 0)
         end = window.end
         last = len(starts) if end is INFINITY else bisect.bisect_left(starts, end)
         return [
-            row
+            row.predecessor()
             for _coordinates, coverage, row in rows[first:last]
             if coverage is None or coverage.overlaps(window)
         ]
@@ -788,8 +809,7 @@ class WriteOwnership:
             if coordinates not in contributions:
                 continue
             row = output.row.row
-            attributes = row.attributes
-            if any(isinstance(value, MaxPlusOne | SelfIncrement) for value in attributes.values()):
+            if any(isinstance(value, MaxPlusOne | SelfIncrement) for value in row.cells):
                 continue
             address = (coordinates.entity, coordinates.key)
             rows = self._current_rows.get(address)
@@ -798,9 +818,7 @@ class WriteOwnership:
             rows.put(
                 coordinates,
                 output.valid_time_coverage,
-                PredecessorRow.adopt_written(
-                    attributes, row.value_objects, retain_document_value(document)
-                ),
+                _HeldRow(row, retain_document_value(document)),
             )
 
     def _forget(self, coordinates: TemporalRowCoordinates) -> None:

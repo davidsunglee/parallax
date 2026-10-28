@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from parallax.core import batch_write, opt_lock
@@ -16,6 +16,7 @@ from parallax.core.entity._model import class_index, model_of
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.read_delivery._page import ABSENT
 from parallax.core.write_payload import LayoutPayloadPreparer
+from parallax.core.write_plan.managed_row import ManagedRow
 
 __all__ = ["build_write_planner", "build_write_preparation", "prepare_model"]
 
@@ -53,14 +54,19 @@ class _BatchingAdapter:
         model: Metamodel,
         entity: EntityMetadata,
         mutation: str,
-        rows: Sequence[Mapping[str, object]],
+        rows: Sequence[ManagedRow],
     ) -> bool:
-        return batch_write.collapses(model, entity, mutation, rows)
+        return batch_write.collapses(model, entity, mutation, [_by_name(row) for row in rows])
 
     def batch_key(
-        self, model: Metamodel, entity: EntityMetadata, mutation: str, row: Mapping[str, object]
+        self, model: Metamodel, entity: EntityMetadata, mutation: str, row: ManagedRow
     ) -> object:
         return collapse_group_key(model, entity, mutation, row)
+
+
+def _by_name(row: ManagedRow) -> dict[str, object]:
+    members = row.selection.members.shape.members
+    return {members[position].name: cell for position, cell in row.stated_cells()}
 
 
 def build_write_preparation(model: Metamodel) -> WritePreparation:

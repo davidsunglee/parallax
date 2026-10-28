@@ -63,7 +63,6 @@ from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedDelete,
     PlannedInsert,
-    PlannedRow,
     PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
@@ -76,6 +75,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.clock_probes import inert_instant
+from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, plan_steps, unobserved_write
 from tests._support.sweep_goldens import WRITE_EXERCISED
 from tests._support.write_preparation import write_preparation_of
@@ -187,8 +187,9 @@ def test_an_insert_never_qualifies_for_ordered_transport() -> None:
     def attr(name: str) -> AttributeIdentity:
         return AttributeIdentity(entity, name)
 
-    row = PlannedRow(
-        attributes={
+    row = managed_row_of(
+        meta,
+        {
             attr("id"): 1,
             attr("acctNum"): "A-1",
             attr("value"): Decimal("1.00"),
@@ -196,7 +197,7 @@ def test_an_insert_never_qualifies_for_ordered_transport() -> None:
             attr("validEnd"): OPEN,
             attr("txStart"): _T1,
             attr("txEnd"): OPEN,
-        }
+        },
     )
     insert = PlannedInsert(entity=entity, entries=(WriteRow(row=row, origin=NEW_LINEAGE),))
     assert ordered_parameter_ceiling(insert, POSTGRES) is None

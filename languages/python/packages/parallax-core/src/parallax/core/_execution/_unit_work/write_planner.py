@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from operator import itemgetter
 
@@ -37,17 +37,17 @@ from parallax.core._execution._unit_work.write_items import (
     TargetWrite,
 )
 from parallax.core._execution._unit_work.write_settlement import WritePlanCompiler
-from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_write.coverage import CoverageTransform
 from parallax.core.write_plan.keys import ObjectKey
+from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     TemporalWriteOwnership,
     WritePlan,
 )
-from parallax.core.write_plan.planned_rows import entity_view, planned_assignments
+from parallax.core.write_plan.planned_rows import planned_assignments
 from parallax.core.write_plan.steps import ANY_COUNT, UNVERSIONED, PlannedDelete, PlannedUpdate
 
 __all__ = [
@@ -220,7 +220,6 @@ class WritePlanner:
         write is ordered around it, and it publishes no completion."""
         return _predicate_step(
             prepared,
-            entity_view(self._families, prepared.selection.target),
             self.audit_decoration(
                 actor_identity=actor_identity, transaction_instant=transaction_instant
             ),
@@ -310,7 +309,7 @@ class WritePlanner:
         object each row names and, for object-locked writes, every distinct
         source evidence they retained; ``None`` where batching declines to
         collapse it. A run shares one mutation, so it never mixes the two."""
-        rows: list[Mapping[str, object]] = []
+        rows: list[ManagedRow] = []
         assigns = False
         insert_keys: list[ObjectKey | None] = []
         locked_keys: list[ObjectKey] = []
@@ -375,7 +374,7 @@ _RANK = itemgetter(0)
 
 
 def _predicate_step(
-    instruction: PreparedPredicateInstruction, view: InheritanceEntityView, audit: AuditDecoration
+    instruction: PreparedPredicateInstruction, audit: AuditDecoration
 ) -> PlannedUpdate | PlannedDelete:
     entity = instruction.selection.target
     target = instruction.selection
@@ -387,7 +386,7 @@ def _predicate_step(
         PlannedUpdate(
             entity=entity.identity,
             target=target,
-            assignments=planned_assignments(entity, view, instruction.row),
+            assignments=planned_assignments(entity, instruction.row),
             concurrency=UNVERSIONED,
             affected_rows=ANY_COUNT,
         )
@@ -413,11 +412,13 @@ def _close_region(
         deletes.clear()
 
 
-def _key_name(families: inheritance.InheritanceFacet, entity: EntityMetadata) -> str:
+def _key_attribute(
+    families: inheritance.InheritanceFacet, entity: EntityMetadata
+) -> AttributeIdentity:
     position = families.entity(entity.identity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    return position.primary_key.identity.name
+    return position.primary_key.identity
 
 
 def _shares_statement(last: PreparedKeyedInstruction, arriving: PreparedKeyedInstruction) -> bool:
@@ -453,14 +454,14 @@ def _without_noop_rows(
     instruction = item.instruction
     if instruction.mutation not in AMEND_MUTATIONS:
         return item
-    key_name = _key_name(families, instruction.target)
+    key = _key_attribute(families, instruction.target)
     (row,) = instruction.rows
-    return None if all(name == key_name for name in row) else item
+    return None if row.presence & ~(1 << row.selection.members.index[key]) == 0 else item
 
 
 def _amends_nothing(transform: CoverageTransform) -> bool:
     return all(
-        segment.assigned is not None and not segment.assigned and not segment.replaces
+        segment.assigned is not None and not segment.assigned.presence and not segment.replaces
         for segment in transform.segments
     )
 

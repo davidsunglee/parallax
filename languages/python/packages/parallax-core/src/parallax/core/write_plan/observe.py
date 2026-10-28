@@ -11,7 +11,6 @@ from parallax.core.document_codec import (
 )
 from parallax.core.metamodel import (
     AttributeIdentity,
-    AttributeMetadata,
     MemberDefinition,
     MemberShape,
     Multiplicity,
@@ -305,26 +304,15 @@ class PredecessorRow:
         object.__setattr__(predecessor, "_absent", absent)
         return predecessor
 
-    @classmethod
-    def adopt_written(
-        cls,
-        attributes: Mapping[AttributeIdentity, object],
-        value_objects: Mapping[ValueObjectIdentity, object],
-        document: object | None,
-    ) -> PredecessorRow:
-        """Adopt the complete state a write persisted — its finalized members,
-        already immutable, and the recursively immutable document it stored —
-        keyed by declared name, without copying either."""
-        members = {identity.name: value for identity, value in attributes.items()}
-        for identity, value in value_objects.items():
-            members[identity.path[-1]] = value
-        predecessor = object.__new__(cls)
-        object.__setattr__(predecessor, "members", EntityStateRow(members))
-        object.__setattr__(predecessor, "document", document)
-        object.__setattr__(predecessor, "_selection", None)
-        object.__setattr__(predecessor, "_row", ())
-        object.__setattr__(predecessor, "_absent", None)
-        return predecessor
+    def positional(
+        self, selection: EntityMemberSelection, absent: object
+    ) -> tuple[object, ...] | None:
+        """The positional member row this row adopted, where it is aligned to
+        ``selection`` and marks an omitted member ``absent``; ``None`` for a
+        row held by member name."""
+        if self._selection is selection and self._absent is absent:
+            return self._row
+        return None
 
     def with_bindable_document(self) -> PredecessorRow:
         """This row with its document recursively immutable, the form every
@@ -374,39 +362,6 @@ class PredecessorRow:
             return self.members.get(attribute.name)
         position = selection.index.get(attribute)
         return None if position is None else self._row[position]
-
-    def identity_maps(
-        self, selection: EntityMemberSelection
-    ) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]]:
-        """One fresh pair of this row's members keyed by ``selection``'s
-        identities, each value the row's own cell or a view over it.
-
-        Every member is one ``selection`` declares: whoever builds a Predecessor
-        Row refuses any other logical member name first, so meeting one here is
-        a broken invariant rather than an input error."""
-        attributes: dict[AttributeIdentity, object] = {}
-        value_objects: dict[ValueObjectIdentity, object] = {}
-        if self._selection is selection:
-            row = self._row
-            for attribute, value in zip(selection.attributes, row, strict=False):
-                attributes[attribute.identity] = value
-            members = selection.shape.members
-            absent = self._absent
-            for position, occurrence in enumerate(
-                selection.value_objects, selection.attribute_count
-            ):
-                value_objects[occurrence.identity] = occurrence_value(
-                    row[position], cast("OccurrenceDefinition", members[position]), absent
-                )
-            return attributes, value_objects
-        for name, value in self.members.items():
-            binding = selection.binding(name)
-            assert binding is not None, f"predecessor member {name!r} is not a selection member"
-            if isinstance(binding, AttributeMetadata):
-                attributes[binding.identity] = value
-            else:
-                value_objects[binding.identity] = value
-        return attributes, value_objects
 
     def holds(self, comparison: AssignedComparison) -> bool:
         """Whether every member ``comparison`` assigns, by declared name,

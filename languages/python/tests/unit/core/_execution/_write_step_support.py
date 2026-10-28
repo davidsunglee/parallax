@@ -48,7 +48,6 @@ from parallax.core.write_plan.steps import (
     PlannedAssignments,
     PlannedClose,
     PlannedInsert,
-    PlannedRow,
     PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
@@ -58,6 +57,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.db_port import OrderedCall, ScriptedAdapter, WriteCall
+from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
 
 POSITIONS: Final = MODELS["position"]
@@ -142,8 +142,9 @@ def opening(month: int, value: object = Decimal("1.00")) -> PlannedInsert:
 
 
 def _opened(key: int, start: dt.datetime, end: object, value: object) -> PlannedInsert:
-    row = PlannedRow(
-        attributes={
+    row = managed_row_of(
+        POSITION_META,
+        {
             position_attribute("id"): key,
             position_attribute("acctNum"): "A-1",
             position_attribute("value"): value,
@@ -151,7 +152,7 @@ def _opened(key: int, start: dt.datetime, end: object, value: object) -> Planned
             position_attribute("validEnd"): end,
             position_attribute("txStart"): T1,
             position_attribute("txEnd"): OPEN,
-        }
+        },
     )
     return PlannedInsert(entity=POSITION, entries=(WriteRow(row=row, origin=NEW_LINEAGE),))
 

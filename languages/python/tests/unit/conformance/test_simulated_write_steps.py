@@ -47,10 +47,10 @@ from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedDelete,
     PlannedInsert,
-    PlannedRow,
     PlannedStep,
     WriteRow,
 )
+from tests._support.managed_rows import managed_row_of
 from tests.unit._gc_reachability import reachable_objects
 
 _ACCOUNT_META: Final = models.load_models()["account"]
@@ -189,7 +189,9 @@ def _close(key: int) -> PlannedStep:
 
 def _opening(key: int, value: str) -> PlannedStep:
     members = _members(key, _JAN, value, tx_start=_NOW)
-    row = PlannedRow(attributes={_position(name): member for name, member in members.items()})
+    row = managed_row_of(
+        _POSITION_META, {_position(name): member for name, member in members.items()}
+    )
     return PlannedInsert(entity=_POSITION.identity, entries=(WriteRow(row, NEW_LINEAGE),))
 
 

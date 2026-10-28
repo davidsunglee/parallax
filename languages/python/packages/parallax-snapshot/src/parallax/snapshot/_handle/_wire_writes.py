@@ -132,7 +132,10 @@ def wire_insert(
     opened = attempt.keyed_insert(
         WireKeyedInsertSource(entity_name, data), valid_from=valid_from, until=until
     )
-    return opened_wire_entity(attempt.model, opened.identity, opened.row, opened.authority)
+    row = opened.row
+    return opened_wire_entity(
+        attempt.model, opened.identity, row.stated_cells(), row.selection.absent, opened.authority
+    )
 
 
 def wire_keyed_write(

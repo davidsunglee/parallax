@@ -38,11 +38,10 @@ from parallax.core.write_plan.steps import (
     ChangedFrom,
     NewLineage,
     PlannedAssignments,
-    PlannedRow,
     RowOrigin,
     WriteRow,
-    adopt_planned_row,
 )
+from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._document_layout_support import PERSON, columns_model, document_model
 from tests.unit._metamodel_support import Declaration, attribute, key, source
@@ -103,7 +102,7 @@ def _successor(
             attributes[identity] = value
         else:
             value_objects[identity] = value
-    row = PlannedRow(attributes=attributes, value_objects=value_objects)
+    row = managed_row_of(_EXPEDITIONS, attributes, value_objects)
     return WriteRow(row=row, origin=origin, executed=tuple(executed))
 
 
@@ -206,9 +205,10 @@ def test_a_columns_row_encodes_each_occurrence_into_its_own_column() -> None:
     address = ValueObjectIdentity(PERSON, ("address",))
     tags = ValueObjectIdentity(PERSON, ("tags",))
     write_row = WriteRow(
-        row=PlannedRow(
-            attributes={AttributeIdentity(PERSON, "id"): 1},
-            value_objects={address: {"city": "Oslo", "geo": None}},
+        row=managed_row_of(
+            columns,
+            {AttributeIdentity(PERSON, "id"): 1},
+            {address: {"city": "Oslo", "geo": None}},
         ),
         origin=NEW_LINEAGE,
     )
@@ -224,9 +224,10 @@ def test_a_columns_row_encodes_each_occurrence_into_its_own_column() -> None:
 def test_the_document_twin_stores_one_shared_document_instead() -> None:
     document = document_model()
     write_row = WriteRow(
-        row=PlannedRow(
-            attributes={AttributeIdentity(PERSON, "id"): 1},
-            value_objects={ValueObjectIdentity(PERSON, ("address",)): {"city": "Oslo"}},
+        row=managed_row_of(
+            document,
+            {AttributeIdentity(PERSON, "id"): 1},
+            {ValueObjectIdentity(PERSON, ("address",)): {"city": "Oslo"}},
         ),
         origin=NEW_LINEAGE,
     )
@@ -276,12 +277,15 @@ def test_a_row_of_unknown_complete_state_equals_nothing() -> None:
     preparer = LayoutPayloadPreparer(positions)
     allocated = _position_row(entity, key=MAX_PLUS_ONE)
     incomplete = WriteRow(
-        row=PlannedRow(attributes={AttributeIdentity(entity, "id"): 1}), origin=NEW_LINEAGE
+        row=managed_row_of(positions, {AttributeIdentity(entity, "id"): 1}), origin=NEW_LINEAGE
     )
 
     for row in (allocated, incomplete):
         payload = preparer.row(entity, row)
         assert not preparer.equal_non_interval(payload, payload)
+
+
+_POSITIONS: Metamodel = corpus_model("position")
 
 
 def _position_row(
@@ -301,7 +305,7 @@ def _position_row(
         AttributeIdentity(entity, "txStart"): _JUN,
         AttributeIdentity(entity, "txEnd"): INFINITY,
     }
-    return WriteRow(row=PlannedRow(attributes=attributes), origin=NEW_LINEAGE)
+    return WriteRow(row=managed_row_of(_POSITIONS, attributes), origin=NEW_LINEAGE)
 
 
 @pytest.mark.parametrize(
@@ -409,7 +413,7 @@ def test_a_json_member_compares_as_a_persisted_document() -> None:
 
     def row(value: object) -> WriteRow:
         return WriteRow(
-            row=PlannedRow(attributes={AttributeIdentity(entity, "id"): 1, entries: value}),
+            row=managed_row_of(model, {AttributeIdentity(entity, "id"): 1, entries: value}),
             origin=NEW_LINEAGE,
         )
 
@@ -425,13 +429,15 @@ def test_a_subtypes_rows_store_and_compare_its_discriminator() -> None:
     car = EntityIdentity("parallax.compatibility", "Car")
     vehicle = EntityIdentity("parallax.compatibility", "Vehicle")
     write_row = WriteRow(
-        row=PlannedRow(
-            attributes={
+        row=managed_row_of(
+            vehicles,
+            {
                 AttributeIdentity(vehicle, "id"): 1,
                 AttributeIdentity(vehicle, "name"): "Coupe",
                 AttributeIdentity(vehicle, "version"): 1,
                 AttributeIdentity(car, "doors"): 2,
-            }
+            },
+            entity=car,
         ),
         origin=NEW_LINEAGE,
     )
@@ -451,12 +457,14 @@ def _moved(write_row: WriteRow, in_z: dt.datetime, **changed: object) -> WriteRo
     """``write_row`` at Transaction-Time start ``in_z`` with ``changed`` members,
     its origin, executed selection, and occurrences its own."""
     row = write_row.row
-    attributes = dict(row.attributes)
-    attributes[_IN] = in_z
+    index = row.selection.members.index
+    positions = [index[_IN]]
+    values: list[object] = [in_z]
     for name, value in changed.items():
-        attributes[AttributeIdentity(_EXPEDITION, name)] = value
+        positions.append(index[AttributeIdentity(_EXPEDITION, name)])
+        values.append(value)
     return WriteRow(
-        row=adopt_planned_row(attributes, row.value_objects),
+        row=row.with_cells(tuple(positions), tuple(values)),
         origin=write_row.origin,
         executed=write_row.executed,
     )
@@ -467,7 +475,7 @@ def test_prepared_cells_rebind_to_a_row_stating_the_same_state_over_another_inte
     source = _successor(CarriedFrom(_predecessor()))
     payload = preparer.row(_EXPEDITION, source)
     moved = WriteRow(
-        row=adopt_planned_row({**source.row.attributes, _IN: _JAN}, source.row.value_objects),
+        row=source.row.with_cell(source.row.selection.members.index[_IN], _JAN),
         origin=source.origin,
         executed=source.executed,
     )
@@ -500,9 +508,10 @@ _ITEM_ID, _AMOUNTS, _TAGS = (AttributeIdentity(_ITEM, name) for name in ("id", "
 
 
 def _collection_row(**attributes: object) -> WriteRow:
-    row = PlannedRow(
-        attributes={_ITEM_ID: 1, **{AttributeIdentity(_ITEM, k): v for k, v in attributes.items()}},
-        value_objects={ValueObjectIdentity(_ITEM, ("detail",)): None},
+    row = managed_row_of(
+        _COLLECTIONS,
+        {_ITEM_ID: 1, **{AttributeIdentity(_ITEM, k): v for k, v in attributes.items()}},
+        {ValueObjectIdentity(_ITEM, ("detail",)): None},
     )
     return WriteRow(row=row, origin=NEW_LINEAGE)
 
@@ -560,9 +569,10 @@ _STORED_COLLECTIONS: Mapping[str, object] = FrozenMap(
 
 
 def _document_collection_row(origin: RowOrigin, **attributes: object) -> WriteRow:
-    row = PlannedRow(
-        attributes={_ITEM_ID: 1, **{AttributeIdentity(_ITEM, k): v for k, v in attributes.items()}},
-        value_objects={ValueObjectIdentity(_ITEM, ("parts",)): ()},
+    row = managed_row_of(
+        _DOCUMENT_COLLECTIONS,
+        {_ITEM_ID: 1, **{AttributeIdentity(_ITEM, k): v for k, v in attributes.items()}},
+        {ValueObjectIdentity(_ITEM, ("parts",)): ()},
     )
     executed = (
         ()

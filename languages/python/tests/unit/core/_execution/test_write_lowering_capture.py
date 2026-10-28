@@ -33,12 +33,12 @@ from parallax.core.write_plan.steps import (
     MilestoneTarget,
     PlannedAssignments,
     PlannedInsert,
-    PlannedRow,
     PlannedStep,
     PlannedTemporalRevision,
     WriteRow,
 )
 from tests._support.db_port import ScriptedAdapter, Write
+from tests._support.managed_rows import managed_row_of
 from tests.unit.core._execution._write_step_support import (
     POSITION,
     POSITION_META,
@@ -204,15 +204,16 @@ def _note(name: str) -> AttributeIdentity:
 def test_a_structured_column_document_is_handed_over_whole_and_a_revision_with_its_patches() -> (
     None
 ):
-    row = PlannedRow(
-        attributes={
+    row = managed_row_of(
+        _NOTES,
+        {
             _note("id"): 1,
             _note("label"): "opened",
             _note("validStart"): T0,
             _note("validEnd"): OPEN,
             _note("txStart"): T1,
             _note("txEnd"): OPEN,
-        }
+        },
     )
     opened = PlannedInsert(entity=_NOTE, entries=(WriteRow(row=row, origin=NEW_LINEAGE),))
     revised = PlannedTemporalRevision(

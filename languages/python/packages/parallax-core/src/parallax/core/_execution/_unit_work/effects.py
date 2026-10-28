@@ -157,7 +157,7 @@ def returns_rows(step: PlannedStep) -> TypeGuard[PlannedInsert]:
     the same generated-value shape, so the first answers for all."""
     if not isinstance(step, PlannedInsert):
         return False
-    for value in step.entries[0].row.attributes.values():
+    for value in step.entries[0].row.cells:
         if isinstance(value, MaxPlusOne) and value.returned:
             return True
     return False

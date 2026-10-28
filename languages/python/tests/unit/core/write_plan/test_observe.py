@@ -23,6 +23,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.temporal_read import Bitemporal, milestone_edge, valid_time_coverage
 from parallax.core.write_plan import EntityStateRow, PredecessorRow
+from parallax.core.write_plan.managed_row import RowSelection, predecessor_state
 from parallax.core.write_plan.observe import AssignedComparison
 from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._corpus_model_support import model as corpus_model
@@ -262,39 +263,46 @@ def test_a_trusted_predecessor_row_reads_each_member_by_identity() -> None:
     assert predecessor.axis_start(None, AttributeIdentity(PERSON, "txStart")) is None
 
 
-def test_identity_maps_hold_each_cell_and_view_each_occurrence_over_its_own_cell() -> None:
+def test_an_adopted_predecessor_answers_its_own_positional_row_for_its_selection() -> None:
     predecessor = _adopted()
 
-    attributes, value_objects = predecessor.identity_maps(_SELECTION)
-    again, again_objects = predecessor.identity_maps(_SELECTION)
-
-    assert list(attributes) == [_ID, _DISPLAY_NAME, _SCORE, _JOINED_ON]
-    assert list(value_objects) == [_ADDRESS, _TAGS]
-    assert all(attributes[member] is _VALUES[index] for index, member in enumerate(attributes))
-    assert _plain(value_objects[_ADDRESS]) == {"city": "Bergen"}
-    assert _plain(value_objects[_TAGS]) == ({"label": "founder"}, {"label": None})
-    assert again is not attributes
-    assert again_objects[_ADDRESS] is not value_objects[_ADDRESS]
+    assert predecessor.positional(_SELECTION, ABSENT) is _VALUES
+    assert predecessor.positional(_SELECTION, object()) is None
+    assert PredecessorRow({"id": 7}).positional(_SELECTION, ABSENT) is None
 
 
-def test_a_mapping_backed_predecessor_maps_its_own_stored_values() -> None:
-    predecessor = PredecessorRow({"id": 7, "address": {"city": "Bergen"}})
-    address = predecessor.member("address")
+def test_a_predecessors_state_packs_its_stated_cells_and_shares_its_occurrences() -> None:
+    state = predecessor_state(RowSelection(_SELECTION, ABSENT), _adopted())
 
-    attributes, value_objects = predecessor.identity_maps(_SELECTION)
-
-    assert attributes == {_ID: 7}
-    assert value_objects[_ADDRESS] is address
-    assert predecessor.cell(_ID) == 7
-    assert predecessor.cell(_ADDRESS) is address
-    assert predecessor.axis_start(None, _ID) == 7
+    assert state.cells == (7, "Ada", None, _VALUES[4], _VALUES[5])
+    assert state.cells[3] is _VALUES[4]
+    assert not state.stated(2)
 
 
-def test_a_predecessor_member_its_selection_lacks_is_a_broken_invariant() -> None:
+def test_a_predecessor_stating_every_member_shares_its_row() -> None:
+    values = (7, "Ada", 3, None, ("Bergen", ABSENT), ())
+    state = predecessor_state(RowSelection(_SELECTION, ABSENT), _adopted(values))
+
+    assert state.cells is values
+
+
+def test_a_mapping_backed_predecessor_projects_its_members_by_declared_name() -> None:
+    state = predecessor_state(
+        RowSelection(_SELECTION, ABSENT), PredecessorRow({"id": 7, "address": {"city": "Bergen"}})
+    )
+
+    assert state.cell(_ID) == 7
+    assert state.cell(_ADDRESS) == ("Bergen", ABSENT)
+    assert not state.stated(1)
+
+
+def test_a_predecessor_member_its_selection_lacks_is_refused() -> None:
     # Row construction and case ingress refuse an undeclared logical member, so
-    # one reaching identity mapping is a defect, never an input to report.
-    with pytest.raises(AssertionError, match="'nickname' is not a selection member"):
-        PredecessorRow({"id": 7, "nickname": "Ada"}).identity_maps(_SELECTION)
+    # one reaching a projected row is a defect, never an input to report.
+    with pytest.raises(ValueError, match="names only members of its selection"):
+        predecessor_state(
+            RowSelection(_SELECTION, ABSENT), PredecessorRow({"id": 7, "nickname": "Ada"})
+        )
 
 
 def test_direct_predecessor_construction_owns_its_members_and_document() -> None:

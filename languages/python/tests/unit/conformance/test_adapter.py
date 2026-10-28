@@ -46,6 +46,7 @@ from parallax.core.predicate import And, Comparison, FieldSubject, ModelRejected
 from parallax.core.predicate import serialize as serialize_predicate
 from parallax.core.predicate._resolved import ResolvedComparison
 from parallax.core.temporal_read import TimeInterval
+from parallax.core.write_plan.managed_row import named_members
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests._support.repo import canonical_snapshot_claim, validate_adapter_envelope
 from tests.unit._second_dialect import BACKTICKED
@@ -85,7 +86,7 @@ rows:
     )
     prepared = _prepare_case_write(instruction, models.load_models()["account"])
     assert isinstance(prepared, PreparedKeyedInstruction)
-    assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
+    assert named_members(prepared.rows[0])["balance"] == decimal.Decimal("5.00")
 
 
 def test_case_write_adapter_preserves_canonical_decimal_digits() -> None:
@@ -101,7 +102,7 @@ rows:
     )
     prepared = _prepare_case_write(instruction, models.load_models()["account"])
     assert isinstance(prepared, PreparedKeyedInstruction)
-    assert prepared.rows[0]["balance"] == decimal.Decimal("1234567890123456.78")
+    assert named_members(prepared.rows[0])["balance"] == decimal.Decimal("1234567890123456.78")
 
 
 def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() -> None:
@@ -114,7 +115,7 @@ def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() 
         )
         prepared = _prepare_case_write(instruction, model)
         assert isinstance(prepared, PreparedKeyedInstruction)
-        assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
+        assert named_members(prepared.rows[0])["balance"] == decimal.Decimal("5.00")
 
 
 def test_case_write_adapter_accepts_canonical_predicate_operands_and_assignments() -> None:
@@ -135,7 +136,7 @@ assignments:
     assert isinstance(prepared, PreparedPredicateInstruction)
     assert isinstance(prepared.selection.predicate, ResolvedComparison)
     assert prepared.selection.predicate.value == decimal.Decimal("200.00")
-    assert prepared.row == {"balance": decimal.Decimal("0.00")}
+    assert named_members(prepared.row) == {"balance": decimal.Decimal("0.00")}
 
 
 def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
@@ -196,7 +197,7 @@ rows:
 
     assert any(call.args[1] is authored for call in decode_wire.call_args_list)
     assert isinstance(prepared, PreparedKeyedInstruction)
-    decoded = prepared.rows[0][member]
+    decoded = named_members(prepared.rows[0])[member]
     assert (decoded, math.copysign(1.0, cast("float", decoded))) == (0.0, 1.0)
 
 
@@ -242,7 +243,7 @@ def test_case_write_adapter_normalizes_nested_value_object_documents() -> None:
     prepared = _prepare_case_write(instruction, models.load_models()["document-codec"])
 
     assert isinstance(prepared, PreparedKeyedInstruction)
-    profile = cast("Mapping[str, object]", prepared.rows[0]["profile"])
+    profile = cast("Mapping[str, object]", named_members(prepared.rows[0])["profile"])
     assert profile["amount"] == decimal.Decimal("12.50")
     assert cast("Mapping[str, object]", profile["origin"])["since"] == dt.date(2026, 1, 1)
     entries = cast("Sequence[Mapping[str, object]]", profile["entries"])

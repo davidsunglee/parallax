@@ -5,10 +5,8 @@ from typing import Final, NamedTuple, cast
 
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import (
-    AttributeIdentity,
     EntityIdentity,
     Metamodel,
-    ValueObjectIdentity,
 )
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._write import (
@@ -172,7 +170,7 @@ class LoweringCursor:
         """
         (entry,) = first.entries
         entity = first.entity
-        members = entry.row.members
+        presence = entry.row.presence
         builder = InsertStatementBuilder(
             entity, entry, self._captured_row(entity, entry), self._meta, self._dialect
         )
@@ -180,7 +178,7 @@ class LoweringCursor:
         following: PlannedStep | None = None
         while builder.has_capacity(_GROUPED_INSERT_ROWS, binds):
             following = self.take()
-            joining = _joining(following, entity, members)
+            joining = _joining(following, entity, presence)
             if joining is None:
                 break
             try:
@@ -352,20 +350,16 @@ def _document_patches(payload: AssignmentPayload) -> PatchedDocument | None:
 
 
 def _generates(entry: WriteRow) -> bool:
-    return any(isinstance(value, MaxPlusOne) for value in entry.row.attributes.values())
+    return any(isinstance(value, MaxPlusOne) for value in entry.row.cells)
 
 
-def _joining(
-    step: PlannedStep | None,
-    entity: EntityIdentity,
-    members: frozenset[AttributeIdentity | ValueObjectIdentity],
-) -> WriteRow | None:
+def _joining(step: PlannedStep | None, entity: EntityIdentity, presence: int) -> WriteRow | None:
     """``step``'s one entry where it can join a grouped insert of ``entity``
-    whose entries name ``members``: placement follows the Entity and the
-    members named, never the values held."""
+    whose entries state the members ``presence`` names: placement follows the
+    Entity and the members stated, never the values held."""
     match step:
         case PlannedInsert(entity=other, entries=(entry,)) if (
-            other == entity and entry.row.members == members and not _generates(entry)
+            other == entity and entry.row.presence == presence and not _generates(entry)
         ):
             return entry
         case _:

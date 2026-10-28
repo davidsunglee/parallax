@@ -38,7 +38,7 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core.base import ManagedValue
 from parallax.core.inheritance import InheritanceEntityView
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata, ValueObjectIdentity
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.temporal_read import (
     Bitemporal,
     TimeInterval,
@@ -53,6 +53,7 @@ from parallax.core.temporal_write.expansion import (
     TemporalFacts,
 )
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
+from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
@@ -64,9 +65,9 @@ from parallax.core.write_plan.plan import (
     WriteGroup,
     WritePlan,
 )
-from parallax.core.write_plan.planned_rows import resolve_row
+from parallax.core.write_plan.planned_rows import planned_cells
 from parallax.core.write_plan.predecessor_rows import PredecessorRows
-from parallax.core.write_plan.steps import KeyTarget, PlannedStep, PlannedValue
+from parallax.core.write_plan.steps import KeyTarget, PlannedStep
 
 __all__ = [
     "DeferredTemporalRange",
@@ -365,7 +366,7 @@ class _OpeningSeed:
     resolved authored state and the Valid-Time window it opens, which no
     stored row is fabricated for."""
 
-    state: tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]
+    state: ManagedRow
     window: TimeInterval
 
 
@@ -622,7 +623,9 @@ def settle_range(
     ((_, key_value),) = target.primary_key
     transform = item.transform
     window = transform.valid_time_window
-    facts = TemporalFacts(entity=item.target, view=view, shape=shape, instant=instant)
+    facts = TemporalFacts(
+        entity=item.target, view=view, shape=shape, instant=instant, selection=item.selection
+    )
     predecessors, validations = _known_predecessors(intents, window, facts, target, ownership)
     meaning = _RangeMeaning(
         facts=facts,
@@ -680,9 +683,12 @@ def settle_opening(
     window = insert.valid_time_window
     assert window is not None  # a Bitemporal opening states its window
     key_attribute = view.primary_key.identity
-    facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=instant)
-    attributes, value_objects = resolve_row(entity, view, insert.rows[0], context="insert")
-    key_value = attributes.get(key_attribute)
+    (row,) = insert.rows
+    facts = TemporalFacts(
+        entity=entity, view=view, shape=shape, instant=instant, selection=row.selection
+    )
+    seed = planned_cells(entity, row, "insert")
+    key_value = seed.cell(key_attribute)
     transform = opening.transform
     if opening.beyond is None:
         return PredecessorExpander(
@@ -693,7 +699,7 @@ def settle_opening(
             ownership=ownership,
             audit=audit,
             payloads=payloads,
-        ).settle((), lineage=((attributes, value_objects), window))
+        ).settle((), lineage=(seed, window))
     meaning = _RangeMeaning(
         facts=facts,
         transform=transform,
@@ -702,7 +708,7 @@ def settle_opening(
         key_attribute=key_attribute,
         key_value=key_value,
         guards=guards,
-        opening=_OpeningSeed((attributes, value_objects), window),
+        opening=_OpeningSeed(seed, window),
     )
     return DeferredTemporalRange(meaning=meaning, predecessors=(), validations=())
 

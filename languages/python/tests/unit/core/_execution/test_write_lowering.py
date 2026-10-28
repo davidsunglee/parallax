@@ -135,7 +135,6 @@ from parallax.core.write_plan.steps import (
     NewLineage,
     PlannedAssignments,
     PlannedDelete,
-    PlannedRow,
     PlannedStep,
     PlannedTemporalRevision,
     PlannedUpdate,
@@ -151,6 +150,7 @@ from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
 from tests._support.db_port import ScriptedAdapter, Write, WriteCall
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
+from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import formed, records
@@ -1146,12 +1146,13 @@ def test_step_lowering_reads_an_immutable_write_input_into_an_immutable_document
     # read-only mapping over read-only elements. The codec READS it and builds the
     # document, so what crosses the bind seam is its own recursively immutable
     # carrier rather than an alias to the frozen carriers the planner held.
-    row = PlannedRow(
-        attributes={
+    row = managed_row_of(
+        CUSTOMER,
+        {
             _attribute(CUSTOMER, "Customer", "id"): 1,
             _attribute(CUSTOMER, "Customer", "name"): "Ada",
         },
-        value_objects={
+        {
             _value_object(CUSTOMER, "Customer", "address"): MappingProxyType(
                 {
                     "city": "Oslo",
@@ -1191,12 +1192,13 @@ def test_finalization_settles_an_insert_into_one_step_of_new_lineage_entries() -
         entity=_identity(WALLET, "Wallet"),
         entries=(
             WriteRow(
-                row=PlannedRow(
-                    attributes={
+                row=managed_row_of(
+                    WALLET,
+                    {
                         _attribute(WALLET, "Wallet", "id"): 10,
                         _attribute(WALLET, "Wallet", "owner"): "Mira",
                         _attribute(WALLET, "Wallet", "balance"): Decimal("100.00"),
-                    }
+                    },
                 ),
                 origin=NEW_LINEAGE,
             ),
@@ -1357,7 +1359,11 @@ def test_a_keyed_write_row_omitting_its_primary_key_addresses_nothing() -> None:
     wallet = entity_by_name(WALLET, "Wallet")
     assert wallet is not None
     with pytest.raises(WritePlanningError, match="omits the primary-key member"):
-        key_target(wallet, (_attribute(WALLET, "Wallet", "id"),), ({"owner": "Mira"},))
+        key_target(
+            wallet,
+            (_attribute(WALLET, "Wallet", "id"),),
+            (managed_row_of(WALLET, {_attribute(WALLET, "Wallet", "owner"): "Mira"}),),
+        )
 
 
 def test_finalization_classifies_a_registry_advance_into_a_generated_value() -> None:
@@ -1386,12 +1392,13 @@ def test_step_lowering_reads_column_participation_and_order_from_the_layout() ->
         entity=_identity(ORDERS, "OrderItem"),
         entries=(
             WriteRow(
-                row=PlannedRow(
-                    attributes={
+                row=managed_row_of(
+                    ORDERS,
+                    {
                         _attribute(ORDERS, "OrderItem", "quantity"): 3,
                         _attribute(ORDERS, "OrderItem", "id"): 200,
                         _attribute(ORDERS, "OrderItem", "orderId"): 100,
-                    }
+                    },
                 ),
                 origin=NEW_LINEAGE,
             ),
@@ -1405,12 +1412,14 @@ def test_step_lowering_reads_column_participation_and_order_from_the_layout() ->
 def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> None:
     # The tag is a layout fact, so it lands at its own slot in every value tuple
     # while no entry carries it — the one cell lowering adds rather than reads.
-    row = PlannedRow(
-        attributes={
+    row = managed_row_of(
+        PAYMENT,
+        {
             _attribute(PAYMENT, "CardPayment", "id"): 1,
             _attribute(PAYMENT, "CardPayment", "amount"): Decimal("10.00"),
             _attribute(PAYMENT, "CardPayment", "cardNetwork"): "Visa",
-        }
+        },
+        entity=_identity(PAYMENT, "CardPayment"),
     )
     step = PlannedInsert(
         entity=_identity(PAYMENT, "CardPayment"),
@@ -1458,7 +1467,7 @@ def test_an_insert_binds_the_empty_array_for_a_many_occurrence_the_row_never_nam
     # (m-value-object "Writing").
     step = PlannedInsert(
         entity=_CRATE,
-        entries=(WriteRow(row=PlannedRow(attributes={_CRATE_ID: 7}), origin=NEW_LINEAGE),),
+        entries=(WriteRow(row=managed_row_of(_CRATE_MODEL, {_CRATE_ID: 7}), origin=NEW_LINEAGE),),
     )
     statement = lowered(step, LayoutPayloadPreparer(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
     assert statement.sql == "insert into crate(id, labels) values (?, ?)"
@@ -1487,7 +1496,7 @@ def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
     # holding several is refused instead of rendered as a value list that could
     # not express it. Batch grouping never produces one (a pk-gen-managed target
     # does not collapse), so this is a hand-built shape.
-    row = PlannedRow(attributes={_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
+    row = managed_row_of(PK_MAX, {_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
     step = PlannedInsert(
         entity=_identity(PK_MAX, "Attendee"),
         entries=(
@@ -1556,7 +1565,8 @@ def _crate_insert(*keys: int) -> PlannedInsert:
         entity=_CRATE,
         entries=tuple(
             WriteRow(
-                row=PlannedRow(attributes={_CRATE_ID: key, _CRATE_NOTE: "n"}), origin=NEW_LINEAGE
+                row=managed_row_of(_CRATE_MODEL, {_CRATE_ID: key, _CRATE_NOTE: "n"}),
+                origin=NEW_LINEAGE,
             )
             for key in keys
         ),
@@ -1898,7 +1908,7 @@ def _noted_crate(column: str) -> Metamodel:
 def _crate_row(attributes: Mapping[AttributeIdentity, object]) -> PlannedInsert:
     return PlannedInsert(
         entity=_CRATE,
-        entries=(WriteRow(row=PlannedRow(attributes=attributes), origin=NEW_LINEAGE),),
+        entries=(WriteRow(row=managed_row_of(_CRATE_MODEL, attributes), origin=NEW_LINEAGE),),
     )
 
 
@@ -1975,15 +1985,16 @@ def _ledger_entry(key: int, memo: str | None = "kept") -> WriteRow:
     shape = temporal_read.view(_BUILDER_MODEL).shape(_BUILDER_LEDGER)
     assert isinstance(shape, TransactionTimeOnly)
     return WriteRow(
-        row=PlannedRow(
-            attributes={
+        row=managed_row_of(
+            _BUILDER_MODEL,
+            {
                 AttributeIdentity(_BUILDER_LEDGER, "id"): key,
                 AttributeIdentity(_BUILDER_LEDGER, "amount"): key * 10,
                 AttributeIdentity(_BUILDER_LEDGER, "memo"): memo,
                 shape.transaction_time.start_attribute: _BUILDER_OPENED,
                 shape.transaction_time.end_attribute: OPEN_BOUND,
             },
-            value_objects={_BUILDER_SHELF: {"label": f"shelf-{key}"}},
+            {_BUILDER_SHELF: {"label": f"shelf-{key}"}},
         ),
         origin=NEW_LINEAGE,
     )
@@ -2187,7 +2198,7 @@ def test_an_ordinary_insert_yields_no_statement_until_every_entry_compiles() -> 
 
 def test_a_multi_entry_generated_value_refusal_follows_the_shared_cells_check() -> None:
     attendee = _identity(PK_MAX, "Attendee")
-    row = PlannedRow(attributes={_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
+    row = managed_row_of(PK_MAX, {_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
     entries = (WriteRow(row=row, origin=NEW_LINEAGE), WriteRow(row=row, origin=NEW_LINEAGE))
     payloads = LayoutPayloadPreparer(PK_MAX)
     first, second = (payloads.row(attendee, entry) for entry in entries)

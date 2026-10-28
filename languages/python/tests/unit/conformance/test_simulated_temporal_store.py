@@ -86,7 +86,6 @@ from parallax.core.write_plan.steps import (
     PlannedClose,
     PlannedDelete,
     PlannedInsert,
-    PlannedRow,
     PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
@@ -96,6 +95,7 @@ from parallax.core.write_plan.steps import (
     Versioned,
     WriteRow,
 )
+from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import admitted_writes, plan_steps
 from tests._support.write_preparation import write_preparation_of
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
@@ -571,7 +571,7 @@ def _opening(key: int, start: dt.datetime, end: object, value: str) -> PlannedIn
         "txStart": _NOW,
         "txEnd": INFINITY,
     }
-    row = PlannedRow(attributes={_position(name): value for name, value in members.items()})
+    row = managed_row_of(POSITION, {_position(name): value for name, value in members.items()})
     return PlannedInsert(entity=POSITION_ENTITY.identity, entries=(WriteRow(row, NEW_LINEAGE),))
 
 
@@ -971,13 +971,14 @@ def _account_update(key: int) -> PlannedUpdate:
 
 
 def _account_insert(key: object) -> PlannedInsert:
-    row = PlannedRow(
-        attributes={
+    row = managed_row_of(
+        ACCOUNT,
+        {
             _account("id"): key,
             _account("owner"): "New",
             _account("balance"): decimal.Decimal("0.00"),
             _account("version"): 1,
-        }
+        },
     )
     return PlannedInsert(entity=ACCOUNT_ENTITY.identity, entries=(WriteRow(row, NEW_LINEAGE),))
 

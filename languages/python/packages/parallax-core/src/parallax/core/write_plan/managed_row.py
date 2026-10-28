@@ -13,7 +13,7 @@ from parallax.core.metamodel import (
     ScalarDefinition,
     ValueObjectIdentity,
 )
-from parallax.core.write_plan.observe import occurrence_value
+from parallax.core.write_plan.observe import PredecessorRow, occurrence_value
 
 if TYPE_CHECKING:
     from parallax.core.inheritance import EntityMemberSelection
@@ -21,9 +21,13 @@ if TYPE_CHECKING:
 __all__ = [
     "ManagedRow",
     "RowSelection",
+    "adopted_row",
     "empty_row",
+    "full_width",
     "managed_row",
+    "named_members",
     "positional_occurrence",
+    "predecessor_state",
     "projected_row",
 ]
 
@@ -163,6 +167,53 @@ def managed_row(selection: RowSelection, cells: tuple[object, ...], presence: in
 def empty_row(selection: RowSelection) -> ManagedRow:
     """The row of ``selection`` stating no member."""
     return managed_row(selection, (), 0)
+
+
+def adopted_row(selection: RowSelection, cells: tuple[object, ...]) -> ManagedRow:
+    """The full-width positional ``cells`` of ``selection`` as the row stating
+    every member they hold, ``cells`` itself where they hold every member."""
+    absent = selection.absent
+    presence = 0
+    for position, cell in enumerate(cells):
+        if cell is not absent:
+            presence |= 1 << position
+    if presence == selection.full_presence:
+        return managed_row(selection, cells, presence)
+    return managed_row(selection, tuple(cell for cell in cells if cell is not absent), presence)
+
+
+def full_width(row: ManagedRow) -> tuple[object, ...]:
+    """``row``'s cell at every member position, ``selection.absent`` where it
+    states none: its own cells where it states every member."""
+    selection = row.selection
+    if row.presence == selection.full_presence:
+        return row.cells
+    return tuple(row.at(position) for position in range(selection.width))
+
+
+def predecessor_state(selection: RowSelection, predecessor: PredecessorRow) -> ManagedRow:
+    """The state ``predecessor`` holds as a row of ``selection``: its own
+    positional member row where it is aligned to that selection, else its
+    members projected by declared name."""
+    aligned = predecessor.positional(selection.members, selection.absent)
+    if aligned is not None:
+        return adopted_row(selection, aligned)
+    return projected_row(selection, predecessor.members)
+
+
+def named_members(row: ManagedRow) -> dict[str, object]:
+    """Each member ``row`` states by declared name, a Value Object viewed by
+    declared name."""
+    members = row.selection.members.shape.members
+    absent = row.selection.absent
+    return {
+        members[position].name: (
+            cell
+            if isinstance(members[position], ScalarDefinition)
+            else occurrence_value(cell, cast("OccurrenceDefinition", members[position]), absent)
+        )
+        for position, cell in row.stated_cells()
+    }
 
 
 def projected_row(selection: RowSelection, row: Mapping[str, object]) -> ManagedRow:

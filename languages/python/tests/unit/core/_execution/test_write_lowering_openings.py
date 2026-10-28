@@ -47,6 +47,7 @@ from parallax.core.sql_gen._context import (
 from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
+from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.payload import RowPayload
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
@@ -62,13 +63,13 @@ from parallax.core.write_plan.steps import (
     PlannedAssignments,
     PlannedClose,
     PlannedInsert,
-    PlannedRow,
     PlannedStep,
     RowOrigin,
     WriteRow,
 )
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
+from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import corpus_records, formed
 
 _GROUPED_INSERT_CAP: Final = "parallax.core._execution._write_lowering._GROUPED_INSERT_ROWS"
@@ -91,9 +92,10 @@ def _row(
     *,
     value: object = Decimal("1.00"),
     account: object = "A-1",
-) -> PlannedRow:
-    return PlannedRow(
-        attributes={
+) -> ManagedRow:
+    return managed_row_of(
+        _META,
+        {
             _attr("id"): key,
             _attr("acctNum"): account,
             _attr("value"): value,
@@ -101,11 +103,11 @@ def _row(
             _attr("validEnd"): end,
             _attr("txStart"): _AT,
             _attr("txEnd"): OPEN,
-        }
+        },
     )
 
 
-def _opening(row: PlannedRow, origin: RowOrigin = NEW_LINEAGE) -> PlannedInsert:
+def _opening(row: ManagedRow, origin: RowOrigin = NEW_LINEAGE) -> PlannedInsert:
     executed = (_attr("value"),) if isinstance(origin, ChangedFrom) else ()
     return PlannedInsert(
         entity=_POSITION, entries=(WriteRow(row=row, origin=origin, executed=executed),)
@@ -242,12 +244,13 @@ def test_any_single_entry_insert_without_generated_values_begins_a_grouped_inser
         entity=account.identity,
         entries=(
             WriteRow(
-                row=PlannedRow(
-                    attributes={
+                row=managed_row_of(
+                    account_meta,
+                    {
                         _attr("id", account.identity): 1,
                         _attr("owner", account.identity): "Ada",
                         _attr("balance", account.identity): Decimal(5),
-                    }
+                    },
                 ),
                 origin=NEW_LINEAGE,
             ),
@@ -260,7 +263,7 @@ def test_any_single_entry_insert_without_generated_values_begins_a_grouped_inser
 def test_every_other_step_lowers_alone() -> None:
     (opening,) = _openings(1)
     generated = _opening(
-        PlannedRow(attributes={**opening.entries[0].row.attributes, _attr("id"): MAX_PLUS_ONE})
+        managed_row_of(_META, {**opening.entries[0].row.attributes, _attr("id"): MAX_PLUS_ONE})
     )
     logical = PlannedInsert(entity=_POSITION, entries=(*opening.entries, *_openings(2)[1].entries))
     cursor = _cursor(())
@@ -320,8 +323,8 @@ def _incompatible() -> dict[str, PlannedStep]:
     other_object = _opening(_row(2, _JUN))
     return {
         "effect": _close(1),
-        "other-members": _opening(PlannedRow(attributes=other_members)),
-        "generated": _opening(PlannedRow(attributes={**attributes, _attr("id"): MAX_PLUS_ONE})),
+        "other-members": _opening(managed_row_of(_META, other_members)),
+        "generated": _opening(managed_row_of(_META, {**attributes, _attr("id"): MAX_PLUS_ONE})),
         "logical-multi-entry": replace(
             other_object, entries=(*other_object.entries, *other_object.entries)
         ),
@@ -570,8 +573,9 @@ def _span_openings(name: str) -> tuple[PlannedInsert, ...]:
             entity=identity,
             entries=(
                 WriteRow(
-                    row=PlannedRow(
-                        attributes={
+                    row=managed_row_of(
+                        _SPANS,
+                        {
                             _attr("id", identity): 1,
                             _attr("tags", identity): tags,
                             _attr("validStart", identity): dt.datetime(
@@ -583,7 +587,7 @@ def _span_openings(name: str) -> tuple[PlannedInsert, ...]:
                             _attr("txStart", identity): _AT,
                             _attr("txEnd", identity): OPEN,
                         },
-                        value_objects={ValueObjectIdentity(identity, ("legs",)): legs},
+                        {ValueObjectIdentity(identity, ("legs",)): legs},
                     ),
                     origin=NEW_LINEAGE,
                 ),

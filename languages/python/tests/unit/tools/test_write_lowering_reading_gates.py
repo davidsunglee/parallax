@@ -151,7 +151,7 @@ _REGISTRY: Final = _Registry()
 def _duplicating(prepare: Callable[..., Any]) -> Callable[..., Any]:
     def prepared(*args: object, **kwargs: object) -> Any:
         result = prepare(*args, **kwargs)
-        _REGISTRY.keep(tuple(detach_json_container(row) for row in result.rows))
+        _REGISTRY.keep(tuple(detach_json_container(row.cells) for row in result.rows))
         return result
 
     return prepared

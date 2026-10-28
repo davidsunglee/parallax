@@ -85,6 +85,7 @@ from parallax.core.write_plan import (
     WritePlanningError,
 )
 from parallax.core.write_plan.keys import VersionedObjectStateKey
+from parallax.core.write_plan.managed_row import ManagedRow, projected_row
 from parallax.core.write_plan.steps import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -97,7 +98,6 @@ from parallax.core.write_plan.steps import (
     ExactCount,
     KeyTarget,
     PlannedDelete,
-    PlannedRow,
     PlannedStep,
     PlannedUpdate,
     ResolvedMutationSelection,
@@ -161,7 +161,7 @@ def _plan(
     )
 
 
-def _row_values(row: PlannedRow) -> dict[str, object]:
+def _row_values(row: ManagedRow) -> dict[str, object]:
     values: dict[str, object] = {ident.name: value for ident, value in row.attributes.items()}
     for ident, value in row.value_objects.items():
         values[ident.path[-1]] = value
@@ -297,7 +297,7 @@ _BALANCE_PREDECESSOR: dict[str, object] = {
 }
 
 
-def _changed_entry(plan: WritePlan) -> tuple[ChangedFrom, PlannedRow]:
+def _changed_entry(plan: WritePlan) -> tuple[ChangedFrom, ManagedRow]:
     (entry,) = (
         entry
         for step in plan_steps(plan)
@@ -1905,20 +1905,11 @@ def test_only_surviving_writes_carry_their_sources_into_settled_writes() -> None
 def _derived(
     write: KeyedWriteInstruction, model: Metamodel, rows: tuple[Mapping[str, object], ...]
 ) -> PreparedKeyedInstruction:
-    """A prepared keyed write whose rows no ingress would have produced."""
-    return derive_keyed_instruction(_prepared_keyed(write, model), rows)
-
-
-def test_a_row_naming_a_member_outside_the_family_is_refused_at_settlement() -> None:
-    stray = _derived(
-        KeyedWriteInstruction(
-            "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)
-        ),
-        _WALLET,
-        rows=({"id": 1, "owner": "Ada", "balance": Decimal("1.00"), "nickname": "w"},),
-    )
-    with pytest.raises(WritePlanningError, match="names 'nickname', which is not a member"):
-        _plan([admitted_write(stray, None, corpus_object_key("Wallet", ("id", 1)))], _WALLET)
+    """A prepared keyed write whose rows, stated by declared name, no ingress
+    would have produced."""
+    prepared = _prepared_keyed(write, model)
+    selection = prepared.rows[0].selection
+    return derive_keyed_instruction(prepared, tuple(projected_row(selection, row) for row in rows))
 
 
 def test_a_many_keyed_mapping_cell_is_an_ordinary_literal_not_a_computed_marker() -> None:

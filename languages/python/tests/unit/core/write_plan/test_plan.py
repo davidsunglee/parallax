@@ -37,21 +37,22 @@ from parallax.core.write_plan.steps import (
     ExactCount,
     KeyTarget,
     PlannedDelete,
-    PlannedRow,
     PlannedStep,
     WriteRow,
 )
+from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
 
-_ACCOUNT = entity_of(corpus_model("account"), "Account").identity
+_ACCOUNT_MODEL = corpus_model("account")
+_ACCOUNT = entity_of(_ACCOUNT_MODEL, "Account").identity
 _ID = AttributeIdentity(_ACCOUNT, "id")
 
 
 def _insert(key: int) -> PlannedInsert:
     return PlannedInsert(
         entity=_ACCOUNT,
-        entries=(WriteRow(row=PlannedRow(attributes={_ID: key}), origin=NEW_LINEAGE),),
+        entries=(WriteRow(row=managed_row_of(_ACCOUNT_MODEL, {_ID: key}), origin=NEW_LINEAGE),),
     )
 
 

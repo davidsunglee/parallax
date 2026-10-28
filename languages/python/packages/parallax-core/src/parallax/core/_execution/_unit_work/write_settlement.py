@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Container, Mapping, Sequence
+from collections.abc import Container, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -62,6 +62,7 @@ from parallax.core.write_plan.keys import (
     ObjectKey,
     VersionedObjectStateKey,
 )
+from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.observe import StateObservation, TemporalObservation
 from parallax.core.write_plan.payload import WritePayloadPreparer
 from parallax.core.write_plan.plan import (
@@ -79,8 +80,8 @@ from parallax.core.write_plan.planned_rows import (
     WritePlanningError,
     entity_view,
     planned_assignments,
+    planned_cells,
     planned_row,
-    resolve_row,
 )
 from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
@@ -92,7 +93,6 @@ from parallax.core.write_plan.steps import (
     PlannedInsert,
     PlannedStep,
     PlannedUpdate,
-    PlannedValue,
     WriteRow,
     shortfall_classification,
 )
@@ -496,9 +496,7 @@ class WritePlanCompiler:
         )
         entries = tuple(
             audit.finalize_row(
-                WriteRow(
-                    row=planned_row(facts.entity, facts.view, row, version), origin=NEW_LINEAGE
-                )
+                WriteRow(row=planned_row(facts.entity, row, version), origin=NEW_LINEAGE)
             )
             for row in instruction.rows
         )
@@ -572,15 +570,26 @@ class WritePlanCompiler:
         view = entity_view(self._families, entity)
         # Reaching a surviving temporal insert is what makes the attempt
         # capture its instant; the row's fresh start derives from that value.
-        facts = TemporalFacts(entity=entity, view=view, shape=shape, instant=tx_instant.value())
-        attributes, value_objects = resolve_row(entity, view, instruction.rows[0], context="insert")
-        allocates = _returns_allocated_key(facts, attributes)
+        (row,) = instruction.rows
+        facts = TemporalFacts(
+            entity=entity,
+            view=view,
+            shape=shape,
+            instant=tx_instant.value(),
+            selection=row.selection,
+        )
+        row = planned_cells(entity, row, "insert")
+        allocated = _with_returned_key(facts, row)
         inserts = (
             PlannedInsert(
                 entity=entity.identity,
                 entries=(
                     audit.finalize_row(
-                        opening(facts, attributes, value_objects, instruction.valid_time_window)
+                        opening(
+                            facts,
+                            row if allocated is None else allocated,
+                            instruction.valid_time_window,
+                        )
                     ),
                 ),
             ),
@@ -589,7 +598,7 @@ class WritePlanCompiler:
             steps=inserts,
             opened=Openings(
                 continued=openings(facts, inserts),
-                allocated=_allocated(facts, inserts) if allocates else (),
+                allocated=() if allocated is None else _allocated(facts, inserts),
             ),
         )
 
@@ -673,9 +682,10 @@ class WritePlanCompiler:
         if version_attr is None:
             _require_unobserved(entity, instruction.mutation, observation)
             return None
+        row = instruction.rows[0]
         if (
             instruction.mutation in ASSIGNMENT_MUTATIONS
-            and version_attr.name in instruction.rows[0]
+            and row.cell(version_attr) is not row.selection.absent
         ):
             self._concurrency.reject_authored_version(entity.identity, version_attr)
         return self._concurrency.require_version(entity.identity, observation)
@@ -783,16 +793,14 @@ def _unobserved_close(entity: EntityMetadata) -> WritePlanningError:
     )
 
 
-def _returns_allocated_key(
-    facts: TemporalFacts, attributes: dict[AttributeIdentity, PlannedValue]
-) -> bool:
-    """Ask the insert that opens a row whose key the database allocates to
-    answer that key, so the row is recorded by its complete address."""
-    key = facts.view.primary_key.identity
-    if not isinstance(attributes.get(key), MaxPlusOne):
-        return False
-    attributes[key] = RETURNED_MAX_PLUS_ONE
-    return True
+def _with_returned_key(facts: TemporalFacts, row: ManagedRow) -> ManagedRow | None:
+    """``row`` asking the insert that opens it, where the database allocates its
+    key, to answer that key, so the row is recorded by its complete address;
+    ``None`` where ``row`` states its key."""
+    position = row.selection.members.index[facts.view.primary_key.identity]
+    if not isinstance(row.at(position), MaxPlusOne):
+        return None
+    return row.with_cell(position, RETURNED_MAX_PLUS_ONE)
 
 
 def _allocated(
@@ -800,15 +808,15 @@ def _allocated(
 ) -> tuple[AllocatedOpening, ...]:
     key = facts.view.primary_key.identity
     return tuple(
-        AllocatedOpening(facts.entity.identity, entry_ends(facts, entry.row.attributes))
+        AllocatedOpening(facts.entity.identity, entry_ends(facts, entry.row))
         for insert in inserts
         for entry in insert.entries
-        if entry.row.attributes.get(key) == RETURNED_MAX_PLUS_ONE
+        if entry.row.cell(key) == RETURNED_MAX_PLUS_ONE
     )
 
 
 def _addressed_assignments(
-    facts: NonTemporalFacts, addressed: AddressedFacts, row: Mapping[str, object]
+    facts: NonTemporalFacts, addressed: AddressedFacts, row: ManagedRow
 ) -> PlannedAssignments:
     """The replacement values an addressed update writes, before its version
     overlay.
@@ -820,12 +828,11 @@ def _addressed_assignments(
     the first row settles the whole step's assignments. Every admitted write
     is single-row, so no multi-row update arrives here any other way.
     """
-    key_names = frozenset(attribute.name for attribute in addressed.key_attributes)
-    return planned_assignments(
-        facts.entity,
-        facts.view,
-        {name: value for name, value in row.items() if name not in key_names},
-    )
+    index = row.selection.members.index
+    keys = 0
+    for attribute in addressed.key_attributes:
+        keys |= 1 << index[attribute]
+    return planned_assignments(facts.entity, row, without=keys)
 
 
 def _decorated(audit: AuditDecoration, step: PlannedStep) -> PlannedStep:

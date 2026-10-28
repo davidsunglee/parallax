@@ -962,7 +962,8 @@ def _occurrence(
 def opened_wire_entity(
     model: CatalogedModel,
     entity: EntityIdentity,
-    row: Mapping[str, object],
+    stated: Iterable[tuple[int, object]],
+    absent: object,
     authority: InsertionIdentity,
 ) -> WireEntity:
     """The frozen Wire node for a row a Wire insert has just OPENED.
@@ -977,19 +978,29 @@ def opened_wire_entity(
 
     What it publishes is what this transaction STATED, not what a later read of
     the stored row will: the framework-owned members are stamped at flush and
-    are absent here, and the walk is over the positions ``row`` names rather than
-    the declared ones. That is exact because ``row`` is an opening row's canonical
-    member set — a complete Create Payload by `m-unit-work`'s own full-document
-    rule, carrying the empty collection at every ``many`` the payload omitted.
+    are absent here, and the walk is over the members the row states rather
+    than the declared ones. That is exact because the row is an opening row's
+    canonical member set — a complete Create Payload by `m-unit-work`'s own
+    full-document rule, carrying the empty collection at every ``many`` the
+    payload omitted. ``stated`` is each stated member's position beside its
+    managed cell, a Value Object's in its positional form marking an omitted
+    nested member ``absent``.
 
     ``model`` is the cataloged model the transaction writes under, so the
     member bindings and the family variant come off the one layout its catalog
     fixed for ``entity`` — the same layout a read of the row publishes against.
     """
     layout = model.layouts.entity(entity)
+    selection = layout.member_selection
+    bindings = selection.bindings
+    names = selection.shape.members
+    occurrences = (
+        _STORED if absent is ABSENT else OccurrenceCarrier(absent, _stored_values, _tuple_elements)
+    )
     rendered: dict[str, WireValue] = {}
-    for name, value in row.items():
-        binding = layout.member_selection.binding(name)
+    for position, value in stated:
+        binding = bindings[position]
+        name = names[position].name
         if isinstance(binding, AttributeMetadata):
             _put(
                 rendered,
@@ -999,12 +1010,7 @@ def opened_wire_entity(
                 else _wire_scalar(binding.type, value),
             )
             continue
-        if binding is not None:  # pragma: no branch - the payload names declared members only
-            _put(
-                rendered,
-                name,
-                _occurrence(value, binding, _AUTHORED, encode_wire),
-            )
+        _put(rendered, name, _occurrence(value, binding, occurrences, encode_wire))
     if layout.family_variant is not None:
         _put(rendered, FAMILY_VARIANT_KEY, layout.family_variant)
     node = _frozen_mapping(_WireAuthoringNode, rendered)

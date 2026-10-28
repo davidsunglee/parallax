@@ -73,6 +73,7 @@ from parallax.core.write_plan.keys import (
     TemporalObjectStateKey,
     VersionedObjectStateKey,
 )
+from parallax.core.write_plan.managed_row import named_members
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
     Openings,
@@ -295,7 +296,7 @@ def test_an_amendment_folded_into_a_pending_insert_leaves_it_an_insert() -> None
     (insert,) = admission.composed_writes()
     assert isinstance(insert, KeyedInsert)
     assert insert.instruction.mutation == "insert"
-    assert insert.instruction.rows[0]["owner"] == "Cy"
+    assert named_members(insert.instruction.rows[0])["owner"] == "Cy"
 
 
 def _person(person_id: int) -> ObjectKey:
@@ -582,7 +583,7 @@ def _pending_owners(admission: WriteAdmission) -> list[tuple[object, object]]:
     owners: list[tuple[object, object]] = []
     for write in admission.composed_writes():
         assert isinstance(write, KeyedInsert)
-        row = write.instruction.rows[0]
+        row = named_members(write.instruction.rows[0])
         owners.append((row["id"], row["owner"]))
     return owners
 
@@ -675,7 +676,8 @@ def test_a_restated_caller_condition_is_kept_once_however_often_it_is_overwritte
     )
     (segment,) = composed.transform.segments
     assert segment.replaces
-    assert dict(segment.assigned or {}) == {"acctNum": "Z", "value": Decimal("3.00")}
+    assert segment.assigned is not None
+    assert named_members(segment.assigned) == {"acctNum": "Z", "value": Decimal("3.00")}
 
 
 def test_an_observed_write_after_a_target_must_state_its_window_and_start() -> None:
@@ -924,7 +926,7 @@ def test_a_read_authorized_amendment_still_folds_into_an_ordinary_pending_insert
     (folded,) = _admitted(insert(), amendment(), meta=meta).composed_writes()
     assert isinstance(folded, KeyedInsert)
     assert folded.instruction.mutation == "insert"
-    assert folded.instruction.rows[0][member] == value
+    assert named_members(folded.instruction.rows[0])[member] == value
     assert folded.source_evidence == ()
 
 
@@ -1012,7 +1014,8 @@ def test_a_first_observed_write_stays_alone_and_answers_its_one_intent() -> None
     assert intent.retained_observation is START
     assert len(intent.source_evidence) == 1 and intent.source_evidence[0] is source
     (segment,) = composed.transform.segments
-    assert dict(segment.assigned or {}) == {"value": Decimal("150.00")}
+    assert segment.assigned is not None
+    assert named_members(segment.assigned) == {"value": Decimal("150.00")}
 
 
 def test_a_first_target_write_stays_alone_and_answers_its_caller_condition() -> None:
@@ -1122,7 +1125,8 @@ def test_repeated_assignments_of_one_observation_and_window_keep_one_intent_in_p
     assert intent.intent == WriteIntent("assignment", TimeInterval(MAR, SEP))
     assert len(intent.source_evidence) == 1 and intent.source_evidence[0] is source
     (segment,) = composed.transform.segments
-    assert dict(segment.assigned or {}) == {"value": Decimal("175.00"), "acctNum": "B"}
+    assert segment.assigned is not None
+    assert named_members(segment.assigned) == {"value": Decimal("175.00"), "acctNum": "B"}
 
 
 def test_a_destruction_superseding_an_observed_run_moves_it_after_intervening_writes() -> None:

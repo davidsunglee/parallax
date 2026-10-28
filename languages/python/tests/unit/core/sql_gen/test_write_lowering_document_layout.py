@@ -50,6 +50,7 @@ from parallax.core.sql_gen._write import InsertStatementBuilder
 from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow
+from parallax.core.write_plan.managed_row import ManagedRow, predecessor_state
 from parallax.core.write_plan.observe import (
     _EntityDocumentRow as _EntityDocumentRowType,  # pyright: ignore[reportPrivateUsage] - comparison spy only
 )
@@ -59,11 +60,11 @@ from parallax.core.write_plan.steps import (
     ChangedFrom,
     ExecutedMembers,
     PlannedInsert,
-    PlannedRow,
     RowOrigin,
     WriteRow,
 )
 from tests._support.lowering_probes import lower_instruction
+from tests._support.managed_rows import managed_row_of, row_selection_of
 from tests.unit._document_layout_support import PERSON, columns_model, document_model, entity
 
 DOCUMENT = document_model()
@@ -282,11 +283,12 @@ def test_a_refused_entry_leaves_every_appended_document_bound_as_it_was() -> Non
     payloads = LayoutPayloadPreparer(DOCUMENT)
     entries = tuple(
         WriteRow(
-            row=PlannedRow(
-                attributes={
+            row=managed_row_of(
+                DOCUMENT,
+                {
                     AttributeIdentity(PERSON, "id"): key,
                     AttributeIdentity(PERSON, "displayName"): name,
-                }
+                },
             ),
             origin=NEW_LINEAGE,
         )
@@ -315,9 +317,11 @@ def test_two_rows_naming_different_document_members_do_not_share_one_statement()
     # one Planned Insert has the same canonical member set (m-unit-work), so a run
     # answered same-shaped here would be one the Planned Insert refuses.
     person = entity(DOCUMENT, "Person")
-    display_name = collapse_group_key(DOCUMENT, person, "insert", {"id": 1, "displayName": "Ada"})
-    score = collapse_group_key(DOCUMENT, person, "insert", {"id": 2, "score": 7})
-    same = collapse_group_key(DOCUMENT, person, "insert", {"id": 3, "displayName": "Bo"})
+    display_name = collapse_group_key(
+        DOCUMENT, person, "insert", _person_row(id=1, displayName="Ada")
+    )
+    score = collapse_group_key(DOCUMENT, person, "insert", _person_row(id=2, score=7))
+    same = collapse_group_key(DOCUMENT, person, "insert", _person_row(id=3, displayName="Bo"))
     assert display_name != score
     assert display_name == same
     first, second = _lower(
@@ -371,8 +375,14 @@ def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:
     # columns and the document members it happens to carry are invisible.
     person = entity(DOCUMENT, "Person")
     assert collapse_group_key(
-        DOCUMENT, person, "delete", {"id": 1, "displayName": "Ada"}
-    ) == collapse_group_key(DOCUMENT, person, "delete", {"id": 2, "score": 7})
+        DOCUMENT, person, "delete", _person_row(id=1, displayName="Ada")
+    ) == collapse_group_key(DOCUMENT, person, "delete", _person_row(id=2, score=7))
+
+
+def _person_row(**members: object) -> ManagedRow:
+    return managed_row_of(
+        DOCUMENT, {AttributeIdentity(PERSON, name): value for name, value in members.items()}
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -417,13 +427,20 @@ them even though the stored subtree still carries it."""
 _SELECTION = LayoutCatalog(DOCUMENT).entity(PERSON).member_selection
 
 
+def _identity_maps(
+    predecessor: PredecessorRow,
+) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]]:
+    state = predecessor_state(row_selection_of(DOCUMENT, PERSON), predecessor)
+    return dict(state.attributes), dict(state.value_objects)
+
+
 def _successor_maps(
     predecessor: PredecessorRow, changes: Mapping[str, object]
 ) -> tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object], ExecutedMembers]:
     """A changed successor's complete row as temporal expansion composes one:
     the predecessor's own cells, with ``changes`` executed over them as authored
     values, and the members it executes."""
-    attributes, value_objects = predecessor.identity_maps(_SELECTION)
+    attributes, value_objects = _identity_maps(predecessor)
     executed: set[AttributeIdentity | ValueObjectIdentity] = set()
     for name, value in changes.items():
         binding = _SELECTION.binding(name)
@@ -442,7 +459,7 @@ def _opened(
     origin: RowOrigin,
     executed: ExecutedMembers = (),
 ) -> object:
-    row = PlannedRow(attributes=attributes, value_objects=value_objects)
+    row = managed_row_of(DOCUMENT, attributes, value_objects)
     step = PlannedInsert(
         entity=PERSON, entries=(WriteRow(row=row, origin=origin, executed=executed),)
     )
@@ -645,6 +662,6 @@ def test_lowering_leaves_the_retained_document_as_it_found_it() -> None:
         predecessor, {"score": 8, "tags": [{"label": "member"}], "address": None}
     )
     _opened(attributes, value_objects, ChangedFrom(predecessor), executed)
-    _opened(*predecessor.identity_maps(_SELECTION), CarriedFrom(predecessor))
+    _opened(*_identity_maps(predecessor), CarriedFrom(predecessor))
     assert stored == _STORED_ROW
     assert predecessor.document is stored

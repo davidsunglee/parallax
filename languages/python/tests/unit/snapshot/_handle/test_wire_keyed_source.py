@@ -29,6 +29,7 @@ from parallax.core.base import INFINITY, SQL_NULL
 from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import TimeInterval
+from parallax.core.write_plan.managed_row import named_members
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._handle._wire_writes import (
     WireKeyedInsertSource,
@@ -139,7 +140,7 @@ def test_a_projected_node_enters_the_existing_wire_keyed_source() -> None:
     )
 
     assert resolved.entity.identity == mm.Account.identity
-    assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
+    assert named_members(prepared.rows[0]) == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigns
 
 
@@ -157,7 +158,7 @@ def test_the_node_an_insert_answered_names_the_object_its_authority_opened() -> 
     )
 
     assert resolved.entity.identity == mm.Account.identity
-    assert prepared.rows[0] == {"id": 7, "balance": Decimal("6.00")}
+    assert named_members(prepared.rows[0]) == {"id": 7, "balance": Decimal("6.00")}
     assert prepared.assigns
 
 
@@ -173,7 +174,7 @@ def test_prepare_states_every_authored_member_as_its_literal_assignment() -> Non
         preparation_for(_meta(ACCOUNT)), "amend", resolved, valid_from=None, until=None
     )
 
-    assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
+    assert named_members(prepared.rows[0]) == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigns
 
 
@@ -186,7 +187,7 @@ def test_a_member_equal_to_what_the_source_published_is_still_assigned() -> None
         preparation_for(_meta(ACCOUNT)), "amend", resolved, valid_from=None, until=None
     )
 
-    assert prepared.rows[0] == {"id": 1, "balance": Decimal("100.00")}
+    assert named_members(prepared.rows[0]) == {"id": 1, "balance": Decimal("100.00")}
     assert prepared.assigns
 
 
@@ -201,7 +202,7 @@ def test_a_stated_key_naming_the_published_object_addresses_rather_than_assigns(
         preparation_for(_meta(ACCOUNT)), "amend", resolved, valid_from=None, until=None
     )
 
-    assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
+    assert named_members(prepared.rows[0]) == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigns
 
 
@@ -225,7 +226,7 @@ def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> No
         preparation_for(_meta(ACCOUNT)), "delete", resolved, valid_from=None, until=None
     )
 
-    assert prepared.rows[0] == {"id": 1}
+    assert named_members(prepared.rows[0]) == {"id": 1}
     assert not prepared.assigns
 
 
@@ -254,7 +255,11 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
     )
 
     assert isinstance(prepared, PreparedKeyedInstruction)
-    assert prepared.rows[0] == {"id": 7, "owner": "Newton", "balance": Decimal("5.00")}
+    assert named_members(prepared.rows[0]) == {
+        "id": 7,
+        "owner": "Newton",
+        "balance": Decimal("5.00"),
+    }
 
 
 def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
