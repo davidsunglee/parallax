@@ -110,7 +110,6 @@ __all__ = [
     "require_bound_elements",
     "snake_to_camel",
     "subtype_selection",
-    "typed_authoring_leaf",
 ]
 
 

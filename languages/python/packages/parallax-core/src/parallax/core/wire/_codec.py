@@ -37,6 +37,9 @@ from parallax.core.base._neutral import (
     base_managed_carrier,
     exceeds_json_int_value_space,
     host_float_binary32,
+    is_decimal_member,
+    is_integer_member,
+    is_string_member,
     normalize_json_carrier,
 )
 from parallax.core.wire._json import (
@@ -96,12 +99,12 @@ def decode_canonical_wire(neutral_type: NeutralType, value: WireValue) -> Manage
         return value
     if isinstance(neutral_type, String) and isinstance(value, str):
         managed = str.__str__(value)
-        if managed.isascii() or matches_neutral_type(managed, neutral_type):
+        if is_string_member(managed, neutral_type):
             return managed
         _fail("out-of-space", value, neutral_type)
     if isinstance(neutral_type, (Int32, Int64)) and type(value) is int:
         managed_int = int.__int__(value)
-        if matches_neutral_type(managed_int, neutral_type):
+        if is_integer_member(managed_int, neutral_type):
             return managed_int
         _fail("out-of-space", value, neutral_type)
     decoded = _decode_admitted(neutral_type, value)
@@ -231,8 +234,8 @@ def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLi
             return _decode_float32(value, neutral_type)
         case Float64():
             return _decode_float64(value, neutral_type)
-        case Decimal(precision, scale):
-            return _decode_decimal(value, neutral_type, precision, scale)
+        case Decimal():
+            return _decode_decimal(value, neutral_type)
         case String():
             return _decode_string(value, neutral_type)
         case Bytes():
@@ -265,7 +268,7 @@ def _decode_string(value: object, neutral_type: String) -> _DecodedWireLiteral:
     if not isinstance(value, str):
         _fail("type-mismatch", value, neutral_type)
     managed = str.__str__(value)
-    if not matches_neutral_type(managed, neutral_type):
+    if not is_string_member(managed, neutral_type):
         _fail("out-of-space", value, neutral_type)
     return _DecodedWireLiteral(managed)
 
@@ -295,7 +298,7 @@ def _decode_integer(
     if number != integral:
         _fail("type-mismatch", value, neutral_type)
     managed = int(integral)
-    if not matches_neutral_type(managed, neutral_type):
+    if not is_integer_member(managed, neutral_type):
         _fail("out-of-space", value, neutral_type)
     return _DecodedWireLiteral(managed, number.is_zero() and number.is_signed())
 
@@ -361,21 +364,16 @@ def _decode_integer_to_float(value: int, neutral_type: Float32 | Float64) -> _De
     return _DecodedWireLiteral(managed)
 
 
-def _decode_decimal(
-    value: object,
-    neutral_type: Decimal,
-    precision: int,
-    scale: int,
-) -> _DecodedWireLiteral:
+def _decode_decimal(value: object, neutral_type: Decimal) -> _DecodedWireLiteral:
     if not isinstance(value, str):
         _fail("type-mismatch", value, neutral_type)
     text = str.__str__(value)
     if _DECIMAL_NUMBER.fullmatch(text) is None:
         _fail("type-mismatch", value, neutral_type)
     managed = decimal.Decimal(text)
-    if not matches_neutral_type(managed, Decimal(precision, scale)):
+    if not is_decimal_member(managed, neutral_type):
         _fail("out-of-space", value, neutral_type)
-    if _exact_decimal(managed, scale) != text:
+    if _exact_decimal(managed, neutral_type.scale) != text:
         _fail("noncanonical", value, neutral_type)
     return _DecodedWireLiteral(managed)
 
@@ -624,7 +622,7 @@ def _normalize_json_scalar(value: object) -> WireValue:  # noqa: C901
         return number
     if isinstance(value, str):
         text = str.__str__(value)
-        if not matches_neutral_type(text, STRING):
+        if not is_string_member(text, STRING):
             raise _JsonFailure("out-of-space", "a Json string has no UTF-8 encoding")
         return text
     raise _JsonFailure("type-mismatch", f"{_diagnostic(value)} is not JSON data-model content")

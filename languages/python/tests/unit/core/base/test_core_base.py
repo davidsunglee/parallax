@@ -7,10 +7,11 @@ import decimal
 import math
 import random
 import struct
-from collections.abc import Iterator, Mapping
+import uuid
+from collections.abc import Callable, Iterator, Mapping
 from fractions import Fraction
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -19,6 +20,9 @@ from parallax.core.base._neutral import (
     ManagedValueExclusion,
     host_float_binary32,
     host_float_number,
+    is_decimal_member,
+    is_integer_member,
+    is_string_member,
     utc_instant,
 )
 from tests._support.binary32 import rounded_once, rounding_witnesses
@@ -528,3 +532,181 @@ def test_float32_membership_refuses_every_value_past_the_finite_binary32_range(
     value: float, member: bool
 ) -> None:
     assert base.matches_neutral_type(value, base.FLOAT32) is member
+
+
+def test_a_typed_float32_input_names_its_spelled_number_rounded_once() -> None:
+    hosts = [float(spelling) for spelling in rounding_witnesses()]
+    coerced = [base.coerce_neutral_input(host, base.FLOAT32) for host in hosts]
+
+    assert coerced == [rounded_once(repr(host)) for host in hosts]
+    assert all(base.matches_neutral_type(value, base.FLOAT32) for value in coerced)
+    assert all(_is_positive_zero_or_nonzero(cast("float", value)) for value in coerced)
+
+
+class _Count(int):
+    pass
+
+
+class _Instant(dt.datetime):
+    pass
+
+
+class _ExcludedCount(int, ManagedValueExclusion):
+    pass
+
+
+class _ExcludedText(str, ManagedValueExclusion):
+    pass
+
+
+_EVERY_TYPE: tuple[base.NeutralType, ...] = (
+    base.BOOLEAN,
+    base.INT32,
+    base.INT64,
+    base.FLOAT32,
+    base.FLOAT64,
+    base.Decimal(6, 2),
+    base.STRING,
+    base.BYTES,
+    base.DATE,
+    base.TIME,
+    base.TIMESTAMP,
+    base.UUID,
+    base.JSON,
+)
+_UUID_TEXT = "123e4567-e89b-12d3-a456-426614174000"
+_CANDIDATES: tuple[object, ...] = (
+    None,
+    True,
+    0,
+    1,
+    -(2**31) - 1,
+    2**31,
+    2**40,
+    2**53 + 1,
+    2**63,
+    2**24 + 1,
+    _Count(7),
+    1.5,
+    0.1,
+    -0.0,
+    1e39,
+    math.inf,
+    math.nan,
+    decimal.Decimal("1.50"),
+    decimal.Decimal("1.234"),
+    decimal.Decimal("12345.6"),
+    decimal.Decimal("NaN"),
+    "text",
+    "\ud800",
+    "1.50",
+    _UUID_TEXT,
+    _UUID_TEXT.upper(),
+    b"raw",
+    dt.date(2026, 1, 1),
+    dt.datetime(2026, 1, 1),
+    dt.datetime(2026, 1, 1, tzinfo=dt.timezone(dt.timedelta(hours=2))),
+    _Instant(2026, 1, 1, tzinfo=dt.UTC),
+    dt.time(12, 0),
+    dt.time(12, 0, tzinfo=dt.UTC),
+    uuid.UUID(_UUID_TEXT),
+    {"a": [1, None]},
+    [math.nan],
+    _ExcludedCount(1),
+    _ExcludedText(_UUID_TEXT),
+)
+
+
+@pytest.mark.parametrize("declared", _EVERY_TYPE, ids=repr)
+def test_every_admissible_typed_input_is_a_carrier(declared: base.NeutralType) -> None:
+    admitted = [
+        candidate
+        for candidate in _CANDIDATES
+        if base.matches_neutral_type(base.coerce_neutral_input(candidate, declared), declared)
+    ]
+
+    assert admitted
+    assert all(base.matches_typed_carrier(candidate, declared) for candidate in admitted)
+
+
+@pytest.mark.parametrize(
+    ("value", "declared", "carrier", "member"),
+    [
+        (2**40, base.INT32, True, False),
+        (_Count(7), base.INT64, True, True),
+        (True, base.INT64, False, False),
+        (1.0, base.INT64, False, False),
+        (1, base.BOOLEAN, False, False),
+        (decimal.Decimal("1.234"), base.Decimal(6, 2), True, False),
+        (decimal.Decimal("12345.6"), base.Decimal(6, 2), True, False),
+        (decimal.Decimal("NaN"), base.Decimal(6, 2), True, False),
+        (10**5, base.Decimal(6, 2), True, False),
+        (1.5, base.Decimal(6, 2), False, False),
+        ("1.50", base.Decimal(6, 2), False, False),
+        (1e39, base.FLOAT32, True, False),
+        (math.inf, base.FLOAT64, True, False),
+        (2**24, base.FLOAT32, True, True),
+        (2**24 + 1, base.FLOAT32, False, False),
+        (2**53 + 1, base.FLOAT64, False, False),
+        (2**2000, base.FLOAT64, False, False),
+        ("1.5", base.FLOAT64, False, False),
+        ("\ud800", base.STRING, True, False),
+        (b"raw", base.STRING, False, False),
+        ("raw", base.BYTES, False, False),
+        (dt.datetime(2026, 1, 1), base.DATE, False, False),
+        ("2026-01-01", base.DATE, False, False),
+        (dt.time(12, 0, tzinfo=dt.UTC), base.TIME, True, False),
+        (dt.datetime(2026, 1, 1), base.TIMESTAMP, True, False),
+        (_Instant(2026, 1, 1, tzinfo=dt.UTC), base.TIMESTAMP, True, True),
+        (dt.date(2026, 1, 1), base.TIMESTAMP, False, False),
+        ("2026-01-01T00:00:00Z", base.TIMESTAMP, False, False),
+        (_UUID_TEXT, base.UUID, True, True),
+        (_UUID_TEXT.upper(), base.UUID, False, False),
+        (_UUID_TEXT.replace("-", ""), base.UUID, False, False),
+        (uuid.UUID(_UUID_TEXT).int, base.UUID, False, False),
+        ([math.nan], base.JSON, True, False),
+        (None, base.JSON, False, False),
+        (None, base.INT64, False, False),
+        (_ExcludedCount(1), base.INT64, False, False),
+        (_ExcludedText(_UUID_TEXT), base.UUID, False, False),
+        (_ExcludedText("text"), base.STRING, False, False),
+    ],
+)
+def test_the_carrier_policy_refuses_only_what_pydantic_would_convert(
+    value: object, declared: base.NeutralType, carrier: bool, member: bool
+) -> None:
+    coerced = base.coerce_neutral_input(value, declared)
+
+    assert base.matches_typed_carrier(value, declared) is carrier
+    assert base.matches_neutral_type(coerced, declared) is member
+
+
+def test_an_unknown_variant_has_no_carrier_member_or_input_form() -> None:
+    unknown = cast("base.NeutralType", object())
+
+    assert base.matches_typed_carrier(1, unknown) is False
+    assert base.matches_neutral_type(1, unknown) is False
+    assert base.coerce_neutral_input(1, unknown) == 1
+
+
+@pytest.mark.parametrize(
+    ("rule", "declared"),
+    [
+        (is_integer_member, base.INT32),
+        (is_integer_member, base.INT64),
+        (is_decimal_member, base.Decimal(6, 2)),
+        (is_decimal_member, base.Decimal(1, 0)),
+        (is_string_member, base.STRING),
+    ],
+    ids=["int32", "int64", "decimal-6-2", "decimal-1-0", "string"],
+)
+def test_a_shared_membership_rule_is_the_judgment_membership_applies(
+    rule: Callable[[object, Any], bool], declared: base.NeutralType
+) -> None:
+    ordinary = [
+        candidate for candidate in _CANDIDATES if not isinstance(candidate, ManagedValueExclusion)
+    ]
+
+    assert [rule(candidate, declared) for candidate in ordinary] == [
+        base.matches_neutral_type(candidate, declared) for candidate in ordinary
+    ]

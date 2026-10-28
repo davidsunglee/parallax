@@ -356,6 +356,48 @@ def test_each_codec_failure_retains_its_classification(
     assert exc_info.value.reason == reason
 
 
+_RULE_DECODED: list[tuple[NeutralType, str, object]] = [
+    (INT32, "2147483647", 2**31 - 1),
+    (INT32, "-2147483648", -(2**31)),
+    (INT64, "-9223372036854775808", -(2**63)),
+    (Decimal(4, 2), '"10.25"', decimal.Decimal("10.25")),
+    (Decimal(4, 2), '"-0.50"', decimal.Decimal("-0.50")),
+    (Decimal(1, 0), '"9"', decimal.Decimal("9")),
+    (STRING, '"caf\u00e9"', "café"),
+    (JSON, '{"name": "caf\u00e9"}', {"name": "café"}),
+]
+_RULE_REFUSED: list[tuple[NeutralType, str, wire.WireDecodingReason]] = [
+    (INT32, "-2147483649", "out-of-space"),
+    (INT64, "-9223372036854775809", "out-of-space"),
+    (Decimal(4, 2), '"100.00"', "out-of-space"),
+    (Decimal(4, 2), '"1.005"', "out-of-space"),
+    (Decimal(4, 2), '"1.5"', "noncanonical"),
+    (Decimal(1, 0), '"10"', "out-of-space"),
+    (STRING, '"\udfff"', "out-of-space"),
+    (JSON, '["\ud800"]', "out-of-space"),
+]
+
+
+@pytest.mark.parametrize("decode", [wire.decode_wire, wire.decode_canonical_wire])
+def test_decoding_judges_each_space_by_its_own_rule_without_general_membership(
+    decode: Callable[[NeutralType, wire.WireValue], ManagedValue],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def general(_value: object, _declared: NeutralType) -> bool:
+        raise AssertionError("decoding dispatched through general membership")
+
+    monkeypatch.setattr(wire_codec, "matches_neutral_type", general)
+    decoded = [decode(declared, wire.loads(written)) for declared, written, _ in _RULE_DECODED]
+    reasons: list[str] = []
+    for declared, written, _ in _RULE_REFUSED:
+        with pytest.raises(wire.WireDecodingError) as refused:
+            decode(declared, wire.loads(written))
+        reasons.append(refused.value.reason)
+
+    assert [repr(value) for value in decoded] == [repr(value) for _, _, value in _RULE_DECODED]
+    assert reasons == [reason for _, _, reason in _RULE_REFUSED]
+
+
 def test_float_zero_normalizes_positive_and_canonical_decoding_observes_source_sign() -> None:
     for neutral_type in (FLOAT32, FLOAT64):
         decoded = wire.decode_wire(neutral_type, wire.loads("-0.0"))

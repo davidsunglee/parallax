@@ -24,19 +24,22 @@ from typing import (
 from pydantic import ConfigDict, field_validator
 from pydantic._internal._model_construction import ModelMetaclass
 
-from parallax.core.base import FLOAT32, INT32, Decimal, Float32, Int32, NeutralType
-from parallax.core.base import infer_neutral_type as _infer_neutral_type
-from parallax.core.document_codec._authoring import (
-    BORROWED_SOURCE_ACCESS,
-    validate_member_authoring,
+from parallax.core.base import (
+    FLOAT32,
+    INT32,
+    Decimal,
+    Float32,
+    Int32,
+    NeutralType,
+    matches_typed_carrier,
 )
+from parallax.core.base import infer_neutral_type as _infer_neutral_type
 from parallax.core.entity._errors import EntityDefinitionError
 from parallax.core.entity._expressions import (
     EXPRESSION_OPERATION_NAMES,
     AttributeRef,
     RelationshipRef,
     snake_to_camel,
-    typed_authoring_leaf,
 )
 from parallax.core.entity._instance_state import PublicationPlan
 from parallax.core.entity._instance_state import install as install_publication_plan
@@ -2171,15 +2174,17 @@ def _framework_owned_validator(py_name: str) -> Any:
 
 def _scalar_collection_validator(py_name: str, leaf: ScalarDefinition) -> Any:
     """A ``mode="before"`` validator enforcing "a scalar collection is a tuple of
-    admissible elements".
+    its element type's carriers".
 
     Pydantic would otherwise accept any sequence for a ``tuple[X, ...]`` field
-    and coerce elements the Python input policy refuses — ``True`` into an
+    and convert elements the Python input policy refuses — ``True`` into an
     integer, a ``float`` into a ``Decimal`` — erasing them before any write
-    admission sees them. So the exact immutable carrier is required here, and
-    every element is judged by the same validation-only authoring an edit or a
-    ``.set(...)`` applies before Pydantic's own element validation runs.
+    admission sees them. So the exact immutable carrier and each element's
+    carrier are required here, before Pydantic's own element validation runs.
+    Each element's value space is judged by the write that admits it, and by an
+    edit or ``.set(...)`` that assigns the collection.
     """
+    declared = leaf.type
 
     def _validate(_cls: type, value: object) -> object:
         # Pydantic distinguishes a `(cls, value)` validator from a `(value, info)`
@@ -2190,18 +2195,12 @@ def _scalar_collection_validator(py_name: str, leaf: ScalarDefinition) -> Any:
             raise TypeError(
                 f"{py_name}: a scalar collection member requires a tuple, not {carrier.__name__!r}"
             )
-        violation = validate_member_authoring(
-            leaf,
-            value,
-            source_access=BORROWED_SOURCE_ACCESS,
-            normalize_leaf=typed_authoring_leaf,
-            path=py_name,
-        )
-        if violation is not None:
-            raise ValueError(
-                f"{py_name}{violation.path}: value {violation.value!r} does not match the "
-                f"declared element type {leaf.type}"
-            )
+        for index, element in enumerate(cast("tuple[object, ...]", value)):
+            if not matches_typed_carrier(element, declared):
+                raise ValueError(
+                    f"{py_name}[{index}]: value {element!r} does not match the "
+                    f"declared element type {declared}"
+                )
         return value
 
     bound = cast("Any", classmethod(_validate))

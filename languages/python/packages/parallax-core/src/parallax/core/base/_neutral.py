@@ -11,7 +11,7 @@ from collections.abc import Callable as _Callable
 from collections.abc import Mapping as _Mapping
 from dataclasses import dataclass
 from fractions import Fraction as _Fraction
-from typing import Final, Literal, TypeGuard, cast
+from typing import Any, Final, Literal, TypeGuard, cast
 
 __all__ = [
     "BOOLEAN",
@@ -52,7 +52,11 @@ __all__ = [
     "exceeds_json_int_value_space",
     "host_float_binary32",
     "host_float_number",
+    "is_decimal_member",
+    "is_integer_member",
+    "is_string_member",
     "matches_neutral_type",
+    "matches_typed_carrier",
     "nearest_binary32_of_spelling",
     "nearest_float_at_width",
     "normalize_json_carrier",
@@ -248,10 +252,7 @@ def utc_instant(value: _dt.datetime) -> _dt.datetime | None:
         return None
 
 
-# One arm per variant of the closed Neutral Type algebra. Membership runs per value on the
-# read path (Wire publication) and the write path (typed row binds), so the arms stay
-# inline rather than behind a per-variant call.
-def matches_neutral_type(value: object, declared: NeutralType) -> bool:  # noqa: C901
+def matches_neutral_type(value: object, declared: NeutralType) -> bool:
     """Whether ``value`` is a member of ``declared``'s logical value space.
 
     Exact membership, not a category guess: an integer outside its declared
@@ -272,44 +273,22 @@ def matches_neutral_type(value: object, declared: NeutralType) -> bool:  # noqa:
     """
     if isinstance(value, ManagedValueExclusion):
         return False
-    match declared:
-        case Boolean():
-            return isinstance(value, bool)
-        case Int32():
-            return _is_integer(value) and _INT32_BOUNDS[0] <= int.__int__(value) <= _INT32_BOUNDS[1]
-        case Int64():
-            return _is_integer(value) and _INT64_BOUNDS[0] <= int.__int__(value) <= _INT64_BOUNDS[1]
-        case Float32():
-            if not isinstance(value, float):
-                return False
-            base_value = float.__float__(value)
-            try:
-                return (
-                    _math.isfinite(base_value)
-                    and _unpack_binary32(_pack_binary32(base_value))[0] == base_value
-                )
-            except OverflowError:
-                return False
-        case Float64():
-            return isinstance(value, float) and _math.isfinite(float.__float__(value))
-        case Decimal(precision, scale):
-            return isinstance(value, _decimal.Decimal) and _is_exact_decimal(
-                value, precision, scale
-            )
-        case String():
-            return isinstance(value, str) and _is_utf8_encodable(str.__str__(value))
-        case Bytes():
-            return isinstance(value, bytes)
-        case Date():
-            return isinstance(value, _dt.date) and not isinstance(value, _dt.datetime)
-        case Time():
-            return isinstance(value, _dt.time) and base_time_carrier(value).tzinfo is None
-        case Timestamp():
-            return isinstance(value, _dt.datetime) and utc_instant(value) is not None
-        case Uuid():
-            return isinstance(value, _uuid.UUID) and base_uuid_carrier(value) is not None
-        case Json():
-            return value is not None and _is_json_value(value)
+    rule = _MEMBERSHIP_RULES.get(type(declared))
+    return rule is not None and rule(value, declared)
+
+
+def matches_typed_carrier(value: object, declared: NeutralType) -> bool:
+    """Whether ``value`` has a Python carrier the developer input policy
+    admits for ``declared`` (`declarations.md` "Python scalar carriers").
+
+    Every input :func:`coerce_neutral_input` can bring into the value space
+    has one. Whether it lies in that space is :func:`matches_neutral_type`'s
+    judgment, not this one's.
+    """
+    if isinstance(value, ManagedValueExclusion):
+        return False
+    rule = _CARRIER_RULES.get(type(declared))
+    return rule is not None and rule(value, declared)
 
 
 def coerce_neutral_input(value: object, declared: NeutralType) -> object:
@@ -332,23 +311,192 @@ def coerce_neutral_input(value: object, declared: NeutralType) -> object:
     """
     if isinstance(value, ManagedValueExclusion):
         return value
-    match declared:
-        case Decimal() if _is_integer(value):
-            return _decimal.Decimal(int.__int__(value))
-        case Float32() | Float64() if isinstance(value, float):
-            base_value = float.__float__(value)
-            projected = _host_float_at_width(base_value, declared)
-            return base_value if projected is None else projected
-        case Float32() | Float64() if _is_integer(value):
-            base_value = int.__int__(value)
-            projected = nearest_float_at_width(base_value, declared)
-            return projected if projected is not None and projected == base_value else base_value
-        case Timestamp() if isinstance(value, _dt.datetime):
-            return utc_instant(value) or value
-        case Uuid() if isinstance(value, str):
-            return _canonical_uuid_input(value)
-        case _:
-            return value
+    rule = _COERCION_RULES.get(type(declared))
+    return value if rule is None else rule(value, declared)
+
+
+# The per-type rules behind the three judgments above. A rule assumes its value is not a
+# `ManagedValueExclusion`: each public judgment refuses or returns one before dispatching.
+
+
+def _is_boolean_member(value: object, _declared: Boolean) -> bool:
+    return isinstance(value, bool)
+
+
+_INTEGER_BOUNDS: Final[_Mapping[type[Int32 | Int64], tuple[int, int]]] = {
+    Int32: _INT32_BOUNDS,
+    Int64: _INT64_BOUNDS,
+}
+
+
+def is_integer_member(value: object, declared: Int32 | Int64) -> bool:
+    """Integer membership for a value that is not a :class:`ManagedValueExclusion`."""
+    low, high = _INTEGER_BOUNDS[type(declared)]
+    return _is_integer(value) and low <= int.__int__(value) <= high
+
+
+def _is_float32_member(value: object, _declared: Float32) -> bool:
+    if not isinstance(value, float):
+        return False
+    base_value = float.__float__(value)
+    try:
+        return (
+            _math.isfinite(base_value)
+            and _unpack_binary32(_pack_binary32(base_value))[0] == base_value
+        )
+    except OverflowError:
+        return False
+
+
+def _is_float64_member(value: object, _declared: Float64) -> bool:
+    return isinstance(value, float) and _math.isfinite(float.__float__(value))
+
+
+def is_decimal_member(value: object, declared: Decimal) -> bool:
+    """Decimal membership for a value that is not a :class:`ManagedValueExclusion`."""
+    return isinstance(value, _decimal.Decimal) and _is_exact_decimal(
+        value, declared.precision, declared.scale
+    )
+
+
+def is_string_member(value: object, _declared: String) -> bool:
+    """String membership for a value that is not a :class:`ManagedValueExclusion`."""
+    return isinstance(value, str) and _is_utf8_encodable(str.__str__(value))
+
+
+def _is_bytes_member(value: object, _declared: Bytes) -> bool:
+    return isinstance(value, bytes)
+
+
+def _is_date_member(value: object, _declared: Date) -> bool:
+    return isinstance(value, _dt.date) and not isinstance(value, _dt.datetime)
+
+
+def _is_time_member(value: object, _declared: Time) -> bool:
+    return isinstance(value, _dt.time) and base_time_carrier(value).tzinfo is None
+
+
+def _is_timestamp_member(value: object, _declared: Timestamp) -> bool:
+    return isinstance(value, _dt.datetime) and utc_instant(value) is not None
+
+
+def _is_uuid_member(value: object, _declared: Uuid) -> bool:
+    return isinstance(value, _uuid.UUID) and base_uuid_carrier(value) is not None
+
+
+def _is_json_member(value: object, _declared: Json) -> bool:
+    return value is not None and _is_json_value(value)
+
+
+def _coerce_decimal_input(value: object, _declared: Decimal) -> object:
+    return _decimal.Decimal(int.__int__(value)) if _is_integer(value) else value
+
+
+def _coerce_float_input(value: object, declared: Float32 | Float64) -> object:
+    if isinstance(value, float):
+        base_value = float.__float__(value)
+        projected = _host_float_at_width(base_value, declared)
+        return base_value if projected is None else projected
+    if _is_integer(value):
+        base_integer = int.__int__(value)
+        exact = _exact_float_of_integer(base_integer, declared)
+        return base_integer if exact is None else exact
+    return value
+
+
+def _coerce_timestamp_input(value: object, _declared: Timestamp) -> object:
+    if isinstance(value, _dt.datetime):
+        return utc_instant(value) or value
+    return value
+
+
+def _coerce_uuid_input(value: object, _declared: Uuid) -> object:
+    return _canonical_uuid_input(value) if isinstance(value, str) else value
+
+
+def _is_integer_carrier(value: object, _declared: Int32 | Int64) -> bool:
+    return _is_integer(value)
+
+
+def _is_float_carrier(value: object, declared: Float32 | Float64) -> bool:
+    if isinstance(value, float):
+        return True
+    return _is_integer(value) and _exact_float_of_integer(int.__int__(value), declared) is not None
+
+
+def _is_decimal_carrier(value: object, _declared: Decimal) -> bool:
+    return isinstance(value, _decimal.Decimal) or _is_integer(value)
+
+
+def _is_string_carrier(value: object, _declared: String) -> bool:
+    return isinstance(value, str)
+
+
+def _is_time_carrier(value: object, _declared: Time) -> bool:
+    return isinstance(value, _dt.time)
+
+
+def _is_timestamp_carrier(value: object, _declared: Timestamp) -> bool:
+    return isinstance(value, _dt.datetime)
+
+
+def _is_uuid_carrier(value: object, _declared: Uuid) -> bool:
+    if isinstance(value, str):
+        return isinstance(_canonical_uuid_input(value), _uuid.UUID)
+    return isinstance(value, _uuid.UUID)
+
+
+def _is_json_carrier(value: object, _declared: Json) -> bool:
+    return value is not None
+
+
+type _Rule[T] = _Callable[[object, Any], T]
+
+_MEMBERSHIP_RULES: Final[_Mapping[type[NeutralType], _Rule[bool]]] = {
+    Boolean: _is_boolean_member,
+    Int32: is_integer_member,
+    Int64: is_integer_member,
+    Float32: _is_float32_member,
+    Float64: _is_float64_member,
+    Decimal: is_decimal_member,
+    String: is_string_member,
+    Bytes: _is_bytes_member,
+    Date: _is_date_member,
+    Time: _is_time_member,
+    Timestamp: _is_timestamp_member,
+    Uuid: _is_uuid_member,
+    Json: _is_json_member,
+}
+_COERCION_RULES: Final[_Mapping[type[NeutralType], _Rule[object]]] = {
+    Decimal: _coerce_decimal_input,
+    Float32: _coerce_float_input,
+    Float64: _coerce_float_input,
+    Timestamp: _coerce_timestamp_input,
+    Uuid: _coerce_uuid_input,
+}
+# Where a variant's membership test is its whole carrier test, the one rule serves both.
+_CARRIER_RULES: Final[_Mapping[type[NeutralType], _Rule[bool]]] = {
+    Boolean: _is_boolean_member,
+    Int32: _is_integer_carrier,
+    Int64: _is_integer_carrier,
+    Float32: _is_float_carrier,
+    Float64: _is_float_carrier,
+    Decimal: _is_decimal_carrier,
+    String: _is_string_carrier,
+    Bytes: _is_bytes_member,
+    Date: _is_date_member,
+    Time: _is_time_carrier,
+    Timestamp: _is_timestamp_carrier,
+    Uuid: _is_uuid_carrier,
+    Json: _is_json_carrier,
+}
+
+
+def _exact_float_of_integer(value: int, declared: Float32 | Float64) -> float | None:
+    """The float of ``declared``'s width naming exactly ``value``, or ``None``
+    when that width carries no float equal to it."""
+    projected = nearest_float_at_width(value, declared)
+    return projected if projected is not None and projected == value else None
 
 
 def _canonical_uuid_input(value: str) -> object:
