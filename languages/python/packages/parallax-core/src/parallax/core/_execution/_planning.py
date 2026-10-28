@@ -7,12 +7,14 @@ from parallax.core import batch_write, opt_lock
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._publication import ModelSelection, check_edition, select_model
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.strategy import NO_AUDIT
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.read_delivery._page import ABSENT
 from parallax.core.write_payload import LayoutPayloadPreparer
 
 __all__ = ["build_write_planner", "prepare_model"]
@@ -28,6 +30,7 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         )
     catalog = CatalogedModel(model_of(model))
     classes = class_index(model)
+    preparation = WritePreparation(catalog.meta, absent=ABSENT)
     return select_model(
         model,
         edition=edition,
@@ -35,7 +38,8 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         classes=classes,
         construction=(None if classes is None else EntityGraphConstruction(catalog, classes)),
         codec=EntityRowCodec(catalog),
-        planner=build_write_planner(catalog.meta),
+        preparation=preparation,
+        planner=build_write_planner(catalog.meta, preparation=preparation),
         evidence_policy_for=opt_lock.view(catalog.meta).required_key,
     )
 
@@ -60,17 +64,21 @@ class _BatchingAdapter:
         return collapse_group_key(model, entity, mutation, row)
 
 
-def build_write_planner(model: Metamodel) -> WritePlanner:
-    """One ``WritePlanner`` for ``model``, wired with production strategies and
-    the model's write payload preparer, which every flush it plans is lowered
-    through.
+def build_write_planner(
+    model: Metamodel, *, preparation: WritePreparation | None = None
+) -> WritePlanner:
+    """One ``WritePlanner`` for ``model``, wired with production strategies,
+    the model's write preparation, and its write payload preparer, which every
+    flush it plans is lowered through.
 
-    Called once per prepared model selection (:func:`prepare_model`) and
-    identically by the conformance engine's compile lane, so the two lanes plan
-    and prepare through the same deterministic computation.
+    Called once per prepared model selection (:func:`prepare_model`), which
+    shares its own ``preparation``, and identically by the conformance engine's
+    compile lane, so the two lanes plan and prepare through the same
+    deterministic computation.
     """
     return WritePlanner(
         model,
+        preparation=WritePreparation(model, absent=ABSENT) if preparation is None else preparation,
         batching=_BatchingAdapter(),
         concurrency=CONCURRENCY,
         audit=NO_AUDIT,

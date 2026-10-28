@@ -25,6 +25,7 @@ from parallax.core._execution._unit_work.instructions import (
     TargetMutation,
     WriteAssignment,
 )
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core.entity import AttributeAssignment, EntityRowCodec
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity._authored_resolver import typed_interpretation
@@ -163,7 +164,7 @@ class TypedKeyedWriteSource:
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedWriteSource,
         /,
@@ -183,9 +184,9 @@ class TypedKeyedWriteSource:
         authors its identity row alone, and so does an amendment off a value
         whose chain touched nothing — the empty write the ingress drops.
         """
-        row, explicit = self._authored(model, mutation, resolved.entity)
+        row, explicit = self._authored(preparation.meta, mutation, resolved.entity)
         return prepared_typed_write(
-            model,
+            preparation.meta,
             mutation,
             resolved.entity,
             row,
@@ -241,7 +242,7 @@ class TypedKeyedInsertSource:
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedInsert,
         /,
@@ -250,7 +251,7 @@ class TypedKeyedInsertSource:
         until: dt.datetime | None,
     ) -> PreparedKeyedInstruction:
         return prepared_typed_write(
-            model,
+            preparation.meta,
             mutation,
             resolved.entity,
             self._codec.full_row(self._instance),

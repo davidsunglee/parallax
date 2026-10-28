@@ -25,6 +25,7 @@ from parallax.core._execution._unit_work.instructions import (
     WriteInstructionError,
 )
 from parallax.core._execution._unit_work.keys import object_key
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.retain import (
     NO_INSERTION_AUTHORITY,
     InsertionIdentity,
@@ -34,7 +35,6 @@ from parallax.core._execution._unit_work.retain import (
 )
 from parallax.core._execution._unit_work.uow import UnitOfWork
 from parallax.core._execution._unit_work.write_items import KeyedInsert, admitted_write
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Bitemporal, Pin, TimeInterval
@@ -279,8 +279,8 @@ class KeyedWriteSource(Protocol):
     :meth:`capture` judges and freezes whatever the representation alone can be
     wrong about — a Wire change document's own shape; nothing at all for a Typed
     value, whose shape its class fixes. :meth:`resolve` answers the source facts.
-    :meth:`prepare` is handed the model and mutation :meth:`resolve` was,
-    beside its answer; it acquires the authored row — the identity plus every
+    :meth:`prepare` is handed the write preparation of the model :meth:`resolve`
+    was, the same mutation, and its answer; it acquires the authored row — the identity plus every
     member the caller expressed, and nothing else — builds the instruction with
     the caller's raw bounds, and has core preparation judge it, target and
     window first, then payload. A representation that addresses members by the
@@ -293,7 +293,7 @@ class KeyedWriteSource(Protocol):
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedWriteSource,
         /,
@@ -318,7 +318,7 @@ class KeyedInsertSource(Protocol):
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedInsert,
         /,
@@ -432,7 +432,7 @@ def stated_valid_from(valid_from: dt.datetime | Omitted) -> dt.datetime | None:
 
 
 def keyed_write(
-    model: CatalogedModel,
+    preparation: WritePreparation,
     uow: UnitOfWork,
     lifecycle: InstalledLifecycle | None,
     source: KeyedWriteSource,
@@ -477,7 +477,7 @@ def keyed_write(
     """
     refuse_reentry(lifecycle)
     source.capture(mutation)
-    meta = model.meta
+    meta = preparation.meta
     resolved = source.resolve(meta, mutation)
     authoring = resolved.authoring
     anchor = (
@@ -495,7 +495,7 @@ def keyed_write(
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
     valid_from = source_start(meta, resolved, mutation, anchor)
-    prepared = source.prepare(meta, mutation, resolved, valid_from=valid_from, until=until)
+    prepared = source.prepare(preparation, mutation, resolved, valid_from=valid_from, until=until)
     if authorized:
         assert authoring is not None  # only an insertion's identity authorizes
         item = admitted_write(prepared, None, authoring.object_key, authority=authoring)
@@ -566,7 +566,7 @@ _SOURCE_WINDOWED: Final[frozenset[str]] = frozenset({"terminate", "terminateUnti
 
 
 def keyed_insert(
-    model: CatalogedModel,
+    preparation: WritePreparation,
     uow: UnitOfWork,
     lifecycle: InstalledLifecycle | None,
     opening: KeyedInsertSource,
@@ -612,7 +612,7 @@ def keyed_insert(
     refuse_reentry(lifecycle)
     start = stated_valid_from(valid_from)
     opening.capture(mutation)
-    meta = model.meta
+    meta = preparation.meta
     resolved = opening.resolve(meta, mutation)
     validate_source_pin(resolved.entity.identity, resolved.pin)
     validate_provenance(
@@ -622,7 +622,7 @@ def keyed_insert(
         inserted=False,
         advice=resolved.advice,
     )
-    prepared = opening.prepare(meta, mutation, resolved, valid_from=start, until=until)
+    prepared = opening.prepare(preparation, mutation, resolved, valid_from=start, until=until)
     opened = object_key(prepared, meta)
     # A Create Payload is a complete document, so the row it buffers always names
     # its own object by the time validation has admitted it.

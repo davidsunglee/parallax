@@ -24,6 +24,7 @@ from parallax.core._execution._unit_work.instructions import (
     TargetMutation,
     TargetWriteInstruction,
 )
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.retain import KeyedWriteRefusalAdvice
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from tests._support.db_port import ScriptedAdapter, Transact
@@ -61,7 +62,7 @@ class _KeyedSource:
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedWriteSource,
         /,
@@ -85,7 +86,7 @@ class _InsertSource:
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedInsert,
         /,

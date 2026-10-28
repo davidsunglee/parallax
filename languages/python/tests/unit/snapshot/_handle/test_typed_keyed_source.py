@@ -44,7 +44,7 @@ from parallax.snapshot._handle._typed_writes import (
 )
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter
-from tests._support.model_capabilities import cataloged_for, row_codec_for
+from tests._support.model_capabilities import cataloged_for, preparation_for, row_codec_for
 from tests.unit._transact_support import (
     ACCOUNT,
     db_for,
@@ -145,7 +145,7 @@ def test_prepare_states_every_touched_member_as_its_literal_assignment() -> None
     source = TypedKeyedWriteSource(edited, codec)
     resolved = source.resolve(meta, "amend")
 
-    prepared = source.prepare(meta, "amend", resolved, valid_from=None, until=None)
+    prepared = source.prepare(preparation_for(meta), "amend", resolved, valid_from=None, until=None)
 
     assert prepared.rows[0] == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigns
@@ -159,7 +159,7 @@ def test_a_wholly_restoring_chain_still_assigns_the_member_it_took_back() -> Non
     source = TypedKeyedWriteSource(restored, codec)
 
     prepared = source.prepare(
-        meta, "amend", source.resolve(meta, "amend"), valid_from=None, until=None
+        preparation_for(meta), "amend", source.resolve(meta, "amend"), valid_from=None, until=None
     )
 
     assert prepared.rows[0] == {"id": 1, "balance": Decimal("100.00")}
@@ -179,7 +179,7 @@ def test_a_correction_states_what_current_authoring_admits_over_any_stored_origi
     )
 
     prepared = source.prepare(
-        meta, "amend", source.resolve(meta, "amend"), valid_from=None, until=None
+        preparation_for(meta), "amend", source.resolve(meta, "amend"), valid_from=None, until=None
     )
 
     assert prepared.rows[0]["address"] == {
@@ -196,7 +196,7 @@ def test_an_untouched_copy_authors_its_identity_row_alone() -> None:
     source = TypedKeyedWriteSource(_published_account(), codec)
 
     prepared = source.prepare(
-        meta, "amend", source.resolve(meta, "amend"), valid_from=None, until=None
+        preparation_for(meta), "amend", source.resolve(meta, "amend"), valid_from=None, until=None
     )
 
     assert prepared.rows[0] == {"id": 1}
@@ -208,7 +208,7 @@ def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> No
     source = TypedKeyedWriteSource(_published_account(), codec)
 
     prepared = source.prepare(
-        meta, "delete", source.resolve(meta, "delete"), valid_from=None, until=None
+        preparation_for(meta), "delete", source.resolve(meta, "delete"), valid_from=None, until=None
     )
 
     assert prepared.rows[0] == {"id": 1}
@@ -231,7 +231,7 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
     source = TypedKeyedInsertSource(new_account(), codec)
 
     prepared = source.prepare(
-        meta, "insert", source.resolve(meta, "insert"), valid_from=None, until=None
+        preparation_for(meta), "insert", source.resolve(meta, "insert"), valid_from=None, until=None
     )
 
     assert prepared.rows[0] == {"id": 7, "owner": "Newton", "balance": Decimal("5.00")}
@@ -246,11 +246,13 @@ def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
     resolved = source.resolve(meta, "insert")
     stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
 
-    prepared = source.prepare(meta, "insert", resolved, valid_from=stated, until=None)
+    prepared = source.prepare(
+        preparation_for(meta), "insert", resolved, valid_from=stated, until=None
+    )
 
     assert prepared.valid_time_window == TimeInterval(_TX_START, INFINITY)
     with pytest.raises(WriteInstructionError, match="a bitemporal 'insert' requires valid_from"):
-        source.prepare(meta, "insert", resolved, valid_from=None, until=None)
+        source.prepare(preparation_for(meta), "insert", resolved, valid_from=None, until=None)
 
 
 # --------------------------------------------------------------------------- #

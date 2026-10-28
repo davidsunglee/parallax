@@ -28,6 +28,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_typed_write,
 )
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
     KeyedWriteRefusalAdvice,
@@ -99,7 +100,7 @@ class _AmendingAccountOne:
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedWriteSource,
         /,
@@ -107,6 +108,7 @@ class _AmendingAccountOne:
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> PreparedKeyedInstruction:
+        model = preparation.meta
         return _prepared(model, mutation, resolved.entity, {"id": 1, "balance": Decimal("9.00")})
 
 
@@ -122,7 +124,7 @@ class _OpeningAccountSeven:
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedInsert,
         /,
@@ -130,6 +132,7 @@ class _OpeningAccountSeven:
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> PreparedKeyedInstruction:
+        model = preparation.meta
         row = {"id": 7, "owner": "Newton", "balance": Decimal("5.00")}
         return _prepared(model, mutation, resolved.entity, row)
 
@@ -219,7 +222,7 @@ class _RevisingInsertedAccountSeven:
 
     def prepare(
         self,
-        model: Metamodel,
+        preparation: WritePreparation,
         mutation: KeyedMutation,
         resolved: ResolvedKeyedWriteSource,
         /,
@@ -227,6 +230,7 @@ class _RevisingInsertedAccountSeven:
         valid_from: dt.datetime | None,
         until: dt.datetime | None,
     ) -> PreparedKeyedInstruction:
+        model = preparation.meta
         self._interferes()
         return _prepared(model, mutation, resolved.entity, {"id": 7, "balance": Decimal("9.00")})
 

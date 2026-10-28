@@ -215,7 +215,6 @@ class AuthoringPlan:
         "_access",
         "_fills",
         "_markable",
-        "_missing",
         "_never_null",
         "_steps",
         "shape",
@@ -229,9 +228,6 @@ class AuthoringPlan:
         self._steps: tuple[_Step, ...] = tuple(_step(member, catalog) for member in members)
         self._fills: tuple[object, ...] = tuple(
             () if member.multiplicity is Multiplicity.MANY else catalog.absent for member in members
-        )
-        self._missing: tuple[AuthoringViolation, ...] = tuple(
-            AuthoringViolation("", _missing_reason(member)) for member in members
         )
         self._never_null = _mask(member.multiplicity is Multiplicity.MANY for member in members)
         self._markable = _mask(
@@ -275,11 +271,11 @@ class AuthoringPlan:
                     cells.append(fill)
                     presence |= bit
                 elif required & bit:
-                    raise AuthoringRefusal(position, self._missing[position], None)
+                    raise self._missing(position)
                 continue
             if raw is None:
                 if (required | self._never_null) & bit:
-                    raise AuthoringRefusal(position, self._missing[position], None)
+                    raise self._missing(position)
                 cells.append(None)
                 presence |= bit
                 continue
@@ -318,6 +314,10 @@ class AuthoringPlan:
                 cells = cells if cells is not None else list(values)
                 cells[position] = cell
         return values if cells is None else tuple(cells)
+
+    def _missing(self, position: int) -> AuthoringRefusal:
+        member = self.shape.members[position]
+        return AuthoringRefusal(position, AuthoringViolation("", _missing_reason(member)), None)
 
     def _converted(self, position: int, raw: object) -> object:
         try:
