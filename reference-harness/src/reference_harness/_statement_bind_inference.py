@@ -11,11 +11,13 @@ from sqlglot.expressions.core import Expr
 from ._postgres_arrays import column_array_element
 from ._sql_placeholders import parse_indexed_statement, placeholder_index
 from .case import Case
+from .ddl_builder import declared_contributors, slot_neutral_type
 from .storage_layout import (
     AttributeContributor,
     ColumnSlot,
     DocumentMember,
     RelationalDocument,
+    TableLayout,
     ValueObjectContributor,
 )
 
@@ -30,7 +32,52 @@ class DocumentBindTarget:
     members: tuple[DocumentMember, ...]
 
 
-type CanonicalBindTarget = ColumnSlot | LiteralBindTarget | DocumentMember | DocumentBindTarget
+@dataclass(frozen=True, slots=True)
+class DocumentArrayBindTarget:
+    """A column array bound into a shared Structured Column: element ``i`` is row
+    ``i``'s document, typed by the members that row's own tag selects."""
+
+    elements: tuple[DocumentBindTarget, ...]
+
+
+type CanonicalBindTarget = (
+    ColumnSlot | LiteralBindTarget | DocumentMember | DocumentBindTarget | DocumentArrayBindTarget
+)
+
+
+class ColumnArrayShapeError(ValueError):
+    """A column-array INSERT whose binds are not one equal-length array per column."""
+
+
+def column_array_rows(statement: str, binds: Sequence[object]) -> list[list[object]] | None:
+    """The rows the PostgreSQL column-array INSERT *statement* writes, in array
+    order, each aligned with its column list; ``None`` for any other statement.
+
+    PostgreSQL pads shorter ``unnest`` arguments with ``NULL``, so arrays of unequal
+    length are refused rather than read as the rows the database would store.
+    """
+    tree = parse_indexed_statement(statement, "postgres")
+    found = None if tree is None else _column_arrays(tree)
+    if found is None:
+        return None
+    columns, arrays = found
+    if len(arrays) != len(columns):
+        raise ColumnArrayShapeError(
+            f"renders {len(arrays)} column array(s) for {len(columns)} column(s)"
+        )
+    if [_bound_index(array) for array in arrays] != list(range(len(binds))):
+        raise ColumnArrayShapeError(
+            f"carries {len(binds)} bind(s) for {len(arrays)} column array(s), each of which "
+            f"binds exactly one array in column order"
+        )
+    lengths: dict[str, int] = {}
+    for column, value in zip(columns, binds, strict=True):
+        if not isinstance(value, list):
+            raise ColumnArrayShapeError(f"binds {value!r} to column {column}, not an array")
+        lengths[column] = len(value)
+    if len(set(lengths.values())) > 1:
+        raise ColumnArrayShapeError(f"binds column arrays of unequal lengths {lengths}")
+    return [list(row) for row in zip(*binds, strict=True)]
 
 
 def infer_statement_bind_targets(
@@ -59,20 +106,22 @@ def infer_statement_bind_targets(
 def _insert_targets(
     case: Case, tree: Expr, binds: Sequence[object]
 ) -> dict[int, CanonicalBindTarget]:
-    if not isinstance(tree, exp.Insert) or not isinstance(tree.this, exp.Schema):
+    layout = _insert_layout(case, tree)
+    if not isinstance(tree, exp.Insert) or layout is None:
         return {}
-    table = tree.this.this
-    if not isinstance(table, exp.Table):
-        return {}
-    layout = case.model.storage_layout.table(table.name)
-    values = tree.expression
-    if layout is None or not isinstance(values, exp.Values):
-        return {}
-    columns = tuple(
-        identifier.name
-        for identifier in tree.this.expressions
-        if isinstance(identifier, exp.Identifier)
-    )
+    if isinstance(tree.expression, exp.Values):
+        return _value_row_targets(case, layout, _insert_columns(tree), tree.expression, binds)
+    found = _column_arrays(tree)
+    return {} if found is None else _column_array_targets(case, layout, *found, binds)
+
+
+def _value_row_targets(
+    case: Case,
+    layout: TableLayout,
+    columns: tuple[str, ...],
+    values: exp.Values,
+    binds: Sequence[object],
+) -> dict[int, CanonicalBindTarget]:
     targets: dict[int, CanonicalBindTarget] = {}
     for row in values.expressions:
         if not isinstance(row, exp.Tuple):
@@ -80,16 +129,100 @@ def _insert_targets(
         cells = dict(zip(columns, row.expressions, strict=False))
         known = {column: _operand_value(cell, binds) for column, cell in cells.items()}
         for column_name, expression in cells.items():
-            placeholders = tuple(expression.find_all(exp.Placeholder))
-            if isinstance(expression, exp.Placeholder):
-                placeholders = (expression,)
-            if len(placeholders) != 1 or not _transparent_placeholder(expression, placeholders[0]):
-                continue
-            index = placeholder_index(placeholders[0])
+            index = _bound_index(expression)
             slot = layout.column(column_name)
             if index is not None and slot is not None:
                 targets[index] = _slot_target(case, slot, known)
     return targets
+
+
+def _column_array_targets(
+    case: Case,
+    layout: TableLayout,
+    columns: tuple[str, ...],
+    arrays: tuple[Expr, ...],
+    binds: Sequence[object],
+) -> dict[int, CanonicalBindTarget]:
+    """Each column array's target: its column's slot, whose declaration types
+    every element, or, for a shared Structured Column, one document target per
+    row, because table-per-hierarchy siblings may declare one path differently
+    and only the tag in the same row position says which sibling owns it."""
+    cells = dict(zip(columns, arrays, strict=False))
+    known = {column: _operand_value(array, binds) for column, array in cells.items()}
+    targets: dict[int, CanonicalBindTarget] = {}
+    for column_name, array in cells.items():
+        index = _bound_index(array)
+        slot = layout.column(column_name)
+        if index is None or slot is None:
+            continue
+        if not isinstance(slot.contributor, RelationalDocument):
+            targets[index] = slot
+            continue
+        documents = known[column_name]
+        rows = len(documents) if isinstance(documents, list) else 0
+        targets[index] = DocumentArrayBindTarget(
+            tuple(
+                DocumentBindTarget(_document_members(case, slot, _array_row(known, row)))
+                for row in range(rows)
+            )
+        )
+    return targets
+
+
+def _array_row(arrays: Mapping[str, object], row: int) -> dict[str, object]:
+    return {
+        column: values[row]
+        for column, values in arrays.items()
+        if isinstance(values, list) and row < len(values)
+    }
+
+
+def _insert_layout(case: Case, tree: Expr) -> TableLayout | None:
+    if not isinstance(tree, exp.Insert) or not isinstance(tree.this, exp.Schema):
+        return None
+    table = tree.this.this
+    return case.model.storage_layout.table(table.name) if isinstance(table, exp.Table) else None
+
+
+def _insert_columns(tree: exp.Insert) -> tuple[str, ...]:
+    return tuple(
+        identifier.name
+        for identifier in tree.this.expressions
+        if isinstance(identifier, exp.Identifier)
+    )
+
+
+def _column_arrays(tree: Expr) -> tuple[tuple[str, ...], tuple[Expr, ...]] | None:
+    """The column list and ``unnest`` arguments of a column-array INSERT
+    (``insert into t(a, b) select * from unnest(cast(? as bigint[]), …)``), or
+    ``None`` for any other statement."""
+    if not isinstance(tree, exp.Insert) or not isinstance(tree.this, exp.Schema):
+        return None
+    select = tree.expression
+    if not isinstance(select, exp.Select) or [
+        key for key, value in select.args.items() if value and key not in ("expressions", "from_")
+    ]:
+        return None
+    if len(select.expressions) != 1 or not isinstance(select.expressions[0], exp.Star):
+        return None
+    source = select.args.get("from_")
+    unnest = source.this if isinstance(source, exp.From) else None
+    if not isinstance(unnest, exp.Unnest) or [
+        key for key, value in unnest.args.items() if value and key != "expressions"
+    ]:
+        return None
+    return _insert_columns(tree), tuple(unnest.expressions)
+
+
+def _bound_index(expression: Expr) -> int | None:
+    """The index of the one placeholder ``expression`` binds, seen through casts
+    and parentheses alone."""
+    placeholders = tuple(expression.find_all(exp.Placeholder))
+    if isinstance(expression, exp.Placeholder):
+        placeholders = (expression,)
+    if len(placeholders) != 1 or not _transparent_placeholder(expression, placeholders[0]):
+        return None
+    return placeholder_index(placeholders[0])
 
 
 def _update_targets(
@@ -301,47 +434,78 @@ def _compared_operand(placeholder: exp.Placeholder) -> Expr | None:
 @dataclass(frozen=True, slots=True)
 class ArrayCastMismatch:
     """A Postgres array parameter not cast to the array of the unmodified type
-    its compared operand compares in; ``cast`` is ``None`` for an uncast one."""
+    its compared operand compares in, or, for a column array, the type its
+    ``column`` is declared with; ``cast`` is ``None`` for an uncast one."""
 
     index: int
     cast: str | None
     expected: str
+    column: str | None = None
 
 
 def array_cast_mismatches(
     case: Case, statement: str, binds: Sequence[object]
 ) -> tuple[ArrayCastMismatch, ...]:
     """Every array parameter of the Postgres *statement* whose cast is not the
-    m-dialect *array parameter cast form* of its compared operand: a column's own
-    type, a cast extraction's type, or text for a text extraction. An operand
-    this cannot type is not judged."""
+    m-dialect *array parameter cast form* of its compared operand — a column's own
+    type, a cast extraction's type, or text for a text extraction — or of the
+    column a column array inserts into. An operand this cannot type is not
+    judged."""
     tree = parse_indexed_statement(statement, "postgres")
     if tree is None:
         return ()
     mismatches: list[ArrayCastMismatch] = []
     for array in tree.find_all(exp.Any):
-        parameter = array.this
-        while isinstance(parameter, exp.Paren):
-            parameter = parameter.this
+        parameter = _unparenthesized(array.this)
         comparison = array.parent
-        placeholder = parameter.this if isinstance(parameter, exp.Cast) else parameter
-        index = placeholder_index(placeholder) if isinstance(placeholder, exp.Placeholder) else None
-        if index is None or not isinstance(comparison, exp.EQ):
+        if not isinstance(comparison, exp.EQ):
             continue
         operand = comparison.this if array is comparison.expression else comparison.expression
         expected = _compared_type(case, operand, binds)
-        if expected is None:
+        mismatch = None if expected is None else _array_cast_mismatch(parameter, expected)
+        if mismatch is not None:
+            mismatches.append(mismatch)
+    mismatches.extend(_column_array_cast_mismatches(case, tree))
+    return tuple(sorted(mismatches, key=lambda mismatch: mismatch.index))
+
+
+def _column_array_cast_mismatches(case: Case, tree: Expr) -> Iterator[ArrayCastMismatch]:
+    layout = _insert_layout(case, tree)
+    found = _column_arrays(tree)
+    if layout is None or found is None:
+        return
+    declarations = declared_contributors(case.model)
+    for column, array in zip(*found, strict=False):
+        slot = layout.column(column)
+        if slot is None:
             continue
-        element = _array_element(parameter.to) if isinstance(parameter, exp.Cast) else None
-        if element is None or element.this != expected.this or element.expressions:
-            mismatches.append(
-                ArrayCastMismatch(
-                    index,
-                    None if element is None else element.sql(dialect="postgres").lower(),
-                    expected.sql(dialect="postgres").lower(),
-                )
-            )
-    return tuple(mismatches)
+        expected = exp.DataType.build(
+            column_array_element(slot_neutral_type(slot, declarations)), dialect="postgres"
+        )
+        mismatch = _array_cast_mismatch(_unparenthesized(array), expected)
+        if mismatch is not None:
+            yield ArrayCastMismatch(mismatch.index, mismatch.cast, mismatch.expected, column)
+
+
+def _array_cast_mismatch(parameter: Expr, expected: exp.DataType) -> ArrayCastMismatch | None:
+    placeholder = parameter.this if isinstance(parameter, exp.Cast) else parameter
+    index = placeholder_index(placeholder) if isinstance(placeholder, exp.Placeholder) else None
+    if index is None:
+        return None
+    element = _array_element(parameter.to) if isinstance(parameter, exp.Cast) else None
+    if element is not None and element.this == expected.this and not element.expressions:
+        return None
+    return ArrayCastMismatch(
+        index,
+        None if element is None else element.sql(dialect="postgres").lower(),
+        expected.sql(dialect="postgres").lower(),
+    )
+
+
+def _unparenthesized(expression: Expr) -> Expr:
+    while isinstance(expression, exp.Paren):
+        expression = expression.this
+    return expression
 
 
 def _array_element(data_type: exp.DataType) -> exp.DataType | None:

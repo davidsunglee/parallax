@@ -35,6 +35,7 @@ import sqlglot
 from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
+from ._statement_bind_inference import ColumnArrayShapeError, column_array_rows
 from .case import Case, Entity
 from .case_assertions import CaseFailure, write_value_equal
 from .document_codec import encode_collection, encode_document, encode_leaf
@@ -836,20 +837,31 @@ def _insert_column_list(statement: str) -> str | None:
 
 
 def insert_value_rows(case: Case, statement: str, binds: list[Any]) -> list[list[Any]]:
-    """An INSERT's binds, one list per value tuple it renders, in tuple order.
+    """An INSERT's binds, one list per row it writes, in row order.
 
-    A multi-row INSERT carries one value tuple per row — a batched insert
-    (`m-batch-write`) and a run of single-entry inserts sharing one statement
-    (`m-sql` *Requested ranges* and *Batched insert / update*) alike — so a
-    row's binds are found by counting
-    each tuple's own placeholders rather than by assuming one row per statement.
-    Read through :func:`_sql_scan`, so neither a bracket nor a `?` inside a quoted
-    identifier or a string literal is taken for syntax.
+    A multi-row INSERT carries several rows — a batched insert (`m-batch-write`)
+    and a run of single-entry inserts sharing one statement (`m-sql` *Requested
+    ranges* and *Batched insert / update*) alike — so a row's binds are found from
+    the statement's own shape rather than by assuming one row per statement. A
+    `VALUES` INSERT binds one tuple per row, found by counting each tuple's own
+    placeholders, read through :func:`_sql_scan` so neither a bracket nor a `?`
+    inside a quoted identifier or a string literal is taken for syntax. A
+    PostgreSQL column-array INSERT binds one array per column instead, and its
+    row ``i`` is element ``i`` of every array.
     """
     values = _values_clause(statement)
     if values is None:
+        try:
+            aligned = column_array_rows(statement, binds)
+        except ColumnArrayShapeError as exc:
+            raise CaseFailure(
+                f"{case.path.name}: the column-array golden INSERT {statement!r} {exc}."
+            ) from exc
+        if aligned is not None:
+            return aligned
         raise CaseFailure(
-            f"{case.path.name}: could not find the VALUES tuples of golden INSERT {statement!r}."
+            f"{case.path.name}: could not find the VALUES tuples or column arrays of golden "
+            f"INSERT {statement!r}."
         )
     widths = _tuple_widths(values)
     if sum(widths) != len(binds):

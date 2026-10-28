@@ -10,19 +10,25 @@ from sqlglot.expressions.core import Expr
 
 _PLACEHOLDER_PREFIX = "__parallax_bind_"
 
-# One array parameter compared through `any`, bare or cast to an array type
-# (`any(?)`, `any(cast(? as bigint[]))`).
-_ARRAY_PARAMETER = re.compile(
-    r"\bany\s*\(\s*(?:\?|cast\s*\(\s*\?\s+as\s+[a-z ]+\[\s*\]\s*\))\s*\)",
+# One array parameter, bare or cast to an array type (`?`, `cast(? as bigint[])`).
+_ARRAY_PARAMETER = r"(?:\?|cast\s*\(\s*\?\s+as\s+[a-z ]+\[\s*\]\s*\))"
+
+# The array parameters passed as one array each: compared through `any`, or read
+# apart as the column arrays of `unnest`.
+_ARRAY_PARAMETERS = re.compile(
+    rf"\b(?:any\s*\(\s*{_ARRAY_PARAMETER}|unnest\s*\(\s*{_ARRAY_PARAMETER}"
+    rf"(?:\s*,\s*{_ARRAY_PARAMETER})*)\s*\)",
     flags=re.IGNORECASE,
 )
 
 
 def array_bind_indexes(statement: str) -> frozenset[int]:
     """The positional indexes of the binds *statement* passes as one array each."""
-    return frozenset(
-        statement[: match.start()].count("?") for match in _ARRAY_PARAMETER.finditer(statement)
-    )
+    indexes: set[int] = set()
+    for match in _ARRAY_PARAMETERS.finditer(statement):
+        first = statement[: match.start()].count("?")
+        indexes.update(range(first, first + match.group().count("?")))
+    return frozenset(indexes)
 
 
 def parse_indexed_statement(statement: str, dialect: str) -> Expr | None:

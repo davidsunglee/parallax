@@ -1465,7 +1465,8 @@ def _assert_insert_statement(
                 expected.append(cols[column])
         if version_col is not None:
             expected.append(1)  # derived initial version (m-opt-lock baseline), never authored
-    assert_write_values(case, expected, binds, statement)
+    row_major = [cell for row in insert_value_rows(case, statement, binds) for cell in row]
+    assert_write_values(case, expected, row_major, statement)
 
 
 def _assert_versioned_update_input(

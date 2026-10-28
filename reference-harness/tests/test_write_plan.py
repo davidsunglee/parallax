@@ -199,6 +199,59 @@ def test_an_insert_binding_other_than_its_placeholders_is_refused() -> None:
         insert_value_rows(case, "update t set a = ?", [1])
 
 
+_COLUMN_ARRAYS = (
+    "insert into t(id, note, doc) select * from "
+    "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
+)
+
+
+def test_row_i_of_a_column_array_insert_is_element_i_of_every_array() -> None:
+    # Each array is one column, in column-list order, so a row is read across the
+    # arrays at one position; a document element is one row's cell whatever its
+    # own JSON shape, including a nested array or a JSON null inside it.
+    case = _a_case()
+    binds = [[1, 2, 3], ["x", None, "z"], [{"a": None}, ["nested", None], None]]
+    assert insert_value_rows(case, _COLUMN_ARRAYS, binds) == [
+        [1, "x", {"a": None}],
+        [2, None, ["nested", None]],
+        [3, "z", None],
+    ]
+    assert insert_value_rows(case, _COLUMN_ARRAYS, [[], [], []]) == []
+
+
+@pytest.mark.parametrize(
+    ("statement", "binds", "refusal"),
+    [
+        pytest.param(
+            _COLUMN_ARRAYS, [[1, 2], ["x"], [{}, {}]], "unequal lengths", id="unequal-lengths"
+        ),
+        pytest.param(_COLUMN_ARRAYS, [[1], "x", [{}]], "not an array", id="scalar-bind"),
+        pytest.param(_COLUMN_ARRAYS, [[1], ["x"]], "carries 2 bind", id="missing-array"),
+        pytest.param(_COLUMN_ARRAYS, [[1], ["x"], [{}], [2]], "carries 4 bind", id="surplus-bind"),
+        pytest.param(
+            "insert into t(id, note) select * from unnest(cast(? as bigint[]))",
+            [[1]],
+            "1 column array",
+            id="fewer-arrays-than-columns",
+        ),
+        pytest.param(
+            "insert into t(id) select * from unnest(cast(? + ? as bigint[]))",
+            [[1], [2]],
+            "carries 2 bind",
+            id="array-expression",
+        ),
+    ],
+)
+def test_a_column_array_insert_not_binding_one_equal_length_array_per_column_is_refused(
+    statement: str, binds: list[object], refusal: str
+) -> None:
+    # PostgreSQL pads a shorter `unnest` argument with NULL, which no emitted
+    # insert intends, so grading refuses the shape rather than reading the rows
+    # the database would happen to store.
+    with pytest.raises(CaseFailure, match=refusal):
+        insert_value_rows(_a_case(), statement, binds)
+
+
 # --- which object an existing-row statement addresses ------------------------
 
 
