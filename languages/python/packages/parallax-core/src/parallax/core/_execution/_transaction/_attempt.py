@@ -73,7 +73,7 @@ from parallax.core.execution_lifecycle._activity import (
     TransactionAttemptActivity,
     refuse_reentry,
 )
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery import RowsResult
@@ -135,15 +135,18 @@ selects the bounded form."""
 class TargetWriteInput:
     """What a representation answers about one target write: the Entity
     spelling, the row naming the object beside the members it states, which
-    leaf converter judges its values, and the members preparation judges as
+    lane judges its values, and the members preparation judges as
     assignments — named outright, or produced once the write is admitted.
-    The attempt states every other part of the canonical instruction."""
+    A Typed representation also names the Entity it already resolved that
+    spelling to. The attempt states every other part of the canonical
+    instruction."""
 
     entity: str
     row: Mapping[str, object]
     representation: Literal["typed", "wire"]
     authored_members: Set[str] | None = None
     members: Callable[[], Mapping[str, object]] | None = None
+    target: EntityMetadata | None = None
 
 
 class TargetWriteAdapter(Protocol):
@@ -649,11 +652,19 @@ class TxnAttempt(_TxnAttemptBase):
             bound,
             revision.stated,
         )
-        prepare = prepare_typed_write if write.representation == "typed" else prepare_wire_write
+        preparation = self._write.preparation
         self._uow.buffer_target(
-            prepare(
+            prepare_typed_write(
                 instruction,
-                self._write.preparation,
+                preparation,
+                authored_members=write.authored_members,
+                members=write.members,
+                target=write.target,
+            )
+            if write.representation == "typed"
+            else prepare_wire_write(
+                instruction,
+                preparation,
                 authored_members=write.authored_members,
                 members=write.members,
             )

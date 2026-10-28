@@ -616,7 +616,7 @@ constructs one final root and shares untouched owned subtrees.
 
 The codec owns the one structural traversal that turns an authored document into
 managed state. The traversal takes a `MemberShape`, a source-access capability,
-and a leaf normalizer. Mapping-backed Wire input and borrowed language-frontend
+and a scalar conversion. Mapping-backed Wire input and borrowed language-frontend
 values differ only in those supplied operations: occurrence recursion, required
 nested members, `many` normalization, canonical member order, immutable output,
 and structural finding paths are one implementation.
@@ -634,15 +634,15 @@ containers are detached once at the boundary.
 
 A complete document is judged in `MemberShape` order: a missing required member
 and an inadmissible value are found in the one pass, and the first one met is
-the document's finding. Root computed markers are admitted only when the
-resolved top-level Attribute role allows them, at that member's judgment point,
-and are never interpreted inside an occurrence.
+the document's finding. A partial document — only the top-level members its
+author states — is judged in the order they are stated, and its stated members
+are packed in `MemberShape` order all the same. Root computed markers are
+admitted only when the resolved top-level Attribute role allows them, at that
+member's judgment point, and are never interpreted inside an occurrence.
 
 The same traversal has a validation-only mode. That mode walks and normalizes the
-same source under the same shape but constructs no success-sized document tree.
-Its evidence is sparse: only failed top-level positions are retained, keyed by
-the canonical `MemberShape` position; a nested failure carries its relative path
-inside that position.
+same source under the same shape but constructs no output. Its evidence is the
+member's first finding, carrying its path relative to the member it validates.
 
 A scalar collection is authored through the same traversal from the frontend's
 sequence carrier. The leaf normalizer runs once per element against the
@@ -650,10 +650,11 @@ collection's own `Many` leaf, never against a synthetic single leaf, and produci
 mode builds the ordered managed sequence once, normalization-created duplicates
 included; validation-only mode builds none. A non-sequence carrier fails at the
 collection, and an element the normalizer refuses — a null element included —
-fails at its index. A null collection is judged by the caller's nullability rule,
-exactly as a null scalar is, and an omitted one is filled with the empty
-collection wherever an omitted `many` occurrence is. Assignment judgement and row validation consume this
-evidence and MUST NOT recursively interpret the authored document again.
+fails at its index. A null collection is never a stated collection, so a row
+stating one is refused there, and an omitted one is filled with the empty
+collection wherever an omitted `many` occurrence is. Assignment judgement and row
+validation consume this evidence and MUST NOT recursively interpret the authored
+document again.
 
 ## Managed documents and the effective change set
 

@@ -363,7 +363,7 @@ def test_an_empty_unversioned_update_neither_writes_nor_spends_its_source() -> N
 def test_an_insert_payload_reaches_the_model_aware_validator_the_typed_verbs_do() -> None:
     # An insert omitting a required attribute is a MODEL judgment, invisible to
     # the member-name honesty gate: the payload names nothing undeclared. The
-    # Wire verb runs `validate_write` for it, so it is refused with the same
+    # Wire verb's preparation judges it, so it is refused with the same
     # classified rule the Typed keyed verbs and the rejected run lane report.
     port = ScriptedAdapter(Transact())
     with raises_contextualized(WriteRejectedError) as raised:

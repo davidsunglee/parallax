@@ -8,7 +8,6 @@ from parallax.core._execution._family import family_view
 from parallax.core._execution._keyed_writes import (
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
-    keyed_instruction,
 )
 from parallax.core._execution._publication import SelectedWriteModel
 from parallax.core._execution._transaction._attempt import TargetWriteInput
@@ -72,32 +71,6 @@ def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadat
     return metadata
 
 
-def prepared_typed_write(
-    preparation: WritePreparation,
-    mutation: KeyedMutation,
-    entity: EntityMetadata,
-    row: Mapping[str, object],
-    *,
-    valid_from: dt.datetime | None,
-    until: dt.datetime | None,
-    members: Callable[[], Mapping[str, object]] | None = None,
-) -> PreparedKeyedInstruction:
-    """One authored single-row keyed instruction, judged by Unit Work's sole
-    typed preparation — target and window, then member names, values, and
-    assignment legality, each of ``members`` judged as an assignment.
-
-    The bounds ride the instruction's dimension-explicit fields rather than the
-    row (ADR 0010/0013): an As-Of Axis endpoint is framework-owned, so a
-    Valid-Time bound is never a member a caller could author.
-    """
-    prepared = instructions.prepare_typed_write(
-        keyed_instruction(mutation, entity.identity, row, valid_from=valid_from, until=until),
-        preparation,
-        members=members,
-    )
-    return prepared
-
-
 def declared_values(
     prepared: EntityPreparation, entity: EntityMetadata, instance: EntityBase
 ) -> Iterable[object]:
@@ -127,11 +100,6 @@ def writable_row(
         for position, value in enumerate(declared_values(prepared, entity, instance))
         if value is not absent and not omitted >> position & 1
     }
-
-
-def _named(prepared: EntityPreparation, pairs: Iterable[tuple[int, object]]) -> dict[str, object]:
-    members = prepared.selection.members.shape.members
-    return {members[position].name: value for position, value in pairs}
 
 
 def typed_selection(
@@ -218,45 +186,51 @@ class TypedKeyedWriteSource:
         authors its identity row alone, and so does an amendment off a value
         whose chain touched nothing — the empty write the ingress drops.
         """
-        row, explicit = self._authored(preparation, mutation, resolved.entity)
-        return prepared_typed_write(
+        value = self._value
+        entity = resolved.entity
+        prepared = preparation.entity(entity.identity)
+        if mutation in REPLACE_MUTATIONS:
+            return instructions.prepare_typed_keyed_write(
+                preparation,
+                mutation,
+                entity,
+                values=declared_values(prepared, entity, value),
+                valid_from=valid_from,
+                until=until,
+            )
+        shape = prepared.selection.members.shape
+        identity = value.__parallax_identity_pairs__(shape, entity.identity, prepared.key)
+        if mutation in ASSIGNMENT_MUTATIONS and self._assignments:
+            return instructions.prepare_typed_keyed_write(
+                preparation,
+                mutation,
+                entity,
+                pairs=identity,
+                members=self._explicit(preparation.meta, entity),
+                valid_from=valid_from,
+                until=until,
+            )
+        authored = (
+            value.__parallax_authored_pairs__(shape, entity.identity, prepared.key)
+            if mutation in ASSIGNMENT_MUTATIONS
+            else None
+        )
+        return instructions.prepare_typed_keyed_write(
             preparation,
             mutation,
-            resolved.entity,
-            row,
+            entity,
+            pairs=identity if authored is None else authored,
             valid_from=valid_from,
             until=until,
-            members=explicit,
         )
 
-    def _authored(
-        self, preparation: WritePreparation, mutation: KeyedMutation, entity: EntityMetadata
-    ) -> tuple[Mapping[str, object], Callable[[], Mapping[str, object]] | None]:
-        """The row this value authors, and the explicit assignments preparation
-        judges into that row once the target and window admit the write."""
-        value = self._value
-        prepared = preparation.entity(entity.identity)
-        shape = prepared.selection.members.shape
-        if mutation in REPLACE_MUTATIONS:
-            return writable_row(prepared, entity, value), None
-        if mutation not in ASSIGNMENT_MUTATIONS:
-            return _named(
-                prepared, value.__parallax_identity_pairs__(shape, entity.identity, prepared.key)
-            ), None
-        if self._assignments:
-            assignments = write_assignments(self._assignments)
-            meta = preparation.meta
-            return (
-                _named(
-                    prepared,
-                    value.__parallax_identity_pairs__(shape, entity.identity, prepared.key),
-                ),
-                lambda: instructions.assigned_members(meta, entity, assignments),
-            )
-        authored = value.__parallax_authored_pairs__(shape, entity.identity, prepared.key)
-        if authored is None:
-            authored = value.__parallax_identity_pairs__(shape, entity.identity, prepared.key)
-        return _named(prepared, authored), None
+    def _explicit(
+        self, meta: Metamodel, entity: EntityMetadata
+    ) -> Callable[[], Mapping[str, object]]:
+        """The explicit assignments preparation judges into the row once the
+        target and window admit the write."""
+        assignments = write_assignments(self._assignments)
+        return lambda: instructions.assigned_members(meta, entity, assignments)
 
 
 class TypedKeyedInsertSource:
@@ -329,6 +303,7 @@ class TypedPredicateWriteAdapter:
     def prepare(
         self, write_model: SelectedWriteModel, mutation: PredicateMutation
     ) -> PreparedPredicateInstruction:
+        target = mutation_selection(self._query).target
         selection = typed_selection(self._query, write_model)
         payload = self._payload
         if mutation in REPLACE_MUTATIONS:
@@ -339,7 +314,9 @@ class TypedPredicateWriteAdapter:
             instruction = PredicateWriteInstruction(
                 mutation, selection, write_assignments(assignments)
             )
-        return instructions.prepare_typed_write(instruction, write_model.preparation)
+        return instructions.prepare_typed_write(
+            instruction, write_model.preparation, target=write_model.model.meta.entity(target)
+        )
 
 
 def _replacement_row(
@@ -379,7 +356,7 @@ class TypedInstanceTargetWriteAdapter:
     ) -> TargetWriteInput:
         entity = metadata_of_instance(write_model.model.meta, self._instance)
         row = writable_row(write_model.preparation.entity(entity.identity), entity, self._instance)
-        return TargetWriteInput(entity.identity.canonical, row, "typed")
+        return TargetWriteInput(entity.identity.canonical, row, "typed", target=entity)
 
 
 class TypedKeyTargetWriteAdapter:
@@ -427,7 +404,7 @@ class TypedKeyTargetWriteAdapter:
 
         key_name = family_view(meta, entity).primary_key.identity.name
         return TargetWriteInput(
-            entity.identity.canonical, {key_name: key}, "typed", members=members
+            entity.identity.canonical, {key_name: key}, "typed", members=members, target=entity
         )
 
 

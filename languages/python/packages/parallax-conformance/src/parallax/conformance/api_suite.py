@@ -2021,7 +2021,7 @@ _VO_QUANTIFIED_SINGLE_REASON: Final[str] = (
 # probe against the shipped surface) to have NO idiomatic spelling through
 # `tx.insert` — `ContactAddress(street=42, ...)` raises Pydantic's own
 # `ValidationError` (a `str` field never coerces an `int`) before the
-# instance can even be constructed, let alone reach `validate_write`. Its
+# instance can even be constructed, let alone reach write preparation. Its
 # four Contact/Shipment siblings (`-039..042`/`-044`) do have an idiomatic
 # spelling through `vo_models.py` and are exercised as build-time proofs
 # above. This case is a sanctioned exception because its invalid input is
@@ -2048,7 +2048,7 @@ _VO_WIRE_INTEGER_OUT_OF_SPACE_UNREACHABLE_REASON: Final[str] = (
 _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
     "`ContactAddress(street=42, ...)` raises Pydantic's own `ValidationError` (a `str` "
     "field never coerces an `int`) before the instance can even be constructed, let alone "
-    "reach `validate_write` — the type system itself prevents authoring the corpus's "
+    "reach write preparation — the type system itself prevents authoring the corpus's "
     "invalid value-type-mismatch shape through `tx.insert`; its four Contact/Shipment "
     "siblings (`-039..042`/`-044`) DO have an idiomatic spelling and are exercised as "
     "build-time proofs against the installed mirror. This case's own skip is a "
@@ -2066,7 +2066,7 @@ _VO_DEPTH_ZERO_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
     "the defect sits at the ENTITY's own Attribute, which this frontend declares as a "
     "Python field: `Contact(id=1, address=...)` (omitting the required `name`) and "
     "`Contact(id='five', ...)` each raise Pydantic's own `ValidationError` before the "
-    "instance exists, let alone reaches `validate_write`. Same sanctioned exception as "
+    "instance exists, let alone reaches write preparation. Same sanctioned exception as "
     "m-value-object-043's, one level out from the document: the type system prevents "
     "authoring the invalid shape, so this is not a coverage gap the frontend can close"
 )
@@ -2081,7 +2081,7 @@ _VO_OCCURRENCE_SHAPE_UNREACHABLE_REASON: Final[str] = (
     "`phones=('555',)` each raise the frontend's own `TypeError` at construction "
     "(\"requires a 'ContactAddress' instance\" / \"requires a tuple of 'ContactPhone' "
     "instances\" / \"element '555' is not a 'ContactPhone' instance\"), before "
-    "`validate_write` sees anything. Same sanctioned exception as m-value-object-043's: "
+    "write preparation sees anything. Same sanctioned exception as m-value-object-043's: "
     "the type system prevents authoring the corpus's invalid occurrence shape"
 )
 

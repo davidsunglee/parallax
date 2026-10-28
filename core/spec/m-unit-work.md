@@ -276,24 +276,29 @@ a predicate-selected write's predicate, family refusal, and payload: an
 amendment's every assignment member resolved, in authored order, before any
 value is judged, and a replacement's row naming declared members only, then
 completed and judged as every replacement is (*Source-authorized replacement*).
-An opening's rows (`insert`, `insertUntil`) are judged one row at a time, so an
-instruction carrying several is refused at its first refused row. Within a row
-its member names — its subtype shape, then an authored framework-owned or an
-undeclared member — are judged before any of its values, and its values are then
-judged in declaration order, a missing required member and an inadmissible
-value found in one pass and the first one met refused. Both producers judge an
-opening in that order, whatever order the row states its members in.
+A keyed instruction's rows are judged one row at a time, so an instruction
+carrying several is refused at its first refused row. Within a row its member
+names — its subtype shape, then an authored framework-owned or an undeclared
+member — are judged before any of its values. A complete row — an opening's
+(`insert`, `insertUntil`) or a replacement's, keyed, target, or
+predicate-selected — then has its values judged in declaration order, a missing
+required member and an inadmissible value found in one pass and the first one
+met refused. A partial row — an amendment's assignments, or the identity a
+destructive write addresses — has its values judged in the order its author
+states them, each assigned member's assignment rule before its value and the
+members addressing the object after every assignment. Both producers judge a
+row in that order, whatever order a complete row states its members in.
 `prepareWireWrite` applies the serialized decoding above;
 `prepareTypedWrite` applies `m-core.coerceNeutralInput` followed by managed
 membership and retains developer-facing mismatch errors. Neither consumer may
 choose the other policy from the runtime carrier it happens to receive.
-Both producers supply their source access and leaf policy to
+Both producers supply their source access and scalar conversion to
 `m-document-codec`'s one authored-document traversal. The Typed producer borrows
 live Value Object instances and tuples until that traversal; it does not first
-render a recursive mapping/list tree. Structural validation consumes the sparse
-position-keyed findings from that same pass rather than walking the document
-again. A validation-only caller invokes the same traversal without constructing
-successful managed output.
+render a recursive mapping/list tree. Structural validation consumes the finding
+from that same pass rather than walking the document again. A validation-only
+caller invokes the same traversal without constructing successful managed
+output.
 
 A target instruction is judged in its own fixed order: its target,
 verb, and window first, as above; then its revision arguments against the
