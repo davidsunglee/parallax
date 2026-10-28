@@ -34,7 +34,7 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import gc
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from functools import partial
 from types import MappingProxyType
@@ -58,7 +58,7 @@ from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocumen
 from parallax.core.db_port import Row
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES, scalar_result
-from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -78,6 +78,7 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
     page_rows,
     release_page_rows,
+    state_for,
 )
 from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.read_delivery._row_decoding import row_identity
@@ -120,6 +121,12 @@ from tests.unit._prepared_read_support import (
     projected_read,
     result_row,
     uncarried,
+)
+from tests.unit._root_publication_support import (
+    RootObservation,
+    each_root,
+    observed,
+    observed_roots,
 )
 from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
@@ -269,7 +276,7 @@ def _compiled(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -
     )
 
 
-type _Prepared = Callable[[Mapping[str, object]], tuple[ReadRowConverter, Row]]
+type _Prepared = partial[tuple[ReadRowConverter, Row]]
 
 
 def _prepared(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -> _Prepared:
@@ -301,10 +308,16 @@ def _converted(prepared: _Prepared, stored: Mapping[str, object]) -> _Converted:
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     layout = rows.layouts[index]
-    root = RootView(page)
-    values = rows.member_rows[index] if root.roots == (None,) else root.member_values(0)
-    issues = root.invalid_roots[0].issues if root.roots == (None,) else root.issues(0)
+    (root,) = observed_roots(page, _model_of(prepared))
+    invalid = root.invalid_root
+    values = rows.member_rows[index] if invalid is not None else root.member_values[0]
+    issues = invalid.issues if invalid is not None else root.issues[0]
     return _Converted(layout.concrete, rendered_members(layout, values), issues)
+
+
+def _model_of(prepared: _Prepared) -> Metamodel:
+    """The accepted model ``prepared`` binds its read under."""
+    return cast("CatalogedModel", prepared.args[0]).meta
 
 
 def _observed(prepared: _Prepared, stored: Mapping[str, object]) -> dict[str, object]:
@@ -314,8 +327,8 @@ def _observed(prepared: _Prepared, stored: Mapping[str, object]) -> dict[str, ob
     index, _resolved, _document, _variant = converter.convert_row(row, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
-    root = RootView(page)
-    return physical_members(rows.layouts[index], root.member_values(0))
+    (root,) = observed_roots(page, _model_of(prepared))
+    return physical_members(rows.layouts[index], root.member_values[0])
 
 
 def _stored_document(members: Mapping[str, object]) -> PresentDocument:
@@ -532,8 +545,8 @@ def test_encoded_identity_is_decoded_before_logical_key_formation(
     )
     claimed = builder.finish((index,), Pin())
     stored_key = page_rows(claimed).keys[index]
-    root = RootView(claimed)
-    issues = root.invalid_roots[0].issues if root.roots == (None,) else root.issues(0)
+    (root,) = observed_roots(claimed, ENCODED_IDENTITY)
+    issues = root.invalid_root.issues if root.invalid_root is not None else root.issues[0]
 
     assert (None if stored_key is None else stored_key.primary_key) == key
     assert [finding.code for finding in issues] == ([] if issue is None else [issue])
@@ -557,8 +570,8 @@ def test_identity_routing_skips_an_absent_non_identity_cell() -> None:
 
     assert builder.member_value(index, _encoded_member("id")) == KEY
     assert builder.member_value(index, token) is ABSENT
-    root = RootView(builder.finish((index,), Pin()))
-    assert root.issues(0) == ()
+    (root,) = observed_roots(builder.finish((index,), Pin()), ENCODED_IDENTITY)
+    assert root.issues[0] == ()
 
 
 def test_identity_routing_keeps_native_non_identity_cells_unchanged() -> None:
@@ -673,11 +686,9 @@ def test_a_row_publisher_views_a_projected_occurrence_in_place() -> None:
     prepared, row = _prepared(REGISTER, "Register")({"id": 1, "payload": _stored_document(_ADA)})
     builder = PageBuilder(ViewSchema.of())
     index, _resolved, _document, variant = prepared.convert_row(row, builder, source=ROOT_LEVEL)
-    root = RootView(builder.finish((index,), Pin()))
+    (root,) = observed_roots(builder.finish((index,), Pin()), REGISTER)
 
-    published = prepared.row_publisher().publish(
-        root.layout(0).concrete, root.member_values(0), variant
-    )
+    published = prepared.row_publisher().publish(root.concretes[0], root.member_values[0], variant)
 
     assert list(published) == ["id", "label", "note", "stamp", "marks"]
     assert published["stamp"] == dt.date(2026, 1, 15)
@@ -869,12 +880,12 @@ def _delivered(
     index, resolved, _document, variant = prepared.convert_row(row, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     key = page_rows(page).keys[index]
-    root = RootView(page)
-    values = root.member_values(0)
+    (root,) = observed_roots(page, model)
+    values = root.member_values[0]
     return _Delivered(
         key,
-        rendered_members(root.layout(0), values),
-        root.issues(0),
+        rendered_members(root.layouts[0], values),
+        root.issues[0],
         prepared.row_publisher().publish(resolved, values, variant),
     )
 
@@ -1116,12 +1127,12 @@ def test_a_rejected_temporal_end_is_diagnosed_once_its_state_is_judged(
         1,
         (_VALID_FROM, _OPENED),
     )
-    root = RootView(page)
+    (root,) = observed_roots(page, POSITION)
     entity = target(POSITION, "Position").identity
-    assert [(issue.code, issue.member, issue.stored_value) for issue in root.issues(0)] == [
+    assert [(issue.code, issue.member, issue.stored_value) for issue in root.issues[0]] == [
         (code, AttributeIdentity(entity, member), stored)
     ]
-    assert member not in rendered_members(root.layout(0), root.member_values(0))
+    assert member not in rendered_members(root.layouts[0], root.member_values[0])
 
 
 def test_rows_share_a_logical_node_only_where_key_and_axis_starts_agree() -> None:
@@ -1171,6 +1182,20 @@ def _milestone(entity: str, **bounds: object) -> dict[str, object]:
     }
 
 
+class _JudgedRow:
+    """One projection's judged member row read at its As-Of Axis positions."""
+
+    def __init__(self, layout: EntityLayout, member_row: tuple[object, ...]) -> None:
+        self._layout = layout
+        self._member_row = member_row
+
+    def axis_start(self, at: None, attribute: AttributeIdentity, /) -> object:
+        del at
+        return self._member_row[self._layout.index_of[attribute]]
+
+    axis_end = axis_start
+
+
 def _milestone_page(entity: str, row: Mapping[str, object]) -> tuple[Page, int, Bitemporal]:
     builder = PageBuilder(ViewSchema.of())
     index, *_ = bound_read(_MILESTONES, entity).convert_row(
@@ -1190,11 +1215,12 @@ def test_a_milestone_covers_its_stored_valid_time_cells_on_the_page_and_its_stat
 ) -> None:
     page, index, shape = _milestone_page(entity, _milestone(entity, thru_z=valid_end))
 
-    on_page = valid_time_coverage(shape, page_rows(page), index)
-    root = RootView(page)
-    on_state = valid_time_coverage(shape, root, 0)
+    rows = page_rows(page)
+    on_page = valid_time_coverage(shape, rows, index)
+    state = state_for(rows, index)
+    on_state = valid_time_coverage(shape, _JudgedRow(rows.layouts[index], state.member_row), None)
 
-    assert root.issues(0) == ()
+    assert state.findings == ()
     for coverage in (on_page, on_state):
         assert coverage is not None
         assert coverage.start is _VALID_FROM
@@ -1214,8 +1240,9 @@ def test_a_rejected_valid_time_end_has_no_coverage_on_either_carrier(
 
     with pytest.raises(TemporalReadError, match=r"\.validEnd: .*interval endpoint"):
         valid_time_coverage(shape, rows, index)
+    judged = _JudgedRow(rows.layouts[index], state_for(rows, index).member_row)
     with pytest.raises(TemporalReadError, match=r"\.validEnd: .*interval endpoint"):
-        valid_time_coverage(shape, RootView(page), 0)
+        valid_time_coverage(shape, judged, None)
 
 
 @_MILESTONE_LAYOUTS
@@ -1315,10 +1342,16 @@ def _holding(**cells: object) -> dict[str, object]:
     }
 
 
-def _consumed(row: Mapping[str, object]) -> RootView:
+def _consumed(row: Mapping[str, object]) -> tuple[RootObservation, StoredDataIssueInput | None]:
+    """``row``'s holding root observed, beside the issue publication refuses it with."""
     builder = PageBuilder(ViewSchema.of())
     index = _held(builder, row)
-    return RootView(builder.finish((index,), Pin()))
+    (consumed,) = each_root(
+        builder.finish((index,), Pin()),
+        HOLDINGS,
+        lambda root, ordinal: (observed(root, ordinal), publication_issue(root)),
+    )
+    return consumed
 
 
 def test_native_correlations_are_reused_without_scalar_admission() -> None:
@@ -1330,8 +1363,8 @@ def test_native_correlations_are_reused_without_scalar_admission() -> None:
         assert calls.decoded == []
         assert calls.admitted == []
 
-        root = RootView(builder.finish((index,), Pin()))
-        members = rendered_members(root.layout(0), root.member_values(0))
+        (root,) = observed_roots(builder.finish((index,), Pin()), HOLDINGS)
+        members = rendered_members(root.layouts[0], root.member_values[0])
 
     assert calls.decoded == ["d101"]
     assert calls.admitted == [b"\xd1\x01"]
@@ -1340,7 +1373,7 @@ def test_native_correlations_are_reused_without_scalar_admission() -> None:
         b"\xd1\x01",
         201,
     )
-    assert root.issues(0) == ()
+    assert root.issues[0] == ()
 
 
 @pytest.mark.parametrize(
@@ -1365,15 +1398,15 @@ def test_native_correlation_presence_is_retained_through_payload_consumption(
         builder.member_value(index, _HOLDER) == routed
     )
 
-    root = RootView(builder.finish((index,), Pin()))
-    assert root.member_values(0)[root.layout(0).index_of[_HOLDER]] == routed
+    (root,) = observed_roots(builder.finish((index,), Pin()), HOLDINGS)
+    assert root.member_values[0][root.layouts[0].index_of[_HOLDER]] == routed
     assert [
-        (issue.code, issue.stored_value) for issue in root.issues(0) if issue.member == _HOLDER
+        (issue.code, issue.stored_value) for issue in root.issues[0] if issue.member == _HOLDER
     ] == []
 
 
-def _diagnoses(root: RootView) -> list[tuple[object, ...]]:
-    return [(issue.code, issue.member, issue.path, issue.stored_value) for issue in root.issues(0)]
+def _diagnoses(root: RootObservation) -> list[tuple[object, ...]]:
+    return [(issue.code, issue.member, issue.path, issue.stored_value) for issue in root.issues[0]]
 
 
 def test_payload_findings_keep_their_attribute_positions_after_native_routing() -> None:
@@ -1381,19 +1414,18 @@ def test_payload_findings_keep_their_attribute_positions_after_native_routing() 
         digest_hex="yy",
         terms=PresentDocument({"label": 7}),
     )
-    root = _consumed(failing)
+    root, refusal = _consumed(failing)
     undecodable = "stored-data-leaf-undecodable"
     assert _diagnoses(root) == [
         (undecodable, _TERMS_LABEL, ("terms", "label"), 7),
         (undecodable, _DIGEST, (), "yy"),
     ]
-    assert publication_issue(root) is root.issues(0)[0]
+    assert refusal is root.issues[0][0]
 
-    without_document = _consumed({**failing, "terms": SQL_NULL})
+    without_document, refusal = _consumed({**failing, "terms": SQL_NULL})
     assert [member for _code, member, _path, _value in _diagnoses(without_document)] == [
         _DIGEST,
     ]
-    refusal = publication_issue(without_document)
     assert refusal is not None
     assert refusal.member == _DIGEST
 
@@ -1402,11 +1434,11 @@ def test_a_rejected_payload_freezes_its_evidence_when_it_is_judged() -> None:
     rejected: list[object] = ["0a", {"k": "1b"}]
     builder = PageBuilder(ViewSchema.of())
     index = _held(builder, _holding(digest_hex=rejected))
-    root = RootView(builder.finish((index,), Pin()))
+    (root,) = observed_roots(builder.finish((index,), Pin()), HOLDINGS)
     cast("dict[str, object]", rejected[1])["k"] = "changed"
     rejected.append("more")
 
-    (issue,) = root.issues(0)
+    (issue,) = root.issues[0]
     evidence = cast("tuple[object, ...]", issue.stored_value)
     assert issue.member == _DIGEST
     assert evidence == ("0a", {"k": "1b"})
@@ -1441,14 +1473,16 @@ def test_a_keyless_holding_keeps_its_payload_finding_for_every_holder_reaching_i
         builder.write_view(root, holdings, (holding,))
     page = builder.finish(roots, Pin())
 
-    def publish(root: RootView, _position: int) -> Iterator[tuple[object, ...]]:
-        node = root.order.index(_HOLDING)
-        yield (
-            rendered_members(root.layout(node), root.member_values(node)),
-            [(issue.code, issue.member, issue.stored_value) for issue in root.issues(node)],
+    def publish(root: RootView, _ordinal: int) -> tuple[object, ...]:
+        node = [root.layout(node).concrete for node in range(len(root))].index(_HOLDING)
+        return (
+            (
+                rendered_members(root.layout(node), root.member_values(node)),
+                [(issue.code, issue.member, issue.stored_value) for issue in root.issues(node)],
+            ),
         )
 
-    published = list(publish_roots(page, publish, atomic=atomic, model=HOLDINGS))
+    published = list(publish_roots(page, publish, HOLDINGS, atomic=atomic))
 
     assert published == [
         (
@@ -1489,8 +1523,7 @@ def _conversion_calls(layout: Layout, owners: int) -> dict[str, int]:
         for name in _COUNTED:
             patched.setattr(_convert, name, _counting(name, getattr(_convert, name), calls))
         page = batch(model, validated, plan, StressPort(reads, rows)).page
-        for position in range(page.root_count):
-            RootView(page, position)
+        observed_roots(page, model.meta)
     return calls
 
 

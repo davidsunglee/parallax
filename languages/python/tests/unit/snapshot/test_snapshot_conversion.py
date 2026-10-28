@@ -89,13 +89,15 @@ from parallax.descriptor._records import (
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot._publication._root import RootView
-from parallax.snapshot._publication._typed import typed_root
+from parallax.snapshot._publication._root_publication import publish_roots
+from parallax.snapshot._publication._typed import TypedRootPublisher
 from tests._support.model_capabilities import graph_construction_for
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import bound_cells, compiled_read, uncarried
-from tests.unit.snapshot._encoded_identity_read import encoded_identity_page
+from tests.unit._root_publication_support import observed_roots
+from tests.unit.snapshot._encoded_identity_read import ENCODED_IDENTITY, encoded_identity_page
 from tests.unit.snapshot._snapshot_page_support import (
     driver_row,
     identity_of,
@@ -180,11 +182,11 @@ def _converted_by(
     index, _resolved, _document, _variant = prepared.convert_row(cells, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
-    root = RootView(page)
+    (root,) = observed_roots(page, model)
     return _Projection(
         rows.layouts[index],
-        rows.member_rows[index] if root.roots == (None,) else root.member_values(0),
-        root.invalid_roots[0].issues if root.roots == (None,) else root.issues(0),
+        rows.member_rows[index] if root.invalid_root is not None else root.member_values[0],
+        root.invalid_root.issues if root.invalid_root is not None else root.issues[0],
         rows.keys[index],
     )
 
@@ -765,9 +767,8 @@ def test_a_back_reference_names_the_logical_claim_not_a_projection_winner() -> N
     builder.write_reference(item, item_order, EntityIdentity(_NAMESPACE, "Order"), _ITEM_ORDER_ID)
     page = builder.finish((first, second), Pin())
     assert page_rows(page).logical_ids[first] == page_rows(page).logical_ids[second]
-    for position in (0, 1):
-        root = RootView(page, position)
-        assert root.view(1, root.view_layout(1).index_of[item_order]) == 0
+    for root in observed_roots(page, ORDERS):
+        assert root.view(1, root.view_layouts[1].index_of[item_order]) == 0
 
 
 def test_a_back_reference_to_a_key_the_builder_never_registered_is_refused() -> None:
@@ -861,14 +862,15 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
     ref, *_ = customers.convert_row(customer, builder, source=ROOT_LEVEL)
     page = builder.finish((ref,), Pin())
     assert page_rows(page).roots == (ref,)
-    view = RootView(page, 0)
-    assert view.invalid_roots == ()
-    (root,) = typed_root(
-        view,
-        CUSTOMER,
-        CONCURRENCY,
-        graph_construction_for(vo_models.CUSTOMER_MODEL),
+    publisher = TypedRootPublisher(
+        CUSTOMER, graph_construction_for(vo_models.CUSTOMER_MODEL), CONCURRENCY
     )
+
+    def publish_root(view: RootView, ordinal: int) -> tuple[object, ...]:
+        assert view.invalid_root is None
+        return publisher(view, ordinal)
+
+    (root,) = publish_roots(page, publish_root, CUSTOMER)
     assert cast("Any", root).id == key
 
 
@@ -915,8 +917,9 @@ def test_entity_attribute_findings_use_attribute_specific_issue_codes(
 
 def test_encoded_identifier_findings_use_the_primary_key_issue_code() -> None:
     page = encoded_identity_page(("not-a-key", None, SQL_NULL))
-    root = RootView(page)
-    assert [issue.code for record in root.invalid_roots for issue in record.issues] == [
+    (root,) = observed_roots(cast("Any", page), ENCODED_IDENTITY)
+    assert root.invalid_root is not None
+    assert [issue.code for issue in root.invalid_root.issues] == [
         "stored-data-primary-key-undecodable"
     ]
     assert page_rows(page).keys[0] is None

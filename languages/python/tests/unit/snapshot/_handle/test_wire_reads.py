@@ -54,6 +54,7 @@ from parallax.core.metamodel import (
     ConcreteSubtype,
     EntityIdentity,
     ExactEntityReference,
+    Metamodel,
     Table,
     TablePerHierarchy,
     ValueObjectAttributeDeclaration,
@@ -65,7 +66,7 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import TrueNode
 from parallax.core.read_delivery import InvalidData
-from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, PageBuilder, ViewSchema
+from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, Page, PageBuilder, ViewSchema
 from parallax.core.temporal_read import Edge, Pin
 from parallax.snapshot import (
     Database,
@@ -82,15 +83,15 @@ from parallax.snapshot._handle._wire import WireDatabaseView, wire_read_query
 from parallax.snapshot._publication import (
     _wire as wire_materialize,
 )
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._wire import (
+    WireRootPublisher,
     _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
     _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
     read_evidence_of,
     shared_wire_encoder,
     stored_entity_of,
     wire_pin_of,
-    wire_roots,
 )
 from tests._support.db_port import (
     ConnectsAsItself,
@@ -126,6 +127,11 @@ CUSTOMER = _MODELS["customer"]
 
 def _root_includes(identity: EntityIdentity) -> IncludeTree:
     return build_include_tree(queried=identity, root=(identity,), positions=())
+
+
+def _published_directly(page: Page, model: Metamodel, includes: IncludeTree) -> tuple[object, ...]:
+    """``page``'s roots published straight through the Wire root publisher."""
+    return tuple(publish_roots(page, WireRootPublisher(model, CONCURRENCY, includes), model))
 
 
 CUSTOMER_META = model_of(CUSTOMER)
@@ -467,11 +473,8 @@ def test_an_absent_many_publishes_empty_through_a_directly_converted_row_too() -
     ref = _converted_customer(
         {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}}, builder
     )
-    (published,) = wire_roots(
-        RootView(builder.finish((ref,), Pin())),
-        CUSTOMER_META,
-        CONCURRENCY,
-        _root_includes(identity),
+    (published,) = _published_directly(
+        builder.finish((ref,), Pin()), CUSTOMER_META, _root_includes(identity)
     )
     assert _mapping(_entity(published)["address"]) == {"street": "9 Beacon St", "phones": []}
 
@@ -493,11 +496,8 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
         builder,
         uncarrying=("name",),
     )
-    (published,) = wire_roots(
-        RootView(builder.finish((ref,), Pin())),
-        CUSTOMER_META,
-        CONCURRENCY,
-        _root_includes(identity),
+    (published,) = _published_directly(
+        builder.finish((ref,), Pin()), CUSTOMER_META, _root_includes(identity)
     )
     node = _entity(published)
     assert "name" not in node
@@ -1235,11 +1235,8 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
     builder = PageBuilder(ViewSchema.of())
     prepared, row = bound_cells(CatalogedModel(_VARIANT_MODEL), compiled, stored)
     ref, resolved, _document, _variant = prepared.convert_row(row, builder, source=ROOT_LEVEL)
-    (root,) = wire_roots(
-        RootView(builder.finish((ref,), Pin())),
-        _VARIANT_MODEL,
-        CONCURRENCY,
-        _root_includes(resolved),
+    (root,) = _published_directly(
+        builder.finish((ref,), Pin()), _VARIANT_MODEL, _root_includes(resolved)
     )
     assert root == {
         "id": 1,

@@ -1,8 +1,8 @@
 """Root classification and the in-band invalid-result surface (m-snapshot-read).
 
-Three seams, in the order a read crosses them. `classify_roots` attributes the
-issues a Root View carries to the result roots whose requested include trees
-reach them, and settles which allocation indices construction covers. The typed
+Three seams, in the order a read crosses them. `classify_root` attributes the
+issues a Root View carries to its result root, whose requested include tree
+reaches them, and settles whether construction covers the root at all. The typed
 materializer then publishes each root as itself or as its `InvalidData` record.
 Finally a layout twin — one logical model authored twice, differing only in its
 root-owned `layout` — proves the whole verdict is layout-independent: the same
@@ -48,6 +48,7 @@ from parallax.core.read_delivery import (
     InvalidDataError,
     StoredDataIssue,
 )
+from parallax.core.read_delivery._page import Page, PageRows, page_rows
 from parallax.core.temporal_read import (
     Bitemporal,
     Edge,
@@ -58,11 +59,10 @@ from parallax.core.temporal_read import view as temporal_view
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import connect
 from parallax.snapshot._publication._classify import (
+    CONFORMING_ROOT,
     ConformingRoot,
     NonConformingRoot,
-    RootClassification,
-    RootClassifications,
-    classify_roots,
+    classify_root,
 )
 from parallax.snapshot._publication._root import RootView
 from tests._support.db_port import (
@@ -70,6 +70,7 @@ from tests._support.db_port import (
     ScriptedAdapter,
 )
 from tests._support.root_ownership import own_root
+from tests.unit._root_publication_support import each_root
 from tests.unit.snapshot._encoded_identity_read import ENCODED_IDENTITY, encoded_identity_page
 from tests.unit.snapshot._encoded_page_models import (
     ENCODED_ACCOUNT,
@@ -91,20 +92,29 @@ _ITEM_ORDER = "parallax.compatibility.EncodedOrderItem.order"
 _ITEM = EntityIdentity(_NAMESPACE, "EncodedOrderItem")
 
 
-def _classified(root: RootClassification) -> NonConformingRoot:
+def _classified(root: ConformingRoot | NonConformingRoot) -> NonConformingRoot:
     """The classified verdict ``root`` is, narrowed for the assertions on it."""
     assert isinstance(root, NonConformingRoot), root
     return root
 
 
-def _classify(fixture: PageFixture, *roots: object, offset: int = 0) -> RootClassifications:
-    graph = fixture.page(*cast("Any", roots))
-    return classify_roots(
-        RootView(graph),
-        model_of(ENCODED_ORDERS),
-        CONCURRENCY,
-        ordinal_offset=offset,
-    )
+def _classify(
+    fixture: PageFixture, *roots: object, offset: int = 0
+) -> list[tuple[ConformingRoot | NonConformingRoot, int]]:
+    """Each root's verdict at result ordinal ``offset`` onward, beside the
+    number of nodes its publication segment holds."""
+    model = model_of(ENCODED_ORDERS)
+
+    def classified(root: RootView, ordinal: int) -> tuple[ConformingRoot | NonConformingRoot, int]:
+        return classify_root(root, model, CONCURRENCY, ordinal=offset + ordinal), len(root)
+
+    return each_root(fixture.page(*cast("Any", roots)), model, classified)
+
+
+def _verdicts(
+    fixture: PageFixture, *roots: object, offset: int = 0
+) -> list[ConformingRoot | NonConformingRoot]:
+    return [verdict for verdict, _nodes in _classify(fixture, *roots, offset=offset)]
 
 
 # --------------------------------------------------------------------------- #
@@ -117,10 +127,10 @@ def test_a_conforming_graph_is_answered_without_walking_or_wrapping() -> None:
     order = fixture.node("EncodedOrder", _ORDER_ROW)
     fixture.attach(order, _ITEMS, (fixture.node("EncodedOrderItem", _ITEM_ROW),))
 
-    classification = _classify(fixture, order)
-    assert classification.conforming
-    assert classification.excluded == frozenset()
-    assert classification.roots == (ConformingRoot(0),)
+    ((verdict, nodes),) = _classify(fixture, order)
+    assert verdict is CONFORMING_ROOT
+    assert verdict == ConformingRoot(0)
+    assert nodes == 2
 
 
 def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> None:
@@ -142,7 +152,7 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
         path=(),
         stored_value="not-hex",
     )
-    affected = [_classified(root) for root in _classify(fixture, first, second).roots]
+    affected = [_classified(root) for root in _verdicts(fixture, first, second)]
     assert [root.issues for root in affected] == [frozenset({diagnosis}), frozenset({diagnosis})]
     assert [root.ordinal for root in affected] == [0, 1]
 
@@ -163,7 +173,7 @@ def test_a_root_reaching_no_issue_stays_conforming_beside_an_invalid_sibling() -
         ),
     )
 
-    conforming, classified = _classify(fixture, clean, affected).roots
+    conforming, classified = _verdicts(fixture, clean, affected)
     assert isinstance(conforming, ConformingRoot)
     assert _classified(classified).ordinal == 1
 
@@ -178,7 +188,7 @@ def test_one_invalid_node_reached_twice_from_one_root_carries_one_diagnosis() ->
     fixture.attach(order, _ITEMS, (item,))
     fixture.attach(order, _ITEMS, (item,), narrowed="items[EncodedOrderItem]")
 
-    (classified,) = _classify(fixture, order).roots
+    (classified,) = _verdicts(fixture, order)
     assert len(_classified(classified).issues) == 1
 
 
@@ -186,15 +196,19 @@ def test_the_ordinal_offset_positions_a_record_in_the_published_result() -> None
     fixture = PageFixture(ENCODED_ORDERS)
     order = fixture.node("EncodedOrder", {**_ORDER_ROW, "badge_hex": "not-hex"})
 
-    (classified,) = _classify(fixture, order, offset=4).roots
+    (classified,) = _verdicts(fixture, order, offset=4)
     assert _classified(classified).ordinal == 4
 
 
 def test_a_root_whose_key_never_decoded_locates_itself_by_ordinal_alone() -> None:
     page = encoded_identity_page((None, "0e", SQL_NULL))
-    view = RootView(cast("Any", page), 0)
-
-    (classified,) = classify_roots(view, ENCODED_IDENTITY, CONCURRENCY, ordinal_offset=3).roots
+    (classified,) = each_root(
+        cast("Any", page),
+        ENCODED_IDENTITY,
+        lambda root, ordinal: classify_root(
+            root, ENCODED_IDENTITY, CONCURRENCY, ordinal=3 + ordinal
+        ),
+    )
     root = _classified(classified)
     assert (root.ordinal, root.object_key, root.version, root.edge, root.node) == (
         3,
@@ -218,9 +232,9 @@ def test_a_non_hydrating_root_leaves_its_own_subtree_out_of_construction() -> No
     fixture.attach(item, _ITEM_ORDER, None)
     fixture.attach(order, _ITEMS, (item,))
 
-    classification = _classify(fixture, order)
-    assert classification.excluded == frozenset({0, 1})
-    assert _classified(classification.roots[0]).node is None
+    ((verdict, nodes),) = _classify(fixture, order)
+    assert nodes == 2
+    assert _classified(verdict).node is None
 
 
 def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
@@ -235,8 +249,9 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
     fixture.attach(clean, _ITEMS, (shared,))
     fixture.attach(affected, _ITEMS, (shared, broken))
 
-    classification = _classify(fixture, clean, affected)
-    assert classification.excluded == frozenset({2, 3})
+    (conforming, clean_nodes), (classified, affected_nodes) = _classify(fixture, clean, affected)
+    assert (conforming, clean_nodes) == (CONFORMING_ROOT, 2)
+    assert (_classified(classified).node, affected_nodes) == (None, 3)
     published, invalid = fixture.materialize(clean, affected)
     order = cast("EncodedOrder", published)
     assert order.id == 1
@@ -375,14 +390,17 @@ def test_an_inherited_record_reads_its_key_at_the_layout_and_its_version_where_t
         },
     )
     layout = fixture.layout_for("DepositRate")
-    view = RootView(fixture.page(root))
     versions = _NamedVersions(cast("AttributeIdentity", layout.members[layout.primary_key[0]]))
+    model = model_of(read_models.RATE_MODEL)
 
     def undiscoverable(_attribute: object) -> object:
         raise AssertionError("classification discovered the key among declarations")
 
-    monkeypatch.setattr(AttributeMetadata, "primary_key", property(undiscoverable))
-    (verdict,) = classify_roots(view, model_of(read_models.RATE_MODEL), versions).roots
+    def classified(view: RootView, ordinal: int) -> ConformingRoot | NonConformingRoot:
+        monkeypatch.setattr(AttributeMetadata, "primary_key", property(undiscoverable))
+        return classify_root(view, model, versions, ordinal=ordinal)
+
+    (verdict,) = each_root(fixture.page(root), model, classified)
 
     record = _classified(verdict)
     assert record.object_key == ObjectKey(layout.concrete, (("id", 7),))
@@ -397,7 +415,7 @@ def test_an_inherited_record_reads_its_key_at_the_layout_and_its_version_where_t
 _RATE_FROM = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 
 
-def _deposit_rate_view(valid_end: object) -> tuple[RootView, Bitemporal]:
+def _deposit_rate_page(valid_end: object) -> tuple[Page, Bitemporal]:
     fixture = PageFixture(read_models.RATE_MODEL)
     root = fixture.node(
         "DepositRate",
@@ -414,29 +432,31 @@ def _deposit_rate_view(valid_end: object) -> tuple[RootView, Bitemporal]:
     model = model_of(read_models.RATE_MODEL)
     shape = temporal_view(model).shape(fixture.layout_for("DepositRate").concrete)
     assert isinstance(shape, Bitemporal)
-    return RootView(fixture.page(root)), shape
+    return fixture.page(root), shape
 
 
 @pytest.mark.parametrize(
     "valid_end", [dt.datetime(2024, 6, 1, tzinfo=dt.UTC), INFINITY], ids=["finite", "open"]
 )
 def test_an_inherited_roots_coverage_reads_its_judged_valid_time_cells(valid_end: object) -> None:
-    view, shape = _deposit_rate_view(valid_end)
+    page, shape = _deposit_rate_page(valid_end)
+    rows = page_rows(page)
 
-    coverage = valid_time_coverage(shape, view, 0)
+    coverage = valid_time_coverage(shape, rows, rows.roots[0])
 
     assert shape.valid_time.end_attribute.entity == EntityIdentity(_NAMESPACE, "Rate")
     assert coverage is not None
     assert coverage.start is _RATE_FROM
     assert coverage.end is valid_end
-    assert valid_time_coverage(shape, view, 0) is not coverage
+    assert valid_time_coverage(shape, rows, rows.roots[0]) is not coverage
 
 
 def test_an_inherited_roots_rejected_valid_time_end_has_no_coverage() -> None:
-    view, shape = _deposit_rate_view("not-an-instant")
+    page, shape = _deposit_rate_page("not-an-instant")
+    rows = page_rows(page)
 
     with pytest.raises(TemporalReadError, match=r"Rate\.validEnd: .*interval endpoint"):
-        valid_time_coverage(shape, view, 0)
+        valid_time_coverage(shape, rows, rows.roots[0])
 
 
 def test_classification_locates_a_root_without_reading_its_axis_ends(
@@ -445,10 +465,13 @@ def test_classification_locates_a_root_without_reading_its_axis_ends(
     def refuse(*_arguments: object) -> object:
         raise AssertionError("an edge read an axis end")
 
-    view, _shape = _deposit_rate_view("not-an-instant")
-    monkeypatch.setattr(RootView, "axis_end", refuse)
+    page, _shape = _deposit_rate_page("not-an-instant")
+    monkeypatch.setattr(PageRows, "axis_end", refuse)
+    model = model_of(read_models.RATE_MODEL)
 
-    (verdict,) = classify_roots(view, model_of(read_models.RATE_MODEL), CONCURRENCY).roots
+    (verdict,) = each_root(
+        page, model, lambda root, ordinal: classify_root(root, model, CONCURRENCY, ordinal=ordinal)
+    )
 
     assert _classified(verdict).edge == Edge(
         tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC), valid_time=_RATE_FROM
@@ -666,8 +689,8 @@ def test_classification_shares_the_one_frozen_evidence_rather_than_copying_it() 
     # equal values no `is` can tell apart.
     fixture = PageFixture(vo.CUSTOMER_MODEL)
     node = fixture.node("Customer", {"id": 1, "name": "Ada", "address": {"city": "Berlin"}})
-    root = RootView(fixture.page(node))
-    (converted,) = root.issues(0)
+    (root,) = fixture.observed_roots(node)
+    (converted,) = root.issues[0]
     record = invalid_record(fixture.materialize(node)[0])
     (published,) = record.issues
     assert published.stored_value is converted.stored_value

@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any, Final, Protocol, Self, SupportsIndex, cast
 
 from parallax.core import temporal_read
@@ -56,7 +55,7 @@ from parallax.snapshot._inspection import (
     pin_for_shape,
     snapshot_state_of,
 )
-from parallax.snapshot._publication._classify import NonConformingRoot, classify_roots
+from parallax.snapshot._publication._classify import ConformingRoot, classify_root
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._wire_memo import IndexMemo, WireMemo
 
@@ -64,6 +63,7 @@ __all__ = [
     "FAMILY_VARIANT_KEY",
     "EntityReader",
     "WireEntity",
+    "WireRootPublisher",
     "WireValue",
     "WireWalk",
     "authoring_of",
@@ -74,7 +74,6 @@ __all__ = [
     "stored_entity_of",
     "wire_edge_of",
     "wire_pin_of",
-    "wire_roots",
 ]
 
 type WireValue = bool | int | float | str | list[WireValue] | dict[str, WireValue] | None
@@ -428,55 +427,62 @@ included node alike, and naming the published union would read as a second
 public type for the root position where the contract has none."""
 
 
-def wire_roots(
-    root_view: RootView,
-    model: Metamodel,
-    versions: VersionAttributes,
-    includes: IncludeTree,
-    *,
-    ordinal_offset: int = 0,
-    origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
-    encode: _Encoder = encode_managed_wire,
-) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
-    """``root_view``'s roots as Wire values, in result order.
+class WireRootPublisher:
+    """One Page's Wire root publisher: classify each root, then render a root
+    that hydrates through the include tree.
 
-    Classification runs first and exactly once, so this materializer publishes
-    the same verdicts the typed one does: a conforming root answers as itself, a
-    hydratable one as its record carrying the unwound value, and a non-hydrating
-    one as its record carrying nothing. ``versions`` names the explicit version
-    Attribute a record publishes. ``ordinal_offset`` is where this Root View's
-    roots start in the ordered result, including a later streamed Page.
-
-    ``origins`` is the Read Evidence the read retained per projection index, which
-    each published Entity node carries privately — the same evidence the typed
-    materializer attaches to the node of the same row, so the two representations
-    license exactly the same writes. Every node carries the root's conformance
-    with or without it.
+    It publishes the same verdicts the Typed publisher does: a conforming root
+    answers as itself, a hydratable one as its record carrying the unwound
+    value, and a non-hydrating one as its record carrying nothing. One reader
+    and one walk serve the Page, bound to the pass's Root View at the first
+    root; the walk's memo is cleared as each root's call ends, so two roots
+    never share a rendered node. ``versions`` names the explicit version
+    Attribute a record publishes. ``encode`` is the delivery's scalar encoder.
     """
-    classification = classify_roots(root_view, model, versions, ordinal_offset=ordinal_offset)
-    retained: Mapping[int, ReadEvidence] = (
-        origins if classification.conforming else MappingProxyType({})
-    )
-    walk = WireWalk(
-        RootViewReader(root_view, retained, classification.conformance, temporal_read.view(model)),
-        includes,
-        encode,
-    )
-    published: list[_WireRoot] = []
-    for verdict in classification.roots:
-        if not isinstance(verdict, NonConformingRoot):
-            published.append(walk.position(verdict.node, includes.root))
-            continue
-        data = None if verdict.node is None else walk.position(verdict.node, includes.root)
-        published.append(cast("InvalidData[WireEntity]", verdict.published(data)))
-    return tuple(published)
+
+    __slots__ = ("_encode", "_includes", "_model", "_reader", "_temporal", "_versions", "_walk")
+
+    def __init__(
+        self,
+        model: Metamodel,
+        versions: VersionAttributes,
+        includes: IncludeTree,
+        encode: _Encoder = encode_managed_wire,
+    ) -> None:
+        self._model = model
+        self._versions = versions
+        self._includes = includes
+        self._encode = encode
+        self._temporal = temporal_read.view(model)
+        self._reader: RootViewReader | None = None
+        self._walk: WireWalk[int] | None = None
+
+    def __call__(self, root: RootView, ordinal: int) -> tuple[_WireRoot, ...]:
+        """``root`` published at result ``ordinal``."""
+        reader = self._reader
+        walk = self._walk
+        if reader is None or walk is None:
+            reader = self._reader = RootViewReader(root, self._temporal)
+            walk = self._walk = WireWalk(reader, self._includes, self._encode)
+        reader.conformance = RootConformance.CONFORMING
+        try:
+            verdict = classify_root(root, self._model, self._versions, ordinal=ordinal)
+            if isinstance(verdict, ConformingRoot):
+                return (walk.position(0, self._includes.root),)
+            reader.conformance = RootConformance.NONCONFORMING
+            if verdict.node is None:
+                return (cast("InvalidData[WireEntity]", verdict.published(None)),)
+            rendered = walk.position(0, self._includes.root)
+            return (cast("InvalidData[WireEntity]", verdict.published(rendered)),)
+        finally:
+            walk.clear()
 
 
 class NodeReader[Node](Protocol):
     """How one representation answers what the Wire walk asks of a node.
 
     The walk is generic over the native reference a representation addresses a
-    node by — an allocation index into a Root View — and asks a reader four
+    node by — a node of a Root View — and asks a reader four
     things of one: the layout its state is read against, its positional member
     values, one requested relationship view's raw arm, and its provenance — the
     pin it was read at, its root's conformance, and the Read Evidence it
@@ -511,29 +517,22 @@ class NodeReader[Node](Protocol):
 
 
 class RootViewReader:
-    """The :class:`NodeReader` over one Root View: a node is its allocation
-    index, and every answer borrows the Root View's own indexed state.
+    """The :class:`NodeReader` over a publication pass's Root View: a node is
+    a Root View node, and every answer borrows the Root View's own state for
+    the root it currently names.
 
-    ``origins`` is the Read Evidence the read retained per projection index,
-    resolved through the Root View's canonical projection for each node; it is
-    empty for a root that does not conform, so a hydrated invalid graph carries
-    none. ``conformance`` is that root's verdict, which every node it publishes
+    ``conformance`` is that root's verdict, which every node it publishes
     carries, and ``temporal`` answers which nodes stand at the Root View's pin.
+    A node's Read Evidence is what the Root View captured for it, which is none
+    for a root publishing a finding.
     """
 
-    __slots__ = ("_conformance", "_origins", "_root", "_temporal")
+    __slots__ = ("_root", "_temporal", "conformance")
 
-    def __init__(
-        self,
-        root: RootView,
-        origins: Mapping[int, ReadEvidence],
-        conformance: RootConformance,
-        temporal: TemporalFacet,
-    ) -> None:
+    def __init__(self, root: RootView, temporal: TemporalFacet) -> None:
         self._root = root
-        self._origins = origins
-        self._conformance = conformance
         self._temporal = temporal
+        self.conformance = RootConformance.CONFORMING
 
     def layout(self, node: int) -> EntityLayout:
         return self._root.layout(node)
@@ -558,8 +557,8 @@ class RootViewReader:
         root = self._root
         return (
             pin_for_shape(self._temporal.shape(root.layout(node).concrete), root.pin),
-            self._conformance,
-            root.projection_value(node, self._origins),
+            self.conformance,
+            root.origin(node),
         )
 
     def occurrence_carrier(self) -> OccurrenceCarrier:
@@ -700,9 +699,10 @@ class WireWalk[Node]:
     that refuses mutation through the instance is safely shared. The leaf
     subtree is one object shared by every position that renders members and no
     relationship, so a node reached under it is keyed by the reference alone.
-    Direct publication owns one walk per Root View, eager Typed projection owns
-    one for the complete result, and stream projection owns one per page. The
-    owner releases that state when its scope ends.
+    Direct publication owns one walk per publication pass and clears it at
+    each root, eager Typed projection owns one for the complete result, and
+    stream projection owns one per page. The owner releases that state when its
+    scope ends.
     """
 
     __slots__ = ("_carrier", "_element", "_encode", "_includes", "_memo", "_reader", "_trusted")

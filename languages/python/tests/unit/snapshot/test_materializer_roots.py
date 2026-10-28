@@ -19,14 +19,17 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
     page_rows,
     page_schedule,
+    reach_into,
     release_finished_rows,
+    state_for,
 )
 from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import compiled_read, convert_cells, uncarried
-from tests.unit.snapshot._encoded_identity_read import encoded_identity_page
+from tests.unit._root_publication_support import each_root, observed_roots
+from tests.unit.snapshot._encoded_identity_read import ENCODED_IDENTITY, encoded_identity_page
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS
 from tests.unit.snapshot._snapshot_page_support import (
     PageFixture,
@@ -95,22 +98,20 @@ def test_equal_witnesses_decode_once_and_share_one_page_state() -> None:
         )
         assert calls.decoded == []
 
-        first = RootView(cast("Any", page), 0)
-        second = RootView(cast("Any", page), 1)
+        first, second = observed_roots(cast("Any", page), _ENCODED)
 
     assert calls.decoded == ["0f"]
     assert len(page_rows(page).judged_states.group(0)) == 1
-    assert first.member_values(0) is second.member_values(0)
+    assert first.member_values[0] is second.member_values[0]
 
 
 def test_separate_roots_may_store_unequal_witnesses_for_one_logical_key() -> None:
     page, _roots = _page(((0, _encoded_order("01", "Ada")), (1, _encoded_order("01", "Grace"))))
 
-    first = RootView(cast("Any", page), 0)
-    second = RootView(cast("Any", page), 1)
+    first, second = observed_roots(cast("Any", page), _ENCODED)
 
-    assert first.member_values(0)[1] == "Ada"
-    assert second.member_values(0)[1] == "Grace"
+    assert first.member_values[0][1] == "Ada"
+    assert second.member_values[0][1] == "Grace"
     assert len(page_rows(page).judged_states.group(0)) == 2
 
 
@@ -120,13 +121,14 @@ def test_keyless_occurrences_are_judged_only_when_their_root_is_requested() -> N
         assert calls.decoded == []
         assert page_rows(cast("Any", page)).roots == (0, 1)
 
-        first = RootView(cast("Any", page), 0)
-        assert calls.decoded == ["0e"]
-        assert [root.ordinal for root in first.invalid_roots] == [0]
+        def judged_so_far(root: RootView, _ordinal: int) -> tuple[list[object], int | None]:
+            invalid = root.invalid_root
+            return list(calls.decoded), None if invalid is None else invalid.ordinal
 
-        second = RootView(cast("Any", page), 1)
-        assert calls.decoded == ["0e", "0f"]
-        assert [root.ordinal for root in second.invalid_roots] == [1]
+        assert each_root(cast("Any", page), ENCODED_IDENTITY, judged_so_far) == [
+            (["0e"], 0),
+            (["0e", "0f"], 1),
+        ]
 
 
 def test_a_root_view_reaches_only_its_roots_nodes_and_unions_its_views() -> None:
@@ -143,11 +145,10 @@ def test_a_root_view_reaches_only_its_roots_nodes_and_unions_its_views() -> None
     fixture.attach(second, "Order.itemsByShipDate", ())
     page = fixture.page(first, second)
 
-    first_view = RootView(page, 0)
-    second_view = RootView(page, 1)
+    first_view, second_view = observed_roots(page, fixture.model)
 
-    assert [identity.name for identity in first_view.order] == ["Order", "OrderItem"]
-    assert [identity.name for identity in second_view.order] == ["Order"]
+    assert first_view.names == ["Order", "OrderItem"]
+    assert second_view.names == ["Order"]
     assert first_view.view(0, 0) == first_view.view(0, 1) == (1,)
 
 
@@ -174,14 +175,17 @@ def test_page_storage_reports_projection_width_and_handles_a_view_cycle() -> Non
 
 
 def test_releasing_a_finished_root_twice_is_idempotent() -> None:
-    page, _roots = _page(((ROOT_LEVEL, _encoded_order("01")),))
+    page, (root,) = _page(((ROOT_LEVEL, _encoded_order("01")),))
     rows = page_rows(cast("Any", page))
     schedule = page_schedule(cast("Any", page), _every_family_versioned, atomic=True)
-    root = RootView(cast("Any", page), 0)
+    reached: list[int] = []
+    reach_into(rows, root, reached)
+    state_for(rows, root)
+    assert rows.judged_states.singleton(0) is not None
 
-    release_finished_rows(cast("Any", page), schedule, 0, root.reached)
+    release_finished_rows(cast("Any", page), schedule, 0, reached)
     released = (list(rows.member_rows), list(rows.keys), list(rows.logical_ids))
-    release_finished_rows(cast("Any", page), schedule, 0, root.reached)
+    release_finished_rows(cast("Any", page), schedule, 0, reached)
 
     assert released == ([()], [None], [0])
     assert (list(rows.member_rows), list(rows.keys), list(rows.logical_ids)) == released
@@ -189,10 +193,7 @@ def test_releasing_a_finished_root_twice_is_idempotent() -> None:
 
 
 def _published_positions(page: Any) -> Iterator[object]:
-    def publish(_root: RootView, position: int) -> Iterator[object]:
-        yield position
-
-    yield from publish_roots(page, publish)
+    return publish_roots(page, lambda _root, ordinal: (ordinal,), _ENCODED)
 
 
 def test_root_zero_publishes_before_root_one_state_is_decoded() -> None:
@@ -278,13 +279,15 @@ def test_a_keyless_occurrence_is_judged_again_for_every_root_reaching_it(
     # payload anew, after earlier roots released what they alone reached.
     page = _shared_keyless_animal(owners, animal_row, uncarrying)
 
-    def publish(root: RootView, _position: int) -> Iterator[tuple[object, ...]]:
-        (node,) = (node for node, concrete in enumerate(root.order) if concrete.name != "Person")
-        yield (
-            rendered_members(root.layout(node), root.member_values(node)),
-            [(issue.code, issue.stored_value) for issue in root.issues(node)],
+    def publish(root: RootView, _ordinal: int) -> tuple[object, ...]:
+        (node,) = (node for node in range(len(root)) if root.layout(node).concrete.name != "Person")
+        return (
+            (
+                rendered_members(root.layout(node), root.member_values(node)),
+                [(issue.code, issue.stored_value) for issue in root.issues(node)],
+            ),
         )
 
-    published = list(publish_roots(cast("Any", page), publish, atomic=atomic, model=_ANIMAL))
+    published = list(publish_roots(cast("Any", page), publish, _ANIMAL, atomic=atomic))
 
     assert published == [expected] * len(owners)

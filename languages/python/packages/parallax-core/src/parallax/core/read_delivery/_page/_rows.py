@@ -683,7 +683,8 @@ def push_edges(rows: PageRows, projection: int, pending: list[int]) -> None:
     row = rows.view_rows[projection]
     if not row:
         return
-    targets = rows.schema.root_view(rows.layouts[projection]).targets[rows.sources[projection]]
+    view_layout = rows.schema.root_view_layout(rows.layouts[projection])
+    targets = view_layout.targets[rows.sources[projection]]
     for slot in reversed(range(len(row))):
         if targets[slot] is not None:
             continue
@@ -923,7 +924,7 @@ class PageBuilder:
         slot = self._slot(projection, view)
         row = cast("list[object]", self._views[projection])
         layout = self._layouts[projection]
-        if self._schema.root_view(layout).targets[self._sources[projection]][slot] is None:
+        if self._schema.root_view_layout(layout).targets[self._sources[projection]][slot] is None:
             raise ValueError(
                 f"{view.narrowed_view or view.relationship.name!r} on "
                 f"{layout.concrete.canonical} holds projections, not back-reference claims"

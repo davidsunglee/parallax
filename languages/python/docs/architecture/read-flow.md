@@ -320,16 +320,19 @@ admission stay outside the cache.
  SnapshotPublication.roots_of(page, includes, atomic, origins, milestones)  _handle/_read
               │   a milestone root's pin comes from its own edge
               ▼
- publish_roots → one transient RootView per Page root                   _root_publication
-              ├ eager (atomic): RootView.complete → RootView.prime(origins)
-              │                 → release Page rows after their last use
-              │                 → publish every root, then hand them all over
-              └ stream:         RootView → release raw rows → publish and hand over
-                                each root in turn
+ publish_roots: one pass per Page                                       _root_publication
+              │   page_schedule and page_edges once; one RootView for the pass
+              │   each root: resolve claims, states, carried views and, for a
+              │              root publishing no finding, its origins
+              │              → release the Page rows it finished with
+              │              → publish_root(root view, result ordinal)
+              ├ eager (atomic): hold every root's values, release the Page,
+              │                 then hand them all over
+              └ stream:         hand over each root in turn
               │
               ▼
- typed_root / wire_roots                                                _typed / _wire
-              ├ classify_roots: a conforming root, or an InvalidData record
+ TypedRootPublisher / WireRootPublisher, one per Page                   _typed / _wire
+              ├ classify_root: a conforming root, or an InvalidData record
               ├ Read Evidence reaches the nodes of a conforming root only
               ├ Typed: EntityGraphConstruction → frozen Entity instances
               └ Wire:  WireWalk along the requested Include Paths
@@ -344,9 +347,12 @@ admission stay outside the cache.
                          root; SnapshotStream.checked yields InvalidData in band
 ```
 
-A Root View is one root's view over the Page. Within it, one logical row is one node,
-so a diamond of include paths shares a node and following a relationship never reads.
-Two roots never share a node object, even when they reached the same Entity State.
+A Root View is one root's view over the Page, and the pass points its one Root View at
+each root in turn. Within a root, one logical row is one node, so a diamond of include
+paths shares a node and following a relationship never reads. Two roots never share a
+node object, even when they reached the same Entity State. An arm the root's carried
+views discard, such as an overwritten view, is still compared and judged but publishes
+nowhere, so its findings do not classify the root.
 
 The eager path publishes nothing until every root is ready, which is the whole-result
 boundary; a stream publishes each root as soon as it is ready and keeps what it has
@@ -366,12 +372,13 @@ are already published into Wire form in memory, with no further read.
 - `parallax.snapshot._handle._read:SnapshotPublication.from_find`
 - `parallax.snapshot._handle._read:SnapshotPublication.from_history`
 - `parallax.snapshot._publication._root_publication:publish_roots`
+- `parallax.core.read_delivery._page._rows:page_schedule`
+- `parallax.core.read_delivery._page._rows:page_edges`
+- `parallax.core.read_delivery._page._rows:release_finished_rows`
 - `parallax.snapshot._publication._root:RootView`
-- `parallax.snapshot._publication._root:RootView.complete`
-- `parallax.snapshot._publication._root:RootView.prime`
-- `parallax.snapshot._publication._typed:typed_root`
-- `parallax.snapshot._publication._wire:wire_roots`
-- `parallax.snapshot._publication._classify:classify_roots`
+- `parallax.snapshot._publication._typed:TypedRootPublisher`
+- `parallax.snapshot._publication._wire:WireRootPublisher`
+- `parallax.snapshot._publication._classify:classify_root`
 - `parallax.snapshot._publication._wire:WireWalk`
 - `parallax.snapshot._publication._wire:WireEntity`
 - `parallax.snapshot._publication._wire:shared_wire_encoder`

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import cast
 
+from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -14,13 +15,12 @@ from parallax.core.read_delivery._page import (
     ABSENT,
     EntityState,
     InvalidRootInput,
-    Page,
     PageRows,
+    PageSchedule,
     RootViewLayout,
     StoredDataIssueInput,
     exact_stored_equal,
     layout_order_key,
-    page_rows,
     reach_into,
     same_witness,
     state_for,
@@ -32,7 +32,6 @@ from parallax.core.write_plan import ObjectKey
 __all__ = ["RootView", "SnapshotConsistencyError"]
 
 SNAPSHOT_PROJECTION_CONFLICT = "snapshot-projection-conflict"
-_UNPRIMED = object()
 
 
 class SnapshotConsistencyError(RuntimeError):
@@ -59,19 +58,26 @@ class SnapshotConsistencyError(RuntimeError):
 
 
 class RootView:
-    """One root's view over a sealed Page: allocation order, roots, and states."""
+    """One result root's borrowed reach over a sealed Page: its nodes, their
+    Page-owned states, their carried relationship views, and their origins.
+
+    A publication pass forms one and re-points it at each root in turn, so it is
+    valid only inside the ``publish_root`` call that received it: kept beyond
+    that call, it answers for whichever root the pass resolved last. Node 0 is
+    the root, and the nodes are the finalized publication segment, which
+    excludes an issue-bearing allocation the root's carried views never reach.
+    """
 
     __slots__ = (
-        "_invalid_roots",
+        "_defers_states",
+        "_has_issues",
+        "_invalid_root",
         "_layouts",
-        "_order",
-        "_pending_invalid",
+        "_origin_values",
+        "_origins",
         "_pin",
-        "_primed_mapping",
-        "_primed_values",
         "_reached",
         "_resolved",
-        "_roots",
         "_rows",
         "_states",
         "_view_layouts",
@@ -81,74 +87,39 @@ class RootView:
 
     def __init__(
         self,
-        page: Page,
-        root_position: int | None = None,
+        rows: PageRows,
+        schedule: PageSchedule,
         *,
-        pin: Pin | None = None,
-        defer_states: bool = False,
+        origins: Mapping[int, ReadEvidence],
     ) -> None:
-        rows = page_rows(page)
         self._rows = rows
-        self._pin = rows.pin if pin is None else pin
-        self._primed_mapping: Mapping[int, object] | None = None
-        self._primed_values: list[object] | None = None
+        self._defers_states = schedule.defers_states
+        self._origins = origins
+        self._pin = rows.pin
         self._winner: list[int] = []
         self._resolved: dict[int, int] = {}
         self._layouts: list[EntityLayout] = []
         self._states: list[EntityState] = []
         self._view_layouts: list[RootViewLayout] = []
-        invalid_entries, root_indices, valid_roots = _partition_roots(rows, root_position)
-        reached: set[int] | None = set() if len(valid_roots) > 1 else None
-        single_reached: list[int] = []
-        winners: list[list[object] | None] = []
-        state_nodes: dict[int, int] | None = {} if len(valid_roots) > 1 else None
-        for root in valid_roots:
-            reachable: list[int] = []
-            reach_into(rows, root, reachable)
-            if reached is None:
-                single_reached = reachable
-            else:
-                reached.update(reachable)
-            if state_nodes is None and (
-                len(reachable) == 1
-                or len({rows.logical_ids[projection] for projection in reachable}) == len(reachable)
-            ):
-                self._allocate_distinct(rows, reachable, winners, defer_states)
-            else:
-                self._allocate_claimed(rows, reachable, winners, state_nodes, defer_states)
+        self._view_rows: list[list[object] | tuple[()]] = []
+        self._reached: list[int] = []
+        self._origin_values: Sequence[ReadEvidence | None] = ()
+        self._invalid_root: InvalidRootInput | None = None
+        self._has_issues = False
 
-        self._pending_invalid = tuple(invalid_entries)
-        self._invalid_roots = ()
-        self._roots = tuple(None if root is None else self._resolved[root] for root in root_indices)
-        self._order = tuple(layout.concrete for layout in self._layouts)
-        self._view_rows = tuple(() if row is None else tuple(row) for row in winners)
-        self._winner = tuple(self._winner)  # pyright: ignore[reportAttributeAccessIssue]
-        self._layouts = tuple(self._layouts)  # pyright: ignore[reportAttributeAccessIssue]
-        self._states = tuple(self._states)  # pyright: ignore[reportAttributeAccessIssue]
-        self._view_layouts = tuple(self._view_layouts)  # pyright: ignore[reportAttributeAccessIssue]
-        self._resolved = None  # pyright: ignore[reportAttributeAccessIssue]
-        self._reached: Sequence[int] = tuple(reached) if reached is not None else single_reached
-        _notify(rows.observer, "occurrences_reached", len(self._reached))
-        if not defer_states:
-            self._complete_invalid()
-            self._rows = None
+    def __len__(self) -> int:
+        """The nodes in this root's segment: none for an invalid root."""
+        return len(self._winner)
 
     @property
-    def order(self) -> tuple[EntityIdentity, ...]:
-        return self._order
-
-    @property
-    def roots(self) -> tuple[int | None, ...]:
-        return self._roots
-
-    @property
-    def invalid_roots(self) -> tuple[InvalidRootInput, ...]:
-        return self._invalid_roots
+    def invalid_root(self) -> InvalidRootInput | None:
+        """The root's own findings when its stored primary key could not be read."""
+        return self._invalid_root
 
     @property
     def has_issues(self) -> bool:
-        """Whether conversion classified any issue in the reachable root view."""
-        return bool(self._invalid_roots) or any(state.findings for state in self._states)
+        """Whether any stored-data finding is published with this root."""
+        return self._has_issues
 
     @property
     def pin(self) -> Pin:
@@ -156,70 +127,9 @@ class RootView:
 
     @property
     def reached(self) -> Sequence[int]:
-        """Every Page projection this Root View's roots reach, which is what
-        releasing the Page storage they finished with reads."""
+        """Every Page projection the root reached, including an arm its carried
+        views discard: what releasing the Page storage it finished with reads."""
         return self._reached
-
-    def by_allocation[T](self, by_projection: Mapping[int, T]) -> Mapping[int, T]:
-        """``by_projection`` re-keyed from projection index to allocation index.
-
-        Several projections may resolve to one logical node, so the first one
-        walked supplies the value after their Payload Witnesses have proved the
-        projections equivalent. Only reached projections are read from the input;
-        a deferred evidence mapping therefore judges nothing outside this Root
-        View, and a projection no root reached contributes nothing.
-        """
-        if self._primed_mapping is by_projection and self._primed_values is not None:
-            return cast(
-                "Mapping[int, T]",
-                {
-                    index: value
-                    for index, value in enumerate(self._primed_values)
-                    if value is not _UNPRIMED
-                },
-            )
-        resolved: dict[int, T] = {}
-        for index, projection in enumerate(self._winner):
-            value = by_projection.get(projection, _UNPRIMED)
-            if value is not _UNPRIMED:
-                resolved[index] = cast("T", value)
-        return resolved
-
-    def prime[T](self, by_projection: Mapping[int, T]) -> None:
-        """Resolve canonical projection values while the borrowed Page is live."""
-        if self.has_issues:
-            return
-        primed: list[object] = [
-            by_projection.get(projection, _UNPRIMED) for projection in self._winner
-        ]
-        self._primed_mapping = by_projection
-        self._primed_values = primed
-
-    def projection_value[T](self, node: int, by_projection: Mapping[int, T]) -> T | None:
-        """The canonical projection's value for one allocation, when present."""
-        if self._primed_mapping is by_projection and self._primed_values is not None:
-            value = self._primed_values[node]
-            return None if value is _UNPRIMED else value  # pyright: ignore[reportReturnType]
-        value = by_projection.get(self._winner[node], _UNPRIMED)
-        return None if value is _UNPRIMED else value  # pyright: ignore[reportReturnType]
-
-    def complete(self) -> None:
-        """Decode the already-consistent root after an atomic claim pass."""
-        if self._rows is None:
-            return
-        self._states = tuple(  # pyright: ignore[reportAttributeAccessIssue]
-            self._state(winner) for winner in self._winner
-        )
-        self._complete_invalid()
-        self._rows = None
-
-    def _complete_invalid(self) -> None:
-        if self._pending_invalid:
-            self._invalid_roots = tuple(
-                InvalidRootInput(ordinal, self._state(root).findings)
-                for ordinal, root in self._pending_invalid
-            )
-            self._pending_invalid = ()
 
     def layout(self, node: int) -> EntityLayout:
         """The member layout ``node``'s state is read against — the canonical
@@ -231,16 +141,6 @@ class RootView:
         against :meth:`layout`."""
         return self._states[node].member_row
 
-    def axis_start(self, node: int, attribute: AttributeIdentity, /) -> object:
-        """``node``'s stored value at one As-Of Axis start, read at that
-        Attribute's position in its member row."""
-        return self._states[node].member_row[self._layouts[node].index_of[attribute]]
-
-    def axis_end(self, node: int, attribute: AttributeIdentity, /) -> object:
-        """``node``'s stored value at one As-Of Axis end, read at that
-        Attribute's position in its member row."""
-        return self._states[node].member_row[self._layouts[node].index_of[attribute]]
-
     def issues(self, node: int) -> tuple[StoredDataIssueInput, ...]:
         """The findings from ``node``'s one Page-owned payload judgment."""
         return self._states[node].findings
@@ -251,75 +151,112 @@ class RootView:
 
     def view(self, node: int, slot: int) -> object:
         """``node``'s value at ``slot``: ``ABSENT`` for a view no projection
-        loaded, ``None`` for loaded-null, an allocation index for a loaded
-        to-one, and a tuple of them for a loaded to-many. A back-reference is a
-        to-one: this root's reached node it names, or ``None`` when it names
-        none this root reached among its targets.
+        loaded, ``None`` for loaded-null, a node for a loaded to-one, and a
+        tuple of them for a loaded to-many. A back-reference is a to-one: this
+        root's reached node it names, or ``None`` when it names none this root
+        reached among its targets.
 
-        Resolved into allocation indices once, when the row was built, so every
-        consumer reading one slot twice is answered the identical value rather
-        than two equal translations of it.
+        Resolved into nodes once, when the root was resolved, so every consumer
+        reading one slot twice is answered the identical value rather than two
+        equal translations of it.
         """
         return self._view_rows[node][slot]
 
-    def _allocate_distinct(
-        self,
-        rows: PageRows,
-        reachable: Sequence[int],
-        winners: list[list[object] | None],
-        defer_states: bool,
-    ) -> None:
+    def origin(self, node: int) -> ReadEvidence | None:
+        """The Read Evidence ``node``'s canonical projection carries, captured
+        only for a root publishing no finding."""
+        values = self._origin_values
+        return values[node] if values else None
+
+    def _resolve_root(self, position: int, pin: Pin) -> None:
+        """Re-point this view at the root at ``position``, published at ``pin``.
+
+        Every claim the root reaches is compared before any of its states is
+        judged, so a projection conflict raises first, including one in an arm
+        its carried views discard. Origins are read while the Page rows are
+        still live, and only when the finalized segment publishes no finding.
+        """
+        rows = self._rows
+        root = rows.roots[position]
+        self._pin = pin
+        self._winner.clear()
+        self._resolved.clear()
+        self._layouts.clear()
+        self._states.clear()
+        self._view_layouts.clear()
+        self._view_rows.clear()
+        self._origin_values = ()
+        self._invalid_root = None
+        reached = self._reached
+        if rows.keys[root] is None and any(
+            issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
+        ):
+            reached.clear()
+            _notify(rows.observer, "occurrences_reached", 0)
+            self._invalid_root = InvalidRootInput(position, state_for(rows, root).findings)
+            self._has_issues = True
+            return
+        reach_into(rows, root, reached)
+        judging = not self._defers_states
+        logical_ids = rows.logical_ids
+        if len(reached) == 1 or len({logical_ids[projection] for projection in reached}) == len(
+            reached
+        ):
+            self._allocate_distinct(rows, reached, judging)
+        else:
+            self._allocate_claimed(rows, reached, judging)
+        _notify(rows.observer, "occurrences_reached", len(reached))
+        states = self._states
+        if not judging:
+            states.extend([state_for(rows, winner) for winner in self._winner])
+        for state in states:
+            if state.findings:
+                if len(states) > 1:
+                    self._realize()
+                self._has_issues = any(published.findings for published in states)
+                break
+        else:
+            self._has_issues = False
+        if not self._has_issues:
+            origins = self._origins
+            self._origin_values = [origins.get(winner) for winner in self._winner]
+
+    def _allocate_distinct(self, rows: PageRows, reached: Sequence[int], judging: bool) -> None:
         """Allocate one node per reached projection, each the only claimant of
         its logical occurrence, and then carry its view values into that node."""
-        for projection in reachable:
-            state = None if defer_states else self._state(projection)
-            index = len(self._winner)
+        resolved = self._resolved
+        for projection in reached:
+            if judging:
+                self._states.append(state_for(rows, projection))
+            resolved[projection] = len(self._winner)
             self._winner.append(projection)
-            self._layouts.append(rows.layouts[projection])
-            if state is not None:
-                self._states.append(state)
-            root_view_layout = rows.schema.root_view(rows.layouts[projection])
-            self._view_layouts.append(root_view_layout)
-            carried_views: list[object] | None = (
-                [cast("object", ABSENT)] * len(root_view_layout.slots)
-                if root_view_layout.slots
-                else None
-            )
-            winners.append(carried_views)
-            self._resolved[projection] = index
-        for projection in reachable:
-            index = self._resolved[projection]
-            values = rows.view_rows[projection]
-            carried_views = winners[index]
-            if carried_views is None:
+            self._allocated(rows, projection)
+        view_rows = self._view_rows
+        for projection in reached:
+            index = resolved[projection]
+            carried_views = view_rows[index]
+            if not carried_views:
                 continue
             view_layout = self._view_layouts[index]
             level = rows.sources[projection]
             to_root_view = view_layout.to_root_view[level]
             targets = view_layout.targets[level]
-            for slot, value in enumerate(values):
+            for slot, value in enumerate(rows.view_rows[projection]):
                 root_view_slot = to_root_view[slot]
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
                     carried_views[root_view_slot] = self._allocation(value, targets[slot], None)
 
-    # Called once per root row by the constructor's per-root allocation loop, which the
-    # Snapshot materialization instruments measure; every split, including sharing the
+    # Called once per root by the pass's per-root resolution, which the Snapshot
+    # materialization instruments measure; every split, including sharing the
     # view-carry loop with `_allocate_distinct`, adds a call to that loop.
     def _allocate_claimed(  # noqa: C901
-        self,
-        rows: PageRows,
-        reachable: Sequence[int],
-        winners: list[list[object] | None],
-        state_nodes: dict[int, int] | None,
-        defer_states: bool,
+        self, rows: PageRows, reached: Sequence[int], judging: bool
     ) -> None:
         """Allocate one node per logical occurrence the reached projections
-        claim, won by its canonical claimant, reusing the node another root
-        already allocated for the same judged state. Once every claimant
-        resolves to its node, carry every claimant's view values into that
-        node."""
+        claim, won by its canonical claimant. Once every claimant resolves to
+        its node, carry every claimant's view values into that node."""
         local_claims: dict[int, int | list[int]] = {}
-        for projection in reachable:
+        for projection in reached:
             logical = rows.logical_ids[projection]
             claimed = local_claims.get(logical)
             if claimed is None:
@@ -337,46 +274,59 @@ class RootView:
         table: dict[int, int] = {}
         for logical, canonical in local_claims.items():
             winner = cast("int", canonical)
-            state = None if defer_states else self._state(winner)
-            index = None if state is None or state_nodes is None else state_nodes.get(id(state))
-            if index is None:
-                index = len(self._winner)
-                if state is not None and state_nodes is not None:
-                    state_nodes[id(state)] = index
-                self._winner.append(winner)
-                self._layouts.append(rows.layouts[winner])
-                if state is not None:
-                    self._states.append(state)
-                root_view_layout = rows.schema.root_view(rows.layouts[winner])
-                self._view_layouts.append(root_view_layout)
-                carried_views = (
-                    [cast("object", ABSENT)] * len(root_view_layout.slots)
-                    if root_view_layout.slots
-                    else None
-                )
-                winners.append(carried_views)
-            table[logical] = index
-        for projection in reachable:
-            self._resolved[projection] = table[rows.logical_ids[projection]]
-        for projection in reachable:
-            index = self._resolved[projection]
-            values = rows.view_rows[projection]
-            carried_views = winners[index]
-            if carried_views is None:
+            if judging:
+                self._states.append(state_for(rows, winner))
+            table[logical] = len(self._winner)
+            self._winner.append(winner)
+            self._allocated(rows, winner)
+        resolved = self._resolved
+        for projection in reached:
+            resolved[projection] = table[rows.logical_ids[projection]]
+        view_rows = self._view_rows
+        for projection in reached:
+            index = resolved[projection]
+            carried_views = view_rows[index]
+            if not carried_views:
                 continue
             view_layout = self._view_layouts[index]
             level = rows.sources[projection]
             to_root_view = view_layout.to_root_view[level]
             targets = view_layout.targets[level]
-            for slot, value in enumerate(values):
+            for slot, value in enumerate(rows.view_rows[projection]):
                 root_view_slot = to_root_view[slot]
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
                     carried_views[root_view_slot] = self._allocation(value, targets[slot], table)
 
+    def _allocated(self, rows: PageRows, winner: int) -> None:
+        layout = rows.layouts[winner]
+        self._layouts.append(layout)
+        view_layout = rows.schema.root_view_layout(layout)
+        self._view_layouts.append(view_layout)
+        self._view_rows.append(
+            cast("list[object]", [ABSENT] * len(view_layout.slots)) if view_layout.slots else ()
+        )
+
+    def _realize(self) -> None:
+        """Compact the segment to the nodes the root's carried views reach.
+
+        An overwritten arm or a claimant's losing slot extends Page reach
+        without being carried, so it is judged and compared but published
+        nowhere; the realized nodes keep their allocation order, node 0 first.
+        """
+        view_rows = self._view_rows
+        kept = _carried_reach(view_rows)
+        if len(kept) == len(view_rows):
+            return
+        nodes = sorted(kept)
+        renumbered = {node: index for index, node in enumerate(nodes)}
+        self._winner[:] = [self._winner[node] for node in nodes]
+        self._layouts[:] = [self._layouts[node] for node in nodes]
+        self._states[:] = [self._states[node] for node in nodes]
+        self._view_layouts[:] = [self._view_layouts[node] for node in nodes]
+        self._view_rows[:] = [_renumbered(view_rows[node], renumbered) for node in nodes]
+
     def _canonical(self, occurrences: Sequence[int]) -> int:
         rows = self._rows
-        if rows is None:  # pragma: no cover - construction owns a live Page
-            raise ValueError("a completed Root View cannot compare another witness")
         if len(occurrences) == 2 and same_witness(rows, occurrences[0], occurrences[1]):
             _notify(rows.observer, "witnesses_compared", 1)
             rows.decoders.settle(occurrences[1])
@@ -405,14 +355,8 @@ class RootView:
             "canonical witness ordering retained no disagreement"
         )  # pragma: no cover
 
-    def _state(self, canonical: int) -> EntityState:
-        rows = self._rows
-        if rows is None:  # pragma: no cover - completion owns a live Page
-            raise ValueError("a completed Root View cannot judge another state")
-        return state_for(rows, canonical)
-
     def _conflict(self, left: int, right: int) -> SnapshotConsistencyError:
-        rows = cast("PageRows", self._rows)
+        rows = self._rows
         left_layout = rows.layouts[left]
         right_layout = rows.layouts[right]
         left_values = cast("tuple[object, ...]", rows.witnesses[left])
@@ -488,14 +432,14 @@ class RootView:
         """The node this root allocated for ``logical``, if it reached any
         claimant of it.
 
-        Without ``table`` this root is the Root View's only root, so its
-        resolved projections are exactly its reach. A released logical's claim
+        Without ``table`` the root's resolved projections are exactly its
+        reach. A released logical's claim
         and its claimants' logical ids read ``0``, so a claimant only counts
         while its logical id still names ``logical``.
         """
         if table is not None:
             return table.get(logical)
-        rows = cast("PageRows", self._rows)
+        rows = self._rows
         resolved = self._resolved
         claim = rows.claims[logical]
         if isinstance(claim, int):
@@ -526,32 +470,35 @@ def _member_order(
     )
 
 
-def _partition_roots(
-    rows: PageRows, root_position: int | None
-) -> tuple[Sequence[tuple[int, int]], Sequence[int | None], Sequence[int]]:
-    """The requested roots split into those whose stored primary key could not
-    be read, as (ordinal, projection) entries, and the valid ones, beside every
-    requested root's projection in order with ``None`` for an invalid one."""
-    if root_position is not None:
-        root = rows.roots[root_position]
-        if rows.keys[root] is None and any(
-            issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
-        ):
-            return ((root_position, root),), (None,), ()
-        return (), (root,), (root,)
-    invalid_entries: list[tuple[int, int]] = []
-    root_indices: list[int | None] = []
-    valid_roots: list[int] = []
-    for ordinal, root in enumerate(rows.roots):
-        if rows.keys[root] is None and any(
-            issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
-        ):
-            invalid_entries.append((ordinal, root))
-            root_indices.append(None)
-        else:
-            valid_roots.append(root)
-            root_indices.append(root)
-    return invalid_entries, root_indices, valid_roots
+def _carried_reach(view_rows: Sequence[Sequence[object]]) -> set[int]:
+    """Every node node 0's carried views reach, itself included."""
+    kept = {0}
+    pending = [0]
+    while pending:
+        for value in view_rows[pending.pop()]:
+            if type(value) is tuple:
+                children = cast("tuple[int, ...]", value)
+            elif value is None or value is ABSENT:
+                continue
+            else:
+                children = (cast("int", value),)
+            for child in children:
+                if child not in kept:
+                    kept.add(child)
+                    pending.append(child)
+    return kept
+
+
+def _renumbered(row: Sequence[object], renumbered: Mapping[int, int]) -> list[object]:
+    """One carried view row with every node it names renumbered."""
+    return [
+        tuple([renumbered[child] for child in cast("tuple[int, ...]", value)])
+        if type(value) is tuple
+        else value
+        if value is None or value is ABSENT
+        else renumbered[cast("int", value)]
+        for value in row
+    ]
 
 
 def _notify(observer: object | None, name: str, *args: object) -> None:

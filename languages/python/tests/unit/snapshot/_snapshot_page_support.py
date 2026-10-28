@@ -19,10 +19,11 @@ carried by this MODULE's underscore. Never imported by production code.
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import cast
+from types import MappingProxyType
+from typing import Any, cast
 
 import pytest
 
@@ -36,8 +37,8 @@ from parallax.core.base import (
     StoredScalarVerdict,
     check_stored_scalar,
 )
-from parallax.core.deep_fetch import RelationshipViewKey
-from parallax.core.deep_fetch._include_tree import build_include_tree
+from parallax.core.deep_fetch import IncludeTree, RelationshipViewKey
+from parallax.core.deep_fetch._include_tree import PositionSeed, build_include_tree
 from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
@@ -64,9 +65,10 @@ from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.core.wire import WireValue, decode_canonical_wire
-from parallax.snapshot._handle._read import typed_publication
+from parallax.snapshot._handle._read import typed_publication, wire_publication
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._prepared_read_support import compiled_read, result_row, uncarried
+from tests.unit._root_publication_support import RootObservation, observed_roots
 
 __all__ = [
     "ConversionCalls",
@@ -285,7 +287,8 @@ class PageFixture:
     Entities its logical claims may resolve to, which is what the plan's slot
     table records for an inverse hop.
 
-    ``model`` overrides the accepted model conversion and Root View judgment without
+    ``observer`` records the Page's cadence. ``model`` overrides the accepted
+    model conversion and Root View judgment without
     changing the classes construction resolves, which is how a suite exercises a
     model and its classes disagreeing — a member the model calls a Value Object
     while the composed class maps it as a scalar. Only a test can reach that
@@ -303,6 +306,7 @@ class PageFixture:
         *views: str | tuple[str, str],
         references: Mapping[str, tuple[str, ...]] | None = None,
         model: Metamodel | None = None,
+        observer: object | None = None,
     ) -> None:
         assert class_index(domain) is not None, "the Page suites compose class-backed models"
         self._domain = domain
@@ -324,7 +328,8 @@ class PageFixture:
                         ),
                     ),
                 )
-            )
+            ),
+            observer,
         )
         self._reads: dict[tuple[str, tuple[str, ...]], ReadRowConverter] = {}
         self._sealed: tuple[tuple[tuple[int, ...], Pin], Page] | None = None
@@ -407,8 +412,28 @@ class PageFixture:
         assert self._sealed[0] == asked, "one fixture seals one Page; build a second fixture"
         return self._sealed[1]
 
+    @property
+    def model(self) -> Metamodel:
+        """The accepted model this fixture converts and judges under."""
+        return self._model
+
+    def observed_roots(
+        self,
+        *roots: int,
+        pin: Pin = _NO_PIN,
+        atomic: bool = False,
+        origins: Mapping[int, object] = MappingProxyType({}),
+    ) -> list[RootObservation]:
+        """Every Page root's Root View, observed through the publication pass."""
+        page = self.page(*roots, pin=pin)
+        return observed_roots(page, self._model, atomic=atomic, origins=origins)
+
     def materialize(
-        self, *roots: int, pin: Pin = _NO_PIN
+        self,
+        *roots: int,
+        pin: Pin = _NO_PIN,
+        atomic: bool = False,
+        origins: Mapping[int, object] = MappingProxyType({}),
     ) -> tuple[object | InvalidData[object], ...]:
         """Judge, classify, and publish the Page roots through the typed read's
         publication.
@@ -416,10 +441,91 @@ class PageFixture:
         A conforming root is its frozen Entity instance; one some stored state
         contradicted is its :class:`InvalidData` record instead.
         """
+        return tuple(self.materialize_stream(*roots, pin=pin, atomic=atomic, origins=origins))
+
+    def materialize_stream(
+        self,
+        *roots: int,
+        pin: Pin = _NO_PIN,
+        atomic: bool = False,
+        origins: Mapping[int, object] = MappingProxyType({}),
+    ) -> Iterator[object | InvalidData[object]]:
+        """:meth:`materialize`'s roots as the publication hands them over."""
         page = self.page(*roots, pin=pin)
         publication = typed_publication(
             self._cataloged, graph_construction_for(self._domain), "fixture"
         )
         queried = self._model.entities[0].identity
         includes = build_include_tree(queried=queried, root=(queried,), positions=())
-        return tuple(publication.roots_of(page, includes))
+        return publication.roots_of(
+            page, includes, atomic=atomic, origins=cast("Mapping[int, Any]", origins)
+        )
+
+    def include_tree(
+        self,
+        root: str,
+        *positions: tuple[int, str, str] | tuple[int, str, str, str],
+        also: tuple[str, ...] = (),
+    ) -> IncludeTree:
+        """The include tree a read of ``root`` requests, one position per
+        ``(parent position, relationship, target)`` with an optional narrowed
+        view key last; the root is position 0, admitting ``also``'s concretes
+        beside ``root``'s, and each position takes the next number."""
+        root_identity = identity_of(self._model, root)
+        admitted = (root_identity, *(identity_of(self._model, name) for name in also))
+        concretes: list[tuple[EntityIdentity, ...]] = [(root_identity,)]
+        seeds: list[PositionSeed] = []
+        for position in positions:
+            parent, relationship, target = position[:3]
+            narrowed = position[3] if len(position) == 4 else None
+            view = self.view_key(relationship, narrowed=narrowed)
+            target_identity = (identity_of(self._model, target),)
+            seeds.append(
+                PositionSeed(
+                    parent,
+                    view,
+                    concretes[parent],
+                    target_identity,
+                    view.relationship in self.layout_for(concretes[parent][0].name).to_many,
+                )
+            )
+            concretes.append(target_identity)
+        return build_include_tree(queried=root_identity, root=admitted, positions=seeds)
+
+    def materialize_wire(
+        self,
+        *roots: int,
+        includes: IncludeTree | None = None,
+        pin: Pin = _NO_PIN,
+        atomic: bool = False,
+        origins: Mapping[int, object] = MappingProxyType({}),
+    ) -> tuple[object, ...]:
+        """Publish the Page roots through the Wire read's publication over
+        ``includes``, the root-only tree when omitted."""
+        return tuple(
+            self.materialize_wire_stream(
+                *roots, includes=includes, pin=pin, atomic=atomic, origins=origins
+            )
+        )
+
+    def materialize_wire_stream(
+        self,
+        *roots: int,
+        includes: IncludeTree | None = None,
+        pin: Pin = _NO_PIN,
+        atomic: bool = False,
+        origins: Mapping[int, object] = MappingProxyType({}),
+    ) -> Iterator[object]:
+        """:meth:`materialize_wire`'s roots as the publication hands them over,
+        releasing the publication once they are exhausted or abandoned."""
+        page = self.page(*roots, pin=pin)
+        if includes is None:
+            queried = self._model.entities[0].identity
+            includes = build_include_tree(queried=queried, root=(queried,), positions=())
+        publication = wire_publication(self._cataloged, "fixture")
+        try:
+            yield from publication.roots_of(
+                page, includes, atomic=atomic, origins=cast("Mapping[int, Any]", origins)
+            )
+        finally:
+            publication.release()

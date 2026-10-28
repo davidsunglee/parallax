@@ -78,8 +78,7 @@ from parallax.core.write_plan.steps import (
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, edge_of, pin_of
 from parallax.snapshot._handle._read import typed_publication, wire_publication
-from parallax.snapshot._publication._classify import NonConformingRoot, classify_roots
-from parallax.snapshot._publication._root import RootView
+from parallax.snapshot._publication._classify import NonConformingRoot, classify_root
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.db_port import (
     Read,
@@ -102,6 +101,7 @@ from tests._support.planner_probes import (
 from tests._support.root_ownership import own_root
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._judged_evidence_support import judged_rows, retained_sources
+from tests.unit._root_publication_support import each_root
 from tests.unit._transact_support import INFINITY_INSTANT, RATE, db_for
 from tests.unit.snapshot._snapshot_page_support import PageFixture, identity_of
 
@@ -434,7 +434,14 @@ class _PreparedPage:
 
     def published(self, publication: str) -> tuple[object, ...]:
         if publication == "rows":
-            return classify_roots(RootView(self.page), self.cataloged.meta, CONCURRENCY).roots
+            meta = self.cataloged.meta
+            return tuple(
+                each_root(
+                    self.page,
+                    meta,
+                    lambda root, ordinal: classify_root(root, meta, CONCURRENCY, ordinal=ordinal),
+                )
+            )
         selected = (
             typed_publication(self.cataloged, self.construction, "owned")
             if publication == "typed"

@@ -49,9 +49,11 @@ from parallax.core.db_port import Row
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import GraphConstructionError, IncludePath
 from parallax.core.entity._expressions import IncludeTraversal
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
+    Metamodel,
     RelationshipIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
@@ -96,6 +98,7 @@ from parallax.snapshot._publication._root_publication import publication_issue, 
 from parallax.snapshot._publication._wire import EntityReader
 from tests._support import snapshot_models as sm
 from tests._support.model_capabilities import graph_construction_for
+from tests.unit._root_publication_support import RootObservation, each_root, observed_roots
 from tests.unit.snapshot._encoded_identity_read import (
     ENCODED_IDENTITY,
     KEY_TEXT,
@@ -260,36 +263,91 @@ def test_an_invalid_root_preserves_its_result_position_without_allocating_a_node
     # The keyless row sits BETWEEN two valid ones, so the hole it leaves is a
     # result position rather than a truncation, and the two survivors keep the
     # allocation indices their own walk order gives them.
-    root_view = RootView(
+    roots = observed_roots(
         encoded_identity_page(
             (KEY_TEXT, None, SQL_NULL), (None, None, SQL_NULL), (OTHER_KEY_TEXT, None, SQL_NULL)
-        )
+        ),
+        ENCODED_IDENTITY,
     )
-    assert root_view.roots == (0, None, 1)
-    assert [issue.code for record in root_view.invalid_roots for issue in record.issues] == [
-        "stored-data-primary-key-null"
-    ]
-    assert [record.ordinal for record in root_view.invalid_roots] == [1]
-    assert [entity.name for entity in root_view.order] == ["EncodedIdentity", "EncodedIdentity"]
+    assert [root.names for root in roots] == [["EncodedIdentity"], [], ["EncodedIdentity"]]
+    assert [root.invalid_root is None for root in roots] == [True, False, True]
+    invalid = cast("InvalidRootInput", roots[1].invalid_root)
+    assert [issue.code for issue in invalid.issues] == ["stored-data-primary-key-null"]
+    assert invalid.ordinal == 1
+
+
+def _publication_issues(page: Page, model: Metamodel) -> list[tuple[object, object]]:
+    """Each root's publication issue beside the first finding it carries
+    itself, its own identity's before its nodes' in node order."""
+
+    def issues(root: RootView, _ordinal: int) -> tuple[object, object]:
+        invalid = root.invalid_root
+        carried = (
+            invalid.issues
+            if invalid is not None
+            else next((root.issues(node) for node in range(len(root)) if root.issues(node)), ())
+        )
+        return publication_issue(root), carried[0] if carried else None
+
+    return each_root(page, model, issues)
 
 
 def test_publication_issue_reads_the_first_invalid_root_issue() -> None:
-    root_view = RootView(encoded_identity_page((None, None, SQL_NULL)))
-    assert publication_issue(root_view) is root_view.invalid_roots[0].issues[0]
+    ((issue, first),) = _publication_issues(
+        encoded_identity_page((None, None, SQL_NULL)), ENCODED_IDENTITY
+    )
+    assert issue is first is not None
+
+
+def test_publication_issue_reads_the_first_node_issue_in_node_order() -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ENCODED_ITEMS)
+    order = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
+    clean = fixture.node("EncodedOrderItem", _ENCODED_ITEM_ROW)
+    invalid = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "id": 12, "code_hex": "no"})
+    later = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "id": 13, "code_hex": "nope"})
+    fixture.attach(order, _ENCODED_ITEMS, (clean, invalid, later))
+
+    ((issue, first),) = _publication_issues(fixture.page(order), fixture.model)
+
+    assert issue is first
+    assert cast("StoredDataIssueInput", issue).stored_value == "no"
+
+
+def test_a_discarded_arms_finding_is_no_publication_issue() -> None:
+    # An arm the root's carried views discard publishes nowhere, so its finding
+    # neither classifies nor refuses the realized graph.
+    fixture = PageFixture(ENCODED_ORDERS, _ENCODED_ITEMS)
+    order = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
+    discarded = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "code_hex": "not-hex"})
+    current = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "id": 12})
+    fixture.attach(order, _ENCODED_ITEMS, (discarded,))
+    fixture.attach(order, _ENCODED_ITEMS, (current,))
+
+    assert _publication_issues(fixture.page(order), fixture.model) == [(None, None)]
 
 
 def test_an_issue_bearing_root_view_is_refused_with_its_first_issue() -> None:
     # A lifecycle that has no in-band channel for a stored-data verdict refuses
     # the Root View before deriving anything from it, naming the issue the
     # publication order reaches first; a conforming one passes untouched.
-    root_view = RootView(encoded_identity_page((None, None, SQL_NULL)))
-    first = root_view.invalid_roots[0].issues[0]
+    ((first, _carried),) = _publication_issues(
+        encoded_identity_page((None, None, SQL_NULL)), ENCODED_IDENTITY
+    )
+    first = cast("StoredDataIssueInput", first)
 
-    with pytest.raises(StoredDataDecodingError) as refused:
-        require_publishable(root_view)
+    def refusal(root: RootView, _ordinal: int) -> object:
+        with pytest.raises(StoredDataDecodingError) as refused:
+            require_publishable(root)
+        return (refused.value.entity, refused.value.member)
 
-    assert (refused.value.entity, refused.value.member) == (first.entity, first.member)
-    require_publishable(RootView(encoded_identity_page((KEY_TEXT, None, SQL_NULL))))
+    assert each_root(encoded_identity_page((None, None, SQL_NULL)), ENCODED_IDENTITY, refusal) == [
+        (first.entity, first.member)
+    ]
+    assert each_root(
+        encoded_identity_page((KEY_TEXT, None, SQL_NULL)),
+        ENCODED_IDENTITY,
+        lambda root, _ordinal: require_publishable(root),
+    ) == [None]
 
 
 def test_flat_publication_preserves_a_classified_result_position() -> None:
@@ -338,14 +396,15 @@ def test_a_keyless_root_with_rejected_structured_evidence_dedupes_in_band() -> N
         (None, None, PresentDocument({"street": "1 Park Ave", "phones": {"type": "home"}})),
     )
 
-    root = RootView(page)
+    (root,) = observed_roots(page, ENCODED_IDENTITY)
 
-    assert root.roots == (None,)
-    assert [issue.code for issue in root.invalid_roots[0].issues] == [
+    assert len(root.layouts) == 0
+    invalid = cast("InvalidRootInput", root.invalid_root)
+    assert [issue.code for issue in invalid.issues] == [
         "stored-data-many-wrong-kind",
         "stored-data-primary-key-null",
     ]
-    assert root.invalid_roots[0].issues[0].stored_value == {"type": "home"}
+    assert invalid.issues[0].stored_value == {"type": "home"}
 
 
 def test_invalid_root_carriers_require_a_position_and_an_issue() -> None:
@@ -364,8 +423,13 @@ def test_an_invalid_root_ordinal_is_its_result_position_by_construction() -> Non
     # A caller never spells one: sealing derives the ordinal from the position
     # the root occupies, so the mismatch a whole-Page validation pass used to
     # look for is unrepresentable rather than checked.
-    root_view = RootView(encoded_identity_page((KEY_TEXT, None, SQL_NULL), (None, None, SQL_NULL)))
-    assert [record.ordinal for record in root_view.invalid_roots] == [1]
+    roots = observed_roots(
+        encoded_identity_page((KEY_TEXT, None, SQL_NULL), (None, None, SQL_NULL)), ENCODED_IDENTITY
+    )
+    assert [None if root.invalid_root is None else root.invalid_root.ordinal for root in roots] == [
+        None,
+        1,
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -463,7 +527,7 @@ def test_unequal_scalar_witnesses_refuse_before_any_payload_decode() -> None:
             page = fixture.page(order)
             assert sorted(cast("list[str]", calls.decoded)) == []
             with pytest.raises(SnapshotConsistencyError) as raised:
-                RootView(page)
+                observed_roots(page, fixture.model)
             assert sorted(cast("list[str]", calls.decoded)) == []
         assert _judged_state_count(page) == 0
         return raised.value
@@ -495,7 +559,7 @@ def test_three_unequal_occurrences_report_one_canonical_conflict() -> None:
         children = tuple(fixture.node("OrderItem", row) for row in ordered)
         fixture.attach(order, items, children)
         with pytest.raises(SnapshotConsistencyError) as raised:
-            RootView(fixture.page(order))
+            fixture.observed_roots(order)
         assert raised.value.occurrences == tuple(
             sorted(
                 (
@@ -548,7 +612,7 @@ def test_concrete_disagreement_canonicalizes_the_diagnostic_entity() -> None:
     fixture.attach(owner, "parallax.compatibility.AnimalOwner.animals", (dog, cat))
 
     with pytest.raises(SnapshotConsistencyError) as raised:
-        RootView(fixture.page(owner))
+        fixture.observed_roots(owner)
 
     assert raised.value.object_key.entity == EntityIdentity(_NAMESPACE, "Cat")
 
@@ -571,7 +635,7 @@ def test_three_concrete_disagreements_select_one_canonical_pair() -> None:
         children = tuple(fixture.node(entity, row) for entity, row in ordered)
         fixture.attach(owner, relationship, children)
         with pytest.raises(SnapshotConsistencyError) as raised:
-            RootView(fixture.page(owner))
+            fixture.observed_roots(owner)
         assert raised.value.occurrences == tuple(
             sorted(
                 (
@@ -610,9 +674,9 @@ def test_duplicate_projections_of_one_finding_retain_it_once() -> None:
     fixture.attach(order, _ENCODED_ITEMS_BY_CODE, (via_code,))
 
     page = fixture.page(order)
-    root = RootView(page)
+    (root,) = fixture.observed_roots(order)
     item = _sole_node(root, "EncodedOrderItem")
-    assert [issue.code for issue in root.issues(item)] == ["stored-data-leaf-undecodable"]
+    assert [issue.code for issue in root.issues[item]] == ["stored-data-leaf-undecodable"]
     assert _judged_state_count(page) == 2
 
 
@@ -629,7 +693,7 @@ def test_a_duplicate_projection_with_different_rejected_state_conflicts() -> Non
     fixture.attach(order, _ENCODED_ITEMS_BY_CODE, (via_code,))
 
     with pytest.raises(SnapshotConsistencyError) as raised:
-        RootView(fixture.page(order))
+        fixture.observed_roots(order)
     assert raised.value.code == "snapshot-projection-conflict"
 
 
@@ -648,7 +712,7 @@ def test_exact_witness_comparison_distinguishes_bool_from_int() -> None:
     fixture.attach(order, "parallax.compatibility.Order.itemsByShipDate", (via_ship_date,))
 
     with pytest.raises(SnapshotConsistencyError) as raised:
-        RootView(fixture.page(order))
+        fixture.observed_roots(order)
     assert raised.value.members == (
         AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "quantity"),
     )
@@ -662,9 +726,10 @@ def test_unequal_document_witnesses_in_separate_roots_coexist() -> None:
     first = fixture.node("Customer", _customer_row("home"))
     second = fixture.node("Customer", _customer_row("work"))
 
-    root_view = RootView(fixture.page(first, second))
-    assert root_view.roots == (0, 1)
-    assert len(root_view.order) == 2
+    roots = fixture.observed_roots(first, second)
+    assert [root.names for root in roots] == [["Customer"], ["Customer"]]
+    assert roots[0].member_values[0] is not roots[1].member_values[0]
+    assert [root.has_issues for root in roots] == [True, True]
 
 
 def test_equal_witnesses_share_across_roots_but_unequal_witnesses_do_not() -> None:
@@ -679,9 +744,10 @@ def test_equal_witnesses_share_across_roots_but_unequal_witnesses_do_not() -> No
     rejected = fixture.node("Customer", _customer_row("home"))
     rejected_again = fixture.node("Customer", _customer_row("home"))
 
-    root_view = RootView(fixture.page(clean, rejected, rejected_again))
-    assert root_view.roots == (0, 1, 1)
-    assert len(root_view.order) == 2
+    roots = fixture.observed_roots(clean, rejected, rejected_again)
+    assert [len(root.layouts) for root in roots] == [1, 1, 1]
+    assert roots[1].member_values[0] is roots[2].member_values[0]
+    assert roots[0].member_values[0] is not roots[1].member_values[0]
 
 
 def test_an_invalid_descendant_classifies_the_reachable_root() -> None:
@@ -966,8 +1032,7 @@ def test_temporal_starts_distinguish_page_logical_identity() -> None:
     )
     page = fixture.page(first, second)
 
-    RootView(page, 0)
-    RootView(page, 1)
+    fixture.observed_roots(first, second)
     rows = page_rows(page)
     first_key, second_key = rows.keys[first], rows.keys[second]
     assert first_key is not None and second_key is not None
@@ -1230,10 +1295,10 @@ def test_a_sealed_builder_holds_none_of_what_it_accumulated() -> None:
     assert [name for name in accumulators if getattr(builder, name)] == []
 
 
-def test_a_root_view_refuses_an_unfinished_builder() -> None:
+def test_a_publication_pass_refuses_an_unfinished_builder() -> None:
     builder, _ = _one_projection()
     with pytest.raises(TypeError, match="requires a finished Page"):
-        RootView(builder)  # pyright: ignore[reportArgumentType]
+        observed_roots(builder, model_of(_ORDERS))  # pyright: ignore[reportArgumentType]
 
 
 # --------------------------------------------------------------------------- #
@@ -1254,21 +1319,22 @@ def test_every_root_view_accessor_answers_the_identical_object_on_a_second_call(
         (None, None, SQL_NULL), fixture.builder, source=0
     )[0]
     fixture.attach(order, _ENCODED_ITEMS, (first, second))
-    root_view = RootView(fixture.page(order, keyless, duplicate))
 
-    assert root_view.layout(0) is root_view.layout(0)
-    assert root_view.member_values(0) is root_view.member_values(0)
-    assert root_view.issues(0) is root_view.issues(0)
-    assert root_view.view_layout(0) is root_view.view_layout(0)
-    assert root_view.view(0, 0) is root_view.view(0, 0)
-    assert root_view.view(0, 0) == (1, 2)
+    def answers_identically(root: RootView, _ordinal: int) -> tuple[object, ...]:
+        if root.invalid_root is not None:
+            assert root.invalid_root is root.invalid_root
+            return (len(root), root.invalid_root.ordinal)
+        assert root.layout(0) is root.layout(0)
+        assert root.member_values(0) is root.member_values(0)
+        assert root.issues(0) is root.issues(0)
+        assert root.view_layout(0) is root.view_layout(0)
+        assert root.view(0, 0) is root.view(0, 0)
+        assert root.origin(0) is root.origin(0)
+        assert root.reached is root.reached
+        return (len(root), root.view(0, 0))
 
-    assert root_view.order is root_view.order
-    assert root_view.roots is root_view.roots
-    assert root_view.invalid_roots is root_view.invalid_roots
-    assert root_view.roots == (0, None, 0)
-    assert len(root_view.order) == 3
-    assert [record.ordinal for record in root_view.invalid_roots] == [1]
+    page = fixture.page(order, keyless, duplicate)
+    assert each_root(page, fixture.model, answers_identically) == [(3, (1, 2)), (0, 1), (1, ABSENT)]
 
 
 def test_one_view_shape_is_shared_by_every_node_that_carries_it() -> None:
@@ -1279,16 +1345,16 @@ def test_one_view_shape_is_shared_by_every_node_that_carries_it() -> None:
     second = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 2})
     fixture.attach(first, "parallax.compatibility.SnapOrder.items", ())
     fixture.attach(second, "parallax.compatibility.SnapOrder.items", ())
-    root_view = RootView(fixture.page(first, second))
-    assert root_view.view_layout(0) is root_view.view_layout(1)
+    one, other = fixture.observed_roots(first, second)
+    assert one.view_layouts[0] is other.view_layouts[0]
 
 
 def test_a_member_the_read_did_not_carry_reads_absent_rather_than_null() -> None:
     fixture = PageFixture(_ORDERS)
     order = fixture.node("SnapOrder", _ORDER_ROW, uncarrying=_UNCARRIED_ORDER_MEMBERS)
-    root_view = RootView(fixture.page(order))
-    layout = root_view.layout(0)
-    values = root_view.member_values(0)
+    (root,) = fixture.observed_roots(order)
+    layout = root.layouts[0]
+    values = root.member_values[0]
     assert values[layout.index_of[AttributeIdentity(_ORDER_IDENTITY, "name")]] == "Ada"
     assert values[layout.index_of[AttributeIdentity(_ORDER_IDENTITY, "sku")]] is ABSENT
     # A failed assertion over a row has to name the absence it found, so the
@@ -1300,19 +1366,22 @@ def test_two_unreadable_projections_of_one_row_never_share_with_each_other() -> 
     # An invalid key short-circuits identity entirely, so a second read of the
     # identical unreadable row is a second logical node rather than the same one
     # diagnosed twice — which is what keeps each physical finding attributable.
-    root_view = RootView(
+    roots = observed_roots(
         encoded_identity_page(
             (None, None, SQL_NULL),
             (None, None, SQL_NULL),
             (KEY_TEXT, None, SQL_NULL),
             (KEY_TEXT, None, SQL_NULL),
-        )
+        ),
+        ENCODED_IDENTITY,
     )
-    # Both unreadable roots are invalid-root holes, and the two readable ones
-    # collapse onto one allocation — so the Root View allocated one node, not three.
-    assert root_view.roots == (None, None, 0, 0)
-    assert len(root_view.order) == 1
-    assert [record.ordinal for record in root_view.invalid_roots] == [0, 1]
+    # Both unreadable roots are invalid-root holes with their own findings, and
+    # the two readable ones share one judged Entity State.
+    assert [len(root.layouts) for root in roots] == [0, 0, 1, 1]
+    first, second = (cast("InvalidRootInput", root.invalid_root) for root in roots[:2])
+    assert [first.ordinal, second.ordinal] == [0, 1]
+    assert first.issues is not second.issues
+    assert roots[2].member_values[0] is roots[3].member_values[0]
 
 
 def test_one_rejected_subtree_reached_twice_retains_one_frozen_copy() -> None:
@@ -1329,11 +1398,11 @@ def test_one_rejected_subtree_reached_twice_retains_one_frozen_copy() -> None:
     fixture = PageFixture(vo_models.CUSTOMER_MODEL)
     first = fixture.node("Customer", dict(stored))
     second = fixture.node("Customer", dict(stored))
-    page = fixture.page(first, second)
-    root = RootView(page)
-    (frozen,) = root.issues(0)
+    root, again = fixture.observed_roots(first, second)
+    (frozen,) = root.issues[0]
     assert frozen.stored_value == {"type": "home"}
-    assert root.issues(0) == (frozen,)
+    assert again.issues[0] == (frozen,)
+    assert again.issues[0][0] is frozen
 
 
 def test_no_published_value_is_the_absent_sentinel() -> None:
@@ -1358,23 +1427,19 @@ def test_stored_value_helpers_order_mappings_and_compare_opaque_values() -> None
     assert not exact_stored_equal(object(), object())
 
 
-def test_root_view_completion_and_raw_row_release_are_idempotent() -> None:
+def test_a_published_roots_raw_row_release_is_idempotent() -> None:
     fixture = PageFixture(_ORDERS)
     order = fixture.node("SnapOrder", _ORDER_ROW)
     page = fixture.page(order)
-    root = RootView(page, defer_states=True)
-    raw_rows = PageSchedule(None, False)
 
-    root.complete()
-    release_finished_rows(page, raw_rows, 0, root.reached)
-    release_finished_rows(page, raw_rows, 0, root.reached)
-    root.complete()
+    (root,) = fixture.observed_roots(order)
+    release_finished_rows(page, PageSchedule(None, False), 0, root.reached)
 
     rows = page_rows(page)
     assert rows.member_rows[order] == ()
     judged = rows.judged_states.singleton(rows.logical_ids[order])
     assert judged is not None
-    assert root.member_values(0) is judged.member_row
+    assert root.member_values[0] is judged.member_row
 
 
 def _customer_row(phone_type: str) -> dict[str, object]:
@@ -1392,8 +1457,8 @@ def _customer_row(phone_type: str) -> dict[str, object]:
     }
 
 
-def _sole_node(root_view: Any, name: str) -> int:
-    (index,) = [index for index, entity in enumerate(root_view.order) if entity.name == name]
+def _sole_node(root: RootObservation, name: str) -> int:
+    (index,) = [index for index, entity in enumerate(root.concretes) if entity.name == name]
     return index
 
 
