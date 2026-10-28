@@ -10,6 +10,7 @@ built before the observed window opens.
 
 from __future__ import annotations
 
+import datetime as dt
 import sys
 from collections import Counter
 from collections.abc import Callable, Generator, Mapping
@@ -17,15 +18,17 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal as PyDecimal
 from types import CodeType
-from typing import Final
+from typing import Any, Final
 
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import (
+    INFINITY,
     INT64,
     STRING,
     Decimal,
+    Int32,
     NeutralType,
     coerce_neutral_input,
     matches_neutral_type,
@@ -35,12 +38,14 @@ from parallax.core.base import (
 from parallax.core.base._neutral import _general_typed_converter  # pyright: ignore[reportPrivateUsage]
 from parallax.core.db_port import JsonDocument
 from parallax.core.entity import Document
+from parallax.core.unit_work import UnitOfWork
 from parallax.core.wire import decode_wire, encode_wire
 from parallax.core.wire._codec import wire_converter
-from parallax.snapshot import TxnContext
+from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._publication._wire import opened_wire_entity
-from tests._support.db_port import ScriptedAdapter, Transact, Write, WriteCall
+from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
 from tests.unit._transact_support import db_for
+from tests.unit._where_position_model import WHERE_POSITION_META, WherePosition
 
 _NS = "judged.once"
 
@@ -93,6 +98,7 @@ _LABELS: Final[Mapping[CodeType, str]] = {
     _general_typed_converter(INT64).__code__: _GENERAL,
 }
 
+_READ: Final = "read"
 _VERB: Final = "verb"
 _NODE: Final = "returned-node"
 _FLUSH: Final = "flush"
@@ -115,6 +121,9 @@ class _Observation:
             if frame.f_code is _NODE_CODE:
                 phase = _NODE
                 break
+            if frame.f_code is _PREDICATE_EXECUTION_CODE:
+                phase = _FLUSH
+                break
             frame = frame.f_back
         self.counts[label, phase] += 1
 
@@ -123,6 +132,8 @@ class _Observation:
 
 
 _NODE_CODE: Final = opened_wire_entity.__code__
+# A predicate write executes at its verb: its statement's lowering is a flush.
+_PREDICATE_EXECUTION_CODE: Final = UnitOfWork._execute_predicate.__code__  # pyright: ignore[reportPrivateUsage]
 
 
 @contextmanager
@@ -148,19 +159,35 @@ def _observed() -> Generator[_Observation]:
         monitoring.free_tool_id(tool)
 
 
-def _write(
-    entity: type[Entity], write: Callable[[TxnContext], object]
-) -> tuple[_Observation, WriteCall]:
-    port = ScriptedAdapter(Transact(Write()))
-    database = db_for(_MODEL, port)
+def _run(
+    model: DomainModel,
+    script: tuple[Read | Write, ...],
+    write: Callable[[TxnContext, object], object],
+    *,
+    read: Callable[[TxnContext], object] | None = None,
+) -> tuple[_Observation, list[WriteCall]]:
+    """``write`` driven over ``script``, handed what ``read`` answers; the read
+    is observed apart from the verb and the flush."""
+    port = ScriptedAdapter(Transact(*script))
+    database = db_for(model, port)
 
     def fn(tx: TxnContext) -> None:
-        write(tx)
+        observation.phase = _READ
+        source = None if read is None else read(tx)
+        observation.phase = _VERB
+        write(tx, source)
         observation.phase = _FLUSH
 
     with _observed() as observation:
-        database.transact(fn)
-    (call,) = [call for call in port.calls if isinstance(call, WriteCall)]
+        database.transact(fn, concurrency="optimistic")
+    return observation, [call for call in port.calls if isinstance(call, WriteCall)]
+
+
+def _write(
+    entity: type[Entity], write: Callable[[TxnContext], object]
+) -> tuple[_Observation, WriteCall]:
+    observation, calls = _run(_MODEL, (Write(),), lambda tx, _source: write(tx))
+    (call,) = calls
     assert call.sql.startswith(f"insert into {entity.__name__.lower()}(")
     return observation, call
 
@@ -225,3 +252,261 @@ def test_the_observer_sees_a_judgment_a_verb_makes() -> None:
     instance = Shelf.model_construct(None, id=_Key(1), price=PyDecimal("2.50"), name="N")
     observation, _call = _write(Shelf, lambda tx: tx.insert(instance))
     assert observation.count(_GENERAL, _VERB) > 0
+
+
+def _admitted_once(observation: _Observation, converted: int) -> None:
+    """``converted`` values were each converted once by the verb, and no value
+    again by anything after it."""
+    assert observation.count(_CONVERT, _VERB) == converted
+    assert observation.count(_GENERAL, _VERB) == 0
+    assert observation.count(_CONVERT, _FLUSH) == 0
+
+
+# A stored Shelf as its Columns read returns it.
+_SHELF_ROW: Final[Mapping[str, object]] = {
+    "id": 1,
+    "price": PyDecimal("2.50"),
+    "name": "N",
+    "sizes": [1, 2],
+    "spot": {"code": "A", "rank": 3},
+}
+_SHELF: Final = Shelf(
+    id=1, price=PyDecimal("2.50"), name="M", sizes=(1, 2), spot=Spot(code="A", rank=3)
+)
+_DRAWER: Final = Drawer(
+    id=1, price=PyDecimal("2.50"), name="M", sizes=(1, 2), spot=Spot(code="A", rank=3)
+)
+# A Wire replacement's document states every member but the key its source
+# addresses.
+_SHELF_STATE: Final[Mapping[str, object]] = {
+    "price": "2.50",
+    "name": "M",
+    "sizes": [1, 2],
+    "spot": {"code": "A", "rank": 3},
+}
+_RENAMED: Final = Shelf.name.set("M")
+_SPOTTED_SHELVES: Final = Shelf.where(Shelf.spot.exists())
+_SPOTTED_DRAWERS: Final = Drawer.where(Drawer.spot.exists())
+_WIRE_SHELF_QUERY: Final[Mapping[str, object]] = {
+    "target": f"{_NS}.Shelf",
+    "predicate": {"eq": {"path": f"{_NS}.Shelf.id", "value": 1}},
+}
+
+
+def _shelf(tx: TxnContext) -> Shelf:
+    return tx.find(Shelf.where(Shelf.id == 1)).result()
+
+
+def _renamed_shelf(tx: TxnContext) -> Shelf:
+    return _shelf(tx).edit(name="M")
+
+
+def _wire_shelf(tx: TxnContext) -> WireEntity:
+    return tx.wire.find(_WIRE_SHELF_QUERY).result()
+
+
+def _typed_amend(tx: TxnContext, source: Any) -> None:
+    tx.amend(source)
+
+
+def _wire_amend(tx: TxnContext, source: Any) -> None:
+    tx.wire.amend(source, {"name": "M"})
+
+
+def _typed_replace(tx: TxnContext, source: Any) -> None:
+    tx.replace(source)
+
+
+def _wire_replace(tx: TxnContext, source: Any) -> None:
+    tx.wire.replace(source, dict(_SHELF_STATE))
+
+
+def _typed_delete(tx: TxnContext, source: Any) -> None:
+    tx.delete(source)
+
+
+def _wire_delete(tx: TxnContext, source: Any) -> None:
+    tx.wire.delete(source)
+
+
+# Each keyed verb's write off a read source, and the scalars it states: the
+# key its source addresses, plus an amendment's one assigned member, or a
+# replacement's every other member as an opening states them.
+@pytest.mark.parametrize(
+    ("read", "write", "converted"),
+    [
+        pytest.param(_renamed_shelf, _typed_amend, 2, id="typed-amend"),
+        pytest.param(_wire_shelf, _wire_amend, 2, id="wire-amend"),
+        pytest.param(_renamed_shelf, _typed_replace, _AUTHORED_SCALARS, id="typed-replace"),
+        pytest.param(_wire_shelf, _wire_replace, _AUTHORED_SCALARS, id="wire-replace"),
+        pytest.param(_shelf, _typed_delete, 1, id="typed-delete"),
+        pytest.param(_wire_shelf, _wire_delete, 1, id="wire-delete"),
+    ],
+)
+def test_a_keyed_write_converts_each_value_it_states_once(
+    read: Callable[[TxnContext], object],
+    write: Callable[[TxnContext, Any], object],
+    converted: int,
+) -> None:
+    observation, calls = _run(_MODEL, (Read(rows=[_SHELF_ROW]), Write()), write, read=read)
+    _admitted_once(observation, converted)
+    assert len(calls) == 1
+
+
+def _typed_amend_where(tx: TxnContext, _source: object) -> None:
+    tx.amend_where(_SPOTTED_SHELVES, _RENAMED)
+
+
+def _wire_amend_where(tx: TxnContext, _source: object) -> None:
+    tx.wire.amend_where(_SPOTTED_SHELVES, {"name": "M"})
+
+
+def _typed_replace_shelves(tx: TxnContext, _source: object) -> None:
+    tx.replace_where(_SPOTTED_SHELVES, _SHELF)
+
+
+def _typed_replace_drawers(tx: TxnContext, _source: object) -> None:
+    tx.replace_where(_SPOTTED_DRAWERS, _DRAWER)
+
+
+def _wire_replace_drawers(tx: TxnContext, _source: object) -> None:
+    tx.wire.replace_where(_SPOTTED_DRAWERS, {"id": 1, **_SHELF_STATE})
+
+
+@pytest.mark.parametrize(
+    ("write", "converted"),
+    [
+        pytest.param(_typed_amend_where, 1, id="typed-amend-where"),
+        pytest.param(_wire_amend_where, 1, id="wire-amend-where"),
+        pytest.param(_typed_replace_shelves, _AUTHORED_SCALARS, id="typed-replace-where-columns"),
+        pytest.param(_typed_replace_drawers, _AUTHORED_SCALARS, id="typed-replace-where-document"),
+        pytest.param(_wire_replace_drawers, _AUTHORED_SCALARS, id="wire-replace-where-document"),
+    ],
+)
+def test_a_predicate_write_converts_each_value_it_assigns_once(
+    write: Callable[[TxnContext, object], object], converted: int
+) -> None:
+    # A Typed assignment's own `.set(...)` judged its value when it was built,
+    # outside the observed verb, under its own contract. The statement executes
+    # at the verb, and its lowering is observed as the flush.
+    observation, calls = _run(_MODEL, (Write(),), write)
+    _admitted_once(observation, converted)
+    assert len(calls) == 1
+
+
+class Crate(Entity, table="crate", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str]
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
+_CRATES: Final = DomainModel(Crate)
+_RENAMED_CRATE: Final = Crate.name.set("M")
+_CRATE: Final = Crate(id=1, name="M")
+
+
+def _typed_amend_if(tx: TxnContext, _source: object) -> None:
+    tx.amend_if(Crate, _RENAMED_CRATE, key=1, version=3)
+
+
+def _wire_amend_if(tx: TxnContext, _source: object) -> None:
+    tx.wire.amend_if("Crate", {"id": 1, "name": "M"}, version=3)
+
+
+def _typed_replace_if(tx: TxnContext, _source: object) -> None:
+    tx.replace_if(_CRATE, version=3)
+
+
+def _wire_replace_if(tx: TxnContext, _source: object) -> None:
+    tx.wire.replace_if("Crate", {"id": 1, "name": "M"}, version=3)
+
+
+def _typed_delete_if(tx: TxnContext, _source: object) -> None:
+    tx.delete_if(Crate, key=1, version=3)
+
+
+def _wire_delete_if(tx: TxnContext, _source: object) -> None:
+    tx.wire.delete_if("Crate", {"id": 1}, version=3)
+
+
+@pytest.mark.parametrize(
+    ("write", "converted"),
+    [
+        pytest.param(_typed_amend_if, 2, id="typed-amend-if"),
+        pytest.param(_wire_amend_if, 2, id="wire-amend-if"),
+        pytest.param(_typed_replace_if, 2, id="typed-replace-if"),
+        pytest.param(_wire_replace_if, 2, id="wire-replace-if"),
+        pytest.param(_typed_delete_if, 1, id="typed-delete-if"),
+        pytest.param(_wire_delete_if, 1, id="wire-delete-if"),
+    ],
+)
+def test_a_target_write_converts_its_key_and_each_member_it_states_once(
+    write: Callable[[TxnContext, object], object], converted: int
+) -> None:
+    observation, calls = _run(_CRATES, (Write(),), write)
+    _admitted_once(observation, converted)
+    assert len(calls) == 1
+
+
+_VALID_FROM: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+_UNTIL: Final = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+_POSITION_ROW: Final[Mapping[str, object]] = {
+    "id": 1,
+    "acct_num": "A",
+    "value": PyDecimal("100.00"),
+    "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "thru_z": INFINITY,
+    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "out_z": INFINITY,
+}
+
+
+def _position(tx: TxnContext) -> WherePosition:
+    query = WherePosition.where(WherePosition.id == 1).as_of(valid_time=_VALID_FROM)
+    return tx.find(query).result()
+
+
+def _revalued(tx: TxnContext) -> WherePosition:
+    return _position(tx).edit(value=PyDecimal("200.00"))
+
+
+def _amend_until(tx: TxnContext, source: Any) -> None:
+    tx.amend(source, until=_UNTIL)
+
+
+def _replace_until(tx: TxnContext, source: Any) -> None:
+    tx.replace(source, until=_UNTIL)
+
+
+def _terminate(tx: TxnContext, source: Any) -> None:
+    tx.terminate(source)
+
+
+def _terminate_until(tx: TxnContext, source: Any) -> None:
+    tx.terminate(source, until=_UNTIL)
+
+
+@pytest.mark.parametrize(
+    ("read", "write", "converted"),
+    [
+        pytest.param(_revalued, _typed_amend, 2, id="amend"),
+        pytest.param(_revalued, _amend_until, 2, id="amend-until"),
+        pytest.param(_revalued, _typed_replace, 3, id="replace"),
+        pytest.param(_revalued, _replace_until, 3, id="replace-until"),
+        pytest.param(_position, _terminate, 1, id="terminate"),
+        pytest.param(_position, _terminate_until, 1, id="terminate-until"),
+    ],
+)
+def test_a_temporal_write_admits_once_and_its_successors_carry_cells_unjudged(
+    read: Callable[[TxnContext], object],
+    write: Callable[[TxnContext, Any], object],
+    converted: int,
+) -> None:
+    observation, calls = _run(
+        WHERE_POSITION_META, (Read(rows=[_POSITION_ROW]), Write(times=2)), write, read=read
+    )
+    _admitted_once(observation, converted)
+    # The close, then one milestone insert of every successor it opens.
+    close, opening = calls
+    assert close.sql.startswith("update where_position")
+    assert opening.sql.startswith("insert into where_position(")
