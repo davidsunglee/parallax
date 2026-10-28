@@ -27,7 +27,11 @@ from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import INT64, STRING, DocumentValue, NeutralType, PresentDocument
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import Leaf, decode_scalar_many_classified, encode_scalar_many
+from parallax.core.document_codec import (
+    ScalarDefinition,
+    decode_scalar_many_classified,
+    encode_scalar_many,
+)
 from parallax.core.entity._expressions import AuthoredQuery
 from parallax.core.execution import prepare_model
 from parallax.core.metamodel import Multiplicity, TablePerConcreteSubtype
@@ -206,7 +210,7 @@ class _ScalarDriver:
 
     def __init__(self, scalar_type: str, size: int, *, encode: bool) -> None:
         self._type = _NEUTRAL_TYPES[scalar_type]
-        self._leaf = Leaf("values", self._type, False, Multiplicity.MANY)
+        self._leaf = ScalarDefinition("values", self._type, False, Multiplicity.MANY)
         self._encode = encode
         raw: list[DocumentValue]
         match scalar_type:

@@ -13,7 +13,12 @@ import write_lowering_overhead
 import write_lowering_reading
 from parallax.core import document_codec
 from parallax.core.base import INT32
-from parallax.core.document_codec import Leaf, MemberShape, Occurrence, _document
+from parallax.core.document_codec import (
+    MemberShape,
+    OccurrenceDefinition,
+    ScalarDefinition,
+    _document,
+)
 from parallax.core.metamodel import Multiplicity
 from parallax.core.write_payload import _preparer as payload_preparer
 from tests.unit import _write_lowering_support as lowering_support
@@ -68,12 +73,12 @@ def test_the_observed_functions_are_the_managed_encoders_payload_preparation_cal
 
 
 def test_managed_encoder_observations_count_returns_not_rows() -> None:
-    element = MemberShape(members=(Leaf("leaf", INT32, True),))
+    element = MemberShape(members=(ScalarDefinition("leaf", INT32, True),))
     shape = MemberShape(
         members=(
-            Leaf("scalar", INT32, True),
-            Occurrence("one", Multiplicity.ONE, False, element),
-            Occurrence("many", Multiplicity.MANY, False, element),
+            ScalarDefinition("scalar", INT32, True),
+            OccurrenceDefinition("one", Multiplicity.ONE, False, element),
+            OccurrenceDefinition("many", Multiplicity.MANY, False, element),
         )
     )
     observer = Observer(OBSERVED_FUNCTIONS)

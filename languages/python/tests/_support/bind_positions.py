@@ -26,11 +26,11 @@ from parallax.core import storage_layout
 from parallax.core.base import Float32, Float64, NeutralType
 from parallax.core.metamodel import (
     AttributeIdentity,
-    Leaf,
     MemberShape,
     Metamodel,
     Multiplicity,
-    Occurrence,
+    OccurrenceDefinition,
+    ScalarDefinition,
     ValueObjectIdentity,
 )
 from parallax.core.storage_layout import ColumnSlot, RelationalDocument, TableLayout
@@ -468,7 +468,7 @@ def _at_path(position: BindPosition | None, path: Sequence[str]) -> BindPosition
     return position
 
 
-def _occurrence(definition: Occurrence) -> BindPosition:
+def _occurrence(definition: OccurrenceDefinition) -> BindPosition:
     document = _document(definition.shape)
     return Elements(document) if definition.multiplicity is Multiplicity.MANY else document
 
@@ -477,8 +477,8 @@ def _document(shape: MemberShape) -> Document:
     return Document({member.name: _member(member) for member in shape.members})
 
 
-def _member(member: Leaf | Occurrence) -> BindPosition:
-    return member.type if isinstance(member, Leaf) else _occurrence(member)
+def _member(member: ScalarDefinition | OccurrenceDefinition) -> BindPosition:
+    return member.type if isinstance(member, ScalarDefinition) else _occurrence(member)
 
 
 def _placed_document(shape: MemberShape, paths: Sequence[Sequence[str]]) -> Document:

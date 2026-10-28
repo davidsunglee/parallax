@@ -18,7 +18,7 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
-    Occurrence,
+    OccurrenceDefinition,
 )
 from parallax.core.read_delivery._convert import EntityReadMapping, register_reduced_row
 from parallax.core.read_delivery._page import ABSENT, LogicalKey, PageBuilder, SourceLevel
@@ -174,7 +174,7 @@ class RowPublisher:
 
 @dataclass(frozen=True, slots=True)
 class _RowOperation:
-    members: tuple[tuple[int, str, NeutralType | None, Occurrence | None], ...]
+    members: tuple[tuple[int, str, NeutralType | None, OccurrenceDefinition | None], ...]
     keys: tuple[str, ...]
     variant: str | None
 
@@ -211,8 +211,8 @@ def _row_operation(
     slots = contract.slots
     ordinals = mapping.result_ordinals
     members = layout.member_selection.bindings
-    kept: list[tuple[int, str, NeutralType | None, Occurrence | None]] = []
-    encoded: list[tuple[int, str, NeutralType | None, Occurrence | None]] = []
+    kept: list[tuple[int, str, NeutralType | None, OccurrenceDefinition | None]] = []
+    encoded: list[tuple[int, str, NeutralType | None, OccurrenceDefinition | None]] = []
     for position, attribute in enumerate(layout.attributes):
         if mapping.encoded_positions >> position & 1:
             encoded.append(

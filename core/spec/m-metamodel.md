@@ -533,19 +533,19 @@ spellings do not cross this interface.
 
 ```text
 MemberShape
-  members: immutable sequence<DocumentMember>
+  members: immutable sequence<MemberDefinition>
   position(MemberName) -> integer | absent
-  member(MemberName) -> DocumentMember | absent
+  member(MemberName) -> MemberDefinition | absent
 
-DocumentMember =
-    Leaf(name: MemberName,
-         type: NeutralType,
-         nullable: boolean,
-         multiplicity: Multiplicity)
-  | Occurrence(name: MemberName,
-               multiplicity: Multiplicity,
-               nullable: boolean,
-               shape: MemberShape)
+MemberDefinition =
+    ScalarDefinition(name: MemberName,
+                     type: NeutralType,
+                     nullable: boolean,
+                     multiplicity: Multiplicity)
+  | OccurrenceDefinition(name: MemberName,
+                         multiplicity: Multiplicity,
+                         nullable: boolean,
+                         shape: MemberShape)
 
 ValueObjectMetadata
   identity: ValueObjectIdentity                 # path length = 1
@@ -578,12 +578,12 @@ IndexMetadata
 
 A `MemberShape` is the ordered document form of accepted Metadata: canonical
 member names, declared Neutral Types, multiplicity, and nullability, and nothing
-physical. Leaves precede occurrences, and every `Occurrence.shape` is the exact
-shape owned by the reusable declaration that defines that occurrence. A
+physical. Scalars precede occurrences, and every `OccurrenceDefinition.shape` is
+the exact shape owned by the reusable declaration that defines that occurrence. A
 declaration composes its immutable shape child-first and each accepted occurrence
 binding references those definitions; using one declaration at several paths or
-in several model formations does not copy its `Leaf`, `Occurrence`, or nested
-shape values. Accepted bindings add contextual identities and storage facts but
+in several model formations does not copy its `ScalarDefinition`,
+`OccurrenceDefinition`, or nested shape values. Accepted bindings add contextual identities and storage facts but
 retain no declaration key or wrapper topology.
 
 Each shape retains one canonical name-to-position index over `members`.
@@ -600,13 +600,13 @@ single composite. `Many` is an ordered, non-null collection that may be empty;
 `Many + nullable` is invalid. There is no mapping discriminator or separate
 Value Object cardinality algebra.
 
-A `Leaf` carries the same `Multiplicity` algebra. A `One` leaf holds one value
-of its declared Neutral Type, and a `Many` leaf — the definition of a scalar
-collection Attribute or Value Object Attribute — holds an ordered,
-duplicate-preserving sequence of non-null values of that type and is itself
-never null, so a nullable `Many` leaf is unconstructible. A scalar collection is
-not a synthetic Value Object and adds no third member variant: every consumer
-reads its multiplicity from this one definition.
+A `ScalarDefinition` carries the same `Multiplicity` algebra. A `One` scalar
+holds one value of its declared Neutral Type, and a `Many` scalar — the
+definition of a scalar collection Attribute or Value Object Attribute — holds an
+ordered, duplicate-preserving sequence of non-null values of that type and is
+itself never null, so a nullable `Many` scalar is unconstructible. A scalar
+collection is not a synthetic Value Object and adds no third member variant:
+every consumer reads its multiplicity from this one definition.
 
 Every Index component is a distinct local Attribute of the Index's Entity and
 preserves declaration order. Indices are not inherited and do not repeat

@@ -242,11 +242,11 @@ class EntityMemberSelection:
 
     @property
     def attribute_count(self) -> int:
-        return self._members.leaf_count
+        return self._members.scalar_count
 
     @property
     def attributes(self) -> Sequence[AttributeMetadata]:
-        return self._members.leaves
+        return self._members.scalars
 
     @property
     def value_objects(self) -> Sequence[ValueObjectMetadata]:
@@ -267,7 +267,7 @@ class EntityMemberSelection:
         return self._members.binding(name)
 
     def attribute(self, name: str) -> AttributeMetadata | None:
-        return self._members.leaf(name)
+        return self._members.scalar(name)
 
     def value_object(self, name: str) -> ValueObjectMetadata | None:
         return self._members.occurrence(name)

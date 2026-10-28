@@ -660,7 +660,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   `parallax.core.document_codec._authoring` for exactly `prepare_authoring` and
   `MAPPING_SOURCE_ACCESS`: a stored-state row a case states is decoded through the
   codec's one authored-document traversal, the one Unit Work and Entity editing
-  share, rather than through a second decoder, and the canonical Leaf that
+  share, rather than through a second decoder, and the canonical `ScalarDefinition` that
   traversal hands its normalizer is what identifies a declared axis end. The
   traversal stays out of `parallax.core.document_codec`'s package interface, since
   no developer-facing surface needs it. The case lanes build instructions and

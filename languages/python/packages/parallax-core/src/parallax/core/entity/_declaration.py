@@ -68,7 +68,6 @@ from parallax.core.metamodel import (
     ExactEntityReference,
     IndexIdentity,
     IndexMetadata,
-    Leaf,
     MemberShape,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
@@ -77,6 +76,7 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     RelationshipReference,
     RelativeEntityReference,
+    ScalarDefinition,
     StorageContainer,
     StorageLayout,
     Table,
@@ -1067,7 +1067,7 @@ def _build_value_object(
     nested: list[NestedValueObjectOccurrenceDeclaration] = []
     py_to_name: dict[str, str] = {}
     nested_classes: dict[str, type] = {}
-    collections: dict[str, Leaf] = {}
+    collections: dict[str, ScalarDefinition] = {}
     shapes: dict[str, _Shape] = {}
 
     body = _body_members(cls_name, annotations, ns, DeclarationKind.VALUE_OBJECT)
@@ -1187,7 +1187,7 @@ def _build_entity(
     relationship_shapes: dict[str, RelationshipAnnotation] = {}
     pk_py: set[str] = set()
     vo_classes: dict[str, type] = {}
-    collections: dict[str, Leaf] = {}
+    collections: dict[str, ScalarDefinition] = {}
     shapes: dict[str, _Shape] = {}
 
     body = _body_members(cls_name, annotations, ns, DeclarationKind.ENTITY)
@@ -2099,7 +2099,7 @@ def _install_fields(
     ns: dict[str, object],
     shapes: dict[str, _Shape],
     vo_classes: dict[str, type],
-    collections: Mapping[str, Leaf],
+    collections: Mapping[str, ScalarDefinition],
     *,
     framework_owned: frozenset[str],
 ) -> None:
@@ -2169,7 +2169,7 @@ def _framework_owned_validator(py_name: str) -> Any:
     return field_validator(py_name, mode="before")(bound)
 
 
-def _scalar_collection_validator(py_name: str, leaf: Leaf) -> Any:
+def _scalar_collection_validator(py_name: str, leaf: ScalarDefinition) -> Any:
     """A ``mode="before"`` validator enforcing "a scalar collection is a tuple of
     admissible elements".
 

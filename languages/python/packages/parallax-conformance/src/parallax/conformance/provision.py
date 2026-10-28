@@ -12,9 +12,9 @@ from parallax.core.base import JSON, TIMESTAMP, NeutralType, retain_document_val
 from parallax.core.db_port import DatabaseRuntime, JsonDocument, Password
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.document_codec import (
-    Leaf,
     MemberShape,
-    Occurrence,
+    OccurrenceDefinition,
+    ScalarDefinition,
     encode_leaf,
     encode_scalar_many,
     occurrence_shape,
@@ -154,7 +154,7 @@ def fixture_document(
                 document[member.name] = ()
             elif member.name in row:
                 document[member.name] = None
-        elif isinstance(member, Leaf):
+        elif isinstance(member, ScalarDefinition):
             document[member.name] = (
                 fixture_collection(member.type, raw)
                 if many
@@ -184,7 +184,7 @@ def fixture_collection(element_type: NeutralType, raw: object) -> object:
     )
 
 
-def _fixture_occurrence(member: Occurrence, raw: object) -> object:
+def _fixture_occurrence(member: OccurrenceDefinition, raw: object) -> object:
     if member.multiplicity is Multiplicity.MANY:
         if not isinstance(raw, Sequence) or isinstance(raw, str | bytes):
             return raw

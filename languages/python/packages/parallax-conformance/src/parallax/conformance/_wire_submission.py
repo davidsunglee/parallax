@@ -12,7 +12,12 @@ from parallax.core import inheritance, read_delivery
 from parallax.core._execution._keyed_writes import validate_source_pin
 from parallax.core._execution._unit_work import instructions
 from parallax.core.execution import TransactionTimePinReadOnlyError
-from parallax.core.metamodel import AttributeMetadata, Leaf, PrimaryKey, TemporalDimension
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    PrimaryKey,
+    ScalarDefinition,
+    TemporalDimension,
+)
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
@@ -332,7 +337,7 @@ def _is_framework_write(instruction: WriteInstruction, model: AcceptedMetamodel)
         return False
     shape = position.member_selection.shape
     return any(
-        isinstance(shape.member(name), Leaf)
+        isinstance(shape.member(name), ScalarDefinition)
         and isinstance(value, Mapping)
         and frozenset(cast("Mapping[str, object]", value)) in _MARKER_KEYS
         for row in instruction.rows

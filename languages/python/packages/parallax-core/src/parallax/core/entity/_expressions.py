@@ -22,9 +22,9 @@ from parallax.core.metamodel import (
     AttributeLocation,
     AttributeMetadata,
     EntityIdentity,
-    Leaf,
     ModelLocation,
     Multiplicity,
+    ScalarDefinition,
     ValueObjectAttributeDeclaration,
     ValueObjectLocation,
     ValueObjectMetadata,
@@ -1129,7 +1129,7 @@ def judged_edit_violation(
     return None
 
 
-def typed_authoring_leaf(leaf: Leaf, value: object, _path: str) -> tuple[object, bool]:
+def typed_authoring_leaf(leaf: ScalarDefinition, value: object, _path: str) -> tuple[object, bool]:
     neutral_type = leaf.type
     managed = coerce_neutral_input(value, neutral_type)
     return managed, matches_neutral_type(managed, neutral_type)

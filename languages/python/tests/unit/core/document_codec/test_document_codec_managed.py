@@ -38,9 +38,9 @@ from parallax.core.base import (
     retain_document_value,
 )
 from parallax.core.document_codec import (
-    Leaf,
     MemberShape,
-    Occurrence,
+    OccurrenceDefinition,
+    ScalarDefinition,
     classify_effective_change,
     prepare_effective_change,
 )
@@ -54,33 +54,38 @@ from parallax.core.document_codec._authoring import (
     validate_member_authoring,
 )
 from parallax.core.document_codec._managed import EffectiveChangeSet
-from parallax.core.metamodel import DocumentMember, Multiplicity
+from parallax.core.metamodel import MemberDefinition, Multiplicity
 from parallax.core.write_plan import EntityStateRow
 from tests.unit._positional_row_support import positional_row
 
-_GEO = MemberShape(members=(Leaf("lat", STRING, True),))
-_ZONE = MemberShape(members=(Leaf("label", STRING, True),))
+_GEO = MemberShape(members=(ScalarDefinition("lat", STRING, True),))
+_ZONE = MemberShape(members=(ScalarDefinition("label", STRING, True),))
 _ORIGIN = MemberShape(
     members=(
-        Leaf("city", STRING, True),
-        Occurrence("geo", Multiplicity.ONE, True, _GEO),
-        Occurrence("zones", Multiplicity.MANY, False, _ZONE),
+        ScalarDefinition("city", STRING, True),
+        OccurrenceDefinition("geo", Multiplicity.ONE, True, _GEO),
+        OccurrenceDefinition("zones", Multiplicity.MANY, False, _ZONE),
     )
 )
-_ENTRY = MemberShape(members=(Leaf("kind", STRING, True), Leaf("price", Decimal(12, 2), True)))
+_ENTRY = MemberShape(
+    members=(
+        ScalarDefinition("kind", STRING, True),
+        ScalarDefinition("price", Decimal(12, 2), True),
+    )
+)
 _SHAPE = MemberShape(
     members=(
-        Leaf("flag", BOOLEAN, True),
-        Leaf("amount", Decimal(12, 2), True),
-        Leaf("day", DATE, True),
-        Leaf("payload", BYTES, True),
-        Occurrence("origin", Multiplicity.ONE, True, _ORIGIN),
-        Occurrence("entries", Multiplicity.MANY, False, _ENTRY),
+        ScalarDefinition("flag", BOOLEAN, True),
+        ScalarDefinition("amount", Decimal(12, 2), True),
+        ScalarDefinition("day", DATE, True),
+        ScalarDefinition("payload", BYTES, True),
+        OccurrenceDefinition("origin", Multiplicity.ONE, True, _ORIGIN),
+        OccurrenceDefinition("entries", Multiplicity.MANY, False, _ENTRY),
     )
 )
 
 
-def _normalize(leaf: Leaf, value: object, _path: str) -> tuple[object, bool]:
+def _normalize(leaf: ScalarDefinition, value: object, _path: str) -> tuple[object, bool]:
     managed = coerce_neutral_input(value, leaf.type)
     return retain_document_value(managed), matches_neutral_type(managed, leaf.type)
 
@@ -149,7 +154,7 @@ def test_occurrence_validation_never_adopts_a_success_document(
     monkeypatch.setattr(authoring, "adopt_frozen_map", reject_adoption)
 
     failure = validate_member_authoring(
-        Occurrence("document", Multiplicity.ONE, False, _SHAPE),
+        OccurrenceDefinition("document", Multiplicity.ONE, False, _SHAPE),
         {"flag": True, "origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]},
         source_access=MAPPING_SOURCE_ACCESS,
         normalize_leaf=_normalize,
@@ -159,7 +164,7 @@ def test_occurrence_validation_never_adopts_a_success_document(
 
 
 def test_member_validation_covers_null_marker_valid_and_invalid_leaves() -> None:
-    flag = cast("Leaf", _SHAPE.members[0])
+    flag = cast("ScalarDefinition", _SHAPE.members[0])
     marker = {"computed": "server"}
 
     assert (
@@ -213,16 +218,16 @@ def test_member_validation_covers_null_marker_valid_and_invalid_leaves() -> None
 def test_both_traversal_modes_hand_the_normalizer_the_shapes_own_leaves() -> None:
     # A normalizer can recognize a leaf by the definition the shape holds, which
     # a structurally equal leaf elsewhere in the document is not.
-    twin = MemberShape(members=(Leaf("label", STRING, True),))
+    twin = MemberShape(members=(ScalarDefinition("label", STRING, True),))
     shape = MemberShape(
         members=(
-            Leaf("label", STRING, True),
-            Occurrence("twin", Multiplicity.ONE, True, twin),
+            ScalarDefinition("label", STRING, True),
+            OccurrenceDefinition("twin", Multiplicity.ONE, True, twin),
         )
     )
-    seen: list[tuple[Leaf, str]] = []
+    seen: list[tuple[ScalarDefinition, str]] = []
 
-    def recording(leaf: Leaf, value: object, path: str) -> tuple[object, bool]:
+    def recording(leaf: ScalarDefinition, value: object, path: str) -> tuple[object, bool]:
         seen.append((leaf, path))
         return _normalize(leaf, value, path)
 
@@ -231,7 +236,7 @@ def test_both_traversal_modes_hand_the_normalizer_the_shapes_own_leaves() -> Non
         shape, source, source_access=MAPPING_SOURCE_ACCESS, normalize_leaf=recording, path="Doc"
     )
     validate_member_authoring(
-        Occurrence("document", Multiplicity.ONE, True, shape),
+        OccurrenceDefinition("document", Multiplicity.ONE, True, shape),
         source,
         source_access=MAPPING_SOURCE_ACCESS,
         normalize_leaf=recording,
@@ -277,9 +282,11 @@ def test_preparation_records_root_leaf_and_explicit_nested_null_failures() -> No
         source_access=MAPPING_SOURCE_ACCESS,
         normalize_leaf=_normalize,
     )
-    required_child = MemberShape(members=(Leaf("required", STRING, False),))
+    required_child = MemberShape(members=(ScalarDefinition("required", STRING, False),))
     nested = prepare_authoring(
-        MemberShape(members=(Occurrence("child", Multiplicity.ONE, False, required_child),)),
+        MemberShape(
+            members=(OccurrenceDefinition("child", Multiplicity.ONE, False, required_child),)
+        ),
         {"child": {"required": None}},
         source_access=MAPPING_SOURCE_ACCESS,
         normalize_leaf=_normalize,
@@ -523,14 +530,14 @@ class _Generated:
 
     def shape(self, depth: int = 0) -> MemberShape:
         draw = self._random
-        members: list[DocumentMember] = []
+        members: list[MemberDefinition] = []
         members.extend(
-            Leaf(f"leaf{index}", draw.choice(tuple(_LEAF_VALUES)), True)
+            ScalarDefinition(f"leaf{index}", draw.choice(tuple(_LEAF_VALUES)), True)
             for index in range(draw.randint(1, 3))
         )
         if depth < 2:
             members.extend(
-                Occurrence(
+                OccurrenceDefinition(
                     f"occurrence{index}",
                     draw.choice((Multiplicity.ONE, Multiplicity.MANY)),
                     True,
@@ -547,11 +554,11 @@ class _Generated:
             if self._random.random() > 0.2
         }
 
-    def value(self, member: DocumentMember) -> object:
+    def value(self, member: MemberDefinition) -> object:
         draw = self._random
         if draw.random() < 0.15:
             return None
-        if isinstance(member, Leaf):
+        if isinstance(member, ScalarDefinition):
             return draw.choice(_LEAF_VALUES[member.type])
         if member.multiplicity is Multiplicity.MANY:
             return [self.document(member.shape) for _ in range(draw.randint(0, 2))]
@@ -578,11 +585,11 @@ class _Generated:
             assigned["undeclared"] = "a"
         return assigned
 
-    def perturbed(self, member: DocumentMember, value: object) -> object:
+    def perturbed(self, member: MemberDefinition, value: object) -> object:
         """``value`` or, now and then, one member of it changed or omitted, or
         a JSON array in the other carrier a caller may hand over."""
         draw = self._random
-        if isinstance(value, list) and isinstance(member, Leaf):
+        if isinstance(value, list) and isinstance(member, ScalarDefinition):
             items = cast("list[object]", value)
             return tuple(items) if draw.random() < 0.5 else items
         if not isinstance(value, dict) or draw.random() < 0.7:
@@ -590,7 +597,7 @@ class _Generated:
         document = dict(cast("dict[str, object]", value))
         if document and draw.random() < 0.5:
             del document[draw.choice(tuple(document))]
-        elif isinstance(member, Occurrence):
+        elif isinstance(member, OccurrenceDefinition):
             nested = draw.choice(member.shape.members)
             document[nested.name] = self.value(nested)
         return document
@@ -641,8 +648,8 @@ def test_a_top_level_absent_position_is_a_change_never_the_observed_null() -> No
     assert _prepared(_SHAPE, {"flag": None}, _row(_SHAPE, {"flag": None})) == []
 
 
-def _is_many(member: DocumentMember) -> bool:
-    return isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
+def _is_many(member: MemberDefinition) -> bool:
+    return isinstance(member, OccurrenceDefinition) and member.multiplicity is Multiplicity.MANY
 
 
 def test_the_prepared_comparison_reads_only_assigned_positions_and_stops_at_the_first_change(
@@ -710,11 +717,11 @@ def test_a_managed_occurrence_assignment_is_weighed_without_decoding_a_leaf(
 
     monkeypatch.setattr(document_codec_leaf, "decode_canonical_wire", forbidden)
     monkeypatch.setattr(document_codec_document, "decode_leaf", forbidden)
-    point = MemberShape(members=(Leaf("f32", FLOAT32, True),))
+    point = MemberShape(members=(ScalarDefinition("f32", FLOAT32, True),))
     shape = MemberShape(
         members=(
-            Occurrence("point", Multiplicity.ONE, True, point),
-            Occurrence("trail", Multiplicity.MANY, False, point),
+            OccurrenceDefinition("point", Multiplicity.ONE, True, point),
+            OccurrenceDefinition("trail", Multiplicity.MANY, False, point),
         )
     )
     widened = struct.unpack("<f", struct.pack("<f", 1.2))[0]

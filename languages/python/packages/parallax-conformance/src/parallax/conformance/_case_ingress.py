@@ -28,10 +28,10 @@ from parallax.core.metamodel import (
     DefiningRelationshipDeclaration,
     EntityIdentity,
     EntityMetadata,
-    Leaf,
     Multiplicity,
     OccurrenceMetadata,
     RelationshipDeclaration,
+    ScalarDefinition,
     TemporalDimension,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
@@ -121,7 +121,9 @@ def decode_case_row(
     ).value
 
 
-def _temporal_ends(model: AcceptedMetamodel, entity: EntityMetadata) -> tuple[Leaf, ...]:
+def _temporal_ends(
+    model: AcceptedMetamodel, entity: EntityMetadata
+) -> tuple[ScalarDefinition, ...]:
     """The canonical definitions of ``entity``'s declared axis ends.
 
     Each end is resolved on the Entity that declares it, so a leaf of the
@@ -131,7 +133,7 @@ def _temporal_ends(model: AcceptedMetamodel, entity: EntityMetadata) -> tuple[Le
     different object.
     """
     temporal = temporal_read.view(model)
-    ends: list[Leaf] = []
+    ends: list[ScalarDefinition] = []
     for dimension in TemporalDimension:
         axis = temporal.axis(entity.identity, dimension)
         if axis is None:
@@ -147,9 +149,9 @@ def _temporal_ends(model: AcceptedMetamodel, entity: EntityMetadata) -> tuple[Le
 
 @dataclass(frozen=True, slots=True)
 class _CaseRowLeaves:
-    ends: tuple[Leaf, ...]
+    ends: tuple[ScalarDefinition, ...]
 
-    def normalize(self, leaf: Leaf, value: object, path: str) -> tuple[object, bool]:
+    def normalize(self, leaf: ScalarDefinition, value: object, path: str) -> tuple[object, bool]:
         if (value is INFINITY or value == INFINITY_LITERAL) and any(
             leaf is end for end in self.ends
         ):

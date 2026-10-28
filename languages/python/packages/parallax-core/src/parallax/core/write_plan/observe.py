@@ -12,11 +12,11 @@ from parallax.core.document_codec import (
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
-    DocumentMember,
-    Leaf,
+    MemberDefinition,
     MemberShape,
     Multiplicity,
-    Occurrence,
+    OccurrenceDefinition,
+    ScalarDefinition,
     ValueObjectIdentity,
 )
 
@@ -166,7 +166,7 @@ class _AlignedItems(ItemsView[str, object]):
     def __init__(
         self,
         mapping: Mapping[str, object],
-        members: tuple[DocumentMember, ...],
+        members: tuple[MemberDefinition, ...],
         values: tuple[object, ...],
         absent: object | None,
     ) -> None:
@@ -195,13 +195,15 @@ class _DocumentItems(_AlignedItems):
                 yield member.name, _member_value(member, value, absent)
 
 
-def _member_value(member: DocumentMember, value: object, absent: object | None) -> object:
-    if isinstance(member, Leaf):
+def _member_value(member: MemberDefinition, value: object, absent: object | None) -> object:
+    if isinstance(member, ScalarDefinition):
         return value
     return occurrence_value(value, member, absent)
 
 
-def occurrence_value(value: object, declared: Occurrence, absent: object | None) -> object:
+def occurrence_value(
+    value: object, declared: OccurrenceDefinition, absent: object | None
+) -> object:
     """View one positional Value Object cell by declared name without copying it.
 
     A One cell answers one mapping view and a Many cell a tuple of them; ``None``
@@ -394,7 +396,7 @@ class PredecessorRow:
                 selection.value_objects, selection.attribute_count
             ):
                 value_objects[occurrence.identity] = occurrence_value(
-                    row[position], cast("Occurrence", members[position]), absent
+                    row[position], cast("OccurrenceDefinition", members[position]), absent
                 )
             return attributes, value_objects
         for name, value in self.members.items():

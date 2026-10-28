@@ -5,24 +5,24 @@ from dataclasses import dataclass
 from typing import ClassVar, Final, Self
 
 from parallax.core.metamodel import (
-    DocumentMember,
-    Leaf,
+    MemberDefinition,
     MemberShape,
-    Occurrence,
+    OccurrenceDefinition,
     OccurrenceMetadata,
+    ScalarDefinition,
 )
 
 __all__ = [
     "MISSING",
     "NULL",
-    "DocumentMember",
     "ExplicitNull",
-    "Leaf",
+    "MemberDefinition",
     "MemberShape",
     "Missing",
-    "Occurrence",
+    "OccurrenceDefinition",
     "Presence",
     "Present",
+    "ScalarDefinition",
     "occurrence_shape",
     "resolve",
 ]
@@ -113,7 +113,7 @@ def occurrence_shape(container: OccurrenceMetadata) -> MemberShape:
     return container.document_shape
 
 
-def resolve(shape: MemberShape, path: Sequence[str]) -> DocumentMember:
+def resolve(shape: MemberShape, path: Sequence[str]) -> MemberDefinition:
     """The member ``path`` names, walking nested occurrences by name.
 
     A path naming no member of ``shape`` is a caller error rather than an absence, so
@@ -124,13 +124,13 @@ def resolve(shape: MemberShape, path: Sequence[str]) -> DocumentMember:
     current = shape
     for name in path[:-1]:
         member = _named(current, path, name)
-        if not isinstance(member, Occurrence):
+        if not isinstance(member, OccurrenceDefinition):
             raise KeyError(f"{'.'.join(path)!r}: the path continues past the leaf {name!r}")
         current = member.shape
     return _named(current, path, path[-1])
 
 
-def _named(shape: MemberShape, path: Sequence[str], name: str) -> DocumentMember:
+def _named(shape: MemberShape, path: Sequence[str], name: str) -> MemberDefinition:
     member = shape.member(name)
     if member is None:
         raise KeyError(f"{'.'.join(path)!r}: {name!r} names no member of the shape")

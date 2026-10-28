@@ -9,7 +9,13 @@ from typing import Protocol, Self, cast, overload
 from parallax.core.base import NeutralType
 from parallax.core.metamodel._values import Multiplicity
 
-__all__ = ["BoundShape", "DocumentMember", "Leaf", "MemberShape", "Occurrence"]
+__all__ = [
+    "BoundShape",
+    "MemberDefinition",
+    "MemberShape",
+    "OccurrenceDefinition",
+    "ScalarDefinition",
+]
 
 
 class _NamedIdentity(Protocol):
@@ -22,7 +28,7 @@ class _PathIdentity(Protocol):
     def path(self) -> Sequence[str]: ...
 
 
-class _LeafSource(Protocol):
+class _ScalarSource(Protocol):
     @property
     def identity(self) -> _NamedIdentity: ...
     @property
@@ -32,7 +38,7 @@ class _LeafSource(Protocol):
     @property
     def multiplicity(self) -> Multiplicity: ...
     @property
-    def definition(self) -> Leaf: ...
+    def definition(self) -> ScalarDefinition: ...
 
 
 class _OccurrenceSource(Protocol):
@@ -45,16 +51,16 @@ class _OccurrenceSource(Protocol):
     @property
     def document_shape(self) -> MemberShape: ...
     @property
-    def definition(self) -> Occurrence: ...
+    def definition(self) -> OccurrenceDefinition: ...
 
 
 @dataclass(frozen=True, slots=True)
-class Leaf:
+class ScalarDefinition:
     """One scalar member of a document, spelled by its declared Neutral Type.
 
     ``type`` is the scalar element type under either multiplicity: a ``MANY``
-    leaf holds an ordered, duplicate-preserving sequence of non-null values of
-    that type and is itself never null, so a nullable ``MANY`` leaf raises
+    scalar holds an ordered, duplicate-preserving sequence of non-null values of
+    that type and is itself never null, so a nullable ``MANY`` scalar raises
     :class:`ValueError`.
     """
 
@@ -69,7 +75,7 @@ class Leaf:
 
 
 @dataclass(frozen=True, slots=True)
-class Occurrence:
+class OccurrenceDefinition:
     """One nested Value Object member: an object for ``ONE``, an array for ``MANY``."""
 
     name: str
@@ -78,16 +84,16 @@ class Occurrence:
     shape: MemberShape
 
 
-type DocumentMember = Leaf | Occurrence
-"""A scalar :class:`Leaf` or nested :class:`Occurrence`; this union is closed."""
+type MemberDefinition = ScalarDefinition | OccurrenceDefinition
+"""A :class:`ScalarDefinition` or nested :class:`OccurrenceDefinition`; this union is closed."""
 
 
 @dataclass(frozen=True, slots=True)
-class _MembersByName(Mapping[str, DocumentMember]):
-    members: tuple[DocumentMember, ...]
+class _MembersByName(Mapping[str, MemberDefinition]):
+    members: tuple[MemberDefinition, ...]
     positions: Mapping[str, int]
 
-    def __getitem__(self, name: str) -> DocumentMember:
+    def __getitem__(self, name: str) -> MemberDefinition:
         return self.members[self.positions[name]]
 
     def __iter__(self) -> Iterator[str]:
@@ -101,9 +107,9 @@ class _MembersByName(Mapping[str, DocumentMember]):
 class MemberShape:
     """The applicable members of one document, in canonical emission order."""
 
-    members: tuple[DocumentMember, ...]
+    members: tuple[MemberDefinition, ...]
     _position_by_name: Mapping[str, int] = field(init=False, compare=False, repr=False)
-    by_name: Mapping[str, DocumentMember] = field(init=False, compare=False, repr=False)
+    by_name: Mapping[str, MemberDefinition] = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         positions: dict[str, int] = {}
@@ -116,19 +122,21 @@ class MemberShape:
     @classmethod
     def of(
         cls,
-        attributes: Sequence[_LeafSource],
+        attributes: Sequence[_ScalarSource],
         value_objects: Sequence[_OccurrenceSource],
     ) -> Self:
-        """Compose leaves before occurrences, reusing each occurrence's held shape."""
-        leaves: tuple[DocumentMember, ...] = tuple(attribute.definition for attribute in attributes)
+        """Compose scalars before occurrences, reusing each occurrence's held shape."""
+        scalars: tuple[MemberDefinition, ...] = tuple(
+            attribute.definition for attribute in attributes
+        )
         occurrences = tuple(value_object.definition for value_object in value_objects)
-        return cls(members=leaves + occurrences)
+        return cls(members=scalars + occurrences)
 
     def position(self, name: str) -> int | None:
         """The canonical position ``name`` occupies, or absence on a miss."""
         return self._position_by_name.get(name)
 
-    def member(self, name: str) -> DocumentMember | None:
+    def member(self, name: str) -> MemberDefinition | None:
         """The member ``name`` names, or absent when the shape does not declare it."""
         position = self.position(name)
         return None if position is None else self.members[position]
@@ -184,26 +192,28 @@ class _BindingRange[T](Sequence[T]):
 class BoundShape[L, O]:
     """A document shape with one binding aligned to each of its members.
 
-    Leaves precede occurrences, so ``leaf_count`` splits ``bindings`` into the
-    ``leaves`` and ``occurrences`` windows. Each window shares the bindings
+    Scalars precede occurrences, so ``scalar_count`` splits ``bindings`` into the
+    ``scalars`` and ``occurrences`` windows. Each window shares the bindings
     tuple without copying it and compares equal to any sequence holding the
     same bindings in the same order.
     """
 
     shape: MemberShape
     bindings: tuple[L | O, ...]
-    leaf_count: int
-    leaves: Sequence[L] = field(init=False, repr=False, compare=False)
+    scalar_count: int
+    scalars: Sequence[L] = field(init=False, repr=False, compare=False)
     occurrences: Sequence[O] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if len(self.shape.members) != len(self.bindings):
             raise ValueError("a bound shape aligns every shape member to one binding")
-        if not 0 <= self.leaf_count <= len(self.bindings):
+        if not 0 <= self.scalar_count <= len(self.bindings):
             raise ValueError("a bound shape counts its leaves within its bindings")
-        object.__setattr__(self, "leaves", _BindingRange(self.bindings, 0, self.leaf_count))
+        object.__setattr__(self, "scalars", _BindingRange(self.bindings, 0, self.scalar_count))
         object.__setattr__(
-            self, "occurrences", _BindingRange(self.bindings, self.leaf_count, len(self.bindings))
+            self,
+            "occurrences",
+            _BindingRange(self.bindings, self.scalar_count, len(self.bindings)),
         )
 
     def binding(self, name: str) -> L | O | None:
@@ -211,16 +221,16 @@ class BoundShape[L, O]:
         position = self.shape.position(name)
         return None if position is None else self.bindings[position]
 
-    def leaf(self, name: str) -> L | None:
-        """The binding aligned to the leaf ``name`` names, absent for an occurrence."""
+    def scalar(self, name: str) -> L | None:
+        """The binding aligned to the scalar ``name`` names, absent for an occurrence."""
         position = self.shape.position(name)
-        if position is None or not isinstance(self.shape.members[position], Leaf):
+        if position is None or not isinstance(self.shape.members[position], ScalarDefinition):
             return None
         return cast("L", self.bindings[position])
 
     def occurrence(self, name: str) -> O | None:
-        """The binding aligned to the occurrence ``name`` names, absent for a leaf."""
+        """The binding aligned to the occurrence ``name`` names, absent for a scalar."""
         position = self.shape.position(name)
-        if position is None or not isinstance(self.shape.members[position], Occurrence):
+        if position is None or not isinstance(self.shape.members[position], OccurrenceDefinition):
             return None
         return cast("O", self.bindings[position])

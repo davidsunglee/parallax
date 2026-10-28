@@ -17,7 +17,7 @@ from parallax.core.metamodel._identities import (
 )
 
 if TYPE_CHECKING:
-    from parallax.core.metamodel._shape import Leaf, MemberShape, Occurrence
+    from parallax.core.metamodel._shape import MemberShape, OccurrenceDefinition, ScalarDefinition
 
 __all__ = [
     "APPLICATION_ASSIGNED",
@@ -401,17 +401,17 @@ class AttributeMetadata:
     optimistic_locking: bool = False
     framework_owned: bool = False
     multiplicity: Multiplicity = Multiplicity.ONE
-    definition: Leaf = field(init=False, repr=False, compare=False)
+    definition: ScalarDefinition = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        from parallax.core.metamodel._shape import Leaf
+        from parallax.core.metamodel._shape import ScalarDefinition
 
         if self.multiplicity is Multiplicity.MANY:
             _check_collection_attribute(self)
         object.__setattr__(
             self,
             "definition",
-            Leaf(
+            ScalarDefinition(
                 name=self.identity.name,
                 type=self.type,
                 nullable=self.nullable,
@@ -628,19 +628,19 @@ class ValueObjectAttributeDeclaration:
     type: NeutralType
     nullable: bool = False
     multiplicity: Multiplicity = Multiplicity.ONE
-    definition: Leaf = field(init=False, repr=False, compare=False)
+    definition: ScalarDefinition = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("a Value Object Attribute name is nonempty")
         if self.multiplicity is Multiplicity.MANY and self.nullable:
             raise ValueError(f"{self.name}: a many Value Object Attribute is never nullable")
-        from parallax.core.metamodel._shape import Leaf
+        from parallax.core.metamodel._shape import ScalarDefinition
 
         object.__setattr__(
             self,
             "definition",
-            Leaf(
+            ScalarDefinition(
                 name=self.name,
                 type=self.type,
                 nullable=self.nullable,
@@ -689,17 +689,17 @@ class NestedValueObjectOccurrenceDeclaration:
     shape: ValueObjectShapeDeclaration
     multiplicity: Multiplicity = Multiplicity.ONE
     nullable: bool = False
-    definition: Occurrence = field(init=False, repr=False, compare=False)
+    definition: OccurrenceDefinition = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("a nested Value Object occurrence name is nonempty")
-        from parallax.core.metamodel._shape import Occurrence
+        from parallax.core.metamodel._shape import OccurrenceDefinition
 
         object.__setattr__(
             self,
             "definition",
-            Occurrence(
+            OccurrenceDefinition(
                 name=self.name,
                 multiplicity=self.multiplicity,
                 nullable=self.nullable,
@@ -723,17 +723,17 @@ class ValueObjectOccurrenceDeclaration:
     shape: ValueObjectShapeDeclaration
     multiplicity: Multiplicity = Multiplicity.ONE
     nullable: bool = False
-    definition: Occurrence = field(init=False, repr=False, compare=False)
+    definition: OccurrenceDefinition = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("a Value Object occurrence name is nonempty")
-        from parallax.core.metamodel._shape import Occurrence
+        from parallax.core.metamodel._shape import OccurrenceDefinition
 
         object.__setattr__(
             self,
             "definition",
-            Occurrence(
+            OccurrenceDefinition(
                 name=self.name,
                 multiplicity=self.multiplicity,
                 nullable=self.nullable,

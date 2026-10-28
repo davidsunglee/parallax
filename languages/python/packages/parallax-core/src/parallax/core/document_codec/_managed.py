@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from typing import NamedTuple, TypeIs, cast
 
 from parallax.core.document_codec._shape import (
-    DocumentMember,
-    Leaf,
+    MemberDefinition,
     MemberShape,
-    Occurrence,
+    OccurrenceDefinition,
+    ScalarDefinition,
 )
 from parallax.core.metamodel import Multiplicity
 
@@ -77,7 +77,7 @@ def classify_effective_change(
 
 class _Assigned(NamedTuple):
     position: int
-    member: DocumentMember
+    member: MemberDefinition
     value: object
 
 
@@ -149,9 +149,9 @@ def prepare_effective_change(
     return PreparedEffectiveChange(tuple(prepared), absent)
 
 
-def _prepared_member(member: DocumentMember, value: object) -> object:
+def _prepared_member(member: MemberDefinition, value: object) -> object:
     """:func:`_canonical_member`'s form, always built anew in plain containers."""
-    if isinstance(member, Leaf):
+    if isinstance(member, ScalarDefinition):
         return _scalar_zero(member, value)
     if member.multiplicity is not Multiplicity.MANY:
         return _prepared_document(member.shape, value) if _is_document(value) else value
@@ -175,16 +175,18 @@ def _prepared_document(shape: MemberShape, document: Mapping[str, object]) -> di
     return prepared
 
 
-def _restores(member: DocumentMember, value: object, cell: object, absent: object) -> bool:
+def _restores(member: MemberDefinition, value: object, cell: object, absent: object) -> bool:
     if cell is absent:
         return False
-    if isinstance(member, Leaf):
+    if isinstance(member, ScalarDefinition):
         cell = _scalar_zero(member, cell)
         return value == cell or _structurally_equal(value, cell)
     return _occurrence_restores(member, value, cell, absent)
 
 
-def _occurrence_restores(member: Occurrence, value: object, cell: object, absent: object) -> bool:
+def _occurrence_restores(
+    member: OccurrenceDefinition, value: object, cell: object, absent: object
+) -> bool:
     """Whether canonical ``value`` equals the canonical form of positional ``cell``.
 
     A null ``many`` cell is that occurrence's empty collection, as an omitted
@@ -219,7 +221,7 @@ def _document_restores(
             return False
         held += 1
         assigned = value[member.name]
-        if isinstance(member, Leaf):
+        if isinstance(member, ScalarDefinition):
             if not _structurally_equal(assigned, _scalar_zero(member, stored)):
                 return False
         elif not _occurrence_restores(member, assigned, stored, absent):
@@ -248,8 +250,8 @@ def _canonical_document(shape: MemberShape, document: Mapping[str, object]) -> M
     return rebuilt if changed else document
 
 
-def _canonical_member(member: DocumentMember, value: object) -> object:
-    if isinstance(member, Leaf):
+def _canonical_member(member: MemberDefinition, value: object) -> object:
+    if isinstance(member, ScalarDefinition):
         return _scalar_zero(member, value)
     if member.multiplicity is not Multiplicity.MANY:
         if not _is_document(value):
@@ -307,11 +309,11 @@ def _is_array(value: object) -> TypeIs[Sequence[object]]:
     )
 
 
-def _scalar_zero(member: Leaf, value: object) -> object:
+def _scalar_zero(member: ScalarDefinition, value: object) -> object:
     """A scalar collection's null as the empty collection it denotes; every
     other scalar value as itself."""
     return [] if value is None and member.multiplicity is Multiplicity.MANY else value
 
 
-def _is_many(member: DocumentMember) -> bool:
+def _is_many(member: MemberDefinition) -> bool:
     return member.multiplicity is Multiplicity.MANY

@@ -73,9 +73,9 @@ from parallax.core.base import SQL_NULL, DocumentValue, ManagedValue, PresentDoc
 from parallax.core.db_port import DocumentReadOrdinals, Row
 from parallax.core.dialect import POSTGRES, Dialect, scalar_result
 from parallax.core.document_codec import (
-    Leaf,
     MemberShape,
-    Occurrence,
+    OccurrenceDefinition,
+    ScalarDefinition,
     encode_leaf,
     occurrence_shape,
 )
@@ -628,9 +628,9 @@ def _leaf_types(shape: MemberShape) -> set[str]:
     reached: set[str] = set()
     for member in shape.members:
         match member:
-            case Leaf(type=neutral_type):
+            case ScalarDefinition(type=neutral_type):
                 reached.add(type(neutral_type).__name__)
-            case Occurrence(shape=nested):
+            case OccurrenceDefinition(shape=nested):
                 reached |= _leaf_types(nested)
     return reached
 
