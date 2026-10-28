@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Mapping
 
 __all__ = [
-    "ABSENT_DECLARED_VALUE",
     "COMPACT_STATE_SLOT",
     "BackedModel",
     "PublicationPlan",
@@ -605,16 +604,9 @@ def declared(value: BaseModel) -> dict[str, object]:
     return dict(zip(plan.fields, plan.field_values(row), strict=True))
 
 
-class _AbsentDeclaredValue:
-    __slots__ = ()
-
-
-ABSENT_DECLARED_VALUE: Final = _AbsentDeclaredValue()
-"""A declared position the value does not carry."""
-
-
 def declared_values(value: BaseModel) -> Generator[object]:
-    """Declared positions in model-fixed order, preserving member absence.
+    """Declared positions in model-fixed order, ``ABSENT`` where the value
+    carries no member.
 
     Published values are read straight from their compact row and ordinary
     values consult their existing presence set one member at a time. The
@@ -626,12 +618,12 @@ def declared_values(value: BaseModel) -> Generator[object]:
     if row is not None:
         bitmap = cast("int", row[0])
         for bit, py_name in enumerate(plan.py_names):
-            yield row[plan.indexes[py_name]] if bitmap >> bit & 1 else ABSENT_DECLARED_VALUE
+            yield row[plan.indexes[py_name]] if bitmap >> bit & 1 else ABSENT
         return
     state = instance_state(value)
     presence = instance_presence(value)
     for py_name in plan.py_names:
-        yield state[py_name] if py_name in presence else ABSENT_DECLARED_VALUE
+        yield state[py_name] if py_name in presence else ABSENT
 
 
 def named_state(value: BaseModel) -> Mapping[str, object]:

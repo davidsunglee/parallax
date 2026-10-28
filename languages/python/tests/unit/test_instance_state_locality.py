@@ -158,7 +158,6 @@ INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
     "parallax.core.entity._value_object": frozenset({"BackedModel", "is_present", "plan_of"}),
     "parallax.snapshot._publication._wire": frozenset(
         {
-            "ABSENT_DECLARED_VALUE",
             "declared_values",
             "is_published",
             "named_state_value",
