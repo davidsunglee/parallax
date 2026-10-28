@@ -108,6 +108,7 @@ __all__ = [
     "prepare_typed_write",
     "prepare_wire_insert",
     "prepare_wire_write",
+    "refuse_opening_registry_advance",
     "resolve_target",
     "serialize",
 ]
@@ -1304,10 +1305,29 @@ def _planned_marker(
         return MAX_PLUS_ONE
     if kind == "increment" and context == "update":
         return SelfIncrement(amount=cast("int", payload))
-    raise WriteInstructionError(
+    raise _unplannable_marker(entity, name, kind, context)
+
+
+def _unplannable_marker(
+    entity: EntityMetadata, name: str, kind: str, context: _MarkerContext
+) -> WriteInstructionError:
+    return WriteInstructionError(
         f"unsupported DB-computed marker on {entity.identity.name!r}.{name}: a {kind!r} "
         f"marker is not recognized for {context} planning"
     )
+
+
+def refuse_opening_registry_advance(assigned: PreparedKeyedInstruction) -> None:
+    """Refuse ``assigned`` where it folds into an object's pending opening and
+    assigns a registry advance: the row it then writes is the one the insert
+    opens, where an ``increment`` marker plans nothing."""
+    for row in assigned.rows:
+        members = row.selection.members.shape.members
+        for position, cell in row.stated_cells():
+            if isinstance(cell, SelfIncrement):
+                raise _unplannable_marker(
+                    assigned.target, members[position].name, "increment", "insert"
+                )
 
 
 def _row_markers(
