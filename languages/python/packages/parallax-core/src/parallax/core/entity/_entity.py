@@ -18,6 +18,7 @@ from parallax.core.entity._declaration import (
     WireNames,
     build_class,
     declaration_of,
+    member_validation,
     wire_names_of,
 )
 from parallax.core.entity._edit import (
@@ -39,6 +40,7 @@ from parallax.core.entity._expressions import (
     AuthoredConstant,
     AuthoredNarrow,
     AuthoredQuery,
+    MemberValidator,
     Predicate,
     conjoin,
     judged_edit_violation,
@@ -332,7 +334,11 @@ def _change_record(value: BaseModel) -> ChangeRecord | None:
 
 
 def _edit_violations(
-    entity: EntityIdentity, cls_name: str, names: WireNames, changes: Mapping[str, object]
+    entity: EntityIdentity,
+    cls_name: str,
+    names: WireNames,
+    validate: MemberValidator,
+    changes: Mapping[str, object],
 ) -> tuple[EditViolation, ...]:
     """Every rule the authored ``changes`` break, one per named member.
 
@@ -391,6 +397,7 @@ def _edit_violations(
             value,
             owner=entity.canonical,
             location=member_location(member),
+            validate=validate,
         )
         if violation is not None:
             violations.append(violation)
@@ -405,11 +412,12 @@ def _resolution_of(cls: type) -> Resolution:
 
     names = wire_names_of(cls)
     entity = declaration_of(cls).identity
+    validate = member_validation(cls)
     resolution = Resolution(
         declared=frozenset(names.py_to_name),
         framework_owned=names.framework_owned_py,
         restores_presence=False,
-        violations=lambda changes: _edit_violations(entity, cls.__name__, names, changes),
+        violations=lambda changes: _edit_violations(entity, cls.__name__, names, validate, changes),
     )
     type.__setattr__(cls, _EDIT_RESOLUTION_SLOT, resolution)
     return resolution

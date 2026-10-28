@@ -10,6 +10,7 @@ from parallax.core.entity._declaration import (
     DeclarationKind,
     ValueObjectShape,
     build_class,
+    member_validation,
     shape_of,
 )
 from parallax.core.entity._edit import (
@@ -229,6 +230,7 @@ def _edit_violations(
     the edit itself still merges the caller's own live value.
     """
     members = _member_metadata(cls, shape)
+    validate = member_validation(cls)
     violations: list[EditViolation] = []
     for py_name, value in changes.items():
         member = members.get(py_name)
@@ -237,7 +239,9 @@ def _edit_violations(
                 unresolved_member_violation(py_name, owner=cls.__name__, location=MODEL_ROOT)
             )
             continue
-        violation = judged_edit_violation(member, value, owner=cls.__name__, location=MODEL_ROOT)
+        violation = judged_edit_violation(
+            member, value, owner=cls.__name__, location=MODEL_ROOT, validate=validate
+        )
         if violation is not None:
             violations.append(violation)
     return tuple(violations)

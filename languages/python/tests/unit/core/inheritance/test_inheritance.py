@@ -14,11 +14,12 @@ from parallax.conformance import case_format
 from parallax.core import inheritance
 from parallax.core._execution._unit_work.instructions import prepare_typed_write
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING, coerce_neutral_input, matches_neutral_type
+from parallax.core.base import STRING, typed_converter
 from parallax.core.base import Decimal as DecimalType
-from parallax.core.document_codec._authoring import (
-    MAPPING_SOURCE_ACCESS,
-    validate_member_authoring,
+from parallax.core.document_codec._plan import (
+    MAPPING_DOCUMENTS,
+    AuthoringCatalog,
+    AuthoringLane,
 )
 from parallax.core.inheritance._rules import (
     CONCRETE_SUBTYPE_WITH_CHILDREN,
@@ -61,7 +62,6 @@ from parallax.core.metamodel import (
     PersistenceMode,
     RelationshipIdentity,
     RelationshipLocation,
-    ScalarDefinition,
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
@@ -237,7 +237,7 @@ def test_a_keyed_subtype_write_passes_the_keyless_check_without_a_key_search(
 # mandated shapes (typed/serialized reject/accept) but declares no             #
 # non-nullable NESTED value object or `cardinality: many` member, so this      #
 # synthetic model -- the SAME "hand-built model" convention                    #
-# `test_write_validate.py`'s own `_WIDGET` uses for the sibling scalar walk --  #
+# `test_write_instructions_refusals.py`'s `_WIDGET` uses for its scalar walk   #
 # reaches every remaining shared-walk violation reason (`not-a-list`,          #
 # `attribute-missing`, `value-object-missing`, a nested `many` element's own   #
 # bracket-indexed path) directly against `judge_assignment`, never through    #
@@ -312,20 +312,14 @@ def _member(name: str) -> AttributeMetadata | ValueObjectMetadata:
     return member
 
 
+_VALIDATION: Final = AuthoringCatalog(
+    (AuthoringLane(typed_converter, MAPPING_DOCUMENTS),), absent=object()
+)
+
+
 def _assignment(name: str, value: object) -> None:
     member = _member(name)
-
-    def normalize(leaf: ScalarDefinition, value: object, _path: str) -> tuple[object, bool]:
-        managed = coerce_neutral_input(value, leaf.type)
-        return managed, matches_neutral_type(managed, leaf.type)
-
-    failure = validate_member_authoring(
-        member.definition,
-        value,
-        source_access=MAPPING_SOURCE_ACCESS,
-        normalize_leaf=normalize,
-        path=f"{_VO_METADATA.identity.canonical}.{name}",
-    )
+    failure = None if value is None else _VALIDATION.violation(member.definition, value, lane=0)
     judge_assignment(member, value, known_violation=failure)
 
 
@@ -412,8 +406,8 @@ def test_judge_assignment_rejects_none_for_a_non_nullable_scalar() -> None:
 
 def test_judge_assignment_accepts_none_for_a_nullable_scalar() -> None:
     # `nickname` is `nullable: true` -- an explicit `None` is a legal
-    # clearing assignment, mirroring `write_validate`'s own null short-
-    # circuit for a nullable attribute.
+    # clearing assignment, mirroring write preparation's own null rule for a
+    # nullable attribute.
     judge_assignment(_member("nickname"), None)  # no raise
 
 
