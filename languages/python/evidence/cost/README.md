@@ -9,7 +9,7 @@ owns what belongs in Git and how future runs are stored.
 
 | Capture | Role | Producing commit | Captured |
 |---|---|---|---|
-| [current](current/portfolio.json) | Current verification input and memory-gate basis | `c51ca3eacf1f89b5d039853a9cd66179a8e6d4b7` | 2026-10-23 |
+| [current](current/portfolio.json) | Current verification input and memory-gate basis | `731527616b9c02a7cf995982567bbf2c3aa109a3` | 2026-10-28 |
 | [structural-metadata-before](structural-metadata-before/portfolio.json) | Fixed recovery reference | `b7abe2d055fd3e0974829616f2de99b94ad5af97` | 2026-09-16 |
 | [structural-metadata-after](structural-metadata-after/portfolio.json) | Fixed regression comparison base | `1636e9f0ce072dce25ddd1ebeabd0b1368b65031` | 2026-09-17 |
 
@@ -38,51 +38,64 @@ remains available. The current capture was taken on its change's branch because
 that change made the previous capture stale; its producing commit remains the
 original branch commit after a rebase merge.
 
-The current collector completed on 2026-10-23, 03:46:44–04:56:15 UTC, in
-69m30s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
-27.0.1, with CPython 3.13.17 and 3.14.8 and PostgreSQL 18.6.
+The current collector completed on 2026-10-28, 10:33:09–11:37:27 UTC, in
+64m18s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
+27.0.1 build 26A434, with CPython 3.13.18 and 3.14.8 and PostgreSQL 18.6 under
+OrbStack 2.2.5.
 [Conditions](current/conditions.json) record interpreter identities and instrument
 source hashes; [durations](current/durations.json) record collection telemetry.
 The dependency lock SHA-256 is
-`35b64b5d8e2caf6927fe70d5714a73d3bdf9ba4e3d6f2244a8767d054f4af870`.
+`5b94947c4c258495210274171de2408fcba6c45b4bffc9f6d6074d3f050d2956`.
 The portfolio SHA-256 is
-`1c1d73f2f5028051f51ea158f21c6c44ac1d6fd97d70dfa2503fa7bd6f7e7707`.
+`1c664bc56afa1fb8d6f4b9ac7b0fa497b4aa2407926a517021a8dd5f3546e45b`.
 
-No competing measurements ran, but other interactive sessions were active: the
-load average was 3.6 (one minute) and 7.4 (five minutes) at the start. Power
-state was not recorded. The run is not evidence of quiet-machine timing
-stability. The historical bases used macOS 26.6.2 and CPython 3.13.15/3.14.7 on
-the same machine, so current-versus-base timings cross host and interpreter
-conditions as well as implementation changes.
+No competing measurements ran from this checkout; other sessions on the host
+were not controlled. The host was on AC power. The load average was 1.2 (one and
+five minutes) at the start and 2.9 (one minute) and 2.5 (five minutes) at the
+end. The run is not evidence of quiet-machine timing stability. The historical
+bases used macOS 26.6.2 and CPython 3.13.15/3.14.7 on the same machine, so
+current-versus-base timings cross host and interpreter conditions as well as
+implementation changes.
 
-Against the superseded `90ff69ccb` capture, no memory reading rose past its
-former gate and every gate address was kept; the comparison crosses a CPython
-3.13 patch release (3.13.16 to 3.13.17) and a dependency lock change
-(`bc4f54c3…` to `35b64b5d…`) as well as implementation changes. Write lowering
-adds five deferred-span `cross-object-flush` workloads, whose flushes also
-answer a range-binding region and their coverage reads, and 30 gates, for 352.
-Rederivation moves 236 existing gates: 208 rise and 28 fall, 156 of the rises
-by at most 1%. The largest rises are the changed-ancestor successors' retained
-bytes, 924 to 1012 B/row (9.5%), and transient bytes, up to 7.3%; target
-writes' transient bytes rise 3.0–5.4%. Read from the source at the base of the
-deferred-grouping change, the changed-ancestor retained bytes and a Bitemporal
-target replacement's transient bytes already stand at their new levels, so those
-rises predate that change. Cross-object plan retention falls 1.9–2.4%, which the
-same base-against-result reading attributes to immutable sharing in planning,
-and Transaction-Time unchanged amendments' transient bytes fall up to 3.9%.
-Snapshot memory gates moved by at most 2%. Snapshot's advisory
-Budget Contract timing outcomes went from 16 to 22 outside: eight new live,
-first-result, or provider-free cells and two former ones back within. Read
-compilation and Snapshot's default stream page size also changed, and no
-matched-source reading separates them from run conditions, so these outcomes
-carry no attribution. The cross-object
-family took 11m12s of the collection, 9m15s of it the deferred spans. These
-span `90ff69ccb..c51ca3eac` and are not attributed to individual commits
-except where stated. The raw capture, its frozen predecessor gates, the
-automated old-address assessment and derivation deltas, and the per-source
-attribution readings are archived at
-`~/.local/share/parallax/evidence/cor-227/`; its `SHA256SUMS` manifest has
-SHA-256 `024612b5447c013001cbaa3f2d2bb6cebc55c1884154c862871e5dbd649ba8e6`.
+Against the superseded `c51ca3eac` capture, no memory reading rose past its
+former gate, and all 352 gate addresses were kept with none added or removed.
+The comparison crosses a CPython 3.13 patch release (3.13.17 to 3.13.18), a
+dependency lock change (`35b64b5d…` to `5b94947c…`), a changed write-lowering
+workload digest, changed Snapshot and write-lowering control sources, and
+changed Snapshot and lifecycle-overhead instruments; `--require-compatible`
+refuses the Snapshot and write-lowering pairs. Rederivation moves 240
+gates: 68 rise, 57 of them by at most 1%, and 172 fall, 133 of them by at most
+1%. Write lowering accounts for 218 of the moves, 160 of them falls: changed
+plain amendments' retained bytes fall 2095 to 1919 B/row (8.4%), geometry
+retained bytes fall 0.6–4.9%, and no write-lowering gate rises by more than
+1.3%, the prepared model's. Snapshot's largest rises are cold read-plan
+compilation peaks: guarded controls rise 2.4–5.9% and depth and width plans
+1.8–2.8%. Cold planning time also rose 5–18% on both runtimes. The highest new
+reading is 96.3% of its former gate, `control-guarded-3` `plan.cold.peakKiB`.
+Other Snapshot memory gates moved by at most 2%. Snapshot's advisory Budget
+Contract timing outcomes went from 22 to 6 outside: 16 cells came back within
+and none newly fell outside. The six are live `page32` time and throughput for
+`duplicate-include`, `document-heavy`, and `versioned-document`.
+
+These changes span `c51ca3eac..731527616`, which includes read-plan reuse
+across predicate values, PostgreSQL temporal-conflict refusal, and first-use
+connection replacement, which removed checkout validation and the separate
+transaction-characteristics statement. No matched-source reading separates
+them, so changes are not attributed to individual commits. First-use
+replacement changed no read-planning or write-lowering production source, but
+that does not assign the planning or write movements to another commit. Live
+delivery owns one retained-pool checkout per eager read or stream page, so it is
+where dropping checkout validation could show; 61 of its 140 compared cells read
+faster and 5 slower. Readings that touch no database also moved: 48 of 190
+provider-free delivery cells read faster, 47 of them on CPython 3.14, and the
+lifecycle-overhead arms over their in-memory port read 6–9% faster at their
+medians. The live movement is therefore not separated from run conditions. The
+raw capture, its frozen predecessor gates and portfolio, the automated
+former-gate assessment and derivation deltas, the comparison and its
+compatibility refusal, host conditions, and the exact commands are archived at
+`~/.local/share/parallax/evidence/cor-248/cost-capture/`; its `SHA256SUMS`
+manifest has SHA-256
+`5168b1f7bf7c6ccff6897d1949a73e41bd373806e4f3345bad1a1aca11ad7e89`.
 
 ## Method and interpretation
 
