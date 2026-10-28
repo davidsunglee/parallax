@@ -284,3 +284,44 @@ def test_authored_values_read_a_payload_in_member_order() -> None:
         _ABSENT,
         _ABSENT,
     )
+
+
+@pytest.mark.parametrize(
+    ("raws", "position", "violation"),
+    [
+        ((7, None, _ABSENT, _ABSENT, "not a document", _ABSENT), 4, "not-a-document"),
+        ((7, None, _ABSENT, _ABSENT, _ABSENT, "not a list"), 5, "not-a-list"),
+        ((7, None, _ABSENT, _ABSENT, {"city": "x", "lines": [None]}, _ABSENT), 4, "type-mismatch"),
+    ],
+)
+def test_a_wire_document_or_collection_of_the_wrong_carrier_is_refused(
+    raws: tuple[object, ...], position: int, violation: str
+) -> None:
+    refused = _refusal(_WIRE, raws)
+
+    assert (refused.position, refused.violation.reason) == (position, violation)
+
+
+def test_a_nested_collection_element_path_joins_its_member() -> None:
+    refused = _refusal(_WIRE, (7, None, _ABSENT, _ABSENT, {"city": "x", "lines": [3]}, _ABSENT))
+
+    assert refused.violation.path == "lines[0]"
+
+
+def test_a_borrowed_value_object_authors_through_its_hooks() -> None:
+    class _Borrowed:
+        def __parallax_authoring_names__(self) -> tuple[str, ...]:
+            return ("city", "geo")
+
+        def __parallax_authoring_member__(self, name: str) -> object:
+            return {"city": "Oslo", "geo": None}[name]
+
+    row = _row(_TYPED, (7, _ABSENT, _ABSENT, _ABSENT, _Borrowed(), ()))
+
+    assert row.cells == (7, (), ("Oslo", (), None), ())
+
+
+def test_a_nested_required_member_stated_null_is_missing() -> None:
+    refused = _refusal(_WIRE, (7, None, _ABSENT, _ABSENT, {"city": None}, _ABSENT))
+
+    assert refused.violation == AuthoringViolation("city", "attribute-missing")
