@@ -665,3 +665,60 @@ def test_lowering_leaves_the_retained_document_as_it_found_it() -> None:
     _opened(*_identity_maps(predecessor), CarriedFrom(predecessor))
     assert stored == _STORED_ROW
     assert predecessor.document is stored
+
+
+def test_a_successor_leaves_an_occurrence_its_predecessor_omits_omitted() -> None:
+    # The predecessor's state holds the nullable `address` as absent, never as a
+    # present null, so the successor neither binds the absence marker nor
+    # reconstructs the untouched missing path as a null one.
+    stored = {name: value for name, value in _STORED.items() if name != "address"}
+    observed = {name: value for name, value in _DECODED.items() if name != "address"}
+
+    successor = _successor({"score": 21}, document=stored, origin=ChangedFrom, observed=observed)
+
+    assert successor == {**stored, "score": 21}
+
+
+def test_an_occurrence_assigned_null_is_written_where_an_omitted_one_is_not() -> None:
+    stored = {name: value for name, value in _STORED.items() if name != "address"}
+    observed = {name: value for name, value in _DECODED.items() if name != "address"}
+
+    assigned = _successor({"address": None}, document=stored, origin=ChangedFrom, observed=observed)
+
+    assert assigned == {**stored, "address": None}
+
+
+def _columns_successor(changes: Mapping[str, object]) -> LoweredStatement:
+    """The Columns twin's changed successor of a predecessor omitting
+    `address`, lowered."""
+    observed = {name: value for name, value in _DECODED.items() if name != "address"}
+    predecessor = PredecessorRow(observed)
+    selection = row_selection_of(COLUMNS, PERSON)
+    attributes: dict[AttributeIdentity, object] = {}
+    value_objects: dict[ValueObjectIdentity, object] = {}
+    for name, value in changes.items():
+        binding = selection.members.binding(name)
+        if isinstance(binding, AttributeMetadata):
+            attributes[binding.identity] = value
+        elif binding is not None:
+            value_objects[binding.identity] = value
+    assigned = managed_row_of(COLUMNS, attributes, value_objects, entity=PERSON)
+    row = predecessor_state(selection, predecessor).with_members_of(assigned)
+    executed = (*attributes, *value_objects)
+    step = PlannedInsert(
+        entity=PERSON,
+        entries=(WriteRow(row=row, origin=ChangedFrom(predecessor), executed=executed),),
+    )
+    return lowered(step, LayoutPayloadPreparer(COLUMNS), COLUMNS, POSTGRES)
+
+
+def test_a_columns_successor_states_no_column_for_an_occurrence_its_predecessor_omits() -> None:
+    omitted = _columns_successor({"score": 21})
+    nulled = _columns_successor({"score": 21, "address": None})
+
+    assert omitted.sql == "insert into person(id, display_name, score, tags) values (?, ?, ?, ?)"
+    assert ABSENT not in omitted.binds
+    assert nulled.sql == (
+        "insert into person(id, display_name, score, address, tags) values (?, ?, ?, ?, ?)"
+    )
+    assert JsonDocument(None) in nulled.binds
