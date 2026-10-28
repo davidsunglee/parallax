@@ -1311,16 +1311,22 @@ def _planned_marker(
 
 
 def _row_markers(
+    model: AcceptedMetamodel,
     entity: EntityMetadata,
     position: inheritance.InheritanceEntityView,
-    context: _MarkerContext | None,
+    assigns: Literal["assignment"] | None,
     converter: _LeafConverter,
     row: Mapping[str, object],
 ) -> _RowMarkers | None:
     """The marker judgment for ``row``, or ``None`` where no member it states
-    is shaped as a DB-computed marker."""
+    is shaped as a DB-computed marker.
+
+    A row ``assigns`` its members, planning in :func:`_assignment_context`'s
+    context, or assigns none and states only the key it addresses by.
+    """
     for value in row.values():
         if _is_root_marker(value):
+            context = None if assigns is None else _assignment_context(model, entity)
             return _RowMarkers(entity, position, context, converter)
     return None
 
@@ -1385,13 +1391,11 @@ class _RowMarkers:
 def _is_root_marker(value: object) -> bool:
     if not isinstance(value, Mapping):
         return False
-    return frozenset(cast("Mapping[object, object]", value)) in _MARKER_KEYS
+    document = cast("Mapping[object, object]", value)
+    return len(document) == 1 and next(iter(document)) in _MARKER_KEYS
 
 
-_MARKER_KEYS: Final[tuple[frozenset[str], ...]] = (
-    frozenset({"computed"}),
-    frozenset({"increment"}),
-)
+_MARKER_KEYS: Final = frozenset({"computed", "increment"})
 
 
 def _judge_write_persistence(
@@ -1831,7 +1835,7 @@ def _prepare_target_payload(
             identity.value,
             model,
             known_failures=identity.failures,
-            markers=_row_markers(entity, position, None, converter, identity.value),
+            markers=_row_markers(model, entity, position, None, converter, identity.value),
         )
         return identity.value, False
     prepared = _assigned_row(
@@ -1909,9 +1913,7 @@ def _assigned_row(
         fill_missing_many=replaces,
     )
     prepared = _completed(entity, position, transformed.value) if replaces else transformed.value
-    markers = _row_markers(
-        entity, position, _assignment_context(model, entity), converter, prepared
-    )
+    markers = _row_markers(model, entity, position, "assignment", converter, prepared)
     for name, value in prepared.items():
         if name != key:
             failure = _member_failure(selection, name, transformed.failures)
@@ -2107,9 +2109,10 @@ def _addressed_rows(
         )
         for row in rows
     ]
-    context = None if mutation in DESTRUCTIVE_MUTATIONS else _assignment_context(model, entity)
+    assigns = None if mutation in DESTRUCTIVE_MUTATIONS else "assignment"
     markers = [
-        _row_markers(entity, position, context, converter, result.value) for result in transformed
+        _row_markers(model, entity, position, assigns, converter, result.value)
+        for result in transformed
     ]
     if authored_members is not None:
         if len(transformed) != 1:
