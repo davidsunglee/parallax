@@ -413,3 +413,19 @@ def test_a_wire_opening_refuses_an_unplannable_marker_before_buffering(
 
     db_for(_MODEL, port).transact(fn)
     assert not [call for call in port.calls if isinstance(call, WriteCall)]
+
+
+def test_a_registry_advance_cannot_fold_into_a_pending_opening() -> None:
+    # The amendment plans an `increment` for the row it revises, and folding
+    # it would make that the row the insert opens; the refusal leaves the
+    # pending insert as it was.
+    def fn(tx: TxnContext) -> None:
+        opened = tx.wire.insert("Parcel", _payload())
+        with pytest.raises(
+            instructions.WriteInstructionError,
+            match=r"^unsupported DB-computed marker on 'Parcel'\.count: a 'increment' marker is "
+            r"not recognized for insert planning$",
+        ):
+            tx.wire.amend(opened, {"count": {"increment": 1}})
+
+    assert _flushed(fn)["count"] == 3

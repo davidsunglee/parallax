@@ -24,6 +24,7 @@ from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
     PreparedKeyedInstruction,
     derive_keyed_instruction,
+    refuse_opening_registry_advance,
 )
 from parallax.core._execution._unit_work.retain import (
     InsertionIdentity,
@@ -525,6 +526,7 @@ class WriteAdmission:
         Transaction-Time-Only insert at ``position``, which takes an
         amendment's values in place and is cancelled by any destruction, which
         removes all of it."""
+        refuse_opening_registry_advance(item.instruction)
         composition = self._authority.apply_insertion_composition(
             key, arriving=item, proposed_opening=None
         )
