@@ -22,7 +22,6 @@ from parallax.core.write_plan.steps import (
     PlannedValue,
     WriteRow,
     adopt_planned_assignments,
-    adopt_planned_row,
 )
 
 __all__ = ["RecordingAudit"]
@@ -52,8 +51,9 @@ class RecordingAudit:
         if not stamped:
             return write_row
         row = write_row.row
+        index = row.selection.members.index
         return WriteRow(
-            row=adopt_planned_row({**row.attributes, **stamped}, dict(row.value_objects)),
+            row=row.with_cells(tuple(index[member] for member in stamped), tuple(stamped.values())),
             origin=write_row.origin,
             executed=(
                 *write_row.executed,

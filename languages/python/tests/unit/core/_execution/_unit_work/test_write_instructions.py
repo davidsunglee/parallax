@@ -48,6 +48,7 @@ from parallax.core.metamodel import Table, WriteAssignmentError
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.unit_work import WriteRejectedError
+from parallax.core.write_plan.managed_row import named_members
 from tests._support.repo import REPO_ROOT
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
@@ -666,7 +667,9 @@ def _prepare_wire_target(
     instruction: wi.TargetWriteInstruction, model: AcceptedMetamodel
 ) -> wi.PreparedTargetInstruction:
     return wi.prepare_wire_write(
-        instruction, write_preparation_of(model), authored_members=instruction.row.keys()
+        instruction,
+        write_preparation_of(model),
+        authored_members=instruction.row.keys(),
     )
 
 
@@ -689,7 +692,7 @@ def test_a_target_patch_states_its_key_its_assignments_and_its_callers_version(
     assert isinstance(prepared, wi.PreparedTargetInstruction)
     assert (prepared.mutation, prepared.assigns) == ("amend", True)
     assert prepared.expectation == wi.ExpectedVersion(3)
-    assert dict(prepared.row) == {"id": 1, "owner": "Bo"}
+    assert named_members(prepared.row) == {"id": 1, "owner": "Bo"}
     keyed = wi.keyed_instruction_from_target(prepared)
     assert (keyed.mutation, keyed.target, keyed.rows) == (
         "amend",
@@ -786,7 +789,7 @@ def test_a_destructive_target_keeps_its_verb_and_assigns_nothing(
 ) -> None:
     prepared = prepare(instruction, _MODELS[model])
     assert (prepared.mutation, prepared.assigns) == (instruction.mutation, False)
-    assert dict(prepared.row) == {"id": 1}
+    assert named_members(prepared.row) == {"id": 1}
     keyed = wi.keyed_instruction_from_target(prepared)
     assert (keyed.mutation, keyed.rows) == (instruction.mutation, (prepared.row,))
 
@@ -796,7 +799,7 @@ def test_a_replacement_writes_every_omitted_nullable_member_empty(prepare: Any) 
     prepared = prepare(_target("replace", "WriteTwinLog", {"id": 5}, if_tx_start=_I1), _TWIN)
     assert (prepared.mutation, prepared.assigns) == ("replace", True)
     assert prepared.expectation == wi.ExpectedTxStart(_I1)
-    assert dict(prepared.row) == {"id": 5, "label": None, "spec": None, "marks": ()}
+    assert named_members(prepared.row) == {"id": 5, "label": None, "spec": None, "marks": ()}
 
 
 _TAGS = _MODELS["scalar-collection-lifecycle-layout-twin-columns"]
@@ -809,13 +812,13 @@ def test_a_replacement_writes_every_omitted_collection_as_the_empty_collection(
     prepared = prepare(
         _target("replace", "TagLedger", {"id": 2, "label": "whole"}, if_version=4), _TAGS
     )
-    assert dict(prepared.row) == {"id": 2, "label": "whole", "tags": (), "route": None}
+    assert named_members(prepared.row) == {"id": 2, "label": "whole", "tags": (), "route": None}
 
 
 @_BOTH_PRODUCERS
 def test_a_patch_assigns_only_the_collections_it_states(prepare: Any) -> None:
     prepared = prepare(_target("amend", "TagLedger", {"id": 2, "tags": ()}, if_version=4), _TAGS)
-    assert dict(prepared.row) == {"id": 2, "tags": ()}
+    assert named_members(prepared.row) == {"id": 2, "tags": ()}
 
 
 @_BOTH_PRODUCERS
@@ -996,7 +999,7 @@ def test_a_serialized_target_write_is_prepared_by_the_one_wire_producer() -> Non
     )
     prepared = wi.prepare_wire_write(instruction, write_preparation_of(_ACCOUNT))
     assert isinstance(prepared, wi.PreparedTargetInstruction)
-    assert dict(prepared.row) == {"id": 1, "balance": Decimal("5.00")}
+    assert named_members(prepared.row) == {"id": 1, "balance": Decimal("5.00")}
     with pytest.raises(wi.InstructionRejectedError) as refused:
         wi.prepare_wire_write(
             wi.deserialize(
@@ -1064,12 +1067,11 @@ def test_preparation_owns_nested_values_once_and_derivation_retains_them() -> No
     )
     prepared = wi.prepare_typed_write(instruction, write_preparation_of(_MODELS["customer"]))
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    retained = prepared.rows[0]["address"]
+    retained = named_members(prepared.rows[0])["address"]
     address["city"] = "Oslo"
     assert cast("Mapping[str, object]", retained)["city"] == "Berlin"
     derived = wi.derive_keyed_instruction(prepared, prepared.rows)
     assert derived.rows[0] is prepared.rows[0]
-    assert derived.rows[0]["address"] is retained
 
 
 def test_preparation_transforms_freezes_and_validates_a_nested_document_in_one_pass() -> None:
@@ -1105,7 +1107,7 @@ def test_wire_preparation_owns_recursive_value_object_decoding() -> None:
     )
     prepared = wi.prepare_wire_write(instruction, write_preparation_of(_MODELS["customer"]))
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    address = cast("Mapping[str, object]", prepared.rows[0]["address"])
+    address = cast("Mapping[str, object]", named_members(prepared.rows[0])["address"])
     geo = cast("Mapping[str, object]", address["geo"])
     assert geo["elevation"] == 5.0
     assert isinstance(address["phones"], tuple)
@@ -1124,7 +1126,7 @@ def test_a_prepared_opening_row_states_every_applicable_many_occurrence(prepare:
         _MODELS["note"],
     )
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    assert prepared.rows[0] == {"id": 1, "title": "Ada", "marks": ()}
+    assert named_members(prepared.rows[0]) == {"id": 1, "title": "Ada", "marks": ()}
 
 
 def test_a_prepared_revising_row_fills_inside_what_it_assigns_and_nowhere_else() -> None:
@@ -1138,15 +1140,15 @@ def test_a_prepared_revising_row_fills_inside_what_it_assigns_and_nowhere_else()
         write_preparation_of(_MODELS["note"]),
     )
     assert isinstance(note, wi.PreparedKeyedInstruction)
-    assert dict(note.rows[0]) == {"id": 1, "title": "Ada"}
+    assert named_members(note.rows[0]) == {"id": 1, "title": "Ada"}
 
     customer = wi.prepare_typed_write(
         wi.KeyedWriteInstruction("amend", "Customer", ({"id": 9, "address": {"street": "Main"}},)),
         write_preparation_of(_MODELS["customer"]),
     )
     assert isinstance(customer, wi.PreparedKeyedInstruction)
-    assert set(customer.rows[0]) == {"id", "address"}
-    assert customer.rows[0]["address"] == {"street": "Main", "phones": ()}
+    assert set(named_members(customer.rows[0])) == {"id", "address"}
+    assert named_members(customer.rows[0])["address"] == {"street": "Main", "phones": ()}
 
 
 def test_a_coerced_typed_row_projects_its_leaves_and_judges_none() -> None:
@@ -1181,7 +1183,7 @@ def test_prepared_json_leaves_are_deeply_frozen_before_retention(prepare: Any) -
         _DOCUMENT_MODEL,
     )
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    retained = cast("Mapping[str, object]", prepared.rows[0]["payload"])
+    retained = cast("Mapping[str, object]", named_members(prepared.rows[0])["payload"])
     items = cast("tuple[object, ...]", retained["items"])
     first = cast("Mapping[str, object]", items[0])
     cast("dict[str, object]", cast("list[object]", payload["items"])[0])["value"] = 2
@@ -2167,13 +2169,14 @@ def test_a_prepared_instruction_has_no_field_constructor() -> None:
         )
     with pytest.raises(TypeError):
         cast("Any", wi.PreparedPredicateInstruction)("delete", None, ())
-    derived = wi.derive_keyed_instruction(prepared, ({"id": 2},))
+    other = prepared.rows[0].with_cell(0, 2)
+    derived = wi.derive_keyed_instruction(prepared, (other,))
     assert (derived.mutation, derived.target, derived.valid_time_window) == (
         prepared.mutation,
         prepared.target,
         prepared.valid_time_window,
     )
-    assert derived.rows == ({"id": 2},)
+    assert derived.rows == (other,)
 
 
 # --------------------------------------------------------------------------- #
@@ -2372,9 +2375,7 @@ def test_derived_writes_share_the_prepared_window_rather_than_judge_it_again() -
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
     window = prepared.valid_time_window
     assert window is not None
-    assert (
-        wi.derive_keyed_instruction(prepared, ({"id": 2, "value": 5},)).valid_time_window is window
-    )
+    assert wi.derive_keyed_instruction(prepared, prepared.rows).valid_time_window is window
 
 
 @pytest.mark.parametrize(
@@ -2455,7 +2456,7 @@ def _wallet_replacement(row: Mapping[str, object]) -> wi.PredicateWriteInstructi
 def test_a_predicate_replacement_drops_the_key_it_states(prepare: Any, balance: object) -> None:
     prepared = prepare(_wallet_replacement({"id": 9, "balance": balance, "owner": "Ada"}), _WALLET)
     assert isinstance(prepared, wi.PreparedPredicateInstruction)
-    assert prepared.row == {"balance": Decimal("1.50"), "owner": "Ada"}
+    assert named_members(prepared.row) == {"balance": Decimal("1.50"), "owner": "Ada"}
     assert prepared.assigns
 
 
@@ -2470,7 +2471,7 @@ def test_a_predicate_replacement_completes_every_member_it_omits(prepare: Any) -
         ),
         _DOCUMENT_LAYOUT,
     )
-    assert prepared.row == {
+    assert named_members(prepared.row) == {
         "note": "east",
         "displayName": None,
         "score": None,
@@ -2488,7 +2489,7 @@ def test_a_predicate_replacement_of_a_key_only_entity_assigns_nothing(prepare: A
         ),
         _DOCUMENT_LAYOUT,
     )
-    assert prepared.row == {}
+    assert named_members(prepared.row) == {}
     assert not prepared.assigns
 
 
@@ -2514,7 +2515,7 @@ def test_an_amendment_assigning_nothing_prepares_an_empty_row(prepare: Any) -> N
         wi.PredicateWriteInstruction("amend", wi.PredicateSelection("Wallet", _ALL)), _WALLET
     )
     assert isinstance(prepared, wi.PreparedPredicateInstruction)
-    assert prepared.row == {}
+    assert named_members(prepared.row) == {}
     assert not prepared.assigns
 
 
@@ -2530,8 +2531,8 @@ def test_a_predicate_amendment_prepares_the_member_row_it_assigns(
         _wallet_update(("Wallet.owner", "Ada"), ("Wallet.balance", balance)), _WALLET
     )
     assert isinstance(prepared, wi.PreparedPredicateInstruction)
-    assert list(prepared.row) == ["owner", "balance"]
-    assert prepared.row == {"owner": "Ada", "balance": Decimal("1.50")}
+    assert list(named_members(prepared.row)) == ["owner", "balance"]
+    assert named_members(prepared.row) == {"owner": "Ada", "balance": Decimal("1.50")}
     assert prepared.assigns
 
 
@@ -2541,7 +2542,7 @@ def test_a_predicate_deletion_prepares_no_row(prepare: Any) -> None:
         wi.PredicateWriteInstruction("delete", wi.PredicateSelection("Wallet", _ALL)), _WALLET
     )
     assert isinstance(prepared, wi.PreparedPredicateInstruction)
-    assert prepared.row == {}
+    assert named_members(prepared.row) == {}
     assert not prepared.assigns
 
 
@@ -2615,7 +2616,7 @@ def test_an_authored_insert_may_assign_its_primary_key() -> None:
         _rate_insert(_RATE_ROW), write_preparation_of(_RATE), authored_members=_RATE_ROW.keys()
     )
     assert isinstance(prepared, wi.PreparedKeyedInstruction)
-    assert prepared.rows[0]["id"] == 1
+    assert named_members(prepared.rows[0])["id"] == 1
 
 
 def test_an_authored_insert_refuses_a_framework_owned_member_before_an_undeclared_one() -> None:

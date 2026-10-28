@@ -12,6 +12,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.predicate._resolved import ResolvedPredicate
+from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.observe import PredecessorRow
 
 if TYPE_CHECKING:
@@ -47,7 +48,6 @@ __all__ = [
     "PlannedClose",
     "PlannedDelete",
     "PlannedInsert",
-    "PlannedRow",
     "PlannedStep",
     "PlannedTemporalGuard",
     "PlannedTemporalRemoval",
@@ -68,7 +68,6 @@ __all__ = [
     "WriteTarget",
     "admits_shortfall",
     "adopt_planned_assignments",
-    "adopt_planned_row",
     "shortfall_classification",
     "shortfall_for",
 ]
@@ -112,8 +111,9 @@ primary-key generation strategy, so no consumer re-classifies an authored
 marker document by its shape. Both variants are `m-pk-gen` allocations: one
 allocates at the position an insert opens, the other advances the registry an
 update maintains. Each is legal only where the statement that renders it can
-express it, and the two carriers enforce that between them: a Planned Row
-admits only :class:`MaxPlusOne`, Planned Assignments only :class:`SelfIncrement`.
+express it, and the two carriers enforce that between them: a Write Row's
+cells admit only :class:`MaxPlusOne`, Planned Assignments only
+:class:`SelfIncrement`.
 """
 
 type PlannedValue = object
@@ -172,34 +172,6 @@ array, so entries of different origins may share one Planned Insert.
 
 
 @dataclass(frozen=True, slots=True)
-class PlannedRow:
-    """The immutable, duplicate-free semantic contents of one Write Row.
-
-    ``attributes`` holds every scalar member the row writes — including the
-    framework-owned values the planner derived, which no caller authors — and
-    ``value_objects`` holds one complete occurrence per top-level Value Object
-    member. Both are frozen at construction; a row carrying no member at all is
-    refused, because it names nothing to write. The only generated value an
-    opening statement can express is the `max` allocation it folds in.
-    """
-
-    attributes: Mapping[AttributeIdentity, PlannedValue]
-    value_objects: Mapping[ValueObjectIdentity, object] = field(
-        default_factory=dict[ValueObjectIdentity, object]
-    )
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "attributes", MappingProxyType(dict(self.attributes)))
-        object.__setattr__(self, "value_objects", MappingProxyType(dict(self.value_objects)))
-        _validate_planned_row(self.attributes, self.value_objects)
-
-    @property
-    def members(self) -> frozenset[AttributeIdentity | ValueObjectIdentity]:
-        """Every member identity this row writes, scalar and Value Object alike."""
-        return frozenset(self.attributes) | frozenset(self.value_objects)
-
-
-@dataclass(frozen=True, slots=True)
 class WriteRow:
     """One represented row's state before settlement chooses how it is
     realized, and the origin of that state.
@@ -210,24 +182,31 @@ class WriteRow:
     member of a carried or changed row is its predecessor's own state. A new
     lineage writes every member it holds either way.
 
+    ``row`` holds every member the row writes — including the framework-owned
+    values the planner derived, which no caller authors — and at least one,
+    since a row naming nothing writes nothing. The only generated value an
+    opening statement can express is the `max` allocation it folds in.
+
     ``prepared`` is persisted backing a payload preparer already derived from
     this row, which lowering reuses. It is not part of the row's meaning, so
     equality ignores it.
     """
 
-    row: PlannedRow
+    row: ManagedRow
     origin: RowOrigin
     executed: ExecutedMembers = ()
     prepared: RowPayload | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         row = self.row
+        if not row.presence:
+            raise ValueError("a Write Row carries at least one member")
         if not self.executed and isinstance(self.origin, ChangedFrom):
             raise ValueError("a changed Write Row names the members it executes")
+        index = row.selection.members.index
         for member in self.executed:
-            if member not in (
-                row.attributes if isinstance(member, AttributeIdentity) else row.value_objects
-            ):
+            position = index.get(member)
+            if position is None or not row.stated(position):
                 raise ValueError(f"{member}: an executed member is one its Write Row holds")
 
     def with_prepared(self, prepared: RowPayload) -> WriteRow:
@@ -257,32 +236,44 @@ class PlannedInsert:
                 f"{self.entity.canonical}: a Planned Insert carries at least one entry"
             )
         first = self.entries[0].row
+        generated = _generated_values(self.entity, first)
         for entry in self.entries[1:]:
-            if entry.row.members != first.members:
+            row = entry.row
+            if row.presence != first.presence or row.selection != first.selection:
                 raise ValueError(
                     f"{self.entity.canonical}: every entry of one Planned Insert names the "
                     "same members, and these differ"
                 )
-            if _generated_values(entry.row) != _generated_values(first):
+            if _generated_values(self.entity, row) != generated:
                 raise ValueError(
                     f"{self.entity.canonical}: every entry of one Planned Insert carries the "
                     "same generated-value shape, and these differ"
                 )
 
 
-def _generated_values(row: PlannedRow) -> dict[AttributeIdentity, GeneratedValueExpression]:
-    return {
-        identity: value
-        for identity, value in row.attributes.items()
-        if isinstance(value, (MaxPlusOne, SelfIncrement))
-    }
+def _generated_values(
+    entity: EntityIdentity, row: ManagedRow
+) -> tuple[tuple[int, GeneratedValueExpression], ...]:
+    """The generated values ``row`` holds, by position; the registry advance a
+    revising statement computes is refused, since no opened row can hold it."""
+    generated: list[tuple[int, GeneratedValueExpression]] = []
+    for position, value in row.stated_cells():
+        if isinstance(value, SelfIncrement):
+            name = row.selection.members.shape.members[position].name
+            raise ValueError(
+                f"{entity.canonical}.{name}: the registry advance is computed from the stored "
+                "row it revises, so it is a Planned Assignment and never a Write Row cell"
+            )
+        if isinstance(value, MaxPlusOne):
+            generated.append((position, value))
+    return tuple(generated)
 
 
 @dataclass(frozen=True, slots=True)
 class PlannedAssignments:
     """The immutable, duplicate-free replacement values one revising step writes.
 
-    Unlike a Planned Row this names only the members the step changes, including
+    Unlike a Write Row's row this names only the members the step changes, including
     the framework-owned advance a versioned update derives; the members it does
     not name keep their stored values. It carries no authored assignment
     expression — nothing a caller composes out of the Predicate algebra — and the
@@ -306,18 +297,6 @@ class PlannedAssignments:
         return frozenset(self.attributes) | frozenset(self.value_objects)
 
 
-def adopt_planned_row(
-    attributes: Mapping[AttributeIdentity, PlannedValue],
-    value_objects: Mapping[ValueObjectIdentity, object],
-) -> PlannedRow:
-    """Adopt trusted final row storage without copying its shallow maps."""
-    row = object.__new__(PlannedRow)
-    object.__setattr__(row, "attributes", _adopt_mapping(attributes))
-    object.__setattr__(row, "value_objects", _adopt_mapping(value_objects))
-    _validate_planned_row(row.attributes, row.value_objects)
-    return row
-
-
 def adopt_planned_assignments(
     attributes: Mapping[AttributeIdentity, PlannedValue],
     value_objects: Mapping[ValueObjectIdentity, object],
@@ -330,20 +309,6 @@ def adopt_planned_assignments(
     return assignments
 
 
-def _validate_planned_row(
-    attributes: Mapping[AttributeIdentity, PlannedValue],
-    value_objects: Mapping[ValueObjectIdentity, object],
-) -> None:
-    if not attributes and not value_objects:
-        raise ValueError("a Planned Row carries at least one member")
-    for identity, value in attributes.items():
-        if isinstance(value, SelfIncrement):
-            raise ValueError(
-                f"{identity.name}: the registry advance is computed from the stored row "
-                "it revises, so it is a Planned Assignment and never a Planned Row cell"
-            )
-
-
 def _validate_planned_assignments(
     attributes: Mapping[AttributeIdentity, PlannedValue],
     value_objects: Mapping[ValueObjectIdentity, object],
@@ -354,7 +319,7 @@ def _validate_planned_assignments(
         if isinstance(value, MaxPlusOne):
             raise ValueError(
                 f"{identity.name}: the `max` allocation folds into the row an insert "
-                "opens, so it is a Planned Row cell and never a Planned Assignment"
+                "opens, so it is a Write Row cell and never a Planned Assignment"
             )
 
 

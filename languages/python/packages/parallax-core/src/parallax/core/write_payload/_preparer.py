@@ -147,27 +147,27 @@ class LayoutPayloadPreparer:
         intervals = self._interval_members(entity, self._view(entity))
         row = write_row.row
         before = source.row
+        index = row.selection.members.index
         if (
             write_row.origin is not source.origin
             or write_row.executed is not source.executed
-            or row.value_objects is not before.value_objects
-            or len(row.attributes) != len(before.attributes)
+            or row.selection is not before.selection
+            or row.presence != before.presence
             or any(
-                identity not in intervals and row.attributes.get(identity, _UNSTATED) is not value
-                for identity, value in before.attributes.items()
+                cell is not other and before.selection.members.identities[position] not in intervals
+                for (position, cell), other in zip(before.stated_cells(), row.cells, strict=True)
             )
         ):
             raise WritePlanningError(
                 f"{entity.name!r}: prepared cells rebind only to a row stating what they were "
                 "prepared from outside its temporal interval"
             )
-        attributes = row.attributes
         return RowPayload(
             entity=entity,
             source=write_row,
             contributors=payload.contributors,
             values=tuple(
-                attributes[contributor]
+                row.at(index[contributor])
                 if isinstance(contributor, AttributeIdentity) and contributor in intervals
                 else value
                 for contributor, value in zip(payload.contributors, payload.values, strict=True)

@@ -42,9 +42,9 @@ from parallax.core.write_plan import (
     TemporalObservation,
     WritePlan,
 )
+from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.steps import (
     ChangedFrom,
-    PlannedRow,
     PlannedStep,
 )
 from tests._support.clock_probes import instant_at
@@ -90,7 +90,7 @@ def _plan(
     )
 
 
-def _row_values(row: PlannedRow) -> dict[str, object]:
+def _row_values(row: ManagedRow) -> dict[str, object]:
     values: dict[str, object] = {ident.name: value for ident, value in row.attributes.items()}
     for ident, value in row.value_objects.items():
         values[ident.path[-1]] = value

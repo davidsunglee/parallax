@@ -254,7 +254,7 @@ def _unclosable(meta: Metamodel, write: KeyedWriteInstruction) -> ReadAuthorized
 
 def _member_value(attributes: Mapping[AttributeIdentity, object], name: str) -> object:
     """The planned value carried under the Attribute spelled ``name``, from a
-    Planned Row's or Planned Assignments' own ``attributes`` mapping."""
+    Write Row's or Planned Assignments' own ``attributes`` mapping."""
     for identity, value in attributes.items():
         if identity.name == name:
             return value

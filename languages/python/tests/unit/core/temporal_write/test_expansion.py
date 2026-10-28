@@ -32,6 +32,7 @@ from parallax.core.temporal_write.expansion import (
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import ObjectKey, PredecessorRow, observe
 from parallax.core.write_plan.keys import TemporalObjectStateKey
+from parallax.core.write_plan.managed_row import ManagedRow, projected_row
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
@@ -57,7 +58,6 @@ from parallax.core.write_plan.steps import (
     MaxPlusOne,
     PlannedClose,
     PlannedInsert,
-    PlannedRow,
     PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
@@ -67,6 +67,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.clock_probes import inert_instant
+from tests._support.managed_rows import row_selection_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
@@ -88,11 +89,29 @@ def _facts(meta: Metamodel, entity: EntityIdentity) -> TemporalFacts:
     shape = temporal_read.view(meta).shape(entity)
     assert metadata is not None and view is not None
     assert isinstance(shape, temporal_read.TransactionTimeOnly | temporal_read.Bitemporal)
-    return TemporalFacts(entity=metadata, view=view, shape=shape, instant=_NOW)
+    return TemporalFacts(
+        entity=metadata,
+        view=view,
+        shape=shape,
+        instant=_NOW,
+        selection=row_selection_of(meta, entity),
+    )
 
 
 _SPAN_FACTS = _facts(_SPANS, _SPAN)
 _BALANCE_FACTS = _facts(_BALANCES, _BALANCE)
+
+
+def _named(members: Mapping[str, object]) -> ManagedRow:
+    """``members``, by declared name, as a row of the one fixture Entity
+    declaring them all."""
+    for facts in (_SPAN_FACTS, _BALANCE_FACTS):
+        shape = facts.selection.members.shape
+        if all(shape.position(name) is not None for name in members):
+            return projected_row(facts.selection, members)
+    raise AssertionError(f"no fixture Entity declares every member of {members!r}")
+
+
 _PAYLOADS = {_SPAN: LayoutPayloadPreparer(_SPANS), _BALANCE: LayoutPayloadPreparer(_BALANCES)}
 
 
@@ -171,7 +190,9 @@ def _state(facts: TemporalFacts, predecessor: PredecessorRow) -> TemporalObjectS
 def _assigning(
     window: TimeInterval | None, assigned: Mapping[str, object] | None
 ) -> CoverageTransform:
-    return NO_TRANSFORM.followed_by(window, assigned, replaces=False)
+    return NO_TRANSFORM.followed_by(
+        window, None if assigned is None else _named(assigned), replaces=False
+    )
 
 
 def _kinds(steps: Iterable[PlannedStep]) -> list[type[PlannedStep]]:
@@ -597,7 +618,7 @@ def test_an_unprovable_starting_rectangle_is_closed_as_its_callers_precondition(
 def test_a_replacements_complete_state_is_compared_by_its_declared_values() -> None:
     replacing = NO_TRANSFORM.followed_by(
         TimeInterval(_MAR, _SEP),
-        {"amount": 100, "label": "a", "memo": None},
+        _named({"amount": 100, "label": "a", "memo": None}),
         replaces=True,
     )
     assert _kinds(
@@ -605,7 +626,7 @@ def test_a_replacements_complete_state_is_compared_by_its_declared_values() -> N
     ) == [PlannedTemporalGuard]
     relabelled = NO_TRANSFORM.followed_by(
         TimeInterval(_MAR, _SEP),
-        {"amount": 100, "label": "b", "memo": None},
+        _named({"amount": 100, "label": "b", "memo": None}),
         replaces=True,
     )
     assert _kinds(
@@ -646,7 +667,11 @@ _STORED_MARKS = PredecessorRow(
 def test_a_collection_assignment_keeps_a_rectangle_only_holding_its_elements_in_order(
     marks: object, kept: bool
 ) -> None:
-    transform = _assigning(TimeInterval(_MAR, _SEP), {"marks": marks})
+    transform = NO_TRANSFORM.followed_by(
+        TimeInterval(_MAR, _SEP),
+        projected_row(_TAG_SPAN_FACTS.selection, {"marks": marks}),
+        replaces=False,
+    )
     expanded = _expand(
         _expansion(_TAG_SPAN_FACTS, transform, guards=True), _TAG_SPAN_FACTS, _STORED_MARKS
     )
@@ -1007,9 +1032,8 @@ class _Rekeying:
     def finalize_row(self, write_row: WriteRow, /) -> WriteRow:
         row = write_row.row
         identity = _SPAN_FACTS.view.primary_key.identity
-        attributes = {**row.attributes, identity: self._key}
         return replace(
-            write_row, row=PlannedRow(attributes=attributes, value_objects=row.value_objects)
+            write_row, row=row.with_cell(row.selection.members.index[identity], self._key)
         )
 
     def decorate_close(self, close: PlannedClose, /) -> PlannedClose:
@@ -1063,8 +1087,7 @@ def test_a_successor_opens_at_the_key_finalization_left_it_rather_than_its_prede
 def test_an_opening_stamps_its_coverage_and_a_fresh_transaction_time_on_authored_state(
     facts: TemporalFacts, window: TimeInterval | None, expected: Mapping[str, object]
 ) -> None:
-    key = facts.view.primary_key.identity
-    entry = opening(facts, {key: 7}, {}, window)
+    entry = opening(facts, projected_row(facts.selection, {"id": 7}), window)
     assert entry.origin is NEW_LINEAGE
     cells = {identity.name: value for identity, value in entry.row.attributes.items()}
     assert cells == {"id": 7, **expected, "txStart": _NOW, "txEnd": INFINITY}
@@ -1078,14 +1101,8 @@ def test_a_pending_insertion_opens_only_the_parts_of_its_window_that_survive(
     transform = _assigning(TimeInterval(_MAR, _JUN), {"amount": 300}).followed_by(
         TimeInterval(_SEP, INFINITY), None, replaces=False
     )
-    key = _SPAN_FACTS.view.primary_key.identity
-    amount = next(
-        attribute.identity
-        for attribute in _SPAN_FACTS.view.member_selection.attributes
-        if attribute.identity.name == "amount"
-    )
     settled = _expansion(_SPAN_FACTS, transform).settle(
-        (), lineage=(({key: 1, amount: 100}, {}), window)
+        (), lineage=(_named({"id": 1, "amount": 100}), window)
     )
     inserts = settled.steps
     assert _windows(inserts) == [(_JAN, _MAR, 100), (_MAR, _JUN, 300), (_JUN, _SEP, 100)]
@@ -1095,7 +1112,7 @@ def test_a_pending_insertion_opens_only_the_parts_of_its_window_that_survive(
 
 
 def test_a_replacement_gap_opens_its_complete_state_at_the_ranges_key() -> None:
-    gap = CoverageGap(TimeInterval(_MAR, _JUN), {"amount": 300, "label": "b", "memo": None})
+    gap = CoverageGap(TimeInterval(_MAR, _JUN), _named({"amount": 300, "label": "b", "memo": None}))
     settled = _expansion(_SPAN_FACTS, NO_TRANSFORM).settle((), gaps=(gap,))
     (insert,) = settled.steps
     assert isinstance(insert, PlannedInsert)

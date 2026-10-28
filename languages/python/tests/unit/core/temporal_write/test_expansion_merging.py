@@ -22,7 +22,6 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     Metamodel,
-    ValueObjectIdentity,
 )
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform
@@ -36,6 +35,7 @@ from parallax.core.wire._json import loads
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import ObjectKey, PredecessorRow
 from parallax.core.write_plan.keys import TemporalObjectStateKey
+from parallax.core.write_plan.managed_row import ManagedRow, projected_row
 from parallax.core.write_plan.payload import RowPayload
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
@@ -57,9 +57,9 @@ from parallax.core.write_plan.steps import (
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
     WriteRow,
-    adopt_planned_row,
 )
 from tests._support.clock_probes import inert_instant
+from tests._support.managed_rows import managed_row_of, row_selection_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
@@ -82,7 +82,18 @@ def _facts(meta: Metamodel) -> TemporalFacts:
     shape = temporal_read.view(meta).shape(_SPAN)
     assert metadata is not None and view is not None
     assert isinstance(shape, temporal_read.Bitemporal)
-    return TemporalFacts(entity=metadata, view=view, shape=shape, instant=_NOW)
+    return TemporalFacts(
+        entity=metadata,
+        view=view,
+        shape=shape,
+        instant=_NOW,
+        selection=row_selection_of(meta, _SPAN),
+    )
+
+
+def _named(meta: Metamodel, members: Mapping[str, object]) -> ManagedRow:
+    """``members``, by declared name, as a row of ``meta``'s span."""
+    return projected_row(row_selection_of(meta, _SPAN), members)
 
 
 @dataclass
@@ -201,9 +212,13 @@ def _state(facts: TemporalFacts, predecessor: PredecessorRow) -> TemporalObjectS
 
 
 def _amending(
-    window: TimeInterval, assigned: Mapping[str, object], *, replaces: bool = False
+    meta: Metamodel,
+    window: TimeInterval,
+    assigned: Mapping[str, object],
+    *,
+    replaces: bool = False,
 ) -> CoverageTransform:
-    return NO_TRANSFORM.followed_by(window, assigned, replaces=replaces)
+    return NO_TRANSFORM.followed_by(window, _named(meta, assigned), replaces=replaces)
 
 
 def _windows(steps: Iterable[PlannedStep]) -> list[tuple[object, object, object, object]]:
@@ -234,7 +249,10 @@ def _endpoint(end: object) -> TemporalRowCoordinates:
 def test_equal_changed_parts_of_two_originals_open_as_one_row(meta: Metamodel) -> None:
     first, second = _span(meta, _JAN, _APR, 100), _span(meta, _APR, _JUL, 200)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150})), meta, first, second
+        _expansion(meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150})),
+        meta,
+        first,
+        second,
     )
     # Both originals are closed under their own gates before anything opens.
     closes = [step for step in settled.steps if isinstance(step, PlannedClose)]
@@ -256,7 +274,10 @@ def test_parts_differing_in_a_member_the_amendment_does_not_assign_stay_apart(
 ) -> None:
     first, second = _span(meta, _JAN, _APR, 100, "A"), _span(meta, _APR, _JUL, 200, "B")
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150})), meta, first, second
+        _expansion(meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150})),
+        meta,
+        first,
+        second,
     )
     assert _windows(settled.steps) == [
         (_JAN, _FEB, 100, "A"),
@@ -270,7 +291,7 @@ def test_parts_differing_in_a_member_the_amendment_does_not_assign_stay_apart(
 def test_a_uniform_replacement_opens_its_extent_as_one_row(meta: Metamodel) -> None:
     first, second = _span(meta, _JAN, _APR, 100, "A"), _span(meta, _APR, _JUL, 200, "B")
     replacing = _amending(
-        TimeInterval(_FEB, _JUN), {"amount": 150, "label": "R", "memo": None}, replaces=True
+        meta, TimeInterval(_FEB, _JUN), {"amount": 150, "label": "R", "memo": None}, replaces=True
     )
     settled = _settle(_expansion(meta, replacing), meta, first, second)
     assert _windows(settled.steps) == [
@@ -286,7 +307,9 @@ def test_unknown_content_outside_the_replaced_members_keeps_the_parts_apart() ->
     second = _span(meta, _APR, _JUL, 200, document='{"amount": 200, "label": "a", "ledger": 2}')
     payloads = _CountingPayloads(LayoutPayloadPreparer(meta))
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), payloads=payloads),
+        _expansion(
+            meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150}), payloads=payloads
+        ),
         meta,
         first,
         second,
@@ -327,7 +350,10 @@ def test_stored_document_content_decides_whether_parts_merge(
     first = _span(meta, _JAN, _APR, 100, document=f'{{"amount": 100, "label": "a", "u": {left}}}')
     second = _span(meta, _APR, _JUL, 200, document=f'{{"amount": 200, "label": "a", "u": {right}}}')
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150})), meta, first, second
+        _expansion(meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150})),
+        meta,
+        first,
+        second,
     )
     changed = [window for window in _windows(settled.steps) if window[2] == 150]
     assert changed == (
@@ -341,7 +367,7 @@ def test_a_cheap_difference_on_one_side_leaves_the_other_side_to_merge(meta: Met
     first, second = _span(meta, _JAN, _APR, 100), _span(meta, _APR, _JUL, 200)
     settled = _settle(
         _expansion(
-            meta, _amending(TimeInterval(_FEB, INFINITY), {"amount": 150}), payloads=payloads
+            meta, _amending(meta, TimeInterval(_FEB, INFINITY), {"amount": 150}), payloads=payloads
         ),
         meta,
         first,
@@ -362,7 +388,10 @@ def test_a_cheap_difference_on_one_side_leaves_the_other_side_to_merge(meta: Met
 def test_nothing_merges_across_a_gap_an_amendment_leaves(meta: Metamodel) -> None:
     first, second = _span(meta, _JAN, _MAR, 100), _span(meta, _APR, _JUL, 200)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150})), meta, first, second
+        _expansion(meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150})),
+        meta,
+        first,
+        second,
     )
     assert _windows(settled.steps) == [
         (_JAN, _FEB, 100, "a"),
@@ -379,7 +408,10 @@ def test_a_kept_neighbour_is_no_part_of_a_merge(meta: Metamodel) -> None:
     # kept milestone is not a row this write produced.
     kept, changed = _span(meta, _JAN, _MAR, 150), _span(meta, _MAR, _JUN, 100)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_JAN, _JUN), {"amount": 150})), meta, kept, changed
+        _expansion(meta, _amending(meta, TimeInterval(_JAN, _JUN), {"amount": 150})),
+        meta,
+        kept,
+        changed,
     )
     assert _kinds(settled.steps) == [PlannedTemporalGuard, PlannedClose, PlannedInsert]
     assert _windows(settled.steps) == [(_MAR, _JUN, 150, "a")]
@@ -402,11 +434,11 @@ class _StampingAudit:
     def finalize_row(self, write_row: WriteRow, /) -> WriteRow:
         self.rows += 1
         row = write_row.row
-        start = row.attributes[self.start]
+        start = row.cell(self.start)
         assert isinstance(start, dt.datetime)  # every produced Bitemporal row has a start
         value = self.stamp(start)
         return WriteRow(
-            row=adopt_planned_row({**row.attributes, self.label: value}, row.value_objects),
+            row=row.with_cell(row.selection.members.index[self.label], value),
             origin=write_row.origin,
             executed=(*write_row.executed, self.label)
             if self.label not in write_row.executed
@@ -445,7 +477,7 @@ def test_final_audit_values_take_part_in_the_comparison(meta: Metamodel, equal: 
     )
     first, second = _span(meta, _JAN, _APR, 100), _span(meta, _APR, _JUL, 200)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), audit=audit),
+        _expansion(meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150}), audit=audit),
         meta,
         first,
         second,
@@ -471,11 +503,10 @@ class _TransactionTimeAudit:
 
     def finalize_row(self, write_row: WriteRow, /) -> WriteRow:
         row = write_row.row
-        if row.attributes[self.valid_start] != _APR:
+        if row.cell(self.valid_start) != _APR:
             return write_row
         return replace(
-            write_row,
-            row=adopt_planned_row({**row.attributes, self.start: self.moved}, row.value_objects),
+            write_row, row=row.with_cell(row.selection.members.index[self.start], self.moved)
         )
 
     def decorate_close(self, close: PlannedClose, /) -> PlannedClose:
@@ -487,7 +518,7 @@ def test_unequal_transaction_time_bounds_never_merge(meta: Metamodel) -> None:
     audit = _TransactionTimeAudit(_identity(meta, "txStart"), _identity(meta, "validStart"), _T1)
     first, second = _span(meta, _JAN, _APR, 100), _span(meta, _APR, _JUL, 200)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), audit=audit),
+        _expansion(meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150}), audit=audit),
         meta,
         first,
         second,
@@ -507,7 +538,9 @@ def test_the_owned_row_ending_a_merged_run_is_revised_into_it_and_the_other_remo
     first = _span(meta, _FEB, _APR, 100, tx_start=_NOW)
     second = _span(meta, _APR, _JUN, 200, tx_start=_NOW)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), ownership=owned),
+        _expansion(
+            meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150}), ownership=owned
+        ),
         meta,
         first,
         second,
@@ -536,7 +569,9 @@ def test_an_owned_row_merged_with_a_later_stored_rows_part_is_removed_and_the_ru
     first = _span(meta, _FEB, _APR, 100, tx_start=_NOW)
     second = _span(meta, _APR, _JUL, 200)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), ownership=owned),
+        _expansion(
+            meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150}), ownership=owned
+        ),
         meta,
         first,
         second,
@@ -566,8 +601,8 @@ def test_a_revision_runs_after_the_row_its_merged_run_absorbs_is_closed_or_remov
     neighbour = _span(meta, _FEB, _APR, 100, tx_start=_NOW if neighbour_owned else _T0)
     revised = _span(meta, _APR, INFINITY, 200, tx_start=_NOW)
     opened = {_endpoint(INFINITY), *((_endpoint(_APR),) if neighbour_owned else ())}
-    transform = _amending(TimeInterval(_APR, INFINITY), {"amount": 150}).followed_by(
-        TimeInterval(_FEB, _APR), {"amount": 150}, replaces=False
+    transform = _amending(meta, TimeInterval(_APR, INFINITY), {"amount": 150}).followed_by(
+        TimeInterval(_FEB, _APR), _named(meta, {"amount": 150}), replaces=False
     )
     stated = [(revised, TimeInterval(_APR, INFINITY)), (neighbour, TimeInterval(_FEB, _APR))]
     if not owned_first:
@@ -694,7 +729,9 @@ def test_no_statement_of_an_object_leaves_two_current_rows_overlapping(
         for windows in _write_windows():
             transform = NO_TRANSFORM
             for window in windows:
-                transform = transform.followed_by(window, assigned, replaces=replaces)
+                transform = transform.followed_by(
+                    window, _named(_COLUMNS, assigned), replaces=replaces
+                )
             gaps = transform.gaps(coverage) if replaces else ()
             for order in (predecessors, predecessors[::-1]):
                 settled = _expansion(_COLUMNS, transform, gated=gated, ownership=ownership).settle(
@@ -712,7 +749,9 @@ def test_each_predecessor_derives_only_its_own_part_of_a_merged_row(meta: Metamo
     first, second = _span(meta, _JAN, _APR, 100), _span(meta, _APR, _JUL, 200)
     settled = _settle(
         _expansion(
-            meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), demanded=(first, second)
+            meta,
+            _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150}),
+            demanded=(first, second),
         ),
         meta,
         first,
@@ -743,7 +782,9 @@ def test_a_merged_row_one_demanded_predecessor_reaches_is_described_whole(
 ) -> None:
     first, second = _span(meta, _JAN, _APR, 100), _span(meta, _APR, _JUL, 200)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), demanded=(second,)),
+        _expansion(
+            meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150}), demanded=(second,)
+        ),
         meta,
         first,
         second,
@@ -769,12 +810,9 @@ def test_a_pending_insertion_continues_only_into_its_own_part_of_a_merged_row(
         _identity(meta, "amount"): 100,
         _identity(meta, "label"): "a",
     }
-    seed: tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]] = (
-        attributes,
-        {},
-    )
+    seed = managed_row_of(meta, attributes)
     replacing = _amending(
-        TimeInterval(_JAN, _JUN), {"amount": 300, "label": "r", "memo": None}, replaces=True
+        meta, TimeInterval(_JAN, _JUN), {"amount": 300, "label": "r", "memo": None}, replaces=True
     )
     stored = _span(meta, _MAY, _JUL, 200, "b")
     expansion = _expansion(meta, replacing)
@@ -805,7 +843,7 @@ def test_a_merged_row_an_insertion_contributed_part_of_is_shared_over_that_part(
 ) -> None:
     facts = _facts(meta)
     replacing = _amending(
-        TimeInterval(_JAN, _JUN), {"amount": 300, "label": "r", "memo": None}, replaces=True
+        meta, TimeInterval(_JAN, _JUN), {"amount": 300, "label": "r", "memo": None}, replaces=True
     )
     # The insertion's own row, flushed and tagged, and a later stored row.
     inserted = _span(meta, _JAN, _APR, 100, tx_start=_NOW)
@@ -845,7 +883,7 @@ def test_the_merged_rows_statements_store_the_addresses_its_effects_name(
     settled = _settle(
         _expansion(
             meta,
-            _amending(TimeInterval(_FEB, _JUN), {"amount": 150}),
+            _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150}),
             ownership=owned,
             payloads=payloads,
         ),
@@ -882,7 +920,9 @@ def test_a_row_revised_in_place_takes_the_parts_of_an_insertion_its_new_extent_k
     )
     row = _span(meta, _JAN, _JUN, 100, tx_start=_NOW)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_FEB, _JUN), {"amount": 150}), ownership=ownership),
+        _expansion(
+            meta, _amending(meta, TimeInterval(_FEB, _JUN), {"amount": 150}), ownership=ownership
+        ),
         meta,
         row,
     )
@@ -900,7 +940,9 @@ def test_a_row_revised_whole_keeps_the_parts_of_an_insertion_it_holds(meta: Meta
     )
     row = _span(meta, _JAN, _JUN, 100, tx_start=_NOW)
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_JAN, _JUN), {"amount": 150}), ownership=ownership),
+        _expansion(
+            meta, _amending(meta, TimeInterval(_JAN, _JUN), {"amount": 150}), ownership=ownership
+        ),
         meta,
         row,
     )
@@ -918,7 +960,9 @@ def test_rows_revised_apart_each_keep_their_own_parts_of_an_insertion(meta: Meta
         insertion_parts=(TimeInterval(_JAN, _FEB), TimeInterval(_MAY, _JUN)),
     )
     settled = _settle(
-        _expansion(meta, _amending(TimeInterval(_JAN, _JUL), {"amount": 150}), ownership=ownership),
+        _expansion(
+            meta, _amending(meta, TimeInterval(_JAN, _JUL), {"amount": 150}), ownership=ownership
+        ),
         meta,
         _span(meta, _JAN, _APR, 100, "a", tx_start=_NOW),
         _span(meta, _APR, _JUL, 200, "b", tx_start=_NOW),
@@ -935,12 +979,11 @@ def test_a_predecessor_derives_its_own_part_of_a_row_merged_with_an_insertions(
     meta: Metamodel,
 ) -> None:
     facts = _facts(meta)
-    seed: tuple[dict[AttributeIdentity, object], dict[ValueObjectIdentity, object]] = (
-        {facts.view.primary_key.identity: 1, _identity(meta, "amount"): 100},
-        {},
+    seed = managed_row_of(
+        meta, {facts.view.primary_key.identity: 1, _identity(meta, "amount"): 100}
     )
     replacing = _amending(
-        TimeInterval(_JAN, _JUN), {"amount": 300, "label": "r", "memo": None}, replaces=True
+        meta, TimeInterval(_JAN, _JUN), {"amount": 300, "label": "r", "memo": None}, replaces=True
     )
     stored = _span(meta, _APR, _JUL, 200, "b")
     settled = _expansion(meta, replacing, demanded=(stored,)).settle(
@@ -959,7 +1002,9 @@ def test_a_guarded_unchanged_predecessor_derives_nothing(meta: Metamodel) -> Non
     kept, changed = _span(meta, _JAN, _MAR, 150), _span(meta, _MAR, _JUN, 100)
     settled = _settle(
         _expansion(
-            meta, _amending(TimeInterval(_JAN, _JUN), {"amount": 150}), demanded=(kept, changed)
+            meta,
+            _amending(meta, TimeInterval(_JAN, _JUN), {"amount": 150}),
+            demanded=(kept, changed),
         ),
         meta,
         kept,

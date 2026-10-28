@@ -38,6 +38,7 @@ from parallax.core.write_plan import (
     PlannedClose,
     PlannedInsert,
 )
+from parallax.core.write_plan.managed_row import ManagedRow, empty_row
 from parallax.core.write_plan.steps import (
     ANY_COUNT,
     INFINITY,
@@ -56,7 +57,6 @@ from parallax.core.write_plan.steps import (
     NonTemporalConcurrency,
     PlannedAssignments,
     PlannedDelete,
-    PlannedRow,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
     PlannedTemporalRevision,
@@ -71,9 +71,9 @@ from parallax.core.write_plan.steps import (
     WriteRow,
     WriteTarget,
     adopt_planned_assignments,
-    adopt_planned_row,
     shortfall_for,
 )
+from tests._support.managed_rows import managed_row_of, row_selection_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -89,7 +89,18 @@ _TWO_KEYS = KeyTarget(key_attributes=(_ID,), key_values=((1,), (2,)))
 _BALANCE_SET = PlannedAssignments(attributes={_OWNER: "Ada"})
 
 
-def _entry(row: PlannedRow) -> WriteRow:
+_CUSTOMER_MODEL = corpus_model("customer")
+_CUSTOMER = entity_of(_CUSTOMER_MODEL, "Customer").identity
+_CUSTOMER_ID = AttributeIdentity(_CUSTOMER, "id")
+_CUSTOMER_NAME = AttributeIdentity(_CUSTOMER, "name")
+_CUSTOMER_ADDRESS = ValueObjectIdentity(_CUSTOMER, ("address",))
+
+
+def _row(attributes: dict[AttributeIdentity, object]) -> ManagedRow:
+    return managed_row_of(_ACCOUNT_MODEL, attributes)
+
+
+def _entry(row: ManagedRow) -> WriteRow:
     return WriteRow(row=row, origin=NEW_LINEAGE)
 
 
@@ -106,26 +117,14 @@ def _delete(
     )
 
 
-def test_a_planned_row_freezes_the_mapping_it_was_built_from() -> None:
-    source: dict[AttributeIdentity, object] = {_ID: 1}
-    row = PlannedRow(attributes=source)
-    source[_OWNER] = "Ada"
-    assert dict(row.attributes) == {_ID: 1}
-
-
-def test_a_planned_row_carrying_no_member_is_refused() -> None:
+def test_a_write_row_carrying_no_member_is_refused() -> None:
     with pytest.raises(ValueError, match="at least one member"):
-        PlannedRow(attributes={})
+        WriteRow(row=empty_row(row_selection_of(_ACCOUNT_MODEL, _ACCOUNT)), origin=NEW_LINEAGE)
 
 
-def test_a_planned_row_carrying_only_a_value_object_is_a_member() -> None:
-    row = PlannedRow(attributes={}, value_objects={_ADDRESS: {"city": "Oslo"}})
-    assert row.members == frozenset({_ADDRESS})
-
-
-def test_row_members_span_both_scalar_and_value_object_identities() -> None:
-    row = PlannedRow(attributes={_ID: 1}, value_objects={_ADDRESS: {"city": "Oslo"}})
-    assert row.members == frozenset({_ID, _ADDRESS})
+def test_a_write_row_carrying_only_a_value_object_states_a_member() -> None:
+    row = managed_row_of(_CUSTOMER_MODEL, {}, {_CUSTOMER_ADDRESS: {"city": "Oslo"}})
+    assert _entry(row).row.value_objects.keys() == {_CUSTOMER_ADDRESS}
 
 
 def test_a_planned_insert_with_no_entries_is_refused() -> None:
@@ -141,8 +140,8 @@ def test_entries_of_one_planned_insert_name_the_same_members() -> None:
         PlannedInsert(
             entity=_ACCOUNT,
             entries=(
-                _entry(PlannedRow(attributes={_ID: 1, _OWNER: "Ada"})),
-                _entry(PlannedRow(attributes={_ID: 2})),
+                _entry(_row({_ID: 1, _OWNER: "Ada"})),
+                _entry(_row({_ID: 2})),
             ),
         )
 
@@ -154,8 +153,8 @@ def test_entries_of_one_planned_insert_share_one_generated_value_shape() -> None
         PlannedInsert(
             entity=_ACCOUNT,
             entries=(
-                _entry(PlannedRow(attributes={_ID: MAX_PLUS_ONE, _OWNER: "Ada"})),
-                _entry(PlannedRow(attributes={_ID: 2, _OWNER: "Bo"})),
+                _entry(_row({_ID: MAX_PLUS_ONE, _OWNER: "Ada"})),
+                _entry(_row({_ID: 2, _OWNER: "Bo"})),
             ),
         )
 
@@ -164,8 +163,8 @@ def test_compatible_entries_form_one_planned_insert() -> None:
     step = PlannedInsert(
         entity=_ACCOUNT,
         entries=(
-            _entry(PlannedRow(attributes={_ID: 1, _OWNER: "Ada"})),
-            _entry(PlannedRow(attributes={_ID: 2, _OWNER: "Bo"})),
+            _entry(_row({_ID: 1, _OWNER: "Ada"})),
+            _entry(_row({_ID: 2, _OWNER: "Bo"})),
         ),
     )
     assert [entry.origin for entry in step.entries] == [NEW_LINEAGE, NEW_LINEAGE]
@@ -174,9 +173,9 @@ def test_compatible_entries_form_one_planned_insert() -> None:
 def test_planned_writes_compare_by_value() -> None:
     # Views are immutable and stable but carry no object-identity promise, so
     # every consumer compares them structurally.
-    row = PlannedRow(attributes={_ID: 1})
+    row = _row({_ID: 1})
     assert PlannedInsert(entity=_ACCOUNT, entries=(_entry(row),)) == PlannedInsert(
-        entity=_ACCOUNT, entries=(_entry(PlannedRow(attributes={_ID: 1})),)
+        entity=_ACCOUNT, entries=(_entry(_row({_ID: 1})),)
     )
 
 
@@ -188,8 +187,8 @@ def test_planned_assignments_naming_no_member_are_refused() -> None:
 def test_a_planned_row_refuses_the_generated_value_no_insert_can_express() -> None:
     # The registry advance reads the stored row it is rewriting; an insert has no
     # stored row, so the combination names an allocation nothing could render.
-    with pytest.raises(ValueError, match="never a Planned Row cell"):
-        PlannedRow(attributes={_ID: SelfIncrement(amount=1)})
+    with pytest.raises(ValueError, match="never a Write Row cell"):
+        PlannedInsert(entity=_ACCOUNT, entries=(_entry(_row({_ID: SelfIncrement(amount=1)})),))
 
 
 def test_planned_assignments_refuse_the_generated_value_no_update_can_express() -> None:
@@ -200,7 +199,8 @@ def test_planned_assignments_refuse_the_generated_value_no_update_can_express() 
 
 
 def test_each_generated_value_is_constructible_at_its_own_statement_position() -> None:
-    assert PlannedRow(attributes={_ID: MAX_PLUS_ONE}).attributes[_ID] == MAX_PLUS_ONE
+    opened = PlannedInsert(entity=_ACCOUNT, entries=(_entry(_row({_ID: MAX_PLUS_ONE})),))
+    assert opened.entries[0].row.cell(_ID) == MAX_PLUS_ONE
     advance = SelfIncrement(amount=1)
     assert PlannedAssignments(attributes={_ID: advance}).attributes[_ID] == advance
 
@@ -580,15 +580,14 @@ def test_an_incomplete_milestone_address_is_refused(kwargs: dict[str, object], m
 
 def test_trusted_carrier_adoption_rejects_invalid_storage() -> None:
     with pytest.raises(TypeError, match="final dict or mapping proxy"):
-        adopt_planned_row(cast("Any", FrozenMap({})), {})
+        adopt_planned_assignments(cast("Any", FrozenMap({})), {})
 
 
 def test_trusted_carriers_adopting_empty_storage_share_one_immutable_empty_map() -> None:
-    first = adopt_planned_row({_ID: 1}, {})
-    second = adopt_planned_row({_ID: 2}, {})
-    assigned = adopt_planned_assignments({_OWNER: "Ada"}, {})
+    first = adopt_planned_assignments({_ID: 1}, {})
+    second = adopt_planned_assignments({_OWNER: "Ada"}, {})
 
-    assert first.value_objects is second.value_objects is assigned.value_objects
+    assert first.value_objects is second.value_objects
     assert dict(first.value_objects) == {}
     with pytest.raises(TypeError):
         cast("dict[object, object]", first.value_objects)[_ADDRESS] = {"city": "Oslo"}
@@ -608,13 +607,17 @@ def test_directly_constructed_assignments_freeze_the_mappings_they_were_built_fr
 # Write Rows state their executed assignments as the values they hold.         #
 # --------------------------------------------------------------------------- #
 def test_a_write_row_executes_only_members_it_holds() -> None:
-    row = PlannedRow(
-        attributes={_ID: 1, _OWNER: "Ada"}, value_objects={_ADDRESS: FrozenMap({"city": "Oslo"})}
+    row = managed_row_of(
+        _CUSTOMER_MODEL,
+        {_CUSTOMER_ID: 1, _CUSTOMER_NAME: "Ada"},
+        {_CUSTOMER_ADDRESS: FrozenMap({"city": "Oslo"})},
     )
-    stated = WriteRow(row=row, origin=NEW_LINEAGE, executed=(_OWNER, _ADDRESS))
+    stated = WriteRow(row=row, origin=NEW_LINEAGE, executed=(_CUSTOMER_NAME, _CUSTOMER_ADDRESS))
 
-    assert stated == WriteRow(row=row, origin=NEW_LINEAGE, executed=(_OWNER, _ADDRESS))
+    assert stated == WriteRow(
+        row=row, origin=NEW_LINEAGE, executed=(_CUSTOMER_NAME, _CUSTOMER_ADDRESS)
+    )
     assert stated != WriteRow(row=row, origin=NEW_LINEAGE)
-    for absent in (_VERSION, ValueObjectIdentity(_ACCOUNT, ("billing",))):
+    for absent in (_VERSION, ValueObjectIdentity(_CUSTOMER, ("billing",))):
         with pytest.raises(ValueError, match="an executed member is one its Write Row holds"):
             WriteRow(row=row, origin=NEW_LINEAGE, executed=(absent,))

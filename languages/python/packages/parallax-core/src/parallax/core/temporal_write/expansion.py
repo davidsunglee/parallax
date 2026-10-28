@@ -24,6 +24,13 @@ from parallax.core.temporal_write.coverage import (
     Successor,
 )
 from parallax.core.write_plan.keys import ObjectStateKey
+from parallax.core.write_plan.managed_row import (
+    ManagedRow,
+    RowSelection,
+    managed_row,
+    named_members,
+    predecessor_state,
+)
 from parallax.core.write_plan.observe import AssignedComparison, PredecessorRow
 from parallax.core.write_plan.payload import RowPayload, WritePayloadPreparer
 from parallax.core.write_plan.plan import (
@@ -37,9 +44,7 @@ from parallax.core.write_plan.plan import (
     TemporalRowCoordinates,
     TemporalWriteOwnership,
 )
-from parallax.core.write_plan.planned_rows import (
-    resolve_row,
-)
+from parallax.core.write_plan.planned_rows import planned_cells
 from parallax.core.write_plan.steps import (
     FAILED_PRECONDITION,
     NEW_LINEAGE,
@@ -68,7 +73,6 @@ from parallax.core.write_plan.steps import (
     TemporalUpperBound,
     WriteRow,
     adopt_planned_assignments,
-    adopt_planned_row,
     shortfall_classification,
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_UPPER_BOUND
@@ -90,15 +94,6 @@ type ExpansionRole = Literal["coverage", "starting", "validation"]
 transform applies to, as coverage a caller's starting condition names, or as an
 earlier observation it only validates and retires."""
 
-type _ResolvedState = tuple[
-    dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]
-]
-
-type _Overlay = tuple[
-    Mapping[AttributeIdentity, PlannedValue], Mapping[ValueObjectIdentity, object]
-]
-"""Resolved assigned members a produced row overlays on its starting state."""
-
 
 class RowAudit(Protocol):
     """How a temporal write's audit finalizes each row it produces and stamps
@@ -113,7 +108,8 @@ class RowAudit(Protocol):
 class TemporalFacts:
     """What one temporal write settles about its target before any predecessor
     is in hand: the target, its compiled family-effective view, the Temporal
-    Shape whose axes bound its intervals, and the attempt's resolved instant.
+    Shape whose axes bound its intervals, the attempt's resolved instant, and
+    the row selection every row it produces is of.
 
     Every field is a value a facet or the clock produced, never the producer,
     so a deferred range may retain them and still decide nothing later.
@@ -123,6 +119,7 @@ class TemporalFacts:
     view: InheritanceEntityView
     shape: TransactionTimeOnly | Bitemporal
     instant: dt.datetime
+    selection: RowSelection
 
 
 _NOTHING: Final[BoundRange] = BoundRange(steps=())
@@ -155,9 +152,9 @@ class PredecessorExpander:
 
     Every predecessor is settled by one decision (:func:`_disposition`) and
     realized by one construction of its own step (:func:`_own_step`) and its
-    successors (:func:`_represented`). Each canonical assignment mapping is
-    resolved, and its comparison with stored values prepared, once per expansion
-    however many predecessors and gaps share it. Nothing returned retains the expansion
+    successors (:func:`_represented`). Each assignment row is planned, and its
+    comparison with stored values prepared, once per expansion however many
+    predecessors and gaps share it. Nothing returned retains the expansion
     or the ownership it read.
     """
 
@@ -216,8 +213,8 @@ class PredecessorExpander:
         self._ownership = ownership
         self._audit = audit
         self._payloads = payloads
-        self._resolved: list[tuple[Mapping[str, object], _ResolvedState, ExecutedMembers]] = []
-        self._comparisons: list[tuple[Mapping[str, object], AssignedComparison]] = []
+        self._resolved: list[tuple[ManagedRow, ManagedRow, ExecutedMembers]] = []
+        self._comparisons: list[tuple[ManagedRow, AssignedComparison]] = []
 
     def expand(
         self,
@@ -295,23 +292,25 @@ class PredecessorExpander:
             for successor in successors
         )
 
-    def _comparison(self, assigned: Mapping[str, object]) -> AssignedComparison:
-        for mapping, comparison in self._comparisons:
-            if mapping is assigned:
+    def _comparison(self, assigned: ManagedRow) -> AssignedComparison:
+        for row, comparison in self._comparisons:
+            if row is assigned:
                 return comparison
-        comparison = AssignedComparison(self._facts.view.member_selection, assigned)
+        comparison = AssignedComparison(self._facts.view.member_selection, named_members(assigned))
         self._comparisons.append((assigned, comparison))
         return comparison
 
-    def _resolution(self, assigned: Mapping[str, object]) -> tuple[_ResolvedState, ExecutedMembers]:
-        for mapping, maps, executed in self._resolved:
-            if mapping is assigned:
-                return maps, executed
-        facts = self._facts
-        maps = resolve_row(facts.entity, facts.view, assigned, context="insert")
-        executed = _in_member_order(facts, (*maps[0], *maps[1]))
-        self._resolved.append((assigned, maps, executed))
-        return maps, executed
+    def _resolution(self, assigned: ManagedRow) -> tuple[ManagedRow, ExecutedMembers]:
+        for row, planned, executed in self._resolved:
+            if row is assigned:
+                return planned, executed
+        planned = planned_cells(self._facts.entity, assigned, "insert")
+        identities = planned.selection.members.identities
+        executed = cast(
+            "ExecutedMembers", tuple(identities[position] for position in planned.positions())
+        )
+        self._resolved.append((assigned, planned, executed))
+        return planned, executed
 
     def _candidate(self, predecessor: PredecessorRow, successor: Successor) -> WriteRow:
         """``successor`` of ``predecessor`` as the finalized row it produces."""
@@ -324,32 +323,23 @@ class PredecessorExpander:
         if assigned is None:
             row = _successor_row(self._facts, predecessor, start, end)
         else:
-            maps, executed = self._resolution(assigned)
+            planned, executed = self._resolution(assigned)
             row = _successor_row(
-                self._facts, predecessor, start, end, assigned=maps, executed=executed
+                self._facts, predecessor, start, end, assigned=planned, executed=executed
             )
         return self._audit.finalize_row(row)
 
     def _new_lineage(
         self,
-        seed: _ResolvedState,
+        seed: ManagedRow,
         coverage: TimeInterval | None,
-        assigned: Mapping[str, object] | None,
+        assigned: ManagedRow | None,
     ) -> WriteRow:
-        """A new lineage over ``coverage`` carrying a fresh copy of ``seed``
-        with ``assigned`` overlaid, finalized once."""
+        """A new lineage over ``coverage`` carrying ``seed`` with ``assigned``
+        overlaid, finalized once."""
         start, end = (None, None) if coverage is None else (coverage.start, coverage.end)
-        return self._audit.finalize_row(
-            _represented(
-                self._facts,
-                dict(seed[0]),
-                dict(seed[1]),
-                start,
-                end,
-                NEW_LINEAGE,
-                assigned=None if assigned is None else self._resolution(assigned)[0],
-            )
-        )
+        state = seed if assigned is None else seed.with_members_of(self._resolution(assigned)[0])
+        return self._audit.finalize_row(_represented(self._facts, state, start, end, NEW_LINEAGE))
 
     def settle(
         self,
@@ -357,7 +347,7 @@ class PredecessorExpander:
             tuple[PredecessorRow, ExpansionRole, ObjectStateKey, TimeInterval | None]
         ],
         *,
-        lineage: tuple[_ResolvedState, TimeInterval] | None = None,
+        lineage: tuple[ManagedRow, TimeInterval] | None = None,
         gaps: Iterable[CoverageGap] = (),
     ) -> BoundRange:
         """One object settled whole: a pending insertion's surviving parts
@@ -415,9 +405,7 @@ class PredecessorExpander:
             window = gap.valid_time_window
             settlement.produce(
                 window,
-                self._new_lineage(
-                    ({self._key_attributes[0]: self._key_values[0]}, {}), window, gap.assigned
-                ),
+                self._new_lineage(self._key_row(), window, gap.assigned),
                 None,
                 kept=False,
                 shares=(),
@@ -671,10 +659,11 @@ class PredecessorExpander:
             return False
         facts = self._facts
         transaction_time = facts.shape.transaction_time
-        before, after = left.row.row.attributes, right.row.row.attributes
-        if (
-            before[transaction_time.start_attribute] != after[transaction_time.start_attribute]
-            or before[transaction_time.end_attribute] != after[transaction_time.end_attribute]
+        before, after = left.row.row, right.row.row
+        if before.cell(transaction_time.start_attribute) != after.cell(
+            transaction_time.start_attribute
+        ) or before.cell(transaction_time.end_attribute) != after.cell(
+            transaction_time.end_attribute
         ):
             return False
         payloads = self._payloads
@@ -689,6 +678,13 @@ class PredecessorExpander:
                 self._facts.entity.identity, candidate.row
             )
         return payload
+
+    def _key_row(self) -> ManagedRow:
+        """The row stating this object's key alone, which a replacement's gap
+        opens its complete state over."""
+        selection = self._facts.selection
+        position = selection.members.index[self._key_attributes[0]]
+        return managed_row(selection, (self._key_values[0],), 1 << position)
 
     def _realize(self, run: list[_Candidate], opened: list[_Opened]) -> _Filed | None:
         """Choose how ``run`` is stored: by the owned predecessor whose own
@@ -995,18 +991,18 @@ def _unmerged_endpoint(
     cells name (:func:`entry_endpoint`)."""
     if record is None:
         return entry_endpoint(facts, row)
-    attributes = row.row.attributes
-    value = attributes.get(facts.view.primary_key.identity)
-    if value is None or isinstance(value, MaxPlusOne):
+    state = row.row
+    value = state.cell(facts.view.primary_key.identity)
+    if value is None or value is state.selection.absent or isinstance(value, MaxPlusOne):
         return None
     own = record.own
     if value != own.key[0]:
         return entry_endpoint(facts, row)
     shape = facts.shape
-    if isinstance(shape, Bitemporal) and attributes[shape.valid_time.end_attribute] != _valid_end(
+    if isinstance(shape, Bitemporal) and state.cell(shape.valid_time.end_attribute) != _valid_end(
         record.coverage
     ):
-        return TemporalRowCoordinates(facts.entity.identity, own.key, entry_ends(facts, attributes))
+        return TemporalRowCoordinates(facts.entity.identity, own.key, entry_ends(facts, state))
     return own
 
 
@@ -1064,11 +1060,11 @@ def _rebound_row(facts: TemporalFacts, write_row: WriteRow, start: object, end: 
     assert isinstance(shape, Bitemporal)  # only Bitemporal rows merge
     row = write_row.row
     valid_time = shape.valid_time
-    attributes = dict(row.attributes)
-    attributes[valid_time.start_attribute] = start
-    attributes[valid_time.end_attribute] = end
+    index = row.selection.members.index
     return WriteRow(
-        row=adopt_planned_row(attributes, row.value_objects),
+        row=row.with_cells(
+            (index[valid_time.start_attribute], index[valid_time.end_attribute]), (start, end)
+        ),
         origin=write_row.origin,
         executed=write_row.executed,
     )
@@ -1225,7 +1221,7 @@ def _successor_row(
     valid_start: object,
     valid_end: object,
     *,
-    assigned: _Overlay | None = None,
+    assigned: ManagedRow | None = None,
     executed: ExecutedMembers = (),
 ) -> WriteRow:
     """One successor of ``predecessor`` over ``[valid_start, valid_end)`` —
@@ -1236,91 +1232,76 @@ def _successor_row(
     overlays every ``assigned`` member, whatever value the predecessor already
     holds there, and states them as its ``executed`` members.
     """
-    attributes, value_objects = predecessor.identity_maps(facts.view.member_selection)
+    state = predecessor_state(facts.selection, predecessor)
+    if assigned is not None:
+        state = state.with_members_of(assigned)
     return _represented(
         facts,
-        attributes,
-        value_objects,
+        state,
         valid_start,
         valid_end,
         CarriedFrom(predecessor=predecessor)
         if assigned is None
         else ChangedFrom(predecessor=predecessor),
-        assigned=assigned,
         executed=executed,
     )
 
 
 def _represented(
     facts: TemporalFacts,
-    attributes: dict[AttributeIdentity, PlannedValue],
-    value_objects: dict[ValueObjectIdentity, object],
+    row: ManagedRow,
     valid_start: object,
     valid_end: object,
     origin: RowOrigin,
     *,
-    assigned: _Overlay | None = None,
     executed: ExecutedMembers = (),
 ) -> WriteRow:
     """The row a write produces over ``[valid_start, valid_end)`` from its
-    starting ``attributes`` and ``value_objects``, which it adopts: a
-    predecessor's cells or a new lineage's authored state, with ``assigned``
-    overlaid and the row stamped as every opened row is."""
-    if assigned is not None:
-        attributes.update(assigned[0])
-        value_objects.update(assigned[1])
-    _stamp(facts, attributes, valid_start, valid_end)
+    represented state ``row`` — a predecessor's cells or a new lineage's
+    authored state, any assignment already overlaid — stamped as every opened
+    row is."""
     return WriteRow(
-        row=adopt_planned_row(attributes, value_objects), origin=origin, executed=executed
+        row=_stamped(facts, row, valid_start, valid_end), origin=origin, executed=executed
     )
-
-
-def _in_member_order(
-    facts: TemporalFacts, members: Iterable[AttributeIdentity | ValueObjectIdentity]
-) -> ExecutedMembers:
-    """``members`` in the Entity's member order, so one assignment set selects
-    one sequence however it was authored."""
-    return tuple(sorted(members, key=facts.view.member_selection.index.__getitem__))
 
 
 def opening(
     facts: TemporalFacts,
-    attributes: dict[AttributeIdentity, PlannedValue],
-    value_objects: dict[ValueObjectIdentity, object],
+    row: ManagedRow,
     valid_time_window: TimeInterval | None,
 ) -> WriteRow:
-    """A new lineage's row: resolved authored ``attributes`` and
-    ``value_objects``, which it adopts, over ``valid_time_window`` — ``None``
-    without Valid Time — stamped as every opened row is."""
+    """A new lineage's row: its planned authored ``row`` over
+    ``valid_time_window`` — ``None`` without Valid Time — stamped as every
+    opened row is."""
     if valid_time_window is None:
-        return _represented(facts, attributes, value_objects, None, None, NEW_LINEAGE)
-    return _represented(
-        facts,
-        attributes,
-        value_objects,
-        valid_time_window.start,
-        valid_time_window.end,
-        NEW_LINEAGE,
-    )
+        return _represented(facts, row, None, None, NEW_LINEAGE)
+    return _represented(facts, row, valid_time_window.start, valid_time_window.end, NEW_LINEAGE)
 
 
-def _stamp(
-    facts: TemporalFacts,
-    attributes: dict[AttributeIdentity, object],
-    valid_start: object,
-    valid_end: object,
-) -> None:
-    """Write an opened row's temporal bounds. Every opened row carries the fresh
-    Transaction-Time interval ``[instant, infinity)``: it is current when it is
-    written, whatever Valid Time it covers."""
+def _stamped(
+    facts: TemporalFacts, row: ManagedRow, valid_start: object, valid_end: object
+) -> ManagedRow:
+    """``row`` with an opened row's temporal bounds. Every opened row carries
+    the fresh Transaction-Time interval ``[instant, infinity)``: it is current
+    when it is written, whatever Valid Time it covers."""
     shape = facts.shape
+    index = row.selection.members.index
+    transaction_time = shape.transaction_time
     if isinstance(shape, Bitemporal):
         valid_time = shape.valid_time
-        attributes[valid_time.start_attribute] = valid_start
-        attributes[valid_time.end_attribute] = valid_end
-    transaction_time = shape.transaction_time
-    attributes[transaction_time.start_attribute] = facts.instant
-    attributes[transaction_time.end_attribute] = INFINITY
+        return row.with_cells(
+            (
+                index[valid_time.start_attribute],
+                index[valid_time.end_attribute],
+                index[transaction_time.start_attribute],
+                index[transaction_time.end_attribute],
+            ),
+            (valid_start, valid_end, facts.instant, INFINITY),
+        )
+    return row.with_cells(
+        (index[transaction_time.start_attribute], index[transaction_time.end_attribute]),
+        (facts.instant, INFINITY),
+    )
 
 
 def _keeping(ends: Iterable[object], end: object) -> int | None:
@@ -1360,10 +1341,10 @@ def _revision_assignments(
         if isinstance(member, ValueObjectIdentity):
             value_objects[member] = row.value_objects[member]
         elif member not in addressed:
-            attributes[member] = row.attributes[member]
+            attributes[member] = row.cell(member)
     if isinstance(shape, Bitemporal):
         valid_start = shape.valid_time.start_attribute
-        moved_to = row.attributes[valid_start]
+        moved_to = row.cell(valid_start)
         if moved_to != predecessor.cell(valid_start):
             attributes[valid_start] = moved_to
     assert attributes or value_objects  # payload construction never reverses the decision
@@ -1376,7 +1357,7 @@ def _revises(facts: TemporalFacts, write_row: WriteRow, predecessor: Predecessor
     shape = facts.shape
     if isinstance(shape, Bitemporal):
         valid_start = shape.valid_time.start_attribute
-        if write_row.row.attributes[valid_start] != predecessor.cell(valid_start):
+        if write_row.row.cell(valid_start) != predecessor.cell(valid_start):
             return True
     addressed = _addressed(facts)
     return any(member not in addressed for member in write_row.executed)
@@ -1411,20 +1392,18 @@ def openings(
 
 
 def entry_endpoint(facts: TemporalFacts, entry: WriteRow) -> TemporalRowCoordinates | None:
-    attributes = entry.row.attributes
-    value = attributes.get(facts.view.primary_key.identity)
+    row = entry.row
+    value = row.cell(facts.view.primary_key.identity)
     # A key the database allocates is named only once its insert answers it.
-    if value is None or isinstance(value, MaxPlusOne):
+    if value is None or value is row.selection.absent or isinstance(value, MaxPlusOne):
         return None
-    return TemporalRowCoordinates(facts.entity.identity, (value,), entry_ends(facts, attributes))
+    return TemporalRowCoordinates(facts.entity.identity, (value,), entry_ends(facts, row))
 
 
-def entry_ends(
-    facts: TemporalFacts, attributes: Mapping[AttributeIdentity, PlannedValue]
-) -> tuple[TemporalUpperBound, ...]:
+def entry_ends(facts: TemporalFacts, row: ManagedRow) -> tuple[TemporalUpperBound, ...]:
     shape = facts.shape
     if isinstance(shape, Bitemporal):
-        return bitemporal_ends(attributes[shape.valid_time.end_attribute])
+        return bitemporal_ends(row.cell(shape.valid_time.end_attribute))
     return TRANSACTION_TIME_ENDS
 
 

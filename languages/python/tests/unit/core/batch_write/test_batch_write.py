@@ -23,7 +23,13 @@ from parallax.core import batch_write
 from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._planning import build_write_planner
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    AttributeMetadata,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+)
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     AdmittedWrite,
@@ -35,6 +41,7 @@ from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
 from tests._support.lowering_probes import lowered_steps
+from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
 from tests.unit._corpus_model_support import formed
 
@@ -290,14 +297,21 @@ def test_one_invalid_insert_refuses_the_whole_candidate_run_before_grouping() ->
 def test_grouping_an_unmappable_row_answers_one_undifferentiated_group() -> None:
     # The grouping key is asked of every collapse candidate, before any lowering
     # decides the row is renderable — so it stays TOTAL where a physical shape
-    # does not exist: an abstract family position owns no table, and a control
-    # key (`m-opt-lock`'s observation signal) names no slot of the view. Both
-    # answer the same absent key, leaving the loud refusal to the builder.
+    # does not exist: an abstract family position owns no table, and a delete
+    # omitting its key addresses nothing. Both answer the same absent key,
+    # leaving the loud refusal to the builder.
     payment_model, payment = _target("payment", "Payment")
-    assert collapse_group_key(payment_model, payment, "insert", {"id": 1}) is None
+    payment_row = managed_row_of(
+        payment_model, {AttributeIdentity(payment.identity, "id"): 1}, entity=payment.identity
+    )
+    assert collapse_group_key(payment_model, payment, "insert", payment_row) is None
     wallet_model, wallet = WALLET
-    row = {"id": 1, "balance": Decimal("5.00"), "observedVersion": 1}
-    assert collapse_group_key(wallet_model, wallet, "amend", row) is None
+    keyless = managed_row_of(
+        wallet_model,
+        {AttributeIdentity(wallet.identity, "balance"): Decimal("5.00")},
+        entity=wallet.identity,
+    )
+    assert collapse_group_key(wallet_model, wallet, "delete", keyless) is None
 
 
 def test_delete_grouping_ignores_members_the_statement_never_uses() -> None:

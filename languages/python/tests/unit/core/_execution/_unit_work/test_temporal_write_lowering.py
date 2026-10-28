@@ -87,7 +87,6 @@ from parallax.core.write_plan.steps import (
     ExactCount,
     Finite,
     NewLineage,
-    PlannedRow,
     PlannedStep,
     PlannedTemporalGuard,
     PlannedTemporalRemoval,
@@ -98,6 +97,7 @@ from parallax.core.write_plan.steps import (
 from parallax.descriptor._records import Metamodel
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
+from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._judged_evidence_support import judged_evidence
@@ -833,13 +833,14 @@ def test_a_generated_key_milestone_insert_binds_managed_infinity_outside_typed_s
     assert isinstance(shape, TransactionTimeOnly)
     opened = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     members = {member.identity.name: member.identity for member in entity.declared_attributes}
-    row = PlannedRow(
-        attributes={
+    row = managed_row_of(
+        model,
+        {
             members["id"]: RETURNED_MAX_PLUS_ONE,
             members["amount"]: 100,
             shape.transaction_time.start_attribute: opened,
             shape.transaction_time.end_attribute: OPEN_BOUND,
-        }
+        },
     )
     step = PlannedInsert(entity=entity.identity, entries=(WriteRow(row=row, origin=NEW_LINEAGE),))
 

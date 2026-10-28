@@ -65,7 +65,8 @@ from parallax.core.write_plan.plan import (
     TemporalRowCoordinates,
 )
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
-from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, MaxPlusOne, PlannedRow, WriteRow
+from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, MaxPlusOne, WriteRow
+from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import source_authority
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
@@ -458,7 +459,7 @@ _VALUE = AttributeIdentity(_KEY.entity, "value")
 def _output(
     coordinates: TemporalRowCoordinates, coverage: TimeInterval, value: str
 ) -> CurrentRowOutput:
-    row = WriteRow(row=PlannedRow(attributes={_VALUE: Decimal(value)}), origin=NEW_LINEAGE)
+    row = WriteRow(row=managed_row_of(_POSITION, {_VALUE: Decimal(value)}), origin=NEW_LINEAGE)
     return CurrentRowOutput(
         coordinates=coordinates, valid_time_coverage=coverage, row=row, emitter=row
     )
@@ -874,7 +875,7 @@ def test_a_row_holding_a_generated_value_is_not_held_however_a_part_reaches_it()
     ownership, _index = _observing(observed)
     whole = _position_endpoint(None)
     generated = WriteRow(
-        row=PlannedRow(attributes={_VALUE: MaxPlusOne()}),
+        row=managed_row_of(_POSITION, {_VALUE: MaxPlusOne()}),
         origin=NEW_LINEAGE,
     )
     ownership.complete(

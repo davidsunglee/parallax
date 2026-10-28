@@ -7,17 +7,18 @@ from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityMetadata,
+    OccurrenceDefinition,
     ValueObjectIdentity,
 )
+from parallax.core.write_plan.managed_row import ManagedRow, managed_row
+from parallax.core.write_plan.observe import occurrence_value
 from parallax.core.write_plan.steps import (
     MAX_PLUS_ONE,
     KeyTarget,
     PlannedAssignments,
-    PlannedRow,
     PlannedValue,
     SelfIncrement,
     adopt_planned_assignments,
-    adopt_planned_row,
 )
 
 __all__ = [
@@ -27,8 +28,8 @@ __all__ = [
     "key_tuple",
     "planned_assignments",
     "planned_cell",
+    "planned_cells",
     "planned_row",
-    "resolve_row",
 ]
 
 # A scalar cell's recognized DB-computed marker kinds
@@ -43,15 +44,14 @@ _MARKER_KEYS: Final[frozenset[str]] = frozenset({"computed", "increment"})
 class WritePlanningError(ValueError):
     """A buffered write cannot be settled into a Planned Step — a caller
     wiring defect the planner refuses loudly rather than settling wrongly
-    (e.g. a row naming a member outside its Entity's family)."""
+    (e.g. an addressed row omitting the key it selects by)."""
 
 
 def planned_row(
     entity: EntityMetadata,
-    view: InheritanceEntityView,
-    row: Mapping[str, object],
+    row: ManagedRow,
     version: tuple[AttributeIdentity, int] | None,
-) -> PlannedRow:
+) -> ManagedRow:
     """One write row as its finalized semantic contents.
 
     A versioned Entity's row derives the INITIAL version at its own Attribute
@@ -60,52 +60,63 @@ def planned_row(
     already resolved is a constant rather than an observation. ``version`` is
     absent for a temporal successor row, which carries no version column.
     """
-    attributes, value_objects = resolve_row(entity, view, row, context="insert")
-    if version is not None:
-        attribute, initial_value = version
-        attributes[attribute] = initial_value
-    return adopt_planned_row(attributes, value_objects)
+    row = planned_cells(entity, row, "insert")
+    if version is None:
+        return row
+    attribute, initial_value = version
+    return row.with_cell(row.selection.members.index[attribute], initial_value)
 
 
 def planned_assignments(
-    entity: EntityMetadata,
-    view: InheritanceEntityView,
-    row: Mapping[str, object],
+    entity: EntityMetadata, row: ManagedRow, *, without: int = 0
 ) -> PlannedAssignments:
-    attributes, value_objects = resolve_row(entity, view, row, context="update")
+    """The members ``row`` states, but for the positions the ``without`` mask
+    names, as the identity-keyed replacement values one revising step writes."""
+    members = row.selection.members
+    identities = members.identities
+    attribute_count = members.attribute_count
+    shape = members.shape.members
+    absent = row.selection.absent
+    attributes: dict[AttributeIdentity, PlannedValue] = {}
+    value_objects: dict[ValueObjectIdentity, object] = {}
+    for position, value in row.stated_cells():
+        if without >> position & 1:
+            continue
+        identity = identities[position]
+        if position < attribute_count:
+            attributes[cast("AttributeIdentity", identity)] = planned_cell(
+                entity, shape[position].name, value, "update"
+            )
+        else:
+            declared = cast("OccurrenceDefinition", shape[position])
+            value_objects[cast("ValueObjectIdentity", identity)] = occurrence_value(
+                value, declared, absent
+            )
     return adopt_planned_assignments(attributes, value_objects)
 
 
-def resolve_row(
-    entity: EntityMetadata,
-    view: InheritanceEntityView,
-    row: Mapping[str, object],
-    *,
-    context: str | None,
-) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
-    """``row``'s cells under their resolved member identities, read off the
-    family-effective indexes the Inheritance Facet compiled once.
-
-    A Value Object occurrence is consulted FIRST, so an occurrence sharing a
-    name with an applicable Attribute still claims the cell.
-    """
-    attributes: dict[AttributeIdentity, PlannedValue] = {}
-    value_objects: dict[ValueObjectIdentity, object] = {}
-    for name, value in row.items():
-        occurrence = view.applicable_value_object(name)
-        if occurrence is not None:
-            value_objects[occurrence.identity] = value
+def planned_cells(entity: EntityMetadata, row: ManagedRow, context: str) -> ManagedRow:
+    """``row`` with each scalar cell its DB-computed marker names replaced by
+    the generated-value expression the marker plans in ``context``
+    (:func:`planned_cell`); ``row`` itself where it holds no marker."""
+    attribute_count = row.selection.members.attribute_count
+    planned: list[object] | None = None
+    for index, (position, value) in enumerate(row.stated_cells()):
+        if position >= attribute_count:
+            break
+        if not isinstance(value, Mapping):
             continue
-        attribute = view.applicable_attribute(name)
-        if attribute is None:
-            raise WritePlanningError(
-                f"{entity.identity.name!r}: write row names {name!r}, which is not a member "
-                "of the Entity's family"
-            )
-        attributes[attribute.identity] = (
-            value if context is None else planned_cell(entity, name, value, context)
-        )
-    return attributes, value_objects
+        marker = cast("Mapping[str, object]", value)
+        name = row.selection.members.shape.members[position].name
+        cell = planned_cell(entity, name, marker, context)
+        if cell is marker:
+            continue
+        if planned is None:
+            planned = list(row.cells)
+        planned[index] = cell
+    if planned is None:
+        return row
+    return managed_row(row.selection, tuple(planned), row.presence)
 
 
 def entity_view(families: InheritanceFacet, entity: EntityMetadata) -> InheritanceEntityView:
@@ -125,7 +136,7 @@ def entity_view(families: InheritanceFacet, entity: EntityMetadata) -> Inheritan
 def key_target(
     entity: EntityMetadata,
     key_attributes: tuple[AttributeIdentity, ...],
-    rows: Sequence[Mapping[str, object]],
+    rows: Sequence[ManagedRow],
 ) -> KeyTarget:
     """The rows an addressed keyed write selects, one aligned value tuple each."""
     return KeyTarget(
@@ -137,7 +148,7 @@ def key_target(
 def key_tuple(
     entity: EntityMetadata,
     key_attributes: tuple[AttributeIdentity, ...],
-    row: Mapping[str, object],
+    row: ManagedRow,
 ) -> tuple[object, ...]:
     """One addressed row's aligned primary-key values.
 
@@ -145,13 +156,15 @@ def key_tuple(
     rather than settled into a target with a missing value.
     """
     values: list[object] = []
+    absent = row.selection.absent
     for attribute in key_attributes:
-        if attribute.name not in row:
+        value = row.cell(attribute)
+        if value is absent:
             raise WritePlanningError(
                 f"{entity.identity.name!r}: an addressed write row omits the primary-key "
                 f"member {attribute.name!r}, so it selects no row"
             )
-        values.append(row[attribute.name])
+        values.append(value)
     return tuple(values)
 
 

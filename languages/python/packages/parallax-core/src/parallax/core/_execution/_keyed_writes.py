@@ -39,6 +39,7 @@ from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refu
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Bitemporal, Pin, TimeInterval
 from parallax.core.write_plan import ObjectKey
+from parallax.core.write_plan.managed_row import ManagedRow
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
@@ -263,7 +264,7 @@ class OpenedKeyedWrite:
     """
 
     identity: EntityIdentity
-    row: Mapping[str, object]
+    row: ManagedRow
     object_key: ObjectKey
     authority: InsertionIdentity
 

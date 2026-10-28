@@ -35,11 +35,11 @@ from parallax.core.write_plan.steps import (
     NewLineage,
     PlannedAssignments,
     PlannedClose,
-    PlannedRow,
     PlannedUpdate,
     WriteRow,
 )
 from tests._support.clock_probes import CountingClock, inert_instant
+from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._corpus_model_support import target as entity_of
@@ -90,7 +90,7 @@ def test_an_accepted_preference_comes_back_as_a_plain_hashable_str() -> None:
 def _account_row() -> tuple[WriteRow, AttributeIdentity, AttributeIdentity]:
     account = entity_of(corpus_model("account"), "Account").identity
     key, owner = AttributeIdentity(account, "id"), AttributeIdentity(account, "owner")
-    row = PlannedRow(attributes={key: 1, owner: "Ada"})
+    row = managed_row_of(corpus_model("account"), {key: 1, owner: "Ada"})
     return WriteRow(row=row, origin=NEW_LINEAGE), key, owner
 
 
@@ -150,14 +150,23 @@ def test_a_finalized_row_states_every_value_it_adds_as_an_executed_assignment() 
     assert finalized.origin is write_row.origin
 
 
-@pytest.mark.parametrize("breach", ["origin", "unstated", "dropped"])
+@pytest.mark.parametrize("breach", ["origin", "unstated", "dropped", "removed", "reselected"])
 def test_an_audit_answer_that_breaks_its_contract_is_refused(breach: str) -> None:
     write_row, key, owner = _account_row()
     stated = WriteRow(row=write_row.row, origin=write_row.origin, executed=(owner,))
     answers = {
         "origin": WriteRow(row=write_row.row, origin=NewLineage()),
-        "unstated": WriteRow(row=PlannedRow(attributes={key: 1, owner: "Eve"}), origin=NEW_LINEAGE),
+        "unstated": WriteRow(
+            row=managed_row_of(corpus_model("account"), {key: 1, owner: "Eve"}), origin=NEW_LINEAGE
+        ),
         "dropped": WriteRow(row=stated.row, origin=NEW_LINEAGE),
+        "removed": WriteRow(
+            row=managed_row_of(corpus_model("account"), {key: 1}), origin=NEW_LINEAGE
+        ),
+        "reselected": WriteRow(
+            row=replace(write_row.row, selection=replace(write_row.row.selection)),
+            origin=NEW_LINEAGE,
+        ),
     }
 
     class _Breaking:

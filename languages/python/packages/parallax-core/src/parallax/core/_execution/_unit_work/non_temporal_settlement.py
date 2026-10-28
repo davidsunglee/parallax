@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
 from parallax.core._execution._unit_work.strategy import VersionArithmetic
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata
+from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.planned_rows import key_target
 from parallax.core.write_plan.steps import (
     UNGATED,
@@ -120,7 +121,7 @@ def non_temporal_step(
     addressed: AddressedFacts,
     *,
     emission: NonTemporalEmission,
-    key_rows: Sequence[Mapping[str, object]],
+    key_rows: Sequence[ManagedRow],
     observed_version: int | None,
     affected_rows: AffectedRows,
 ) -> PlannedStep:

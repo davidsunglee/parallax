@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal
 
 from parallax.core.base import INFINITY, TemporalBound
 from parallax.core.temporal_read import TimeInterval
+from parallax.core.write_plan.managed_row import ManagedRow
 
 type _Cursor = dt.datetime | Literal[TemporalBound.INFINITY]
 
@@ -26,15 +27,15 @@ class CoverageSegment:
 
     ``valid_time_window`` is the segment's extent, or ``None`` on a
     Transaction-Time-Only target, whose one segment spans the whole axis.
-    ``assigned`` maps each assigned member's declared name to its managed value,
-    the last authored value per member, or is ``None`` where the segment
-    destroys existing coverage. ``replaces`` marks a replacement's extent:
+    ``assigned`` is the row stating each assigned member's managed value, the
+    last authored value per member, or is ``None`` where the segment destroys
+    existing coverage. ``replaces`` marks a replacement's extent:
     ``assigned`` there is a complete state, which a gap in existing coverage
     takes too.
     """
 
     valid_time_window: TimeInterval | None
-    assigned: Mapping[str, object] | None
+    assigned: ManagedRow | None
     replaces: bool = False
 
 
@@ -46,7 +47,7 @@ class Successor:
     ``None`` on a Transaction-Time-Only target."""
 
     valid_time_coverage: TimeInterval | None
-    assigned: Mapping[str, object] | None
+    assigned: ManagedRow | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +56,7 @@ class CoverageGap:
     holds, and the complete state a new lineage opens there."""
 
     valid_time_window: TimeInterval
-    assigned: Mapping[str, object]
+    assigned: ManagedRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +76,7 @@ class CoverageTransform:
     def followed_by(
         self,
         window: TimeInterval | None,
-        assigned: Mapping[str, object] | None,
+        assigned: ManagedRow | None,
         *,
         replaces: bool,
     ) -> CoverageTransform:
@@ -232,7 +233,7 @@ def _rest(
     composed: list[CoverageSegment],
     window: TimeInterval,
     cursor: _Cursor,
-    assigned: Mapping[str, object] | None,
+    assigned: ManagedRow | None,
     replaces: bool,
 ) -> _Cursor:
     """Compose the part of ``window`` from ``cursor`` on that no earlier segment
@@ -245,7 +246,7 @@ def _rest(
 def _overlaid(
     window: TimeInterval | None,
     previous: CoverageSegment | None,
-    assigned: Mapping[str, object] | None,
+    assigned: ManagedRow | None,
     *,
     replaces: bool,
 ) -> CoverageSegment:
@@ -258,7 +259,7 @@ def _overlaid(
         return CoverageSegment(window, assigned, replaces)
     if replaces:
         return CoverageSegment(window, assigned, replaces=True)
-    return CoverageSegment(window, {**previous.assigned, **assigned}, previous.replaces)
+    return CoverageSegment(window, previous.assigned.with_members_of(assigned), previous.replaces)
 
 
 def _joined(segments: list[CoverageSegment]) -> tuple[CoverageSegment, ...]:

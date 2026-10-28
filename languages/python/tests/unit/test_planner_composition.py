@@ -75,10 +75,8 @@ from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.dialect import Dialect
 from parallax.core.execution import prepare_model
 from parallax.core.metamodel import (
-    AttributeIdentity,
     EntityIdentity,
     Metamodel,
-    ValueObjectIdentity,
 )
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._write import StepPayload, compile_write_step
@@ -271,12 +269,8 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         seen.rendered.append(first)
         return grouping(self, first)
 
-    def join(
-        step: PlannedStep | None,
-        entity: EntityIdentity,
-        members: frozenset[AttributeIdentity | ValueObjectIdentity],
-    ) -> WriteRow | None:
-        entry = joining(step, entity, members)
+    def join(step: PlannedStep | None, entity: EntityIdentity, presence: int) -> WriteRow | None:
+        entry = joining(step, entity, presence)
         if step is not None and entry is not None:
             seen.rendered.append(step)
         return entry

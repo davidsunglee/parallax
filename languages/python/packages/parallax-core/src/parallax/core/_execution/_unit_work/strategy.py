@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Container, Mapping, Sequence
+from collections.abc import Callable, Collection, Container, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
@@ -15,6 +15,7 @@ from parallax.core.metamodel import (
     Metamodel,
 )
 from parallax.core.write_plan.keys import ObjectKey
+from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.observe import StateObservation
 from parallax.core.write_plan.planned_rows import WritePlanningError
 from parallax.core.write_plan.steps import (
@@ -116,7 +117,7 @@ class BatchingStrategy(Protocol):
         model: Metamodel,
         entity: EntityMetadata,
         mutation: str,
-        rows: Sequence[Mapping[str, object]],
+        rows: Sequence[ManagedRow],
     ) -> bool: ...
 
     def batch_key(
@@ -124,7 +125,7 @@ class BatchingStrategy(Protocol):
         model: Metamodel,
         entity: EntityMetadata,
         mutation: str,
-        row: Mapping[str, object],
+        row: ManagedRow,
     ) -> object: ...
 
 
@@ -381,21 +382,29 @@ def _require_finalized(
         finalized.origin is not write_row.origin
         or any(member not in executed for member in write_row.executed)
         or any(member in settled for member in executed if member not in write_row.executed)
-        or not _keeps(write_row.row.attributes, finalized.row.attributes, executed)
-        or not _keeps(write_row.row.value_objects, finalized.row.value_objects, executed)
+        or not _keeps(write_row.row, finalized.row, executed)
     ):
         raise _audit_refused("a row's finalization")
 
 
-def _keeps[K](
-    members: Mapping[K, object], final: Mapping[K, object], stated: Collection[object]
-) -> bool:
-    """Whether ``final`` holds every member of ``members`` as it was, but for
-    the ``stated`` ones, and adds none it does not state."""
-    return all(
-        member in final and (final[member] is value or member in stated)
-        for member, value in members.items()
-    ) and all(member in members or member in stated for member in final)
+def _keeps(row: ManagedRow, final: ManagedRow, stated: Collection[object]) -> bool:
+    """Whether ``final`` holds every member of ``row`` as it was, but for the
+    ``stated`` ones, and adds none it does not state."""
+    if final.selection is not row.selection:
+        return False
+    identities = row.selection.members.identities
+    for position in range(row.selection.width):
+        held = row.stated(position)
+        if not held and not final.stated(position):
+            continue
+        if held:
+            if not final.stated(position):
+                return False
+            if final.at(position) is row.at(position):
+                continue
+        if identities[position] not in stated:
+            return False
+    return True
 
 
 def _extends(

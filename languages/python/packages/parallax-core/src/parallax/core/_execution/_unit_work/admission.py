@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Collection, Hashable, Iterator, Mapping
+from collections.abc import Callable, Collection, Hashable, Iterator
 from dataclasses import replace
 from enum import Enum
 from typing import Final
@@ -56,6 +56,7 @@ from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.temporal_read import TimeInterval, milestone_edge, valid_time_coverage
 from parallax.core.temporal_write.coverage import NO_TRANSFORM
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
+from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.observe import PredecessorRow, TemporalObservation
 
 __all__ = [
@@ -900,11 +901,14 @@ def _merge_assignment_into_insert(
     settling per temporal flavor) but carries the FINAL values — no
     ``INSERT`` + ``UPDATE``.
     """
-    merged = dict(insert.rows[0])
-    for name, value in assigned.rows[0].items():
-        if name != key_name:
-            merged[name] = value
-    return derive_keyed_instruction(insert, (merged,), assigns=insert.assigns or assigned.assigns)
+    (row,) = insert.rows
+    (overlay,) = assigned.rows
+    key = overlay.selection.members.shape.position(key_name)
+    if key is not None:
+        overlay = overlay.without(1 << key)
+    return derive_keyed_instruction(
+        insert, (row.with_members_of(overlay),), assigns=insert.assigns or assigned.assigns
+    )
 
 
 def _merged_claimed(base: _Claimed, arriving: _Claimed) -> _Claimed:
@@ -914,10 +918,12 @@ def _merged_claimed(base: _Claimed, arriving: _Claimed) -> _Claimed:
     two claim one scope over one window, which is what let them coalesce — and
     gains the merged row under the verb they leave (:func:`_coalesced`).
     """
-    merged = dict(base.instruction.rows[0])
-    merged.update(arriving.instruction.rows[0])
+    (row,) = base.instruction.rows
+    (overlay,) = arriving.instruction.rows
     return _with_composed_authority(
-        base, arriving, _coalesced(base.instruction, arriving.instruction, merged)
+        base,
+        arriving,
+        _coalesced(base.instruction, arriving.instruction, row.with_members_of(overlay)),
     )
 
 
@@ -965,7 +971,7 @@ def _with_composed_authority(
 
 
 def _coalesced(
-    base: PreparedKeyedInstruction, arriving: PreparedKeyedInstruction, merged: Mapping[str, object]
+    base: PreparedKeyedInstruction, arriving: PreparedKeyedInstruction, merged: ManagedRow
 ) -> PreparedKeyedInstruction:
     """``base`` over the ``merged`` row, replacing where either write did: a
     replacement's complete state overlaid by an amendment, or overlaying one,

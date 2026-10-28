@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Final, Literal, overload
 
@@ -34,6 +33,7 @@ from parallax.core.metamodel import EntityMetadata
 from parallax.core.temporal_read import TimeInterval
 from parallax.core.temporal_write.coverage import NO_TRANSFORM, CoverageTransform, Successor
 from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, VersionedObjectStateKey
+from parallax.core.write_plan.managed_row import ManagedRow, RowSelection
 from parallax.core.write_plan.observe import StateObservation
 
 __all__ = [
@@ -221,6 +221,11 @@ class StateObservedWrite:
         coverage, built when asked."""
         return _alone_transform(self)
 
+    @property
+    def selection(self) -> RowSelection:
+        """The row selection this write's rows are of."""
+        return self.instruction.rows[0].selection
+
 
 @dataclass(frozen=True, slots=True)
 class ObjectLockedWrite:
@@ -345,6 +350,11 @@ class InsertionAuthorizedWrite:
         coverage, built when asked."""
         return _alone_transform(self)
 
+    @property
+    def selection(self) -> RowSelection:
+        """The row selection this write's rows are of."""
+        return self.instruction.rows[0].selection
+
 
 @dataclass(frozen=True, slots=True)
 class TargetWrite:
@@ -397,6 +407,11 @@ class TargetWrite:
         """What this write of a temporal object alone does to its existing
         coverage, built when asked."""
         return _alone_transform(self)
+
+    @property
+    def selection(self) -> RowSelection:
+        """The row selection this write's rows are of."""
+        return self.instruction.rows[0].selection
 
 
 def target_write(
@@ -575,13 +590,15 @@ class ComposedTemporalWrite:
     ``intents`` keeps each admitted write's authority and window, overwritten
     ones included, except that an initial run of observed writes of one
     observation over one window keeps one intent; ``transform`` holds only the
-    assignments that still survive.
+    assignments that still survive. ``selection`` is the row selection every
+    composed write's rows are of.
     """
 
     target: EntityMetadata
     object_key: ObjectKey
     intents: tuple[TemporalIntent, ...]
     transform: CoverageTransform
+    selection: RowSelection
 
     @property
     def phase(self) -> WritePhase:
@@ -644,6 +661,7 @@ def compose_temporal_write(
         object_key=held.object_key,
         intents=intents,
         transform=_transformed(held.transform, instruction, key_name),
+        selection=held.selection,
     )
 
 
@@ -672,6 +690,7 @@ def compact_observed_run(
         object_key=held.object_key,
         intents=(only,),
         transform=_transformed(held.transform, arriving.instruction, key_name),
+        selection=held.selection,
     )
 
 
@@ -716,10 +735,12 @@ def _transformed(
     )
 
 
-def _assigned(instruction: PreparedKeyedInstruction, key_name: str) -> Mapping[str, object] | None:
+def _assigned(instruction: PreparedKeyedInstruction, key_name: str) -> ManagedRow | None:
     if instruction.mutation not in ASSIGNMENT_MUTATIONS:
         return None
-    return {name: value for name, value in instruction.rows[0].items() if name != key_name}
+    (row,) = instruction.rows
+    key = row.selection.members.shape.position(key_name)
+    return row if key is None else row.without(1 << key)
 
 
 @dataclass(frozen=True, slots=True)

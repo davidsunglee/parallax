@@ -92,6 +92,7 @@ from parallax.core.write_plan import (
     WritePlanningError,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjectStateKey
+from parallax.core.write_plan.managed_row import named_members
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.sweep_goldens import write_golden_statements
@@ -4069,7 +4070,7 @@ def test_a_compiled_versioned_write_no_evidence_licenses_is_refused_when_submitt
     with pytest.raises(EngineError, match="requires the version its source observed") as raised:
         scenario.compile_write_sequence_case(case, "postgres")
     assert isinstance(raised.value.__cause__, opt_lock.UnobservedVersionError)
-    assert [instruction.rows[0]["id"] for instruction in submitted] == [1]
+    assert [named_members(instruction.rows[0])["id"] for instruction in submitted] == [1]
     assert admitted == []
 
 

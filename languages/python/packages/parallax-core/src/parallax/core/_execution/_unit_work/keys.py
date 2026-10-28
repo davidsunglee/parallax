@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Final
 
 from parallax.core import inheritance
 from parallax.core._execution._unit_work.instructions import (
@@ -9,7 +10,7 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     WriteInstruction,
 )
-from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.write_plan.keys import ObjectKey
 
 __all__ = [
@@ -39,7 +40,9 @@ def object_key(
     entity = entity_by_name(model, instruction.entity)
     if entity is None:
         return None
-    return _row_identity(entity, inheritance.view(model), instruction.rows[0])
+    name = _key_attribute(entity, inheritance.view(model)).name
+    row = instruction.rows[0]
+    return _identity(entity, name, row.get(name, _UNSTATED))
 
 
 def resolve_object_key(
@@ -54,21 +57,28 @@ def resolve_object_key(
     """
     if not isinstance(instruction, PreparedKeyedInstruction) or len(instruction.rows) != 1:
         return None
-    return _row_identity(instruction.target, families, instruction.rows[0])
+    entity = instruction.target
+    attribute = _key_attribute(entity, families)
+    (row,) = instruction.rows
+    value = row.cell(attribute)
+    return _identity(entity, attribute.name, _UNSTATED if value is row.selection.absent else value)
 
 
-def _row_identity(
-    entity: EntityMetadata, families: inheritance.InheritanceFacet, row: Mapping[str, object]
-) -> ObjectKey | None:
-    """``row``'s Object Key under ``entity`` — the one key derivation both
+_UNSTATED: Final = object()
+
+
+def _key_attribute(
+    entity: EntityMetadata, families: inheritance.InheritanceFacet
+) -> AttributeIdentity:
+    """``entity``'s family primary-key Attribute — the one key derivation both
     entry points share, so the family primary key stays one decision."""
     position = families.entity(entity.identity)
     if position is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
-    name = position.primary_key.identity.name
-    if name not in row:
-        return None
-    value = row[name]
-    if isinstance(value, Mapping):
+    return position.primary_key.identity
+
+
+def _identity(entity: EntityMetadata, name: str, value: object) -> ObjectKey | None:
+    if value is _UNSTATED or isinstance(value, Mapping):
         return None
     return ObjectKey(entity.identity, ((name, value),))
