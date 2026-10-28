@@ -125,7 +125,7 @@ from parallax.snapshot import (
     pin_of,
 )
 from parallax.snapshot._handle import _database, _read
-from parallax.snapshot._publication._classify import NonConformingRoot, classify_roots
+from parallax.snapshot._publication._classify import NonConformingRoot, classify_root
 from parallax.snapshot._publication._root import RootView
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
@@ -140,6 +140,7 @@ from tests._support.db_port import (
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
 from tests.unit._corpus_model_support import formed, records
+from tests.unit._root_publication_support import each_root, observed_roots
 from tests.unit._transact_support import ACCOUNT, NEW_ROW, PERSON
 from tests.unit.snapshot._snapshot_page_support import (
     ConversionCalls,
@@ -327,8 +328,7 @@ def test_find_collects_claims_without_decoding_trusted_scalar_payloads() -> None
             QueuePort([[{**_ORDER_ROW, "id": 1}, {**_ORDER_ROW, "id": 2}]]),
         )
         assert len(page_rows(result.page).keys) == 2
-        RootView(result.page, 0)
-        RootView(result.page, 1)
+        observed_roots(result.page, ORDERS)
 
     assert calls == ConversionCalls()
 
@@ -360,11 +360,14 @@ def test_a_later_root_document_is_not_classified_before_its_root_view() -> None:
     )
 
     assert _states_decoded(observer) == 0
-    assert RootView(result.page, 0).issues(0) == ()
-    assert _states_decoded(observer) == 1
-    later = RootView(result.page, 1)
-    assert _states_decoded(observer) == 2
-    assert [issue.code for issue in later.issues(0)] == ["stored-data-leaf-undecodable"]
+
+    def judged_so_far(root: RootView, _ordinal: int) -> tuple[int, list[str]]:
+        return _states_decoded(observer), [issue.code for issue in root.issues(0)]
+
+    assert each_root(result.page, meta, judged_so_far) == [
+        (1, []),
+        (2, ["stored-data-leaf-undecodable"]),
+    ]
 
 
 class PipelineQueuePort(QueuePort):
@@ -442,15 +445,16 @@ def test_encoded_payloads_preserve_integer_identity_gather_and_fanback() -> None
 
     assert port.executed[1][1][-1] == [1]
     assert _value(rows, root, "EncodedParent", "id") == 1
-    consumed = RootView(result.page)
+    (consumed,) = observed_roots(result.page, model_of(_ENCODED_RELATIONSHIP_MODEL))
     assert (
-        consumed.view(1, consumed.view_layout(1).index_of[_view_key("EncodedChild", "parent")]) == 0
+        consumed.view(1, consumed.view_layouts[1].index_of[_view_key("EncodedChild", "parent")])
+        == 0
     )
-    parent_values = consumed.member_values(0)
-    child_values = consumed.member_values(1)
+    parent_values = consumed.member_values[0]
+    child_values = consumed.member_values[1]
     assert (
         parent_values[
-            consumed.layout(0).index_of[
+            consumed.layouts[0].index_of[
                 AttributeIdentity(
                     EntityIdentity("parallax.compatibility", "EncodedParent"), "payload"
                 )
@@ -460,7 +464,7 @@ def test_encoded_payloads_preserve_integer_identity_gather_and_fanback() -> None
     )
     assert (
         child_values[
-            consumed.layout(1).index_of[
+            consumed.layouts[1].index_of[
                 AttributeIdentity(
                     EntityIdentity("parallax.compatibility", "EncodedChild"), "payload"
                 )
@@ -650,8 +654,8 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
     assert len(port.executed) == 2  # the back-reference costs nothing
     rows = _rows(result.page)
     assert len(_refs(_view(rows, _root(result), "items"))) == 1
-    consumed = RootView(result.page)
-    assert consumed.view(1, consumed.view_layout(1).index_of[_view_key("OrderItem", "order")]) == 0
+    (consumed,) = observed_roots(result.page, ORDERS)
+    assert consumed.view(1, consumed.view_layouts[1].index_of[_view_key("OrderItem", "order")]) == 0
 
 
 @pytest.mark.parametrize(
@@ -926,7 +930,11 @@ def test_find_history_trusts_a_native_temporal_start_but_cannot_derive_an_edge()
     )
     result = _find_history(query, INVOICE, port)
     assert tuple(page_edges(result.page, result.milestones)) == (None,)
-    (verdict,) = classify_roots(RootView(result.page), INVOICE, CONCURRENCY).roots
+    (verdict,) = each_root(
+        result.page,
+        INVOICE,
+        lambda root, ordinal: classify_root(root, INVOICE, CONCURRENCY, ordinal=ordinal),
+    )
     assert not isinstance(verdict, NonConformingRoot)
 
 
@@ -956,8 +964,9 @@ def test_find_history_does_not_reclassify_a_native_primary_key() -> None:
     )
     result = _find_history(query, INVOICE, port)
     assert _rows(result.page).roots == (0,)
-    assert RootView(result.page, 0).invalid_roots == ()
     assert _value(_rows(result.page), 0, "InvoiceLine", "id") is None
+    (root,) = observed_roots(result.page, INVOICE)
+    assert root.invalid_root is None
 
 
 def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
@@ -1535,7 +1544,11 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
         del args, kwargs
         raise ValueError("no state for Balance[id=1]")
 
-    monkeypatch.setattr(_read, "typed_root", refuse_materialization)
+    def refusing_publisher(*args: object) -> object:
+        del args
+        return refuse_materialization
+
+    monkeypatch.setattr(_read, "TypedRootPublisher", refusing_publisher)
     port = QueuePort(
         [
             [
@@ -2352,9 +2365,8 @@ def test_every_history_root_of_one_read_uses_the_same_page_schema() -> None:
     )
     result = _find_history(query, INVOICE, port)
     assert len(_rows(result.page).roots) == 2
-    first = RootView(result.page, 0)
-    second = RootView(result.page, 1)
-    assert first.view_layout(0) is second.view_layout(0)
+    first, second = observed_roots(result.page, INVOICE)
+    assert first.view_layouts[0] is second.view_layouts[0]
 
 
 # --------------------------------------------------------------------------- #

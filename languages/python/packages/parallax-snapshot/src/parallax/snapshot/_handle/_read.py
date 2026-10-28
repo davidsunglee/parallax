@@ -11,15 +11,15 @@ from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._expressions import include_traversal
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
-from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.object_query.validate import validate_include_path
 from parallax.core.predicate import root_position
 from parallax.core.read_delivery import InvalidData, InvalidDataError
-from parallax.core.read_delivery._page import Page, page_edges
+from parallax.core.read_delivery._page import Page
 from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
 from parallax.core.read_delivery._publication import RootsOf
-from parallax.core.temporal_read import Edge, Pin, TemporalShape
+from parallax.core.temporal_read import Pin, TemporalShape
 
 if TYPE_CHECKING:
     from parallax.snapshot._publication._wire import EntityReader
@@ -30,8 +30,8 @@ from parallax.snapshot._handle._errors import SnapshotConnectionError, SnapshotM
 from parallax.snapshot._inspection import SnapshotInspectionError
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
-from parallax.snapshot._publication._typed import typed_root
-from parallax.snapshot._publication._wire import WireEntity, wire_roots
+from parallax.snapshot._publication._typed import TypedRootPublisher
+from parallax.snapshot._publication._wire import WireEntity, WireRootPublisher
 
 __all__ = [
     "CheckedSnapshot",
@@ -460,16 +460,6 @@ class CheckedSnapshot[T]:
         return f"CheckedSnapshot(roots={len(self._roots)}, pin={self._pin!r})"
 
 
-def edge_pin(edge: Edge) -> Pin:
-    """One milestone's own edge, rendered as a :class:`Pin` (the Python binding: each
-    milestone-set root is edge-pinned at its own milestone's from-instant).
-
-    An axis the Entity does not declare answers absent on both sides, so the
-    rendering needs no per-entity axis list of its own.
-    """
-    return Pin(tx_time=edge.tx_time_or_none, valid_time=edge.valid_time_or_none)
-
-
 class _DeliveryWireEncoder(Protocol):
     def __call__(self, neutral_type: Any, value: Any, /) -> object: ...
 
@@ -495,10 +485,10 @@ class SnapshotPublication:
     stream reuses it across every bounded Page, then :attr:`release` drops any
     representation-specific reuse state. An eager
     find and a milestone-set find each publish one Page, while a streamed read
-    publishes one bounded Page at a time. Every root receives a transient Root
-    View, which keeps result scope a property of the root being published rather
-    than a mode the materializer is told
-    about. :meth:`from_find` and :meth:`from_history` are the two eager
+    publishes one bounded Page at a time. Each Page's one Root View is re-pointed
+    at every root in turn, which keeps result scope a property of the root being
+    published rather than a mode the materializer is told about.
+    :meth:`from_find` and :meth:`from_history` are the two eager
     compositions over it, so neither is an independent conversion that could
     drift from the streamed one.
 
@@ -540,9 +530,9 @@ class SnapshotPublication:
     def from_history(self, result: HistoryPageResult) -> Snapshot[Any]:
         """Every milestone's roots as ONE ordered result.
 
-        Each milestone root is classified through its own Root View while a
-        classified root's ordinal names its position in the flat published
-        result. A milestone-set read carries no Include Path (`m-case-format`),
+        Each milestone root is classified on its own, at its own milestone's
+        edge, while a classified root's ordinal names its position in the flat
+        published result. A milestone-set read carries no Include Path (`m-case-format`),
         so every root publishes root-only, and the outer pin
         is empty because a scan is not a pin.
         """
@@ -612,28 +602,30 @@ def typed_publication(
         milestones: TemporalShape | None = None,
     ) -> Iterator[object]:
         del includes
+        publisher = TypedRootPublisher(model.meta, construction, CONCURRENCY)
 
-        pins = tuple(
-            None if edge is None else edge_pin(edge) for edge in page_edges(page, milestones)
-        )
-
-        def publish(root: RootView, position: int) -> Iterator[object]:
-            yield from _materialize_result_page(
-                root,
-                model.meta,
-                construction,
-                ordinal_offset=ordinal_offset + position,
-                origins=origins,
-            )
+        def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
+            # Stored state contradicting the model is no failure here: it was
+            # classified before construction and publishes in band, so what
+            # reaches this boundary is only a defect in building the Entity
+            # graph a valid row describes.
+            try:
+                return publisher(root, ordinal)
+            except Exception as exc:
+                raise SnapshotMaterializationError(
+                    "the read succeeded but its Entity graph could not be built "
+                    "(snapshot-materialization-failed)",
+                    cause=exc,
+                ) from exc
 
         yield from publish_roots(
             page,
-            publish,
+            publish_root,
+            model.meta,
             atomic=atomic,
-            model=model.meta,
             ordinal_offset=ordinal_offset,
-            pins=pins,
-            prepare=lambda root: root.prime(origins),
+            milestones=milestones,
+            origins=origins,
         )
 
     return SnapshotPublication("typed", roots_of, edition, _release_nothing, construction)
@@ -671,61 +663,19 @@ def wire_publication(model: CatalogedModel, edition: str) -> SnapshotPublication
         origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
         milestones: TemporalShape | None = None,
     ) -> Iterator[object]:
-        pins = tuple(
-            None if edge is None else edge_pin(edge) for edge in page_edges(page, milestones)
-        )
-
         nonlocal encode
         current = encode
         if released or current is None:
             raise RuntimeError("a released Wire publication cannot publish another Page")
         current.begin_page()
-
-        def publish(root: RootView, position: int) -> Iterator[object]:
-            yield from wire_roots(
-                root,
-                model.meta,
-                CONCURRENCY,
-                includes,
-                ordinal_offset=ordinal_offset + position,
-                origins=origins,
-                encode=current,
-            )
-
         yield from publish_roots(
             page,
-            publish,
+            WireRootPublisher(model.meta, CONCURRENCY, includes, current),
+            model.meta,
             atomic=atomic,
-            model=model.meta,
             ordinal_offset=ordinal_offset,
-            pins=pins,
-            prepare=lambda root: root.prime(origins),
+            milestones=milestones,
+            origins=origins,
         )
 
     return SnapshotPublication("wire", roots_of, edition, release)
-
-
-def _materialize_result_page(
-    root: RootView,
-    meta: Metamodel,
-    construction: EntityGraphConstruction,
-    *,
-    ordinal_offset: int = 0,
-    origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
-) -> tuple[Any, ...]:
-    """Translate a graph-construction or lifecycle failure exactly once.
-
-    Stored state that contradicts the model is no failure here: it was
-    classified before construction and publishes in band, so what reaches this
-    wrapper is only a defect in building the Entity graph a valid row describes.
-    """
-    try:
-        return typed_root(
-            root, meta, CONCURRENCY, construction, ordinal_offset=ordinal_offset, origins=origins
-        )
-    except Exception as exc:
-        raise SnapshotMaterializationError(
-            "the read succeeded but its Entity graph could not be built "
-            "(snapshot-materialization-failed)",
-            cause=exc,
-        ) from exc

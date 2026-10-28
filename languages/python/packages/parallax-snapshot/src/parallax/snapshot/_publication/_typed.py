@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
-from types import MappingProxyType
 from typing import cast
 
 from parallax.core import temporal_read
-from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core.entity import (
     UNLOADED,
     EntityGraphConstruction,
@@ -16,109 +13,89 @@ from parallax.core.entity import (
 )
 from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
-from parallax.core.temporal_read import NonTemporal, TemporalFacet
+from parallax.core.temporal_read import NonTemporal
 from parallax.snapshot._inspection import RootConformance, SnapshotNodeState, pin_for_shape
-from parallax.snapshot._publication._classify import (
-    ConformingRoot,
-    NonConformingRoot,
-    RootClassifications,
-    classify_roots,
-)
+from parallax.snapshot._publication._classify import ConformingRoot, classify_root
 from parallax.snapshot._publication._root import RootView
 
-__all__ = ["typed_root"]
+__all__ = ["TypedRootPublisher"]
 
 
-def typed_root(
-    root: RootView,
-    model: Metamodel,
-    versions: VersionAttributes,
-    construction: EntityGraphConstruction,
-    *,
-    ordinal_offset: int = 0,
-    origins: Mapping[int, ReadEvidence] = MappingProxyType({}),
-) -> tuple[object | InvalidData[object], ...]:
-    """Classify ``root`` and construct the nodes that hydrate.
+class TypedRootPublisher:
+    """One Page's Typed root publisher: classify each root, then construct the
+    nodes of a root that hydrates as one Entity graph.
 
-    Every constructible node is allocated before any is populated, so a cycle
-    closes on an object that already exists, and everything constructible
-    publishes at once or not at all.
+    Every node is allocated before any is populated, so a cycle closes on an
+    object that already exists, and everything a root constructs publishes at
+    once or not at all. The model's facts are bound for the Page; the Root View,
+    conformance, handles, and pending node are one root's, reset when its call
+    begins and the bookkeeping cleared when it ends. A node's broad-relationship
+    row is built at the callback that needs it, and its member row is
+    Page-owned, so no payload accumulates into a second Page-sized structure.
 
     ``versions`` names the explicit version Attribute a classified record
-    publishes. ``ordinal_offset`` is where this Root View's roots start in the
-    ordered result the caller publishes, including a later root or streamed Page. ``origins`` is
-    the Read Evidence the read retained per projection,
-    which each node's own Snapshot state carries so a later keyed write reads its
-    evidence off the value it was handed; a read that retained none passes the
-    empty mapping. Each node's state carries the root's conformance either way.
-    """
-    classification = classify_roots(root, model, versions, ordinal_offset=ordinal_offset)
-    retained: Mapping[int, ReadEvidence] = (
-        root.by_allocation(origins) if classification.conforming else MappingProxyType({})
-    )
-    return _Materialization(root, temporal_read.view(model), classification, retained).run(
-        construction
-    )
-
-
-class _Materialization:
-    """One root's construction drive: the Root View, its classification, and the two
-    callbacks over them.
-
-    Between the two callbacks it retains the allocation handles and nothing else.
-    A node's own broad-relationship row is built from the Root View at the
-    callback that needs it and dies with it, and its member row is Page-owned, so
-    no payload is accumulated into a second Page-sized structure.
+    publishes.
     """
 
     __slots__ = (
-        "_classification",
         "_conformance",
+        "_construction",
         "_handles",
-        "_origins",
+        "_model",
         "_pending",
         "_root",
-        "_scope",
         "_temporal",
+        "_versions",
     )
 
     def __init__(
         self,
-        root: RootView,
-        temporal: TemporalFacet,
-        classification: RootClassifications,
-        origins: Mapping[int, ReadEvidence],
+        model: Metamodel,
+        construction: EntityGraphConstruction,
+        versions: VersionAttributes,
     ) -> None:
-        self._root = root
-        self._temporal = temporal
-        self._classification = classification
-        self._conformance: RootConformance = classification.conformance
-        self._origins = origins
-        self._scope = tuple(
-            index for index in range(len(root.order)) if index not in classification.excluded
-        )
-        self._handles: dict[int, NodeHandle] = {}
-        self._pending = iter(self._scope)
+        self._model = model
+        self._construction = construction
+        self._versions = versions
+        self._temporal = temporal_read.view(model)
+        self._root: RootView | None = None
+        self._conformance = RootConformance.CONFORMING
+        self._handles: list[NodeHandle] = []
+        self._pending = 0
 
-    def run(
-        self, construction: EntityGraphConstruction
-    ) -> tuple[object | InvalidData[object], ...]:
-        return self._published(construction.construct(self.build, state_factory=self.state))
+    def __call__(self, root: RootView, ordinal: int) -> tuple[object | InvalidData[object], ...]:
+        """``root`` published at result ``ordinal``: as itself when it conforms,
+        and otherwise as its record, carrying its value when it hydrates."""
+        # The construction callbacks are bound per call rather than held: a held
+        # bound method would leave this publisher reachable only through a cycle,
+        # keeping the Root View and its Page rows alive past the pass.
+        self._root = root
+        self._conformance = RootConformance.CONFORMING
+        self._handles.clear()
+        self._pending = 0
+        try:
+            verdict = classify_root(root, self._model, self._versions, ordinal=ordinal)
+            if isinstance(verdict, ConformingRoot):
+                return self._construction.construct(self.build, state_factory=self.state)
+            self._conformance = RootConformance.NONCONFORMING
+            if verdict.node is None:
+                return (verdict.published(None),)
+            (constructed,) = self._construction.construct(self.build, state_factory=self.state)
+            return (verdict.published(constructed),)
+        finally:
+            self._handles.clear()
+            self._pending = 0
 
     def build(self, writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = self._root.order
-        self._handles = {index: writer.allocate(order[index]) for index in self._scope}
-        for index in self._scope:
-            writer.populate(
-                self._handles[index],
-                self._root.member_values(index),
-                self._broad_arms(index),
-            )
-        return tuple(
-            self._handles[root.node] for root in self._classification.roots if root.node is not None
-        )
+        root = cast("RootView", self._root)
+        handles = self._handles
+        allocate = writer.allocate
+        handles.extend([allocate(root.layout(node).concrete) for node in range(len(root))])
+        for node, handle in enumerate(handles):
+            writer.populate(handle, root.member_values(node), self._broad_arms(root, node))
+        return (handles[0],)
 
-    def _broad_arms(self, index: int) -> tuple[object, ...]:
+    def _broad_arms(self, root: RootView, node: int) -> tuple[object, ...]:
         """One node's full-width broad-relationship row.
 
         A narrowed view is a read-time presentation of a direction the broad view
@@ -133,41 +110,22 @@ class _Materialization:
         declare — an unguarded level attaches its slot to every concrete it can
         reach, and the canonical view order ranks such a direction last rather
         than refusing it — so laying the slot out is tolerated and WRITING one is
-        the disagreement. Translating the view's direction to a position is where
-        that becomes visible, so the refusal is stated here in the construction
-        vocabulary, because a position dropped instead would lose a view the read
-        loaded. The whole Relationship Identity is what locates the position: two
-        Entities may declare one local name, and matching on the name alone would
-        write a foreign direction's arm at the declared one's position.
+        the disagreement, stated here in the construction vocabulary, because a
+        position dropped instead would lose a view the read loaded.
         """
-        layout = self._root.layout(index)
+        layout = root.layout(node)
         row: list[object] = [UNLOADED] * len(layout.relationships)
-        for slot, key in enumerate(self._root.view_layout(index).slots):
-            if key.narrowed_view is not None or (value := self._root.view(index, slot)) is ABSENT:
+        view_layout = root.view_layout(node)
+        for slot, position in view_layout.broad_positions:
+            value = root.view(node, slot)
+            if value is ABSENT:
                 continue
-            position = layout.relationship_index.get(key.relationship)
             if position is None:
                 raise _undeclared_direction(
-                    layout.concrete, key.relationship, self._scope.index(index)
+                    layout.concrete, view_layout.slots[slot].relationship, node
                 )
             row[position] = self._arm(value)
         return tuple(row)
-
-    def _published(
-        self, constructed: tuple[object, ...]
-    ) -> tuple[object | InvalidData[object], ...]:
-        """Each result root as itself or as its record, in result order.
-
-        A conforming graph hands the constructed roots over untouched, so the
-        common case allocates no wrapper at all.
-        """
-        if self._classification.conforming:
-            return constructed
-        instances = iter(constructed)
-        return tuple(
-            next(instances) if isinstance(root, ConformingRoot) else _record(root, instances)
-            for root in self._classification.roots
-        )
 
     def state(self, view: ResolutionView, handle: NodeHandle) -> SnapshotNodeState:
         """One node's Snapshot state, built in allocation order.
@@ -182,38 +140,42 @@ class _Materialization:
         Identities.
         """
         del handle
-        index = next(self._pending)
-        concrete = self._root.layout(index).concrete
+        root = cast("RootView", self._root)
+        node = self._pending
+        self._pending = node + 1
+        concrete = root.layout(node).concrete
         shape = self._temporal.shape(concrete)
         return SnapshotNodeState(
             entity=concrete,
             views={
-                key.narrowed_view: self._resolved(view, value)
-                for slot, key in enumerate(self._root.view_layout(index).slots)
-                if key.narrowed_view is not None
-                and (value := self._root.view(index, slot)) is not ABSENT
+                name: self._resolved(view, value)
+                for slot, name in root.view_layout(node).narrowed_views
+                if (value := root.view(node, slot)) is not ABSENT
             },
             root_conformance=self._conformance,
-            pin=pin_for_shape(shape, self._root.pin),
+            pin=pin_for_shape(shape, root.pin),
             edge_cache=None if isinstance(shape, NonTemporal) else shape,
-            read_evidence=self._origins.get(index),
+            read_evidence=root.origin(node),
         )
 
     def _arm(self, value: object) -> object:
-        return _by_arm(
-            value,
-            null=None,
-            one=lambda index: self._handles[index],
-            many=lambda indices: tuple(self._handles[index] for index in indices),
-        )
+        """A carried arm as handles: a tuple is loaded-many, ``None`` is
+        loaded-null, and a lone node is loaded-one."""
+        handles = self._handles
+        if type(value) is tuple:
+            return tuple([handles[node] for node in cast("tuple[int, ...]", value)])
+        if value is None:
+            return None
+        return handles[cast("int", value)]
 
     def _resolved(self, view: ResolutionView, value: object) -> object:
-        return _by_arm(
-            value,
-            null=None,
-            one=lambda index: view.resolve(self._handles[index]),
-            many=lambda indices: tuple(view.resolve(self._handles[index]) for index in indices),
-        )
+        """A carried arm as the instances its handles resolve to."""
+        handles = self._handles
+        if type(value) is tuple:
+            return tuple([view.resolve(handles[node]) for node in cast("tuple[int, ...]", value)])
+        if value is None:
+            return None
+        return view.resolve(handles[cast("int", value)])
 
 
 def _undeclared_direction(
@@ -235,34 +197,3 @@ def _undeclared_direction(
         index=index,
         identity=relationship,
     )
-
-
-def _record(root: NonConformingRoot, instances: Iterator[object]) -> InvalidData[object]:
-    """One classified root's published record.
-
-    A hydrating root takes the next constructed instance, in the same order its
-    handle was answered; a non-hydrating one takes nothing at all, which is what
-    keeps the two iterators aligned without an index.
-    """
-    return root.published(None if root.node is None else next(instances))
-
-
-def _by_arm[T](
-    value: object,
-    *,
-    null: T,
-    one: Callable[[int], T],
-    many: Callable[[tuple[int, ...]], T],
-) -> T:
-    """Dispatch on a unioned view's arm — the one place its shape is read.
-
-    A Root View carries its arm in its shape: a tuple is
-    loaded-many, ``None`` is loaded-null, and a lone allocation index is
-    loaded-one. Every consumer of an arm goes through here, so adding an arm is
-    one cascade to change rather than one per consumer.
-    """
-    if isinstance(value, tuple):
-        return many(cast("tuple[int, ...]", value))
-    if value is None:
-        return null
-    return one(cast("int", value))

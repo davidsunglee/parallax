@@ -246,7 +246,7 @@ def test_projection_does_not_serialize_or_reclassify(
     monkeypatch.setattr(vo.Customer, "model_dump", forbidden)
     monkeypatch.setattr(deep_fetch_module, "plan", forbidden)
     monkeypatch.setattr(read_query_module, "resolve_read_query", forbidden)
-    monkeypatch.setattr(wire_materialize, "classify_roots", forbidden)
+    monkeypatch.setattr(wire_materialize, "classify_root", forbidden)
 
     assert typed.wire().result()["name"] == "Ada"
     assert named_state_reads > 0

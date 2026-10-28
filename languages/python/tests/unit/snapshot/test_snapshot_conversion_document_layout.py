@@ -48,11 +48,11 @@ from parallax.core.read_delivery._page import (
 from parallax.core.read_delivery._row_converter import bind
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.temporal_read import Pin
-from parallax.snapshot._publication._root import RootView
 from tests._support.document_reads import folded_names
 from tests._support.sql import compile_read
 from tests.unit._document_layout_support import columns_model, document_model, entity
 from tests.unit._prepared_read_support import convert_cells, result_row
+from tests.unit._root_publication_support import observed_roots
 from tests.unit.snapshot._snapshot_page_support import documents_of, rendered_members
 
 _CORPUS = models.load_models()["document-layout"]
@@ -78,8 +78,8 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Co
     index = convert_cells(CatalogedModel(model), compiled, stored, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
-    root = RootView(page)
-    return _Converted(rendered_members(rows.layouts[index], root.member_values(0)), root.issues(0))
+    (root,) = observed_roots(page, model)
+    return _Converted(rendered_members(rows.layouts[index], root.member_values[0]), root.issues[0])
 
 
 def _members(node: _Converted) -> Mapping[str, Any]:
@@ -285,7 +285,7 @@ def test_an_occurrence_column_requires_a_folded_document_read() -> None:
     builder = PageBuilder(ViewSchema.of())
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         index, *_ = prepared.convert_row(tuple(folded), builder, source=ROOT_LEVEL)
-        RootView(builder.finish((index,), Pin())).member_values(0)
+        observed_roots(builder.finish((index,), Pin()), _TWIN_COLUMNS)
 
 
 _BO_ONLY: Mapping[str, object] = {

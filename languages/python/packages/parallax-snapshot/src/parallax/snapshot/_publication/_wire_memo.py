@@ -20,7 +20,7 @@ class WireMemo(Protocol[Node]):
 
 
 class IndexMemo:
-    """Completed RootView outputs keyed by stable allocation index and token."""
+    """One root's completed Root View outputs keyed by node and token."""
 
     __slots__ = ("_entries",)
 

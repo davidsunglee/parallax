@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from typing import Final
 
 import pytest
 
 from parallax.conformance.story_models import ORDERS_MODEL
-from parallax.core import deep_fetch
+from parallax.core import DomainModel, deep_fetch
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.dialect import POSTGRES
@@ -37,7 +37,8 @@ from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
 from tests.unit._prepared_read_support import bound_read, compiled_read, result_row
-from tests.unit.snapshot._snapshot_page_support import RecordingObserver
+from tests.unit.snapshot._encoded_page_models import ENCODED_ACCOUNT, ENCODED_ORDERS
+from tests.unit.snapshot._snapshot_page_support import PageFixture, RecordingObserver
 
 
 def test_the_inert_observer_accepts_a_witness_comparison_total() -> None:
@@ -68,11 +69,11 @@ def _page(observer: MaterializationObserver, *order_ids: int) -> Page:
     return builder.finish(roots, Pin())
 
 
-def _publish(page: Page) -> Callable[[RootView, int], Iterator[object]]:
-    def publish(_root: RootView, position: int) -> Iterator[object]:
-        yield position
+_ORDERS: Final = model_of(ORDERS_MODEL)
 
-    return publish
+
+def _publish(_root: RootView, ordinal: int) -> tuple[object, ...]:
+    return (ordinal,)
 
 
 def _order_read() -> tuple[Metamodel, CatalogedModel, CompiledRead]:
@@ -163,23 +164,16 @@ def test_a_flat_page_read_without_an_observer_records_none_and_publishes_inertly
     assert page_cadence(stage.page) is INERT_OBSERVER
 
 
-def test_root_publication_requires_one_pin_per_page_root() -> None:
-    observer = RecordingObserver()
-    page = _page(observer, 1)
-    with pytest.raises(ValueError, match="pin count must match"):
-        list(publish_roots(page, _publish(page), pins=()))
-
-
 def test_eager_and_streamed_pages_report_the_same_publication_totals() -> None:
     eager = RecordingObserver()
     eager_page = _page(eager, 1, 2)
-    assert list(publish_roots(eager_page, _publish(eager_page))) == [0, 1]
+    assert list(publish_roots(eager_page, _publish, _ORDERS)) == [0, 1]
 
     streamed = RecordingObserver()
     ordinal = 0
     for order_id in (1, 2):
         page = _page(streamed, order_id)
-        assert list(publish_roots(page, _publish(page), ordinal_offset=ordinal)) == [0]
+        assert list(publish_roots(page, _publish, _ORDERS, ordinal_offset=ordinal)) == [ordinal]
         ordinal += page.root_count
 
     totals = {"occurrences_reached": 2, "states_decoded": 2}
@@ -190,6 +184,64 @@ def test_eager_and_streamed_pages_report_the_same_publication_totals() -> None:
     assert [value for name, value in streamed.events if name == "root_published"] == [0, 1]
 
 
+_DECODED: Final = ("states_decoded", 1)
+_SHARED: Final = ("states_shared", 1)
+_REACHED: Final = ("occurrences_reached", 1)
+
+
+@pytest.mark.parametrize(
+    ("domain", "entity", "row", "atomic", "expected"),
+    [
+        pytest.param(
+            ENCODED_ORDERS,
+            "EncodedOrder",
+            {"name": "Ada", "badge_hex": None, "address": None},
+            False,
+            [
+                *(_DECODED, _REACHED, ("root_published", 0)),
+                *(_DECODED, _REACHED, ("root_published", 1)),
+                *(_SHARED, _REACHED, ("root_published", 2)),
+            ],
+            id="streamed",
+        ),
+        pytest.param(
+            ENCODED_ORDERS,
+            "EncodedOrder",
+            {"name": "Ada", "badge_hex": None, "address": None},
+            True,
+            [_DECODED, _REACHED, _DECODED, _REACHED, _SHARED, _REACHED]
+            + [("root_published", ordinal) for ordinal in range(3)],
+            id="atomic-judging-in-place",
+        ),
+        pytest.param(
+            ENCODED_ACCOUNT,
+            "EncodedAccount",
+            {"token_hex": "0a", "version": 1},
+            True,
+            [_REACHED, _DECODED, _REACHED, _DECODED, _REACHED, _SHARED]
+            + [("root_published", ordinal) for ordinal in range(3)],
+            id="atomic-deferring-states",
+        ),
+    ],
+)
+def test_graph_publication_orders_each_roots_judgment_against_its_reach(
+    domain: DomainModel,
+    entity: str,
+    row: dict[str, object],
+    atomic: bool,
+    expected: list[tuple[str, int]],
+) -> None:
+    # A deferring atomic Page judges a root's states only after reaching and
+    # comparing its claims; every other publication judges while it allocates.
+    observer = RecordingObserver()
+    fixture = PageFixture(domain, observer=observer)
+    roots = tuple(fixture.node(entity, {**row, "id": key}) for key in (1, 2, 1))
+
+    fixture.materialize(*roots, atomic=atomic)
+
+    assert observer.events == expected
+
+
 def test_atomic_publication_withholds_every_root_and_event_when_a_later_root_fails() -> None:
     # An eager result is one publication boundary. Even though root zero can be
     # prepared, root one's failure prevents either value or either publication
@@ -197,25 +249,17 @@ def test_atomic_publication_withholds_every_root_and_event_when_a_later_root_fai
     observer = RecordingObserver()
     page = _page(observer, 1, 2)
 
-    def publish(_root: RootView, position: int) -> Iterator[object]:
-        if position == 1:
+    def publish(_root: RootView, ordinal: int) -> tuple[object, ...]:
+        if ordinal == 1:
             raise RuntimeError("later root failed")
-        yield position
+        return (ordinal,)
 
     received: list[object] = []
     with pytest.raises(RuntimeError, match="later root failed"):
-        received.extend(publish_roots(page, publish, atomic=True, model=model_of(ORDERS_MODEL)))
+        received.extend(publish_roots(page, publish, _ORDERS, atomic=True))
 
     assert received == []
     assert [event for event in observer.events if event[0] == "root_published"] == []
-
-
-def test_an_atomic_publication_needs_the_model_that_decides_state_deferral() -> None:
-    observer = RecordingObserver()
-    page = _page(observer, 1)
-    with pytest.raises(ValueError, match="state deferral against its model"):
-        list(publish_roots(page, _publish(page), atomic=True))
-    assert observer.events == []
 
 
 def test_incremental_publication_keeps_the_prefix_before_a_later_root_fails() -> None:
@@ -226,12 +270,12 @@ def test_incremental_publication_keeps_the_prefix_before_a_later_root_fails() ->
     page = _page(observer, 1, 2)
     received: list[object] = []
 
-    def publish(_root: RootView, position: int) -> Iterator[object]:
-        if position == 1:
+    def publish(_root: RootView, ordinal: int) -> tuple[object, ...]:
+        if ordinal == 1:
             raise RuntimeError("later root failed")
-        yield position
+        return (ordinal,)
 
-    roots = publish_roots(page, publish)
+    roots = publish_roots(page, publish, _ORDERS)
     received.append(next(roots))
     assert received == [0]
     with pytest.raises(RuntimeError, match="later root failed"):

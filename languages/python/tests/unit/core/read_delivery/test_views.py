@@ -93,7 +93,7 @@ def test_a_concrete_no_slot_admits_carries_an_empty_row() -> None:
     # laid out for rather than failed on, and what it is laid out is nothing.
     schema = ViewSchema(((ChildSlot(_OWNER, frozenset({_identity("Dog")})),),))
     assert schema.source(ROOT_LEVEL, _layout("Cat")).slots == ()
-    assert schema.root_view(_layout("Cat")).slots == ()
+    assert schema.root_view_layout(_layout("Cat")).slots == ()
 
 
 def test_a_schema_lays_out_no_row_for_a_source_level_its_plan_never_had() -> None:
@@ -107,18 +107,18 @@ def test_a_prepared_schema_refuses_layouts_outside_its_frozen_catalog() -> None:
     with pytest.raises(ValueError, match="no source layout"):
         schema.source(ROOT_LEVEL, _layout("Cat"))
     with pytest.raises(ValueError, match="no root layout"):
-        schema.root_view(_layout("Cat"))
+        schema.root_view_layout(_layout("Cat"))
 
 
 # --------------------------------------------------------------------------- #
-# The root_view union and the translation into it.                               #
+# The Root View layout's union and the translation into it.                    #
 # --------------------------------------------------------------------------- #
 def test_a_root_view_layout_is_the_union_of_a_concretes_source_layouts() -> None:
     # A node projected at one level still carries the slots its concrete can
     # receive at every other, because the width is fixed before the first
     # projection of that node is walked and a second level widens nothing.
     schema = ViewSchema(((ChildSlot(_PETS),), (ChildSlot(_ANIMALS),)))
-    root_view = schema.root_view(_layout("Person"))
+    root_view = schema.root_view_layout(_layout("Person"))
     assert root_view.slots == (_ANIMALS, _PETS)
     assert dict(root_view.index_of) == {_ANIMALS: 0, _PETS: 1}
 
@@ -128,13 +128,14 @@ def test_the_union_is_in_the_member_layouts_canonical_order_not_the_plans() -> N
     # whichever level reached which — the same rule the Root View walks slots by.
     forward = ViewSchema(((ChildSlot(_ANIMALS),), (ChildSlot(_PETS),)))
     backward = ViewSchema(((ChildSlot(_PETS),), (ChildSlot(_ANIMALS),)))
-    assert forward.root_view(_layout("Person")).slots == backward.root_view(_layout("Person")).slots
+    person = _layout("Person")
+    assert forward.root_view_layout(person).slots == backward.root_view_layout(person).slots
 
 
 def test_to_root_view_carries_every_source_slot_to_the_position_its_key_holds() -> None:
     schema = ViewSchema(((ChildSlot(_PETS),), (ChildSlot(_ANIMALS),)))
     layout = _layout("Person")
-    root_view = schema.root_view(layout)
+    root_view = schema.root_view_layout(layout)
     for level, translation in enumerate(root_view.to_root_view):
         source = schema.source(level, layout)
         assert translation == tuple(root_view.index_of[view] for view in source.slots)
@@ -146,14 +147,14 @@ def test_a_guarded_concretes_translation_omits_the_slot_it_never_receives() -> N
     schema = ViewSchema(
         ((ChildSlot(_OWNER), ChildSlot(_OWNER_NARROWED, frozenset({_identity("Dog")}))),)
     )
-    assert schema.root_view(_layout("Dog")).to_root_view == ((0, 1),)
-    assert schema.root_view(_layout("Cat")).to_root_view == ((0,),)
+    assert schema.root_view_layout(_layout("Dog")).to_root_view == ((0, 1),)
+    assert schema.root_view_layout(_layout("Cat")).to_root_view == ((0,),)
 
 
 def test_targets_are_indexed_like_the_translation_and_name_only_back_reference_slots() -> None:
     owners = frozenset({_identity("Person")})
     schema = ViewSchema(((ChildSlot(_PETS),), (ChildSlot(_ANIMALS, targets=owners),)))
-    root_view = schema.root_view(_layout("Person"))
+    root_view = schema.root_view_layout(_layout("Person"))
     assert tuple(map(len, root_view.targets)) == tuple(map(len, root_view.to_root_view))
     assert root_view.targets == ((None,), (owners,))
 
@@ -165,7 +166,7 @@ def test_one_view_key_is_a_back_reference_at_one_level_and_forward_at_another() 
     schema = ViewSchema.prepared(
         ((ChildSlot(_OWNER),), (ChildSlot(_OWNER, targets=owners),)), (_layout("Dog"),)
     )
-    root_view = schema.root_view(_layout("Dog"))
+    root_view = schema.root_view_layout(_layout("Dog"))
     assert root_view.slots == (_OWNER,)
     assert root_view.to_root_view == ((0,), (0,))
     assert root_view.targets == ((None,), (owners,))
@@ -179,8 +180,8 @@ def test_a_prepared_schema_shares_equal_translation_and_targets_rows_across_conc
         ((ChildSlot(_OWNER),), (ChildSlot(_OWNER, targets=owners),)),
         (_layout("Dog"), _layout("Cat")),
     )
-    dog = schema.root_view(_layout("Dog"))
-    cat = schema.root_view(_layout("Cat"))
+    dog = schema.root_view_layout(_layout("Dog"))
+    cat = schema.root_view_layout(_layout("Cat"))
     assert dog is not cat
     assert dog.to_root_view == ((0,), (0,))
     assert dog.to_root_view is cat.to_root_view
@@ -188,8 +189,39 @@ def test_a_prepared_schema_shares_equal_translation_and_targets_rows_across_conc
     assert dog.targets is cat.targets
 
 
+def test_broad_slots_name_their_relationship_positions_and_narrowed_slots_their_views() -> None:
+    # A schema may lay out a slot for a direction the concrete does not
+    # declare, so its position is absent rather than refused: only a loaded
+    # value written there contradicts the layout.
+    schema = ViewSchema.of(_OWNER, _OWNER_NARROWED, _PETS)
+    dog = _layout("Dog")
+    root_view = schema.root_view_layout(dog)
+    assert root_view.slots == (_OWNER, _OWNER_NARROWED, _PETS)
+    assert root_view.broad_positions == (
+        (0, dog.relationship_index[_OWNER.relationship]),
+        (2, None),
+    )
+    assert root_view.narrowed_views == ((1, "owner[Person]"),)
+
+
+def test_a_prepared_schema_shares_equal_relationship_position_rows_across_concretes() -> None:
+    schema = ViewSchema.prepared(
+        ((ChildSlot(_OWNER), ChildSlot(_OWNER_NARROWED)),), (_layout("Dog"), _layout("Cat"))
+    )
+    dog = schema.root_view_layout(_layout("Dog"))
+    cat = schema.root_view_layout(_layout("Cat"))
+    assert dog.broad_positions is cat.broad_positions
+    assert dog.narrowed_views is cat.narrowed_views
+    unrelated = ViewSchema.prepared(((ChildSlot(_PETS),),), (_layout("Person"), _layout("Dog")))
+    assert unrelated.root_view_layout(_layout("Dog")).narrowed_views == ()
+    assert (
+        unrelated.root_view_layout(_layout("Dog")).narrowed_views
+        is unrelated.root_view_layout(_layout("Person")).narrowed_views
+    )
+
+
 def test_a_root_view_layout_is_answered_identically_on_a_second_reach() -> None:
     # Every node of one concrete shares the one layout, which is what makes a
     # Root View's per-node layout a reference rather than a derivation.
     schema = ViewSchema.of(_OWNER)
-    assert schema.root_view(_layout("Dog")) is schema.root_view(_layout("Dog"))
+    assert schema.root_view_layout(_layout("Dog")) is schema.root_view_layout(_layout("Dog"))

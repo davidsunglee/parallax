@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import pytest
 
@@ -14,25 +14,20 @@ from parallax.core import (
     Rel,
     attr,
     deep_fetch,
+    opt_lock,
     rel,
 )
 from parallax.core.entity import model_of
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.object_query import validate_object_query
 from parallax.core.object_query.serde import deserialize
 from parallax.core.read_delivery._fetch import attach_children
-from parallax.core.read_delivery._page import (
-    Page,
-    PageSchedule,
-    page_rows,
-    page_schedule,
-    release_finished_rows,
-    release_page_rows,
-)
+from parallax.core.read_delivery._page import page_rows, page_schedule
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import SnapshotConsistencyError
 from parallax.snapshot._publication._root import RootView
 from tests._support.tpcs_inverse_models import INVERSE_MODEL, LINK_ROW, PARENT_ROWS
+from tests.unit._root_publication_support import each_root
 from tests.unit.snapshot._snapshot_page_support import PageFixture
 
 
@@ -77,7 +72,7 @@ def test_forward_fanback_preserves_same_logical_concrete_witnesses(
     children = tuple(fixture.node(str(row["family_variant"]), _concrete(row)) for row in rows)
     attach_children(fixture.builder, meta, plan.includes, step, (root,), children)
     with pytest.raises(SnapshotConsistencyError) as conflict:
-        RootView(fixture.page(root))
+        fixture.observed_roots(root)
     assert conflict.value.code == "snapshot-projection-conflict"
     assert conflict.value.coordinates == ()
     assert conflict.value.occurrences == ((0, 1), (0, 2))
@@ -87,12 +82,16 @@ def _every_family_versioned(_entity: EntityIdentity) -> bool:
     return True
 
 
-def _releasing_at_last_use(page: Page) -> PageSchedule:
-    """``page``'s atomic schedule with every root family deferring its states,
-    which releases each projection at its last use."""
-    schedule = page_schedule(page, _every_family_versioned, atomic=True)
-    assert schedule.last_uses is not None
-    return schedule
+@pytest.fixture
+def releasing_at_last_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Atomic publication schedules every root family as carrying write
+    evidence, which defers its states and releases each projection at its last
+    use."""
+
+    def every_family_versioned(_model: Metamodel) -> Callable[[EntityIdentity], bool]:
+        return _every_family_versioned
+
+    monkeypatch.setattr(opt_lock, "write_evidence", every_family_versioned)
 
 
 _PARENT_KEY = "InverseLink.parentId"
@@ -115,12 +114,13 @@ def test_deferred_inverse_reuses_the_canonical_grouped_claim_and_overwritten_vie
     fixture.attach(first, "InverseParent.links", (link,))
     fixture.attach(duplicate, "InverseParent.links", (link,))
     fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
-    root = RootView(fixture.page(owner))
-    assert [entity.name for entity in root.order] == ["InverseOwner", "InverseAlpha", "InverseLink"]
-    slot = root.view_layout(2).index_of[fixture.view_key("InverseLink.parent")]
+    (root,) = fixture.observed_roots(owner)
+    assert root.names == ["InverseOwner", "InverseAlpha", "InverseLink"]
+    slot = root.view_layouts[2].index_of[fixture.view_key("InverseLink.parent")]
     assert root.view(2, slot) == 1
 
 
+@pytest.mark.usefixtures("releasing_at_last_use")
 def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime() -> None:
     fixture = PageFixture(INVERSE_MODEL, "InverseParent.links", references=_BOTH_PARENTS)
     alpha = fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0]))
@@ -131,25 +131,35 @@ def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime()
     fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
     page = fixture.page(alpha, beta)
     rows = page_rows(page)
-    schedule = _releasing_at_last_use(page)
+    schedule = page_schedule(page, _every_family_versioned, atomic=True)
     assert schedule.last_uses is not None
     assert tuple(schedule.last_uses[0]) == (1, 1, 1)
-    first = RootView(page, 0)
-    slot = first.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
-    assert first.view(1, slot) == 0
-    release_finished_rows(page, schedule, 0, first.reached)
-    assert rows.view_rows[link]
-    second = RootView(page, 1)
-    assert second.order[0].name == "InverseBeta"
-    assert second.view(1, slot) == 0
-    release_finished_rows(page, schedule, 1, second.reached)
-    assert all(not row for row in rows.member_rows)
-    assert not rows.view_rows[beta] and not rows.view_rows[link]
-    assert all(rows.judged_states.singleton(logical) is None for logical in range(len(rows.claims)))
-    release_page_rows(page)
+    slot = rows.schema.root_view_layout(fixture.layout_for("InverseLink")).index_of[
+        fixture.view_key("InverseLink.parent")
+    ]
+
+    def after_release(root: RootView, ordinal: int) -> tuple[object, ...]:
+        # The pass releases what a root finished with before publishing it.
+        if ordinal == 0:
+            return (root.view(1, slot), bool(rows.view_rows[link]))
+        return (
+            root.layout(0).concrete.name,
+            root.view(1, slot),
+            all(not row for row in rows.member_rows),
+            not rows.view_rows[beta] and not rows.view_rows[link],
+            all(
+                rows.judged_states.singleton(logical) is None for logical in range(len(rows.claims))
+            ),
+        )
+
+    assert each_root(page, fixture.model, after_release, atomic=True) == [
+        (0, True),
+        ("InverseBeta", 0, True, True, True),
+    ]
     assert not rows.view_rows
 
 
+@pytest.mark.usefixtures("releasing_at_last_use")
 def test_a_later_root_resolves_an_inverse_to_a_released_claim_to_null() -> None:
     fixture = PageFixture(INVERSE_MODEL, "InverseParent.links", references=_BOTH_PARENTS)
     other = fixture.node("InverseBeta", {**_concrete(PARENT_ROWS[1]), "id": 2})
@@ -161,15 +171,20 @@ def test_a_later_root_resolves_an_inverse_to_a_released_claim_to_null() -> None:
     page = fixture.page(released, other)
     rows = page_rows(page)
     logical = rows.logical_ids[released]
-    schedule = _releasing_at_last_use(page)
-    first = RootView(page, 0)
-    slot = first.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
-    assert first.view(1, slot) == 0
-    release_finished_rows(page, schedule, 0, first.reached)
-    assert rows.claims[logical] == other
-    second = RootView(page, 1)
-    assert [entity.name for entity in second.order] == ["InverseBeta", "InverseLink"]
-    assert second.view(1, slot) is None
+    slot = rows.schema.root_view_layout(fixture.layout_for("InverseLink")).index_of[
+        fixture.view_key("InverseLink.parent")
+    ]
+
+    def after_release(root: RootView, ordinal: int) -> tuple[object, ...]:
+        names = [root.layout(node).concrete.name for node in range(len(root))]
+        if ordinal == 0:
+            return (root.view(1, slot), rows.claims[logical])
+        return (names, root.view(1, slot))
+
+    assert each_root(page, fixture.model, after_release, atomic=True) == [
+        (0, other),
+        (["InverseBeta", "InverseLink"], None),
+    ]
 
 
 def test_an_inverse_to_a_grouped_claim_this_root_never_reached_is_null() -> None:
@@ -180,12 +195,13 @@ def test_an_inverse_to_a_grouped_claim_this_root_never_reached_is_null() -> None
     link = fixture.node("InverseLink", LINK_ROW)
     fixture.attach(other, "InverseParent.links", (link,))
     fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
-    root = RootView(fixture.page(other), 0)
-    slot = root.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
+    (root,) = fixture.observed_roots(other)
+    slot = root.view_layouts[1].index_of[fixture.view_key("InverseLink.parent")]
     assert root.view(1, slot) is None
 
 
-def test_every_root_of_a_multi_root_view_resolves_its_edges_and_inverse_to_its_own_nodes() -> None:
+@pytest.mark.usefixtures("releasing_at_last_use")
+def test_every_root_resolves_its_edges_and_inverse_to_its_own_nodes() -> None:
     fixture = PageFixture(
         INVERSE_MODEL,
         "InverseParent.links",
@@ -199,13 +215,12 @@ def test_every_root_of_a_multi_root_view_resolves_its_edges_and_inverse_to_its_o
     for parent in parents:
         fixture.attach(parent, "InverseParent.links", (link,))
     fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
-    root = RootView(fixture.page(*parents), defer_states=True)
-    links = root.view_layout(0).index_of[fixture.view_key("InverseParent.links")]
-    parent = root.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
-    assert root.roots == (0, 2)
-    assert [(root.view(node, links), root.view(node + 1, parent)) for node in (0, 2)] == [
+    roots = fixture.observed_roots(*parents, atomic=True)
+    links = roots[0].view_layouts[0].index_of[fixture.view_key("InverseParent.links")]
+    parent = roots[0].view_layouts[1].index_of[fixture.view_key("InverseLink.parent")]
+    assert [(root.view(0, links), root.view(1, parent)) for root in roots] == [
         ((1,), 0),
-        ((3,), 2),
+        ((1,), 0),
     ]
 
 
@@ -219,20 +234,19 @@ def test_an_inverse_resolves_only_to_a_reached_node_its_targets_admit() -> None:
     fixture.attach(alpha, "InverseParent.links", (link,))
     fixture.attach(beta, "InverseParent.links", (link,))
     fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
-    page = fixture.page(alpha, beta)
-    excluded = RootView(page, 0)
-    slot = excluded.view_layout(1).index_of[fixture.view_key("InverseLink.parent")]
+    excluded, admitted = fixture.observed_roots(alpha, beta)
+    slot = excluded.view_layouts[1].index_of[fixture.view_key("InverseLink.parent")]
     assert excluded.view(1, slot) is None
-    assert RootView(page, 1).view(1, slot) == 0
+    assert admitted.view(1, slot) == 0
 
 
 def test_an_inverse_whose_key_is_null_is_loaded_null() -> None:
     fixture = PageFixture(INVERSE_MODEL, references=_BOTH_PARENTS)
     link = fixture.node("InverseLink", {**LINK_ROW, "parent_id": None})
     fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
-    root = RootView(fixture.page(link))
+    (root,) = fixture.observed_roots(link)
     assert (
-        root.view(0, root.view_layout(0).index_of[fixture.view_key("InverseLink.parent")]) is None
+        root.view(0, root.view_layouts[0].index_of[fixture.view_key("InverseLink.parent")]) is None
     )
 
 
@@ -257,8 +271,8 @@ def test_to_one_selection_among_distinct_logical_targets_remains_unchanged() -> 
     first = fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0]))
     other = fixture.node("InverseBeta", {**_concrete(PARENT_ROWS[1]), "id": 2})
     fixture.builder.write_to_one(link, fixture.view_key("InverseLink.parent"), (first, other))
-    root = RootView(fixture.page(link))
-    assert [entity.name for entity in root.order] == ["InverseLink", "InverseAlpha"]
+    (root,) = fixture.observed_roots(link)
+    assert root.names == ["InverseLink", "InverseAlpha"]
 
 
 class TemporalParent(Bitemporal, table="temporal_parent"):
@@ -322,18 +336,21 @@ def _coordinate_distinct_parents() -> tuple[PageFixture, tuple[int, ...], int]:
     return fixture, parents, link
 
 
-def _resolved_parent(page: Page, position: int, fixture: PageFixture) -> object:
-    root = RootView(page, position)
-    link = len(root.order) - 1
-    return root.view(link, root.view_layout(link).index_of[fixture.view_key(_TEMPORAL_PARENT)])
+def _resolved_parents(fixture: PageFixture, *roots: int) -> list[object]:
+    """Each root's link's resolved inverse, the link being its last node."""
+
+    def resolved(root: RootView, _ordinal: int) -> object:
+        link = len(root) - 1
+        return root.view(link, root.view_layout(link).index_of[fixture.view_key(_TEMPORAL_PARENT)])
+
+    return each_root(fixture.page(*roots, pin=_TEMPORAL_PIN), fixture.model, resolved)
 
 
 def test_inverse_lookup_keeps_coordinate_distinct_claims_until_root_local_resolution() -> None:
     fixture, roots, _link = _coordinate_distinct_parents()
     page = fixture.page(*roots, pin=_TEMPORAL_PIN)
     assert page_rows(page).logical_ids[roots[0]] != page_rows(page).logical_ids[roots[1]]
-    for position in (0, 1):
-        assert _resolved_parent(page, position, fixture) == 0
+    assert _resolved_parents(fixture, *roots) == [0, 0]
 
 
 def test_every_coordinate_distinct_claim_of_one_key_resolves_its_own_inverse() -> None:
@@ -348,8 +365,7 @@ def test_every_coordinate_distinct_claim_of_one_key_resolves_its_own_inverse() -
     logical_ids = page_rows(page).logical_ids
     assert len({logical_ids[parent] for parent in distinct}) == len(distinct)
     assert logical_ids[repeated] == logical_ids[distinct[1]]
-    for position in range(len(roots)):
-        assert _resolved_parent(page, position, fixture) == 0
+    assert _resolved_parents(fixture, *roots) == [0] * len(roots)
 
 
 def test_an_inverse_keeps_the_claims_its_key_held_when_it_was_written() -> None:
@@ -359,12 +375,11 @@ def test_an_inverse_keeps_the_claims_its_key_held_when_it_was_written() -> None:
     _reference(fixture, link)
     later = _temporal_parent(fixture, _THIRD_START)
     fixture.attach(later, "TemporalParent.links", (link,))
-    page = fixture.page(*earlier, later, pin=_TEMPORAL_PIN)
-    assert [_resolved_parent(page, position, fixture) for position in range(3)] == [0, 0, None]
+    assert _resolved_parents(fixture, *earlier, later) == [0, 0, None]
 
 
 def test_an_inverse_to_coordinate_distinct_claims_this_root_never_reached_is_null() -> None:
     fixture, _parents, link = _coordinate_distinct_parents()
-    root = RootView(fixture.page(link, pin=_TEMPORAL_PIN), 0)
-    assert root.order[0].name == "TemporalLink"
-    assert root.view(0, root.view_layout(0).index_of[fixture.view_key(_TEMPORAL_PARENT)]) is None
+    (root,) = fixture.observed_roots(link, pin=_TEMPORAL_PIN)
+    assert root.names[0] == "TemporalLink"
+    assert root.view(0, root.view_layouts[0].index_of[fixture.view_key(_TEMPORAL_PARENT)]) is None

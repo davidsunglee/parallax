@@ -97,12 +97,22 @@ class RootViewLayout:
     logical claims. It is kept per source level rather than per view key,
     because one view key can be a back-reference at one level and a forward hop
     at another.
+
+    ``broad_positions`` pairs each broad slot with the relationship position it
+    fills in the concrete's member layout, located by the whole Relationship
+    Identity because two Entities may declare one local name. The position is
+    ``None`` where the concrete declares no such direction: an unguarded level
+    may lay out a slot for one, and only a loaded value written there
+    contradicts the layout.
+    ``narrowed_views`` pairs each narrowed slot with its view name.
     """
 
     slots: tuple[RelationshipViewKey, ...]
     index_of: Mapping[RelationshipViewKey, int]
     to_root_view: tuple[tuple[int, ...], ...]
     targets: tuple[tuple[frozenset[EntityIdentity] | None, ...], ...]
+    broad_positions: tuple[tuple[int, int | None], ...]
+    narrowed_views: tuple[tuple[int, str], ...]
 
 
 class ViewSchema:
@@ -141,7 +151,7 @@ class ViewSchema:
         for layout in held:
             for level in range(len(schema._levels)):
                 schema.source(level, layout)
-            schema._built_root_view(layout, shared)
+            schema._built_root_view_layout(layout, shared)
         schema._interned = MappingProxyType(schema._interned)  # pyright: ignore[reportAttributeAccessIssue]
         schema._source = MappingProxyType(schema._source)  # pyright: ignore[reportAttributeAccessIssue]
         schema._root_views = MappingProxyType(schema._root_views)  # pyright: ignore[reportAttributeAccessIssue]
@@ -183,7 +193,7 @@ class ViewSchema:
         self._source[memo] = built
         return built
 
-    def root_view(self, layout: EntityLayout) -> RootViewLayout:
+    def root_view_layout(self, layout: EntityLayout) -> RootViewLayout:
         """The Root View row a logical node resolving to ``layout``'s Entity
         carries, with the translation of every source level's row into it."""
         cached = self._root_views.get(layout.concrete)
@@ -193,14 +203,14 @@ class ViewSchema:
             raise ValueError(
                 f"this prepared view schema carries no root layout for {layout.concrete.canonical}"
             )
-        return self._built_root_view(layout, None)
+        return self._built_root_view_layout(layout, None)
 
-    def _built_root_view(
+    def _built_root_view_layout(
         self, layout: EntityLayout, shared: dict[tuple[object, ...], tuple[object, ...]] | None
     ) -> RootViewLayout:
         """Lay out ``layout``'s Root View row. A prepared schema passes ``shared``
-        so that equal ``to_root_view`` and ``targets`` rows of its every concrete,
-        retained for the plan's lifetime, are one object."""
+        so that equal rows of its every concrete, retained for the plan's
+        lifetime, are one object."""
         sources = tuple(self.source(level, layout) for level in range(len(self._levels)))
         slots = layout.ordered(dict.fromkeys(view for source in sources for view in source.slots))
         index_of = _index_of(slots)
@@ -226,6 +236,26 @@ class ViewSchema:
                             shared,
                         )
                         for level, source in enumerate(sources)
+                    ]
+                ),
+                shared,
+            ),
+            _shared(
+                tuple(
+                    [
+                        _shared((slot, layout.relationship_index.get(view.relationship)), shared)
+                        for slot, view in enumerate(slots)
+                        if view.narrowed_view is None
+                    ]
+                ),
+                shared,
+            ),
+            _shared(
+                tuple(
+                    [
+                        _shared((slot, view.narrowed_view), shared)
+                        for slot, view in enumerate(slots)
+                        if view.narrowed_view is not None
                     ]
                 ),
                 shared,

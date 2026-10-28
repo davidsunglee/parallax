@@ -413,7 +413,11 @@ def test_a_failure_after_the_call_completed_is_the_reads_own(
         del args, kwargs
         raise SnapshotMaterializationError("refused materialization", cause=ValueError("refused"))
 
-    monkeypatch.setattr(read_module, "typed_root", refuse_materialization)
+    def refusing_publisher(*args: object) -> object:
+        del args
+        return refuse_materialization
+
+    monkeypatch.setattr(read_module, "TypedRootPublisher", refusing_publisher)
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(
         Read(

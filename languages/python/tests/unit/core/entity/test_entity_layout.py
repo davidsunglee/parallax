@@ -58,11 +58,11 @@ from parallax.core.metamodel import (
 from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema, page_rows
 from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
-from parallax.snapshot._publication._root import RootView
 from tests._support.document_reads import folded_names
 from tests.unit._corpus_model_support import corpus, formed, target
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import bound_read, compiled_read
+from tests.unit._root_publication_support import observed_roots
 
 _NAMESPACE = "parallax.compatibility"
 
@@ -551,7 +551,8 @@ def _merged_view_order(
     projection = _claimed(builder, model, identity, 0)
     for view in views:
         builder.write_view(projection, view, None)
-    return RootView(builder.finish((projection,), Pin())).view_layout(0).slots
+    (root,) = observed_roots(builder.finish((projection,), Pin()), model)
+    return root.view_layouts[0].slots
 
 
 def _claimed(builder: PageBuilder, model: Metamodel, identity: EntityIdentity, seed: int) -> int:

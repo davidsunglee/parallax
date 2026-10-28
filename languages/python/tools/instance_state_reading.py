@@ -43,8 +43,8 @@ from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.read_delivery._page import ROOT_LEVEL, LogicalKey, PageBuilder, ViewSchema
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Snapshot
-from parallax.snapshot._publication._root import RootView
-from parallax.snapshot._publication._wire import shared_wire_encoder, wire_roots
+from parallax.snapshot._publication._root_publication import publish_roots
+from parallax.snapshot._publication._wire import WireRootPublisher, shared_wire_encoder
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
@@ -342,12 +342,12 @@ def direct_wire_result(
     encoder = shared_wire_encoder()
     try:
         encoder.begin_page()
-        roots = wire_roots(
-            RootView(cast("Any", page)),
-            cast("Any", model),
-            CONCURRENCY,
-            cast("Any", includes),
-            encode=encoder,
+        roots = tuple(
+            publish_roots(
+                cast("Any", page),
+                WireRootPublisher(cast("Any", model), CONCURRENCY, cast("Any", includes), encoder),
+                cast("Any", model),
+            )
         )
         return Snapshot(cast("Any", roots), pin, edition)
     finally:

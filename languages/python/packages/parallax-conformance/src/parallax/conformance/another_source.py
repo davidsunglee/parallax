@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, cast
@@ -115,22 +115,23 @@ class AnotherSource:
 
     def _materialize(self, page: Page) -> tuple[object, ...]:
         """Publish Page roots through the shared seam using this source state."""
+        construction = self._construction
 
-        def publish(root: RootView, _position: int) -> Iterator[object]:
+        def publish(root: RootView, _ordinal: int) -> tuple[object, ...]:
             require_publishable(root)
 
             def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-                handles = [writer.allocate(identity) for identity in root.order]
-                for index, handle in enumerate(handles):
+                handles = [writer.allocate(root.layout(node).concrete) for node in range(len(root))]
+                for node, handle in enumerate(handles):
                     writer.populate(
                         handle,
-                        root.member_values(index),
-                        (UNLOADED,) * len(root.layout(index).relationships),
+                        root.member_values(node),
+                        (UNLOADED,) * len(root.layout(node).relationships),
                     )
-                return tuple(handles[index] for index in root.roots if index is not None)
+                return (handles[0],)
 
-            yield from self._construction.construct(
+            return construction.construct(
                 build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
             )
 
-        return tuple(publish_roots(page, publish))
+        return tuple(publish_roots(page, publish, self._model.meta))
