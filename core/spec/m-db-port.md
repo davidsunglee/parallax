@@ -49,6 +49,18 @@ it carries, a number retained from an earlier read included; the adapter
 interprets no numeric provenance itself. The final serialized bytes and driver
 buffers remain necessary adapter output.
 
+An array bind crosses the port as one **array carrier**: the scalar Neutral
+Type its elements share, and its managed elements in order, with no
+per-element wrapper. A null element is SQL NULL, and a `timestamp` element may
+be the open upper bound (`m-core`). The carrier is the only owner of the
+element type: a concrete adapter binds the array as that type's array, and
+MUST NOT infer a type from the elements or copy them into another sequence
+first. The statement casts the parameter to its array type (`m-dialect`
+**array parameter cast form**), so an adapter whose driver has no native array
+binding MAY instead bind one correctly escaped array literal of the elements'
+text spellings for the cast to type on the server. Ownership of the element
+sequence passes to the statement; the caller does not mutate it afterwards.
+
 `executePipeline` takes an ordered sequence of independent row-returning
 statements, each carrying its own SQL, binds, and `documentReads`, and returns
 one row batch per statement in the same order. A conforming implementation sends

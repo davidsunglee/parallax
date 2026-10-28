@@ -86,6 +86,7 @@ from typing import Any, Final, NamedTuple, cast
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
 from parallax.conformance.workloads import catalog
 from parallax.core.db_port import (
+    ArrayBind,
     DatabaseConnection,
     DocumentReadOrdinals,
     MappingRow,
@@ -278,7 +279,7 @@ class _GeneratingPort(ConnectsAsItself):
     ) -> list[Row]:
         del document_reads
         if "order_item t0" in sql:
-            parents = tuple(cast("list[int]", binds[0]))
+            parents = tuple(cast("list[int]", cast("ArrayBind", binds[0]).values))
             first_id = cast("int", self._orders[0]["id"])
             return [
                 tuple(_item_row(row).values())

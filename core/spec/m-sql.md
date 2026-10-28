@@ -76,13 +76,16 @@ A lowered statement retains driver-ready binds as one plain ordered tuple. SQL
 chooses the physical representation of each typed value: a direct typed column or
 typed document cast binds the managed carrier, while document text extraction
 binds canonical comparison text supplied by `m-document-codec`. No per-bind
-wrapper carries value, type, and form together.
+wrapper carries a scalar's value, type, and form together. Only the port's
+document and array carriers (`m-db-port`) wrap a bind, because a driver cannot
+type either from its value; an array carrier names its element type itself, one
+wrapper per array rather than per element.
 
 Where canonical compatibility projection needs declared-type information, the
 statement carries compact private metadata over that tuple:
 
 ```text
-BindForm = MANAGED | MANAGED_ARRAY | COMPARISON_TEXT | COMPARISON_TEXT_ARRAY
+BindForm = MANAGED | COMPARISON_TEXT
 
 TypedBindSpan(start, stop, declaredType, form)
 RepeatedTypedBindSpan(start, width, stride, repetitions, declaredType, form)
@@ -107,18 +110,17 @@ values require no override. The database adapter ignores all span and override
 metadata.
 
 The statement's canonical bind-projection operation walks the compact metadata,
-calls `encodeWire` only for `MANAGED` and `MANAGED_ARRAY` spans, emits
-`COMPARISON_TEXT` values as the already-canonical Wire strings they represent,
-applies sparse overrides, and unwraps document values. A `MANAGED_ARRAY` bind is
-one ordered array of members of the declared type, and projects as a JSON array
-of each element's `encodeWire` under that type, in order. A
-`COMPARISON_TEXT_ARRAY` bind is one ordered array of the comparison texts a
-text-compared document extraction is compared with, and projects as a JSON array
-of those strings, in order. It never infers a `NeutralType` from a runtime
-carrier.
+calls `encodeWire` only for `MANAGED` spans, emits `COMPARISON_TEXT` values as
+the already-canonical Wire strings they represent, applies sparse overrides, and
+unwraps document values. Span metadata covers scalar binds only. An array
+carrier projects as a JSON array of each element's `encodeWire` under the
+carrier's own element type, in order, with a null element as `null` and the open
+upper bound as its canonical literal. It never infers a `NeutralType` from a
+runtime carrier.
 An unannotated bind in a publicly constructible statement may pass through only
-when it is already an ordinary Wire Value or a document wrapper; any other
-carrier is a SQL-generation error rather than a guessed encoding.
+when it is already an ordinary Wire Value, a document wrapper, or an array
+carrier; any other carrier is a SQL-generation error rather than a guessed
+encoding.
 
 The core does **not** mandate *how* an implementation produces SQL (a language
 MAY lower the algebra onto an external SQL IR inside `m-sql`). The core mandates
@@ -511,11 +513,11 @@ subject compares in, through the `m-dialect` **array parameter cast form** — t
 column's own type, or, for a document extraction, the type its typed cast form
 casts to and otherwise text — so the comparison stays same-typed however the
 driver types the array. The statement's text and bind arity are therefore
-independent of the list's length. The elements are managed values of the
-subject's declared type (`MANAGED_ARRAY`), or the comparison texts a
-text-compared extraction compares with (`COMPARISON_TEXT_ARRAY`). MariaDB has no
-array parameter and renders `t0.col in (?, ?, …)` with one placeholder and bind
-per value. A list is never empty (`m-predicate`); no dialect array-binds an empty
+independent of the list's length. The bind is one array carrier (`m-db-port`)
+whose elements are managed values of the subject's declared type, or, for a
+text-compared extraction, the `string` comparison texts it compares with.
+MariaDB has no array parameter and renders `t0.col in (?, ?, …)` with one
+placeholder and bind per value. A list is never empty (`m-predicate`); no dialect array-binds an empty
 one, since `not t0.col = any(…)` over an empty array is true even for a null
 subject, which `notIn` excludes.
 
@@ -523,11 +525,11 @@ A framework-generated child-level membership carries a **deferred key set**
 rather than an authored list. Its statement is compiled once with one template
 hole and rendered when the distinct parent keys are known. Postgres renders
 `t0.col = any(cast(? as <type>[]))` and binds the complete key set as one array
-parameter; its SQL text and bind arity are therefore constant across pages. The
-cast names the key's own type through the `m-dialect` **array parameter cast
-form**, so the comparison stays same-typed however the driver types the array.
-MariaDB renders
-`t0.col in (?, ..., ?)` with one placeholder and bind per key. Other predicate
+carrier of the key's declared type; its SQL text and bind arity are therefore
+constant across pages. The cast names the key's own type through the
+`m-dialect` **array parameter cast form**, so the comparison stays same-typed
+however the driver types the array. MariaDB renders `t0.col in (?, ..., ?)` with
+one placeholder and bind per key. Other predicate
 binds retain their authored order around the rendered key-set bind(s). An empty
 gathered key set issues no child statement, so no dialect renders an empty
 membership list.

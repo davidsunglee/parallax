@@ -1,10 +1,11 @@
-"""Integer arrays bound as binary ``int8[]`` against Int32 and Int64 columns.
+"""Integer arrays bound in their declared binary type against Int32 and Int64 columns.
 
 An authored membership and a child level's gathered keys each bind one integer
-list. The adapter binds every such list as a binary ``int8[]`` whatever its
-magnitudes, on every way a connection comes into existence, and the statement's
-array cast compares it in the column's own type. The keys sit at and near both
-ends of each column's range, so a narrowing or a sign error would lose rows.
+array carrier. The adapter binds it as the binary array of its declared element
+type whatever its magnitudes, on every way a connection comes into existence,
+and the statement's array cast compares it in the column's own type. The keys
+sit at and near both ends of each column's range, so a narrowing or a sign
+error would lose rows.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from psycopg.pq import Format
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance._postgres_control import PostgresControl
 from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Int32, Rel, attr, rel
+from parallax.core.base import INT32, INT64, NeutralType
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.sql_gen import LoweredStatement
@@ -56,9 +59,13 @@ _INT64_KEYS: Final = (-(2**63), -(2**63) + 1, -(2**31) - 1, -7, 0, 5, 2**31, 2**
 _INT32_KEYS: Final = (-(2**31), -(2**31) + 1, -7, 0, 5, 2**31 - 2, 2**31 - 1)
 
 _CASES: Final = [
-    pytest.param(WideHolder, WideItem, _INT64_KEYS, "bigint", id="int64"),
-    pytest.param(NarrowHolder, NarrowItem, _INT32_KEYS, "int", id="int32"),
+    pytest.param(WideHolder, WideItem, _INT64_KEYS, "bigint", INT64, id="int64"),
+    pytest.param(NarrowHolder, NarrowItem, _INT32_KEYS, "int", INT32, id="int32"),
 ]
+_ARRAY_TYPES: Final[dict[NeutralType, tuple[int, str]]] = {
+    INT64: (1016, "bigint[]"),
+    INT32: (1007, "integer[]"),
+}
 
 
 @pytest.fixture(scope="module")
@@ -98,22 +105,29 @@ def _delivered(
     return [call.statement for call in observation.calls[mark:] if call.kind == "read"]
 
 
-def _integer_arrays(statements: list[LoweredStatement], element: str) -> list[list[int]]:
-    """Each statement's one array bind, checked against the cast it compares under."""
-    arrays: list[list[int]] = []
+def _integer_arrays(
+    statements: list[LoweredStatement], element: str, declared: NeutralType
+) -> list[ArrayBind]:
+    """Each statement's one array bind, checked against the cast it compares
+    under and the key type it declares."""
+    arrays: list[ArrayBind] = []
     for statement in statements:
         assert f"= any(cast(? as {element}[]))" in statement.sql
-        (array,) = (
-            cast("list[object]", bind) for bind in statement.binds if isinstance(bind, list)
-        )
-        assert {type(value) for value in array} == {int}
-        arrays.append(cast("list[int]", array))
+        (array,) = (bind for bind in statement.binds if isinstance(bind, ArrayBind))
+        assert array.element_type == declared
+        assert {type(value) for value in array.values} == {int}
+        arrays.append(array)
     return arrays
 
 
-@pytest.mark.parametrize(("holder", "item", "keys", "element"), _CASES)
+@pytest.mark.parametrize(("holder", "item", "keys", "element", "declared"), _CASES)
 def test_authored_and_gathered_integer_arrays_select_their_rows_at_the_column_bounds(
-    profile_run: Any, holder: type[Any], item: type[Any], keys: tuple[int, ...], element: str
+    profile_run: Any,
+    holder: type[Any],
+    item: type[Any],
+    keys: tuple[int, ...],
+    element: str,
+    declared: NeutralType,
 ) -> None:
     statements = _delivered(profile_run, holder, item, keys)
 
@@ -121,25 +135,27 @@ def test_authored_and_gathered_integer_arrays_select_their_rows_at_the_column_bo
     assert "t0.id = any(" in root.sql
     assert "t0.holder_id = any(" in level.sql
     assert negated.sql.count("not t0.id = any(") == 1
-    assert len(_integer_arrays(statements, element)) == 3
+    assert len(_integer_arrays(statements, element, declared)) == 3
 
 
-@pytest.mark.parametrize(("holder", "item", "keys", "element"), _CASES)
-def test_every_connection_path_binds_an_integer_array_as_binary_int8(
+@pytest.mark.parametrize(("holder", "item", "keys", "element", "declared"), _CASES)
+def test_every_connection_path_binds_an_integer_array_in_its_declared_binary_type(
     profile_run: Any,
     control: PostgresControl,
     holder: type[Any],
     item: type[Any],
     keys: tuple[int, ...],
     element: str,
+    declared: NeutralType,
 ) -> None:
     statements = _delivered(profile_run, holder, item, keys)
-    arrays = _integer_arrays(statements, element)
+    arrays = _integer_arrays(statements, element, declared)
+    array_oid, array_type = _ARRAY_TYPES[declared]
 
     for array in arrays:
         transformer = Transformer(control.native)
         transformer.dump_sequence(adapt_binds([array]), [PyFormat.AUTO])
-        assert (transformer.types, transformer.formats) == ((1016,), [Format.BINARY])
+        assert (transformer.types, transformer.formats) == ((array_oid,), [Format.BINARY])
 
     runtimes = [
         profile_run.configured(pool=pool).open()
@@ -150,13 +166,13 @@ def test_every_connection_path_binds_an_integer_array_as_binary_int8(
             with runtime.login_execution().new_context() as connection:
                 for statement, array in zip(statements, arrays, strict=True):
                     assert connection.execute("select pg_typeof(%s)::text", [array]) == [
-                        ("bigint[]",)
+                        (array_type,)
                     ]
                     rows = connection.execute(
                         POSTGRES.to_driver_sql(statement.sql), list(statement.binds)
                     )
                     assert rows
-        assert control.execute("select pg_typeof(%s)::text", [arrays[0]]) == [("bigint[]",)]
+        assert control.execute("select pg_typeof(%s)::text", [arrays[0]]) == [(array_type,)]
     finally:
         for runtime in runtimes:
             runtime.close()

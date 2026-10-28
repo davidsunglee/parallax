@@ -260,13 +260,15 @@ names the concrete cast type.
 ### Array parameter cast form (`m-sql` membership and deferred key set)
 
 Postgres binds an authored membership's list, and a child level's gathered key
-set, as one array parameter (`m-sql`). A driver types an array by its elements,
-so small integers can arrive as a narrower integer array; against a wider
-subject the comparison would then be cross-type, which forgoes hashed evaluation
-of a long array and misleads plan choice. The array is therefore cast to the
-array of the type its subject compares in: a column's own type, or, for a
-document extraction, the type the typed cast form above casts it to, and text for
-one of the six text-compared types. The element type carries **no length or
+set, as one array parameter (`m-sql`), crossing the port as one `m-db-port`
+array carrier. The carrier's element type is the subject's declared type, or
+`string` for comparison texts, which need not be the type the subject compares
+in, and a driver without native arrays binds an untyped literal; against a
+wider subject the comparison would then be cross-type, which forgoes hashed
+evaluation of a long array and misleads plan choice. The array is therefore
+cast to the array of the type its subject compares in: a column's own type, or,
+for a document extraction, the type the typed cast form above casts it to, and
+text for one of the six text-compared types. The element type carries **no length or
 precision modifier**: a cast to `varchar(n)` truncates and one to `decimal(p, s)`
 rounds, so either could make an element equal a value it does not equal, while
 comparing against the unmodified type uses the subject's own equality and index.
@@ -286,9 +288,9 @@ comparing against the unmodified type uses the subject's own equality and index.
 | `timestamp` | `cast(? as timestamptz[])` | `cast(? as text[])` |
 | `uuid` | `cast(? as uuid[])` | `cast(? as text[])` |
 
-A text-compared extraction's array holds the comparison texts its elements bind
-as (`m-sql` `COMPARISON_TEXT_ARRAY`). MariaDB has no array parameter and expands
-the list or key set instead.
+A text-compared extraction's array carrier holds the `string` comparison texts
+its elements bind as (`m-sql`). MariaDB has no array parameter and expands the
+list or key set instead.
 
 ### Array traversal form (`m-value-object`)
 

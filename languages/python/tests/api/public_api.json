@@ -169,6 +169,7 @@
   "parallax.core.db_port": [
     "AccessMode",
     "AcquisitionReason",
+    "ArrayBind",
     "BeginFailed",
     "Bind",
     "CallbackRaised",

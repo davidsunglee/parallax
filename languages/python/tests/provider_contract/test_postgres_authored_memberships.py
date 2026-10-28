@@ -4,7 +4,8 @@ Every admitted subject type is read three ways — a column, a document-resident
 attribute, and a value-object leaf or scalar-collection element — and both
 operators select exactly the rows a value comparison selects, excluding a row
 whose subject is null. The delivered statement binds the whole list as one
-array, so a list longer than the protocol's 65,535 parameters still executes.
+array carrier, so a list longer than the protocol's 65,535 parameters still
+executes.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import pytest
 
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.core import Attr, Document, DomainModel, Entity, Float32, Int32, ValueObject, attr
+from parallax.core.db_port import ArrayBind
 from parallax.core.entity._model import model_of
 from parallax.snapshot import ScopedDatabase, connect
 from tests._support.root_ownership import own_root
@@ -126,7 +128,7 @@ def _ids(
     statement = call.statement
     assert " = any(cast(? as " in statement.sql
     assert " in (" not in statement.sql
-    assert sum(isinstance(bind, list) for bind in statement.binds) == 1
+    assert sum(isinstance(bind, ArrayBind) for bind in statement.binds) == 1
     return found
 
 

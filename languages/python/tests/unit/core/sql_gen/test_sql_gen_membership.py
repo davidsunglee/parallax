@@ -1,7 +1,7 @@
 # pyright: reportPrivateUsage=false
 
-"""Authored memberships as one execution value: Postgres binds one cast array,
-another dialect expands one placeholder per element, and a template compiled at
+"""Authored memberships as one execution value: a dialect that binds arrays
+binds one cast array, another expands one placeholder per element, and a template compiled at
 one width renders every other width exactly as direct compilation does."""
 
 from __future__ import annotations
@@ -10,14 +10,15 @@ import dataclasses
 import datetime as dt
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
-from typing import Final, cast
+from typing import Final
 
 import pytest
 
-from parallax.core import continuation, deep_fetch
+from parallax.core import base, continuation, deep_fetch
 from parallax.core import object_query as oq
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INT64, STRING
+from parallax.core.base import INT32, INT64, STRING
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query._resolved import ContinuationCoordinate, ResolvedObjectQuery
@@ -39,7 +40,7 @@ DOCUMENT: Final = model("document")
 DOCUMENT_LAYOUT: Final = model("document-layout")
 CUSTOMER: Final = model("customer")
 COLLECTIONS: Final = model("predicate-collections")
-_MARIADB: Final = dataclasses.replace(POSTGRES, name="mariadb")
+_MARIADB: Final = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
 _DIALECTS: Final = pytest.mark.parametrize(
     "dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"]
 )
@@ -74,8 +75,8 @@ def _direct(
 
 def _carriers(binds: Sequence[object]) -> list[object]:
     return [
-        (list, _carriers(cast("list[object]", bind)))
-        if isinstance(bind, list)
+        (ArrayBind, bind.element_type, _carriers(bind.values))
+        if isinstance(bind, ArrayBind)
         else (type(bind), bind, bind.as_tuple())
         if isinstance(bind, Decimal)
         else (type(bind), bind)
@@ -142,7 +143,7 @@ def test_two_memberships_of_different_widths_render_before_a_comparison_seek_and
     if dialect is POSTGRES:
         assert "t0.id = any(cast(? as bigint[]))" in rendered.sql
         assert "not t0.qty = any(cast(? as int[]))" in rendered.sql
-        assert rendered.binds[:2] == ([4], [5, 6, 7])
+        assert rendered.binds[:2] == (ArrayBind(INT64, [4]), ArrayBind(INT32, [5, 6, 7]))
     else:
         assert "t0.id in (?) and not t0.qty in (?, ?, ?)" in rendered.sql
         assert rendered.binds[:4] == (4, 5, 6, 7)
@@ -326,8 +327,9 @@ def test_a_text_compared_document_membership_binds_and_projects_comparison_texts
     )
 
     statement = template.render(query=read(["2024-02-01", "2024-03-09"])).statement
-    assert statement.binds[-1] == ["2024-02-01", "2024-03-09"]
-    assert statement.typed_bind_spans[-1].form == "COMPARISON_TEXT_ARRAY"
+    assert statement.binds[-1] == ArrayBind(STRING, ["2024-02-01", "2024-03-09"])
+    last = len(statement.binds) - 1
+    assert all(last not in span.indexes() for span in statement.typed_bind_spans)
     assert statement.wire_binds()[-1] == ["2024-02-01", "2024-03-09"]
 
 
@@ -336,8 +338,9 @@ def test_a_managed_array_membership_projects_each_element_to_its_wire_value() ->
         return _query(ORDERS, "Order", _membership("in", "Order.price", prices))
 
     statement = _template(read(["1.50"]), ORDERS, POSTGRES).render(query=read(["2.50", "10.00"]))
-    assert statement.statement.binds == ([Decimal("2.50"), Decimal("10.00")],)
-    assert statement.statement.typed_bind_spans[-1].form == "MANAGED_ARRAY"
+    (bind,) = statement.statement.binds
+    assert bind == ArrayBind(base.Decimal(18, 2), [Decimal("2.50"), Decimal("10.00")])
+    assert statement.statement.typed_bind_spans == ()
     assert statement.statement.wire_binds() == (["2.50", "10.00"],)
 
 

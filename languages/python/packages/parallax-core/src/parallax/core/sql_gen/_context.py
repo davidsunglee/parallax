@@ -17,7 +17,7 @@ from parallax.core.base import (
     detach_json_container,
     matches_neutral_type,
 )
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import ArrayBind, JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
@@ -32,9 +32,8 @@ from parallax.core.wire import (
     encode_wire,
 )
 
-type _ScalarBindForm = Literal["MANAGED", "COMPARISON_TEXT"]
-type _BindForm = _ScalarBindForm | Literal["MANAGED_ARRAY", "COMPARISON_TEXT_ARRAY"]
-type _TypedBindSlot = tuple[NeutralType, _ScalarBindForm]
+type _BindForm = Literal["MANAGED", "COMPARISON_TEXT"]
+type _TypedBindSlot = tuple[NeutralType, _BindForm]
 
 
 class _NoWireBindOverride:
@@ -322,7 +321,7 @@ class ContinuationCarrierForm:
     typed metadata of the expression it is compared against."""
 
     neutral_type: NeutralType
-    bind_form: _ScalarBindForm
+    bind_form: _BindForm
     expands: ClassVar[bool] = False
 
     @property
@@ -343,15 +342,16 @@ PAGE_CAP: Final = PageCapForm()
 
 @dataclass(frozen=True, slots=True)
 class GatheredKeysForm:
-    """A child read's gathered parent keys: one managed array bind, or one
-    managed bind per key in place of an expanding placeholder."""
+    """A child read's gathered parent keys: one :class:`ArrayBind` of the keys'
+    own type, or one managed bind per key in place of an expanding
+    placeholder."""
 
     neutral_type: NeutralType
     array: bool
 
     @property
-    def typed_slot(self) -> tuple[NeutralType, _BindForm]:
-        return self.neutral_type, "MANAGED_ARRAY" if self.array else "MANAGED"
+    def typed_slot(self) -> tuple[NeutralType, _BindForm] | None:
+        return None if self.array else (self.neutral_type, "MANAGED")
 
     @property
     def expands(self) -> bool:
@@ -361,7 +361,7 @@ class GatheredKeysForm:
 @dataclass(frozen=True, slots=True)
 class MembershipForm:
     """An authored membership's elements, each managed or its comparison text:
-    one array bind, or one bind per element in place of an expanding
+    one :class:`ArrayBind`, or one bind per element in place of an expanding
     placeholder."""
 
     neutral_type: NeutralType
@@ -369,11 +369,9 @@ class MembershipForm:
     array: bool
 
     @property
-    def typed_slot(self) -> tuple[NeutralType, _BindForm]:
+    def typed_slot(self) -> tuple[NeutralType, _BindForm] | None:
         if self.array:
-            return self.neutral_type, (
-                "COMPARISON_TEXT_ARRAY" if self.comparison_text else "MANAGED_ARRAY"
-            )
+            return None
         return self.neutral_type, "COMPARISON_TEXT" if self.comparison_text else "MANAGED"
 
     @property
@@ -386,9 +384,9 @@ class MembershipForm:
 managed_operand_form: Final[Callable[[NeutralType], ManagedOperandForm]] = cache(ManagedOperandForm)
 comparison_text_form: Final[Callable[[NeutralType], ComparisonTextForm]] = cache(ComparisonTextForm)
 affix_form: Final[Callable[[StringOp, bool], AffixForm]] = cache(AffixForm)
-continuation_carrier_form: Final[
-    Callable[[NeutralType, _ScalarBindForm], ContinuationCarrierForm]
-] = cache(ContinuationCarrierForm)
+continuation_carrier_form: Final[Callable[[NeutralType, _BindForm], ContinuationCarrierForm]] = (
+    cache(ContinuationCarrierForm)
+)
 gathered_keys_form: Final[Callable[[NeutralType, bool], GatheredKeysForm]] = cache(GatheredKeysForm)
 membership_form: Final[Callable[[NeutralType, bool, bool], MembershipForm]] = cache(MembershipForm)
 
@@ -431,16 +429,14 @@ def _typed_wire_bind(value: object, neutral_type: NeutralType, form: _BindForm) 
         raise SqlGenError(_UNRENDERED)
     if form == "MANAGED":
         return encode_wire(neutral_type, cast("ManagedValue", value))
-    if form == "MANAGED_ARRAY":
-        return [encode_wire(neutral_type, element) for element in cast("list[ManagedValue]", value)]
-    if form == "COMPARISON_TEXT_ARRAY":
-        return list(cast("list[str]", value))
     return cast("str", value)
 
 
 def _wire_bind(value: object) -> WireValue:
     if isinstance(value, _ExecutionValueMarker):
         raise SqlGenError(_UNRENDERED)
+    if isinstance(value, ArrayBind):
+        return _array_wire_bind(value)
     if isinstance(value, JsonDocument):
         value = detach_json_container(value.value)
     if value is None:
@@ -452,6 +448,18 @@ def _wire_bind(value: object) -> WireValue:
         raise SqlGenError(
             f"bind carrier {type(value).__name__} is not an ordinary Wire value: {error}"
         ) from error
+
+
+def _array_wire_bind(array: ArrayBind) -> WireValue:
+    element_type = array.element_type
+    return [
+        None
+        if element is None
+        else INFINITY_LITERAL
+        if element is INFINITY
+        else encode_wire(element_type, cast("ManagedValue", element))
+        for element in array.values
+    ]
 
 
 class SqlGenError(ValueError):
@@ -703,9 +711,6 @@ class StatementBuilder[RowScope = object]:
 
     def bind_comparison_text(self, value: object, neutral_type: NeutralType) -> None:
         self._bind_typed(value, neutral_type, "COMPARISON_TEXT")
-
-    def bind_managed_array(self, value: object, neutral_type: NeutralType) -> None:
-        self._bind_typed(value, neutral_type, "MANAGED_ARRAY")
 
     def bind_concrete(self, value: object, form: ExecutionValueForm) -> None:
         """Bind ``value`` now, under the classification ``form`` selects."""

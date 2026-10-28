@@ -46,9 +46,9 @@ from parallax.conformance.story_models import (
 )
 from parallax.core import DomainModel
 from parallax.core._execution import _read_policy
-from parallax.core.base import ManagedValue, NeutralType
+from parallax.core.base import INT64, ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DatabaseAdapter, MappingRow
+from parallax.core.db_port import ArrayBind, DatabaseAdapter, MappingRow
 from parallax.core.entity._authored_resolver import typed_interpretation
 from parallax.core.execution import (
     DeferredFeatureError,
@@ -1556,8 +1556,8 @@ def test_the_lookahead_root_is_never_paired_with_the_page_that_read_it() -> None
     with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
         assert _ids(iter(stream)) == [1, 2, 3]
     reads = _reads(port)
-    assert reads[1].binds == ([1, 2],)
-    assert reads[3].binds == ([3],)
+    assert reads[1].binds == (ArrayBind(INT64, [1, 2]),)
+    assert reads[3].binds == (ArrayBind(INT64, [3]),)
 
 
 # --------------------------------------------------------------------------- #

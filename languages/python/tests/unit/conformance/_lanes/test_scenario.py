@@ -51,6 +51,7 @@ from parallax.core.base import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    ArrayBind,
     JsonDocument,
     MappingRow,
 )
@@ -3510,7 +3511,7 @@ def test_one_entity_spelled_two_ways_owes_one_membership_read() -> None:
     scenario.run_scenario_case(case, port)
     assert len(port.reads) == 1
     assert port.reads[0][0].endswith("where t0.id = any(cast(%s as bigint[])) for share of t0")
-    assert sorted(cast("list[int]", port.reads[0][1][0])) == [21, 22]
+    assert sorted(cast("list[int]", cast("ArrayBind", port.reads[0][1][0]).values)) == [21, 22]
 
 
 def _registry_advance(sequence: str) -> dict[str, object]:

@@ -17,6 +17,8 @@ import pytest
 import snapshot_delivery_reading
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.workloads import GEOMETRY_LEVELS, catalog, plan_levels
+from parallax.core.base import INT64
+from parallax.core.db_port import ArrayBind
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.snapshot import Database
 from snapshot_delivery_reading import (
@@ -143,7 +145,9 @@ def test_catalog_port_preserves_child_fanout_for_offset_parent_keys() -> None:
     parents = [row["id"] for row in rows.entity("parallax.compatibility.Order")]
     port = CatalogPort(workload, 2)
 
-    returned = port.execute("select t0.id, t0.order_id from order_item t0", [parents])
+    returned = port.execute(
+        "select t0.id, t0.order_id from order_item t0", [ArrayBind(INT64, list(parents))]
+    )
 
     expected = rows.entity("parallax.compatibility.OrderItem")
     assert returned == [(row["id"], row["orderId"]) for row in expected]

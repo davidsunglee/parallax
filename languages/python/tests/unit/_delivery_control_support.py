@@ -36,7 +36,7 @@ from parallax.conformance.animal_owner import ANIMAL_MODEL
 from parallax.conformance.read_models import Animal, Cat, Dog, WildBoar
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.conformance.workloads import catalog
-from parallax.core.db_port import DocumentReadOrdinals, PipelineStatement, Row
+from parallax.core.db_port import ArrayBind, DocumentReadOrdinals, PipelineStatement, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from tests._support.db_port import ConnectsAsItself, projected_rows
@@ -174,12 +174,12 @@ class GuardedPort(ConnectsAsItself):
         read_only: bool = False,
     ) -> list[Row]:
         if "from person t0" in sql:
-            keys = sorted(cast("Sequence[int]", binds[0]))
+            keys = sorted(cast("list[int]", cast("ArrayBind", binds[0]).values))
             return projected_rows(
                 sql, ({"id": key, "name": f"person-{key:06d}"} for key in keys), document_reads
             )
         if "t0.owner_id = any(" in sql:
-            owners = frozenset(cast("Sequence[int]", binds[0]))
+            owners = frozenset(cast("ArrayBind", binds[0]).values)
             return projected_rows(
                 sql,
                 (

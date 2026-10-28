@@ -47,8 +47,9 @@ from parallax.core import (
 )
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._read_query import resolve_read_query
-from parallax.core.base import INFINITY, PresentDocument
+from parallax.core.base import INFINITY, INT64, PresentDocument
 from parallax.core.db_port import (
+    ArrayBind,
     DatabaseConnection,
     DocumentReadOrdinals,
     MappingRow,
@@ -443,7 +444,7 @@ def test_encoded_payloads_preserve_integer_identity_gather_and_fanback() -> None
     root = _root(result)
     assert len(_refs(_view(rows, root, "children"))) == 1
 
-    assert port.executed[1][1][-1] == [1]
+    assert port.executed[1][1][-1] == ArrayBind(INT64, [1])
     assert _value(rows, root, "EncodedParent", "id") == 1
     (consumed,) = observed_roots(result.page, model_of(_ENCODED_RELATIONSHIP_MODEL))
     assert (
@@ -497,7 +498,7 @@ def test_dependency_ready_sibling_levels_share_one_pipeline_batch() -> None:
 
     (pipeline,) = port.pipelines
     assert len(pipeline) == 2
-    assert [statement.binds for statement in pipeline] == [([1],), ([1],)]
+    assert [statement.binds for statement in pipeline] == [(ArrayBind(INT64, [1]),)] * 2
     assert all(" = any(cast(%s as bigint[]))" in statement.sql for statement in pipeline)
     rows = _rows(result.page)
     root = _root(result)
@@ -764,7 +765,7 @@ def test_a_broad_include_over_a_partial_family_diagnoses_its_unknown_child_at_th
         "select t0.id, t0.kind, t0.name, t0.keeper_id, t0.howl from beast t0 "
         "where t0.keeper_id = any(cast(%s as bigint[])) order by t0.id asc"
     )
-    assert child_binds == [[10, 11]]
+    assert child_binds == [ArrayBind(INT64, [10, 11])]
     with pytest.raises(InvalidDataError) as refused:
         snapshot.results()
     mowgli, bagheera = snapshot.checked().results()
@@ -1793,7 +1794,7 @@ def test_a_child_statement_binds_each_gathered_key_once_in_encounter_order() -> 
         }
     )
     _find(query, ANIMAL, port)
-    assert port.executed[1][1] == [[20, 10, 30]]
+    assert port.executed[1][1] == [ArrayBind(INT64, [20, 10, 30])]
 
 
 def test_a_parent_the_child_level_returned_no_row_for_is_loaded_empty() -> None:
@@ -1969,7 +1970,7 @@ def test_an_include_of_a_dormant_target_loads_empty_and_null_without_a_child_sta
         "select t0.id, t0.kind, t0.label, t0.workbench_id, t0.spin from dormant_gadget t0 "
         "where t0.workbench_id = any(cast(%s as bigint[])) order by t0.id asc"
     )
-    assert gadgets.binds == ([1, 2],)
+    assert gadgets.binds == (ArrayBind(INT64, [1, 2]),)
     bench, shed = snapshot.results()
     assert (bench.prototypes, bench.prototype) == ((), None)
     assert (shed.prototypes, shed.prototype) == ((), None)

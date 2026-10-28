@@ -23,7 +23,7 @@ from parallax.core.base import (
     ManagedValue,
 )
 from parallax.core.base import Decimal as DecimalType
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import ArrayBind, JsonDocument
 from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
@@ -314,6 +314,21 @@ def test_statement_metadata_preserves_ranges_gaps_forms_offsets_and_overrides() 
     assert isinstance(lowered.binds[4], dt.date)
 
 
+def test_an_array_bind_projects_each_element_under_its_own_element_type() -> None:
+    builder = _builder()
+    instant = dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.UTC)
+    array = ArrayBind(TIMESTAMP, [instant, INFINITY, None])
+    builder.bind_concrete(array, MembershipForm(TIMESTAMP, False, True))
+    builder.bind_managed(7, INT64)
+
+    statement = builder.finish("select ?, ?")
+
+    assert statement.binds == (array, 7)
+    assert statement.typed_bind_spans == (_TypedBindSpan(1, 2, INT64, "MANAGED"),)
+    assert statement.wire_bind_overrides == ()
+    assert statement.wire_binds() == (["2024-01-02T03:04:05.000000Z", INFINITY_LITERAL, None], 7)
+
+
 def test_comparison_text_projection_retains_the_owned_text_without_codec_work() -> None:
     builder = _builder()
     builder.bind_comparison_text("12.340", DecimalType(8, 2))
@@ -353,7 +368,9 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
     indexes = (2, 5, 6)
     keys: list[ManagedValue] = [10, 20, 30]
     rendered = template.render(keys).statement
-    values: tuple[object, ...] = (keys,) if postgres_array else tuple(keys)
+    array = ArrayBind(INT64, cast("list[object]", keys))
+    values: tuple[object, ...] = (array,) if postgres_array else tuple(keys)
+    wire: tuple[object, ...] = ([10, 20, 30],) if postgres_array else tuple(keys)
     assert rendered.binds == (
         "leading-driver",
         100,
@@ -370,11 +387,11 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
     assert rendered.wire_binds() == (
         "leading-wire",
         100,
-        *values,
+        *wire,
         200,
         None,
-        *values,
-        *values,
+        *wire,
+        *wire,
         "tail",
         "trailing-wire",
         "a",
@@ -385,7 +402,7 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
         assert rendered.sql == statement.sql
         assert rendered.typed_bind_spans is statement.typed_bind_spans
         assert rendered.wire_bind_overrides is statement.wire_bind_overrides
-        assert all(rendered.binds[index] is keys for index in indexes)
+        assert all(cast("ArrayBind", rendered.binds[index]).values is keys for index in indexes)
     else:
         assert rendered.sql == "select ?, ?, (?, ?, ?), ?, ?, (?, ?, ?), (?, ?, ?), ?, ?, ?, ?"
         assert rendered.typed_bind_spans == (

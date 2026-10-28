@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
-from parallax.core.base import DocumentReadOrdinals
+from parallax.core.base import DocumentReadOrdinals, NeutralType
 from parallax.core.db_port._credentials import (
     DRIVER_MANAGED,
     Credential,
@@ -53,6 +53,7 @@ __all__ = [
     "RESOURCE_LOGGER_NAME",
     "AccessMode",
     "AcquisitionReason",
+    "ArrayBind",
     "BeginFailed",
     "Bind",
     "CallbackRaised",
@@ -260,6 +261,22 @@ class JsonDocument:
     """
 
     value: object
+
+
+@dataclass(frozen=True, slots=True)
+class ArrayBind:
+    """A neutral carrier for one array bind whose elements share ``element_type``.
+
+    ``values`` holds the managed elements in order, with no per-element
+    wrapper; a ``None`` element is SQL NULL, and a ``timestamp`` element may be
+    the open upper bound ``INFINITY``. The carrier is the only owner of
+    its element type, so a concrete adapter binds the array from that type
+    alone rather than by inspecting its elements. ``values`` is the caller's own
+    list, handed over unchanged: it must not be mutated after binding.
+    """
+
+    element_type: NeutralType
+    values: list[object]
 
 
 @dataclass(frozen=True, slots=True)

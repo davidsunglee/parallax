@@ -131,12 +131,14 @@ def compare_binds(
     ``JsonDocument`` carrier, `m-db-port`) unwraps to its underlying JSON
     document before comparing, so it reconciles against the golden's plain
     dict/list literal exactly like `parallax.conformance.engine._json_bind`'s
-    own emission-wire rendering; everything else is exact wire equality.
+    own emission-wire rendering; an array bind (an ``ArrayBind`` carrier)
+    reconciles element by element against the golden's list; everything else
+    is exact wire equality.
 
     At each of ``positions`` the bind additionally carries the golden's float
     zero sign (`tests._support.bind_positions`).
     """
-    obs = [_wire_value(value) for value in observed]
+    obs = [_wire_value(_array_elements(value)) for value in observed]
     exp = [_wire_value(value) for value in expected]
     assert len(obs) == len(exp), f"bind count: observed {obs!r} != expected {exp!r}"
     for index, (left, right) in enumerate(zip(obs, exp, strict=True)):
@@ -145,6 +147,12 @@ def compare_binds(
         from tests._support.bind_positions import assert_zero_signs
 
         assert_zero_signs(obs, exp, positions)
+
+
+def _array_elements(bind: object) -> object:
+    from parallax.core.db_port import ArrayBind
+
+    return bind.values if isinstance(bind, ArrayBind) else bind
 
 
 def _wire_value(value: object) -> object:

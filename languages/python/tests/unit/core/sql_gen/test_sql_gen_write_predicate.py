@@ -23,7 +23,8 @@ from decimal import Decimal
 import pytest
 
 from parallax.core import predicate as oa
-from parallax.core.base import INFINITY, TIMESTAMP
+from parallax.core.base import INFINITY, INT64, TIMESTAMP
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.navigate import (
@@ -152,7 +153,7 @@ def test_a_current_row_term_binds_managed_infinity_and_publishes_its_literal() -
         (
             oa.Membership(op="in", subject=oa.FieldSubject("Account.id"), values=(1, 2)),
             "id = any(cast(? as bigint[]))",
-            ([1, 2],),
+            (ArrayBind(INT64, [1, 2]),),
         ),
         (
             oa.StringMatch(op="startsWith", subject=oa.FieldSubject("Account.owner"), value="A"),
