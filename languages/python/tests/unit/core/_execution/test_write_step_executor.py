@@ -55,6 +55,7 @@ from parallax.core.write_plan.steps import (
 from tests._support.clock_probes import instant_at
 from tests._support.db_port import Read, ReadCall, ScriptedAdapter, Write, WriteCall
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._execution_support import ACCOUNT
 from tests.unit.core._execution._write_step_support import (
     POSITION,
@@ -147,7 +148,7 @@ def _allocating_group() -> WriteGroup:
             ({"id": {"computed": "maxPlusOne"}, "amount": 1},),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         ),
-        meta,
+        write_preparation_of(meta),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     plan = build_write_planner(meta).finalize(

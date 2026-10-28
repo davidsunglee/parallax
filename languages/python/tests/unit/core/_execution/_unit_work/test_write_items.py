@@ -60,6 +60,7 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import ObjectKey, VersionObservation
 from parallax.core.write_plan.keys import VersionedObjectStateKey
 from tests._support.planner_probes import admitted_writes, object_source, write_admission
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     JAN,
@@ -79,7 +80,9 @@ _PERSON = corpus_model("person")
 
 
 def _prepared(mutation: KeyedMutation, *rows: Mapping[str, object]) -> PreparedKeyedInstruction:
-    prepared = prepare_typed_write(KeyedWriteInstruction(mutation, "Account", rows), _ACCOUNT)
+    prepared = prepare_typed_write(
+        KeyedWriteInstruction(mutation, "Account", rows), write_preparation_of(_ACCOUNT)
+    )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
@@ -204,7 +207,7 @@ def _continued_state_observed() -> _Row:
 def _person_delete(*person_ids: int) -> PreparedKeyedInstruction:
     prepared = prepare_typed_write(
         KeyedWriteInstruction("delete", "Person", tuple({"id": key} for key in person_ids)),
-        _PERSON,
+        write_preparation_of(_PERSON),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -238,7 +241,8 @@ def _insertion_authorized() -> _Row:
 
 def _target_write() -> _Row:
     prepared = prepare_wire_write(
-        TargetWriteInstruction("delete", "Account", {"id": 1}, if_version=3), _ACCOUNT
+        TargetWriteInstruction("delete", "Account", {"id": 1}, if_version=3),
+        write_preparation_of(_ACCOUNT),
     )
     write = target_write(prepared, inheritance.view(_ACCOUNT))
     key = _account_key(1)
@@ -325,7 +329,7 @@ def _lone_target() -> _Row:
             valid_from=MAR,
             until=JUN,
         ),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     (write,) = admitted_writes(POSITION, [target_write(prepared, inheritance.view(POSITION))])
     assert isinstance(write, TargetWrite)
@@ -352,11 +356,11 @@ def _position_opening() -> ComposedBitemporalOpening:
         KeyedWriteInstruction(
             "insertUntil", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), JAN, SEP
         ),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     amendment = prepare_wire_write(
         KeyedWriteInstruction("amendUntil", "Position", ({"id": 1, "value": "2.00"},), JAN, MAR),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     assert isinstance(amendment, PreparedKeyedInstruction)

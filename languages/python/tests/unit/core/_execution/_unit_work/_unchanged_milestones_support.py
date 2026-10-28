@@ -39,6 +39,7 @@ from parallax.core.write_plan.steps import (
 )
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes, settled_writes
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._unit_work._acquired_rows_support import bind_held
 
@@ -108,7 +109,7 @@ def observed_write(
         KeyedWriteInstruction(
             mutation, entity, ({"id": 1, **(assigned or {}), **members},), valid_from, until
         ),
-        meta,
+        write_preparation_of(meta),
     )
     return admitted_write(prepared, evidence, evidence.key.object)
 

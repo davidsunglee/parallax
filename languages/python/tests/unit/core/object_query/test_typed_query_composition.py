@@ -134,6 +134,7 @@ from tests._support.snapshot_models import (
     SnapOrder,
     SnapOrderStatus,
 )
+from tests._support.write_preparation import write_preparation_of
 
 _ANIMALS = snapshot_models.ANIMAL_MODEL
 _ORDERS = snapshot_models.SNAP_ORDERS_MODEL
@@ -738,7 +739,7 @@ def test_a_foreign_assignment_never_targets_the_queried_position() -> None:
         assignments=(WriteAssignment(attr=str(assignment.attr), value=assignment.value),),
     )
     with pytest.raises(WriteInstructionError, match="does not name a declared member"):
-        prepare_typed_write(write, model_of(_ORDERS))
+        prepare_typed_write(write, write_preparation_of(model_of(_ORDERS)))
 
 
 def test_an_assignment_value_is_the_members_own_declared_type() -> None:

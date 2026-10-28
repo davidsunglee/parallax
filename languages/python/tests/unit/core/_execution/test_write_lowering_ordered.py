@@ -78,6 +78,7 @@ from parallax.core.write_plan.steps import (
 from tests._support.clock_probes import inert_instant
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, plan_steps, unobserved_write
 from tests._support.sweep_goldens import WRITE_EXERCISED
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -246,7 +247,7 @@ def _wallet_effects(*keys: int) -> tuple[PlannedUpdate, PlannedDelete]:
 def _planned(
     meta: Metamodel, instruction: KeyedWriteInstruction | PredicateWriteInstruction
 ) -> PlannedStep:
-    prepared = prepare_typed_write(instruction, meta)
+    prepared = prepare_typed_write(instruction, write_preparation_of(meta))
     assert not isinstance(prepared, PreparedTargetInstruction)
     planner = build_write_planner(meta)
     if isinstance(prepared, PreparedPredicateInstruction):

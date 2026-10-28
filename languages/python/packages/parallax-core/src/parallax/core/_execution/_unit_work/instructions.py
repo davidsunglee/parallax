@@ -9,6 +9,7 @@ from typing import Final, Literal, cast, overload
 
 from parallax.core import inheritance, temporal_read
 from parallax.core import predicate as predicate_algebra
+from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.write_validate import WriteRejectedError, validate_write
 from parallax.core.base import (
     INFINITY,
@@ -924,7 +925,7 @@ def _temporal_singleton_refusal(entity_name: str, instruction: KeyedWriteInstruc
 @overload
 def prepare_typed_write(
     instruction: TargetWriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
@@ -932,7 +933,7 @@ def prepare_typed_write(
 @overload
 def prepare_typed_write(
     instruction: KeyedWriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
@@ -940,7 +941,7 @@ def prepare_typed_write(
 @overload
 def prepare_typed_write(
     instruction: PredicateWriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
@@ -948,14 +949,14 @@ def prepare_typed_write(
 @overload
 def prepare_typed_write(
     instruction: WriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedInstruction | PreparedTargetInstruction: ...
 def prepare_typed_write(
     instruction: WriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
@@ -971,7 +972,7 @@ def prepare_typed_write(
     an assignment."""
     return _prepare_write(
         instruction,
-        model,
+        preparation,
         converter=_coerce_typed_leaf,
         source_access=BORROWED_SOURCE_ACCESS,
         authored_members=authored_members,
@@ -982,7 +983,7 @@ def prepare_typed_write(
 @overload
 def prepare_wire_write(
     instruction: TargetWriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
@@ -990,7 +991,7 @@ def prepare_wire_write(
 @overload
 def prepare_wire_write(
     instruction: KeyedWriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
@@ -998,7 +999,7 @@ def prepare_wire_write(
 @overload
 def prepare_wire_write(
     instruction: PredicateWriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
@@ -1006,14 +1007,14 @@ def prepare_wire_write(
 @overload
 def prepare_wire_write(
     instruction: WriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
 ) -> PreparedInstruction | PreparedTargetInstruction: ...
 def prepare_wire_write(
     instruction: WriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     authored_members: Set[str] | None = None,
     members: Callable[[], Mapping[str, object]] | None = None,
@@ -1029,7 +1030,7 @@ def prepare_wire_write(
     """
     return _prepare_write(
         instruction,
-        model,
+        preparation,
         converter=_decode_wire_leaf,
         source_access=MAPPING_SOURCE_ACCESS,
         authored_members=authored_members,
@@ -1039,7 +1040,7 @@ def prepare_wire_write(
 
 def _prepare_write(
     instruction: WriteInstruction,
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     *,
     converter: _LeafConverter,
     source_access: SourceAccess,
@@ -1053,6 +1054,7 @@ def _prepare_write(
     The target's family Persistence Mode is judged before anything else about
     the write, since no verb, window, revision, predicate, or payload could
     make a write to a ReadOnly family admissible."""
+    model = preparation.meta
     entity = resolve_target(
         model,
         instruction.target.entity

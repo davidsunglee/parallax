@@ -17,7 +17,7 @@ from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.read_delivery._page import ABSENT
 from parallax.core.write_payload import LayoutPayloadPreparer
 
-__all__ = ["build_write_planner", "prepare_model"]
+__all__ = ["build_write_planner", "build_write_preparation", "prepare_model"]
 
 
 def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
@@ -30,7 +30,6 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         )
     catalog = CatalogedModel(model_of(model))
     classes = class_index(model)
-    preparation = WritePreparation(catalog.meta, absent=ABSENT)
     return select_model(
         model,
         edition=edition,
@@ -38,7 +37,7 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         classes=classes,
         construction=(None if classes is None else EntityGraphConstruction(catalog, classes)),
         codec=EntityRowCodec(catalog),
-        preparation=preparation,
+        preparation=build_write_preparation(catalog.meta),
         planner=build_write_planner(catalog.meta),
         evidence_policy_for=opt_lock.view(catalog.meta).required_key,
     )
@@ -62,6 +61,17 @@ class _BatchingAdapter:
         self, model: Metamodel, entity: EntityMetadata, mutation: str, row: Mapping[str, object]
     ) -> object:
         return collapse_group_key(model, entity, mutation, row)
+
+
+def build_write_preparation(model: Metamodel) -> WritePreparation:
+    """The one ``WritePreparation`` every write of ``model`` is admitted
+    against, its rows marking an omitted member as accepted Entity State does.
+
+    Called once per prepared model selection (:func:`prepare_model`) and
+    identically by the conformance engine's case lanes, so both lanes judge
+    and represent a write through the same preparation.
+    """
+    return WritePreparation(model, absent=ABSENT)
 
 
 def build_write_planner(model: Metamodel) -> WritePlanner:

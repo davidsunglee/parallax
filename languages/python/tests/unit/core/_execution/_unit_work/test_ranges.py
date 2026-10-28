@@ -84,6 +84,7 @@ from tests._support.planner_probes import (
     plan_steps,
     settled_writes,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
@@ -143,7 +144,7 @@ def _update(
         KeyedWriteInstruction(
             mutation, "SequenceSpan", ({"id": 1, "amount": 300},), valid_from, until
         ),
-        _SPANS,
+        write_preparation_of(_SPANS),
     )
     return admitted_write(prepared, evidence, evidence.key.object)
 
@@ -158,7 +159,7 @@ def _target(valid_from: dt.datetime, until: dt.datetime) -> AdmittedWrite:
             valid_from=valid_from,
             until=until,
         ),
-        _SPANS,
+        write_preparation_of(_SPANS),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return target_write(prepared, inheritance.view(_SPANS))
@@ -438,7 +439,7 @@ def test_a_temporal_write_holding_no_temporal_observation_is_refused_before_the_
         KeyedWriteInstruction(
             "amendUntil", "SequenceSpan", ({"id": 1, "amount": 300},), _MAR, _APR
         ),
-        _SPANS,
+        write_preparation_of(_SPANS),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     span = ObjectKey(_SPAN, (("id", 1),))

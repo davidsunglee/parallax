@@ -52,6 +52,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._transact_support import (
     FIND_SQL_UNLOCKED,
     FIXED,
@@ -609,7 +610,9 @@ def test_an_instruction_stating_no_revision_is_refused_for_every_target(
 ) -> None:
     model = model_of(MODELS["wallet"] if entity == "Wallet" else MODELS["account"])
     with pytest.raises(WriteInstructionError, match=outcome):
-        prepare_typed_write(TargetWriteInstruction("amend", entity, row), model)
+        prepare_typed_write(
+            TargetWriteInstruction("amend", entity, row), write_preparation_of(model)
+        )
 
 
 @pytest.mark.parametrize("mutation", ["amend", "delete"])

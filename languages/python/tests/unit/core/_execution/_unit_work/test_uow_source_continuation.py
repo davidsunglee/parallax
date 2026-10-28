@@ -69,6 +69,7 @@ from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     retained_observation,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._gc_reachability import reachable_objects
@@ -145,7 +146,7 @@ def _write(
         KeyedWriteInstruction(
             mutation, entity.identity.name, ({**dict(key.primary_key), **members},)
         ),
-        meta,
+        write_preparation_of(meta),
     )
     assert isinstance(instruction, PreparedKeyedInstruction)
     settled = uow.source_authority.resolve_read_evidence(
@@ -261,7 +262,8 @@ def test_a_locking_versioned_source_carrying_no_observation_settles_against_noth
 def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
     uow, simulated = _uow(_PERSON)
     insertion = prepare_typed_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 5, "name": "New"},)), _PERSON
+        KeyedWriteInstruction("insert", "Person", ({"id": 5, "name": "New"},)),
+        write_preparation_of(_PERSON),
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     identity = uow.buffer_insert(admitted_write(insertion, None, _person(5)), insertion_advice=None)
@@ -269,7 +271,8 @@ def test_two_writes_one_insertion_authorized_coalesce_into_one() -> None:
     assert identity is not None
     for name in ("First", "Second"):
         amendment = prepare_typed_write(
-            KeyedWriteInstruction("amend", "Person", ({"id": 5, "name": name},)), _PERSON
+            KeyedWriteInstruction("amend", "Person", ({"id": 5, "name": name},)),
+            write_preparation_of(_PERSON),
         )
         assert isinstance(amendment, PreparedKeyedInstruction)
         uow.buffer(admitted_write(amendment, None, _person(5), authority=identity))
@@ -308,7 +311,8 @@ def test_a_page_read_before_a_deletion_stays_stale_after_its_demand_and_a_reinse
     gc.collect()
     assert held() is None
     insertion = prepare_typed_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "New"},)), _PERSON
+        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "New"},)),
+        write_preparation_of(_PERSON),
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     uow.buffer_insert(admitted_write(insertion, None, _person(1)), insertion_advice=None)
@@ -365,7 +369,7 @@ def test_a_readless_write_neither_ends_nor_stales_a_source() -> None:
             ),
             assignments=(WriteAssignment("Person.name", "Readless"),),
         ),
-        _PERSON,
+        write_preparation_of(_PERSON),
     )
     assert isinstance(predicate, PreparedPredicateInstruction)
     uow.execute_predicate(predicate)
@@ -384,7 +388,8 @@ def _reinserted(uow: UnitOfWork, key: int) -> int:
     _write(uow, _PERSON, _published(uow, _person(key)), "delete")
     _flush(uow)
     insertion = prepare_typed_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": key, "name": "Again"},)), _PERSON
+        KeyedWriteInstruction("insert", "Person", ({"id": key, "name": "Again"},)),
+        write_preparation_of(_PERSON),
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     uow.buffer_insert(admitted_write(insertion, None, _person(key)), insertion_advice=None)
@@ -538,7 +543,7 @@ def test_a_deferred_write_keeps_its_source_and_nothing_else_it_was_buffered_as()
         KeyedWriteInstruction(
             "amend", "WherePosition", ({"id": 1, "acctNum": "O"},), valid_from=_FEB
         ),
-        _POSITION,
+        write_preparation_of(_POSITION),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     observation = uow.source_authority.retain(

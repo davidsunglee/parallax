@@ -95,6 +95,7 @@ from parallax.core.write_plan.keys import TemporalObjectStateKey, VersionedObjec
 from tests._support.case_corpus import case as corpus_case
 from tests._support.db_port import ScriptedAdapter, Transact, Write
 from tests._support.sweep_goldens import write_golden_statements
+from tests._support.write_preparation import write_preparation_of
 from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
 
@@ -1123,6 +1124,7 @@ def test_a_settled_write_names_a_versioned_targets_own_read_generation() -> None
         write = scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
+            scenario.case_wire_preparer(meta),
             SimulatedTemporalStore(),
             set(),
             [],
@@ -1142,6 +1144,7 @@ def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -
         scenario._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             {"mutation": "amend", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
+            scenario.case_wire_preparer(meta),
             SimulatedTemporalStore(),
             set(),
             [],
@@ -1188,6 +1191,7 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
                 "rows": [{"id": 1, "value": "5.00"}],
             },
             meta,
+            scenario.case_wire_preparer(meta),
             SimulatedTemporalStore(),
             set(),
             [],
@@ -3580,7 +3584,12 @@ def test_store_free_composition_refuses_actual_row_acquisition() -> None:
         EngineError, match="store-free framework marker lowering cannot acquire rows"
     ):
         scenario._lower_marker_unit(  # pyright: ignore[reportPrivateUsage] - exercise the no-store composition
-            target, model, POSTGRES, "locking", scenario.INERT_CLOCK_INSTANT
+            target,
+            model,
+            scenario.case_wire_preparer(model),
+            POSTGRES,
+            "locking",
+            scenario.INERT_CLOCK_INSTANT,
         )
 
 
@@ -3987,7 +3996,7 @@ def test_a_simulated_unit_writes_through_its_latest_returned_insertion_across_fl
     def keyed(mutation: KeyedMutation, **row: object) -> scenario._ResolvedWrite:  # pyright: ignore[reportPrivateUsage] - what the lane resolves a compile entry into
         prepared = instructions.prepare_wire_write(
             KeyedWriteInstruction(mutation, "Account", ({"id": 9, **row},)),
-            model,
+            write_preparation_of(model),
         )
         return scenario._ResolvedWrite(prepared, None)  # pyright: ignore[reportPrivateUsage] - what the lane resolves a compile entry into
 

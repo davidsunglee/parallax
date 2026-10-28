@@ -87,6 +87,7 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests._support.root_ownership import own_root
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._document_layout_support import document_model
 from tests.unit._document_layout_support import entity as document_layout_entity
 from tests.unit._positional_row_support import positional_row
@@ -903,6 +904,7 @@ def test_the_engines_readless_case_adapter_refuses_before_execution(
         scenario._prepared_case_predicate_write(  # pyright: ignore[reportPrivateUsage] - the scenario lane's case-format preparation ingress
             {"mutation": "delete", "target": {"entity": "Wallet", "predicate": predicate}},
             _READLESS_ENGINE_META,
+            scenario.case_wire_preparer(_READLESS_ENGINE_META),
         )
 
 
@@ -964,7 +966,7 @@ def test_preparation_refuses_an_inheritance_family_predicate_instruction(
     with pytest.raises(
         (inheritance.InheritanceError, instructions.InstructionRejectedError)
     ) as refused:
-        instructions.prepare_wire_write(instruction, model_of(model))
+        instructions.prepare_wire_write(instruction, write_preparation_of(model_of(model)))
     assert refused.value.rule == rule
 
 

@@ -61,6 +61,7 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan.plan import SettledWrite
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, settled_writes
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import formed, records
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 from tests.unit.memory_instruments import (
@@ -169,7 +170,7 @@ def _key_derivation_over(entities: int, *, prepared: bool) -> Seam:
     """
     model = _model(entities)
     raw = KeyedWriteInstruction("amend", "Entity0", ({"id": 1, "value": 2},))
-    instruction = prepare_typed_write(raw, model) if prepared else raw
+    instruction = prepare_typed_write(raw, write_preparation_of(model)) if prepared else raw
 
     def run(sample: Callable[[], None]) -> None:
         object_key(instruction, model)

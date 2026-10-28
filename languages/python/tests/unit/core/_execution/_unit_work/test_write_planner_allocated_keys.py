@@ -30,6 +30,7 @@ from parallax.core.write_plan.steps import (
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lowered_steps
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, plan_steps, settled_writes
+from tests._support.write_preparation import write_preparation_of
 
 _NAMESPACE = "allocated.planner"
 _MAR, _JUN = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (3, 6))
@@ -64,7 +65,7 @@ def _plan(
             valid_from=valid_from,
             until=until,
         ),
-        _META,
+        write_preparation_of(_META),
     )
     assert not isinstance(prepared, PreparedTargetInstruction)
     return build_write_planner(_META).finalize(

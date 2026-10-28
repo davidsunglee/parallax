@@ -58,6 +58,7 @@ from tests._support.planner_probes import (
     plan_steps,
     unobserved_write,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit.core._execution._shared_coverage_support import MODEL as SHARED_MODEL
@@ -279,7 +280,7 @@ def test_a_batch_brings_every_key_it_writes_to_the_distinct_object_check(
     # reach the planner as admitted, without admission coalescing the later
     # write of key 2 into the earlier one.
     buffer = [
-        unobserved_write(prepare_typed_write(instruction, _WALLET), _WALLET)
+        unobserved_write(prepare_typed_write(instruction, write_preparation_of(_WALLET)), _WALLET)
         for instruction in (
             _amend_wallet(1, "5.00"),
             _amend_wallet(2, "5.00"),
@@ -385,7 +386,7 @@ def test_an_insert_whose_key_the_database_decides_stands_alone(
         KeyedWriteInstruction(
             "insert", entity.identity.canonical, ({"id": {"computed": "maxPlusOne"}, "amount": 1},)
         ),
-        _ALLOCATED,
+        write_preparation_of(_ALLOCATED),
     )
     insert = admitted_write(computed, None, object_key(computed, _ALLOCATED))
     plan = _finalize([insert, insert], _ALLOCATED, instant=instant_at("2024-01-10T00:00:00Z"))
@@ -416,7 +417,7 @@ def _inside(key: int) -> AdmittedWrite:
         KeyedWriteInstruction(
             "amendUntil", ShareCols.identity.canonical, ({"id": key, "amount": 9},), day(0), day(1)
         ),
-        SHARED_MODEL,
+        write_preparation_of(SHARED_MODEL),
     )
     held = observation(ShareCols, observed)
     return admitted_write(prepared, held, held.key.object)
@@ -429,7 +430,7 @@ def _terminated(key: int) -> AdmittedWrite:
         KeyedWriteInstruction(
             "terminateUntil", ShareCols.identity.canonical, ({"id": key},), day(0), day(2)
         ),
-        SHARED_MODEL,
+        write_preparation_of(SHARED_MODEL),
     )
     held = observation(ShareCols, observed)
     return admitted_write(prepared, held, held.key.object)
@@ -485,7 +486,7 @@ def test_a_transaction_time_only_deferred_write_reads_alone() -> None:
                 TargetWriteInstruction(
                     "amend", "Balance", {"id": key, "value": "9.00"}, if_tx_start=_JAN
                 ),
-                _BALANCE,
+                write_preparation_of(_BALANCE),
             ),
             inheritance.view(_BALANCE),
         )

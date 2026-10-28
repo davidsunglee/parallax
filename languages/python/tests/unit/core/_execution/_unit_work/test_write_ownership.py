@@ -67,6 +67,7 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import NEW_LINEAGE, Finite, MaxPlusOne, PlannedRow, WriteRow
 from tests._support.planner_probes import source_authority
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import WHERE_POSITION_META
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
@@ -105,7 +106,7 @@ def _insert(start: dt.datetime, until: dt.datetime | None = None) -> KeyedInsert
             start,
             until,
         ),
-        _POSITION,
+        write_preparation_of(_POSITION),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, _KEY)
@@ -197,7 +198,8 @@ def _cancel_reinsertion(admission: WriteAdmission, start: dt.datetime) -> Insert
     identity = admission.admit_insert(_insert(start), insertion_advice=None)
     assert identity is not None
     termination = prepare_wire_write(
-        KeyedWriteInstruction("terminate", "WherePosition", ({"id": 1},), start), _POSITION
+        KeyedWriteInstruction("terminate", "WherePosition", ({"id": 1},), start),
+        write_preparation_of(_POSITION),
     )
     assert isinstance(termination, PreparedKeyedInstruction)
     admission.admit(
@@ -369,7 +371,7 @@ def test_a_reinsertion_supersedes_the_identity_before_it_and_issues_its_own() ->
     assert ownership.insertion_authority(second) == TimeInterval(_APR, INFINITY)
     amendment = prepare_wire_write(
         KeyedWriteInstruction("amend", "WherePosition", ({"id": 1, "value": "2.00"},), _FEB),
-        _POSITION,
+        write_preparation_of(_POSITION),
     )
     assert isinstance(amendment, PreparedKeyedInstruction)
     with pytest.raises(UnitOfWorkError, match="no longer stands"):
@@ -392,11 +394,11 @@ def test_an_ended_opening_retires_its_identity_and_its_reinsertion_follows_it() 
             _FEB,
             _SEP,
         ),
-        _POSITION,
+        write_preparation_of(_POSITION),
     )
     destruction = prepare_wire_write(
         KeyedWriteInstruction("terminateUntil", "WherePosition", ({"id": 1},), _FEB, _SEP),
-        _POSITION,
+        write_preparation_of(_POSITION),
     )
     assert isinstance(replacement, PreparedKeyedInstruction)
     assert isinstance(destruction, PreparedKeyedInstruction)

@@ -54,6 +54,7 @@ from tests._support.planner_probes import (
     plan_steps,
     retained_observation,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit import _milestone_rows_support as milestone_rows
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._positional_row_support import positional_row
@@ -102,7 +103,7 @@ def _insert_rows(step: PlannedStep) -> list[dict[str, object]]:
 
 
 def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedInstruction:
-    prepared = prepare_typed_write(write, model)
+    prepared = prepare_typed_write(write, write_preparation_of(model))
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 

@@ -127,7 +127,7 @@ def converted(monkeypatch: pytest.MonkeyPatch) -> list[Converted]:
     def converter(representation: Literal["typed", "wire"]) -> Callable[..., NoReturn]:
         def prepare(
             instruction: TargetWriteInstruction,
-            model: Metamodel,
+            preparation: WritePreparation,
             *,
             authored_members: Set[str] | None,
             members: Callable[[], Mapping[str, object]] | None,

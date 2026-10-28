@@ -82,6 +82,7 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite
 from tests._support.planner_probes import admit, object_source, source_authority
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     APR,
@@ -161,7 +162,8 @@ def _account(account_id: int) -> ObjectKey:
 
 def _account_observed(account_id: int, version: int) -> ReadAuthorizedWrite:
     prepared = prepare_wire_write(
-        KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Bo"},)), _ACCOUNT
+        KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Bo"},)),
+        write_preparation_of(_ACCOUNT),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     state = VersionedObjectStateKey(_account(account_id), version)
@@ -175,7 +177,7 @@ def _account_target(account_id: int, version: int) -> TargetWrite:
         TargetWriteInstruction(
             "amend", "Account", {"id": account_id, "balance": "1.00"}, if_version=version
         ),
-        _ACCOUNT,
+        write_preparation_of(_ACCOUNT),
     )
     return target_write(prepared, inheritance.view(_ACCOUNT))
 
@@ -185,7 +187,7 @@ def _account_insert(account_id: int) -> KeyedInsert:
         KeyedWriteInstruction(
             "insert", "Account", ({"id": account_id, "owner": "N", "balance": "5.00"},)
         ),
-        _ACCOUNT,
+        write_preparation_of(_ACCOUNT),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, _account(account_id))
@@ -193,7 +195,8 @@ def _account_insert(account_id: int) -> KeyedInsert:
 
 def _account_amend(account_id: int) -> PreparedKeyedInstruction:
     prepared = prepare_wire_write(
-        KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Cy"},)), _ACCOUNT
+        KeyedWriteInstruction("amend", "Account", ({"id": account_id, "owner": "Cy"},)),
+        write_preparation_of(_ACCOUNT),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -270,7 +273,7 @@ def test_a_batch_composition_left_nothing_of_still_needs_its_flush() -> None:
     assert not admission
     identity = admission.admit_insert(_account_insert(9), insertion_advice=None)
     deletion = prepare_wire_write(
-        KeyedWriteInstruction("delete", "Account", ({"id": 9},)), _ACCOUNT
+        KeyedWriteInstruction("delete", "Account", ({"id": 9},)), write_preparation_of(_ACCOUNT)
     )
     assert isinstance(deletion, PreparedKeyedInstruction)
     assert identity is not None
@@ -301,7 +304,8 @@ def _person(person_id: int) -> ObjectKey:
 
 def _person_write(person_id: int, source: ReadEvidence) -> ReadAuthorizedWrite:
     prepared = prepare_wire_write(
-        KeyedWriteInstruction("amend", "Person", ({"id": person_id, "name": "Grace"},)), _PERSON
+        KeyedWriteInstruction("amend", "Person", ({"id": person_id, "name": "Grace"},)),
+        write_preparation_of(_PERSON),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, _person(person_id), _person(person_id), source=source)
@@ -336,7 +340,8 @@ def test_discard_drops_the_buffer_and_leaves_the_authoritys_insertions_alone() -
         _person_write(1, object_source(_person(1))), meta=_PERSON, authority=authority
     )
     insertion = prepare_wire_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)), _PERSON
+        KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)),
+        write_preparation_of(_PERSON),
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     identity = admission.admit_insert(
@@ -396,7 +401,7 @@ def _position_insert() -> KeyedInsert:
         KeyedWriteInstruction(
             "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), FEB
         ),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, OBJECT)
@@ -469,7 +474,8 @@ def _account_delete_through(
     identity: InsertionIdentity, account_id: int = 9
 ) -> InsertionAuthorizedWrite:
     prepared = prepare_wire_write(
-        KeyedWriteInstruction("delete", "Account", ({"id": account_id},)), _ACCOUNT
+        KeyedWriteInstruction("delete", "Account", ({"id": account_id},)),
+        write_preparation_of(_ACCOUNT),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return InsertionAuthorizedWrite(prepared, _account(account_id), identity)
@@ -477,7 +483,7 @@ def _account_delete_through(
 
 def _balance_terminate_through(identity: InsertionIdentity) -> InsertionAuthorizedWrite:
     prepared = prepare_wire_write(
-        KeyedWriteInstruction("terminate", "Balance", ({"id": 1},)), _BALANCE
+        KeyedWriteInstruction("terminate", "Balance", ({"id": 1},)), write_preparation_of(_BALANCE)
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return InsertionAuthorizedWrite(prepared, _BALANCE_OBJECT, identity)
@@ -735,11 +741,11 @@ def test_a_write_an_insertion_authorized_never_shares_a_targets_window() -> None
         KeyedWriteInstruction(
             "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), MAR
         ),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     amendment = prepare_wire_write(
         KeyedWriteInstruction("amendUntil", "Position", ({"id": 1, "value": "2.00"},), MAR, SEP),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     assert isinstance(insertion, PreparedKeyedInstruction)
     assert isinstance(amendment, PreparedKeyedInstruction)
@@ -759,7 +765,7 @@ def _position(
 ) -> PreparedKeyedInstruction:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -846,7 +852,7 @@ def test_cancelling_an_opening_leaves_a_read_authorized_write_beside_it_standing
 def _balance_insert() -> KeyedInsert:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("insert", "Balance", ({"id": 1, "acctNum": "N", "value": "5.00"},)),
-        _BALANCE,
+        write_preparation_of(_BALANCE),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, _BALANCE_OBJECT)
@@ -855,7 +861,8 @@ def _balance_insert() -> KeyedInsert:
 def _balance_observed(mutation: KeyedMutation) -> ReadAuthorizedWrite:
     members: dict[str, object] = {"value": "7.00"} if mutation == "amend" else {}
     prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)), _BALANCE
+        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)),
+        write_preparation_of(_BALANCE),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     row = PredecessorRow(
@@ -883,7 +890,8 @@ def _balance_observed(mutation: KeyedMutation) -> ReadAuthorizedWrite:
 
 def _account_observed_delete(account_id: int, version: int) -> ReadAuthorizedWrite:
     prepared = prepare_wire_write(
-        KeyedWriteInstruction("delete", "Account", ({"id": account_id},)), _ACCOUNT
+        KeyedWriteInstruction("delete", "Account", ({"id": account_id},)),
+        write_preparation_of(_ACCOUNT),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     state = VersionedObjectStateKey(_account(account_id), version)

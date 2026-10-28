@@ -94,6 +94,7 @@ from parallax.descriptor._records import (
     ValueObject,
     ValueObjectAttribute,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._metamodel_support import Declaration, accepted, attribute, identity, key, source
@@ -461,7 +462,10 @@ def _assignment_rejects(value: object) -> bool:
 def _row_rejects(value: object) -> bool:
     row = {"id": 1, "amount": value}
     try:
-        prepare_typed_write(KeyedWriteInstruction("insert", "Invoice", (row,)), _INVOICE_ACCEPTED)
+        prepare_typed_write(
+            KeyedWriteInstruction("insert", "Invoice", (row,)),
+            write_preparation_of(_INVOICE_ACCEPTED),
+        )
     except WriteRejectedError:
         return True
     return False

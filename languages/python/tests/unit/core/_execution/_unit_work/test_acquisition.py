@@ -56,6 +56,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.write_plan import ObjectKey, PredecessorRow
 from tests._support.planner_probes import NO_ROW_READS, TEST_ACTOR_IDENTITY
+from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._unit_work._acquired_rows_support import HeldRows
 
@@ -150,7 +151,7 @@ def _predicate(
             ),
             tuple(assignments),
         ),
-        meta,
+        write_preparation_of(meta),
     )
 
 
@@ -159,7 +160,7 @@ def _account_patch(*, version: int = 3) -> PreparedTargetInstruction:
         TargetWriteInstruction(
             "amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version
         ),
-        _ACCOUNT,
+        write_preparation_of(_ACCOUNT),
     )
 
 

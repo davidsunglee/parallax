@@ -31,6 +31,7 @@ from parallax.core.write_plan import (
     TemporalObservation,
 )
 from parallax.core.write_plan.keys import TemporalObjectStateKey
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 
 POSITION = formed(corpus_records()["position"])
@@ -89,7 +90,7 @@ def addressed_write(
                 valid_from=valid_from,
                 until=until,
             ),
-            POSITION,
+            write_preparation_of(POSITION),
         ),
         FAMILIES,
     )
@@ -105,7 +106,7 @@ def observed_write(
 ) -> StateObservedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     item = admitted_write(prepared, evidence, evidence.key.object)
     assert isinstance(item, StateObservedWrite)

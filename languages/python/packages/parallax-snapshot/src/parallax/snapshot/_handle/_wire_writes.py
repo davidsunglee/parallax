@@ -232,7 +232,7 @@ class WirePredicateWriteAdapter:
                     for member, value in authored.items()
                 ),
             )
-        return instructions.prepare_wire_write(instruction, meta)
+        return instructions.prepare_wire_write(instruction, write_model.preparation)
 
 
 def _published_replacement(
@@ -384,7 +384,7 @@ def _mutable_copy(value: object) -> object:
 
 
 def _prepared_wire_write(
-    meta: Metamodel,
+    preparation: WritePreparation,
     mutation: KeyedMutation,
     entity: EntityMetadata,
     row: Mapping[str, object],
@@ -405,7 +405,7 @@ def _prepared_wire_write(
     """
     prepared = instructions.prepare_wire_write(
         keyed_instruction(mutation, entity.identity, row, valid_from=valid_from, until=until),
-        meta,
+        preparation,
         authored_members=authored,
         members=members,
     )
@@ -507,7 +507,7 @@ class WireKeyedWriteSource:
         identity = _published_identity(model, entity, node)
         if not any(name in authored for name in identity):
             return _prepared_wire_write(
-                model,
+                preparation,
                 mutation,
                 entity,
                 {**identity, **authored},
@@ -517,7 +517,7 @@ class WireKeyedWriteSource:
             )
         stated = authored
         return _prepared_wire_write(
-            model,
+            preparation,
             mutation,
             entity,
             identity,
@@ -585,7 +585,7 @@ class WireKeyedInsertSource:
         interval bounds are stamped at flush from the Clock Strategy and the
         version is derived."""
         return _prepared_wire_write(
-            preparation.meta,
+            preparation,
             mutation,
             resolved.entity,
             self._payload,

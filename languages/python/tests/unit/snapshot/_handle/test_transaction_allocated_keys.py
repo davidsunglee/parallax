@@ -32,6 +32,7 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._transact_support import FIXED, INFINITY_INSTANT, db_for
 
 _T0 = dt.datetime(2023, 12, 1, tzinfo=dt.UTC)
@@ -58,7 +59,7 @@ def _insert_allocated(tx: TxnContext, entity: type[Entity], amount: int) -> None
     instruction = KeyedWriteInstruction(
         "insert", entity.identity.canonical, ({"id": {"computed": "maxPlusOne"}, "amount": amount},)
     )
-    prepared = prepare_typed_write(instruction, model_of(_MODEL))
+    prepared = prepare_typed_write(instruction, write_preparation_of(model_of(_MODEL)))
     # An insert whose key the database allocates opens no insertion authority.
     assert (
         tx._attempt.uow.buffer_insert(admitted_write(prepared, None, None), insertion_advice=None)

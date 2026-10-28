@@ -102,6 +102,7 @@ from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     retained_observation,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import WherePosition
 from tests.unit.core._execution._shared_coverage_support import MODEL as SHARED_MODEL
@@ -296,7 +297,7 @@ def _span_insert() -> KeyedInsert:
             ({"id": {"computed": "maxPlusOne"}, "amount": 1},),
             valid_from=_MAR,
         ),
-        _SPANS,
+        write_preparation_of(_SPANS),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, object_key(prepared, _SPANS))
@@ -319,7 +320,7 @@ def _span_amend(key: int) -> ReadAuthorizedWrite:
     )
     prepared = prepare_typed_write(
         KeyedWriteInstruction("amend", Span.identity.canonical, ({"id": key, "amount": 2},), _MAR),
-        _SPANS,
+        write_preparation_of(_SPANS),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, RetainedObservation(state, observation, None), state.object)
@@ -406,7 +407,7 @@ def _target(
             valid_from=valid_from,
             until=until,
         ),
-        TARGET_POSITION,
+        write_preparation_of(TARGET_POSITION),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
@@ -418,7 +419,7 @@ _JAN, _APR, _JUN, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month i
 def _observed_amend(key: int, claim: RetainedObservation) -> ReadAuthorizedWrite:
     prepared = prepare_wire_write(
         KeyedWriteInstruction("amend", "Position", ({"id": key, "value": "150.00"},), _APR),
-        TARGET_POSITION,
+        write_preparation_of(TARGET_POSITION),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, claim, claim.key.object)
@@ -676,7 +677,7 @@ def _tag_predicate_write() -> PreparedPredicateInstruction:
             ),
             assignments=(WriteAssignment("RunnerTag.label", "q"),),
         ),
-        _PREDICATED,
+        write_preparation_of(_PREDICATED),
     )
     assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared
@@ -720,7 +721,7 @@ def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_l
             valid_from=_FEB,
             until=_APR,
         ),
-        _PREDICATED,
+        write_preparation_of(_PREDICATED),
     )
     assert isinstance(amendment, PreparedKeyedInstruction)
     later = prepare_wire_write(
@@ -731,7 +732,7 @@ def test_a_write_after_a_predicate_write_continues_from_what_the_earlier_write_l
             valid_from=_JUN,
             until=_AUG,
         ),
-        _PREDICATED,
+        write_preparation_of(_PREDICATED),
     )
     assert isinstance(later, PreparedKeyedInstruction)
     observed = uow.source_authority.retain(

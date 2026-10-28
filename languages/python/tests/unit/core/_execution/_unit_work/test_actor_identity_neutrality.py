@@ -44,6 +44,7 @@ from parallax.core.write_plan import (
 from tests._support.clock_probes import inert_instant, instant_at
 from tests._support.lowering_probes import lowered_steps
 from tests._support.planner_probes import observed_buffer, plan_steps
+from tests._support.write_preparation import write_preparation_of
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -151,7 +152,7 @@ def test_a_readless_predicate_write_is_actor_neutral() -> None:
             ),
         ),
     )
-    prepared = prepare_typed_write(predicate, _WALLET)
+    prepared = prepare_typed_write(predicate, write_preparation_of(_WALLET))
     assert isinstance(prepared, PreparedPredicateInstruction)
     planner = build_write_planner(_WALLET)
     subject, login = (

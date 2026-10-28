@@ -50,6 +50,7 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import PlannedClose, PlannedInsert, PlannedStep
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._reach_support import frames, reaches
 from tests.unit.core._execution._shared_coverage_support import (
     AT,
@@ -324,7 +325,7 @@ def _reaching_past(observed: PredecessorRow, *, replaces: bool) -> AdmittedWrite
             day(0),
             day(4),
         ),
-        MODEL,
+        write_preparation_of(MODEL),
     )
     held = observation(ShareCols, observed)
     return admitted_write(prepared, held, held.key.object)
@@ -744,7 +745,7 @@ def _inside_write() -> AdmittedWrite:
         KeyedWriteInstruction(
             "amendUntil", ShareCols.identity.canonical, ({"id": 9, "amount": 9},), day(0), day(1)
         ),
-        MODEL,
+        write_preparation_of(MODEL),
     )
     held = observation(ShareCols, observed)
     return admitted_write(prepared, held, held.key.object)

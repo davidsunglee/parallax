@@ -33,6 +33,7 @@ from parallax.core.predicate._resolved import ResolvedPresence, ResolvedRelation
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 from tests._support.sql import compile_read
+from tests._support.write_preparation import write_preparation_of
 
 
 def _entity(name: str, namespace: str) -> records.Entity:
@@ -98,13 +99,13 @@ def test_the_write_boundary_classifies_an_ambiguous_bare_name_by_the_same_rule()
         {"mutation": "delete", "entity": "Person", "rows": [{"id": 1}]}
     )
     with pytest.raises(instructions.InstructionRejectedError) as excinfo:
-        instructions.prepare_typed_write(keyed, model)
+        instructions.prepare_typed_write(keyed, write_preparation_of(model))
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
     canonical = instructions.deserialize(
         {"mutation": "delete", "entity": "a.Person", "rows": [{"id": 1}]}
     )
-    instructions.prepare_typed_write(canonical, model)
+    instructions.prepare_typed_write(canonical, write_preparation_of(model))
 
 
 def _query(target: str, includes: tuple[IncludePathNode, ...] = ()) -> ObjectQueryNode:

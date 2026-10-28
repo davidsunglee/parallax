@@ -82,6 +82,7 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit import _family_predecessor_support as family
 from tests.unit.core._execution import _shared_coverage_support as shared
 from tests.unit.core._execution._execution_support import ACCOUNT, account_insert, itself, scope
@@ -101,7 +102,7 @@ def _patch(*, version: int = 3) -> PreparedTargetInstruction:
         TargetWriteInstruction(
             "amend", "Account", {"id": 1, "balance": "9.00"}, if_version=version
         ),
-        _META,
+        write_preparation_of(_META),
     )
 
 
@@ -140,7 +141,7 @@ def _ledger(*, balance: DocumentValue = "1.00") -> MappingRow:
 def _ledger_patch() -> PreparedTargetInstruction:
     return prepare_wire_write(
         TargetWriteInstruction("amend", "Ledger", {"id": 1, "label": "Z"}, if_version=3),
-        model_of(_LEDGER),
+        write_preparation_of(model_of(_LEDGER)),
     )
 
 
@@ -401,7 +402,7 @@ def test_a_coverage_read_is_a_read_call_of_the_flush_reaching_its_range() -> Non
     port = ScriptedAdapter(Transact(Read(rows=[stored]), Write(), Write()))
     patch = prepare_wire_write(
         TargetWriteInstruction("amend", "Balance", {"id": 1, "value": "9.00"}, if_tx_start=_T0),
-        model_of(_BALANCE),
+        write_preparation_of(model_of(_BALANCE)),
     )
     scope(port, _BALANCE, provider=recorder).transact(
         lambda tx: tx.uow.buffer_target(patch), itself, concurrency="optimistic"
@@ -443,7 +444,7 @@ def test_each_deferred_range_reads_its_coverage_only_once_the_write_before_it_ra
             TargetWriteInstruction(
                 "amend", "Balance", {"id": key, "value": "9.00"}, if_tx_start=_T0
             ),
-            model_of(_BALANCE),
+            write_preparation_of(model_of(_BALANCE)),
         )
         for key in (1, 2)
     ]
@@ -690,7 +691,7 @@ def test_a_write_reusing_a_pending_participation_reads_and_judges_nothing_again(
                 if_tx_start=_T0,
                 valid_from=_MAR,
             ),
-            model_of(_HULLS),
+            write_preparation_of(model_of(_HULLS)),
         )
 
     def fn(tx: TxnAttempt) -> None:
@@ -726,7 +727,7 @@ def test_an_optimistic_target_reads_no_collection_until_its_flush_covers_it(
                     if_tx_start=_T0,
                     valid_from=_MAR,
                 ),
-                model_of(_HULLS),
+                write_preparation_of(model_of(_HULLS)),
             )
         )
         assert [type(call) for call in port.calls] == [BeginCall]
@@ -815,7 +816,7 @@ def test_a_retained_rows_invalid_occurrence_fails_at_its_flush_not_its_call(
                     if_tx_start=_T0,
                     valid_from=_MAR,
                 ),
-                model_of(_HULLS),
+                write_preparation_of(model_of(_HULLS)),
             )
         )
         called.append("returned")
@@ -906,7 +907,7 @@ def test_a_retaining_reads_invalid_attribute_is_refused_at_its_call(
                         if_tx_start=dt.datetime(1999, 1, 1, tzinfo=dt.UTC),
                         valid_from=_MAR,
                     ),
-                    model_of(_HULLS),
+                    write_preparation_of(model_of(_HULLS)),
                 )
             )
         refused.append(caught.value)
@@ -932,7 +933,7 @@ def _hull_target(metadata: Any, key: int) -> PreparedTargetInstruction:
             if_tx_start=_T0,
             valid_from=_MAR,
         ),
-        model_of(_HULLS),
+        write_preparation_of(model_of(_HULLS)),
     )
 
 
@@ -1137,7 +1138,7 @@ def _tag_predicate() -> PreparedPredicateInstruction:
             ),
             assignments=(WriteAssignment(f"{tag}.label", "q"),),
         ),
-        model_of(shared.DOMAIN),
+        write_preparation_of(model_of(shared.DOMAIN)),
     )
     assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared

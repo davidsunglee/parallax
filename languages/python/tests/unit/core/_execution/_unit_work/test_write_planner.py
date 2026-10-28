@@ -114,6 +114,7 @@ from tests._support.planner_probes import (
     retained_observation,
     settled_writes,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._corpus_model_support import model as corpus_model
@@ -202,7 +203,7 @@ def _single_key(step: PlannedUpdate | PlannedDelete) -> object:
 
 
 def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedInstruction:
-    prepared = prepare_typed_write(write, model)
+    prepared = prepare_typed_write(write, write_preparation_of(model))
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
@@ -799,7 +800,7 @@ def test_an_undeclared_entitys_keyed_update_survives_elision_to_the_same_refusal
 def _predicate_step(
     instruction: PredicateWriteInstruction, model: Metamodel
 ) -> PlannedUpdate | PlannedDelete:
-    prepared = prepare_typed_write(instruction, model)
+    prepared = prepare_typed_write(instruction, write_preparation_of(model))
     assert isinstance(prepared, PreparedPredicateInstruction)
     return build_write_planner(model).predicate_step(
         prepared, actor_identity=TEST_ACTOR_IDENTITY, transaction_instant=_INSTANT
@@ -1519,7 +1520,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
                 predicate_algebra.Comparison("eq", predicate_algebra.FieldSubject("Wallet.id"), 2),
             ),
         ),
-        model,
+        write_preparation_of(model),
     )
     assert isinstance(predicate, PreparedPredicateInstruction)
     prepared = observed_buffer(

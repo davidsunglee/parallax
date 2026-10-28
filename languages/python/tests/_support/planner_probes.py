@@ -47,6 +47,7 @@ from parallax.core.write_plan import ObjectKey, StateObservation, WritePlan
 from parallax.core.write_plan.keys import object_state_key_from_observation
 from parallax.core.write_plan.plan import SettledWrite, WriteGroup
 from parallax.core.write_plan.steps import PlannedDelete, PlannedStep, PlannedUpdate
+from tests._support.write_preparation import write_preparation_of
 
 __all__ = [
     "NO_COUNTED_STEPS",
@@ -138,7 +139,7 @@ def observed_buffer(
     handles: dict[ObjectKey, InsertionIdentity] = {}
     for item in buffer:
         if isinstance(item, KeyedWriteInstruction):
-            prepared = prepare_typed_write(item, model)
+            prepared = prepare_typed_write(item, write_preparation_of(model))
             key = object_key(prepared, model)
             observation = None if key is None or not observations else observations.get(key)
             if key is not None and observation is not None:
