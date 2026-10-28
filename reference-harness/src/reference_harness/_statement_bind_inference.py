@@ -447,13 +447,12 @@ def array_cast_mismatches(
         return ()
     mismatches: list[ArrayCastMismatch] = []
     for array in tree.find_all(exp.Any):
-        parameter = _unparenthesized(array.this)
         comparison = array.parent
         if not isinstance(comparison, exp.EQ):
             continue
         operand = comparison.this if array is comparison.expression else comparison.expression
         expected = _compared_type(case, operand, binds)
-        mismatch = None if expected is None else _array_cast_mismatch(parameter, expected)
+        mismatch = None if expected is None else _array_cast_mismatch(array.this, expected)
         if mismatch is not None:
             mismatches.append(mismatch)
     mismatches.extend(_column_array_cast_mismatches(case, tree))
@@ -473,30 +472,27 @@ def _column_array_cast_mismatches(case: Case, tree: Expr) -> Iterator[ArrayCastM
         expected = exp.DataType.build(
             column_array_element(slot_neutral_type(slot, declarations)), dialect="postgres"
         )
-        mismatch = _array_cast_mismatch(_unparenthesized(array), expected)
+        mismatch = _array_cast_mismatch(array, expected)
         if mismatch is not None:
             yield ArrayCastMismatch(mismatch.index, mismatch.cast, mismatch.expected, column)
 
 
 def _array_cast_mismatch(parameter: Expr, expected: exp.DataType) -> ArrayCastMismatch | None:
-    placeholder = parameter.this if isinstance(parameter, exp.Cast) else parameter
-    index = placeholder_index(placeholder) if isinstance(placeholder, exp.Placeholder) else None
+    """The first cast wrapping the one placeholder *parameter* binds that is not
+    to the array of *expected* unmodified, since any one of them could truncate or
+    round an element; the placeholder uncast is itself a mismatch."""
+    index = bound_placeholder_index(parameter)
     if index is None:
         return None
-    element = _array_element(parameter.to) if isinstance(parameter, exp.Cast) else None
-    if element is not None and element.this == expected.this and not element.expressions:
-        return None
-    return ArrayCastMismatch(
-        index,
-        None if element is None else element.sql(dialect="postgres").lower(),
-        expected.sql(dialect="postgres").lower(),
-    )
-
-
-def _unparenthesized(expression: Expr) -> Expr:
-    while isinstance(expression, exp.Paren):
-        expression = expression.this
-    return expression
+    for cast in tuple(parameter.find_all(exp.Cast)) or (None,):
+        element = None if cast is None else _array_element(cast.to)
+        if element is None or element.this != expected.this or element.expressions:
+            return ArrayCastMismatch(
+                index,
+                None if element is None else element.sql(dialect="postgres").lower(),
+                expected.sql(dialect="postgres").lower(),
+            )
+    return None
 
 
 def _array_element(data_type: exp.DataType) -> exp.DataType | None:
