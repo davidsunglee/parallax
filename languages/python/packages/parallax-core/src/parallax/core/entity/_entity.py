@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import pickle
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Self, SupportsIndex, cast
 
 from pydantic._internal._model_construction import ModelMetaclass
 
+from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._declaration import (
     DECLARATION_MEMBER_NAMES as _DECLARATION_MEMBERS,
 )
@@ -25,7 +26,14 @@ from parallax.core.entity._edit import (
     unresolved_member_violation,
     use_edit,
 )
-from parallax.core.entity._errors import EditError, EditViolation, EntityDefinitionError
+from parallax.core.entity._errors import (
+    ENTITY_ROW_MALFORMED_PROVENANCE,
+    ENTITY_ROW_MEMBER_MISSING,
+    EditError,
+    EditViolation,
+    EntityDefinitionError,
+    EntityRowError,
+)
 from parallax.core.entity._expressions import (
     AllPredicate,
     AuthoredConstant,
@@ -40,7 +48,9 @@ from parallax.core.entity._expressions import (
 )
 from parallax.core.entity._instance_state import (
     BackedModel,
+    declared_values,
     named_state,
+    plan_of,
 )
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
 from parallax.core.entity._pydantic_storage import attach_instance_state
@@ -50,6 +60,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityLocation,
     IndexMetadata,
+    MemberShape,
     PersistenceMode,
     RelationshipLocation,
     StorageContainer,
@@ -297,8 +308,8 @@ CHANGE_RECORD_SLOT: Final = "__parallax_changes__"
 
 Only :meth:`Entity.edit` ever writes it, and what it writes is a
 :class:`ChangeRecord`. Two readers interpret what the slot holds: the edit
-surface reads the record an edit extends (:func:`_change_record`), and the Entity
-Row Codec derives an Edited Copy's sparse row from it and reports anything else
+surface reads the record an edit extends (:func:`_change_record`), and the Typed
+write source derives an Edited Copy's sparse row from it and reports anything else
 under the slot as corruption of private first-party state. It lives in
 ``__dict__`` rather than in a declared field so it stays outside
 ``model_fields_set``, outside canonical serialization, and outside the declared
@@ -314,7 +325,7 @@ def _change_record(value: BaseModel) -> ChangeRecord | None:
     The edit surface's own reader: it needs only the record it will extend, and
     an unedited value extends an empty one. Anything else under the slot was
     written by no edit and so names no original to preserve; reporting it as the
-    corruption it is belongs to the Row Codec, not here.
+    corruption it is belongs to the Typed write source, not here.
     """
     record = named_state(value).get(CHANGE_RECORD_SLOT)
     return record if isinstance(record, ChangeRecord) else None
@@ -568,6 +579,86 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         attach_instance_state(copied, CHANGE_RECORD_SLOT, record)
         return copied
 
+    # The Typed write source: what a value answers the write it is handed to,
+    # through names the framework reserves from every class body, so a caller
+    # holding no Entity internals reads the value as a Value Object is read.
+    # `shape` is the member shape of the Entity the write resolved, `entity` its
+    # identity and `key` its primary key's position there; each answer is in
+    # `shape`'s member order, with `ABSENT` where the value holds nothing.
+
+    def __parallax_member_values__(self) -> Iterator[object]:
+        """Every member this value's class declares, in that class's own
+        member order."""
+        return declared_values(self)
+
+    def __parallax_row_values__(
+        self, shape: MemberShape, entity: EntityIdentity, /
+    ) -> tuple[object, ...]:
+        """Every member this value populated, read by name.
+
+        A populated member ``shape`` does not declare is refused rather than
+        dropped, since dropping a value the caller authored would signal
+        nothing.
+        """
+        names = wire_names_of(type(self))
+        held = {
+            names.py_to_name[py_name]: value
+            for py_name, value in zip(
+                plan_of(type(self)).py_names, declared_values(self), strict=True
+            )
+            if value is not ABSENT
+        }
+        _require_declared(shape, entity, held, "full_row")
+        return tuple(held.get(member.name, ABSENT) for member in shape.members)
+
+    def __parallax_identity_pairs__(
+        self, shape: MemberShape, entity: EntityIdentity, key: int, /
+    ) -> tuple[tuple[int, object], ...]:
+        """The key this value names its object by, as one ``(position,
+        value)`` pair."""
+        names = wire_names_of(type(self))
+        return ((key, _supplied_value(self, names, shape, entity, (key,), "identity_row")[0]),)
+
+    def __parallax_authored_pairs__(
+        self, shape: MemberShape, entity: EntityIdentity, key: int, /
+    ) -> tuple[tuple[int, object], ...] | None:
+        """The key plus every member this value's edit chain touched, at the
+        value each now holds, as ``(position, value)`` pairs in that order —
+        or ``None`` where the chain touched nothing.
+
+        Effectiveness is weighed nowhere here: a member set back to its
+        original is still touched. The whole selection is judged before any
+        value is read, so one this value could not answer is refused whether
+        or not the chain touched anything.
+        """
+        names = wire_names_of(type(self))
+        touched = {
+            names.py_to_name.get(py_name, py_name) for py_name in _recorded_changes(self, entity)
+        }
+        _require_declared(shape, entity, touched, "authored_row")
+        _require_supplied(names, entity, (shape.members[key].name,), "authored_row")
+        positions = tuple(
+            position
+            for position, member in enumerate(shape.members)
+            if member.name in touched and position != key
+        )
+        _require_supplied(
+            names, entity, tuple(shape.members[p].name for p in positions), "authored_row"
+        )
+        if not touched:
+            return None
+        selected = (key, *positions)
+        values = _supplied_value(self, names, shape, entity, selected, "authored_row")
+        return tuple(zip(selected, values, strict=True))
+
+    def __parallax_edit_history__(self) -> bool:
+        """Whether this value's edit chain touched any member at all.
+
+        A member set back to its original is still history, while an empty
+        ``edit()`` adds none.
+        """
+        return bool(_recorded_changes(self, declaration_of(type(self)).identity))
+
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
         """Refused: ``edit(**changes)`` is the object-copy verb.
 
@@ -659,6 +750,89 @@ _LifecycleState: Final = cast("Any", Entity).__dict__[LIFECYCLE_STATE_SLOT]
 """The lifecycle slot's own descriptor, so the framework's reads and writes of a
 value's private state reach the slot itself rather than a name a class answers
 for."""
+
+
+_NO_RECORD: Final = object()
+
+
+def _recorded_changes(value: Entity, entity: EntityIdentity) -> Mapping[str, object]:
+    """``value``'s accepted Change Record, empty where it carries none.
+
+    An absent slot and an empty record both say an edit chain touched nothing.
+    A slot holding anything but a :class:`ChangeRecord` reports corruption of
+    private first-party state: only :meth:`Entity.edit` constructs one, so a
+    well-shaped mapping left there some other way names no touched member.
+    """
+    record = named_state(value).get(CHANGE_RECORD_SLOT, _NO_RECORD)
+    if record is _NO_RECORD:
+        return {}
+    if not isinstance(record, ChangeRecord):
+        raise EntityRowError(
+            code=ENTITY_ROW_MALFORMED_PROVENANCE,
+            message=(
+                f"this {entity.canonical} value's Change Record slot holds a "
+                f"{type(record).__name__} no edit wrote, so it names no touched member"
+            ),
+            identity=entity,
+        )
+    return record
+
+
+def _require_declared(
+    shape: MemberShape, entity: EntityIdentity, selected: Iterable[str], operation: str
+) -> None:
+    """Refuse a selection naming a member the resolved Entity does not declare."""
+    undeclared = sorted(name for name in selected if shape.position(name) is None)
+    if not undeclared:
+        return
+    named = ", ".join(repr(name) for name in undeclared)
+    raise EntityRowError(
+        code=ENTITY_ROW_MEMBER_MISSING,
+        message=(
+            f"{operation} selects {named}, which {entity.canonical} does not "
+            "declare: no canonical key names it, and dropping a value the caller authored "
+            "would signal nothing"
+        ),
+        identity=entity,
+    )
+
+
+def _require_supplied(
+    names: WireNames, entity: EntityIdentity, selected: Iterable[str], operation: str
+) -> None:
+    """Refuse a selection naming a member the value's class carries no
+    attribute for.
+
+    The resolved Entity decides what a member is and the value's class what
+    can be read for one; a value of another model's class declaring the same
+    identity is free to name its members otherwise.
+    """
+    unsupplied = sorted(name for name in selected if name not in names.name_to_py)
+    if not unsupplied:
+        return
+    named = ", ".join(repr(name) for name in unsupplied)
+    raise EntityRowError(
+        code=ENTITY_ROW_MEMBER_MISSING,
+        message=(
+            f"{operation} selects {named}, which this {entity.canonical} value's "
+            "class does not carry: its own declaration of that Entity names those members "
+            "otherwise, and a row short of what its selection claims would signal nothing"
+        ),
+        identity=entity,
+    )
+
+
+def _supplied_value(
+    value: Entity,
+    names: WireNames,
+    shape: MemberShape,
+    entity: EntityIdentity,
+    positions: tuple[int, ...],
+    operation: str,
+) -> tuple[object, ...]:
+    selected = tuple(shape.members[position].name for position in positions)
+    _require_supplied(names, entity, selected, operation)
+    return tuple(getattr(value, names.name_to_py[name]) for name in selected)
 
 
 def attach_lifecycle_state(value: BaseModel, state: object) -> None:

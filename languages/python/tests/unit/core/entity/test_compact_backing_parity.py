@@ -4,7 +4,7 @@ Every reader of a value's physical state asks the instance-state Module rather
 than Pydantic's instance dictionary, and the point of asking there is that the
 answers do not depend on which backing the value carries. So each case here
 builds the SAME value both ways and asserts one outcome: an edit, the Change
-Record an edit chain composes, the Row Codec operations, and a Value Object's
+Record an edit chain composes, the Typed write source's answers, and a Value Object's
 canonical document.
 
 The two arms are twins by construction. ``model_construct(**members)`` populates
@@ -65,7 +65,7 @@ from parallax.core.entity._instance_state import (
     named_state_value,
 )
 from parallax.core.entity._pydantic_storage import attach_instance_state
-from tests._support.model_capabilities import row_codec_for
+from tests._support.typed_write_source import TypedWriteSource
 from tests.unit.core.entity._compact_support import (
     carries_instance_storage,
     published,
@@ -77,7 +77,6 @@ from tests.unit.core.entity._value_object_document_support import inserted_docum
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from parallax.core.entity import EntityRowCodec
 
 _NS = "parallax.parity"
 
@@ -183,8 +182,8 @@ def build(request: pytest.FixtureRequest) -> Builder:
     return cast("Builder", request.param[1])
 
 
-def _codec() -> EntityRowCodec:
-    return row_codec_for(PARITY_MODEL)
+def _source() -> TypedWriteSource:
+    return TypedWriteSource(PARITY_MODEL)
 
 
 def _stored_document(site: Site) -> Mapping[str, object]:
@@ -227,7 +226,7 @@ def test_the_two_arms_address_an_inherited_member_the_same_way() -> None:
     assert ordinary == compact
     assert ordinary.model_fields_set == compact.model_fields_set == set(members)
     assert ordinary.payload is compact.payload is None
-    assert _codec().full_row(ordinary) == _codec().full_row(compact) == {"id": 1, "plate": "AB-12"}
+    assert _source().row(ordinary) == _source().row(compact) == {"id": 1, "plate": "AB-12"}
 
 
 # --------------------------------------------------------------------------- #
@@ -356,61 +355,59 @@ def test_one_named_state_value_is_read_from_either_backing_without_allocation() 
 # --------------------------------------------------------------------------- #
 
 
-def test_a_full_row_emits_every_populated_member_of_either_backing(build: Builder) -> None:
-    assert _codec().full_row(build(Depot, id=1, label="north", capacity=12)) == {
+def test_a_row_emits_every_populated_member_of_either_backing(build: Builder) -> None:
+    assert _source().row(build(Depot, id=1, label="north", capacity=12)) == {
         "id": 1,
         "label": "north",
         "capacity": 12,
     }
 
 
-def test_a_full_row_omits_a_member_the_value_never_populated(build: Builder) -> None:
+def test_a_row_omits_a_member_the_value_never_populated(build: Builder) -> None:
     # The distinction compact presence exists to preserve: `capacity` reads as
     # `None` under both backings, and neither row spells it, so the narrower
     # insert is emitted and the column keeps its stored default.
     value = build(Depot, id=1, label="north")
     assert value.capacity is None
-    assert _codec().full_row(value) == {"id": 1, "label": "north"}
+    assert _source().row(value) == {"id": 1, "label": "north"}
 
 
-def test_a_full_row_spells_a_member_populated_as_null(build: Builder) -> None:
-    assert _codec().full_row(build(Depot, id=1, label="north", capacity=None)) == {
+def test_a_row_spells_a_member_populated_as_null(build: Builder) -> None:
+    assert _source().row(build(Depot, id=1, label="north", capacity=None)) == {
         "id": 1,
         "label": "north",
         "capacity": None,
     }
 
 
-def test_a_full_row_borrows_an_authored_occurrence(build: Builder) -> None:
+def test_a_row_borrows_an_authored_occurrence(build: Builder) -> None:
     site = _site()
 
-    assert _codec().full_row(build(Depot, id=1, label="north", site=site))["site"] is site
+    assert _source().row(build(Depot, id=1, label="north", site=site))["site"] is site
 
 
 def test_an_identity_row_reads_the_primary_key_of_either_backing(build: Builder) -> None:
-    assert _codec().identity_row(build(Depot, id=1, label="north")) == {"id": 1}
+    assert _source().identity(build(Depot, id=1, label="north")) == {"id": 1}
 
 
-def test_an_authored_row_carries_both_sides_of_the_change_off_either_backing(
+def test_an_authored_row_carries_the_change_off_either_backing(
     build: Builder,
 ) -> None:
     edited = build(Depot, id=1, label="north", capacity=12).edit(label="south")
-    authored = _codec().authored_row(edited)
+    authored = _source().authored(edited)
     assert authored is not None
-    assert authored.row == {"id": 1, "label": "south"}
-    assert authored.originals == {"label": "north"}
+    assert authored == {"id": 1, "label": "south"}
 
 
 def test_an_authored_row_answers_none_only_for_a_value_no_edit_touched(
     build: Builder,
 ) -> None:
     value = build(Depot, id=1, label="north")
-    assert _codec().authored_row(value) is None
+    assert _source().authored(value) is None
     restored = value.edit(label="south").edit(label="north")
-    authored = _codec().authored_row(restored)
+    authored = _source().authored(restored)
     assert authored is not None
-    assert authored.row == {"id": 1, "label": "north"}
-    assert authored.originals == {"label": "north"}
+    assert authored == {"id": 1, "label": "north"}
 
 
 def test_a_row_derived_from_a_published_value_creates_no_storage_for_it() -> None:
@@ -420,10 +417,10 @@ def test_a_row_derived_from_a_published_value_creates_no_storage_for_it() -> Non
     # exists without — permanently, on a read.
     value = published(Depot, id=1, label="north", capacity=12)
     assert value.shouted == "NORTH"
-    codec = _codec()
-    codec.full_row(value)
-    codec.identity_row(value)
-    codec.authored_row(value)
+    source = _source()
+    source.row(value)
+    source.identity(value)
+    source.authored(value)
     assert not carries_instance_storage(value)
     # Read last, because reading it is what creates it.
     assert real_storage(value) == {}

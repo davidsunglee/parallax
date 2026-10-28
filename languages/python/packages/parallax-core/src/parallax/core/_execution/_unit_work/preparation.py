@@ -38,18 +38,22 @@ _LANES: Final = (
 class EntityPreparation:
     """What every write of one Entity is prepared against.
 
-    ``plan`` walks the Entity's member shape against each lane's converters.
-    ``insert_required`` marks the members an opening row must
-    state with a value, and ``framework_owned`` the members the framework
-    supplies, which a Typed row never authors. ``typed_class`` is the Entity
-    Class whose instances hold their members in ``selection``'s order, proven
-    so when the model was prepared, or ``None`` where no class was.
+    ``plan`` walks the Entity's member shape against each lane's converters,
+    and ``key`` is its primary key's position there. ``insert_required`` marks
+    the members an opening row must state with a value, ``framework_owned`` the
+    members the framework supplies, which a Typed row never authors, and
+    ``read_only`` the members outside the key that are immutable once inserted.
+    ``typed_class`` is the Entity Class whose instances hold their members in
+    ``selection``'s order, proven so when the model was prepared, or ``None``
+    where no class was.
     """
 
     selection: RowSelection
     plan: AuthoringPlan
+    key: int
     insert_required: int
     framework_owned: int
+    read_only: int
     typed_class: type | None
 
 
@@ -101,18 +105,24 @@ def _entity_preparation(
     typed_class: type | None,
 ) -> EntityPreparation:
     selection = view.member_selection
+    key = selection.index[view.primary_key.identity]
     required = 0
     framework_owned = 0
+    read_only = 0
     for position, member in enumerate(selection.bindings):
-        owned = isinstance(member, AttributeMetadata) and member.framework_owned
-        if owned:
+        attribute = member if isinstance(member, AttributeMetadata) else None
+        if attribute is not None and attribute.framework_owned:
             framework_owned |= 1 << position
         elif not member.nullable and member.multiplicity is Multiplicity.ONE:
             required |= 1 << position
+        if attribute is not None and attribute.read_only and position != key:
+            read_only |= 1 << position
     return EntityPreparation(
         selection=RowSelection(selection, absent),
         plan=catalog.plan(selection.shape),
+        key=key,
         insert_required=required,
         framework_owned=framework_owned,
+        read_only=read_only,
         typed_class=typed_class,
     )

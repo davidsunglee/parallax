@@ -1280,7 +1280,7 @@ def test_a_keyed_verb_refuses_an_instance_of_an_undeclared_class() -> None:
 # separate models. Membership is decided by the identity the instance's class
 # declares, so a `_TwinLeft` instance handed to a database connected to
 # `_TwinRight`'s model resolves — and the guarantee the old object-identity guard
-# provided survives in the Entity MappingRow Codec, which refuses the foreign class's
+# provided survives in the reading of its row, which refuses the foreign class's
 # own member by name before an instruction exists at all.
 class _TwinLeft(Entity, table="twin", name="Twin", namespace="parallax.compatibility"):
     id: Attr[int] = attr(primary_key=True)
@@ -1302,7 +1302,7 @@ def test_a_foreign_twins_members_are_refused_when_the_row_is_derived() -> None:
     def fn(tx: TxnContext) -> None:
         tx.insert(_TwinLeft(id=1, left_only="x"))
 
-    # `full_row` selects what the instance populated and the connected model
+    # The row selects what the instance populated and the connected model
     # declares no `leftOnly`, so the substitution is named where it happened —
     # rather than reported downstream as the ABSENCE of the `rightOnly` this
     # model does declare.

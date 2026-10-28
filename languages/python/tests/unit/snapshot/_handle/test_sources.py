@@ -40,7 +40,7 @@ from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
-from tests._support.model_capabilities import cataloged_for, graph_construction_for, row_codec_for
+from tests._support.model_capabilities import cataloged_for, graph_construction_for
 from tests.unit._transact_support import ACCOUNT, INFINITY_INSTANT, db_for, new_account
 from tests.unit._where_position_model import WHERE_POSITION_META, WherePosition
 
@@ -295,7 +295,7 @@ _ENTITY_NAMES: Final = {
 def _resolved_source(row: _Row, value: object) -> ResolvedKeyedWriteSource:
     meta = cataloged_for(row.model).meta
     if row.representation == "typed":
-        typed = TypedKeyedWriteSource(cast("EntityBase", value), row_codec_for(row.model))
+        typed = TypedKeyedWriteSource(cast("EntityBase", value))
         return typed.resolve(meta, "amend")
     wire = WireKeyedWriteSource(value, {})
     wire.capture("amend")
@@ -305,7 +305,7 @@ def _resolved_source(row: _Row, value: object) -> ResolvedKeyedWriteSource:
 def _resolved_insert(row: _Row, value: object) -> ResolvedKeyedInsert:
     meta = cataloged_for(row.model).meta
     if row.representation == "typed":
-        typed = TypedKeyedInsertSource(cast("EntityBase", value), row_codec_for(row.model))
+        typed = TypedKeyedInsertSource(cast("EntityBase", value))
         return typed.resolve(meta, "insert")
     wire = WireKeyedInsertSource(_ENTITY_NAMES[row.model], cast("dict[str, object]", value))
     wire.capture("insert")

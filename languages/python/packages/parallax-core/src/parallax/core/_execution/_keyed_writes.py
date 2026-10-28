@@ -136,8 +136,8 @@ def validate_provenance(
     insertion opened (`m-unit-work` "Insertion authority"). It is answered from
     the authority the value itself carries, never from the key it names or a
     row derived for the purpose, so a value whose class can key no row still
-    reaches THIS refusal rather than an
-    :class:`~parallax.core.entity.EntityRowError` raised on its behalf. It is the
+    reaches THIS refusal rather than the refusal reading its row would raise on
+    its behalf. It is the
     amendment and replacement family's exemption only: the insert family asks whether an insertion
     of the object still stands for the opposite verdict, and that refusal is
     buffering's
@@ -190,7 +190,7 @@ class ResolvedKeyedWriteSource:
     provenance refusal, the exemption a standing insertion grants it, and the
     pin refusal are all decided from it, in that order, before any row is
     derived — so a value whose class can key no row reaches the provenance
-    refusal that is the honest complaint about it, rather than a codec failure.
+    refusal that is the honest complaint about it, rather than a row-reading failure.
 
     ``pin`` and ``read_evidence`` are the source's own, never derived. Read
     evidence is optional beside ``provenance``: a read outside a writable

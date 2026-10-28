@@ -32,10 +32,10 @@ from parallax.core._execution._publication import (
     read_projection,
     write_projection,
 )
+from parallax.core._execution._unit_work import preparation as preparation_module
 from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity import _layout as layout_module
-from parallax.core.entity import _row_codec as row_codec_module
 from parallax.core.entity._model import model_of
 from parallax.core.execution import (
     ModelSelection,
@@ -137,7 +137,7 @@ def _refuse_every_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("a per-Entity derivation ran after preparation")
 
     monkeypatch.setattr(layout_module.LayoutCatalog, "_build", refuse)
-    monkeypatch.setattr(row_codec_module, "_row_facts", refuse)
+    monkeypatch.setattr(preparation_module, "_entity_preparation", refuse)
     monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse)
 
 
@@ -158,7 +158,7 @@ def test_a_class_backed_model_prepares_every_product_for_every_entity() -> None:
     assert isinstance(read.construction, EntityGraphConstruction)
     expected = _identities(_ACCOUNT)
     assert set(read.model.layouts._layouts) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert set(write.codec._facts_by_identity) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
+    assert set(write.preparation._entities) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(read.construction._facts) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     facet = opt_lock.view(write.model.meta)
     assert write.evidence_policy_for == facet.required_key
@@ -171,11 +171,8 @@ def test_a_descriptor_backed_model_prepares_with_no_graph_construction() -> None
 
     assert read.construction is None
     assert set(read.model.layouts._layouts) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    assert write.codec.full_row(mm.Account(id=1, owner="Ada", balance=_BALANCE)) == {
-        "id": 1,
-        "owner": "Ada",
-        "balance": _BALANCE,
-    }
+    assert set(write.preparation._entities) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
+    assert write.preparation.entity(mm.Account.identity).typed_class is None
 
 
 @pytest.mark.parametrize("edition", ["", None, 7], ids=["empty", "none", "not-a-string"])

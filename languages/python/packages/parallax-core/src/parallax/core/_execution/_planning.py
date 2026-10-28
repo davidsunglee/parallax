@@ -10,7 +10,7 @@ from parallax.core._execution._publication import ModelSelection, check_edition,
 from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.strategy import NO_AUDIT
 from parallax.core._execution._unit_work.write_planner import WritePlanner
-from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
+from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
@@ -43,7 +43,6 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         catalog=catalog,
         classes=classes,
         construction=construction,
-        codec=EntityRowCodec(catalog),
         preparation=build_write_preparation(catalog.meta, positional=positional),
         planner=build_write_planner(catalog.meta),
         evidence_policy_for=opt_lock.view(catalog.meta).required_key,

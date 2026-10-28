@@ -109,7 +109,8 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core._execution._unit_work.instructions import coerce_typed_row
+from parallax.core._execution._planning import build_write_preparation
+from parallax.core._execution._unit_work.preparation import TYPED_LANE
 from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.write_planner import WritePlanner, WritePlanningRequest
 from parallax.core._execution._write_step_executor import WriteStepExecutor
@@ -127,12 +128,13 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity import EntityRowCodec
+from parallax.core.entity._instance_state import declared_values
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle._activity import FlushActivity
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import KeyedMutation, TargetMutation
+from parallax.core.write_plan.managed_row import managed_row, named_members
 from parallax.core.write_plan.payload import PatchedDocument
 from parallax.core.write_plan.plan import WriteGroup, WritePlan
 from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
@@ -355,7 +357,7 @@ class Case:
     addressed: bool = False
 
 
-_CODEC: Final = EntityRowCodec(CATALOG)
+_PREPARATION: Final = build_write_preparation(CATALOG.meta)
 
 
 def _value(cls: type[Entity], key: int, label: str) -> Entity:
@@ -369,9 +371,9 @@ def _value(cls: type[Entity], key: int, label: str) -> Entity:
 
 def _wire_row(value: Entity) -> dict[str, object]:
     """``value``'s complete row in canonical Wire spellings, as a fresh mapping."""
-    entity = CATALOG.meta.entity(type(value).identity)
-    assert entity is not None
-    row = coerce_typed_row(_CODEC.full_row(value), CATALOG.meta, entity)
+    entry = _PREPARATION.entity(type(value).identity)
+    authored = entry.plan.complete_row(declared_values(value), lane=TYPED_LANE, required=0)
+    row = named_members(managed_row(entry.selection, authored.cells, authored.presence))
     return cast("dict[str, object]", detach_json_container(row))
 
 

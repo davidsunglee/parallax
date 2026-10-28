@@ -100,7 +100,6 @@ __all__ = [
     "WriteInstructionError",
     "addressed_members",
     "assigned_members",
-    "coerce_typed_row",
     "derive_keyed_instruction",
     "deserialize",
     "keyed_instruction_from_target",
@@ -2383,38 +2382,6 @@ def addressed_members(
                 "the write and never changes it"
             )
     return {name: member for name, member in document.items() if name not in stated}
-
-
-def coerce_typed_row(
-    row: Mapping[str, object], model: AcceptedMetamodel, entity: EntityMetadata
-) -> Mapping[str, object]:
-    """``row``'s members in the managed carriers :func:`prepare_typed_write`
-    produces, judged by nothing.
-
-    For the state a write is addressed AGAINST, read back to be weighed against
-    what that write's caller authored. Every rule preparation applies is a rule
-    about what a caller states in the call being prepared, and this side states
-    nothing in it, so no name, value, assignment, or temporal rule is applied
-    here, and this is never a door for caller input.
-
-    Coercion rather than decoding, because a runtime argument already carries a
-    native value: what this side owes the weighing is the width projection and
-    normalization the authoring producer applies and nothing else, so a member
-    restored to the `float32` its own read published is the same value on both
-    sides rather than differing by the projection alone.
-
-    Judging it would refuse the write that repairs it. State a write is addressed
-    against is state some earlier door admitted, and a constraint tightened since
-    then makes correcting that member the whole point of the call.
-    """
-    return _transform_row(
-        _member_selection(model, entity),
-        entity,
-        row,
-        converter=_coerce_typed_leaf,
-        source_access=BORROWED_SOURCE_ACCESS,
-        fill_missing_many=False,
-    ).value
 
 
 type _LeafConverter = Callable[[ScalarDefinition, object, str], tuple[object, bool]]

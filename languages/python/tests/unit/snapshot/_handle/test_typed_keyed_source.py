@@ -19,7 +19,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Iterator
 from decimal import Decimal
-from typing import Final, cast
+from typing import Any, Final, cast
 
 import pytest
 
@@ -30,13 +30,12 @@ from parallax.conformance.vo_models import (
     ContactGeo,
     ContactPoint,
 )
-from parallax.core import Attr, DomainModel, attr
+from parallax.core import Attr, attr
 from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._publication import write_projection
 from parallax.core.base import INFINITY, DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import EntityRowCodec
 from parallax.core.metamodel import Metamodel
 from parallax.core.read_delivery import InvalidData
 from parallax.core.temporal_read import TimeInterval
@@ -48,7 +47,7 @@ from parallax.snapshot._handle._typed_writes import (
 )
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter
-from tests._support.model_capabilities import cataloged_for, preparation_for, row_codec_for
+from tests._support.model_capabilities import cataloged_for, preparation_for
 from tests.unit._transact_support import (
     ACCOUNT,
     db_for,
@@ -81,15 +80,8 @@ class _RekeyedTwin(EntityBase, table="twin", name="Twin", namespace="parallax.co
     only: Attr[str] = attr(max_length=8)
 
 
-_TWIN: Final = DomainModel(_Twin)
-
-
-def _accounts() -> tuple[Metamodel, EntityRowCodec]:
-    return cataloged_for(ACCOUNT).meta, row_codec_for(ACCOUNT)
-
-
-def _twins() -> tuple[Metamodel, EntityRowCodec]:
-    return cataloged_for(_TWIN).meta, row_codec_for(_TWIN)
+def _accounts() -> Metamodel:
+    return cataloged_for(ACCOUNT).meta
 
 
 def _published_account() -> mm.Account:
@@ -126,27 +118,27 @@ def _published_contact() -> Contact:
 # Which Entity a value names.                                                 #
 # --------------------------------------------------------------------------- #
 def test_a_value_names_the_entity_its_class_declares_in_the_connected_model() -> None:
-    meta, codec = _accounts()
+    meta = _accounts()
 
-    resolved = TypedKeyedWriteSource(_published_account(), codec).resolve(meta, "amend")
+    resolved = TypedKeyedWriteSource(_published_account()).resolve(meta, "amend")
 
     assert resolved.entity.identity == mm.Account.identity
 
 
 def test_a_class_the_connected_model_does_not_declare_is_refused_while_resolving() -> None:
-    meta, _ = _accounts()
+    meta = _accounts()
 
     with pytest.raises(TypeError, match="is not an Entity Class of this model"):
-        TypedKeyedWriteSource(_Twin(id=1, only="x"), row_codec_for(_TWIN)).resolve(meta, "amend")
+        TypedKeyedWriteSource(_Twin(id=1, only="x")).resolve(meta, "amend")
 
 
 # --------------------------------------------------------------------------- #
 # What a value authors, once the window has been judged.                      #
 # --------------------------------------------------------------------------- #
 def test_prepare_states_every_touched_member_as_its_literal_assignment() -> None:
-    meta, codec = _accounts()
+    meta = _accounts()
     edited = _published_account().edit(balance=Decimal("125.00"))
-    source = TypedKeyedWriteSource(edited, codec)
+    source = TypedKeyedWriteSource(edited)
     resolved = source.resolve(meta, "amend")
 
     prepared = source.prepare(preparation_for(meta), "amend", resolved, valid_from=None, until=None)
@@ -158,9 +150,9 @@ def test_prepare_states_every_touched_member_as_its_literal_assignment() -> None
 def test_a_wholly_restoring_chain_still_assigns_the_member_it_took_back() -> None:
     # The chain touched the member, so the adapter states it at the value the
     # chain ended on, whatever that equals: the assignment is literal.
-    meta, codec = _accounts()
+    meta = _accounts()
     restored = _published_account().edit(balance=Decimal("125.00")).edit(balance=Decimal("100.00"))
-    source = TypedKeyedWriteSource(restored, codec)
+    source = TypedKeyedWriteSource(restored)
 
     prepared = source.prepare(
         preparation_for(meta), "amend", source.resolve(meta, "amend"), valid_from=None, until=None
@@ -178,9 +170,7 @@ def test_a_correction_states_what_current_authoring_admits_over_any_stored_origi
     # write repairing it is a correction, judged on the authored side alone, so
     # the state it revises never refuses it.
     meta = cataloged_for(CONTACT_MODEL).meta
-    source = TypedKeyedWriteSource(
-        _published_contact().edit(address=_COMPLETE_ADDRESS), row_codec_for(CONTACT_MODEL)
-    )
+    source = TypedKeyedWriteSource(_published_contact().edit(address=_COMPLETE_ADDRESS))
 
     prepared = source.prepare(
         preparation_for(meta), "amend", source.resolve(meta, "amend"), valid_from=None, until=None
@@ -196,8 +186,8 @@ def test_a_correction_states_what_current_authoring_admits_over_any_stored_origi
 
 
 def test_an_untouched_copy_authors_its_identity_row_alone() -> None:
-    meta, codec = _accounts()
-    source = TypedKeyedWriteSource(_published_account(), codec)
+    meta = _accounts()
+    source = TypedKeyedWriteSource(_published_account())
 
     prepared = source.prepare(
         preparation_for(meta), "amend", source.resolve(meta, "amend"), valid_from=None, until=None
@@ -208,8 +198,8 @@ def test_an_untouched_copy_authors_its_identity_row_alone() -> None:
 
 
 def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> None:
-    meta, codec = _accounts()
-    source = TypedKeyedWriteSource(_published_account(), codec)
+    meta = _accounts()
+    source = TypedKeyedWriteSource(_published_account())
 
     prepared = source.prepare(
         preparation_for(meta), "delete", source.resolve(meta, "delete"), valid_from=None, until=None
@@ -223,16 +213,16 @@ def test_a_destructive_verb_authors_its_identity_row_and_assigns_nothing() -> No
 # The insert door's narrower peer.                                            #
 # --------------------------------------------------------------------------- #
 def test_an_insert_source_answers_the_entity_the_value_is_of() -> None:
-    meta, codec = _accounts()
+    meta = _accounts()
 
-    resolved = TypedKeyedInsertSource(new_account(), codec).resolve(meta, "insert")
+    resolved = TypedKeyedInsertSource(new_account()).resolve(meta, "insert")
 
     assert resolved.entity.identity == mm.Account.identity
 
 
 def test_an_insert_source_authors_the_whole_create_payload() -> None:
-    meta, codec = _accounts()
-    source = TypedKeyedInsertSource(new_account(), codec)
+    meta = _accounts()
+    source = TypedKeyedInsertSource(new_account())
 
     prepared = source.prepare(
         preparation_for(meta), "insert", source.resolve(meta, "insert"), valid_from=None, until=None
@@ -245,32 +235,29 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
     }
 
 
-class _ReadRecordingCodec(EntityRowCodec):
-    """A codec recording which of its two insert readers a source asks."""
-
-    __slots__ = ("reads",)
-
-    def __init__(self, codec_of: DomainModel) -> None:
-        super().__init__(cataloged_for(codec_of))
-        self.reads: list[str] = []
-
-    def declared_values(self, value: EntityBase) -> Iterator[object]:
-        self.reads.append("positional")
-        return super().declared_values(value)
-
-    def full_row(self, value: object) -> dict[str, object]:
-        self.reads.append("by-name")
-        return super().full_row(value)
-
-
-def test_an_insert_source_reads_a_proven_class_by_position_and_any_other_by_name() -> None:
+def test_an_insert_source_reads_a_proven_class_by_position_and_any_other_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The model a selection prepares proves its own classes positional; one
     # prepared from the bare Metamodel proves none.
-    codec = _ReadRecordingCodec(ACCOUNT)
+    reads: list[str] = []
+    by_position = EntityBase.__parallax_member_values__
+    by_name = EntityBase.__parallax_row_values__
+
+    def positional(value: EntityBase) -> Iterator[object]:
+        reads.append("positional")
+        return by_position(value)
+
+    def named(value: EntityBase, *against: Any) -> tuple[object, ...]:
+        reads.append("by-name")
+        return by_name(value, *against)
+
+    monkeypatch.setattr(EntityBase, "__parallax_member_values__", positional)
+    monkeypatch.setattr(EntityBase, "__parallax_row_values__", named)
     meta = cataloged_for(ACCOUNT).meta
     proven = write_projection(prepare_model(ACCOUNT, edition="e1")).preparation
     for preparation in (proven, preparation_for(meta)):
-        source = TypedKeyedInsertSource(new_account(), codec)
+        source = TypedKeyedInsertSource(new_account())
         prepared = source.prepare(
             preparation, "insert", source.resolve(meta, "insert"), valid_from=None, until=None
         )
@@ -279,15 +266,15 @@ def test_an_insert_source_reads_a_proven_class_by_position_and_any_other_by_name
             "owner": "Newton",
             "balance": Decimal("5.00"),
         }
-    assert codec.reads == ["positional", "by-name"]
+    assert reads == ["positional", "by-name"]
 
 
 def test_an_insert_source_hands_its_raw_window_to_preparation() -> None:
     # The source states the caller's bounds as they were passed; preparation
     # judges them against the target and normalizes what it admits.
-    meta, codec = cataloged_for(WHERE_POSITION_META).meta, row_codec_for(WHERE_POSITION_META)
+    meta = cataloged_for(WHERE_POSITION_META).meta
     position = WherePosition(id=9, acct_num="A", value=Decimal("1.00"))
-    source = TypedKeyedInsertSource(position, codec)
+    source = TypedKeyedInsertSource(position)
     resolved = source.resolve(meta, "insert")
     stated = dt.datetime(2024, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
 
@@ -308,7 +295,6 @@ def test_construction_and_capture_refuse_nothing_a_verb_would() -> None:
     # no read produced it, and its class keys the Entity elsewhere. Constructing
     # a source over it and capturing must still be silent, because the ingress
     # refuses re-entry before either runs.
-    _, codec = _twins()
     rekeyed = _RekeyedTwin(id_elsewhere=1, only="x")
-    assert TypedKeyedWriteSource(rekeyed, codec).capture("amend") is None
-    assert TypedKeyedInsertSource(rekeyed, codec).capture("insert") is None
+    assert TypedKeyedWriteSource(rekeyed).capture("amend") is None
+    assert TypedKeyedInsertSource(rekeyed).capture("insert") is None

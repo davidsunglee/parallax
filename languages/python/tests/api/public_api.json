@@ -251,7 +251,6 @@
     "EntityDefinitionError",
     "EntityGraphConstruction",
     "EntityGraphWriter",
-    "EntityRowCodec",
     "Float32",
     "GraphConstructionError",
     "IncludePath",

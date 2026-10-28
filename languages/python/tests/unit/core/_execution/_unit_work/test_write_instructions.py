@@ -1150,28 +1150,6 @@ def test_a_prepared_revising_row_fills_inside_what_it_assigns_and_nowhere_else()
     assert named_members(customer.rows[0])["address"] == {"street": "Main", "phones": ()}
 
 
-def test_a_coerced_typed_row_projects_its_leaves_and_judges_none() -> None:
-    # The state a keyed write is addressed AGAINST, in the carriers the authored
-    # side of that write states the same members in. The `float32` crosses the
-    # same width projection preparation applies, so a member an author restored
-    # to what its own read published compares equal rather than differing by the
-    # projection alone. Coercion judges nothing, so the out-of-scale `amount` —
-    # a synthetic leaf, refused by the write-preparing producer as the assertion
-    # below shows — passes through as itself: what a row is weighed against is
-    # answered here, and whether it may be authored is answered there alone.
-    model = _MODELS["writable-scalars"]
-    entity = wi.resolve_target(model, "WritableScalar")
-    row: dict[str, object] = {"id": 1, "f32": 0.1, "amount": Decimal("1.00005")}
-
-    coerced = wi.coerce_typed_row(row, model, entity)
-
-    assert dict(coerced) == {"id": 1, "f32": 0.10000000149011612, "amount": Decimal("1.00005")}
-    with pytest.raises(WriteRejectedError, match="does not match the declared type"):
-        wi.prepare_typed_write(
-            wi.KeyedWriteInstruction("amend", "WritableScalar", (row,)), write_preparation_of(model)
-        )
-
-
 @pytest.mark.parametrize("prepare", [_prepare_typed, _prepare_wire])
 def test_prepared_json_leaves_are_deeply_frozen_before_retention(prepare: Any) -> None:
     payload: dict[str, object] = {"items": [{"value": 1}]}
@@ -1966,7 +1944,7 @@ def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() 
 # rows the corpus's own `when.write` cases carry (m-value-object-039..044 /     #
 # m-inheritance-086..089). Every one of them is authored straight at this       #
 # producer rather than through a keyed verb, because no keyed verb can reach    #
-# them: the Entity Row Codec derives a Typed row from the value's own class, so #
+# them: a Typed write reads its row off the value's own class, so            #
 # an undeclared member, a sibling branch's column, a framework-owned metadata   #
 # key, and a keyless row have no Typed spelling, and the Entity constructor     #
 # refuses the value-object payloads before a verb could receive one. The one    #
