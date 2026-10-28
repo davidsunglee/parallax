@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Container, Hashable, Mapping, Sequence
+from collections.abc import Container, Hashable, Iterator, Mapping, Sequence
 from itertools import chain
-from typing import Final, cast
+from typing import cast
 
 from parallax.core import storage_layout
 from parallax.core.base import Json, ManagedValue, NeutralType
@@ -35,6 +35,7 @@ from parallax.core.storage_layout import (
     InheritanceDiscriminator,
     RelationalDocument,
 )
+from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.payload import (
     AssignmentPayload,
     PatchedDocument,
@@ -50,8 +51,6 @@ from parallax.core.write_plan.steps import (
 )
 
 __all__ = ["LayoutPayloadPreparer"]
-
-_UNSTATED: Final = object()
 
 
 class LayoutPayloadPreparer:
@@ -99,15 +98,19 @@ class LayoutPayloadPreparer:
         # is compared before the rest; an executed occurrence is no scalar and
         # its lookups miss.
         documented = cast("Mapping[Hashable, bool]", self._comparison(entity).scalars)
-        left_attributes = cast("Mapping[Hashable, object]", left.row.attributes)
-        right_attributes = cast("Mapping[Hashable, object]", right.row.attributes)
-        for identity in chain(left.executed, right.executed, left_attributes):
+        left_row, right_row = left.row, right.row
+        for identity in chain(left.executed, right.executed, _stated_attributes(left_row)):
             json = documented.get(identity)
             if json is None:  # an interval member or an occurrence
                 continue
-            value = left_attributes.get(identity, _UNSTATED)
-            other = right_attributes.get(identity, _UNSTATED)
-            if value is _UNSTATED or other is _UNSTATED or _generated(value) or _generated(other):
+            value = left_row.cell(cast("AttributeIdentity", identity))
+            other = right_row.cell(cast("AttributeIdentity", identity))
+            if (
+                value is left_row.selection.absent
+                or other is right_row.selection.absent
+                or _generated(value)
+                or _generated(other)
+            ):
                 continue
             if _scalar_differs(json, value, other):
                 return True
@@ -550,6 +553,16 @@ def _require_placed(view: EntityLayoutView, matched: int, named: int) -> None:
             f"{view.entity.canonical}: a planned member occupies no Column of the target's "
             "Table Layout"
         )
+
+
+def _stated_attributes(row: ManagedRow) -> Iterator[AttributeIdentity]:
+    """The scalar members ``row`` states, in member order."""
+    members = row.selection.members
+    identities = members.identities
+    for position in row.positions():
+        if position >= members.attribute_count:
+            return
+        yield cast("AttributeIdentity", identities[position])
 
 
 def _generated(value: object) -> bool:

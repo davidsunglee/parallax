@@ -10,6 +10,7 @@ from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityMetadata,
+    OccurrenceDefinition,
     ValueObjectIdentity,
 )
 from parallax.core.temporal_read import (
@@ -31,7 +32,7 @@ from parallax.core.write_plan.managed_row import (
     named_members,
     predecessor_state,
 )
-from parallax.core.write_plan.observe import AssignedComparison, PredecessorRow
+from parallax.core.write_plan.observe import AssignedComparison, PredecessorRow, occurrence_value
 from parallax.core.write_plan.payload import RowPayload, WritePayloadPreparer
 from parallax.core.write_plan.plan import (
     OPEN_BITEMPORAL_ENDS,
@@ -172,6 +173,7 @@ class PredecessorExpander:
         "_payloads",
         "_resolved",
         "_starting_close_affected_rows",
+        "_states",
         "_transform",
     )
 
@@ -214,6 +216,7 @@ class PredecessorExpander:
         self._payloads = payloads
         self._resolved: list[tuple[ManagedRow, ExecutedMembers]] = []
         self._comparisons: list[tuple[ManagedRow, AssignedComparison]] = []
+        self._states: list[tuple[PredecessorRow, ManagedRow]] = []
 
     def expand(
         self,
@@ -318,18 +321,30 @@ class PredecessorExpander:
         else:
             start, end = coverage.start, coverage.end
         assigned = successor.assigned
+        state = self._state(predecessor)
         if assigned is None:
-            row = _successor_row(self._facts, predecessor, start, end)
+            row = _successor_row(self._facts, predecessor, state, start, end)
         else:
             row = _successor_row(
                 self._facts,
                 predecessor,
+                state,
                 start,
                 end,
                 assigned=assigned,
                 executed=self._executed(assigned),
             )
         return self._audit.finalize_row(row)
+
+    def _state(self, predecessor: PredecessorRow) -> ManagedRow:
+        """``predecessor``'s cells as the row its successors start from,
+        packed once however many successors it has."""
+        for held, state in self._states:
+            if held is predecessor:
+                return state
+        state = predecessor_state(self._facts.selection, predecessor)
+        self._states.append((predecessor, state))
+        return state
 
     def _new_lineage(
         self,
@@ -1220,6 +1235,7 @@ def _complete(successors: Sequence[Successor], coverage: TimeInterval) -> bool:
 def _successor_row(
     facts: TemporalFacts,
     predecessor: PredecessorRow,
+    state: ManagedRow,
     valid_start: object,
     valid_end: object,
     *,
@@ -1229,12 +1245,12 @@ def _successor_row(
     """One successor of ``predecessor`` over ``[valid_start, valid_end)`` —
     ignored without Valid Time — as the row it represents.
 
-    A successor starts from its predecessor's own cells. A carried one keeps
-    them all (:class:`CarriedFrom`); a changed one (:class:`ChangedFrom`)
-    overlays every ``assigned`` member, whatever value the predecessor already
-    holds there, and states them as its ``executed`` members.
+    A successor starts from ``state``, its predecessor's own cells. A carried
+    one keeps them all (:class:`CarriedFrom`); a changed one
+    (:class:`ChangedFrom`) overlays every ``assigned`` member, whatever value
+    the predecessor already holds there, and states them as its ``executed``
+    members.
     """
-    state = predecessor_state(facts.selection, predecessor)
     if assigned is not None:
         state = state.with_members_of(assigned)
     return _represented(
@@ -1337,11 +1353,14 @@ def _revision_assignments(
     shape = facts.shape
     addressed = _addressed(facts)
     row = write_row.row
+    selection = row.selection
     attributes: dict[AttributeIdentity, PlannedValue] = {}
     value_objects: dict[ValueObjectIdentity, object] = {}
     for member in write_row.executed:
         if isinstance(member, ValueObjectIdentity):
-            value_objects[member] = row.value_objects[member]
+            position = selection.members.index[member]
+            declared = cast("OccurrenceDefinition", selection.members.shape.members[position])
+            value_objects[member] = occurrence_value(row.at(position), declared, selection.absent)
         elif member not in addressed:
             attributes[member] = row.cell(member)
     if isinstance(shape, Bitemporal):
