@@ -521,7 +521,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
     # + balance row omitting the required `owner`) must NOT be rejected — an
     # absent top-level member is untouched, never a violation, on any mutation
     # but `insert`. The edited copy names `balance` alone, so the row that
-    # reaches `validate_write` is exactly that pair. The version advances from
+    # write preparation judges is exactly that pair. The version advances from
     # the observation the write carries, never a row-carried value
     # (`m-opt-lock`); the `locking` preference keeps the statement ungated, so
     # what the assertion measures is the sparse row.

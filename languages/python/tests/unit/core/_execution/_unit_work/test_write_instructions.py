@@ -819,19 +819,51 @@ def test_a_patch_assigns_only_the_collections_it_states(prepare: Any) -> None:
     assert named_members(prepared.row) == {"id": 2, "tags": ()}
 
 
-@_BOTH_PRODUCERS
-def test_a_replacement_refuses_an_omitted_required_value_object(prepare: Any) -> None:
+@pytest.mark.parametrize(
+    ("prepare", "celsius"),
+    [
+        pytest.param(_prepare_typed, Decimal("1.00"), id="typed"),
+        pytest.param(_prepare_wire_target, "1.00", id="wire"),
+    ],
+)
+def test_a_replacement_refuses_an_omitted_required_value_object(
+    prepare: Any, celsius: object
+) -> None:
     with pytest.raises(WriteRejectedError, match=r"probe.*absent") as refused:
         prepare(
             _target(
                 "replace",
                 "LayoutMeterReading",
-                {"id": 5, "sensor": "s", "celsius": "1.00"},
+                {"id": 5, "sensor": "s", "celsius": celsius},
                 if_tx_start=_I1,
             ),
             _MODELS["storage-layout"],
         )
     assert refused.value.rule == "write-required-value-object-missing"
+
+
+@pytest.mark.parametrize(
+    ("prepare", "celsius"),
+    [
+        pytest.param(_prepare_typed, "1.00", id="typed"),
+        pytest.param(_prepare_wire_target, "1.001", id="wire"),
+    ],
+)
+def test_a_replacement_judges_its_members_in_declaration_order(
+    prepare: Any, celsius: object
+) -> None:
+    # The inadmissible Attribute precedes the omitted required Value Object in
+    # member order, so it is refused first, on both lanes.
+    with pytest.raises(wi.WriteInstructionError, match=r"\.celsius"):
+        prepare(
+            _target(
+                "replace",
+                "LayoutMeterReading",
+                {"id": 5, "sensor": "s", "celsius": celsius},
+                if_tx_start=_I1,
+            ),
+            _MODELS["storage-layout"],
+        )
 
 
 @_BOTH_PRODUCERS
@@ -1953,8 +1985,8 @@ def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() 
 # --------------------------------------------------------------------------- #
 def test_a_keyed_row_naming_an_undeclared_member_is_rejected() -> None:
     # An otherwise-COMPLETE row keeps the stray key the only defect, so the
-    # refusal is the member-name gate's rather than `validate_write`'s, which
-    # walks only Account's declared members and never notices a stray key.
+    # refusal is the member-name gate's rather than a value judgment's, which
+    # reads only Account's declared members and never notices a stray key.
     keyed = wi.deserialize(
         {
             "mutation": "insert",

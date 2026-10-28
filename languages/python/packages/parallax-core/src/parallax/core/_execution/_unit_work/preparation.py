@@ -43,6 +43,8 @@ class EntityPreparation:
     the members an opening row must state with a value, ``framework_owned`` the
     members the framework supplies, which a Typed row never authors, and
     ``read_only`` the members outside the key that are immutable once inserted.
+    A replacement must state each member in ``replace_required``, and writes
+    one in ``replace_nulled`` it leaves unstated as null.
     ``typed_class`` is the Entity Class whose instances hold their members in
     ``selection``'s order, proven so when the model was prepared, or ``None``
     where no class was.
@@ -54,6 +56,8 @@ class EntityPreparation:
     insert_required: int
     framework_owned: int
     read_only: int
+    replace_required: int
+    replace_nulled: int
     typed_class: type | None
 
 
@@ -109,14 +113,19 @@ def _entity_preparation(
     required = 0
     framework_owned = 0
     read_only = 0
+    replaced = 0
     for position, member in enumerate(selection.bindings):
+        bit = 1 << position
         attribute = member if isinstance(member, AttributeMetadata) else None
         if attribute is not None and attribute.framework_owned:
-            framework_owned |= 1 << position
+            framework_owned |= bit
         elif not member.nullable and member.multiplicity is Multiplicity.ONE:
-            required |= 1 << position
+            required |= bit
         if attribute is not None and attribute.read_only and position != key:
-            read_only |= 1 << position
+            read_only |= bit
+        if member.multiplicity is Multiplicity.ONE and position != key:
+            replaced |= bit
+    replaced &= ~(framework_owned | read_only)
     return EntityPreparation(
         selection=RowSelection(selection, absent),
         plan=catalog.plan(selection.shape),
@@ -124,5 +133,7 @@ def _entity_preparation(
         insert_required=required,
         framework_owned=framework_owned,
         read_only=read_only,
+        replace_required=replaced & required,
+        replace_nulled=replaced & ~required,
         typed_class=typed_class,
     )

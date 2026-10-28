@@ -43,6 +43,7 @@ from parallax.core._execution._unit_work.instructions import (
     TargetWriteInstruction,
     WriteAssignment,
     WriteInstructionError,
+    WriteRejectedError,
 )
 from parallax.core._execution._unit_work.keys import object_key
 from parallax.core._execution._unit_work.retain import (
@@ -81,7 +82,6 @@ from parallax.core._execution._unit_work.write_planner import (
     WritePlanner,
     WritePlanningRequest,
 )
-from parallax.core._execution._unit_work.write_validate import WriteRejectedError
 from parallax.core.temporal_write import TemporalConflictError
 
 __all__ = [

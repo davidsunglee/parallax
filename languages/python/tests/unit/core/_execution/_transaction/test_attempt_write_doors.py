@@ -131,6 +131,7 @@ def converted(monkeypatch: pytest.MonkeyPatch) -> list[Converted]:
             *,
             authored_members: Set[str] | None,
             members: Callable[[], Mapping[str, object]] | None,
+            target: object = None,
         ) -> NoReturn:
             calls.append((representation, instruction, authored_members, members))
             raise _Prepared
