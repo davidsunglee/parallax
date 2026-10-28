@@ -5,12 +5,13 @@ import decimal
 import math
 import re
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final, Literal, NoReturn, assert_never, cast
+from typing import Any, Final, Literal, NoReturn, assert_never, cast
 
 from parallax.core.base import (
+    JSON,
     STRING,
     Boolean,
     Bytes,
@@ -23,10 +24,12 @@ from parallax.core.base import (
     Json,
     ManagedValue,
     NeutralType,
+    ScalarConverter,
     String,
     Time,
     Timestamp,
     Uuid,
+    adopt_frozen_map,
     matches_neutral_type,
     nearest_binary32_of_spelling,
     nearest_float_at_width,
@@ -111,6 +114,40 @@ def decode_canonical_wire(neutral_type: NeutralType, value: WireValue) -> Manage
     if not _is_canonical_output(neutral_type, value, decoded):
         _fail("noncanonical", value, neutral_type)
     return decoded.managed
+
+
+def wire_converter(neutral_type: NeutralType) -> ScalarConverter:
+    """The Wire lane's conversion for ``neutral_type``: :func:`decode_wire`
+    resolved once to its type's own decoder, with the owned form of a Json
+    value, raising :class:`WireDecodingError`."""
+    if isinstance(neutral_type, Json):
+        return _decode_owned_json
+    decode = _WIRE_DECODERS[type(neutral_type)]
+
+    def convert(value: object) -> object:
+        if _is_unrecognized_exclusion(value):
+            _fail("type-mismatch", value, neutral_type)
+        return decode(value, neutral_type).managed
+
+    return convert
+
+
+def _decode_owned_json(value: object) -> object:
+    if _is_unrecognized_exclusion(value):
+        _fail("type-mismatch", value, JSON)
+    try:
+        return normalize_json_carrier(
+            value,
+            normalize_scalar=_normalize_json_scalar,
+            top_level=True,
+            accept_mappings=True,
+            seal_list=tuple,
+            seal_dict=adopt_frozen_map,
+        )
+    except JsonCarrierFailure as exc:
+        _fail(_json_failure_reason(exc), value, JSON)
+    except _JsonFailure as exc:
+        _fail(exc.reason, value, JSON)
 
 
 def encode_wire(neutral_type: NeutralType, value: ManagedValue) -> WireValue:
@@ -580,10 +617,11 @@ def _normalize_json(
             ),
         )
     except JsonCarrierFailure as exc:
-        reason: WireDecodingReason = (
-            "out-of-space" if exc.kind == "member-name-unicode" else "type-mismatch"
-        )
-        raise _JsonFailure(reason, str(exc)) from exc
+        raise _JsonFailure(_json_failure_reason(exc), str(exc)) from exc
+
+
+def _json_failure_reason(failure: JsonCarrierFailure) -> WireDecodingReason:
+    return "out-of-space" if failure.kind == "member-name-unicode" else "type-mismatch"
 
 
 # One arm per JSON scalar kind. It runs per scalar inside every Json value on Wire encode
@@ -673,3 +711,23 @@ def _is_unrecognized_exclusion(value: object) -> bool:
     if not isinstance(value, ManagedValueExclusion):
         return False
     return not isinstance(value, (int, float)) or authored_token(value) is None
+
+
+_WIRE_DECODERS: Final[Mapping[type[NeutralType], Callable[[object, Any], _DecodedWireLiteral]]] = (
+    MappingProxyType(
+        {
+            Boolean: _decode_boolean,
+            Int32: _decode_integer,
+            Int64: _decode_integer,
+            Float32: _decode_float32,
+            Float64: _decode_float64,
+            Decimal: _decode_decimal,
+            String: _decode_string,
+            Bytes: _decode_bytes,
+            Date: _decode_date,
+            Time: _decode_time,
+            Timestamp: _decode_timestamp,
+            Uuid: _decode_uuid,
+        }
+    )
+)

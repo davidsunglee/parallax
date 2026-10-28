@@ -39,6 +39,8 @@ __all__ = [
     "ManagedValue",
     "ManagedValueExclusion",
     "NeutralType",
+    "NeutralTypeMismatch",
+    "ScalarConverter",
     "String",
     "Time",
     "Timestamp",
@@ -60,6 +62,7 @@ __all__ = [
     "nearest_binary32_of_spelling",
     "nearest_float_at_width",
     "normalize_json_carrier",
+    "typed_converter",
     "utc_instant",
 ]
 
@@ -492,6 +495,180 @@ _CARRIER_RULES: Final[_Mapping[type[NeutralType], _Rule[bool]]] = {
 }
 
 
+class NeutralTypeMismatch(ValueError):
+    """A converted value is no member of its declared Neutral Type.
+
+    ``managed`` is the value after the conversion the input policy applies, the
+    value a mismatch diagnostic names.
+    """
+
+    def __init__(self, managed: object, declared: NeutralType) -> None:
+        super().__init__(f"value {managed!r} does not match the declared type {declared!r}")
+        self.managed = managed
+        self.declared = declared
+
+
+type ScalarConverter = _Callable[[object], object]
+"""One lane's conversion of an authored scalar into its declared value space,
+answering the owned managed value or raising the lane's mismatch."""
+
+
+def typed_converter(declared: NeutralType) -> ScalarConverter:
+    """The Typed lane's conversion for ``declared``: :func:`coerce_neutral_input`
+    followed by :func:`matches_neutral_type`, with the owned form of a Json
+    value, as one call raising :class:`NeutralTypeMismatch`.
+
+    An exact built-in carrier takes its type's own rule directly; every other
+    input, a subclass or an excluded carrier included, takes the general rule.
+    """
+    factory = _TYPED_CONVERTERS.get(type(declared))
+    return _general_typed_converter(declared) if factory is None else factory(declared)
+
+
+def _general_typed_converter(declared: NeutralType) -> ScalarConverter:
+    def convert(value: object) -> object:
+        managed = coerce_neutral_input(value, declared)
+        if matches_neutral_type(managed, declared):
+            return managed
+        raise _typed_mismatch(managed, declared)
+
+    return convert
+
+
+def _typed_mismatch(managed: object, declared: NeutralType) -> NeutralTypeMismatch:
+    # The package defines the frozen carriers after importing this module.
+    from parallax.core.base import retain_document_value
+
+    return NeutralTypeMismatch(retain_document_value(managed), declared)
+
+
+def _typed_boolean(declared: Boolean) -> ScalarConverter:
+    general = _general_typed_converter(declared)
+    return lambda value: value if type(value) is bool else general(value)
+
+
+def _typed_integer(declared: Int32 | Int64) -> ScalarConverter:
+    low, high = _INTEGER_BOUNDS[type(declared)]
+    general = _general_typed_converter(declared)
+
+    def convert(value: object) -> object:
+        if type(value) is int and low <= value <= high:
+            return value
+        return general(value)
+
+    return convert
+
+
+def _typed_float(declared: Float32 | Float64) -> ScalarConverter:
+    general = _general_typed_converter(declared)
+
+    def convert(value: object) -> object:
+        if type(value) is float:
+            projected = _host_float_at_width(value, declared)
+            if projected is not None:
+                return projected
+        return general(value)
+
+    return convert
+
+
+def _typed_decimal(declared: Decimal) -> ScalarConverter:
+    precision, scale = declared.precision, declared.scale
+    general = _general_typed_converter(declared)
+
+    def convert(value: object) -> object:
+        if type(value) is _decimal.Decimal:
+            if _is_exact_decimal(value, precision, scale):
+                return value
+            raise NeutralTypeMismatch(value, declared)
+        if type(value) is int:
+            managed = _decimal.Decimal(value)
+            if _is_exact_decimal(managed, precision, scale):
+                return managed
+            raise NeutralTypeMismatch(managed, declared)
+        return general(value)
+
+    return convert
+
+
+def _typed_string(declared: String) -> ScalarConverter:
+    general = _general_typed_converter(declared)
+
+    def convert(value: object) -> object:
+        if type(value) is str and _is_utf8_encodable(value):
+            return value
+        return general(value)
+
+    return convert
+
+
+def _typed_exact(carrier: type) -> _Callable[[NeutralType], ScalarConverter]:
+    def factory(declared: NeutralType) -> ScalarConverter:
+        general = _general_typed_converter(declared)
+        return lambda value: value if type(value) is carrier else general(value)
+
+    return factory
+
+
+def _typed_time(declared: Time) -> ScalarConverter:
+    general = _general_typed_converter(declared)
+
+    def convert(value: object) -> object:
+        if type(value) is _dt.time and value.tzinfo is None:
+            return value
+        return general(value)
+
+    return convert
+
+
+def _typed_timestamp(declared: Timestamp) -> ScalarConverter:
+    def convert(value: object) -> object:
+        if isinstance(value, _dt.datetime):
+            instant = utc_instant(value)
+            if instant is not None:
+                return instant
+        raise _typed_mismatch(value, declared)
+
+    return convert
+
+
+def _typed_json(declared: Json) -> ScalarConverter:
+    # The package defines the frozen carriers after importing this module.
+    from parallax.core.base import adopt_frozen_map
+
+    def convert(value: object) -> object:
+        if value is not None:
+            try:
+                return normalize_json_carrier(
+                    value,
+                    normalize_scalar=_json_membership_scalar,
+                    seal_list=tuple,
+                    seal_dict=adopt_frozen_map,
+                )
+            except JsonCarrierFailure:
+                pass
+        raise _typed_mismatch(value, declared)
+
+    return convert
+
+
+_TYPED_CONVERTERS: Final[_Mapping[type[NeutralType], _Callable[[Any], ScalarConverter]]] = {
+    Boolean: _typed_boolean,
+    Int32: _typed_integer,
+    Int64: _typed_integer,
+    Float32: _typed_float,
+    Float64: _typed_float,
+    Decimal: _typed_decimal,
+    String: _typed_string,
+    Bytes: _typed_exact(bytes),
+    Date: _typed_exact(_dt.date),
+    Time: _typed_time,
+    Timestamp: _typed_timestamp,
+    Uuid: _typed_exact(_uuid.UUID),
+    Json: _typed_json,
+}
+
+
 def _exact_float_of_integer(value: int, declared: Float32 | Float64) -> float | None:
     """The float of ``declared``'s width naming exactly ``value``, or ``None``
     when that width carries no float equal to it."""
@@ -849,6 +1026,9 @@ class _JsonVisit:
 @dataclass(frozen=True, slots=True)
 class _JsonLeave:
     identity: int
+    parent: _JsonContainer
+    location: _JsonLocation
+    container: _JsonContainer
 
 
 type _JsonTraversal = _JsonVisit | _JsonLeave
@@ -860,8 +1040,15 @@ def normalize_json_carrier(
     normalize_scalar: _Callable[[object], object],
     top_level: bool = False,
     accept_mappings: bool = False,
+    seal_list: _Callable[[list[object]], object] | None = None,
+    seal_dict: _Callable[[dict[str, object]], object] | None = None,
 ) -> object:
-    """Normalize one JSON carrier through the shared iterative container walk."""
+    """Normalize one JSON carrier through the shared iterative container walk.
+
+    ``seal_list`` and ``seal_dict`` replace each normalized container once its
+    members are complete, so a caller owning the result in another container
+    form builds it in this same walk.
+    """
     root: list[object] = [None]
     active_containers: set[int] = set()
     pending: list[_JsonTraversal] = [_JsonVisit(value, root, 0, top_level)]
@@ -869,6 +1056,7 @@ def normalize_json_carrier(
         task = pending.pop()
         if isinstance(task, _JsonLeave):
             active_containers.remove(task.identity)
+            _seal_json_container(task, seal_list, seal_dict)
             continue
         current = task.value
         if isinstance(current, ManagedValueExclusion) and isinstance(current, (list, _Mapping)):
@@ -883,7 +1071,7 @@ def normalize_json_carrier(
             items = base_list_carrier(base_current)
             normalized_list: list[object] = [None] * len(items)
             _assign_json_value(task.parent, task.location, normalized_list)
-            _enter_json_container(base_current, active_containers, pending)
+            _enter_json_container(base_current, task, normalized_list, active_containers, pending)
             for index in range(len(items) - 1, -1, -1):
                 pending.append(_JsonVisit(items[index], normalized_list, index))
             continue
@@ -893,7 +1081,7 @@ def normalize_json_carrier(
             normalized_items = _normalize_json_member_names(items)
             normalized_object: dict[str, object] = {}
             _assign_json_value(task.parent, task.location, normalized_object)
-            _enter_json_container(mapping, active_containers, pending)
+            _enter_json_container(mapping, task, normalized_object, active_containers, pending)
             for name, member in reversed(normalized_items):
                 pending.append(_JsonVisit(member, normalized_object, name))
             continue
@@ -905,8 +1093,23 @@ def normalize_json_carrier(
     return root[0]
 
 
+def _seal_json_container(
+    leave: _JsonLeave,
+    seal_list: _Callable[[list[object]], object] | None,
+    seal_dict: _Callable[[dict[str, object]], object] | None,
+) -> None:
+    container = leave.container
+    if isinstance(container, list):
+        if seal_list is not None:
+            _assign_json_value(leave.parent, leave.location, seal_list(container))
+    elif seal_dict is not None:
+        _assign_json_value(leave.parent, leave.location, seal_dict(container))
+
+
 def _enter_json_container(
     value: object,
+    visit: _JsonVisit,
+    normalized: _JsonContainer,
     active_containers: set[int],
     pending: list[_JsonTraversal],
 ) -> None:
@@ -914,7 +1117,7 @@ def _enter_json_container(
     if identity in active_containers:
         raise JsonCarrierFailure("cycle", "cyclic containers are not Json content")
     active_containers.add(identity)
-    pending.append(_JsonLeave(identity))
+    pending.append(_JsonLeave(identity, visit.parent, visit.location, normalized))
 
 
 def _json_mapping_items(value: _Mapping[object, object]) -> list[tuple[object, object]]:

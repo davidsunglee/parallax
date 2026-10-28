@@ -1232,3 +1232,85 @@ def test_each_scalar_type_names_the_json_kind_its_spelling_takes(
 
 def test_json_has_no_single_kind() -> None:
     assert wire_codec.encoded_json_kind(JSON) is None
+
+
+_CONVERTER_TYPES: tuple[NeutralType, ...] = (
+    BOOLEAN,
+    INT32,
+    INT64,
+    FLOAT32,
+    FLOAT64,
+    Decimal(6, 2),
+    STRING,
+    BYTES,
+    DATE,
+    TIME,
+    TIMESTAMP,
+    UUID,
+    JSON,
+)
+_CONVERTER_SPELLINGS: tuple[str, ...] = (
+    "null",
+    "true",
+    "0",
+    "-0.0",
+    "1.50",
+    "2147483648",
+    "1e39",
+    "3.4028235677973366e38",
+    '"1.50"',
+    '"1.5"',
+    '"text"',
+    '"\\ud800"',
+    '"00ff"',
+    '"00FF"',
+    '"2026-01-15"',
+    '"2026-1-15"',
+    '"09:30:00"',
+    '"2026-01-15T09:30:00Z"',
+    '"2026-01-15T11:30:00+02:00"',
+    '"123e4567-e89b-12d3-a456-426614174000"',
+    '"123E4567-E89B-12D3-A456-426614174000"',
+    '{"a":[1,{"b":null}],"c":"text"}',
+    '[1,"\\ud800"]',
+    "[]",
+)
+
+
+@pytest.mark.parametrize("declared", _CONVERTER_TYPES, ids=repr)
+def test_a_wire_converter_decodes_and_owns_exactly_as_decoding_then_retaining(
+    declared: NeutralType,
+) -> None:
+    from parallax.core.base import retain_document_value
+
+    convert = wire_codec.wire_converter(declared)
+    for spelling in _CONVERTER_SPELLINGS:
+        try:
+            expected: object = retain_document_value(
+                wire.decode_wire(declared, wire.loads(spelling))
+            )
+        except wire.WireDecodingError as error:
+            with pytest.raises(wire.WireDecodingError) as refused:
+                convert(wire.loads(spelling))
+            assert (refused.value.reason, str(refused.value)) == (error.reason, str(error))
+            continue
+        converted = convert(wire.loads(spelling))
+        assert converted == expected
+        assert type(converted) is type(expected)
+
+
+def test_a_wire_converter_judges_with_its_types_own_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(value: object, declared: NeutralType) -> bool:
+        raise AssertionError(f"general membership judged {value!r} as {declared!r}")
+
+    monkeypatch.setattr(wire_codec, "matches_neutral_type", refuse)
+
+    assert [
+        wire_codec.wire_converter(declared)(wire.loads(spelling))
+        for declared, spelling in (
+            (INT64, "7"),
+            (Decimal(6, 2), '"1.50"'),
+            (STRING, '"text"'),
+            (TIMESTAMP, '"2026-01-15T09:30:00Z"'),
+        )
+    ] == [7, decimal.Decimal("1.50"), "text", _INSTANT.replace(hour=9)]

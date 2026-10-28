@@ -32,6 +32,8 @@ from parallax.core.base._neutral import (
     Json,
     ManagedValue,
     NeutralType,
+    NeutralTypeMismatch,
+    ScalarConverter,
     String,
     Time,
     Timestamp,
@@ -42,6 +44,7 @@ from parallax.core.base._neutral import (
     matches_typed_carrier,
     nearest_binary32_of_spelling,
     nearest_float_at_width,
+    typed_converter,
     utc_instant,
 )
 
@@ -77,7 +80,9 @@ __all__ = [
     "Json",
     "ManagedValue",
     "NeutralType",
+    "NeutralTypeMismatch",
     "PresentDocument",
+    "ScalarConverter",
     "SqlNull",
     "String",
     "TemporalBound",
@@ -100,6 +105,7 @@ __all__ = [
     "nearest_float_at_width",
     "normalize_instant",
     "retain_document_value",
+    "typed_converter",
     "unwrap_document_read",
 ]
 
