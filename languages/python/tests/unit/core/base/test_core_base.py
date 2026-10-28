@@ -710,3 +710,66 @@ def test_a_shared_membership_rule_is_the_judgment_membership_applies(
     assert [rule(candidate, declared) for candidate in ordinary] == [
         base.matches_neutral_type(candidate, declared) for candidate in ordinary
     ]
+
+
+def _general_typed_conversion(value: object, declared: base.NeutralType) -> tuple[bool, object]:
+    managed = base.coerce_neutral_input(value, declared)
+    return base.matches_neutral_type(managed, declared), base.retain_document_value(managed)
+
+
+@pytest.mark.parametrize("declared", _EVERY_TYPE, ids=repr)
+def test_a_typed_converter_answers_coercion_then_membership_as_one_call(
+    declared: base.NeutralType,
+) -> None:
+    convert = base.typed_converter(declared)
+    for candidate in (*_CANDIDATES, _Instant(2026, 1, 1, tzinfo=dt.timezone.min)):
+        member, managed = _general_typed_conversion(candidate, declared)
+        if member:
+            converted = convert(candidate)
+            assert converted == managed
+            # Owned Json content keeps each scalar in its built-in carrier.
+            assert type(converted) is type(managed) or declared == base.JSON
+        else:
+            with pytest.raises(base.NeutralTypeMismatch) as refused:
+                convert(candidate)
+            assert refused.value.declared == declared
+            assert repr(refused.value.managed) == repr(managed)
+
+
+def test_a_typed_float32_converter_names_the_spelled_number_rounded_once() -> None:
+    convert = base.typed_converter(base.FLOAT32)
+    hosts = [float(spelling) for spelling in rounding_witnesses()]
+
+    assert [convert(host) for host in hosts] == [rounded_once(repr(host)) for host in hosts]
+
+
+def test_a_typed_timestamp_converter_finds_the_utc_instant_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from parallax.core.base import _neutral
+
+    calls: list[dt.datetime] = []
+
+    def counted(value: dt.datetime) -> dt.datetime | None:
+        calls.append(value)
+        return utc_instant(value)
+
+    monkeypatch.setattr(_neutral, "utc_instant", counted)
+    east = dt.datetime(2026, 1, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+
+    assert base.typed_converter(base.TIMESTAMP)(east) == dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    assert calls == [east]
+
+
+def test_a_typed_json_converter_owns_its_containers_in_the_judging_walk() -> None:
+    source: dict[str, object] = {"a": [1, {"b": None}], "c": "text"}
+
+    converted = base.typed_converter(base.JSON)(source)
+
+    assert converted == base.retain_document_value(source)
+    assert type(converted) is base.FrozenMap
+    owned = cast("Mapping[str, object]", converted)
+    assert type(owned["a"]) is tuple
+    assert type(cast("tuple[object, ...]", owned["a"])[1]) is base.FrozenMap
+    cast("list[object]", source["a"]).append(2)
+    assert owned["a"] == (1, base.FrozenMap({"b": None}))
