@@ -6,7 +6,7 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 from collections.abc import Mapping
-from typing import Final
+from typing import Final, cast
 
 import pytest
 
@@ -325,3 +325,108 @@ def test_a_nested_required_member_stated_null_is_missing() -> None:
     refused = _refusal(_WIRE, (7, None, _ABSENT, _ABSENT, {"city": None}, _ABSENT))
 
     assert refused.violation == AuthoringViolation("city", "attribute-missing")
+
+
+def test_a_partial_row_judges_in_its_stated_order_and_packs_in_member_order() -> None:
+    judged: list[int] = []
+
+    row = _plan().partial_row(
+        ((3, ["a"]), (0, 7), (1, None)),
+        lane=_WIRE,
+        check=lambda position, _raw: judged.append(position),
+    )
+
+    assert judged == [3, 0, 1]
+    assert row.cells == (7, None, ("a",))
+    assert row.presence == 0b1011
+
+
+def test_a_partial_row_refuses_its_first_refused_member_in_stated_order() -> None:
+    with pytest.raises(AuthoringRefusal) as refused:
+        _plan().partial_row(((2, "not-an-instant"), (0, "seven")), lane=_TYPED)
+
+    assert refused.value.position == 2
+
+
+def test_a_partial_row_states_no_member_it_omits_and_never_a_null_collection() -> None:
+    assert _plan().partial_row((), lane=_TYPED) == PreparedAuthoringRow((), 0)
+    with pytest.raises(AuthoringRefusal) as refused:
+        _plan().partial_row(((3, None),), lane=_TYPED)
+
+    assert refused.value.violation == AuthoringViolation("", "attribute-missing")
+
+
+def test_an_addressing_position_spells_its_marker_as_an_ordinary_value() -> None:
+    marker = {"computed": "maxPlusOne"}
+
+    planned = _plan().partial_row(((1, marker),), lane=_WIRE, root=lambda _p, _m: "planned")
+    with pytest.raises(AuthoringRefusal) as refused:
+        _plan().partial_row(
+            ((0, marker),), lane=_WIRE, root=lambda _p, _m: "planned", addressing=0b1
+        )
+
+    assert planned.cells == ("planned",)
+    assert isinstance(refused.value.cause, WireDecodingError)
+
+
+def test_a_complete_row_states_an_unstated_nulled_member_as_null() -> None:
+    row = _plan().complete_row(
+        (7, _ABSENT, _ABSENT, _ABSENT, _ABSENT, _ABSENT), lane=_TYPED, required=0, nulled=0b10110
+    )
+
+    assert row.cells == (7, None, None, (), None, ())
+    assert row.presence == 0b111111
+
+
+def test_a_complete_row_judges_a_stated_member_by_its_check_before_its_value() -> None:
+    def refuse_name(position: int, _raw: object) -> None:
+        if position == 1:
+            raise LookupError(position)
+
+    with pytest.raises(LookupError):
+        _plan().complete_row(
+            (7, "Ada", "not-an-instant", _ABSENT, _ABSENT, _ABSENT),
+            lane=_TYPED,
+            required=0,
+            check=refuse_name,
+        )
+
+
+def test_validation_only_mode_reports_the_first_violation_and_builds_nothing() -> None:
+    catalog = AuthoringCatalog(_LANES, absent=_ABSENT)
+    home = cast("OccurrenceDefinition", _ROW.members[4])
+    tags = cast("ScalarDefinition", _ROW.members[3])
+
+    assert catalog.violation(home, {"city": "Paris"}, lane=_WIRE) is None
+    assert catalog.plan(home.shape).document({"city": "Paris"}, _WIRE, produce=False) is None
+    assert catalog.violation(home, {"lines": ["a"]}, lane=_WIRE) == AuthoringViolation(
+        "city", "attribute-missing"
+    )
+    assert catalog.violation(tags, ("a", 2), lane=_TYPED) == AuthoringViolation(
+        "[1]", "type-mismatch", 2, STRING
+    )
+    assert catalog.violation(_ROW.members[0], True, lane=_TYPED) == AuthoringViolation(
+        "", "type-mismatch", True, INT64
+    )
+
+
+def test_a_lane_converts_one_exact_definition_apart_from_its_neutral_type() -> None:
+    twin = MemberShape((ScalarDefinition("label", STRING, True),))
+    shape = MemberShape(
+        (
+            ScalarDefinition("label", STRING, True),
+            OccurrenceDefinition("twin", Multiplicity.ONE, True, twin),
+        )
+    )
+    top = shape.members[0]
+    assert top == twin.members[0]
+
+    plan = AuthoringPlan.compile(
+        shape,
+        wire_converter,
+        absent=_ABSENT,
+        definition_converter=lambda member: (lambda _v: "own") if member is top else None,
+    )
+    row = plan.complete_row(("a", {"label": "b"}), lane=0, required=0)
+
+    assert row.cells == ("own", ("b",))
