@@ -4,17 +4,16 @@ import contextlib
 import sys
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
-from typing import Any, LiteralString, cast
+from typing import Any, Final, cast
 
 import psycopg
 from psycopg import postgres
 from psycopg.abc import AdaptContext, Buffer
 from psycopg.adapt import Dumper
 from psycopg.errors import error_from_result
-from psycopg.pq import DiagnosticField, ExecStatus
+from psycopg.pq import DiagnosticField, ExecStatus, TransactionStatus
 from psycopg.pq.abc import PGresult
 from psycopg.rows import RowMaker, TupleRow, tuple_row
-from psycopg.sql import SQL, Literal
 from psycopg.types.array import ListBinaryDumper
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
@@ -51,7 +50,6 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.wire._json import dump_document, prepared_loads
 from parallax.postgres._compiled_loaders import compiled_loaders
-from parallax.postgres._isolation import isolation_spelling, read_only_setting
 
 __all__ = [
     "CONNECT_KWARGS",
@@ -755,7 +753,8 @@ class PostgresConnection:
         """Whether reuse of this connection could not be established.
 
         Set where a boundary could not be brought back to a known state — a
-        rollback that failed, an empty transaction that could not be undone.
+        transaction context that failed to enter, a rollback that failed, or
+        characteristics that could not be cleared.
         It is a report for cleanup to act on, not an action: this class closes
         nothing and returns nothing.
         """
@@ -832,6 +831,9 @@ class PostgresConnection:
             self._suspect = True
         return result
 
+    def _mark_suspect(self) -> None:
+        self._suspect = True
+
     def transaction[T](
         self,
         body: Callable[[DatabaseConnection], T],
@@ -866,92 +868,77 @@ class PostgresConnection:
         indistinguishable, and a rollback failure — which psycopg's context logs
         and discards — would not arrive at all.
 
-        A requested ``isolation`` or ``access_mode`` is part of opening the
-        boundary rather than part of the work inside it: each is applied to the
-        transaction just begun, before the body sees a connection, so it governs
-        this transaction alone and leaves the session's own defaults untouched
-        for the next one. An explicit boundary opens on an autocommit session
-        exactly as it does on any other, so autocommit changes none of this.
-        Postgres forbids each portable level's anomalies under its own name for
-        it and states the access mode as `transaction_read_only`, so this maps
-        each request to that setting and asks for it; a request Postgres
-        nonetheless refuses ends the boundary
+        A requested ``isolation`` or ``access_mode`` travels inside the driver's
+        own ``BEGIN``: each maps to the driver attribute it composes that command
+        from, assigned while the session is idle, so the request governs this
+        transaction alone and costs no request of its own. A request the
+        database refuses ends the boundary
         :class:`~parallax.core.db_port.BeginFailed`: no work of the caller's was
         attempted, and a request silently downgraded to one the caller did not
-        make is worse than one refused.
+        make is worse than one refused. Once the outer boundary ends, both
+        attributes are cleared so the session's own defaults govern the next one.
+
+        A call made while this session's transaction is already open joins it
+        through a savepoint and leaves the characteristics to the outer
+        boundary; the driver refuses a characteristic requested there, before
+        the savepoint opens.
         """
         connection = self._native()
-        # Resolved before the physical transaction exists, so a request outside
-        # its vocabulary — a type violation the handle's own check would have
-        # caught — cannot leave an empty transaction open on the connection.
-        settings = _transaction_settings(isolation, access_mode)
-        boundary = connection.transaction()
+        # Resolved before the driver is touched, so a request outside its
+        # vocabulary — a type violation the handle's own check would have
+        # caught — changes no driver state and opens nothing.
+        isolation_level, read_only = _transaction_characteristics(isolation, access_mode)
+        outer = _idle(connection)
         try:
-            boundary.__enter__()
-        except psycopg.Error as exc:
-            return BeginFailed(reported_failure(self.dialect, exc))
-        if settings:
-            unopened = self._configured(settings, boundary=boundary)
-            if unopened is not None:
-                return unopened
-        try:
-            value = body(self)
-        except BaseException as raised:
-            return self._undone(CallbackRaised(raised), boundary=boundary)
-        try:
-            boundary.__exit__(None, None, None)
-        except psycopg.Error as exc:
-            return self._undone(CommitFailed(reported_failure(self.dialect, exc)), boundary=None)
-        return Committed(value)
-
-    def _configured(
-        self,
-        settings: Sequence[tuple[LiteralString, str]],
-        *,
-        boundary: contextlib.AbstractContextManager[psycopg.Transaction],
-    ) -> BeginFailed | None:
-        """Apply each transaction-scoped ``(setting, value)`` to the transaction
-        just begun, or report it unopened.
-
-        Postgres accepts a level and an access mode only before a transaction's
-        first query, which is what makes this part of opening the boundary rather
-        than of the work inside it. Every setting travels in one request, so
-        asking for both costs the round trip asking for one does, and none of
-        them takes a snapshot. The request is never prepared: the driver would
-        otherwise prepare it once it passes its preparation threshold, and a
-        prepared statement holds a single command.
-
-        Each mapped value arrives as the bound VALUE of its transaction-scoped
-        setting rather than as SQL text it is composed into, so what a statement
-        can express is one value of one setting and never a second transaction
-        mode or a second statement — a property of the request's SHAPE, which
-        holds however the mappings are later spelled.
-
-        A refusal leaves a transaction that began and did nothing. Undoing it is
-        this connection's business rather than the caller's, and the outcome
-        reported is the one for a boundary that never opened as asked — no work
-        of the caller's ran, so there is nothing to retry and nothing for a
-        caller to undo. A connection too broken to undo an empty transaction is
-        marked suspect, since what it would run next is unknown; disposing of it
-        is the acquisition's cleanup, which is the one place that can also
-        settle the accounting for it.
-        """
-        request = SQL("; ").join(
-            SQL("set local {} = {}").format(SQL(name), Literal(value)) for name, value in settings
-        )
-        try:
-            with self._native().cursor() as cursor:
-                cursor.execute(request, prepare=False)
-        except psycopg.Error as exc:
             try:
-                boundary.__exit__(type(exc), exc, exc.__traceback__)
-                self._native().rollback()
-            except psycopg.Error:
-                self._suspect = True
-            return BeginFailed(reported_failure(self.dialect, exc))
-        return None
+                boundary = _open_transaction(
+                    connection,
+                    self,
+                    isolation_level,
+                    read_only,
+                    outer or isolation is not None or access_mode is not None,
+                )
+            except psycopg.Error as exc:
+                return BeginFailed(reported_failure(self.dialect, exc))
+            try:
+                value = body(self)
+            except BaseException as raised:
+                return self._rollback_transaction(CallbackRaised(raised), boundary=boundary)
+            try:
+                boundary.__exit__(None, None, None)
+            except psycopg.Error as exc:
+                return self._rollback_transaction(
+                    CommitFailed(reported_failure(self.dialect, exc)), boundary=None
+                )
+            return Committed(value)
+        finally:
+            if outer:
+                self._clear_characteristics()
 
-    def _undone(
+    def _clear_characteristics(self) -> None:
+        """Leave the session's own defaults to govern the next boundary, or mark
+        it suspect where that cannot be established.
+
+        A suspect session is left as it is: disposal, not repair, ends its use,
+        and a session whose transaction context failed to enter may report idle
+        while the driver's own bookkeeping says otherwise. A failure here never
+        replaces the outcome the boundary already reached.
+        """
+        connection = self._connection
+        if connection is None or self._suspect:
+            return
+        try:
+            if not _idle(connection):
+                self._suspect = True
+                return
+            connection.isolation_level = None
+            connection.read_only = None
+        except BaseException as exc:
+            self._suspect = True
+            if not isinstance(exc, Exception):
+                raise
+
+    def _rollback_transaction(
         self,
         trigger: RollbackTrigger,
         *,
@@ -984,14 +971,57 @@ class PostgresConnection:
         return RolledBack(trigger)
 
 
-def _transaction_settings(
+def _idle(connection: psycopg.Connection[TupleRow]) -> bool:
+    try:
+        return connection.pgconn.transaction_status == TransactionStatus.IDLE
+    except Exception:
+        return False
+
+
+def _open_transaction(
+    connection: psycopg.Connection[TupleRow],
+    execution: PostgresConnection,
+    isolation: psycopg.IsolationLevel | None,
+    read_only: bool | None,
+    characterize: bool,
+) -> contextlib.AbstractContextManager[psycopg.Transaction]:
+    """Enter a fresh driver transaction context on ``connection``, carrying the
+    mapped characteristics where ``characterize`` asks for them.
+
+    The driver counts a transaction context as open before it sends ``BEGIN``
+    and does not uncount one whose entry failed, so any failed entry leaves the
+    session unfit for reuse even when the server reports it idle; the session
+    is marked suspect for disposal rather than repaired. A refused assignment
+    happens before entry and says nothing about that bookkeeping.
+    """
+    if characterize:
+        connection.isolation_level = isolation
+        connection.read_only = read_only
+    boundary = connection.transaction()
+    try:
+        boundary.__enter__()
+    except BaseException:
+        execution._mark_suspect()  # pyright: ignore[reportPrivateUsage] - the same-module facade this entry opens for
+        raise
+    return boundary
+
+
+_ISOLATION_LEVELS: Final[dict[IsolationLevel, psycopg.IsolationLevel]] = {
+    "read_committed": psycopg.IsolationLevel.READ_COMMITTED,
+    "repeatable_read": psycopg.IsolationLevel.REPEATABLE_READ,
+    "serializable": psycopg.IsolationLevel.SERIALIZABLE,
+}
+
+_READ_ONLY: Final[dict[AccessMode, bool]] = {"read_only": True, "read_write": False}
+
+
+def _transaction_characteristics(
     isolation: IsolationLevel | None, access_mode: AccessMode | None
-) -> tuple[tuple[LiteralString, str], ...]:
-    """The transaction-scoped settings a boundary's requests map to, in the order
-    they are applied; a request naming nothing contributes none."""
-    settings: list[tuple[LiteralString, str]] = []
-    if isolation is not None:
-        settings.append(("transaction_isolation", isolation_spelling(isolation)))
-    if access_mode is not None:
-        settings.append(("transaction_read_only", read_only_setting(access_mode)))
-    return tuple(settings)
+) -> tuple[psycopg.IsolationLevel | None, bool | None]:
+    """The driver's ``isolation_level`` and ``read_only`` values for a boundary's
+    requests; a request naming nothing maps to ``None``, the session's own default.
+    """
+    return (
+        None if isolation is None else _ISOLATION_LEVELS[isolation],
+        None if access_mode is None else _READ_ONLY[access_mode],
+    )

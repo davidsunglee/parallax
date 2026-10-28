@@ -85,11 +85,12 @@ For every supported adapter, the smoke suite covers:
   alone, because the two are independent requests that one boundary applies
   together; and a write in a read-only boundary refused by the database itself
 - a **session setup that fails**, for a level or for an access mode, which
-  reports `BeginFailed`, runs no callback,
-  and leaves the port usable for the next boundary; and a connection that also
-  fails to undo the empty transaction, which is discarded. Proved against the
-  driver seam rather than against a real refusal, because a conforming mapping
-  sends only levels its own engine accepts
+  reports `BeginFailed`, runs no callback, and leaves no transaction open on
+  the server; and a connection whose driver state the refusal left unsafe for
+  reuse, which is discarded rather than offered to the next boundary, so later
+  work proceeds on another connection. Proved against the driver seam rather
+  than against a real refusal, because a conforming mapping sends only levels
+  its own engine accepts
 - a **connection whose own default Isolation Level is below Read Committed**,
   refused as a connection error when the adapter takes it — once per connection,
   not per boundary and not per attempt — and one at or above the floor, kept as

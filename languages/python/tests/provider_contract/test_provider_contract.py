@@ -24,6 +24,7 @@ from contextlib import closing, suppress
 from typing import Any, cast
 
 import pytest
+from psycopg.pq import TransactionStatus
 
 from parallax.conformance import concurrency_runner, engine, models, provision
 from parallax.conformance._postgres_control import PostgresControl
@@ -257,12 +258,15 @@ def test_every_portable_level_opens_the_boundary_at_its_spelling(profile_run: An
         )
     # An omitted level asks for nothing, so the boundary after three explicit
     # ones reports the connection's own default rather than the last request:
-    # the setting is the boundary's and outlives none of them.
+    # the characteristic is the boundary's and outlives none of them.
     assert profile_run.port.transaction(body) == Committed(None)
     assert observed == [
         *(isolation_spelling(isolation_level(level)) for level in sorted(ISOLATION_LEVELS)),
         "read committed",
     ]
+
+
+_DRIVER_SPELLING = {"read_only": b"READ ONLY", "read_write": b"READ WRITE"}
 
 
 @pytest.mark.parametrize("mode", ["read_only", "read_write"])
@@ -272,20 +276,36 @@ def test_every_access_mode_opens_the_boundary_at_every_level(
     # The access mode crosses the port independently of the level: under each
     # requested level the transaction the callback runs in reports the mode it
     # was asked for and the level it was asked for, and a boundary asking for
-    # neither reports the connection's own defaults afterwards.
+    # neither reports the connection's own defaults afterwards. Both travel in
+    # the one opening command the driver composes, which is observed here as
+    # the driver generates it; and each boundary leaves the driver's own
+    # characteristics cleared behind it.
     observed: list[tuple[str, str]] = []
+    generated: list[bytes] = []
+    left: list[tuple[object, object]] = []
 
     def body(port: Any) -> None:
         (read_only,) = port.execute("show transaction_read_only", [])
         (level,) = port.execute("show transaction_isolation", [])
         observed.append((str(read_only[0]), str(level[0])))
 
-    for level in sorted(ISOLATION_LEVELS):
-        outcome = profile_run.port.transaction(
-            body, isolation=isolation_level(level), access_mode=mode
-        )
-        assert outcome == Committed(None)
-    assert profile_run.port.transaction(body) == Committed(None)
+    with closing(profile_run.control()) as control, pytest.MonkeyPatch.context() as patch:
+        native = cast("PostgresControl", control).native
+        compose = native._get_tx_start_command  # pyright: ignore[reportPrivateUsage] - the driver's opening-command seam is this proof's observable
+
+        def recorded() -> bytes:
+            command = compose()
+            generated.append(command)
+            return command
+
+        patch.setattr(native, "_get_tx_start_command", recorded)
+        requests: list[dict[str, Any]] = [
+            {"isolation": isolation_level(level), "access_mode": mode}
+            for level in sorted(ISOLATION_LEVELS)
+        ]
+        for request in (*requests, {}):
+            assert control.transaction(body, **request) == Committed(None)
+            left.append((native.isolation_level, native.read_only))
     expected = "on" if mode == "read_only" else "off"
     assert observed == [
         *(
@@ -294,14 +314,25 @@ def test_every_access_mode_opens_the_boundary_at_every_level(
         ),
         ("off", "read committed"),
     ]
+    assert generated == [
+        *(
+            b"BEGIN ISOLATION LEVEL "
+            + isolation_spelling(isolation_level(level)).upper().encode()
+            + b" "
+            + _DRIVER_SPELLING[mode]
+            for level in sorted(ISOLATION_LEVELS)
+        ),
+        b"BEGIN",
+    ]
+    assert left == [(None, None)] * (len(ISOLATION_LEVELS) + 1)
 
 
 def test_a_level_and_a_mode_open_every_boundary_under_immediate_preparation(
     profile_run: Any,
 ) -> None:
-    # A driver configured to prepare every statement on its first run would
-    # prepare the one request carrying both settings, and a prepared statement
-    # holds a single command: the boundary must still open, attempt after attempt.
+    # A driver configured to prepare every statement on its first run still
+    # opens each boundary at the requested level and mode, boundary after
+    # boundary over the one retained connection.
     runtime = profile_run.configured(
         pool=PoolOptions(min_size=1, max_size=1), prepare_threshold=0
     ).open()
@@ -321,6 +352,56 @@ def test_a_level_and_a_mode_open_every_boundary_under_immediate_preparation(
     finally:
         runtime.close()
     assert observed == ["on", "on", "on"]
+
+
+@pytest.mark.parametrize(
+    ("requested", "composed", "rejected"),
+    [
+        (
+            {"isolation": "serializable"},
+            b"BEGIN ISOLATION LEVEL SERIALIZABLE",
+            b"BEGIN ISOLATION LEVEL SNAPSHOT",
+        ),
+        ({"access_mode": "read_only"}, b"BEGIN READ ONLY", b"BEGIN READ_ONLY"),
+    ],
+    ids=["isolation", "access-mode"],
+)
+def test_a_refused_begin_runs_no_callback_and_leaves_the_session_idle(
+    profile_run: Any, requested: dict[str, str], composed: bytes, rejected: bytes
+) -> None:
+    # PostgreSQL accepts every request the vocabulary can make, so the refusal
+    # is injected at the driver's own command seam, after the command it would
+    # have sent is recorded: the server refuses what it is sent, no callback
+    # runs, and the session the refusal leaves behind is idle rather than in an
+    # aborted transaction. The driver's own bookkeeping for that session is
+    # left as the refusal left it, so the session is closed here rather than
+    # used again.
+    control = profile_run.control()
+    native = cast("PostgresControl", control).native
+    compose = native._get_tx_start_command  # pyright: ignore[reportPrivateUsage] - the driver's opening-command seam is this proof's fault injection
+    generated: list[bytes] = []
+    ran: list[str] = []
+
+    def refused() -> bytes:
+        generated.append(compose())
+        return rejected
+
+    def never_runs(_port: Any) -> None:
+        ran.append("body")
+
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(native, "_get_tx_start_command", refused)
+            outcome = control.transaction(never_runs, **cast("dict[str, Any]", requested))
+        status = native.pgconn.transaction_status
+    finally:
+        control.close()
+    assert isinstance(outcome, BeginFailed)
+    assert isinstance(outcome.error, DatabaseError)
+    assert outcome.error.native_code == "42601"
+    assert ran == []
+    assert generated == [composed]
+    assert status == TransactionStatus.IDLE
 
 
 def test_a_read_only_boundary_refuses_a_write_natively(profile_run: Any) -> None:

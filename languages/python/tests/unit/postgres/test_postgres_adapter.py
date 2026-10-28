@@ -50,6 +50,7 @@ from parallax.core.db_port import (
     CanonicalWriteStatement,
     CommitFailed,
     Committed,
+    DatabaseConnection,
     JsonDocument,
     OrderedWriteResult,
     OrderedWriteResultComplete,
@@ -280,11 +281,9 @@ class _FakeCursor:
     """A psycopg-cursor stand-in whose ``execute`` raises a preset driver error.
 
     Every statement it is handed is appended to the list its connection gave it,
-    so a test can ask what the adapter actually sent and in what order — which is
-    the whole observable of a boundary opened at a requested isolation. A
-    statement arrives either as the encoded text the port sends or as the
-    composed statement a requested isolation is delimited into, so the list holds
-    both and :func:`_sent` renders either one.
+    so a test can ask what the adapter actually sent and in what order. A
+    statement arrives either as the encoded text the port sends or as a composed
+    statement, so the list holds both and :func:`_sent_sql` renders either one.
     """
 
     def __init__(self, error: psycopg.Error | None, executed: list[object]) -> None:
@@ -314,8 +313,12 @@ class _FakeCursor:
 class _FakeTxn:
     """A ``connection.transaction()`` stand-in, faithful about what it hides.
 
-    Begin and commit raise the driver failure asked of them. A ROLLBACK failure
-    does NOT raise: psycopg's own transaction context catches it, logs a warning,
+    Entry decides, as psycopg does, from the session's own status whether it
+    opens the outer transaction — a ``BEGIN`` composed from the connection's
+    characteristics at that moment — or a savepoint inside one, and raises the
+    begin failure the connection holds without leaving the session in a
+    transaction. Commit raises the failure asked of it. A ROLLBACK failure does
+    NOT raise: psycopg's own transaction context catches it, logs a warning,
     and lets the exception that triggered the rollback carry on — which is why
     the adapter asks the connection to roll back a second time, and why this
     stand-in leaves that failure to :meth:`_FakeConnection.rollback` rather than
@@ -323,20 +326,34 @@ class _FakeTxn:
     driver never presents.
     """
 
-    def __init__(
-        self, *, begin_error: psycopg.Error | None, commit_error: psycopg.Error | None
-    ) -> None:
-        self._begin_error = begin_error
-        self._commit_error = commit_error
+    def __init__(self, connection: _FakeConnection) -> None:
+        self._connection = connection
+        self._outer = False
 
     def __enter__(self) -> _FakeTxn:
-        if self._begin_error is not None:
-            raise self._begin_error
+        connection = self._connection
+        self._outer = connection.pgconn.transaction_status == TransactionStatus.IDLE
+        connection.boundary.append(
+            ("BEGIN", connection.isolation_level, connection.read_only)
+            if self._outer
+            else "SAVEPOINT"
+        )
+        if connection.begin_error is not None:
+            raise connection.begin_error
+        if self._outer:
+            connection.pgconn.transaction_status = TransactionStatus.INTRANS
         return self
 
     def __exit__(self, _exc_type: object, exc: BaseException | None, _tb: object) -> bool:
-        if exc is None and self._commit_error is not None:
-            raise self._commit_error
+        connection = self._connection
+        committing = exc is None
+        if self._outer:
+            connection.boundary.append("COMMIT" if committing else "ROLLBACK")
+            connection.pgconn.transaction_status = connection.status_after_boundary
+        else:
+            connection.boundary.append("RELEASE" if committing else "ROLLBACK TO")
+        if committing and connection.commit_error is not None:
+            raise connection.commit_error
         return False
 
 
@@ -386,6 +403,24 @@ class _FakeInfo:
         return self._date_style if name == "DateStyle" else None
 
 
+class _FakePgConn:
+    """The libpq status a session reports, readable or failing to be read."""
+
+    def __init__(self) -> None:
+        self.status = TransactionStatus.IDLE
+        self.status_error: Exception | None = None
+
+    @property
+    def transaction_status(self) -> TransactionStatus:
+        if self.status_error is not None:
+            raise self.status_error
+        return self.status
+
+    @transaction_status.setter
+    def transaction_status(self, status: TransactionStatus) -> None:
+        self.status = status
+
+
 class _FakeConnection:
     """A minimal psycopg-connection stand-in for the boundary tests.
 
@@ -395,36 +430,77 @@ class _FakeConnection:
     boundary that fails to begin reaches neither commit nor rollback.
     ``rollback_error`` belongs to the connection rather than to the transaction
     context because that is where a real rollback failure becomes visible.
+
+    ``boundary`` records, in order, each characteristic the driver accepted and
+    each transaction command its context would send, which is the whole
+    observable of a boundary's characteristics: the driver composes its
+    ``BEGIN`` from them and sends nothing when they are assigned. As psycopg
+    does, an assignment is refused unless the session is idle, and
+    ``refuse_assignment`` can refuse one it would otherwise accept.
     """
 
     def __init__(
         self,
         *,
         cursor_error: psycopg.Error | None = None,
-        begin_error: psycopg.Error | None = None,
+        begin_error: BaseException | None = None,
         commit_error: psycopg.Error | None = None,
         rollback_error: psycopg.Error | None = None,
         encoding: str = "utf-8",
         date_style: str | None = "ISO, MDY",
     ) -> None:
         self.info = _FakeInfo(encoding=encoding, date_style=date_style)
+        self.pgconn = _FakePgConn()
         self.cursor_error = cursor_error
         self.begin_error = begin_error
         self.commit_error = commit_error
         self.rollback_error = rollback_error
+        self.refuse_assignment: Callable[[str, object], BaseException | None] = (
+            lambda _name, _value: None
+        )
+        self.status_after_boundary = TransactionStatus.IDLE
         self.adapters = _RecordingAdapters()
         self.rollbacks = 0
         self.closed = False
         self.executed: list[object] = []
+        self.boundary: list[object] = []
         self.begins = 0
         self.pipeline_events: list[str] = []
+        self._isolation_level: psycopg.IsolationLevel | None = None
+        self._read_only: bool | None = None
+
+    @property
+    def isolation_level(self) -> psycopg.IsolationLevel | None:
+        return self._isolation_level
+
+    @isolation_level.setter
+    def isolation_level(self, value: psycopg.IsolationLevel | None) -> None:
+        self._accept("isolation_level", value)
+        self._isolation_level = value
+
+    @property
+    def read_only(self) -> bool | None:
+        return self._read_only
+
+    @read_only.setter
+    def read_only(self, value: bool | None) -> None:
+        self._accept("read_only", value)
+        self._read_only = value
+
+    def _accept(self, name: str, value: object) -> None:
+        refusal = self.refuse_assignment(name, value)
+        if refusal is not None:
+            raise refusal
+        if self.pgconn.transaction_status != TransactionStatus.IDLE:
+            raise errors.ProgrammingError(f"can't change {name!r} now")
+        self.boundary.append((name, value))
 
     def cursor(self, **_: object) -> _FakeCursor:
         return _FakeCursor(self.cursor_error, self.executed)
 
     def transaction(self) -> _FakeTxn:
         self.begins += 1
-        return _FakeTxn(begin_error=self.begin_error, commit_error=self.commit_error)
+        return _FakeTxn(self)
 
     def pipeline(self) -> _FakePipeline:
         return _FakePipeline(self.pipeline_events)
@@ -438,7 +514,7 @@ class _FakeConnection:
         self.closed = True
 
 
-def _adapter(connection: _FakeConnection) -> PostgresConnection:
+def _direct_execution(connection: _FakeConnection) -> PostgresConnection:
     """The scoped execution an acquisition of ``connection`` would yield.
 
     Initialization is applied first, exactly as a runtime applies it to every
@@ -449,7 +525,7 @@ def _adapter(connection: _FakeConnection) -> PostgresConnection:
     return PostgresConnection(native)
 
 
-def _sent(connection: _FakeConnection) -> list[str]:
+def _sent_sql(connection: _FakeConnection) -> list[str]:
     """The statements the adapter handed the driver, as the driver would render them."""
     return [
         statement.as_string()
@@ -465,7 +541,7 @@ def test_adapter_registers_boundary_value_adapters() -> None:
     # runs, documents decode through the adapter's own JSON loaders, and the
     # sentinel binds through the adapter's own dumper.
     connection = _FakeConnection()
-    _adapter(connection)
+    _direct_execution(connection)
     loaders = compiled_loaders(psycopg.pq.__impl__)
     assert connection.adapters.registered == [
         ("float4", loaders.float4),
@@ -492,7 +568,7 @@ def test_the_open_bound_binds_exactly_as_its_string_spelling_does() -> None:
     # Untyped text, so the server infers the parameter's type from the
     # statement around it, as it does for the spelling.
     connection = _FakeConnection()
-    _adapter(connection)
+    _direct_execution(connection)
 
     assert _dumped(connection.adapters, INFINITY) == (b"infinity", 0, Format.TEXT)
     assert _dumped(connection.adapters, "infinity") == _dumped(connection.adapters, INFINITY)
@@ -500,7 +576,7 @@ def test_the_open_bound_binds_exactly_as_its_string_spelling_does() -> None:
 
 def test_the_open_bound_dumper_is_registered_on_the_connection_alone() -> None:
     connection = _FakeConnection()
-    _adapter(connection)
+    _direct_execution(connection)
     dumper = connection_module._NativeInfinityDumper  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
 
     assert connection.adapters.get_dumper(TemporalBound, PyFormat.AUTO) is dumper
@@ -527,7 +603,7 @@ def test_an_integer_list_binds_as_one_binary_int8_array_whatever_its_magnitudes(
     values: list[int],
 ) -> None:
     connection = _FakeConnection()
-    _adapter(connection)
+    _direct_execution(connection)
 
     (adapted,) = adapt_binds([values])
     assert type(adapted) is connection_module._Int8Array  # pyright: ignore[reportPrivateUsage] - the bound carrier is this test's subject
@@ -577,7 +653,7 @@ def test_an_integer_list_refuses_an_element_it_cannot_bind_as_int8(
 
 def test_the_integer_array_dumper_is_registered_on_the_connection_alone() -> None:
     connection = _FakeConnection()
-    _adapter(connection)
+    _direct_execution(connection)
     carrier = connection_module._Int8Array  # pyright: ignore[reportPrivateUsage] - the bound carrier is this test's subject
     dumper = connection_module._Int8ArrayBinaryDumper  # pyright: ignore[reportPrivateUsage] - the registered dumper is this test's subject
 
@@ -742,7 +818,7 @@ def test_an_unpaired_result_is_the_drivers_own_row_list() -> None:
     records: list[tuple[object, ...]] = [(1, None), (2, {"kept": True})]
     connection = _ResultConnection(_Result(2, records))
 
-    rows = _adapter(connection).execute("select id, document", [])
+    rows = _direct_execution(connection).execute("select id, document", [])
 
     assert rows is records
     assert connection.result_cursors[0].row_factory_kind == "default"
@@ -753,7 +829,7 @@ def test_a_paired_result_folds_sql_null_and_present_json_null_by_presence() -> N
         _Result(3, [(1, False, None), (2, True, None), (3, True, {"value": 1})])
     )
 
-    rows = _adapter(connection).execute("select id, present, document", [], ((1, 2),))
+    rows = _direct_execution(connection).execute("select id, present, document", [], ((1, 2),))
 
     assert rows == [(1, SQL_NULL), (2, PresentDocument(None)), (3, PresentDocument({"value": 1}))]
     assert connection.result_cursors[0].row_factory_kind == "folding"
@@ -784,7 +860,7 @@ def test_paired_rows_are_built_directly_in_their_final_shape(
     expected: tuple[object, ...],
 ) -> None:
     connection = _ResultConnection(_Result(len(record), [record]))
-    assert _adapter(connection).execute("select", [], document_reads) == [expected]
+    assert _direct_execution(connection).execute("select", [], document_reads) == [expected]
 
 
 @pytest.mark.parametrize(
@@ -803,7 +879,7 @@ def test_malformed_pair_metadata_is_judged_at_attachment_and_refused_at_fetch(
     connection = _ResultConnection(_Result(width, [(True,) * width]))
 
     with pytest.raises(ValueError, match=message):
-        _adapter(connection).execute("select", [], document_reads)
+        _direct_execution(connection).execute("select", [], document_reads)
 
     assert connection.pipeline_events == [
         "cursor-0-enter",
@@ -817,7 +893,7 @@ def test_malformed_pair_metadata_in_a_pipeline_is_refused_after_every_result_syn
     connection = _ResultConnection(_Result(3, []), _Result(1, [(1,)]))
 
     with pytest.raises(ValueError, match="adjacent, zero-based"):
-        _adapter(connection).execute_pipeline(
+        _direct_execution(connection).execute_pipeline(
             (
                 PipelineStatement("select malformed", document_reads=((0, 2),)),
                 PipelineStatement("select 1"),
@@ -841,7 +917,7 @@ def test_malformed_pair_metadata_in_a_pipeline_is_refused_after_every_result_syn
 def test_a_paired_row_whose_width_disagrees_with_its_description_is_refused() -> None:
     connection = _ResultConnection(_Result(3, [(1, True)]))
     with pytest.raises(ValueError, match="does not match its result description"):
-        _adapter(connection).execute("select", [], ((1, 2),))
+        _direct_execution(connection).execute("select", [], ((1, 2),))
 
 
 @pytest.mark.parametrize("document_reads", [(), ((0, 1),)], ids=["unpaired", "paired"])
@@ -850,14 +926,14 @@ def test_a_result_without_a_description_yields_no_rows_and_is_not_fetched(
 ) -> None:
     connection = _ResultConnection(None)
 
-    assert _adapter(connection).execute("set local x = 1", [], document_reads) == []
+    assert _direct_execution(connection).execute("set local x = 1", [], document_reads) == []
     assert "cursor-0-fetch" not in connection.pipeline_events
 
 
 def test_execute_pipeline_owns_one_cursor_per_statement_and_fetches_after_sync() -> None:
     records: list[tuple[object, ...]] = [(1,), (2,)]
     connection = _ResultConnection(_Result(1, records), _Result(2, [(False, None), (True, None)]))
-    rows = _adapter(connection).execute_pipeline(
+    rows = _direct_execution(connection).execute_pipeline(
         (
             PipelineStatement("select unnest(%s::bigint[])", ([1, 2],)),
             PipelineStatement("select present, document", document_reads=((0, 1),)),
@@ -886,8 +962,8 @@ def test_execute_and_execute_pipeline_return_the_same_rows_for_the_same_result()
     def result() -> _Result:
         return _Result(3, [(1, False, None), (2, True, None), (3, True, {"a": 1})])
 
-    ordinary = _adapter(_ResultConnection(result())).execute("select", [], ((1, 2),))
-    (pipelined,) = _adapter(_ResultConnection(result())).execute_pipeline(
+    ordinary = _direct_execution(_ResultConnection(result())).execute("select", [], ((1, 2),))
+    (pipelined,) = _direct_execution(_ResultConnection(result())).execute_pipeline(
         (PipelineStatement("select", document_reads=((1, 2),)),)
     )
 
@@ -895,13 +971,13 @@ def test_execute_and_execute_pipeline_return_the_same_rows_for_the_same_result()
 
 
 def test_execute_pipeline_returns_an_empty_result_for_a_statement_without_rows() -> None:
-    assert _adapter(_ResultConnection(None)).execute_pipeline(
+    assert _direct_execution(_ResultConnection(None)).execute_pipeline(
         (PipelineStatement("set local application_name = 'parallax'"),)
     ) == [[]]
 
 
 def test_execute_reraises_a_driver_error_at_the_boundary() -> None:
-    adapter = _adapter(_FakeConnection(cursor_error=errors.UniqueViolation("dup")))
+    adapter = _direct_execution(_FakeConnection(cursor_error=errors.UniqueViolation("dup")))
     with pytest.raises(DatabaseError) as exc_info:
         adapter.execute("select 1", [])
     assert exc_info.value.violates_unique_index
@@ -917,7 +993,7 @@ def test_a_scope_holds_its_ordered_write_operation_exactly_where_libpq_can_pipel
     monkeypatch: pytest.MonkeyPatch, pipelined: bool
 ) -> None:
     monkeypatch.setattr(connection_module, "_PIPELINED", pipelined)
-    facade = _adapter(_FakeConnection())
+    facade = _direct_execution(_FakeConnection())
     transport = facade.ordered_write_transport
     if not pipelined:
         assert transport is None
@@ -929,7 +1005,7 @@ def test_a_scope_holds_its_ordered_write_operation_exactly_where_libpq_can_pipel
 
 
 def test_execute_write_reraises_a_driver_error_at_the_boundary() -> None:
-    adapter = _adapter(_FakeConnection(cursor_error=errors.DeadlockDetected("deadlock")))
+    adapter = _direct_execution(_FakeConnection(cursor_error=errors.DeadlockDetected("deadlock")))
     with pytest.raises(DatabaseError) as exc_info:
         adapter.execute_write("update gauge set v = %s", [1])
     assert exc_info.value.category == "deadlock"
@@ -1417,7 +1493,7 @@ def test_every_failed_port_invocation_reports_its_own_error_instance() -> None:
     # invocation the error it holds came from.
     driver_error = errors.UniqueViolation("dup")
     connection = _FakeConnection(cursor_error=driver_error, commit_error=driver_error)
-    adapter = _adapter(connection)
+    adapter = _direct_execution(connection)
 
     def raised(invoke: Callable[[], object]) -> DatabaseError:
         with pytest.raises(DatabaseError) as exc_info:
@@ -1471,151 +1547,354 @@ def test_every_failed_port_invocation_reports_its_own_error_instance() -> None:
 
 
 def test_transaction_commits_and_reports_the_body_value() -> None:
-    assert _adapter(_FakeConnection()).transaction(lambda _port: "kept") == Committed("kept")
+    assert _direct_execution(_FakeConnection()).transaction(lambda _port: "kept") == Committed(
+        "kept"
+    )
 
 
 def test_the_transaction_scoped_port_reports_the_boundarys_own_dialect() -> None:
     # The port a body holds spells the statements that boundary is about to run,
     # so it answers the dialect of the port that opened the boundary rather than
     # resolving one of its own.
-    outcome = _adapter(_FakeConnection()).transaction(lambda port: port.dialect)
+    outcome = _direct_execution(_FakeConnection()).transaction(lambda port: port.dialect)
     assert outcome == Committed(PostgresAdapter.dialect)
 
 
 def test_transaction_reports_a_boundary_that_never_began() -> None:
     # No attempt ran, so there is nothing to undo and nothing to re-execute; the
-    # body is what proves it, by never running.
+    # body is what proves it, by never running. The driver counted the context
+    # it could not enter as open, so the session is left suspect for disposal
+    # rather than reset.
     connection = _FakeConnection(begin_error=errors.OperationalError("the connection is closed"))
+    execution = _direct_execution(connection)
     ran: list[str] = []
-    outcome = _adapter(connection).transaction(lambda _port: ran.append("body"))
+    outcome = execution.transaction(lambda _port: ran.append("body"))
     assert isinstance(outcome, BeginFailed)
     assert _translated(outcome.error).category is None
     assert ran == []
     assert connection.rollbacks == 0
-
-
-def test_a_boundary_asked_for_no_isolation_sends_no_level_statement() -> None:
-    # The default path is the whole default path: absence asks for nothing, so
-    # the connection keeps whatever it already defaults to and the boundary costs
-    # exactly the statements the body ran.
-    connection = _FakeConnection()
-    assert _adapter(connection).transaction(lambda _port: "kept") == Committed("kept")
-    assert connection.executed == []
-
-
-@pytest.mark.parametrize("level", sorted(ISOLATION_LEVELS))
-def test_each_portable_level_opens_the_boundary_at_its_postgres_spelling(level: str) -> None:
-    # Postgres accepts a level only as the transaction's first statement, which
-    # is what makes this part of opening the boundary rather than of the work
-    # inside it. What it is asked for is Postgres' OWN name for the portable
-    # level, delimited as the setting's value, so the whole statement is one
-    # level and never a second transaction mode or a second statement.
-    requested = isolation_level(level)
-    connection = _FakeConnection()
-    outcome = _adapter(connection).transaction(
-        lambda port: port.execute("select 1", []), isolation=requested
-    )
-    assert isinstance(outcome, Committed)
-    assert _sent(connection) == [
-        f"set local transaction_isolation = '{isolation_spelling(requested)}'",
-        "select 1",
-    ]
-
-
-@pytest.mark.parametrize(("mode", "value"), [("read_only", "on"), ("read_write", "off")])
-def test_each_access_mode_opens_the_boundary_with_its_read_only_setting(
-    mode: AccessMode, value: str
-) -> None:
-    # An access mode is asked for on the same terms as a level: the transaction
-    # just begun is set as the setting's value, independently of any level.
-    connection = _FakeConnection()
-    outcome = _adapter(connection).transaction(
-        lambda port: port.execute("select 1", []), access_mode=mode
-    )
-    assert isinstance(outcome, Committed)
-    assert _sent(connection) == [f"set local transaction_read_only = '{value}'", "select 1"]
-
-
-def test_a_level_and_a_mode_travel_in_one_request_before_the_body() -> None:
-    # Asking for both costs the round trip asking for one does, and the level
-    # precedes the mode, so neither is a query that could take a snapshot first.
-    connection = _FakeConnection()
-    outcome = _adapter(connection).transaction(
-        lambda port: port.execute("select 1", []),
-        isolation="repeatable_read",
-        access_mode="read_only",
-    )
-    assert isinstance(outcome, Committed)
-    assert _sent(connection) == [
-        "set local transaction_isolation = 'repeatable read'; "
-        "set local transaction_read_only = 'on'",
-        "select 1",
-    ]
-
-
-def test_a_refused_access_mode_reports_a_boundary_that_never_opened() -> None:
-    connection = _FakeConnection(
-        cursor_error=errors.ReadOnlySqlTransaction("cannot set transaction read-write mode")
-    )
-    ran: list[str] = []
-    outcome = _adapter(connection).transaction(
-        lambda _port: ran.append("body"), access_mode="read_write"
-    )
-    assert isinstance(outcome, BeginFailed)
-    assert _translated(outcome.error).native_code == "25006"
-    assert ran == []
-    assert connection.rollbacks == 1
-
-
-def test_a_refused_isolation_reports_a_boundary_that_never_opened() -> None:
-    # A boundary whose level statement the database refuses has begun and done
-    # nothing. The body never runs, the empty transaction is undone here rather
-    # than by the caller, and the outcome is the one for a boundary that never
-    # opened — nothing to retry, nothing to undo.
-    #
-    # What separates this outcome from every other unhappy one is that the port
-    # is still usable, so the proof runs to a NEXT boundary on the same adapter:
-    # it begins, its body runs a statement through the port, and it commits. A
-    # connection merely left unclosed would satisfy a weaker assertion while
-    # carrying an abandoned transaction no later boundary could open through.
-    connection = _FakeConnection(
-        cursor_error=errors.InvalidParameterValue("invalid value for parameter")
-    )
-    adapter = _adapter(connection)
-    ran: list[str] = []
-    outcome = adapter.transaction(lambda _port: ran.append("body"), isolation="serializable")
-    assert isinstance(outcome, BeginFailed)
-    assert _translated(outcome.error).native_code == "22023"
-    assert ran == []
-    assert connection.rollbacks == 1
-    assert not connection.closed
-
-    connection.cursor_error = None
-    assert adapter.transaction(lambda port: port.execute("select 1", [])) == Committed([])
-    assert connection.begins == 2
-    assert _sent(connection)[-1] == "select 1"
-
-
-def test_a_connection_that_cannot_undo_a_refused_isolation_is_marked_suspect() -> None:
-    # The undo is the last thing scoped execution can do about a boundary it
-    # could not open as asked. When even that fails, what the connection would
-    # run next is unknown — so it is reported as suspect and the acquisition's
-    # own cleanup disposes of it, which is the one place that can also settle
-    # the accounting for it. Execution closes nothing itself.
-    connection = _FakeConnection(
-        cursor_error=errors.InvalidParameterValue("invalid value for parameter"),
-        rollback_error=errors.OperationalError("the connection is closed"),
-    )
-    execution = _adapter(connection)
-    outcome = execution.transaction(lambda _port: None, isolation="serializable")
-    assert isinstance(outcome, BeginFailed)
-    assert _translated(outcome.error).native_code == "22023"
     assert execution.suspect
+    assert connection.boundary == [
+        ("isolation_level", None),
+        ("read_only", None),
+        ("BEGIN", None, None),
+    ]
+
+
+_DRIVER_LEVELS: dict[str, psycopg.IsolationLevel] = {
+    "read_committed": psycopg.IsolationLevel.READ_COMMITTED,
+    "repeatable_read": psycopg.IsolationLevel.REPEATABLE_READ,
+    "serializable": psycopg.IsolationLevel.SERIALIZABLE,
+}
+
+_CLEARED: list[object] = [("isolation_level", None), ("read_only", None)]
+
+
+@pytest.mark.parametrize("access_mode", [None, "read_only", "read_write"])
+@pytest.mark.parametrize("isolation", [None, *sorted(ISOLATION_LEVELS)])
+def test_each_request_travels_in_the_drivers_begin_and_is_cleared_after_it(
+    isolation: str | None, access_mode: AccessMode | None
+) -> None:
+    # Every pair, including each request alone and neither, reaches the
+    # attributes the driver composes its BEGIN from before the context is
+    # entered, so the boundary sends no statement beyond the body's own; and the
+    # outer boundary leaves both cleared, so the session's own defaults govern
+    # the next one.
+    connection = _FakeConnection()
+    outcome = _direct_execution(connection).transaction(
+        lambda port: port.execute("select 1", []),
+        isolation=None if isolation is None else isolation_level(isolation),
+        access_mode=access_mode,
+    )
+    level = None if isolation is None else _DRIVER_LEVELS[isolation]
+    read_only = None if access_mode is None else access_mode == "read_only"
+    assert outcome == Committed([])
+    assert connection.boundary == [
+        ("isolation_level", level),
+        ("read_only", read_only),
+        ("BEGIN", level, read_only),
+        "COMMIT",
+        *_CLEARED,
+    ]
+    assert _sent_sql(connection) == ["select 1"]
+
+
+@pytest.mark.parametrize(
+    "requested",
+    [
+        {"isolation": "snapshot"},
+        {"access_mode": "read-write"},
+        {"isolation": "serializable", "access_mode": "write"},
+    ],
+)
+def test_a_request_outside_the_vocabulary_changes_nothing_and_opens_nothing(
+    requested: dict[str, str],
+) -> None:
+    connection = _FakeConnection()
+    ran: list[str] = []
+    with pytest.raises(KeyError):
+        _direct_execution(connection).transaction(
+            lambda _port: ran.append("body"), **cast("dict[str, Any]", requested)
+        )
+    assert connection.boundary == []
+    assert connection.begins == 0
+    assert ran == []
+
+
+@pytest.mark.parametrize(
+    "requested",
+    [{"isolation": "serializable"}, {"access_mode": "read_only"}],
+)
+def test_a_refused_begin_runs_no_callback_and_leaves_its_session_to_disposal(
+    requested: dict[str, str],
+) -> None:
+    # The server refused the command and left the session idle, but the driver
+    # still counts the context it could not enter: nothing resets the
+    # characteristics of a session cleanup is about to dispose of, and nothing
+    # sends a rollback to repair it.
+    connection = _FakeConnection(begin_error=errors.SyntaxError("syntax error at or near"))
+    execution = _direct_execution(connection)
+    ran: list[str] = []
+    outcome = execution.transaction(
+        lambda _port: ran.append("body"), **cast("dict[str, Any]", requested)
+    )
+    assert isinstance(outcome, BeginFailed)
+    assert _translated(outcome.error).native_code == "42601"
+    assert ran == []
+    assert execution.suspect
+    assert connection.rollbacks == 0
+    assert connection.pgconn.status == TransactionStatus.IDLE
+    assert connection.boundary[-1] == ("BEGIN", connection.isolation_level, connection.read_only)
     assert not connection.closed
+
+
+def test_a_failed_entry_that_is_no_driver_error_propagates_as_itself_and_leaves_it_suspect() -> (
+    None
+):
+    stale = AssertionError()
+    connection = _FakeConnection(begin_error=stale)
+    execution = _direct_execution(connection)
+    with pytest.raises(AssertionError) as raised:
+        execution.transaction(lambda _port: None, isolation="serializable")
+    assert raised.value is stale
+    assert execution.suspect
+    assert connection.boundary[-1] == ("BEGIN", psycopg.IsolationLevel.SERIALIZABLE, None)
+
+
+def _refusing_resets(error: BaseException) -> Callable[[str, object], BaseException | None]:
+    return lambda _name, value: error if value is None else None
+
+
+def _commits(_port: object) -> str:
+    return "kept"
+
+
+def _raises(_port: object) -> None:
+    raise _BodyFailure
+
+
+@pytest.mark.parametrize(
+    ("body", "commit_error", "ending", "expected"),
+    [
+        (_commits, None, "COMMIT", Committed),
+        (_raises, None, "ROLLBACK", RolledBack),
+        (_commits, errors.SerializationFailure("serialize"), "COMMIT", RolledBack),
+    ],
+    ids=["committed", "callback-rolled-back", "commit-rolled-back"],
+)
+def test_a_failed_reset_keeps_the_outcome_and_leaves_the_session_suspect(
+    body: Callable[[object], object],
+    commit_error: psycopg.Error | None,
+    ending: str,
+    expected: type[object],
+) -> None:
+    connection = _FakeConnection(commit_error=commit_error)
+    connection.refuse_assignment = _refusing_resets(errors.OperationalError("reset refused"))
+    execution = _direct_execution(connection)
+    outcome = execution.transaction(body, isolation="serializable", access_mode="read_only")
+    assert isinstance(outcome, expected)
+    assert execution.suspect
+    assert connection.boundary[-1] == ending
+
+
+def test_a_rollback_failure_leaves_its_characteristics_to_disposal() -> None:
+    attempted: list[tuple[str, object]] = []
+
+    def record(name: str, value: object) -> None:
+        attempted.append((name, value))
+
+    connection = _FakeConnection(rollback_error=errors.OperationalError("the connection is lost"))
+    connection.refuse_assignment = record
+    execution = _direct_execution(connection)
+    outcome = execution.transaction(_raises, isolation="serializable", access_mode="read_only")
+    assert isinstance(outcome, RollbackFailed)
+    assert execution.suspect
+    assert attempted == [
+        ("isolation_level", psycopg.IsolationLevel.SERIALIZABLE),
+        ("read_only", True),
+    ]
+
+
+def test_a_fatal_reset_failure_propagates_and_leaves_the_session_suspect() -> None:
+    interrupt = KeyboardInterrupt()
+    connection = _FakeConnection()
+    connection.refuse_assignment = _refusing_resets(interrupt)
+    execution = _direct_execution(connection)
+    with pytest.raises(KeyboardInterrupt) as raised:
+        execution.transaction(_commits, isolation="serializable")
+    assert raised.value is interrupt
+    assert execution.suspect
+
+
+def test_a_session_its_boundary_left_unsafe_is_not_reset() -> None:
+    connection = _FakeConnection()
+    connection.status_after_boundary = TransactionStatus.UNKNOWN
+    execution = _direct_execution(connection)
+    assert execution.transaction(_commits, isolation="serializable") == Committed("kept")
+    assert execution.suspect
+    assert connection.boundary[-1] == "COMMIT"
+
+
+def test_a_session_whose_state_became_unreadable_is_not_reset() -> None:
+    connection = _FakeConnection()
+    execution = _direct_execution(connection)
+
+    def body(_port: object) -> str:
+        connection.pgconn.status_error = RuntimeError("the state is gone")
+        return "kept"
+
+    assert execution.transaction(body, access_mode="read_only") == Committed("kept")
+    assert execution.suspect
+    assert connection.boundary[-1] == "COMMIT"
+
+
+def test_a_refused_assignment_opens_nothing_and_clears_what_it_assigned() -> None:
+    # A refusal before entry says nothing about the driver's transaction
+    # bookkeeping, so the session is not suspect; the characteristic already
+    # assigned is cleared like any boundary's.
+    connection = _FakeConnection()
+    connection.refuse_assignment = lambda name, value: (
+        errors.OperationalError("refused") if (name, value) == ("read_only", True) else None
+    )
+    execution = _direct_execution(connection)
+    ran: list[str] = []
+    outcome = execution.transaction(
+        lambda _port: ran.append("body"), isolation="serializable", access_mode="read_only"
+    )
+    assert isinstance(outcome, BeginFailed)
+    assert _translated(outcome.error).message == "refused"
+    assert ran == []
+    assert connection.begins == 0
+    assert not execution.suspect
+    assert connection.boundary == [
+        ("isolation_level", psycopg.IsolationLevel.SERIALIZABLE),
+        *_CLEARED,
+    ]
+
+
+def test_a_refused_assignment_whose_reset_fails_keeps_its_failure_and_is_suspect() -> None:
+    connection = _FakeConnection()
+    connection.refuse_assignment = lambda name, value: (
+        errors.OperationalError(f"refused {name}") if value in (True, None) else None
+    )
+    execution = _direct_execution(connection)
+    outcome = execution.transaction(
+        lambda _port: None, isolation="serializable", access_mode="read_only"
+    )
+    assert isinstance(outcome, BeginFailed)
+    assert _translated(outcome.error).message == "refused read_only"
+    assert execution.suspect
+
+
+def test_an_assignment_failure_that_is_no_driver_error_propagates_as_itself() -> None:
+    refusal = ValueError("not a driver error")
+    connection = _FakeConnection()
+    connection.refuse_assignment = lambda name, value: (
+        refusal if (name, value) == ("read_only", True) else None
+    )
+    execution = _direct_execution(connection)
+    with pytest.raises(ValueError, match="not a driver error") as raised:
+        execution.transaction(lambda _port: None, isolation="serializable", access_mode="read_only")
+    assert raised.value is refusal
+    assert connection.begins == 0
+    assert not execution.suspect
+    assert connection.boundary == [
+        ("isolation_level", psycopg.IsolationLevel.SERIALIZABLE),
+        *_CLEARED,
+    ]
+
+
+def test_a_nested_call_asking_for_nothing_joins_through_a_savepoint_untouched() -> None:
+    connection = _FakeConnection()
+    execution = _direct_execution(connection)
+    joined: list[object] = []
+
+    def body(port: DatabaseConnection) -> str:
+        joined.append(port.transaction(lambda inner: inner.execute("select 1", [])))
+        return "outer"
+
+    outcome = execution.transaction(body, isolation="repeatable_read", access_mode="read_only")
+    assert outcome == Committed("outer")
+    assert joined == [Committed([])]
+    assert not execution.suspect
+    assert connection.boundary == [
+        ("isolation_level", psycopg.IsolationLevel.REPEATABLE_READ),
+        ("read_only", True),
+        ("BEGIN", psycopg.IsolationLevel.REPEATABLE_READ, True),
+        "SAVEPOINT",
+        "RELEASE",
+        "COMMIT",
+        *_CLEARED,
+    ]
+
+
+@pytest.mark.parametrize("requested", [{"isolation": "serializable"}, {"access_mode": "read_only"}])
+def test_a_nested_call_asking_for_a_characteristic_is_refused_before_its_savepoint(
+    requested: dict[str, str],
+) -> None:
+    connection = _FakeConnection()
+    execution = _direct_execution(connection)
+    ran: list[str] = []
+    refused: list[object] = []
+
+    def body(port: DatabaseConnection) -> str:
+        refused.append(
+            port.transaction(
+                lambda _inner: ran.append("inner"), **cast("dict[str, Any]", requested)
+            )
+        )
+        return "outer"
+
+    assert execution.transaction(body) == Committed("outer")
+    (inner,) = refused
+    assert isinstance(inner, BeginFailed)
+    assert ran == []
+    assert not execution.suspect
+    assert connection.boundary == [*_CLEARED, ("BEGIN", None, None), "COMMIT", *_CLEARED]
+
+
+def test_a_nested_call_whose_savepoint_fails_to_enter_leaves_the_session_suspect() -> None:
+    connection = _FakeConnection()
+    execution = _direct_execution(connection)
+    refused: list[object] = []
+
+    def body(port: DatabaseConnection) -> str:
+        connection.begin_error = errors.OperationalError("savepoint refused")
+        try:
+            refused.append(port.transaction(lambda _inner: None))
+        finally:
+            connection.begin_error = None
+        return "outer"
+
+    assert execution.transaction(body) == Committed("outer")
+    (inner,) = refused
+    assert isinstance(inner, BeginFailed)
+    assert execution.suspect
+    assert connection.boundary[-2:] == ["SAVEPOINT", "COMMIT"]
 
 
 def test_transaction_reports_a_commit_time_driver_error_as_rolled_back() -> None:
-    outcome = _adapter(
+    outcome = _direct_execution(
         _FakeConnection(commit_error=errors.SerializationFailure("serialize"))
     ).transaction(lambda _port: None)
     assert isinstance(outcome, RolledBack)
@@ -1632,7 +1911,9 @@ def test_a_reported_boundary_failure_keeps_the_driver_exception_as_its_cause() -
     # failure is reported rather than raised, and chaining it here is what keeps
     # that reading the same for both.
     driver_error = errors.SerializationFailure("serialize")
-    outcome = _adapter(_FakeConnection(commit_error=driver_error)).transaction(lambda _port: None)
+    outcome = _direct_execution(_FakeConnection(commit_error=driver_error)).transaction(
+        lambda _port: None
+    )
     assert isinstance(outcome, RolledBack)
     trigger = outcome.trigger
     assert isinstance(trigger, CommitFailed)
@@ -1648,7 +1929,7 @@ def test_transaction_reports_a_non_driver_body_error_unchanged() -> None:
     def body(_port: object) -> None:
         raise raised_by_the_body
 
-    assert _adapter(_FakeConnection()).transaction(body) == RolledBack(
+    assert _direct_execution(_FakeConnection()).transaction(body) == RolledBack(
         CallbackRaised(raised_by_the_body)
     )
 
@@ -1664,7 +1945,7 @@ def test_transaction_reports_a_body_raised_driver_error_unchanged() -> None:
     def body(_port: object) -> None:
         raise raised_by_the_body
 
-    outcome = _adapter(_FakeConnection()).transaction(body)
+    outcome = _direct_execution(_FakeConnection()).transaction(body)
     assert isinstance(outcome, RolledBack)
     trigger = outcome.trigger
     assert isinstance(trigger, CallbackRaised)
@@ -1682,7 +1963,7 @@ def test_transaction_reports_a_rollback_failure_beside_the_body_error_that_trigg
         raise raised_by_the_body
 
     connection = _FakeConnection(rollback_error=errors.UniqueViolation("dup"))
-    execution = _adapter(connection)
+    execution = _direct_execution(connection)
     outcome = execution.transaction(body)
     assert isinstance(outcome, RollbackFailed)
     assert outcome.trigger == CallbackRaised(raised_by_the_body)
@@ -1707,7 +1988,7 @@ def test_transaction_separates_a_rollback_failure_raised_as_the_bodys_own_object
     def body(_port: object) -> None:
         raise reused
 
-    outcome = _adapter(_FakeConnection(rollback_error=reused)).transaction(body)
+    outcome = _direct_execution(_FakeConnection(rollback_error=reused)).transaction(body)
     assert isinstance(outcome, RollbackFailed)
     assert outcome.trigger == CallbackRaised(reused)
     assert outcome.rollback_error is not reused
@@ -1722,7 +2003,7 @@ def test_transaction_reports_a_rollback_failure_after_a_failed_commit() -> None:
         commit_error=errors.SerializationFailure("serialize"),
         rollback_error=errors.OperationalError("the connection is lost"),
     )
-    execution = _adapter(connection)
+    execution = _direct_execution(connection)
     outcome = execution.transaction(lambda _port: None)
     assert isinstance(outcome, RollbackFailed)
     trigger = outcome.trigger
@@ -1742,7 +2023,7 @@ def test_transaction_reports_a_body_raised_base_exception_unchanged() -> None:
     def body(_port: object) -> None:
         raise raised_by_the_body
 
-    outcome = _adapter(_FakeConnection()).transaction(body)
+    outcome = _direct_execution(_FakeConnection()).transaction(body)
     assert isinstance(outcome, RolledBack)
     trigger = outcome.trigger
     assert isinstance(trigger, CallbackRaised)
