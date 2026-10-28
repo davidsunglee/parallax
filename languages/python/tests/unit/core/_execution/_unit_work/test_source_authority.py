@@ -56,6 +56,7 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import INFINITY as PLANNED_INFINITY
 from parallax.core.write_plan.steps import Finite
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._gc_reachability import reachable_objects
@@ -313,7 +314,7 @@ def _position_insert() -> PreparedKeyedInstruction:
         KeyedWriteInstruction(
             "insert", "Position", ({"id": 1, "acctNum": "A", "value": "1.00"},), JAN
         ),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -331,7 +332,8 @@ def test_an_insertion_stands_until_a_completed_removal_of_its_rows_and_its_histo
     row = TemporalRowCoordinates(ENTITY, (1,), OPEN_BITEMPORAL_ENDS)
     authority.complete_write(WriteEffects(opened=Openings(continued=(row,))), ())
     termination = prepare_wire_write(
-        KeyedWriteInstruction("terminate", "Position", ({"id": 1},), JAN), POSITION
+        KeyedWriteInstruction("terminate", "Position", ({"id": 1},), JAN),
+        write_preparation_of(POSITION),
     )
     assert isinstance(termination, PreparedKeyedInstruction)
     write = authority.resolve_insertion_authorized_write(
@@ -354,7 +356,8 @@ def test_clearing_forgets_every_fact_but_keeps_participation_and_freshness() -> 
     authority.complete_write(WriteEffects(changed=(_person(1),), destroyed=(_person(1),)), ())
     authority.register_read_evidence(stale, read_at=read_at)
     insert = prepare_wire_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)), _PERSON
+        KeyedWriteInstruction("insert", "Person", ({"id": 9, "name": "Ada"},)),
+        write_preparation_of(_PERSON),
     )
     assert isinstance(insert, PreparedKeyedInstruction)
     identity = WriteAdmission(_PERSON, authority=authority).admit_insert(

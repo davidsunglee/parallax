@@ -659,7 +659,7 @@ class TxnAttempt(_TxnAttemptBase):
         self._uow.buffer_target(
             prepare(
                 instruction,
-                self._write.model.meta,
+                self._write.preparation,
                 authored_members=write.authored_members,
                 members=write.members,
             )

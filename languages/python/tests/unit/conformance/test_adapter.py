@@ -20,6 +20,7 @@ import pytest
 from parallax.conformance import _case_ingress, adapter, case_format, engine, models
 from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lanes import scenario
+from parallax.conformance._lanes.scenario import case_wire_preparer
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance._mechanism import model_facts
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
@@ -28,13 +29,17 @@ from parallax.conformance.provision import Provisioner
 from parallax.core import inheritance, wire
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._unit_work.instructions import (
+    PreparedInstruction,
     PreparedKeyedInstruction,
     PreparedPredicateInstruction,
+    PreparedTargetInstruction,
+    WriteInstruction,
 )
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import AsOfRange, object_query, validate_object_query
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import And, Comparison, FieldSubject, ModelRejectedError, Quantifier
@@ -78,7 +83,7 @@ rows:
 """
         )
     )
-    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
+    prepared = _prepare_case_write(instruction, models.load_models()["account"])
     assert isinstance(prepared, PreparedKeyedInstruction)
     assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
 
@@ -94,7 +99,7 @@ rows:
 """
         )
     )
-    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
+    prepared = _prepare_case_write(instruction, models.load_models()["account"])
     assert isinstance(prepared, PreparedKeyedInstruction)
     assert prepared.rows[0]["balance"] == decimal.Decimal("1234567890123456.78")
 
@@ -107,7 +112,7 @@ def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() 
             "parallax.compatibility.Account",
             ({"id": 7, "owner": "Newton", "balance": value, "version": 1},),
         )
-        prepared = _case_ingress.prepare_case_write(instruction, model)
+        prepared = _prepare_case_write(instruction, model)
         assert isinstance(prepared, PreparedKeyedInstruction)
         assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
 
@@ -126,7 +131,7 @@ assignments:
 """
         )
     )
-    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["wallet"])
+    prepared = _prepare_case_write(instruction, models.load_models()["wallet"])
     assert isinstance(prepared, PreparedPredicateInstruction)
     assert isinstance(prepared.selection.predicate, ResolvedComparison)
     assert prepared.selection.predicate.value == decimal.Decimal("200.00")
@@ -141,7 +146,7 @@ def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
         ({"id": 1, "value": decimal.Decimal("5.00")},),
         valid_from=stated,
     )
-    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
+    prepared = _prepare_case_write(instruction, models.load_models()["position"])
     assert isinstance(prepared, PreparedKeyedInstruction)
     assert prepared.valid_time_window == TimeInterval(
         dt.datetime(2024, 7, 1, tzinfo=dt.UTC), INFINITY
@@ -159,7 +164,7 @@ def test_case_write_adapter_carries_the_decoded_case_temporal_bounds() -> None:
     )
     assert isinstance(instruction, instructions.KeyedWriteInstruction)
     assert instruction.valid_from == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
-    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
+    prepared = _prepare_case_write(instruction, models.load_models()["position"])
     assert isinstance(prepared, PreparedKeyedInstruction)
     assert prepared.valid_time_window == TimeInterval(
         dt.datetime(2024, 2, 1, tzinfo=dt.UTC), INFINITY
@@ -187,9 +192,7 @@ rows:
     authored = instruction.rows[0][member]
 
     with mock.patch.object(instructions, "decode_wire", wraps=wire.decode_wire) as decode_wire:
-        prepared = _case_ingress.prepare_case_write(
-            instruction, models.load_models()["writable-scalars"]
-        )
+        prepared = _prepare_case_write(instruction, models.load_models()["writable-scalars"])
 
     assert any(call.args[1] is authored for call in decode_wire.call_args_list)
     assert isinstance(prepared, PreparedKeyedInstruction)
@@ -204,14 +207,14 @@ def test_case_write_adapter_leaves_malformed_values_for_core_classification() ->
         ({"id": 7, "owner": "Newton", "balance": True, "version": 1},),
     )
     with pytest.raises(instructions.InstructionRejectedError) as caught:
-        _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
+        _prepare_case_write(instruction, models.load_models()["account"])
     assert caught.value.rule == "neutral-literal-type-mismatch"
 
 
 def test_case_write_adapter_leaves_unknown_entities_for_core_classification() -> None:
     instruction = instructions.KeyedWriteInstruction("insert", "Missing", ({"id": 1},))
     with pytest.raises(instructions.WriteInstructionError, match="declares no entity 'Missing'"):
-        _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
+        _prepare_case_write(instruction, models.load_models()["account"])
 
 
 def test_case_write_adapter_normalizes_nested_value_object_documents() -> None:
@@ -236,7 +239,7 @@ def test_case_write_adapter_normalizes_nested_value_object_documents() -> None:
         ),
     )
 
-    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["document-codec"])
+    prepared = _prepare_case_write(instruction, models.load_models()["document-codec"])
 
     assert isinstance(prepared, PreparedKeyedInstruction)
     profile = cast("Mapping[str, object]", prepared.rows[0]["profile"])
@@ -1923,3 +1926,9 @@ def test_a_state_graded_run_reports_its_unit_fates_and_table_state() -> None:
         "units": units,
         "tableState": table_state,
     }
+
+
+def _prepare_case_write(
+    instruction: WriteInstruction, model: Metamodel
+) -> PreparedInstruction | PreparedTargetInstruction:
+    return _case_ingress.prepare_case_write(instruction, model, case_wire_preparer(model))

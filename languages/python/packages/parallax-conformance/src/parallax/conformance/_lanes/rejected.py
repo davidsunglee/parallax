@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Final, cast
 
 from parallax.conformance import _case_ingress, case_format
+from parallax.conformance._lanes.scenario import case_wire_preparer
 from parallax.conformance._mechanism import case_document
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.conformance._mechanism.model_facts import (
@@ -188,7 +189,7 @@ def _rejected_write(case: case_format.Case, raw_write: object, model: AcceptedMe
         )
     instruction = _rejected_instruction(case, cast("Mapping[str, object]", raw_write), model)
     try:
-        _case_ingress.prepare_case_write(instruction, model)
+        _case_ingress.prepare_case_write(instruction, model, case_wire_preparer(model))
     except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
         return exc.rule
     except instructions.WriteInstructionError as exc:

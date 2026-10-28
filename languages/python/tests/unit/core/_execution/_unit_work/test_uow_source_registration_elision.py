@@ -48,6 +48,7 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import ObjectKey
 from parallax.core.write_plan.keys import VersionedObjectStateKey
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit._judged_evidence_support import judged_evidence
@@ -162,7 +163,8 @@ class _Production:
                 self._write(self.published[label], mutation, members)
             case _Insert(entity, members):
                 instruction = prepare_typed_write(
-                    KeyedWriteInstruction("insert", entity, (members,)), self.meta
+                    KeyedWriteInstruction("insert", entity, (members,)),
+                    write_preparation_of(self.meta),
                 )
                 assert isinstance(instruction, PreparedKeyedInstruction)
                 self.uow.buffer_insert(
@@ -205,7 +207,7 @@ class _Production:
             KeyedWriteInstruction(
                 mutation, entity.identity.name, ({**dict(key.primary_key), **members},)
             ),
-            self.meta,
+            write_preparation_of(self.meta),
         )
         assert isinstance(instruction, PreparedKeyedInstruction)
         settled = self.uow.source_authority.resolve_read_evidence(

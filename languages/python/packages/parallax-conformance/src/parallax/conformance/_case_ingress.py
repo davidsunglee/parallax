@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast, overload
@@ -50,27 +50,40 @@ from parallax.core.unit_work import (
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire
 from parallax.core.write_plan.columns import freeze_retained_value
 
-__all__ = ["decode_case_row", "normalize_case_query", "normalize_case_write", "prepare_case_write"]
+__all__ = [
+    "WirePreparer",
+    "decode_case_row",
+    "normalize_case_query",
+    "normalize_case_write",
+    "prepare_case_write",
+]
 
 type _ScalarMember = AttributeMetadata | ValueObjectAttributeMetadata
 
 
+type WirePreparer = Callable[[WriteInstruction], PreparedInstruction | PreparedTargetInstruction]
+"""Strict Wire preparation against one model's write preparation."""
+
+
 @overload
 def prepare_case_write(
-    instruction: TargetWriteInstruction, model: AcceptedMetamodel
+    instruction: TargetWriteInstruction, model: AcceptedMetamodel, prepare: WirePreparer
 ) -> PreparedTargetInstruction: ...
 @overload
 def prepare_case_write(
-    instruction: KeyedWriteInstruction | PredicateWriteInstruction, model: AcceptedMetamodel
+    instruction: KeyedWriteInstruction | PredicateWriteInstruction,
+    model: AcceptedMetamodel,
+    prepare: WirePreparer,
 ) -> PreparedInstruction: ...
 @overload
 def prepare_case_write(
-    instruction: WriteInstruction, model: AcceptedMetamodel
+    instruction: WriteInstruction, model: AcceptedMetamodel, prepare: WirePreparer
 ) -> PreparedInstruction | PreparedTargetInstruction: ...
 def prepare_case_write(
-    instruction: WriteInstruction, model: AcceptedMetamodel
+    instruction: WriteInstruction, model: AcceptedMetamodel, prepare: WirePreparer
 ) -> PreparedInstruction | PreparedTargetInstruction:
-    """Normalize one case-format instruction and invoke strict Wire preparation.
+    """Normalize one case-format instruction and invoke strict Wire preparation
+    through ``prepare``, ``model``'s.
 
     Synthetic conformance cases may carry values already in their managed Python
     form. This seam encodes only those, using the declared member type; authored
@@ -78,7 +91,7 @@ def prepare_case_write(
     ``prepare_wire_write`` unchanged for it to decode, classify, validate, freeze,
     and retain in its prepared result.
     """
-    return instructions.prepare_wire_write(normalize_case_write(instruction, model), model)
+    return prepare(normalize_case_write(instruction, model))
 
 
 def decode_case_row(

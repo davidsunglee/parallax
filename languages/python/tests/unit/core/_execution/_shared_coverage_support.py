@@ -48,6 +48,7 @@ from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.plan import SettledWrite
 from tests._support.clock_probes import instant_at
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, admitted_writes
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._positional_row_support import positional_row
 
 __all__ = [
@@ -178,7 +179,7 @@ def frag(entity: type[Bitemporal], key: int, parts: int) -> list[ReadAuthorizedW
                 day(2 * pair),
                 day(2 * pair + 2),
             ),
-            MODEL,
+            write_preparation_of(MODEL),
         )
         assert isinstance(prepared, PreparedKeyedInstruction)
         observed = observation(entity, rows[2 * pair])
@@ -200,7 +201,7 @@ def covered_target(entity: type[Bitemporal], key: int) -> tuple[TargetWrite, Pre
             valid_from=day(0),
             until=day(1),
         ),
-        MODEL,
+        write_preparation_of(MODEL),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     view = inheritance_view(MODEL).entity(entity.identity)

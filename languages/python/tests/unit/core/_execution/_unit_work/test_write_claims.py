@@ -49,6 +49,7 @@ from parallax.core.unit_work import (
 from parallax.core.write_plan import ObjectKey, VersionObservation
 from parallax.core.write_plan.keys import VersionedObjectStateKey
 from tests._support.planner_probes import object_source
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._where_position_model import (
     WHERE_POSITION_META,
 )
@@ -91,7 +92,9 @@ def _person_delete(*ids: int) -> KeyedWriteInstruction:
 
 
 def _prepared_person_delete(*ids: int) -> PreparedKeyedInstruction:
-    prepared = instructions.prepare_wire_write(_person_delete(*ids), _PERSON_META)
+    prepared = instructions.prepare_wire_write(
+        _person_delete(*ids), write_preparation_of(_PERSON_META)
+    )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
@@ -110,7 +113,9 @@ def _prepared_intent(mutation: str) -> PreparedKeyedInstruction:
     if mutation.endswith("Until"):
         document["until"] = "2024-06-01T00:00:00.000000Z"
     instruction = instructions.deserialize(document)
-    prepared = instructions.prepare_wire_write(instruction, _WHERE_POSITION_META)
+    prepared = instructions.prepare_wire_write(
+        instruction, write_preparation_of(_WHERE_POSITION_META)
+    )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
@@ -350,7 +355,7 @@ def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:
     )
     assert isinstance(foreign, KeyedWriteInstruction)
     with pytest.raises(instructions.WriteInstructionError, match="declares no entity"):
-        instructions.prepare_wire_write(foreign, _PERSON_META)
+        instructions.prepare_wire_write(foreign, write_preparation_of(_PERSON_META))
 
 
 def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> None:
@@ -360,7 +365,7 @@ def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> Non
         insertion = instructions.deserialize(
             {"mutation": "insert", "entity": "Person", "rows": [{"id": 1, "name": "Ada"}]}
         )
-        prepared = instructions.prepare_wire_write(insertion, _PERSON_META)
+        prepared = instructions.prepare_wire_write(insertion, write_preparation_of(_PERSON_META))
         assert isinstance(prepared, PreparedKeyedInstruction)
         ObjectLockedWrite(prepared, _PERSON_ONE, (object_source(_PERSON_ONE),))
     with pytest.raises(ValueError, match="an object claim addresses one object"):
@@ -403,7 +408,8 @@ def test_an_observed_write_requires_a_retained_observation(evidence: object) -> 
 
 def test_a_target_write_refuses_an_insert_and_a_write_of_several_objects() -> None:
     insert = instructions.prepare_wire_write(
-        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "Ada"},)), _PERSON_META
+        KeyedWriteInstruction("insert", "Person", ({"id": 1, "name": "Ada"},)),
+        write_preparation_of(_PERSON_META),
     )
     several = _prepared_person_delete(1, 2)
     person = ObjectKey(EntityIdentity("parallax.compatibility", "Person"), (("id", 1),))

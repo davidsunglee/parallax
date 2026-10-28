@@ -126,6 +126,7 @@ from tests._support.planner_probes import (
     plan_steps,
     settled_writes,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._where_position_model import (
     WherePosition,
@@ -197,7 +198,7 @@ def _run[T](
 
 
 def _prepared_keyed(write: KeyedWriteInstruction, model: Metamodel) -> PreparedKeyedInstruction:
-    prepared = prepare_typed_write(write, model)
+    prepared = prepare_typed_write(write, write_preparation_of(model))
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
 
@@ -1473,7 +1474,7 @@ def _position_target(start: dt.datetime, until: dt.datetime) -> PreparedTargetIn
             valid_from=start,
             until=until,
         ),
-        _PREDICATED,
+        write_preparation_of(_PREDICATED),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
@@ -1488,7 +1489,7 @@ def _observed_amendment(claim: RetainedObservation) -> ReadAuthorizedWrite:
             valid_from=_FEB,
             until=_APR,
         ),
-        _PREDICATED,
+        write_preparation_of(_PREDICATED),
     )
     assert isinstance(observed, PreparedKeyedInstruction)
     return admitted_write(observed, claim, claim.key.object)
@@ -1566,7 +1567,7 @@ def _observed_value(
             valid_from=start,
             until=until,
         ),
-        _PREDICATED,
+        write_preparation_of(_PREDICATED),
     )
     assert isinstance(observed, PreparedKeyedInstruction)
     return admitted_write(observed, claim, claim.key.object)
@@ -1577,7 +1578,7 @@ def _account_target(version: int) -> PreparedTargetInstruction:
         TargetWriteInstruction(
             "amend", "Account", {"id": 1, "balance": "6.00"}, if_version=version
         ),
-        _ACCOUNT,
+        write_preparation_of(_ACCOUNT),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared
@@ -1666,7 +1667,7 @@ def _shell_predicate_write(
             ),
             assignments=assignments,
         ),
-        _PREDICATED,
+        write_preparation_of(_PREDICATED),
     )
     assert isinstance(prepared, PreparedPredicateInstruction)
     return prepared
@@ -1785,7 +1786,7 @@ def test_an_empty_predicate_write_answers_zero_and_leaves_the_buffer_pending(
                 PredicateSelection("ShellKey", predicate_algebra.TrueNode()),
                 row={},
             ),
-            _PREDICATED,
+            write_preparation_of(_PREDICATED),
         )
     )
     assert isinstance(empty, PreparedPredicateInstruction)
@@ -2058,7 +2059,7 @@ def _late_position_target() -> PreparedTargetInstruction:
             valid_from=_JUN,
             until=_AUG,
         ),
-        _PREDICATED,
+        write_preparation_of(_PREDICATED),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared

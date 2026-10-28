@@ -16,6 +16,7 @@ from parallax.conformance._database_control import (
 from parallax.conformance._lanes.scenario import (
     LOWERING_ERRORS,
     CaseContext,
+    case_wire_preparer,
     entry_instant,
     execute_keyed_unit,
     is_predicate_write_step,
@@ -152,6 +153,7 @@ def compile_scenario(
     options = case_format.database_options(case)
     dialect = dialect_for(dialect_name)
     concurrency = case_document.concurrency(case)
+    prepare = case_wire_preparer(model)
     store = SimulatedTemporalStore()
     seed_store_from_fixtures(case, model, store)
     emissions: list[Emission] = []
@@ -165,6 +167,7 @@ def compile_scenario(
                     statements = lower_writes(
                         entries,
                         model,
+                        prepare,
                         dialect,
                         concurrency,
                         store,

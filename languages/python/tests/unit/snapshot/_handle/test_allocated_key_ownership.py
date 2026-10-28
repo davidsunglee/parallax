@@ -20,6 +20,7 @@ from parallax.core.unit_work import KeyedWriteInstruction, admitted_write
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.write_bounds import stated_start
+from tests._support.write_preparation import write_preparation_of
 
 _NAMESPACE = "allocated.key"
 
@@ -84,7 +85,7 @@ def _insert_allocated(
         ({"id": {"computed": "maxPlusOne"}, **row},),
         valid_from=valid_from,
     )
-    prepared = prepare_typed_write(instruction, model_of(_MODEL))
+    prepared = prepare_typed_write(instruction, write_preparation_of(model_of(_MODEL)))
     # An insert whose key the database allocates opens no insertion authority.
     assert (
         tx._attempt.uow.buffer_insert(admitted_write(prepared, None, None), insertion_advice=None)

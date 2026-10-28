@@ -71,6 +71,7 @@ from tests._support.planner_probes import (
     settled_writes,
     source_authority,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._temporal_targets_support import (
     AUG,
@@ -132,7 +133,8 @@ def _write(
     **members: object,
 ) -> StateObservedWrite:
     prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)), _BALANCE
+        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)),
+        write_preparation_of(_BALANCE),
     )
     item = admitted_write(prepared, evidence, evidence.key.object, source=source)
     assert isinstance(item, StateObservedWrite)
@@ -260,7 +262,7 @@ def test_a_bitemporal_write_carrying_no_temporal_observation_is_refused_as_unobs
             ({"id": 1, "value": "1.00"},),
             dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         ),
-        model,
+        write_preparation_of(model),
     )
     position = ObjectKey(prepared.target.identity, (("id", 1),))
     unobserved = RetainedObservation(
@@ -309,7 +311,7 @@ def test_two_observed_rectangles_bind_at_planning_when_they_cover_the_range() ->
     def update(valid_from: dt.datetime, value: str, observed: TemporalObservation) -> AdmittedWrite:
         prepared = prepare_wire_write(
             KeyedWriteInstruction("amend", "Position", ({"id": 1, "value": value},), valid_from),
-            model,
+            write_preparation_of(model),
         )
         state = object_state_key_from_observation(
             ObjectKey(position, (("id", 1),)), observed, shape
@@ -344,7 +346,7 @@ def _position_write(
 ) -> PreparedKeyedInstruction:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -457,7 +459,8 @@ def _balance(
     mutation: KeyedMutation, balance_id: int, **members: object
 ) -> PreparedKeyedInstruction:
     prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Balance", ({"id": balance_id, **members},)), _BALANCE
+        KeyedWriteInstruction(mutation, "Balance", ({"id": balance_id, **members},)),
+        write_preparation_of(_BALANCE),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared

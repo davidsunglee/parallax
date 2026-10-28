@@ -41,6 +41,7 @@ from parallax.core.execution import ExecutionFailure
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.write_plan import ObjectKey
 from tests._support.db_port import ScriptedAdapter, Transact, Write
+from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._execution_support import ACCOUNT, itself, scope
 
 _ADVICE: Final = KeyedWriteRefusalAdvice(
@@ -64,7 +65,9 @@ def _key(entity: EntityIdentity, account_id: int) -> ObjectKey:
 def _prepared(
     model: Metamodel, mutation: KeyedMutation, entity: EntityMetadata, row: Mapping[str, object]
 ) -> PreparedKeyedInstruction:
-    return prepare_typed_write(keyed_instruction(mutation, entity.identity, row), model)
+    return prepare_typed_write(
+        keyed_instruction(mutation, entity.identity, row), write_preparation_of(model)
+    )
 
 
 type Named = Literal["evidence", "authoring", "both", "neither"]

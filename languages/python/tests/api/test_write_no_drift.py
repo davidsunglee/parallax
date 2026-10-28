@@ -67,6 +67,7 @@ from tests._support.db_port import (
 )
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
+from tests._support.write_preparation import write_preparation_of
 
 _STORIES = {story.case_id: story for story in WRITE_STORIES}
 
@@ -672,7 +673,7 @@ def test_the_declared_structure_classifies_the_corpus_rule(case_id: str) -> None
         else KeyedWriteInstruction("insert", target.identity.canonical, (authored,))
     )
     with pytest.raises(WriteRejectedError) as exc_info:
-        instructions.prepare_wire_write(instruction, model)
+        instructions.prepare_wire_write(instruction, write_preparation_of(model))
     assert exc_info.value.rule == expected_rule
 
 

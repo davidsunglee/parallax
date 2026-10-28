@@ -73,7 +73,7 @@ def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadat
 
 
 def prepared_typed_write(
-    meta: Metamodel,
+    preparation: WritePreparation,
     mutation: KeyedMutation,
     entity: EntityMetadata,
     row: Mapping[str, object],
@@ -92,7 +92,7 @@ def prepared_typed_write(
     """
     prepared = instructions.prepare_typed_write(
         keyed_instruction(mutation, entity.identity, row, valid_from=valid_from, until=until),
-        meta,
+        preparation,
         members=members,
     )
     return prepared
@@ -186,7 +186,7 @@ class TypedKeyedWriteSource:
         """
         row, explicit = self._authored(preparation.meta, mutation, resolved.entity)
         return prepared_typed_write(
-            preparation.meta,
+            preparation,
             mutation,
             resolved.entity,
             row,
@@ -251,7 +251,7 @@ class TypedKeyedInsertSource:
         until: dt.datetime | None,
     ) -> PreparedKeyedInstruction:
         return prepared_typed_write(
-            preparation.meta,
+            preparation,
             mutation,
             resolved.entity,
             self._codec.full_row(self._instance),
@@ -300,7 +300,7 @@ class TypedPredicateWriteAdapter:
             instruction = PredicateWriteInstruction(
                 mutation, selection, write_assignments(assignments)
             )
-        return instructions.prepare_typed_write(instruction, write_model.model.meta)
+        return instructions.prepare_typed_write(instruction, write_model.preparation)
 
 
 def _replacement_row(

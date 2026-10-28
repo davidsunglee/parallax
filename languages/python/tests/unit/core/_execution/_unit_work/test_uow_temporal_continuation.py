@@ -70,6 +70,7 @@ from tests._support.planner_probes import (
     TEST_ACTOR_IDENTITY,
     retained_observation,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._where_position_model import WHERE_POSITION_META
 from tests.unit.core._execution._reach_support import frames, reaches
 
@@ -95,7 +96,7 @@ def _write(
         KeyedWriteInstruction(
             verb, "WherePosition", ({"id": 1, **members},), valid_from=valid_from, until=until
         ),
-        _META,
+        write_preparation_of(_META),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -437,7 +438,7 @@ def _target(
             valid_from=valid_from,
             until=until,
         ),
-        _META,
+        write_preparation_of(_META),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     return prepared

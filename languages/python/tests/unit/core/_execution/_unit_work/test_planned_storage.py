@@ -55,6 +55,7 @@ from tests._support.planner_probes import (
     plan_steps,
     settled_writes,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
@@ -141,7 +142,7 @@ def test_a_deferred_range_retains_finalized_data_and_neither_producer_nor_owners
             valid_from=_JAN,
             until=_MAR,
         ),
-        _POSITION,
+        write_preparation_of(_POSITION),
     )
     assert isinstance(prepared, PreparedTargetInstruction)
     plan = build_write_planner(_POSITION).finalize(

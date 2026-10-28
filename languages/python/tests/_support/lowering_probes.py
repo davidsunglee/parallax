@@ -46,6 +46,7 @@ from tests._support.planner_probes import (
     observed_write,
     plan_steps,
 )
+from tests._support.write_preparation import write_preparation_of
 
 __all__ = ["lower_instruction", "lower_instruction_steps", "lowered_steps"]
 
@@ -138,7 +139,7 @@ def _stream(
 
 
 def _prepared(instruction: WriteInstruction, model: Metamodel) -> PreparedInstruction:
-    prepared = prepare_typed_write(instruction, model)
+    prepared = prepare_typed_write(instruction, write_preparation_of(model))
     assert not isinstance(
         prepared, PreparedTargetInstruction
     )  # a target write buffers through its UoW

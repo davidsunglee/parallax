@@ -42,6 +42,7 @@ from parallax.core.write_plan.steps import (
 )
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from tests._support.planner_probes import plan_steps, settled_writes
+from tests._support.write_preparation import write_preparation_of
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 from tests.unit.core._execution._unit_work._unchanged_milestones_support import (
     APR,
@@ -247,7 +248,7 @@ def test_a_window_a_target_keeps_a_milestone_it_leaves_unchanged() -> None:
                 valid_from=MAR,
                 until=JUN,
             ),
-            SPANS,
+            write_preparation_of(SPANS),
         ),
         inheritance.view(SPANS),
     )
@@ -376,7 +377,7 @@ def test_a_stale_start_at_an_address_the_attempt_reopened_is_its_callers_precond
             TargetWriteInstruction(
                 "amend", "Balance", {"id": 1, "value": "100.00"}, if_tx_start=T0
             ),
-            BALANCES,
+            write_preparation_of(BALANCES),
         ),
         inheritance.view(BALANCES),
     )

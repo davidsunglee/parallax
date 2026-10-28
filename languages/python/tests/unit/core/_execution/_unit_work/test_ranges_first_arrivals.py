@@ -85,6 +85,7 @@ from tests._support.planner_probes import (
     source_authority,
     write_admission,
 )
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_model_support import corpus_records, formed
 from tests.unit.core._execution._unit_work._acquired_rows_support import (
     alone,
@@ -174,7 +175,7 @@ def _position(
 ) -> PreparedKeyedInstruction:
     prepared = prepare_wire_write(
         KeyedWriteInstruction(mutation, "Position", ({"id": 1, **members},), valid_from, until),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -182,7 +183,8 @@ def _position(
 
 def _balance(mutation: KeyedMutation, **members: object) -> PreparedKeyedInstruction:
     prepared = prepare_wire_write(
-        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)), _BALANCE
+        KeyedWriteInstruction(mutation, "Balance", ({"id": 1, **members},)),
+        write_preparation_of(_BALANCE),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return prepared
@@ -312,7 +314,7 @@ def _balance_target(tx_start: dt.datetime, **members: object) -> TargetWrite:
     return target_write(
         prepare_wire_write(
             TargetWriteInstruction("amend", "Balance", {"id": 1, **members}, if_tx_start=tx_start),
-            _BALANCE,
+            write_preparation_of(_BALANCE),
         ),
         inheritance.view(_BALANCE),
     )
@@ -353,7 +355,7 @@ def _position_target(mutation: TargetMutation, **members: object) -> TargetWrite
                 valid_from=MAR,
                 until=SEP,
             ),
-            POSITION,
+            write_preparation_of(POSITION),
         ),
         FAMILIES,
     )

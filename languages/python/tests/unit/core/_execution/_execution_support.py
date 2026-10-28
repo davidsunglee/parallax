@@ -26,6 +26,7 @@ from parallax.core.unit_work import (
     object_key,
 )
 from tests._support.root_ownership import own_root
+from tests._support.write_preparation import write_preparation_of
 
 ACCOUNT: Final = MODELS["account"]
 FIXED: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -80,7 +81,7 @@ def account_insert(account_id: int = 7) -> KeyedInsert:
             "Account",
             ({"id": account_id, "owner": "Newton", "balance": 5},),
         ),
-        model_of(ACCOUNT),
+        write_preparation_of(model_of(ACCOUNT)),
     )
     assert isinstance(prepared, PreparedKeyedInstruction)
     return admitted_write(prepared, None, object_key(prepared, model_of(ACCOUNT)))

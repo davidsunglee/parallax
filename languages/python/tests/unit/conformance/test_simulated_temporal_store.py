@@ -97,6 +97,7 @@ from parallax.core.write_plan.steps import (
     WriteRow,
 )
 from tests._support.planner_probes import admitted_writes, plan_steps
+from tests._support.write_preparation import write_preparation_of
 from tests.unit.conformance._coverage_rows_support import coverage_members, read_coverage
 
 POSITION = models.load_models()["position"]
@@ -220,7 +221,7 @@ def _planned(
         {"mutation": "insert", "entity": entity_name, "rows": [members], "validFrom": valid_from}
     )
     assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
-    prepared = instructions.prepare_wire_write(instruction, POSITION)
+    prepared = instructions.prepare_wire_write(instruction, write_preparation_of(POSITION))
     return plan_steps(
         build_write_planner(POSITION).finalize(
             WritePlanningRequest(
@@ -270,7 +271,7 @@ def test_a_milestone_no_planned_step_closes_stays_stored_as_it_was(value: str, k
             dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
             dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         ),
-        POSITION,
+        write_preparation_of(POSITION),
     )
     steps = plan_steps(
         build_write_planner(POSITION).finalize(
@@ -333,7 +334,7 @@ def test_an_applied_non_temporal_insert_stores_nothing() -> None:
     )
     assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
     account = models.load_models()["account"]
-    prepared = instructions.prepare_wire_write(instruction, account)
+    prepared = instructions.prepare_wire_write(instruction, write_preparation_of(account))
     plan = build_write_planner(account).finalize(
         WritePlanningRequest(
             actor_identity=SubjectActor("unattributed"),
@@ -376,7 +377,7 @@ def _rectangles(
             document["until"] = until
         instruction = instructions.deserialize(document)
         assert isinstance(instruction, KeyedWriteInstruction)  # a `rows` document is a keyed write
-        prepared = instructions.prepare_wire_write(instruction, POSITION)
+        prepared = instructions.prepare_wire_write(instruction, write_preparation_of(POSITION))
         entries.append(admitted_write(prepared, None, object_key(prepared, POSITION)))
     return plan_steps(
         build_write_planner(POSITION).finalize(

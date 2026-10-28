@@ -546,12 +546,13 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"authoring_of", "read_evidence_of"}
     ),
     # The conformance-only runtime names the scenario and snapshot lanes drive the
-    # production planner and source-pin check through, read from the modules that
-    # own them, the attempt lifetime a simulated transaction's unit of work runs
-    # over, the dry lowering simulated step execution lowers each span through,
-    # and the family-variant key a Wire node is spelled with.
+    # production planner, write preparation, and source-pin check through, read
+    # from the modules that own them, the attempt lifetime a simulated
+    # transaction's unit of work runs over, the dry lowering simulated step
+    # execution lowers each span through, and the family-variant key a Wire node
+    # is spelled with.
     ("parallax.conformance._lanes.scenario", "parallax.core._execution._planning"): frozenset(
-        {"build_write_planner"}
+        {"build_write_planner", "build_write_preparation"}
     ),
     (
         "parallax.conformance._lanes.scenario",
