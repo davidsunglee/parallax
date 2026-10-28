@@ -147,10 +147,7 @@ class _Refused(Exception):
 
 
 _CONVERSION_FAILURES: Final = (NeutralTypeMismatch, WireDecodingError)
-_MARKER_KEYS: Final[tuple[frozenset[str], ...]] = (
-    frozenset({"computed"}),
-    frozenset({"increment"}),
-)
+_MARKER_KEYS: Final = frozenset({"computed", "increment"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,4 +433,5 @@ def _mask(flags: Iterable[bool]) -> int:
 def _is_marker(value: object) -> bool:
     if not isinstance(value, Mapping):
         return False
-    return frozenset(cast("Mapping[object, object]", value)) in _MARKER_KEYS
+    document = cast("Mapping[object, object]", value)
+    return len(document) == 1 and next(iter(document)) in _MARKER_KEYS
