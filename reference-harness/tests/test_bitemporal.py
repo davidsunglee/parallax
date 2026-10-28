@@ -652,6 +652,66 @@ def test_a_split_rendering_its_chained_rows_as_separate_inserts_is_refused() -> 
         _assert_write_input_columns(case, "postgres")
 
 
+_POSITION_COLUMN_ARRAYS = (
+    "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) select * from "
+    "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), "
+    "cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), "
+    "cast(? as timestamptz[]))"
+)
+
+# The head / middle / tail successors of `m-temporal-write-017`'s split, one array
+# per physical column.
+_SPLIT_SUCCESSOR_ARRAYS: list[list[Any]] = [
+    [1, 1, 1],
+    ["A", "A", "A"],
+    ["100.00", "200.00", "100.00"],
+    ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z"],
+    ["2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z", "infinity"],
+    ["2024-02-15T00:00:00.000000Z"] * 3,
+    ["infinity"] * 3,
+]
+
+
+def _split_as_column_arrays(arrays: list[list[Any]]) -> Case:
+    case = copy.deepcopy(
+        next(c for c in _until_write_cases() if c.path.stem.startswith("m-temporal-write-017"))
+    )
+    grouped = case.then["statements"][2]
+    grouped["sql"]["postgres"] = _POSITION_COLUMN_ARRAYS
+    grouped["binds"] = {"postgres": arrays, "mariadb": grouped["binds"]}
+    return case
+
+
+def test_a_split_chaining_its_successors_as_column_arrays_is_graded_row_by_row() -> None:
+    _assert_write_input_columns(_split_as_column_arrays(_SPLIT_SUCCESSOR_ARRAYS), "postgres")
+
+
+@pytest.mark.parametrize(
+    ("column", "position", "damaged", "refusal"),
+    [
+        pytest.param(5, 1, "2024-03-01T00:00:00.000000Z", "!= golden bind", id="successor-in_z"),
+        pytest.param(6, 2, "2024-09-01T00:00:00.000000Z", "!= golden bind", id="successor-out_z"),
+        pytest.param(4, 1, "2024-10-01T00:00:00.000000Z", "Valid-Time", id="successor-window"),
+    ],
+)
+def test_a_split_successor_damaged_inside_one_column_array_is_refused(
+    column: int, position: int, damaged: str, refusal: str
+) -> None:
+    arrays = copy.deepcopy(_SPLIT_SUCCESSOR_ARRAYS)
+    arrays[column][position] = damaged
+    with pytest.raises(CaseFailure, match=refusal):
+        _assert_write_input_columns(_split_as_column_arrays(arrays), "postgres")
+
+
+def test_a_split_whose_column_arrays_disagree_in_length_is_refused() -> None:
+    # Unequal arrays would make PostgreSQL pad the missing tail with NULL, which
+    # would hide a dropped successor rather than grade it.
+    arrays = copy.deepcopy(_SPLIT_SUCCESSOR_ARRAYS)
+    arrays[4] = arrays[4][:2]
+    with pytest.raises(CaseFailure, match="unequal lengths"):
+        _assert_write_input_columns(_split_as_column_arrays(arrays), "postgres")
+
+
 # --- temporal inheritance composition -----------------------------------------
 #
 # A temporal inheritance participant composes milestone-chaining writes and temporal reads

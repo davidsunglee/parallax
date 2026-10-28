@@ -75,9 +75,10 @@ _DROP_TOKENS = frozenset({TokenType.ALIAS})
 # every surface; ``CONVERT`` is matched too for defensiveness.
 _CAST_FUNCTIONS = frozenset({"CAST", "CONVERT"})
 
-# PostgreSQL's quantified comparison operator is tokenized as a keyword rather
-# than a generic function name, but its array expression still binds tightly.
-_TIGHT_PAREN_KEYWORDS = frozenset({"ANY"})
+# PostgreSQL's quantified comparison operator and its set-returning `unnest` are
+# tokenized as keywords rather than generic function names, but their arguments
+# still bind tightly (`any(cast(? as bigint[]))`, `unnest(cast(? as bigint[]), …)`).
+_TIGHT_PAREN_KEYWORDS = frozenset({"ANY", "UNNEST"})
 
 # A private spacing sentinel used by the renderer to mark a VAR token that is a
 # function name (``lower(…)``). It is never a real sqlglot token type; it only
@@ -306,9 +307,10 @@ def _inline_parameter_literal(tree: Expr) -> Expr | None:
     """The first literal used as a *parameter* (which must therefore be a ``?``
     bind), or ``None``. A literal compared against a column, listed in an
     ``in`` / ``between`` against a column, used as a row ``limit``, or placed in
-    an ``INSERT ... VALUES`` tuple is a parameter. Structural constants — the
-    ``1 = 0`` none-identity and the ``select 1`` EXISTS probe — are not
-    parameters and are left alone."""
+    an ``INSERT ... VALUES`` tuple or among the column arrays an
+    ``INSERT ... SELECT * FROM unnest(…)`` reads apart is a parameter. Structural
+    constants — the ``1 = 0`` none-identity and the ``select 1`` EXISTS probe —
+    are not parameters and are left alone."""
 
     for kind, is_parameter in _PARAMETER_LITERAL_RULES:
         found = next((node for node in tree.find_all(kind) if is_parameter(node)), None)
@@ -318,6 +320,16 @@ def _inline_parameter_literal(tree: Expr) -> Expr | None:
         values = tree.args.get("expression")
         if isinstance(values, exp.Values):
             return next(values.find_all(exp.Literal), None)
+        if isinstance(values, exp.Select):
+            return next(
+                (
+                    literal
+                    for unnest in values.find_all(exp.Unnest)
+                    for literal in unnest.find_all(exp.Literal)
+                    if literal.find_ancestor(exp.DataType) is None
+                ),
+                None,
+            )
     return None
 
 

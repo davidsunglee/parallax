@@ -120,11 +120,33 @@ def _adapt(value: Any) -> Any:
     return value
 
 
+def _adapt_array(values: Any) -> Any:
+    """Adapt each element of an array bind as it would bind alone, so a ``None``
+    element is SQL ``NULL`` exactly as a lone ``None`` bind is.
+
+    A document element is wrapped whole, so a nested JSON array or a JSON null
+    inside it stays part of that one ``jsonb`` element rather than becoming an
+    array dimension or an array ``NULL``. psycopg dumps an array of one Python
+    type only, so a timestamp array holding the open bound spells every finite
+    instant as ISO-8601 text beside ``infinity`` for the statement's cast to read.
+    """
+    if not isinstance(values, list):
+        return values
+    elements = [_adapt(value) for value in values]
+    if any(value is TEMPORAL_INFINITY for value in values):
+        return [
+            element.isoformat() if isinstance(element, datetime) else element
+            for element in elements
+        ]
+    return elements
+
+
 def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
     physical = adapt_document_scalar_binds(sql, binds, "postgres")
     array_binds = array_bind_indexes(sql)
     return tuple(
-        value if index in array_binds else _adapt(value) for index, value in enumerate(physical)
+        _adapt_array(value) if index in array_binds else _adapt(value)
+        for index, value in enumerate(physical)
     )
 
 

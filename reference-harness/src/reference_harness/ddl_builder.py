@@ -470,17 +470,31 @@ def declared_contributors(model: Model) -> Mapping[ColumnContributor, DeclaredCo
     return _declarations(model).contributors
 
 
-def _slot_ddl(slot: ColumnSlot, declarations: _Declarations, dialect: str) -> str:
+def slot_neutral_type(
+    slot: ColumnSlot, declarations: Mapping[ColumnContributor, DeclaredContributor]
+) -> str:
+    """The neutral type *slot*'s column is declared with, including the
+    framework-owned discriminator and shared Structured Column that no
+    contributor declaration types."""
+    return _slot_declaration(slot, declarations)[0]
+
+
+def _slot_declaration(
+    slot: ColumnSlot, declarations: Mapping[ColumnContributor, DeclaredContributor]
+) -> tuple[str, int | None]:
     if isinstance(slot.contributor, InheritanceDiscriminator):
-        neutral_type, max_length = _TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH
-    elif isinstance(slot.contributor, RelationalDocument):
+        return _TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH
+    if isinstance(slot.contributor, RelationalDocument):
         # A Relational Document Layout's shared Structured Column has no
         # declaration of its own, and carries the document-resident members of
         # every governed row in the same physical type a Value Object occupies.
-        neutral_type, max_length = _DOCUMENT_TYPE, None
-    else:
-        declared = declarations.contributors[slot.contributor]
-        neutral_type, max_length = declared.neutral_type, declared.max_length
+        return _DOCUMENT_TYPE, None
+    declared = declarations[slot.contributor]
+    return declared.neutral_type, declared.max_length
+
+
+def _slot_ddl(slot: ColumnSlot, declarations: _Declarations, dialect: str) -> str:
+    neutral_type, max_length = _slot_declaration(slot, declarations.contributors)
     parts = [
         quote_identifier(slot.column, dialect),
         _column_type(neutral_type, max_length, dialect),
