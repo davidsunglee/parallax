@@ -245,6 +245,14 @@ def test_every_column_array_an_insert_reads_apart_is_an_array_bind() -> None:
     assert array_bind_indexes("insert into item(a, b) values (?, ?), (?, ?)") == frozenset()
 
 
+def test_a_column_array_is_an_array_bind_through_casts_and_parentheses() -> None:
+    statement = (
+        "insert into item(a, b, c) select * from unnest((cast(? as bigint[])), ?::text[], (?)) u"
+    )
+
+    assert array_bind_indexes(statement) == {0, 1, 2}
+
+
 _POSITION_COLUMN_ARRAYS = (
     "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) select * from "
     "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), "
