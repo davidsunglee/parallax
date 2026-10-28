@@ -3,20 +3,20 @@
     "feature-boundary": {
       "runtimes": {
         "3.13": {
-          "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-feature-boundary-3.13/bin/python",
+          "executable": "/opt/homebrew/opt/python@3.13/bin/python3.13",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.17"
+          "version": "3.13.18"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-227-batch-execute-deferred-bitemporal-ranges-4omsdv/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-248-reduce-db-round-trips-94qpqh/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_feature_boundary_support.py": "64f02a60d9403ea6621963a7652dc847b5e321551e0a0697d8d060b120320f1b",
+        "tests/unit/_feature_boundary_support.py": "d59877596c6efca67260a83971c4a1afb7484a07f2234fe76ecb1ebe0e47a8c5",
         "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
         "tools/feature_boundary_overhead.py": "d7268ae2198a6778d654e3814e67cd8cea14ee544dc683af8f9bb01a841af45e",
         "tools/feature_boundary_reading.py": "8d879c4af9590a661f50dca39a8e8667f62a3dc7ffbc631550db862e7e68688f"
@@ -25,13 +25,13 @@
     "instance-state": {
       "runtimes": {
         "3.13": {
-          "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-instance-state-3.13/bin/python",
+          "executable": "/opt/homebrew/opt/python@3.13/bin/python3.13",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.17"
+          "version": "3.13.18"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-227-batch-execute-deferred-bitemporal-ranges-4omsdv/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-248-reduce-db-round-trips-94qpqh/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -51,62 +51,62 @@
           "status": "unavailable"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-227-batch-execute-deferred-bitemporal-ranges-4omsdv/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-248-reduce-db-round-trips-94qpqh/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tools/lifecycle_overhead.py": "17d27c69273afcf61e95ec45cd49cad55bdb623d5c78ad0fded9da94625f4ac9"
+        "tools/lifecycle_overhead.py": "4e4a2aeb717a7246a02489e615c0b989fecabb8881438a281925bdab126d3c27"
       }
     },
     "snapshot-delivery": {
       "runtimes": {
         "3.13": {
-          "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-snapshot-delivery-3.13/bin/python",
+          "executable": "/opt/homebrew/opt/python@3.13/bin/python3.13",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.17"
+          "version": "3.13.18"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-227-batch-execute-deferred-bitemporal-ranges-4omsdv/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-248-reduce-db-round-trips-94qpqh/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_delivery_control_support.py": "deb006e98068a7f059c2771500d378cf6757dcaa37baf84feec1beab37e9f115",
-        "tests/unit/_leaf_type_support.py": "ba71d340b0a45e885b18ef6a7db6dcdf249e2e76949730de2525fc9c2dcef112",
-        "tests/unit/_snapshot_materialization_support.py": "419afb567aba7c12a64d0ab924349724bac2ff5b805b7f410906d46eff6a4495",
-        "tests/unit/_structural_geometry_support.py": "41673306e078cb7e920bbf5c11d348bfe68da531a4abef21d9f653cb3ae99dd3",
+        "tests/unit/_delivery_control_support.py": "01c1f91cea322712887f714caf041efa5c3819d1e0305b886104ebad45101610",
+        "tests/unit/_leaf_type_support.py": "af1c73fd8fc2df6edf7fbdaa7ffbfd7c2d62dbc31af93cce529f6d5ac41ad49f",
+        "tests/unit/_snapshot_materialization_support.py": "9dede31de3eb67d9c3890e9bcde3bc570ca797605a1abe8c2c9dd91e2ace26ce",
+        "tests/unit/_structural_geometry_support.py": "5a9b489a5cf1db949724afc89894a38daac07afe4cb6ba77c9eb0db414a0fde9",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
         "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
         "tools/snapshot_delivery_overhead.py": "f20a3d3740f0c5ebd0fa1b403e0a898fdd131178e635f80377d9db56ba946d7c",
-        "tools/snapshot_delivery_reading.py": "50d8dae50d3135527c6f773851b54fc05bdcc47fcb5f90bdea96beedf56f5934"
+        "tools/snapshot_delivery_reading.py": "cb50ad67203901874572bb5fe659bd2f3b82450e778e448e09c581b9679fc60c"
       }
     },
     "write-lowering": {
       "runtimes": {
         "3.13": {
-          "executable": "/private/var/folders/32/33v_wbcd6rv1sqvqs6v7qcvw0000gp/T/parallax-write-lowering-3.13/bin/python",
+          "executable": "/opt/homebrew/opt/python@3.13/bin/python3.13",
           "implementation": "CPython",
           "status": "available",
-          "version": "3.13.17"
+          "version": "3.13.18"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-227-batch-execute-deferred-bitemporal-ranges-4omsdv/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-248-reduce-db-round-trips-94qpqh/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_leaf_type_support.py": "ba71d340b0a45e885b18ef6a7db6dcdf249e2e76949730de2525fc9c2dcef112",
-        "tests/unit/_structural_geometry_support.py": "41673306e078cb7e920bbf5c11d348bfe68da531a4abef21d9f653cb3ae99dd3",
+        "tests/unit/_leaf_type_support.py": "af1c73fd8fc2df6edf7fbdaa7ffbfd7c2d62dbc31af93cce529f6d5ac41ad49f",
+        "tests/unit/_structural_geometry_support.py": "5a9b489a5cf1db949724afc89894a38daac07afe4cb6ba77c9eb0db414a0fde9",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
-        "tests/unit/_write_lowering_support.py": "56d7bdb00cd9ae548307ab756e69a960e0c0c494cbbeac22b91a942501c8ea21",
+        "tests/unit/_write_lowering_support.py": "44f6726e8c264103f11deaa8f1fee31ccfb223c11191646b41d79511dbc1b6d8",
         "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
         "tools/write_lowering_overhead.py": "41448a7f8ad39237a8b9801091af1ba75e6b9107efd078dda8e80c97b43901bd",
         "tools/write_lowering_reading.py": "486009cc65122e9f77f9462bef4e0180e4fffd2221847d27b57e1cfa810127a6"
