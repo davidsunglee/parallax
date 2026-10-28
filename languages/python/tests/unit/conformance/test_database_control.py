@@ -83,6 +83,9 @@ class _FakeCursor:
             self.description = [_Column(name) for name in self._rows[0]] if self._rows else None
             return
         self._connection.statements.append((text, tuple(binds or ())))
+        role_error = self._connection.role_error
+        if "SET ROLE" in text and text != "RESET ROLE" and role_error is not None:
+            raise role_error
         rows = self._rows
         self.description = [_Column(name) for name in rows[0]] if rows else None
 
@@ -167,9 +170,6 @@ class _FakeConnection:
             if self.reset_error is not None:
                 raise self.reset_error
             return cursor
-        if "SET ROLE" in text and text != "RESET ROLE" and self.role_error is not None:
-            self.statements.append((text, tuple(binds or ())))
-            raise self.role_error
         cursor = self.cursor()
         cursor.execute(sql, binds)
         return cursor

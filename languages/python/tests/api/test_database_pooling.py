@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
+import uuid
 from decimal import Decimal
 from typing import Any
 
@@ -259,6 +261,89 @@ def test_a_committed_transaction_keeps_its_value_across_the_release(profile_run:
 
         assert db.transact(body) == new_id
         assert any(int(account.id) == new_id for account in _accounts(db))
+
+
+class _EndingAtAcquisition:
+    """A lifecycle provider that, once armed, ends the backend of the next
+    connection an operation acquires — from an independent session, between
+    the acquisition and the operation's first statement — and records every
+    event it hears by kind."""
+
+    def __init__(self, profile_run: Any, application_name: str) -> None:
+        self._profile_run = profile_run
+        self._application_name = application_name
+        self.armed = False
+        self.ended: list[int] = []
+        self.events: list[str] = []
+
+    def open(self, execution: Any, /) -> Any:
+        del execution
+        return self
+
+    def report_handler_error(self, error: Any, /) -> None:
+        raise AssertionError(f"no handler failure expected: {error.diagnostic.message}")
+
+    def handle(self, event: Any, /) -> None:
+        kind = type(event).__name__
+        self.events.append(kind)
+        if self.armed and kind == "AcquisitionFinished":
+            self.armed = False
+            self._end_the_acquired_backend()
+
+    def heard(self) -> list[str]:
+        heard, self.events = self.events, []
+        return heard
+
+    def _end_the_acquired_backend(self) -> None:
+        executioner = self._profile_run.control()
+        try:
+            ((pid,),) = executioner.execute(
+                "select pid from pg_stat_activity where application_name = %s",
+                [self._application_name],
+            )
+            executioner.execute("select pg_terminate_backend(%s) as ended", [pid])
+            give_up = time.monotonic() + 10.0
+            while executioner.execute(
+                "select count(*) as listed from pg_stat_activity where pid = %s", [pid]
+            ) != [(0,)]:
+                assert time.monotonic() < give_up, "the ended backend never left"
+                time.sleep(0.01)
+            self.ended.append(pid)
+        finally:
+            executioner.close()
+
+
+def test_a_read_whose_session_ended_after_acquisition_is_still_one_lease_and_one_call(
+    profile_run: Any,
+) -> None:
+    # The read's backend is ended after its connection was acquired and before
+    # its first statement. The statement runs again on a replacement inside
+    # the same lease, so what the operation reports — its one acquisition and
+    # release, its one Database Call per statement, and its rows, membership
+    # values included — is exactly what the same read reports undisturbed.
+    _seeded(profile_run)
+    application_name = f"parallax_first_use_{uuid.uuid4().hex[:12]}"
+    provider = _EndingAtAcquisition(profile_run, application_name)
+    configured = profile_run.configured(
+        pool=PoolOptions(min_size=1, max_size=1),
+        settings={"application_name": application_name},
+    )
+    with connect(configured, _ACCOUNT, lifecycle_provider=provider) as _root_db:
+        db = _root_db.using_database_login()
+        ids = sorted(int(account.id) for account in _accounts(db))[:2]
+        query = Account.where(Account.id.in_(list[object](ids)))
+        provider.heard()
+        undisturbed = [int(account.id) for account in db.find(query).results()]
+        expected = provider.heard()
+        provider.armed = True
+        replaced = [int(account.id) for account in db.find(query).results()]
+        observed = provider.heard()
+
+    assert len(provider.ended) == 1
+    assert replaced == undisturbed and sorted(replaced) == ids
+    assert observed == expected
+    assert observed.count("AcquisitionStarted") == observed.count("ReleaseFinished") == 1
+    assert observed.count("DatabaseCallStarted") == 1
 
 
 # --------------------------------------------------------------------------- #

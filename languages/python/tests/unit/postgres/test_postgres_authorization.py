@@ -22,6 +22,15 @@ class _RecordingConnection:
     def execute(self, command: object) -> None:
         self.commands.append(command)
 
+    def cursor(self) -> _RecordingConnection:
+        return self
+
+    def __enter__(self) -> _RecordingConnection:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return
+
 
 class _UnusedPool:
     def get_stats(self) -> dict[str, int]:

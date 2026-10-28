@@ -4,7 +4,7 @@ import contextlib
 import sys
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import psycopg
 from psycopg import postgres
@@ -50,6 +50,9 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.wire._json import dump_document, prepared_loads
 from parallax.postgres._compiled_loaders import compiled_loaders
+
+if TYPE_CHECKING:
+    from parallax.postgres._context import PostgresConnectionContext
 
 __all__ = [
     "CONNECT_KWARGS",
@@ -329,6 +332,85 @@ def _document_read_rows(
     return _DocumentReadRows(dialect, document_reads) if document_reads else None
 
 
+type _NativeOperation[T, *P] = Callable[
+    [psycopg.Connection[TupleRow], PostgresConnectionContext | None, *P], T
+]
+"""One native operation over the connection it is handed, and its prepared inputs.
+
+Its connection context, when it has one, is the lease whose first submission it
+may be: it marks the start of its driver submission immediately before the
+driver is called and its completion as soon as the submission has answered,
+before any result is fetched or caller work runs. Direct execution hands it no
+context, and nothing is marked.
+"""
+
+type _PreparedStatement = tuple[bytes, list[object], Sequence[DocumentReadOrdinals]]
+
+
+def _start_first_send(context: PostgresConnectionContext | None) -> None:
+    if context is not None:
+        context._start_first_send()  # pyright: ignore[reportPrivateUsage] - the lease's own first-send marker
+
+
+def _complete_first_send(context: PostgresConnectionContext | None) -> None:
+    if context is not None:
+        context._complete_first_send()  # pyright: ignore[reportPrivateUsage] - the lease's own first-send marker
+
+
+def _execute_rows(
+    connection: psycopg.Connection[TupleRow],
+    context: PostgresConnectionContext | None,
+    dialect: Dialect,
+    sql: bytes,
+    binds: list[object],
+    document_reads: Sequence[DocumentReadOrdinals],
+) -> list[Row]:
+    rows = _document_read_rows(dialect, document_reads)
+    with _cursor(connection, rows) as cursor:
+        _start_first_send(context)
+        cursor.execute(sql, binds)
+        _complete_first_send(context)
+        return _fetch(cursor, rows)
+
+
+def _execute_pipeline(
+    connection: psycopg.Connection[TupleRow],
+    context: PostgresConnectionContext | None,
+    dialect: Dialect,
+    statements: tuple[_PreparedStatement, ...],
+) -> list[list[Row]]:
+    """Present ``statements`` in one pipeline, then fetch each one's rows.
+
+    The batch's submission is complete only once the pipeline has
+    synchronized: a queued statement has not been answered, so queueing alone
+    proves nothing about the round trip.
+    """
+    with contextlib.ExitStack() as cursors:
+        pending: list[tuple[psycopg.Cursor[Row], _DocumentReadRows | None]] = []
+        with connection.pipeline():
+            for sql, binds, document_reads in statements:
+                rows = _document_read_rows(dialect, document_reads)
+                cursor = cursors.enter_context(_cursor(connection, rows))
+                pending.append((cursor, rows))
+                _start_first_send(context)
+                cursor.execute(sql, binds)
+        _complete_first_send(context)
+        return [_fetch(cursor, rows) for cursor, rows in pending]
+
+
+def _execute_write(
+    connection: psycopg.Connection[TupleRow],
+    context: PostgresConnectionContext | None,
+    sql: bytes,
+    binds: list[object],
+) -> int:
+    with connection.cursor() as cursor:
+        _start_first_send(context)
+        cursor.execute(sql, binds)
+        _complete_first_send(context)
+        return cursor.rowcount
+
+
 CONNECT_KWARGS: dict[str, object] = {"autocommit": True, "row_factory": tuple_row}
 """The driver configuration every owned physical connection is created with.
 
@@ -598,6 +680,7 @@ class _CountCursor(psycopg.Cursor[TupleRow]):
 
 def _write_in_order(
     connection: psycopg.Connection[TupleRow],
+    context: PostgresConnectionContext | None,
     dialect: Dialect,
     statements: Sequence[CanonicalWriteStatement],
 ) -> OrderedWriteResult:
@@ -623,6 +706,7 @@ def _write_in_order(
                     binds = adapt_binds(statement.binds)
                     cursor = _CountCursor(connection, intake)
                     cursors.append(cursor)
+                    _start_first_send(context)
                     cursor.execute(query, binds, prepare=False)
             except BaseException:
                 intake.accepting = False
@@ -727,9 +811,13 @@ class PostgresConnection:
     psycopg connection somebody else owns the lifetime of.
 
     It runs statements and demarcates transactions, and it does nothing about
-    the connection's life. Revocation is how the owner ends the scope: the
-    native reference is cleared, so a caller holding this past its acquisition
-    executes nothing and — more importantly — retains nothing.
+    the connection's life. Built over a native connection, it is direct access
+    to a session its owner manages, and it never replaces that session. Built
+    from a connection context, it holds no connection at all: every operation
+    borrows the context's current one, which is how a connection the context
+    replaced is the one the next operation reaches. Revocation is how the owner
+    ends the scope: the access is cleared, so a caller holding this past its
+    acquisition executes nothing and — more importantly — retains nothing.
     """
 
     dialect: Dialect = POSTGRES
@@ -741,10 +829,24 @@ class PostgresConnection:
     name that could drift from it.
     """
 
-    __slots__ = ("_connection", "_ordered", "_suspect")
+    __slots__ = ("_connection", "_context", "_ordered", "_suspect")
 
     def __init__(self, connection: psycopg.Connection[TupleRow]) -> None:
-        self._connection: psycopg.Connection[TupleRow] | None = connection
+        self._grant(connection, None)
+
+    @classmethod
+    def _from_context(cls, context: PostgresConnectionContext) -> PostgresConnection:
+        execution = cls.__new__(cls)
+        execution._grant(None, context)
+        return execution
+
+    def _grant(
+        self,
+        connection: psycopg.Connection[TupleRow] | None,
+        context: PostgresConnectionContext | None,
+    ) -> None:
+        self._connection = connection
+        self._context = context
         self._suspect = False
         self._ordered: OrderedWriteTransport | None = self._ordered_writes if _PIPELINED else None
 
@@ -754,27 +856,46 @@ class PostgresConnection:
 
         Set where a boundary could not be brought back to a known state — a
         transaction context that failed to enter, a rollback that failed, or
-        characteristics that could not be cleared.
+        characteristics that could not be cleared. Under a connection context
+        it is the context's own record for its current connection.
         It is a report for cleanup to act on, not an action: this class closes
         nothing and returns nothing.
         """
+        context = self._context
+        if context is not None:
+            return context._suspect  # pyright: ignore[reportPrivateUsage] - the owner's record for its current connection
         return self._suspect
 
     def revoke(self) -> bool:
         """End this scope's access and report whether it left the connection suspect.
 
         Idempotent, and it never touches the connection itself. Clearing the
-        reference here is what makes a later call raise before reaching a driver
-        instead of running on a connection somebody else now holds.
+        access here is what makes a later call raise before reaching a driver
+        instead of running on a connection somebody else now holds, and what
+        leaves a saved reference reaching neither a connection nor the context
+        that could replace one.
         """
+        suspect = self.suspect
         self._connection = None
-        return self._suspect
+        self._context = None
+        return suspect
 
-    def _native(self) -> psycopg.Connection[TupleRow]:
+    def _current_native(self) -> psycopg.Connection[TupleRow]:
+        context = self._context
+        if context is not None:
+            return context._current_native()  # pyright: ignore[reportPrivateUsage] - the owner's current connection
         connection = self._connection
         if connection is None:
             raise RuntimeError(_REVOKED)
         return connection
+
+    def _invoke_native[T, *P](
+        self, operation: _NativeOperation[T, *P], /, *prepared: *P, replay_safe: bool
+    ) -> T:
+        context = self._context
+        if context is not None:
+            return context._run_native(operation, *prepared, replay_safe=replay_safe)  # pyright: ignore[reportPrivateUsage] - the owner's one native-operation runner
+        return operation(self._current_native(), None, *prepared)
 
     def execute(
         self,
@@ -784,12 +905,19 @@ class PostgresConnection:
         *,
         read_only: bool = False,
     ) -> list[Row]:
-        del read_only
-        connection = self._native()
-        rows = _document_read_rows(self.dialect, document_reads)
-        with translating_driver_errors(self.dialect), _cursor(connection, rows) as cursor:
-            cursor.execute(sql.encode(), adapt_binds(binds))
-            return _fetch(cursor, rows)
+        """Run one statement and return its rows.
+
+        Under a connection context, a ``read_only`` submission that is the
+        lease's first and meets a broken session is submitted once more,
+        unchanged, on the connection the context replaces it with; nothing else
+        is ever resubmitted.
+        """
+        query = sql.encode()
+        adapted = adapt_binds(binds)
+        with translating_driver_errors(self.dialect):
+            return self._invoke_native(
+                _execute_rows, self.dialect, query, adapted, document_reads, replay_safe=read_only
+            )
 
     def execute_pipeline(
         self,
@@ -798,22 +926,21 @@ class PostgresConnection:
         read_only: bool = False,
     ) -> list[list[Row]]:
         del read_only
-        connection = self._native()
-        with translating_driver_errors(self.dialect), contextlib.ExitStack() as cursors:
-            pending: list[tuple[psycopg.Cursor[Row], _DocumentReadRows | None]] = []
-            with connection.pipeline():
-                for statement in statements:
-                    rows = _document_read_rows(self.dialect, statement.document_reads)
-                    cursor = cursors.enter_context(_cursor(connection, rows))
-                    pending.append((cursor, rows))
-                    cursor.execute(statement.sql.encode(), adapt_binds(statement.binds))
-            return [_fetch(cursor, rows) for cursor, rows in pending]
+        if not statements:
+            self._current_native()
+            return []
+        prepared = tuple(
+            (statement.sql.encode(), adapt_binds(statement.binds), statement.document_reads)
+            for statement in statements
+        )
+        with translating_driver_errors(self.dialect):
+            return self._invoke_native(_execute_pipeline, self.dialect, prepared, replay_safe=False)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        connection = self._native()
-        with translating_driver_errors(self.dialect), connection.cursor() as cursor:
-            cursor.execute(sql.encode(), adapt_binds(binds))
-            return cursor.rowcount
+        query = sql.encode()
+        adapted = adapt_binds(binds)
+        with translating_driver_errors(self.dialect):
+            return self._invoke_native(_execute_write, query, adapted, replay_safe=False)
 
     @property
     def ordered_write_transport(self) -> OrderedWriteTransport | None:
@@ -830,18 +957,26 @@ class PostgresConnection:
         call, so a saved reference to this operation runs nothing once the
         scope is revoked.
         """
-        connection = self._native()
+        self._current_native()
+        if not statements:
+            return OrderedWriteResultComplete(())
         try:
-            result = _write_in_order(connection, self.dialect, statements)
+            result = self._invoke_native(
+                _write_in_order, self.dialect, statements, replay_safe=False
+            )
         except BaseException:
-            self._suspect = True
+            self._mark_suspect()
             raise
         if isinstance(result, OrderedWriteResultInterrupted):
-            self._suspect = True
+            self._mark_suspect()
         return result
 
     def _mark_suspect(self) -> None:
-        self._suspect = True
+        context = self._context
+        if context is not None:
+            context._mark_suspect()  # pyright: ignore[reportPrivateUsage] - the owner's record for its current connection
+        else:
+            self._suspect = True
 
     def transaction[T](
         self,
@@ -887,12 +1022,17 @@ class PostgresConnection:
         make is worse than one refused. Once the outer boundary ends, both
         attributes are cleared so the session's own defaults govern the next one.
 
+        Under a connection context, an outer ``BEGIN`` that is the lease's first
+        submission and meets a broken session is opened once more, with the same
+        characteristics, on the connection the context replaces it with; the
+        callback runs only once a boundary has opened, so it never runs twice.
+
         A call made while this session's transaction is already open joins it
         through a savepoint and leaves the characteristics to the outer
         boundary; the driver refuses a characteristic requested there, before
         the savepoint opens.
         """
-        connection = self._native()
+        connection = self._current_native()
         # Resolved before the driver is touched, so a request outside its
         # vocabulary — a type violation the handle's own check would have
         # caught — changes no driver state and opens nothing.
@@ -900,12 +1040,13 @@ class PostgresConnection:
         outer = _idle(connection)
         try:
             try:
-                boundary = _open_transaction(
-                    connection,
+                boundary = self._invoke_native(
+                    _open_transaction,
                     self,
                     isolation_level,
                     read_only,
                     outer or isolation is not None or access_mode is not None,
+                    replay_safe=outer,
                 )
             except psycopg.Error as exc:
                 return BeginFailed(reported_failure(self.dialect, exc))
@@ -930,20 +1071,24 @@ class PostgresConnection:
 
         A suspect session is left as it is: disposal, not repair, ends its use,
         and a session whose transaction context failed to enter may report idle
-        while the driver's own bookkeeping says otherwise. A failure here never
-        replaces the outcome the boundary already reached.
+        while the driver's own bookkeeping says otherwise. So is a scope with no
+        connection left to clear. A failure here never replaces the outcome the
+        boundary already reached.
         """
-        connection = self._connection
-        if connection is None or self._suspect:
+        if self.suspect:
+            return
+        try:
+            connection = self._current_native()
+        except RuntimeError:
             return
         try:
             if not _idle(connection):
-                self._suspect = True
+                self._mark_suspect()
                 return
             connection.isolation_level = None
             connection.read_only = None
         except BaseException as exc:
-            self._suspect = True
+            self._mark_suspect()
             if not isinstance(exc, Exception):
                 raise
 
@@ -972,10 +1117,10 @@ class PostgresConnection:
         try:
             if boundary is not None:
                 boundary.__exit__(type(error), error, error.__traceback__)
-            self._native().rollback()
+            self._current_native().rollback()
         except psycopg.Error as exc:
             rollback_error = reported_failure(self.dialect, exc)
-            self._suspect = True
+            self._mark_suspect()
             return RollbackFailed(trigger, rollback_error)
         return RolledBack(trigger)
 
@@ -989,6 +1134,7 @@ def _idle(connection: psycopg.Connection[TupleRow]) -> bool:
 
 def _open_transaction(
     connection: psycopg.Connection[TupleRow],
+    context: PostgresConnectionContext | None,
     execution: PostgresConnection,
     isolation: psycopg.IsolationLevel | None,
     read_only: bool | None,
@@ -1007,11 +1153,13 @@ def _open_transaction(
         connection.isolation_level = isolation
         connection.read_only = read_only
     boundary = connection.transaction()
+    _start_first_send(context)
     try:
         boundary.__enter__()
     except BaseException:
         execution._mark_suspect()  # pyright: ignore[reportPrivateUsage] - the same-module facade this entry opens for
         raise
+    _complete_first_send(context)
     return boundary
 
 
