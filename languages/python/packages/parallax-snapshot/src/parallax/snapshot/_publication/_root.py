@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from array import array
 from collections.abc import Mapping, Sequence
 from typing import cast
 
@@ -15,7 +14,6 @@ from parallax.core.read_delivery._page import (
     ABSENT,
     EntityState,
     InvalidRootInput,
-    LogicalKey,
     Page,
     PageRows,
     RootViewLayout,
@@ -23,7 +21,7 @@ from parallax.core.read_delivery._page import (
     exact_stored_equal,
     layout_order_key,
     page_rows,
-    push_edges,
+    reach_into,
     same_witness,
     state_for,
     stored_order_key,
@@ -71,7 +69,7 @@ class RootView:
         "_pin",
         "_primed_mapping",
         "_primed_values",
-        "_releasable_rows",
+        "_reached",
         "_resolved",
         "_roots",
         "_rows",
@@ -101,11 +99,12 @@ class RootView:
         self._view_layouts: list[RootViewLayout] = []
         invalid_entries, root_indices, valid_roots = _partition_roots(rows, root_position)
         reached: set[int] | None = set() if len(valid_roots) > 1 else None
-        single_reached: tuple[int, ...] = ()
+        single_reached: list[int] = []
         winners: list[list[object] | None] = []
         state_nodes: dict[int, int] | None = {} if len(valid_roots) > 1 else None
         for root in valid_roots:
-            reachable = self._reachable([root])
+            reachable: list[int] = []
+            reach_into(rows, root, reachable)
             if reached is None:
                 single_reached = reachable
             else:
@@ -128,11 +127,8 @@ class RootView:
         self._states = tuple(self._states)  # pyright: ignore[reportAttributeAccessIssue]
         self._view_layouts = tuple(self._view_layouts)  # pyright: ignore[reportAttributeAccessIssue]
         self._resolved = None  # pyright: ignore[reportAttributeAccessIssue]
-        reached_projections = tuple(reached) if reached is not None else single_reached
-        self._releasable_rows = (
-            (rows, reached_projections) if isinstance(rows.member_rows, list) else None
-        )
-        _notify(rows.observer, "occurrences_reached", len(reached_projections))
+        self._reached: Sequence[int] = tuple(reached) if reached is not None else single_reached
+        _notify(rows.observer, "occurrences_reached", len(self._reached))
         if not defer_states:
             self._complete_invalid()
             self._rows = None
@@ -157,6 +153,12 @@ class RootView:
     @property
     def pin(self) -> Pin:
         return self._pin
+
+    @property
+    def reached(self) -> Sequence[int]:
+        """Every Page projection this Root View's roots reach, which is what
+        releasing the Page storage they finished with reads."""
+        return self._reached
 
     def by_allocation[T](self, by_projection: Mapping[int, T]) -> Mapping[int, T]:
         """``by_projection`` re-keyed from projection index to allocation index.
@@ -200,57 +202,6 @@ class RootView:
             return None if value is _UNPRIMED else value  # pyright: ignore[reportReturnType]
         value = by_projection.get(self._winner[node], _UNPRIMED)
         return None if value is _UNPRIMED else value  # pyright: ignore[reportReturnType]
-
-    def release_raw_rows(self) -> None:
-        """Release reached raw member rows after all evidence lookups are primed,
-        except a keyless claim's, whose payload a later root judges again."""
-        releasable = self._releasable_rows
-        if releasable is None:
-            return
-        page_rows, reached = releasable
-        member_rows = cast("list[tuple[object, ...]]", page_rows.member_rows)
-        keys = page_rows.keys
-        for projection in reached:
-            if keys[projection] is not None or not page_rows.decoders.pending(projection):
-                member_rows[projection] = ()
-        self._releasable_rows = None
-
-    def release_finished_page_rows(
-        self,
-        root_position: int,
-        last_uses: tuple[array[int], array[int]],
-    ) -> None:
-        """Release Page occurrence storage no later root can reach, and the raw
-        member rows of the other reached projections except a keyless claim's,
-        whose payload a later root judges again."""
-        releasable = self._releasable_rows
-        if releasable is None:
-            return
-        rows, reached = releasable
-        projection_last, logical_last = last_uses
-        member_rows = cast("list[tuple[object, ...]]", rows.member_rows)
-        keys = cast("list[LogicalKey | None]", rows.keys)
-        view_rows = cast("list[Sequence[object]]", rows.view_rows)
-        witnesses = cast("list[object]", rows.witnesses)
-        logical_ids = cast("list[int]", rows.logical_ids)
-        for projection in reached:
-            if projection_last[projection] != root_position:
-                if keys[projection] is not None or not rows.decoders.pending(projection):
-                    member_rows[projection] = ()
-                continue
-            member_rows[projection] = ()
-            logical = logical_ids[projection]
-            rows.issues.release(projection)
-            keys[projection] = None
-            view_rows[projection] = ()
-            rows.overwritten_edges.release(projection)
-            witnesses[projection] = None
-            rows.decoders.release(projection)
-            logical_ids[projection] = 0
-            if logical_last[logical] == root_position:
-                rows.judged_states.release_logical(logical)
-                logical_last[logical] = -1
-        self._releasable_rows = None
 
     def complete(self) -> None:
         """Decode the already-consistent root after an atomic claim pass."""
@@ -314,7 +265,7 @@ class RootView:
     def _allocate_distinct(
         self,
         rows: PageRows,
-        reachable: tuple[int, ...],
+        reachable: Sequence[int],
         winners: list[list[object] | None],
         defer_states: bool,
     ) -> None:
@@ -357,7 +308,7 @@ class RootView:
     def _allocate_claimed(  # noqa: C901
         self,
         rows: PageRows,
-        reachable: tuple[int, ...],
+        reachable: Sequence[int],
         winners: list[list[object] | None],
         state_nodes: dict[int, int] | None,
         defer_states: bool,
@@ -421,24 +372,6 @@ class RootView:
                 root_view_slot = to_root_view[slot]
                 if value is not ABSENT and carried_views[root_view_slot] is ABSENT:
                     carried_views[root_view_slot] = self._allocation(value, targets[slot], table)
-
-    def _reachable(self, roots: list[int]) -> tuple[int, ...]:
-        """Projection preorder from the roots through every reached logical
-        occurrence."""
-        rows = self._rows
-        if rows is None:  # pragma: no cover - construction owns a live Page
-            raise ValueError("a completed Root View cannot rebuild reachability")
-        order: list[int] = []
-        seen: set[int] = set()
-        pending = list(reversed(roots))
-        while pending:
-            projection = pending.pop()
-            if projection in seen:
-                continue
-            seen.add(projection)
-            order.append(projection)
-            push_edges(rows, projection, pending)
-        return tuple(order)
 
     def _canonical(self, occurrences: Sequence[int]) -> int:
         rows = self._rows

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from array import array
 from collections.abc import Generator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -18,10 +17,10 @@ from parallax.core.read_delivery._page import (
     INERT_OBSERVER,
     EntityState,
     InvalidData,
-    LogicalKey,
     MaterializationObserver,
     Page,
     PageRows,
+    PageSchedule,
     VersionAttributes,
     attribute_state,
     diagnosis,
@@ -30,8 +29,10 @@ from parallax.core.read_delivery._page import (
     observed_version,
     page_cadence,
     page_rows,
+    page_schedule,
+    reach_into,
+    release_finished_rows,
     release_page_rows,
-    root_last_uses,
     state_for,
     stored_data_refusal,
 )
@@ -142,21 +143,10 @@ def _published_rows(
     page = stage.page
     rows = page_rows(page)
     observer = page_cadence(page)
-    keys = opt_lock.view(meta)
-    deferred_states = all(
-        isinstance(
-            keys.key(rows.layouts[root].concrete),
-            opt_lock.ExplicitVersion | opt_lock.TransactionTimeDerived,
-        )
-        for root in rows.roots
-    )
-    last_uses = (
-        root_last_uses(page)
-        if deferred_states or any(not isinstance(claim, int) for claim in rows.claims)
-        else None
-    )
+    schedule = page_schedule(page, opt_lock.write_evidence(meta), atomic=True)
     temporal = temporal_read.view(meta)
     published: list[PublishedRow] = []
+    reached: list[int] = []
     for position, root in enumerate(rows.roots):
         if _keyless(rows, root):
             observer.occurrences_reached(0)
@@ -175,17 +165,15 @@ def _published_rows(
                 )
             )
             continue
-        if deferred_states:
+        if schedule.defers_states:
             observer.occurrences_reached(1)
             state = state_for(rows, root)
         else:
             state = state_for(rows, root)
             observer.occurrences_reached(1)
         layout = rows.layouts[root]
-        if last_uses is None:
-            _release_raw_row(rows, root)
-        else:
-            _release_finished_root(rows, position, root, last_uses)
+        reach_into(rows, root, reached)
+        release_finished_rows(page, schedule, position, reached)
         detached = MappingProxyType(
             publisher.publish(layout.concrete, state.member_row, stage.variants[position])
         )
@@ -215,11 +203,12 @@ def publishable_member_rows(page: Page) -> Generator[tuple[object, ...]]:
     judged.
     """
     rows = page_rows(page)
-    for root in rows.roots:
+    raw_rows = PageSchedule(None, False)
+    for position, root in enumerate(rows.roots):
         state = state_for(rows, root)
         if state.findings:
             raise stored_data_refusal(state.findings[0])
-        _release_raw_row(rows, root)
+        release_finished_rows(page, raw_rows, position, (root,))
         yield state.member_row
 
 
@@ -238,11 +227,12 @@ def admitted_member_rows(page: Page) -> Generator[tuple[object, ...]]:
     released once judged.
     """
     rows = page_rows(page)
-    for root in rows.roots:
+    raw_rows = PageSchedule(None, False)
+    for position, root in enumerate(rows.roots):
         state = attribute_state(rows, root)
         if state.findings:
             raise stored_data_refusal(state.findings[0])
-        _release_raw_row(rows, root)
+        release_finished_rows(page, raw_rows, position, (root,))
         yield state.member_row
 
 
@@ -285,41 +275,3 @@ def _keyless(rows: PageRows, root: int) -> bool:
     return rows.keys[root] is None and any(
         issue.code.startswith("stored-data-primary-key-") for issue in rows.issues[root]
     )
-
-
-def _release_raw_row(rows: PageRows, root: int) -> None:
-    """Release ``root``'s raw member row once judged, except a keyless claim's
-    still-pending one."""
-    if not isinstance(rows.member_rows, list):  # pragma: no cover - a sealed Page holds lists
-        return
-    if rows.keys[root] is not None or not rows.decoders.pending(root):
-        rows.member_rows[root] = ()
-
-
-def _release_finished_root(
-    rows: PageRows, position: int, root: int, last_uses: tuple[array[int], array[int]]
-) -> None:
-    """Release ``root``'s Page storage once no later root can reach it, and its
-    logical state once the last root sharing it has been judged."""
-    if not isinstance(rows.member_rows, list):  # pragma: no cover - a sealed Page holds lists
-        return
-    projection_last, logical_last = last_uses
-    member_rows = rows.member_rows
-    if projection_last[root] != position:  # pragma: no cover - a flat root is its own reach
-        if rows.keys[root] is not None or not rows.decoders.pending(root):
-            member_rows[root] = ()
-        return
-    keys = cast("list[LogicalKey | None]", rows.keys)
-    logical_ids = cast("list[int]", rows.logical_ids)
-    member_rows[root] = ()
-    logical = logical_ids[root]
-    rows.issues.release(root)
-    keys[root] = None
-    cast("list[object]", rows.view_rows)[root] = ()
-    rows.overwritten_edges.release(root)
-    cast("list[object]", rows.witnesses)[root] = None
-    rows.decoders.release(root)
-    logical_ids[root] = 0
-    if logical_last[logical] == position:
-        rows.judged_states.release_logical(logical)
-        logical_last[logical] = -1

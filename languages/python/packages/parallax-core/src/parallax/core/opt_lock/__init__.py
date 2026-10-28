@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Final
 
 from parallax.core._execution._unit_work.claims import SettledEvidence
@@ -40,6 +41,7 @@ __all__ = [
     "require_observed",
     "settled_evidence",
     "view",
+    "write_evidence",
 ]
 
 # The derived initial version every versioned insert carries, ignoring any
@@ -178,3 +180,16 @@ def reject_caller_authored_version(entity: str, version_attr: str) -> None:
         "data; the advance is always derived from the observation the write's source "
         "retained (a prior find), never a row-carried value (m-opt-lock)"
     )
+
+
+def write_evidence(model: Metamodel) -> Callable[[EntityIdentity], bool]:
+    """The predicate answering whether an Entity's family carries write evidence
+    under ``model``: an explicit version Attribute or a Transaction-Time
+    milestone start. An unversioned family, and an Identity the model does not
+    contain, carries none."""
+    keys = view(model)
+
+    def carries(entity: EntityIdentity) -> bool:
+        return isinstance(keys.key(entity), ExplicitVersion | TransactionTimeDerived)
+
+    return carries

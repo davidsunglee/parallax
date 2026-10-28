@@ -64,10 +64,12 @@ from parallax.core.read_delivery._page import (
     InvalidRootInput,
     Page,
     PageBuilder,
+    PageSchedule,
     StoredDataIssueInput,
     ViewSchema,
     exact_stored_equal,
     page_rows,
+    release_finished_rows,
     stored_order_key,
 )
 from parallax.core.read_delivery._page_reader import FlatPageResult
@@ -1358,12 +1360,21 @@ def test_stored_value_helpers_order_mappings_and_compare_opaque_values() -> None
 
 def test_root_view_completion_and_raw_row_release_are_idempotent() -> None:
     fixture = PageFixture(_ORDERS)
-    root = RootView(fixture.page(fixture.node("SnapOrder", _ORDER_ROW)), defer_states=True)
+    order = fixture.node("SnapOrder", _ORDER_ROW)
+    page = fixture.page(order)
+    root = RootView(page, defer_states=True)
+    raw_rows = PageSchedule(None, False)
 
     root.complete()
-    root.release_raw_rows()
-    root.release_raw_rows()
+    release_finished_rows(page, raw_rows, 0, root.reached)
+    release_finished_rows(page, raw_rows, 0, root.reached)
     root.complete()
+
+    rows = page_rows(page)
+    assert rows.member_rows[order] == ()
+    judged = rows.judged_states.singleton(rows.logical_ids[order])
+    assert judged is not None
+    assert root.member_values(0) is judged.member_row
 
 
 def _customer_row(phone_type: str) -> dict[str, object]:

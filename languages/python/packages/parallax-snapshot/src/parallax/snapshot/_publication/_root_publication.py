@@ -7,11 +7,12 @@ from parallax.core import opt_lock
 from parallax.core.metamodel import Metamodel
 from parallax.core.read_delivery._page import (
     Page,
+    PageSchedule,
     StoredDataIssueInput,
     page_cadence,
-    page_rows,
+    page_schedule,
+    release_finished_rows,
     release_page_rows,
-    root_last_uses,
     stored_data_refusal,
 )
 from parallax.core.temporal_read import Pin
@@ -57,41 +58,28 @@ def publish_roots[T](
     An ``atomic`` publication publishes nothing until every root has been, and
     defers judging every root's state when each root's family carries write
     evidence, which ``model``'s Optimistic Lock Facet answers; it is required
-    exactly then. Each root's Page storage is released once no later root can
-    reach it.
+    exactly then. Each root's Page storage is released as the Page schedules,
+    once that root's evidence is resolved.
     """
     observer = page_cadence(page)
     if pins is not None and len(pins) != page.root_count:
         raise ValueError("root pin count must match the Page root count")
+    if model is not None:
+        schedule = page_schedule(page, opt_lock.write_evidence(model), atomic=atomic)
+    elif atomic:
+        raise ValueError("an atomic publication decides state deferral against its model")
+    else:
+        schedule = PageSchedule(None, False)
     if atomic:
-        if model is None:
-            raise ValueError("an atomic publication decides state deferral against its model")
-        keys = opt_lock.view(model)
-        rows = page_rows(page)
-        deferred_states = all(
-            isinstance(
-                keys.key(rows.layouts[root].concrete),
-                opt_lock.ExplicitVersion | opt_lock.TransactionTimeDerived,
-            )
-            for root in rows.roots
-        )
-        last_uses = (
-            root_last_uses(page)
-            if deferred_states or any(not isinstance(claim, int) for claim in rows.claims)
-            else None
-        )
         prepared: list[T] = []
         published_counts = array("I")
         for position in range(page.root_count):
             pin = None if pins is None else pins[position]
-            root = RootView(page, position, pin=pin, defer_states=deferred_states)
+            root = RootView(page, position, pin=pin, defer_states=schedule.defers_states)
             root.complete()
             if prepare is not None:
                 prepare(root)
-            if last_uses is None:
-                root.release_raw_rows()
-            else:
-                root.release_finished_page_rows(position, last_uses)
+            release_finished_rows(page, schedule, position, root.reached)
             before = len(prepared)
             prepared.extend(publish(root, position))
             published_counts.append(len(prepared) - before)
@@ -106,6 +94,6 @@ def publish_roots[T](
     for position in range(page.root_count):
         pin = None if pins is None else pins[position]
         root = RootView(page, position, pin=pin)
-        root.release_raw_rows()
+        release_finished_rows(page, schedule, position, root.reached)
         yield from publish(root, position)
         observer.root_published(ordinal_offset + position)
