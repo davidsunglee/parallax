@@ -2094,6 +2094,13 @@ _VO_BATCH_WRITE_REASON: Final[str] = (
     "m-batch-write bucket reason; no idiomatic story was authored for this VO-bearing "
     "batched shape"
 )
+_VO_SQL_NULL_STORAGE_REASON: Final[str] = (
+    "a null value object written by a single-row insert, a multi-row insert, or an "
+    "amend: the developer spelling is the null `address` the m-value-object-027 story "
+    "already shows, and what these cases pin is the stored state — SQL NULL, not JSON "
+    "null — which the case's own `referenceSql` oracle and the run lane's driver-bind "
+    "grading observe; the compile/run conformance lanes grade their emitted SQL and binds"
+)
 _VO_OPT_LOCK_CONFLICT_REASON: Final[str] = (
     "a versioned write under an optimistic-lock gate over a value-object-bearing "
     "entity: the m-opt-lock keyed-write machinery is graded end-to-end by the "
@@ -2817,6 +2824,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-value-object: remaining write-family siblings --------------------- #
     "m-value-object-045": _VO_BATCH_WRITE_REASON,
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,
+    "m-value-object-076": _VO_SQL_NULL_STORAGE_REASON,
+    "m-value-object-077": _VO_SQL_NULL_STORAGE_REASON,
+    "m-value-object-078": _VO_SQL_NULL_STORAGE_REASON,
     "m-value-object-067": (
         "a top-level occurrence inside an ENTITY document (Relational Document Layout): "
         "the developer spelling is the ordinary whole-occurrence assignment every "

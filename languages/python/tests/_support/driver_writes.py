@@ -1,8 +1,10 @@
 """The parameterized writes a case database's driver was handed, and their grading.
 
 A run lane reports each statement's binds re-encoded as Wire values, which
-spells a managed scalar ``-0.0`` as ``0.0``: the driver bind is the only place
-a scalar float write's sign is observable before the database stores it. The
+spells a managed scalar ``-0.0`` as ``0.0`` and SQL NULL and the literal JSON
+null document both as ``null``: the driver bind is the only place a scalar
+float write's sign, or which null a document Column stores, is observable
+before the database stores it. The
 recording wraps both halves of a case database and records each modeled
 ``execute_write`` before forwarding it: every write through the configuration a
 ``Database`` is composed from — its runtimes, acquisitions, connections, and
@@ -40,10 +42,18 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
-from tests._support.bind_positions import assert_zero_signs, statement_bind_positions
+from tests._support.bind_positions import (
+    assert_document_nulls,
+    assert_zero_signs,
+    statement_bind_positions,
+)
 from tests._support.sweep_goldens import wire_binds
 
-__all__ = ["RecordingCaseDatabase", "assert_driver_write_zero_signs"]
+__all__ = [
+    "RecordingCaseDatabase",
+    "assert_driver_write_document_nulls",
+    "assert_driver_write_zero_signs",
+]
 
 type DriverWrite = tuple[str, list[object]]
 
@@ -194,18 +204,39 @@ def assert_driver_write_zero_signs(
 ) -> None:
     """The recorded modeled writes are the golden writes, in order, and each
     carries the golden's zero sign at every declared float position."""
-    golden_writes = [
-        (sql, binds) for sql, binds in golden if sql.lstrip().lower().startswith(_WRITE_VERBS)
-    ]
-    assert [sql for sql, _binds in writes] == [
-        dialect.to_driver_sql(sql) for sql, _binds in golden_writes
-    ], "the driver writes are not the golden writes"
-    for (golden_sql, golden_binds), (_driver_sql, driver_binds) in zip(
-        golden_writes, writes, strict=True
-    ):
+    for (golden_sql, golden_binds), driver_binds in _paired_writes(dialect, golden, writes):
         assert_zero_signs(
             wire_binds(driver_binds),
             wire_binds(golden_binds),
             statement_bind_positions(model, golden_sql, golden_binds),
             label="driver bind",
         )
+
+
+def assert_driver_write_document_nulls(
+    model: Metamodel,
+    dialect: Dialect,
+    golden: Sequence[tuple[str, list[object]]],
+    writes: Sequence[DriverWrite],
+) -> None:
+    """The recorded modeled writes are the golden writes, in order, and each
+    binds SQL NULL wherever the golden writes a whole document Column ``null``."""
+    for (golden_sql, golden_binds), driver_binds in _paired_writes(dialect, golden, writes):
+        assert_document_nulls(model, golden_sql, driver_binds, golden_binds, label="driver bind")
+
+
+def _paired_writes(
+    dialect: Dialect,
+    golden: Sequence[tuple[str, list[object]]],
+    writes: Sequence[DriverWrite],
+) -> list[tuple[tuple[str, list[object]], list[object]]]:
+    golden_writes = [
+        (sql, binds) for sql, binds in golden if sql.lstrip().lower().startswith(_WRITE_VERBS)
+    ]
+    assert [sql for sql, _binds in writes] == [
+        dialect.to_driver_sql(sql) for sql, _binds in golden_writes
+    ], "the driver writes are not the golden writes"
+    return [
+        (golden_write, driver_binds)
+        for golden_write, (_driver_sql, driver_binds) in zip(golden_writes, writes, strict=True)
+    ]

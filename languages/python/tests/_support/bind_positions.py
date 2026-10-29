@@ -12,6 +12,9 @@ compared with. A multi-row insert's column array holds its Column's position at
 every element, and a shared Structured Column's array the document each row's
 own discriminator tag selects. A position this cannot resolve stays untyped and
 compares as JSON; a type is never guessed from a value.
+
+The same reading names the binds that write a whole document Column, where a
+golden ``null`` states SQL NULL (`m-value-object`).
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from sqlglot import exp
 
 from parallax.core import storage_layout
 from parallax.core.base import Float32, Float64, NeutralType
+from parallax.core.db_port import ArrayBind
 from parallax.core.metamodel import (
     AttributeIdentity,
     MemberShape,
@@ -35,15 +39,17 @@ from parallax.core.metamodel import (
     ScalarDefinition,
     ValueObjectIdentity,
 )
-from parallax.core.storage_layout import ColumnSlot, RelationalDocument, TableLayout
+from parallax.core.storage_layout import ColumnSlot, ColumnTier, RelationalDocument, TableLayout
 
 __all__ = [
     "BindPosition",
     "Document",
     "EachElement",
     "Elements",
+    "assert_document_nulls",
     "assert_zero_signs",
     "statement_bind_positions",
+    "whole_document_binds",
     "zero_signs_agree",
 ]
 
@@ -100,6 +106,95 @@ def statement_bind_positions(
         if position is not None:
             positions[index] = position
     return positions
+
+
+def whole_document_binds(
+    model: Metamodel, sql: str, *, dialect: str = "postgres"
+) -> dict[int, bool]:
+    """Each bind index of the canonical ``sql`` that writes one whole document
+    Column, mapped to whether it binds a column array: an ``insert`` cell or
+    column array, or an ``update``'s bare ``column = ?``. A document path a
+    mutation expression assigns writes inside the Column, not the Column."""
+    try:
+        tree = sqlglot.parse_one(_indexed(sql), read=dialect)
+    except sqlglot.ParseError:
+        return {}
+    layouts = {layout.table.name: layout for layout in storage_layout.view(model).tables}
+    if isinstance(tree, exp.Insert):
+        return _inserted_documents(layouts, tree)
+    if isinstance(tree, exp.Update):
+        return _assigned_documents(layouts, tree)
+    return {}
+
+
+def assert_document_nulls(
+    model: Metamodel,
+    sql: str,
+    observed: Sequence[object],
+    expected: Sequence[object],
+    *,
+    label: str = "bind",
+) -> None:
+    """Every golden ``null`` that writes a whole document Column — alone or as a
+    column array's element — is a bare ``None`` in ``observed``: SQL NULL, never
+    the literal JSON null document a Wire projection spells alike."""
+    for index, array in sorted(whole_document_binds(model, sql).items()):
+        want, got = expected[index], observed[index]
+        if not array:
+            assert want is not None or got is None, (
+                f"{label} {index}: {got!r} is not the SQL NULL the golden states"
+            )
+            continue
+        pairs = zip(cast("list[object]", want), cast("ArrayBind", got).values, strict=True)
+        for element, (want_element, got_element) in enumerate(pairs):
+            assert want_element is not None or got_element is None, (
+                f"{label} {index}[{element}]: {got_element!r} is not the SQL NULL the golden states"
+            )
+
+
+def _inserted_documents(layouts: Mapping[str, TableLayout], tree: exp.Insert) -> dict[int, bool]:
+    target = tree.this
+    if not isinstance(target, exp.Schema) or not isinstance(target.this, exp.Table):
+        return {}
+    layout = layouts.get(target.this.name)
+    if layout is None:
+        return {}
+    columns = [identifier.name for identifier in target.expressions]
+    arrays = _column_arrays(tree.expression)
+    if arrays is not None:
+        rows = [arrays]
+    elif isinstance(tree.expression, exp.Values):
+        rows = [
+            row.expressions for row in tree.expression.expressions if isinstance(row, exp.Tuple)
+        ]
+    else:
+        return {}
+    return {
+        index: arrays is not None
+        for cells in rows
+        for name, cell in zip(columns, cells, strict=False)
+        if _stores_document(layout, name) and (index := _bare_bind(cell)) is not None
+    }
+
+
+def _assigned_documents(layouts: Mapping[str, TableLayout], tree: exp.Update) -> dict[int, bool]:
+    table = tree.this
+    layout = layouts.get(table.name) if isinstance(table, exp.Table) else None
+    if layout is None:
+        return {}
+    return {
+        index: False
+        for assignment in tree.expressions
+        if isinstance(assignment, exp.EQ)
+        and isinstance(assignment.this, exp.Column)
+        and _stores_document(layout, assignment.this.name)
+        and (index := _bare_bind(assignment.expression)) is not None
+    }
+
+
+def _stores_document(layout: TableLayout, column: str) -> bool:
+    slot = _slot_named(layout, column)
+    return slot is not None and slot.tier is ColumnTier.DOCUMENT
 
 
 def assert_zero_signs(

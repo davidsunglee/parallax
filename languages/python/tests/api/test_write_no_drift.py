@@ -16,6 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.engine import load_case_metamodel
 from parallax.conformance.read_models import (
     Balance,
     Magazine,
@@ -53,6 +54,7 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 from tests._support.adoption import raises_contextualized
+from tests._support.bind_positions import assert_document_nulls
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document, compare_binds
 from tests._support.db_port import (
@@ -67,6 +69,7 @@ from tests._support.db_port import (
 )
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.root_ownership import own_root
+from tests._support.sweep_goldens import write_golden_statements
 from tests._support.write_preparation import write_preparation_of
 
 _STORIES = {story.case_id: story for story in WRITE_STORIES}
@@ -463,6 +466,9 @@ def _assert_statements(
 ) -> None:
     observed = _observed_statements(port, case_id)
     assert len(observed) == len(goldens), (case_id, observed, goldens)
+    case = corpus_case(case_id)
+    model = load_case_metamodel(case)
+    canonical = {POSTGRES.to_driver_sql(sql): sql for sql, _binds in write_golden_statements(case)}
     for (sql, binds), (golden_sql, golden_binds) in zip(observed, goldens, strict=True):
         assert sql == golden_sql, (case_id, sql, golden_sql)
         # A graduated verb's bind is a REAL typed value (e.g. `Decimal("5.00")`
@@ -470,6 +476,7 @@ def _assert_statements(
         # golden is a plain YAML literal (`5.00`, a float) — `compare_binds`
         # reconciles the two in exact-Decimal space, same as row grading.
         compare_binds(binds, golden_binds)
+        assert_document_nulls(model, canonical[golden_sql], binds, golden_binds)
 
 
 def _db(port: _KeyedSeedPort, story: WriteStory) -> ScopedDatabase:
