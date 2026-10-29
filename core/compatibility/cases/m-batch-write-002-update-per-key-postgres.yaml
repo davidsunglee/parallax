@@ -1,8 +1,3 @@
-# Batched UPDATE, per-distinct-key form (m-batch-write): non-uniform new values.
-# Each key stays its own keyed update; PostgreSQL applies the updates assigning
-# one member set as one grouped effect whose source binds one array per column
-# and returns each changed row's source ordinal. Its MariaDB twin keeps one
-# statement per key.
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, write-sequence, per-key, grouped-effect, slice-snapshot-1, slice-managed-1]
 shape: writeSequence

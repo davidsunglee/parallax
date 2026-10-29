@@ -1,8 +1,3 @@
-# Columns half of the grouped versioned update proof: two gated amendments of
-# distinct objects assigning the same members stay one keyed update each, and
-# PostgreSQL applies them as one grouped effect. Each source row binds its own
-# key, observed version, planned version advance, and assigned collection. Its
-# twin authors the same writes under Relational Document Layout.
 model: models/scalar-collection-lifecycle-layout-twin-columns.yaml
 tags: [m-opt-lock, m-unit-work, m-storage-layout, m-sql, write-sequence, update, json, grouped-effect, layout-twin, columns, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
