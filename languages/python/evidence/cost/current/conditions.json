@@ -1,4 +1,25 @@
 {
+  "adjustment": {
+    "date": "2026-10-29",
+    "replacedMember": {
+      "member": "write-lowering",
+      "originalCollection": {
+        "finishedAt": "2026-10-29T18:42:46.144492+00:00",
+        "startedAt": "2026-10-29T17:38:54.924381+00:00"
+      },
+      "originalCommit": "01a0ef034f21046d12b654f9e9e9bed6ffa6b8eb",
+      "proven": "HEAD descends from the original commit, and the kept members' recorded instrument and control sources, the test modules they import, workload digests, and Budget Contract, the dependency lock, every production package, and every tool other than the collector and the replaced member's own instruments equal HEAD's",
+      "recipe": "python-report-write-lowering",
+      "replacedFailure": "exit 3: the matrix is incomplete, so no envelope is reported:\nCPython 3.13, cross-object.txtime.changed-64.columns.typed: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.13, cross-object.txtime.changed-130.columns.typed: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.13, cross-object.bitemporal.interior-64.document.wire: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.13, cross-object.bitemporal.deferred-32x4.columns.typed: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.13, cross-object.bitemporal.deferred-32x12.document.wire: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.13, cross-object.bitemporal.requesting-32x12.document.wire: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.13, cross-object.bitemporal.deferred-32x32.columns.typed: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.14, cross-object.txtime.changed-64.columns.typed: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.14, cross-object.txtime.changed-130.columns.typed: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.14, cross-object.bitemporal.interior-64.document.wire: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.14, cross-object.bitemporal.deferred-32x4.columns.typed: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.14, cross-object.bitemporal.deferred-32x12.document.wire: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.14, cross-object.bitemporal.requesting-32x12.document.wire: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive\nCPython 3.14, cross-object.bitemporal.deferred-32x32.columns.typed: the child's reading did not decode: samples.work.largestOrderedInvocation samples must be positive",
+      "replacement": {
+        "finishedAt": "2026-10-29T20:09:33.938449+00:00",
+        "startedAt": "2026-10-29T19:55:21.283511+00:00"
+      },
+      "replacementCommit": "b3ebdfcf3532ecf885783947dbc66e184fe95c31",
+      "unchanged": "every kept member's envelope, conditions, and duration spans"
+    },
+    "schemaVersion": 1
+  },
   "members": {
     "feature-boundary": {
       "runtimes": {
@@ -9,14 +30,14 @@
           "version": "3.13.18"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-248-reduce-db-round-trips-94qpqh/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-251-bind-batched-inserts-as-column-arrays-gyrdqd/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_feature_boundary_support.py": "d59877596c6efca67260a83971c4a1afb7484a07f2234fe76ecb1ebe0e47a8c5",
+        "tests/unit/_feature_boundary_support.py": "fd82c09c93eba3f298fd0f7785f3c0d28da94e331d2b54cedff0bde576a32614",
         "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
         "tools/feature_boundary_overhead.py": "d7268ae2198a6778d654e3814e67cd8cea14ee544dc683af8f9bb01a841af45e",
         "tools/feature_boundary_reading.py": "8d879c4af9590a661f50dca39a8e8667f62a3dc7ffbc631550db862e7e68688f"
@@ -31,7 +52,7 @@
           "version": "3.13.18"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-248-reduce-db-round-trips-94qpqh/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-251-bind-batched-inserts-as-column-arrays-gyrdqd/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -41,7 +62,7 @@
         "tests/unit/_instance_state_support.py": "31bfcde149191834ff7d2f80d0f7003e403362f122b7c38093a8cf21f9804c79",
         "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
         "tools/instance_state_overhead.py": "4c1058dda6ab31e8c263bf742c9edb3270ee86aeea8c070323b22aed097d2294",
-        "tools/instance_state_reading.py": "3f25f428052e40de7726b2448a34927394bd7adcf1a9fa1b0a7d964b70e6ce14"
+        "tools/instance_state_reading.py": "2a9d733ef3aa29f37cd6f4779ad09ee0a927b53fb61cb92272dfbcc328486ba6"
       }
     },
     "lifecycle-overhead": {
@@ -51,7 +72,7 @@
           "status": "unavailable"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-248-reduce-db-round-trips-94qpqh/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-251-bind-batched-inserts-as-column-arrays-gyrdqd/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -70,21 +91,21 @@
           "version": "3.13.18"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-248-reduce-db-round-trips-94qpqh/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-251-bind-batched-inserts-as-column-arrays-gyrdqd/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
         }
       },
       "sources": {
-        "tests/unit/_delivery_control_support.py": "01c1f91cea322712887f714caf041efa5c3819d1e0305b886104ebad45101610",
+        "tests/unit/_delivery_control_support.py": "9fa6763f7fc6c09e98752890b3bfd80e7abdeef93391440522d362c0ecef67fa",
         "tests/unit/_leaf_type_support.py": "af1c73fd8fc2df6edf7fbdaa7ffbfd7c2d62dbc31af93cce529f6d5ac41ad49f",
-        "tests/unit/_snapshot_materialization_support.py": "9dede31de3eb67d9c3890e9bcde3bc570ca797605a1abe8c2c9dd91e2ace26ce",
+        "tests/unit/_snapshot_materialization_support.py": "ba43f5b767e63d28bcee411e888484e551e2184d9b8c3ea51383db1949d26b8a",
         "tests/unit/_structural_geometry_support.py": "5a9b489a5cf1db949724afc89894a38daac07afe4cb6ba77c9eb0db414a0fde9",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
         "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
         "tools/snapshot_delivery_overhead.py": "f20a3d3740f0c5ebd0fa1b403e0a898fdd131178e635f80377d9db56ba946d7c",
-        "tools/snapshot_delivery_reading.py": "cb50ad67203901874572bb5fe659bd2f3b82450e778e448e09c581b9679fc60c"
+        "tools/snapshot_delivery_reading.py": "f3ead11e2c71a8bf4f730a1ef56e19cbb152803c13fd03c059e2977955008c76"
       }
     },
     "write-lowering": {
@@ -96,7 +117,7 @@
           "version": "3.13.18"
         },
         "3.14": {
-          "executable": "/Users/david/.humanlayer/workspaces/cor-248-reduce-db-round-trips-94qpqh/parallax/languages/python/.venv/bin/python",
+          "executable": "/Users/david/.humanlayer/workspaces/cor-251-bind-batched-inserts-as-column-arrays-gyrdqd/parallax/languages/python/.venv/bin/python",
           "implementation": "CPython",
           "status": "available",
           "version": "3.14.8"
@@ -106,10 +127,10 @@
         "tests/unit/_leaf_type_support.py": "af1c73fd8fc2df6edf7fbdaa7ffbfd7c2d62dbc31af93cce529f6d5ac41ad49f",
         "tests/unit/_structural_geometry_support.py": "5a9b489a5cf1db949724afc89894a38daac07afe4cb6ba77c9eb0db414a0fde9",
         "tests/unit/_workload_spelling_support.py": "c84e87a236d549df8423293c7b05cf5a5ebb6c5a20149ffa1b9abe57527d8636",
-        "tests/unit/_write_lowering_support.py": "44f6726e8c264103f11deaa8f1fee31ccfb223c11191646b41d79511dbc1b6d8",
+        "tests/unit/_write_lowering_support.py": "133280cf51f03724322100fd346882dbea888c67a8618834c684dc1c32974c43",
         "tests/unit/memory_instruments.py": "56cde6c16963e5d3d15ecd8ab558f01ca1c7f781a8623dff9b3c53414a56dc19",
-        "tools/write_lowering_overhead.py": "41448a7f8ad39237a8b9801091af1ba75e6b9107efd078dda8e80c97b43901bd",
-        "tools/write_lowering_reading.py": "486009cc65122e9f77f9462bef4e0180e4fffd2221847d27b57e1cfa810127a6"
+        "tools/write_lowering_overhead.py": "ba992852ffd19d555914e70084edc7c0fbcbfd91b43ca3b5e26e8b15c1e2814b",
+        "tools/write_lowering_reading.py": "6e47c0c08c24a324f9ce898c6783030ce488522d6d2e521aea94da0c7c3a9e25"
       }
     }
   },
