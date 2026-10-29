@@ -1288,7 +1288,7 @@ plain `amend` is the inactivate `update` plus a `head` **and** a new `tail`; pla
 |---|---|---|
 | **insert** (plain) | `insert into position(cols…) values (?, …, ?)` — fully-current row, Valid Time `[V, infinity)`, Transaction Time `[txInstant, infinity)` | `[…row…, V, infinity, txInstant, infinity]` |
 | **amend** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` | `[txInstant, pk, observedValidEnd, infinity]` |
-| **amend** (head + new tail) | `insert into position(cols…) values (?, …, ?), (?, …, ?)` — `head` old value, Valid Time `[from_z, V)`, then new `tail` new value, Valid Time `[V, infinity)`, both at Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity, …row…, V, infinity, txInstant, infinity]` |
+| **amend** (head + new tail) | `insert into position(cols…) select * from unnest(cast(? as bigint[]), …)`, one array per Column (*Batched insert / update*) — `head` old value, Valid Time `[from_z, V)`, then new `tail` new value, Valid Time `[V, infinity)`, both at Transaction Time `[txInstant, infinity)` | `[…[head, tail] per Column…, [from_z, V], [V, infinity], [txInstant, txInstant], [infinity, infinity]]` |
 | **terminate** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` | `[txInstant, pk, observedValidEnd, infinity]` |
 | **terminate** (head) | `insert into position(cols…) values (?, …, ?)` — old value, Valid Time `[from_z, V)`, Transaction Time `[txInstant, infinity)` | `[…row…, from_z, V, txInstant, infinity]` |
 
