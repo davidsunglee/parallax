@@ -273,10 +273,14 @@ class _GroupedSource:
 
 
 def _grouped_source(case: Case, tree: Expr) -> _GroupedSource | None:
-    if not isinstance(tree, exp.Update) or not isinstance(tree.this, exp.Table):
+    if not isinstance(tree, exp.Update | exp.Delete) or not isinstance(tree.this, exp.Table):
         return None
-    source = tree.args.get("from_")
-    unnest = source.this if isinstance(source, exp.From) else None
+    if isinstance(tree, exp.Update):
+        source = tree.args.get("from_")
+        unnest = source.this if isinstance(source, exp.From) else None
+    else:
+        using = tree.args.get("using") or []
+        unnest = using[0] if len(using) == 1 else None
     if not isinstance(unnest, exp.Unnest):
         return None
     alias = unnest.args.get("alias")
@@ -293,9 +297,10 @@ def _grouped_sources(
     case: Case, tree: Expr, binds: Sequence[object]
 ) -> Iterator[tuple[Expr, ColumnSlot | DocumentMember, str]]:
     """Each source array of a grouped effect (``update t set … from unnest(…) with
-    ordinality v(…) … returning v.ord``) beside what types its elements: the slot
-    of the column a source column is assigned to or compared with, or the document
-    member a path assignment writes it to, and that column's name."""
+    ordinality v(…) … returning v.ord``, or ``delete from t using unnest(…) …``)
+    beside what types its elements: the slot of the column a source column is
+    assigned to or compared with, or the document member a path assignment writes
+    it to, and that column's name."""
     grouped = _grouped_source(case, tree)
     if grouped is None:
         return

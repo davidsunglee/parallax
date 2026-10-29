@@ -18,18 +18,28 @@ from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision,
 __all__ = ["ObservedSteps", "statement_kinds"]
 
 # A close sets the Transaction-Time end alone, which also addresses the
-# current row it ends.
+# current row it ends; a grouped close draws the end it sets from its source.
 _CLOSE: Final = re.compile(r"update \S+ set (\w+) = \? where .*\b\1 = \?")
+_GROUPED_CLOSE: Final = re.compile(r"update \S+ t set (\w+) = v\.c\d+ from .* where .*\bt\.\1 = \?")
+_GROUPED_GUARD: Final = re.compile(r"update \S+ t set (\w+) = t\.\1 from ")
 
 
 def statement_kinds(statements: Iterable[LoweredStatement]) -> list[str]:
     """What each statement does, in order: ``insert``, ``delete``, ``close``,
-    ``guard`` for an update assigning nothing, or ``update``."""
+    ``guard`` for an update assigning nothing, or ``update`` — each prefixed
+    ``grouped`` where one grouped effect applies several such effects."""
     kinds: list[str] = []
     for statement in statements:
         sql = statement.sql
         verb = sql.split(" ", 1)[0]
-        if verb != "update":
+        if sql.endswith(" returning v.ord"):
+            if verb != "update":
+                kinds.append(f"grouped {verb}")
+            elif _GROUPED_GUARD.match(sql):
+                kinds.append("grouped guard")
+            else:
+                kinds.append("grouped close" if _GROUPED_CLOSE.match(sql) else "grouped update")
+        elif verb != "update":
             kinds.append(verb)
         elif "= ?" not in sql.split(" where ", 1)[0]:
             kinds.append("guard")

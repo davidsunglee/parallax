@@ -58,8 +58,12 @@ Delete whose Key Target holds several key tuples.
   per key.
 - Multiple deletes of the same **non-versioned** entity collapse into a **single
   `DELETE`** with an `IN` predicate (`delete from t where id in (?, …)`) rather
-  than one statement per row — the delete analogue of the multi-row `INSERT`. (A
-  **versioned** entity's set-based delete cannot collapse — see below.)
+  than one statement per row — the delete analogue of the multi-row `INSERT`. A
+  **versioned** entity's deletes cannot collapse: each key stays its own step,
+  under its own observation and exactly-one expectation, however its steps are
+  then presented. A dialect with array parameters applies them as one grouped
+  effect (`m-sql` *Grouped effects*), and a dialect without them runs one
+  statement per key.
 
 The canonical Postgres golden SQL (`m-sql`), as `then.statements` entries:
 
@@ -76,9 +80,9 @@ The canonical Postgres golden SQL (`m-sql`), as `then.statements` entries:
 # m-batch-write-003 (batch DELETE collapse) then.statements:
 - sql:
     postgres: delete from wallet where id in (?, ?, ?)
-# m-batch-write-004 (versioned delete materializes per key, locking mode) then.statements:
+# m-batch-write-004 (versioned delete keeps one step per key, one grouped effect, locking mode) then.statements:
 - sql:
-    postgres: delete from account where id = ?
+    postgres: delete from account t using unnest(cast(? as bigint[])) with ordinality v(c1, ord) where t.id = v.c1 returning v.ord
 ```
 
 The suite proves the batched forms against real data by **applying** the golden
@@ -87,7 +91,7 @@ DML and asserting the resulting table state — the write-sequence machinery
 `m-batch-write-001` / `m-batch-write-002` for the insert/update collapse and the
 per-key updates, with `m-batch-write-064` for MariaDB's one statement per key,
 `m-batch-write-003` for the DELETE collapse, `m-batch-write-004` for the versioned
-per-key delete). So "buffered writes flush as set-based SQL" is verified by the
+per-key deletes, with `m-batch-write-065` for MariaDB's one statement per key). So "buffered writes flush as set-based SQL" is verified by the
 rows it leaves behind, not merely asserted.
 
 ## A predicate-selected write is readless, or refused

@@ -2415,6 +2415,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-execution-lifecycle-011": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-012": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-013": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
+    "m-execution-lifecycle-014": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,
     "m-execution-lifecycle-004": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-005": _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-007": _EXECUTION_LIFECYCLE_STREAMED_ROOT_REASON,
