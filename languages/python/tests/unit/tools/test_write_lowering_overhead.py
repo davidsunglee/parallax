@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
+import struct
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, cast
 
+import psycopg
 import pytest
+from psycopg import postgres
+from psycopg.adapt import PyFormat, Transformer
 
 import write_lowering_overhead as report
 from durations import Spans
@@ -15,11 +20,21 @@ from interpreter_matrix import CURRENT_MINOR, IDENTITY_SCRIPT, supported_minors
 from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract, derive_memory_gates
 from parallax.conformance.cost_envelope import validate
+from parallax.core import Bitemporal, TxTemporal
 from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_step_executor import WriteStepExecutor
-from parallax.core.base import INFINITY, INT64, Json, detach_json_container
+from parallax.core.base import (
+    INFINITY,
+    INT64,
+    JSON,
+    TIMESTAMP,
+    Int64,
+    Json,
+    String,
+    detach_json_container,
+)
 from parallax.core.db_port import (
     ArrayBind,
     CanonicalWriteStatement,
@@ -29,6 +44,7 @@ from parallax.core.db_port import (
     OrderedWriteResultComplete,
     Row,
 )
+from parallax.core.write_plan.steps import PlannedInsert
 from tests._support.db_port import WriteCall, inserted_rows
 from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _write_lowering_support as lowering_support
@@ -52,7 +68,7 @@ def _child_document(case: str, overrides: Mapping[str, object] | None = None) ->
     document: dict[str, object] = {
         "case": case,
         "window": window,
-        "units": report.CROSS_OBJECT_OBJECTS.get(case, 2),
+        "units": report.CASE_UNITS.get(case, 2),
         "samples": {metric: _samples(metric) for metric in report.metrics_of(window, case)},
         "calls": dict.fromkeys(report.CALL_NAMES, 1.0) if window == report.KEYED_WINDOW else {},
         "warmups": report.WARMUPS,
@@ -86,18 +102,21 @@ def test_the_matrix_names_every_keyed_response_and_model_case_once() -> None:
     target = [case.name for case in lowering_support.CASES if case.addressed]
     response = [case.name for case in lowering_support.RESPONSE_CASES]
     cross_object = [case.name for case in lowering_support.CROSS_OBJECT_CASES]
+    batch = [case.name for case in lowering_support.BATCH_CASES]
     assert (
         *keyed,
         *response,
         report.MODEL_CASE,
         report.MODEL_FAMILY_CASE,
         *cross_object,
+        *batch,
     ) == report.CASE_NAMES
     assert len(set(report.CASE_NAMES)) == len(report.CASE_NAMES)
     assert (*response, report.MODEL_FAMILY_CASE) == report.CONTROL_CASE_NAMES
     assert tuple(leaf_keyed) == report.LEAF_TYPE_CASE_NAMES
     assert tuple(target) == report.TARGET_CASE_NAMES
     assert tuple(cross_object) == report.CROSS_OBJECT_CASE_NAMES
+    assert tuple(batch) == report.BATCH_CASE_NAMES
     legacy_keyed = [name for name in keyed if name not in target and name not in leaf_keyed]
     assert (*legacy_keyed, *report.RETIRED_WINDOWS, report.MODEL_CASE) == report.LEGACY_CASE_NAMES
     assert report.CASE_COVERAGES == {
@@ -600,6 +619,7 @@ def test_envelope_carries_every_address_with_its_window_runtime_and_unit() -> No
         report.RESPONSE_WINDOW,
         report.MODEL_WINDOW,
         report.FLUSH_WINDOW,
+        report.BATCH_WINDOW,
     }
     addresses = {(reading.runtime, reading.workload, reading.cell) for reading in envelope.readings}
     assert addresses == report.expected_addresses(("3.13", "3.14"))
@@ -931,6 +951,7 @@ def test_the_legacy_coverage_drops_the_later_cases_and_carries_the_retired_ones(
         *report.LEAF_TYPE_CASE_NAMES,
         *report.TARGET_CASE_NAMES,
         *report.CROSS_OBJECT_CASE_NAMES,
+        *report.BATCH_CASE_NAMES,
     }
     assert legacy - current == {
         (runtime, case, metric)
@@ -1426,3 +1447,224 @@ def test_marked_flushes_restore_production_on_every_exit() -> None:
     assert WritePlanner.finalize is finalize
     assert RangeBindings.__next__ is advance
     assert WriteStepExecutor.execute is execute
+
+
+# --------------------------------------------------------------------------- #
+# The batch inserts: many inserts one flush collapses into one statement.      #
+# --------------------------------------------------------------------------- #
+_BATCH_ROWS: Final = {
+    "batch.insert.2.columns.typed": 2,
+    "batch.insert.8.columns.typed": 8,
+    "batch.insert.1000.columns.typed": 1000,
+    "batch.insert.1000.document.typed": 1000,
+    "batch.insert.1000.columns.wire": 1000,
+}
+
+
+def test_the_batch_insert_window_reads_each_row_count_layout_and_ingress_on_every_minor() -> None:
+    names = tuple(_BATCH_ROWS)
+    assert tuple(case.name for case in lowering_support.BATCH_CASES) == names
+    assert names == report.BATCH_CASE_NAMES
+    assert report.BATCH_ROWS == _BATCH_ROWS
+    assert report.selected_cases([f"{lowering_support.BATCH_PREFIX}*"]) == names
+    assert report.selected_cases(["batch.insert.1000.*"]) == names[2:]
+    for case in lowering_support.BATCH_CASES:
+        _prefix, _verb, rows, layout, ingress = case.name.split(".")
+        assert (case.rows, case.layout, case.ingress) == (int(rows), layout, ingress)
+        assert len(case.instances if ingress == "typed" else case.payloads) == case.rows
+        assert not (case.instances and case.payloads)
+        assert case.entity in lowering_support.BATCH_ENTITY_CLASSES
+        assert not issubclass(case.entity, Bitemporal | TxTemporal)
+        assert report.WINDOWS[case.name] == report.BATCH_WINDOW
+        assert report.metrics_of(report.BATCH_WINDOW, case.name) == report.METRICS
+    assert {report.unit_of(report.BATCH_WINDOW, metric) for metric in report.METRICS} == {
+        "us/row",
+        "B/row",
+    }
+    assert not set(lowering_support.BATCH_ENTITY_CLASSES) & set(lowering_support.ENTITY_CLASSES)
+    runtimes = supported_minors()
+    assert {
+        (runtime, case)
+        for runtime, case, _cell in report.expected_addresses(runtimes)
+        if case in _BATCH_ROWS
+    } == {(runtime, case) for runtime in runtimes for case in names}
+
+
+@pytest.mark.parametrize("units", [1, 999, 1001])
+def test_a_batch_insert_child_dividing_by_other_than_its_rows_is_an_unavailable_cell(
+    units: int,
+) -> None:
+    case = "batch.insert.1000.columns.typed"
+    assert isinstance(_reading(case), report.ChildReading)
+    assert isinstance(
+        report._decoded(  # pyright: ignore[reportPrivateUsage] - child protocol under test
+            json.dumps(_child_document(case, {"units": units})), case
+        ),
+        str,
+    )
+
+
+class _RecordingBatchPort(lowering_support.OrderedAcceptingPort):
+    __slots__ = ("executed",)
+    executed: list[lowering_support.Executed]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.executed = []
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.executed.append(
+            lowering_support.Executed(sql, tuple(binds), lowering_support.serialize(binds))
+        )
+        return super().execute_write(sql, binds)
+
+
+def _expected_batch_columns(case: lowering_support.BatchCase) -> dict[str, list[object]]:
+    """Each physical column of ``case``'s rows, keyed from one, every fourth
+    row's note null."""
+    keys = range(1, case.rows + 1)
+    members: dict[str, list[object]] = {
+        "title": [f"title-{key}" for key in keys],
+        "note": [None if key % 4 == 0 else f"note-{key}" for key in keys],
+        "address": [{"city": f"city-{key}", "geo": {"country": f"country-{key}"}} for key in keys],
+    }
+    if case.layout == "document":
+        return {
+            "id": list(keys),
+            "payload": [
+                {name: column[index] for name, column in members.items()}
+                for index in range(case.rows)
+            ],
+        }
+    return {"id": list(keys), **members}
+
+
+_ELEMENT_OIDS: Final[Mapping[type[object], int]] = {Int64: 20, String: 25, Json: 3802}
+"""The PostgreSQL type each array's elements dump as: ``int8``, ``text``, and
+``jsonb``."""
+
+
+def _array_shape(buffer: object) -> tuple[int, int, int, int]:
+    """A one-dimensional binary array's dimensions, null flag, element OID, and
+    length, read from its header."""
+    data = bytes(cast("bytes", buffer))
+    dimensions, has_null, element_oid = struct.unpack_from("!iiI", data)
+    (length, _lower) = struct.unpack_from("!ii", data, 12)
+    return dimensions, has_null, element_oid, length
+
+
+@pytest.mark.parametrize("case", lowering_support.BATCH_CASES, ids=lambda case: case.name)
+def test_a_batch_insert_flushes_every_row_as_one_collapsed_column_array_insert(
+    case: lowering_support.BatchCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executed: list[tuple[object, ...]] = []
+    execute = WriteStepExecutor.execute
+
+    def executing(executor: WriteStepExecutor, steps: tuple[Any, ...], /, **kwargs: Any) -> Any:
+        executed.append(steps)
+        return execute(executor, steps, **kwargs)
+
+    monkeypatch.setattr(WriteStepExecutor, "execute", executing)
+    port = _RecordingBatchPort()
+    with lowering_support.batch_database(port) as handle:
+        lowering_support.insert_batch(handle, case)
+    # The planner collapsed the inserts into one step, rather than execution
+    # grouping one step per insert into one statement.
+    ((step,),) = executed
+    assert isinstance(step, PlannedInsert)
+    assert len(step.entries) == case.rows
+    assert port.work() == lowering_support.FlushWork(
+        statements=1, invocations=1, largest_ordered_invocation=0, largest_grouped_insert=case.rows
+    )
+    assert case.work == port.work()
+    (statement,) = port.executed
+    matched = re.fullmatch(
+        r"insert into (\w+)\(([\w, ]+)\) select \* from unnest\((.+)\)", statement.sql
+    )
+    assert matched is not None, statement.sql
+    table, columns = matched.group(1), matched.group(2).split(", ")
+    expected = _expected_batch_columns(case)
+    assert table == f"write_lowering_batch_{case.layout}"
+    assert columns == list(expected)
+    assert len(statement.binds) == len(columns)
+    for column, bind, buffer in zip(columns, statement.binds, statement.dumped, strict=True):
+        assert isinstance(bind, ArrayBind), column
+        values = (
+            [detach_json_container(value) for value in bind.values]
+            if isinstance(bind.element_type, Json)
+            else bind.values
+        )
+        assert values == expected[column], column
+        assert _array_shape(buffer) == (
+            1,
+            int(None in expected[column]),
+            _ELEMENT_OIDS[type(bind.element_type)],
+            case.rows,
+        ), column
+
+
+def _binary_array(element_oid: int, elements: Sequence[bytes | None]) -> bytes:
+    """A one-dimensional binary array of ``elements``, spelled from the
+    PostgreSQL array wire format rather than from any dumper."""
+    data = struct.pack("!iiI", 1, int(None in elements), element_oid)
+    data += struct.pack("!ii", len(elements), 1)
+    for element in elements:
+        data += struct.pack("!i", -1) if element is None else struct.pack("!i", len(element))
+        data += element or b""
+    return data
+
+
+def _jsonb(document: object) -> bytes:
+    return b"\x01" + json.dumps(document).encode()
+
+
+def test_production_codecs_dump_the_open_bound_documents_and_arrays_as_a_connection_does() -> None:
+    instant = dt.datetime(2026, 2, 1, 12, 30, tzinfo=dt.UTC)
+    since_epoch = (instant - dt.datetime(2000, 1, 1, tzinfo=dt.UTC)) // dt.timedelta(microseconds=1)
+    documents: list[object] = [None, {"kind": "object"}, ["nested", None], []]
+    dumped = lowering_support.serialize(
+        [
+            INFINITY,
+            JsonDocument({"a": [1, None]}),
+            ArrayBind(TIMESTAMP, [instant, INFINITY, None]),
+            ArrayBind(JSON, documents),
+            ArrayBind(INT64, [1, None]),
+        ]
+    )
+    assert [bytes(cast("bytes", buffer)) for buffer in dumped] == [
+        b"infinity",
+        json.dumps({"a": [1, None]}).encode(),
+        _binary_array(1184, [struct.pack("!q", since_epoch), struct.pack("!q", 2**63 - 1), None]),
+        _binary_array(3802, [_jsonb(document) for document in documents]),
+        _binary_array(20, [struct.pack("!q", 1), None]),
+    ]
+    # psycopg's process-wide map knows neither the open bound's native spelling
+    # nor the array carrier, and serialization left it so.
+    defaults = Transformer(postgres.adapters)
+    assert defaults.dump_sequence([INFINITY], [PyFormat.AUTO]) != [b"infinity"]
+    with pytest.raises(psycopg.ProgrammingError):
+        defaults.dump_sequence([ArrayBind(INT64, [1])], [PyFormat.AUTO])
+
+
+@pytest.mark.parametrize(
+    ("authored", "edited"),
+    [
+        ("_NULL_EVERY: Final = 4", "_NULL_EVERY: Final = 5"),
+        ('_batch_case(8, "columns", "typed")', '_batch_case(16, "columns", "typed")'),
+        ('_batch_case(1000, "columns", "wire")', '_batch_case(1000, "document", "wire")'),
+    ],
+)
+def test_a_batch_insert_workload_change_moves_the_write_digest(
+    monkeypatch: pytest.MonkeyPatch, authored: str, edited: str
+) -> None:
+    baseline = lowering_support.write_lowering_digest()
+    source_path = Path(lowering_support.__file__)
+    read_text = Path.read_text
+    assert authored in read_text(source_path, encoding="utf-8")
+
+    def changed(path: Path, *args: Any, **kwargs: Any) -> str:
+        source = read_text(path, *args, **kwargs)
+        return source.replace(authored, edited) if path == source_path else source
+
+    monkeypatch.setattr(Path, "read_text", changed)
+    assert lowering_support.write_lowering_digest() != baseline

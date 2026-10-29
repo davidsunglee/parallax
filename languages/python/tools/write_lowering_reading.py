@@ -4,12 +4,16 @@ This script is imported only by its gated suite. Report execution starts it in a
 child interpreter, where it drives one case through the production seams of its
 window and answers with one JSON line.
 
-Four windows are read. A keyed-write case reads its row inside one
+Five windows are read. A keyed-write case reads its row inside one
 transaction and runs from the public keyed verb until ``transact`` returns:
 preparation, buffering, and the pre-commit flush's settlement, SQL lowering,
 production bind adaptation, and psycopg's own document serialization. A
 target reads nothing before its verb, so its own coverage read
-at flush falls inside that window. A public insert case runs one
+at flush falls inside that window. A batch insert runs the same window over
+one transaction of many inserts, from the first verb, through the flush's
+collapse of them into one statement and the dump of its column arrays, until
+``transact`` returns, and its readings are per row; every run must present to
+the port exactly the work its case states. A public insert case runs one
 ``tx.wire.insert`` of a nested, polymorphic payload inside an open transaction
 to the frozen node it answers, and stops before the commit that flushes the
 row. The model-preparation cases each run one complete model preparation: the
@@ -22,7 +26,7 @@ stage each window names — what the verb kept of its buffered write beyond the
 read it revises, the node answered with its row buffered, the model prepared —
 so sampling never prolongs a lifetime inside a timed run.
 
-The fourth window, a cross-object flush, is read over two regions of one
+The cross-object flush window is read over two regions of one
 flush instead, after its transaction has read every object and buffered an
 amendment of each.
 Planning runs from finalization's start to the finalized plan, and its elapsed
@@ -100,13 +104,14 @@ from tests.unit.memory_instruments import (  # noqa: E402
 )
 
 type Window = Literal[
-    "keyed-write", "wire-insert-response", "model-preparation", "cross-object-flush"
+    "keyed-write", "wire-insert-response", "model-preparation", "cross-object-flush", "batch-insert"
 ]
 
 KEYED_WINDOW: Final[Window] = "keyed-write"
 RESPONSE_WINDOW: Final[Window] = "wire-insert-response"
 MODEL_WINDOW: Final[Window] = "model-preparation"
 FLUSH_WINDOW: Final[Window] = "cross-object-flush"
+BATCH_WINDOW: Final[Window] = "batch-insert"
 MODEL_CASE: Final = "model.prepared"
 MODEL_FAMILY_CASE: Final = "model.prepared.family"
 MODEL_EDITION: Final = "write-lowering-report"
@@ -159,6 +164,7 @@ WINDOWS: Final[Mapping[str, Window]] = {
     MODEL_CASE: MODEL_WINDOW,
     MODEL_FAMILY_CASE: MODEL_WINDOW,
     **{case.name: FLUSH_WINDOW for case in lowering_support.CROSS_OBJECT_CASES},
+    **{case.name: BATCH_WINDOW for case in lowering_support.BATCH_CASES},
 }
 CASE_NAMES: Final = tuple(WINDOWS)
 MODEL_CLASSES: Final[Mapping[str, tuple[type[Entity], ...]]] = {
@@ -272,6 +278,38 @@ def _keyed_driver(case: lowering_support.Case, handle: ScopedDatabase) -> Driver
     return Driver(1, run, marked, checkpoint, _kept_by_the_verb)
 
 
+def _batch_driver(
+    case: lowering_support.BatchCase,
+    handle: ScopedDatabase,
+    port: lowering_support.OrderedAcceptingPort,
+) -> Driver:
+    """A batch insert's runs, read per row. Its checkpoint samples before the
+    first verb and once the last has buffered: what the verbs kept. Each run
+    is refused unless its flush presented exactly the case's work."""
+
+    def presenting(run: Callable[[], None]) -> None:
+        port.reset()
+        run()
+        work = port.work()
+        if work != case.work:
+            raise RuntimeError(f"{case.name} presented {work}, expected {case.work}")
+
+    def run() -> None:
+        presenting(lambda: lowering_support.insert_batch(handle, case))
+
+    def marked(opened: Sampler, closed: Sampler) -> None:
+        presenting(
+            lambda: lowering_support.insert_batch(handle, case, opened=opened, closed=closed)
+        )
+
+    def checkpoint(sample: Sampler) -> None:
+        presenting(
+            lambda: lowering_support.insert_batch(handle, case, opened=sample, buffered=sample)
+        )
+
+    return Driver(case.rows, run, marked, checkpoint, _kept_by_the_verb)
+
+
 def _response_driver(case: lowering_support.ResponseCase, handle: ScopedDatabase) -> Driver:
     def run() -> None:
         lowering_support.insert_response(handle, case)
@@ -313,6 +351,12 @@ def driver_for(name: str) -> Generator[Driver]:
         keyed = lowering_support.case_named(name)
         with lowering_support.database(keyed) as handle:
             yield _keyed_driver(keyed, handle)
+        return
+    if window == BATCH_WINDOW:
+        batch = lowering_support.batch_case_named(name)
+        port = lowering_support.OrderedAcceptingPort()
+        with lowering_support.batch_database(port) as handle:
+            yield _batch_driver(batch, handle, port)
         return
     if window == RESPONSE_WINDOW:
         response = lowering_support.response_case_named(name)
