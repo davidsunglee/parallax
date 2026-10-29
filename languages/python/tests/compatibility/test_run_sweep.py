@@ -39,7 +39,11 @@ from tests._support.corpus import (
     compare_stored_data_issues,
     wire_value_deep,
 )
-from tests._support.driver_writes import RecordingCaseDatabase, assert_driver_write_zero_signs
+from tests._support.driver_writes import (
+    RecordingCaseDatabase,
+    assert_driver_write_document_nulls,
+    assert_driver_write_zero_signs,
+)
 from tests._support.graph_residuals import (
     CHILD_LEVEL_GRAPH_SHAPE_RESIDUALS,
     classify_child_graph_shape_residuals,
@@ -546,6 +550,7 @@ def _grade_write_run(
             statement_bind_positions(model, golden_sql, golden_binds),
         )
     assert_driver_write_zero_signs(model, port.dialect, golden_statements, port.writes)
+    assert_driver_write_document_nulls(model, port.dialect, golden_statements, port.writes)
     assert envelope["observations"]["databaseCalls"] == case_document(case)["then"]["databaseCalls"]
     _grade_execution_lifecycle(case_document(case)["then"], envelope["observations"])
 
