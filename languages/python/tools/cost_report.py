@@ -15,8 +15,9 @@ fixture keys no workload reads. A capture is taken once at its producing
 commit; the blocking memory gates are the cost class's, and whether a later
 instrument edit leaves two captures comparable is a judgement recorded beside
 the evidence. A capture whose readings were changed after that run, whose
-envelopes were re-classified under a later Budget Contract, or whose workload
-digest was re-stated under a later digest definition records the change in the
+envelopes were re-classified under a later Budget Contract, whose workload
+digest was re-stated under a later digest definition, or one of whose members
+was re-measured after its collection failed records the change in the
 ``adjustment`` of its ``conditions.json``, and verification and comparison both
 state it rather than presenting the amended capture as the run's own.
 
@@ -60,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import hashlib
 import json
 import os
@@ -72,7 +74,7 @@ import tempfile
 import uuid
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
 from typing import Final, cast
@@ -82,7 +84,7 @@ from jsonschema import ValidationError
 import feature_boundary_overhead as feature_report
 import instance_state_overhead as instance_report
 import write_lowering_overhead as write_report
-from durations import Spans, render
+from durations import Span, Spans, render
 from interpreter_matrix import (
     RuntimeIdentity,
     RuntimeStatus,
@@ -719,17 +721,26 @@ def collect(
         recorder.span("collection", COLLECTION_SPAN),
     ):
         for member in MEMBERS:
-            arguments = (
-                ("--authority-preflight",)
-                if canonical and member.subject == SNAPSHOT_SUBJECT
-                else ()
+            result, identities = _collected(
+                member, Path(scratch), recorder, runner, canonical=canonical
             )
-            result, identities = _attempt(member, arguments, Path(scratch), recorder, runner)
-            if canonical and result.failure and "authority preflight refused" in result.failure:
-                raise ValueError(result.failure)
             results.append(result)
             runtimes[member.subject] = identities
     return Collection(tuple(results), recorder, runtimes)
+
+
+def _collected(
+    member: Member, scratch: Path, recorder: Spans, runner: Runner, *, canonical: bool
+) -> tuple[MemberResult, dict[str, RuntimeStatus]]:
+    """One member's attempt as collection takes it; a canonical attempt its
+    member's own authority preflight refuses stops collection."""
+    arguments = (
+        ("--authority-preflight",) if canonical and member.subject == SNAPSHOT_SUBJECT else ()
+    )
+    result, identities = _attempt(member, arguments, scratch, recorder, runner)
+    if canonical and result.failure and "authority preflight refused" in result.failure:
+        raise ValueError(result.failure)
+    return result, identities
 
 
 def _attempt(
@@ -879,15 +890,20 @@ def conditions_document(
     return {
         "schemaVersion": CONDITIONS_VERSION,
         "members": {
-            member.subject: {
-                "sources": source_digests(MEMBER_SOURCES[member.subject], workspace),
-                "runtimes": {
-                    runtime: status.document()
-                    for runtime, status in sorted(runtimes.get(member.subject, {}).items())
-                },
-            }
+            member.subject: _member_conditions(
+                member.subject, runtimes.get(member.subject, {}), workspace
+            )
             for member in MEMBERS
         },
+    }
+
+
+def _member_conditions(
+    subject: str, runtimes: Mapping[str, RuntimeStatus], workspace: Path | None = None
+) -> dict[str, object]:
+    return {
+        "sources": source_digests(MEMBER_SOURCES[subject], workspace),
+        "runtimes": {runtime: status.document() for runtime, status in sorted(runtimes.items())},
     }
 
 
@@ -1070,12 +1086,15 @@ def verify(
     document: Document,
     contract: BudgetContract | None = None,
     required: Sequence[str] = (),
+    replacement: MemberReplacement | None = None,
 ) -> list[str]:
     """Every reason the required portfolio is not valid evidence: a missing,
     malformed, or incomplete required envelope, a snapshot-delivery envelope
     that is not authoritative, a capture taken from a dirty tree, a workload or
     Budget Contract digest disagreeing with the inspected checkout, or members
-    produced at different commits.
+    produced at different commits. Under a recorded ``replacement``, every
+    verified member must instead name exactly the commit it assigns that
+    member; :func:`replace_member` proved the rest when it was made.
 
     ``required`` names members held to their owners' exact current matrices
     beyond that: optional members must then be present, complete, clean,
@@ -1121,10 +1140,11 @@ def verify(
     failures += _provenance_failures(
         write, WRITE_SUBJECT, write_report.lowering_support.write_lowering_digest(), active
     )
-    commits = {
-        str(cast("Document", member["provenance"])["commit"]) for member in (snapshot, write)
-    }
-    if len(commits) != 1:
+    commits = {_producing_commit(member) for member in (snapshot, write)}
+    if replacement is not None:
+        failures += replacement.commit_failures(SNAPSHOT_SUBJECT, snapshot)
+        failures += replacement.commit_failures(WRITE_SUBJECT, write)
+    elif len(commits) != 1:
         failures.append("the snapshot-delivery and write-lowering envelopes name different commits")
     if INSTANCE_STATE_SUBJECT in required:
         failures += _optional_member_failures(
@@ -1134,6 +1154,7 @@ def verify(
             INSTANCE_STATE_SUBJECT,
             validate_instance_state_matrix,
             workload_digest(),
+            replacement,
         )
     if FEATURE_SUBJECT in required:
         failures += _optional_member_failures(
@@ -1143,8 +1164,37 @@ def verify(
             FEATURE_SUBJECT,
             feature_report.validate_matrix,
             feature_report.workload_digest(),
+            replacement,
         )
     return failures
+
+
+def _producing_commit(member: Document) -> str:
+    return str(cast("Document", member["provenance"])["commit"])
+
+
+@dataclass(frozen=True, slots=True)
+class MemberReplacement:
+    """A recorded re-measurement of ``member`` at ``replacement_commit``
+    beside the members a capture at ``original_commit`` kept."""
+
+    member: str
+    original_commit: str
+    replacement_commit: str
+
+    def commit_failures(self, subject: str, envelope: Document) -> list[str]:
+        """Why ``envelope`` does not name the commit this replacement assigns
+        ``subject``: the replacement's for the replaced member, the original
+        capture's for every other."""
+        expected = self.replacement_commit if subject == self.member else self.original_commit
+        named = _producing_commit(envelope)
+        if named == expected:
+            return []
+        role = "replacement" if subject == self.member else "original"
+        return [
+            f"the {subject} envelope names commit {named[:12]}, but the recorded replacement "
+            f"of the {self.member} member requires the {role} commit {expected[:12]}"
+        ]
 
 
 def _valid_member(
@@ -1183,6 +1233,7 @@ def _optional_member_failures(
     subject: str,
     matrix: Callable[[Document], None],
     digest: str,
+    replacement: MemberReplacement | None,
 ) -> list[str]:
     member, failures = _valid_member(document, subject, matrix)
     if member is None:
@@ -1190,8 +1241,9 @@ def _optional_member_failures(
     if member.get("incomplete") or member.get("errors"):
         failures.append(f"the {subject} envelope is incomplete")
     failures += _provenance_failures(member, subject, digest, contract)
-    commit = str(cast("Document", member["provenance"])["commit"])
-    if commits != {commit}:
+    if replacement is not None:
+        failures += replacement.commit_failures(subject, member)
+    elif commits != {_producing_commit(member)}:
         failures.append(
             f"the {subject} envelope names a different commit from the required members"
         )
@@ -1617,8 +1669,9 @@ def conditions_beside(portfolio: Path) -> Conditions | None:
 
 ADJUSTMENT_FIELD: Final = "adjustment"
 """Where a capture's conditions record readings changed after the run, its
-envelopes re-classified under a later Budget Contract, or its workload digest
-re-stated under a later digest definition."""
+envelopes re-classified under a later Budget Contract, its workload digest
+re-stated under a later digest definition, or a member re-measured after its
+collection failed."""
 
 
 def _authority_only_change(old: BudgetContract, new: BudgetContract) -> None:
@@ -2018,6 +2071,31 @@ def amendment_beside(portfolio: Path) -> str | None:
     if recorded is None:
         return None
     adjustment = _object(recorded, f"conditions {ADJUSTMENT_FIELD}")
+    changed = _changed_readings(adjustment)
+    reclassified = adjustment.get("reclassified") is not None
+    redigested = adjustment.get("redigested") is not None
+    replaced = _recorded_replacement(adjustment)
+    statements: list[str] = []
+    if changed:
+        statements.append(f"{' and '.join(changed)} readings changed")
+    elif not (reclassified or redigested or replaced):
+        statements.append("readings changed")
+    if reclassified:
+        statements.append("envelopes re-classified under a later Budget Contract")
+    if redigested:
+        statements.append("workload digest re-stated under a later digest definition")
+    if replaced is not None:
+        statements.append(
+            f"the {replaced.member} member, which the run at {replaced.original_commit[:12]} "
+            f"failed to produce, re-measured alone at {replaced.replacement_commit[:12]}"
+        )
+    return (
+        f"{' and '.join(statements)} after the run its provenance names, recorded in the "
+        f"{ADJUSTMENT_FIELD} of {CONDITIONS_FILE}"
+    )
+
+
+def _changed_readings(adjustment: Mapping[str, object]) -> list[str]:
     changed: list[str] = []
     for key, label in (("remeasured", "re-measured"), ("derived", "derived")):
         entry = adjustment.get(key)
@@ -2026,20 +2104,267 @@ def amendment_beside(portfolio: Path) -> str | None:
         count = _object(entry, f"{ADJUSTMENT_FIELD} {key}").get("count")
         if isinstance(count, int) and not isinstance(count, bool):
             changed.append(f"{count} {label}")
-    reclassified = adjustment.get("reclassified") is not None
-    redigested = adjustment.get("redigested") is not None
-    statements: list[str] = []
-    if changed:
-        statements.append(f"{' and '.join(changed)} readings changed")
-    elif not (reclassified or redigested):
-        statements.append("readings changed")
-    if reclassified:
-        statements.append("envelopes re-classified under a later Budget Contract")
-    if redigested:
-        statements.append("workload digest re-stated under a later digest definition")
-    return (
-        f"{' and '.join(statements)} after the run its provenance names, recorded in the "
-        f"{ADJUSTMENT_FIELD} of {CONDITIONS_FILE}"
+    return changed
+
+
+REPLACEMENT_KEY: Final = "replacedMember"
+"""Where an adjustment records a member re-measured after its collection failed."""
+REPLACEMENT_SPAN: Final = "python-report-cost-replacement"
+
+
+def _recorded_replacement(adjustment: Mapping[str, object]) -> MemberReplacement | None:
+    recorded = adjustment.get(REPLACEMENT_KEY)
+    if recorded is None:
+        return None
+    fields = _object(recorded, f"{ADJUSTMENT_FIELD} {REPLACEMENT_KEY}")
+    member = _text(fields, "member")
+    if member not in {known.subject for known in MEMBERS}:
+        raise ValueError(f"the replaced member {member!r} is not a collected member")
+    return MemberReplacement(
+        member,
+        _commit(_text(fields, "originalCommit"), "originalCommit"),
+        _commit(_text(fields, "replacementCommit"), "replacementCommit"),
+    )
+
+
+def replacement_beside(portfolio: Path) -> MemberReplacement | None:
+    """The member replacement the conditions beside ``portfolio`` record, or
+    ``None``; ``ValueError`` names the first way a recorded one is malformed."""
+    path = portfolio.parent / CONDITIONS_FILE
+    if not path.exists():
+        return None
+    recorded = _object(_load(path), "conditions").get(ADJUSTMENT_FIELD)
+    if recorded is None:
+        return None
+    return _recorded_replacement(_object(recorded, f"conditions {ADJUSTMENT_FIELD}"))
+
+
+def checkout_is_clean() -> bool:
+    """Whether the inspected checkout has no change, staged, unstaged, or untracked."""
+    completed = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=WORKSPACE,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return not completed.stdout.strip()
+
+
+def changed_since(commit: str) -> frozenset[str]:
+    """Every repository-relative path that differs between ``commit`` and HEAD."""
+    completed = subprocess.run(
+        ["git", "diff", "--name-only", "--no-renames", commit, "HEAD"],
+        cwd=WORKSPACE,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return frozenset(completed.stdout.splitlines())
+
+
+def head_workload_digest(subject: str) -> str:
+    """The workload digest HEAD gives what ``subject`` measures."""
+    if subject == WRITE_SUBJECT:
+        return write_report.lowering_support.write_lowering_digest()
+    if subject == FEATURE_SUBJECT:
+        return feature_report.workload_digest()
+    return workload_digest()
+
+
+def _replaceable(document: Document, subject: str) -> tuple[Member, str]:
+    """The member ``subject`` names and the failure its collection recorded,
+    when the capture produced no envelope for it."""
+    member = next((known for known in MEMBERS if known.subject == subject), None)
+    if member is None:
+        raise ValueError(f"{subject!r} is not a collected member: {[m.subject for m in MEMBERS]}")
+    if _members(document, subject):
+        raise ValueError(
+            f"the capture produced the {subject} member; only a member its collection "
+            "failed to produce can be replaced"
+        )
+    recorded = [
+        _object(failure, "portfolio failure")
+        for failure in cast("Sequence[object]", document.get("failures", ()))
+    ]
+    failures = [failure for failure in recorded if failure.get("recipe") == member.recipe]
+    if len(failures) != 1:
+        raise ValueError(
+            f"the capture records {len(failures)} collection failures for {member.recipe}, "
+            "expected exactly one"
+        )
+    return member, _text(failures[0], "message")
+
+
+def _kept_commit(kept: Sequence[Document]) -> str:
+    commits = {_producing_commit(member) for member in kept}
+    if len(commits) != 1:
+        raise ValueError("the kept members name different producing commits")
+    (commit,) = commits
+    if any(cast("Document", member["provenance"]).get("dirty") is not False for member in kept):
+        raise ValueError("a kept member was not produced from a clean tree")
+    return _commit(commit, "the kept members' producing commit")
+
+
+def _prove_kept_unchanged(
+    kept: Sequence[Document], conditions: Conditions, changed: frozenset[str], replaced: str
+) -> None:
+    """Refuse unless HEAD differs from the producing commit in nothing a kept
+    member measured through: its recorded instrument and control sources, its
+    workload digest, and the Budget Contract it embeds, nor any production
+    package, the dependency lock, or a tool other than the collector and the
+    replaced member's own instruments."""
+    contract = committed_contract()
+    kept_sources: set[str] = set()
+    for envelope in kept:
+        subject = str(envelope["subject"])
+        provenance = cast("Document", envelope["provenance"])
+        if provenance.get("budgetContractDigest") != contract.digest:
+            raise ValueError(
+                f"the kept {subject} member embeds a Budget Contract other than HEAD's"
+            )
+        if provenance.get("workloadDigest") != head_workload_digest(subject):
+            raise ValueError(f"the kept {subject} member's workload digest differs from HEAD's")
+        current = source_digests(MEMBER_SOURCES[subject])
+        recorded = conditions[subject].sources
+        differing = sorted(path for path, digest in current.items() if recorded.get(path) != digest)
+        if differing:
+            raise ValueError(
+                f"the kept {subject} member's recorded sources differ from HEAD's: "
+                f"{', '.join(differing)}"
+            )
+        kept_sources.update(current)
+    workspace = WORKSPACE.relative_to(WORKSPACE.parents[1]).as_posix()
+    own = {
+        f"{workspace}/{path}"
+        for path in (*MEMBER_SOURCES[replaced].instruments, "tools/cost_report.py")
+        if path not in kept_sources
+    }
+    shared = (f"{workspace}/packages/", f"{workspace}/tools/")
+    measured_through = sorted(
+        path for path in changed - own if path.startswith(shared) or path == f"{workspace}/uv.lock"
+    )
+    if measured_through:
+        raise ValueError(
+            "HEAD changes what the kept members measured through: " + ", ".join(measured_through)
+        )
+
+
+def _interpreter_mismatches(
+    conditions: Conditions, kept: Sequence[str], identities: Mapping[str, RuntimeStatus]
+) -> list[str]:
+    mismatches: list[str] = []
+    for runtime, status in sorted(identities.items()):
+        if isinstance(status, RuntimeUnavailable):
+            continue
+        for subject in kept:
+            recorded = conditions[subject].runtimes.get(runtime)
+            if isinstance(recorded, RuntimeIdentity) and not _same_interpreter(recorded, status):
+                mismatches.append(
+                    f"CPython {runtime} is {status.implementation} {status.version} now and "
+                    f"{recorded.implementation} {recorded.version} in the kept {subject} member"
+                )
+    return mismatches
+
+
+def _span(durations: Spans, name: str) -> Span:
+    """The last collection span ``durations`` records under ``name``."""
+    for span in reversed(durations.spans):
+        if span.scope == "collection" and span.name == name:
+            return span
+    raise ValueError(f"the durations record no {name} collection span")
+
+
+def _interval(span: Span) -> dict[str, str]:
+    return {
+        "startedAt": span.started_at.isoformat(),
+        "finishedAt": (span.started_at + timedelta(seconds=span.seconds)).isoformat(),
+    }
+
+
+def replace_member(run_dir: Path, subject: str, out: Path, runner: Runner = run_member) -> None:
+    """Re-measure the one member ``run_dir``'s collection failed to produce, at
+    HEAD, and write the capture it completes into the new directory ``out``.
+
+    Every refusal comes before measuring or after it and before any write, and
+    ``run_dir`` is never written. The checkout must be clean at a descendant of
+    the kept members' producing commit that changed nothing they measured
+    through, and must pass the canonical authority preflight; the member is
+    then measured exactly as canonical collection measures it. Kept envelopes,
+    conditions, and duration spans are carried unchanged beside the new member,
+    its conditions, and its span, and the adjustment records the replacement.
+    """
+    if out.exists():
+        raise ValueError(f"{out} exists; the replacement writes a new capture directory")
+    portfolio = run_dir / "portfolio.json"
+    document, conditions, durations = _reclassification_inputs(portfolio)
+    if durations is None:
+        raise ValueError(f"{run_dir} records no {DURATIONS_FILE}")
+    member, failure = _replaceable(document, subject)
+    kept = cast("Sequence[Document]", document["members"])
+    original = _kept_commit(kept)
+    if not checkout_is_clean():
+        raise ValueError("the checkout is not clean")
+    head = git_head()
+    if not is_published(original):
+        raise ValueError(f"HEAD {head[:12]} does not descend from the capture's {original[:12]}")
+    recorded_conditions = load_conditions(run_dir / CONDITIONS_FILE)
+    _prove_kept_unchanged(kept, recorded_conditions, changed_since(original), subject)
+    collection = _span(durations, COLLECTION_SPAN)
+    preflight()
+    with (
+        tempfile.TemporaryDirectory(prefix="parallax-durations-") as scratch,
+        durations.span("collection", REPLACEMENT_SPAN, member=subject),
+    ):
+        result, identities = _collected(member, Path(scratch), durations, runner, canonical=True)
+    if result.envelope is None:
+        raise ValueError(f"the {subject} member failed again: {result.failure}")
+    provenance = cast("Document", result.envelope["provenance"])
+    if _producing_commit(result.envelope) != head or provenance.get("dirty") is not False:
+        raise ValueError(f"the {subject} member was not measured on a clean {head[:12]}")
+    kept_subjects = [str(envelope["subject"]) for envelope in kept]
+    mismatches = _interpreter_mismatches(recorded_conditions, kept_subjects, identities)
+    if mismatches:
+        raise ValueError("the interpreters differ from the kept members': " + "; ".join(mismatches))
+    span = _span(durations, REPLACEMENT_SPAN)
+    order = [known.subject for known in MEMBERS]
+    replaced = {
+        **document,
+        "members": sorted(
+            [*kept, result.envelope], key=lambda envelope: order.index(str(envelope["subject"]))
+        ),
+        "failures": [
+            entry
+            for entry in cast("Sequence[Document]", document.get("failures", ()))
+            if entry.get("recipe") != member.recipe
+        ],
+    }
+    members = _object(conditions.get("members"), "conditions members")
+    out.mkdir(parents=True)
+    durations.write(out / DURATIONS_FILE)
+    _write_adjusted(
+        out / "portfolio.json",
+        replaced,
+        durations,
+        {**conditions, "members": {**members, subject: _member_conditions(subject, identities)}},
+        {
+            REPLACEMENT_KEY: {
+                "member": subject,
+                "recipe": member.recipe,
+                "originalCommit": original,
+                "replacementCommit": head,
+                "replacedFailure": failure,
+                "originalCollection": _interval(collection),
+                "replacement": _interval(span),
+                "proven": (
+                    "HEAD descends from the original commit, and the kept members' recorded "
+                    "instrument and control sources, workload digests, and Budget Contract, "
+                    "the dependency lock, every production package, and every tool other than "
+                    "the collector and the replaced member's own instruments equal HEAD's"
+                ),
+                "unchanged": "every kept member's envelope, conditions, and duration spans",
+            },
+        },
     )
 
 
@@ -3774,6 +4099,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--verify", type=Path)
     parser.add_argument("--reclassify", type=Path, metavar="PORTFOLIO")
     parser.add_argument("--redigest", type=Path, metavar="PORTFOLIO")
+    parser.add_argument(
+        "--replace-member",
+        metavar="SUBJECT",
+        help="re-measure the one member --from's collection failed to produce into --out",
+    )
+    parser.add_argument(
+        "--from", dest="replace_from", type=Path, metavar="RUN_DIR", help="the capture to complete"
+    )
     parser.add_argument("--freshness-only", type=Path, metavar="PORTFOLIO")
     parser.add_argument("--lock-file", type=Path, help="lock inspected by --freshness-only")
     parser.add_argument("--compare", nargs=2, type=Path, metavar=("BASE", "HEAD"))
@@ -3823,6 +4156,7 @@ def _refuse_misplaced_options(parser: argparse.ArgumentParser, args: argparse.Na
             ("--compare", args.compare is not None),
             ("--reclassify", args.reclassify is not None),
             ("--redigest", args.redigest is not None),
+            ("--replace-member", args.replace_member is not None),
         )
         if chosen
     ]
@@ -3837,6 +4171,14 @@ def _refuse_misplaced_options(parser: argparse.ArgumentParser, args: argparse.Na
         (
             args.redigest is not None and args.out is not None,
             "--redigest rewrites its input; --out is not accepted",
+        ),
+        (
+            args.replace_member is not None and (args.replace_from is None or args.out is None),
+            "--replace-member requires --from and --out",
+        ),
+        (
+            args.replace_from is not None and args.replace_member is None,
+            "--from is a --replace-member option",
         ),
         (
             args.lock_file is not None and args.freshness_only is None,
@@ -3908,12 +4250,17 @@ def _run_verify(args: argparse.Namespace) -> int:
     fresh, freshness = lock_freshness(document)
     if fresh:
         print(freshness)
-    amended = amendment_beside(args.verify)
+    try:
+        amended = amendment_beside(args.verify)
+        replacement = replacement_beside(args.verify)
+    except (KeyError, TypeError, ValueError) as error:
+        print(f"the recorded {ADJUSTMENT_FIELD} is malformed: {error}", file=sys.stderr)
+        return 1
     if amended is not None:
         print(f"the capture is amended: {amended}")
     for advisory in advisories(document):
         print(advisory)
-    failures = verify(document, required=args.require_member)
+    failures = verify(document, required=args.require_member, replacement=replacement)
     for failure in failures:
         print(failure, file=sys.stderr)
     return 1 if failures else 0
@@ -3975,7 +4322,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_verify(args)
     if args.compare is not None:
         return _run_compare(parser, args)
-    if args.reclassify is not None or args.redigest is not None:
+    if args.reclassify is not None or args.redigest is not None or args.replace_member is not None:
         return _run_adjustment(args)
     if args.out is None:
         parser.error("--out is required when collecting")
@@ -3983,16 +4330,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run_adjustment(args: argparse.Namespace) -> int:
+    adjust: Callable[[], None]
     if args.reclassify is not None:
         portfolio = cast("Path", args.reclassify)
-        adjust, refused = reclassify, "reclassification"
+        adjust, refused = functools.partial(reclassify, portfolio), "reclassification"
         done = f"reclassified {portfolio} under the committed Budget Contract"
-    else:
+    elif args.redigest is not None:
         portfolio = cast("Path", args.redigest)
-        adjust, refused = redigest, "redigest"
+        adjust, refused = functools.partial(redigest, portfolio), "redigest"
         done = f"re-digested {portfolio} under HEAD's workload digest definition"
+    else:
+        subject, run_dir, out = cast(
+            "tuple[str, Path, Path]", (args.replace_member, args.replace_from, args.out)
+        )
+        adjust = functools.partial(replace_member, run_dir, subject, out, run_member)
+        refused = "member replacement"
+        done = f"re-measured {subject} at HEAD and wrote the capture it completes to {out}"
     try:
-        adjust(portfolio)
+        adjust()
     except (
         KeyError,
         TypeError,

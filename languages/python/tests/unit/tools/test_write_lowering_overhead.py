@@ -16,6 +16,7 @@ from psycopg import postgres
 from psycopg.adapt import PyFormat, Transformer
 
 import write_lowering_overhead as report
+import write_lowering_reading as reading_child
 from durations import Spans
 from interpreter_matrix import CURRENT_MINOR, IDENTITY_SCRIPT, supported_minors
 from parallax.conformance import workloads
@@ -1132,7 +1133,19 @@ def test_a_cross_object_flush_answers_per_flush_and_per_object_bytes_at_distinct
         {
             "samples": {
                 **{metric: _samples(metric) for metric in report.FLUSH_METRICS},
-                "work.statements": [0.0],
+                "work.statements": [-1.0],
+            }
+        },
+        {
+            "samples": {
+                **{metric: _samples(metric) for metric in report.FLUSH_METRICS},
+                "execution.elapsedUs": [0.0] * report.MEASURED,
+            }
+        },
+        {
+            "samples": {
+                **{metric: _samples(metric) for metric in report.FLUSH_METRICS},
+                "plan.elapsedUs": [10.0] * (report.MEASURED - 1) + [0.0],
             }
         },
         {"calls": dict.fromkeys(report.CALL_NAMES, 1.0)},
@@ -1149,6 +1162,82 @@ def test_a_malformed_cross_object_child_reading_is_an_unavailable_cell(
         ),
         str,
     )
+
+
+def test_a_keyed_child_reading_a_zero_timing_is_an_unavailable_cell() -> None:
+    case = lowering_support.CASES[0].name
+    samples = {metric: _samples(metric) for metric in report.METRICS}
+    zero = {**samples, "elapsedUs": [0.0] * report.MEASURED}
+    assert isinstance(_reading(case), report.ChildReading)
+    decoded = report._decoded(  # pyright: ignore[reportPrivateUsage] - child protocol under test
+        json.dumps(_child_document(case, {"samples": zero})), case
+    )
+    assert (
+        decoded == "the child's reading did not decode: samples.elapsedUs samples must be positive"
+    )
+
+
+def _stated_flush_document(case: lowering_support.CrossObjectCase) -> dict[str, object]:
+    """A child's answer for ``case`` as its run emits it: timings and bytes as
+    measured, and every work count exactly the work the case states."""
+    samples: dict[str, list[float]] = {
+        "plan.elapsedUs": [812.4, 790.1, 803.9, 799.0, 801.7, 795.2, 808.8, 797.3, 802.6],
+        "plan.retainedBytes": [48_210.0],
+        "plan.retainedBytesPerObject": [48_210.0 / case.objects],
+        "execution.elapsedUs": [
+            2410.5,
+            2388.2,
+            2402.9,
+            2395.4,
+            2399.1,
+            2391.0,
+            2405.6,
+            2398.7,
+            2393.3,
+        ],
+        "execution.transientBytes": [165_271.0] * report.MEASURED,
+        "execution.transientBytesPerObject": [165_271.0 / case.objects] * report.MEASURED,
+        **{cell: [float(count(case.work))] for cell, count in reading_child.WORK_CELLS.items()},
+    }
+    if case.deferred:
+        samples |= {
+            "binding.elapsedUs": [1_204.0] * report.MEASURED,
+            "binding.transientBytes": [1_311_056.0] * report.MEASURED,
+            "binding.transientBytesPerObject": [1_311_056.0 / case.objects] * report.MEASURED,
+            "work.coverageReads": [float(case.coverage_reads)],
+        }
+    return _child_document(case.name, {"units": case.objects, "samples": samples})
+
+
+@pytest.mark.parametrize("case", lowering_support.CROSS_OBJECT_CASES, ids=lambda case: case.name)
+def test_a_cross_object_child_reading_its_stated_work_decodes_with_every_count_kept(
+    case: lowering_support.CrossObjectCase,
+) -> None:
+    decoded = report._decoded(  # pyright: ignore[reportPrivateUsage] - child protocol under test
+        json.dumps(_stated_flush_document(case)), case.name
+    )
+    assert isinstance(decoded, report.ChildReading), decoded
+    assert decoded.samples["work.largestOrderedInvocation"] == (
+        float(case.work.largest_ordered_invocation),
+    )
+    assert decoded.samples["work.statements"] == (float(case.work.statements),)
+
+
+def test_a_grouped_flush_presents_no_ordered_invocation() -> None:
+    grouped = [
+        case.name
+        for case in lowering_support.CROSS_OBJECT_CASES
+        if case.work.largest_ordered_invocation == 0
+    ]
+    assert grouped == [
+        "cross-object.txtime.changed-64.columns.typed",
+        "cross-object.txtime.changed-130.columns.typed",
+        "cross-object.bitemporal.interior-64.document.wire",
+        "cross-object.bitemporal.deferred-32x4.columns.typed",
+        "cross-object.bitemporal.deferred-32x12.document.wire",
+        "cross-object.bitemporal.requesting-32x12.document.wire",
+        "cross-object.bitemporal.deferred-32x32.columns.typed",
+    ]
 
 
 def test_the_single_write_port_offers_no_ordered_transport_and_the_flush_port_one_stable_one() -> (
