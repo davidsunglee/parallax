@@ -240,6 +240,11 @@ globals().update(
 
 
 @in_a_child_interpreter
+def test_the_batch_inserts_stay_within_their_memory_gates() -> None:
+    _within_gates(gate_support.owner_of(test_the_batch_inserts_stay_within_their_memory_gates))
+
+
+@in_a_child_interpreter
 def test_a_seeded_retained_duplicate_of_every_prepared_row_trips_the_retained_gate() -> None:
     # A per-instruction registry holding a detached copy of each prepared row is
     # the regression class preparation used to pay and the unification removed:

@@ -27,9 +27,10 @@ from tests.unit._workload_spelling_support import (
     LEAF_PREFIX,
     PLAN_PREFIX,
 )
-from tests.unit._write_lowering_support import CROSS_OBJECT_CASES
+from tests.unit._write_lowering_support import BATCH_PREFIX, CROSS_OBJECT_CASES
 
 __all__ = [
+    "BATCH_INSERT_OWNER",
     "CROSS_OBJECT_FLUSH_OWNERS",
     "LEAF_READ_OWNERS",
     "OWNERS",
@@ -113,6 +114,13 @@ CROSS_OBJECT_FLUSH_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
     for case in CROSS_OBJECT_CASES
 )
 
+BATCH_INSERT_OWNER: Final = GateOwner(
+    WRITE_MODULE,
+    "test_the_batch_inserts_stay_within_their_memory_gates",
+    WRITE_SUBJECT,
+    _prefixed(BATCH_PREFIX),
+)
+
 
 OWNERS: Final[tuple[GateOwner, ...]] = (
     GateOwner(
@@ -146,6 +154,7 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         _exactly("model.prepared", "model.prepared.family"),
     ),
     *CROSS_OBJECT_FLUSH_OWNERS,
+    BATCH_INSERT_OWNER,
     GateOwner(
         SNAPSHOT_MODULE,
         "test_the_depth_reads_stay_within_their_memory_gates",
