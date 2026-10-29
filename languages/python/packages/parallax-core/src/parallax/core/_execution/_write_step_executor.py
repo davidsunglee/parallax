@@ -263,7 +263,7 @@ class WriteStepExecutor:
         with flush.database_call(statement, "write", step.entity) as call:
             try:
                 affected = connection.execute_write(
-                    connection.dialect.to_driver_sql(statement.sql), list(statement.binds)
+                    connection.dialect.to_driver_sql(statement.sql), statement.binds
                 )
             except DatabaseError as error:
                 self._recognize(step, error)
@@ -280,7 +280,7 @@ class WriteStepExecutor:
         with flush.database_call(statement, "write", step.entity) as call:
             try:
                 rows = connection.execute(
-                    connection.dialect.to_driver_sql(statement.sql), list(statement.binds)
+                    connection.dialect.to_driver_sql(statement.sql), statement.binds
                 )
             except DatabaseError as error:
                 self._recognize(step, error)

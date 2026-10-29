@@ -63,7 +63,6 @@ from parallax.core.document_codec import (
     prepared_raw_member_classifier,
     reduce_declared_members,
 )
-from parallax.core.document_codec._document import encode_managed_document
 from parallax.core.document_codec._leaf import LeafEncodingError, encode_managed_scalar_many
 from parallax.core.document_codec._plan import (
     BORROWED_DOCUMENTS,
@@ -74,6 +73,7 @@ from parallax.core.document_codec._plan import (
     DocumentAccess,
 )
 from parallax.core.metamodel import AuthoringViolation, Multiplicity
+from tests._support.managed_documents import encoded_document
 
 _MANY = Multiplicity.MANY
 _TAGS = ScalarDefinition("tags", STRING, False, _MANY)
@@ -288,7 +288,7 @@ def test_the_admitted_collection_encoder_is_not_a_package_export() -> None:
 
 
 def test_a_managed_document_encodes_every_collection_omitted_or_null_as_empty() -> None:
-    document = encode_managed_document(
+    document = encoded_document(
         _SHAPE,
         {"tags": ("b", "a", "b"), "amounts": None, "lines": ({"sku": "x", "marks": (2, 2)},)},
     )

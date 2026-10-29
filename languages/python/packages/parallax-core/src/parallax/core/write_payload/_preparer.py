@@ -1,50 +1,40 @@
 from __future__ import annotations
 
-from collections.abc import Container, Hashable, Iterator, Mapping, Sequence
+from collections.abc import Hashable, Iterator, Mapping
 from itertools import chain
 from typing import cast
 
-from parallax.core import storage_layout
 from parallax.core.base import Json, ManagedValue, NeutralType
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
+    OccurrenceDefinition,
     Present,
     SetScalar,
     SetValueObject,
-    apply_prepared_patches,
     persisted_document_equal,
-    prepare_patches,
 )
-from parallax.core.document_codec._document import encode_managed_document, encode_managed_many
+from parallax.core.document_codec._document import prepare_managed_patches
 from parallax.core.document_codec._leaf import encode_managed_scalar_many
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     Metamodel,
-    Multiplicity,
     ValueObjectIdentity,
-    ValueObjectMetadata,
 )
-from parallax.core.storage_layout import (
-    ColumnSlot,
-    ColumnTier,
-    DocumentResidentSelection,
-    EntityLayoutView,
-    InheritanceDiscriminator,
-    RelationalDocument,
-)
+from parallax.core.storage_layout import ColumnTier, EntityLayoutView, RelationalDocument
+from parallax.core.write_payload._storage import EntityStorage, StorageCatalog, assigned_document
 from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.payload import (
     AssignmentPayload,
     PatchedDocument,
     RowPayload,
+    RowSlots,
 )
 from parallax.core.write_plan.planned_rows import WritePlanningError
 from parallax.core.write_plan.steps import (
     MaxPlusOne,
-    NewLineage,
     PlannedAssignments,
     SelfIncrement,
     WriteRow,
@@ -61,24 +51,29 @@ class LayoutPayloadPreparer:
     answers. Nothing here chooses authority, preservation, or topology.
     """
 
-    __slots__ = ("_comparisons", "_entities", "_intervals", "_layouts")
+    __slots__ = ("_comparisons", "_storage")
 
     def __init__(self, model: Metamodel) -> None:
-        self._layouts = storage_layout.view(model)
-        self._intervals: dict[EntityIdentity, frozenset[AttributeIdentity]] = {}
-        self._entities: dict[EntityIdentity, _Table] = {}
+        self._storage = StorageCatalog(model)
         self._comparisons: dict[EntityIdentity, _Comparison] = {}
 
+    def row_slots(self, entity: EntityIdentity, presence: int) -> RowSlots:
+        return self._storage.entity(entity).row_slots(presence)
+
     def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
-        contributors, values = _row_cells(self._table(entity), write_row)
-        return RowPayload(entity=entity, source=write_row, contributors=contributors, values=values)
+        slots = self.row_slots(entity, write_row.row.presence)
+        return RowPayload(slots=slots, source=write_row, values=slots.cells(write_row))
 
     def assignments(
         self, entity: EntityIdentity, assignments: PlannedAssignments
     ) -> AssignmentPayload:
-        contributors, values = _assignment_cells(self._table(entity), assignments)
+        storage = self._storage.entity(entity)
+        slots, values = _assignment_cells(storage, assignments)
         return AssignmentPayload(
-            entity=entity, assignments=assignments, contributors=contributors, values=values
+            entity=entity,
+            assignments=assignments,
+            placement=storage.assignment_placement(slots),
+            values=values,
         )
 
     def proven_unequal_non_interval(
@@ -97,7 +92,7 @@ class LayoutPayloadPreparer:
         # A member either row executes is where neighbours usually differ, so it
         # is compared before the rest; an executed occurrence is no scalar and
         # its lookups miss.
-        documented = cast("Mapping[Hashable, bool]", self._comparison(entity).scalars)
+        documented = cast("Mapping[Hashable, bool]", self._storage.entity(entity).scalars)
         left_row, right_row = left.row, right.row
         for identity in chain(left.executed, right.executed, _stated_attributes(left_row)):
             json = documented.get(identity)
@@ -147,7 +142,7 @@ class LayoutPayloadPreparer:
     def rebound(self, payload: RowPayload, write_row: WriteRow) -> RowPayload:
         source = payload.source
         entity = payload.entity
-        intervals = self._interval_members(entity, self._view(entity))
+        intervals = self._storage.entity(entity).interval_members
         row = write_row.row
         before = source.row
         index = row.selection.members.index
@@ -166,9 +161,8 @@ class LayoutPayloadPreparer:
                 "prepared from outside its temporal interval"
             )
         return RowPayload(
-            entity=entity,
+            slots=payload.slots,
             source=write_row,
-            contributors=payload.contributors,
             values=tuple(
                 row.at(index[contributor])
                 if isinstance(contributor, AttributeIdentity) and contributor in intervals
@@ -177,54 +171,24 @@ class LayoutPayloadPreparer:
             ),
         )
 
-    def _view(self, entity: EntityIdentity) -> EntityLayoutView:
-        return self._table(entity).view
-
-    def _table(self, entity: EntityIdentity) -> _Table:
-        table = self._entities.get(entity)
-        if table is None:
-            view = self._layouts.entity(entity)
-            if view is None:
-                raise WritePlanningError(f"{entity.name!r}: write target has no effective table")
-            table = self._entities[entity] = _Table(view)
-        return table
-
     def _comparison(self, entity: EntityIdentity) -> _Comparison:
         comparison = self._comparisons.get(entity)
         if comparison is None:
-            comparison = self._comparisons[entity] = _Comparison(self._view(entity))
+            comparison = self._comparisons[entity] = _Comparison(self._storage.entity(entity).view)
         return comparison
 
-    def _interval_members(
-        self, entity: EntityIdentity, view: EntityLayoutView
-    ) -> frozenset[AttributeIdentity]:
-        intervals = self._intervals.get(entity)
-        if intervals is None:
-            intervals = frozenset(
-                slot.contributor
-                for slot in view.columns
-                if slot.tier is ColumnTier.TEMPORAL
-                and isinstance(slot.contributor, AttributeIdentity)
-            )
-            self._intervals[entity] = intervals
-        return intervals
-
-
-type _Cells = tuple[tuple[Hashable, ...], tuple[object, ...]]
 
 _INTERVAL, _DOCUMENT, _JSON, _SCALAR, _EXACT = range(5)
 
 
 class _Comparison:
     """How one Table's persisted cells compare, resolved once per preparer:
-    each slot's contributor and how its cell compares, and whether each
-    non-interval Attribute stores a ``json`` document."""
+    each slot's contributor and how its cell compares."""
 
-    __slots__ = ("cells", "scalars")
+    __slots__ = ("cells",)
 
     def __init__(self, view: EntityLayoutView) -> None:
         cells: list[tuple[Hashable, int]] = []
-        scalars: dict[AttributeIdentity, bool] = {}
         for slot in view.columns:
             contributor = slot.contributor
             if slot.tier is ColumnTier.TEMPORAL:
@@ -236,323 +200,105 @@ class _Comparison:
             else:
                 kind = _EXACT
             cells.append((contributor, kind))
-        intervals = {slot for slot, kind in cells if kind == _INTERVAL}
-        for binding in view.member_selection.bindings:
-            if isinstance(binding, AttributeMetadata) and binding.identity not in intervals:
-                scalars[binding.identity] = isinstance(binding.type, Json)
         self.cells = tuple(cells)
-        self.scalars = scalars
 
 
-class _Table:
-    """One Entity's Table Layout view, resolved once per preparer: the view, its
-    slots in Table Layout order, its document-resident members, and the element
-    type of each scalar collection with a structured Column of its own."""
-
-    __slots__ = ("collections", "columns", "residence", "view")
-
-    def __init__(self, view: EntityLayoutView) -> None:
-        self.view = view
-        self.columns: tuple[ColumnSlot, ...] = tuple(view.columns)
-        resident = view.document_residents
-        self.residence = None if resident is None else _Residence(resident)
-        bindings = view.member_selection.bindings
-        selection = view.member_selection
-        self.collections: Mapping[AttributeIdentity, NeutralType] = {
-            slot.contributor: cast(
-                "AttributeMetadata", bindings[selection.position(slot.contributor)]
-            ).type
-            for slot in self.columns
-            if slot.tier is ColumnTier.DOCUMENT and isinstance(slot.contributor, AttributeIdentity)
-        }
-
-
-class _Residence:
-    """One Table's document-resident members, resolved once per preparer: each
-    member's binding and path in canonical logical placement order, and the
-    identities the shared Structured Column accounts for."""
-
-    __slots__ = ("members", "placements", "selection")
-
-    def __init__(self, selection: DocumentResidentSelection) -> None:
-        bindings = selection.member_selection.bindings
-        self.selection = selection
-        self.placements: tuple[
-            tuple[AttributeMetadata | ValueObjectMetadata, tuple[str, ...]], ...
-        ] = tuple(
-            (bindings[position], placement.path)
-            for position, placement in zip(selection.positions, selection.placements, strict=True)
-        )
-        self.members: frozenset[AttributeIdentity | ValueObjectIdentity] = frozenset(
-            binding.identity for binding, _ in self.placements
-        )
-
-    def named(
-        self,
-        attributes: Mapping[AttributeIdentity, object],
-        value_objects: Mapping[ValueObjectIdentity, object],
-    ) -> int:
-        """How many of the named members the Structured Column accounts for."""
-        members = self.members
-        return len(members.intersection(attributes)) + len(members.intersection(value_objects))
-
-
-# One arm per Column contributor kind, in Table Layout slot order. It runs per written row
-# and visits every slot, so the arms stay inline rather than behind a per-slot call.
-def _row_cells(table: _Table, write_row: WriteRow) -> _Cells:  # noqa: C901
-    """``write_row``'s complete persisted cells, in Table Layout slot order.
-
-    Every member a row names occupies its slot. A Value Object occurrence with
-    a Column of its own stores its whole encoded document there, and an unnamed
-    `many` stores ``[]``, because absence and the empty array are one logical
-    zero state (`m-value-object`). Every document-resident member collapses into
-    the Table's one shared Structured Column, which every row stores, the empty
-    object included (`m-storage-layout`). The table-per-hierarchy discriminator
-    stores the concrete subtype's own tag.
-    """
-    view = table.view
-    residence = table.residence
-    row = write_row.row
-    attributes = row.attributes
-    value_objects = row.value_objects
-    discriminator = view.discriminator
-    collections = table.collections
-    contributors: list[Hashable] = []
-    values: list[object] = []
-    matched = 0
-    for slot in table.columns:
-        contributor = slot.contributor
-        if isinstance(contributor, AttributeIdentity):
-            element_type = collections.get(contributor) if collections else None
-            if contributor not in attributes:
-                if element_type is None:
-                    continue
-                value: object = ()
-            else:
-                value = attributes[contributor]
-                matched += 1
-                if element_type is not None:
-                    value = _collection_cell(element_type, value)
-        elif isinstance(contributor, InheritanceDiscriminator):
-            if discriminator is None:  # pragma: no cover - a discriminator slot owns its tag
-                raise ValueError(f"{view.entity.canonical}: discriminator slot has no tag")
-            value = discriminator.value
-        elif isinstance(contributor, RelationalDocument):
-            resident = _residents(view, residence)
-            value = _row_document(resident, write_row)
-            matched += resident.named(attributes, value_objects)
-        else:
-            occurrence = _occurrence_binding(view, contributor)
-            if contributor in value_objects:
-                stated = value_objects[contributor]
-                value = None if stated is None else _occurrence_document(occurrence, stated)
-                matched += 1
-            elif occurrence.multiplicity is Multiplicity.MANY:
-                value = _occurrence_document(occurrence, ())
-            else:
-                continue
-        contributors.append(contributor)
-        values.append(value)
-    _require_placed(view, matched, len(attributes) + len(value_objects))
-    return tuple(contributors), tuple(values)
-
-
-def _assignment_cells(table: _Table, assignments: PlannedAssignments) -> _Cells:
-    """The persisted values ``assignments`` writes, in Table Layout slot order.
+def _assignment_cells(
+    storage: EntityStorage, assignments: PlannedAssignments
+) -> tuple[int, tuple[object, ...]]:
+    """The slots ``assignments`` writes, as a mask of their indexes, and the
+    persisted value each stores there, in Table Layout slot order.
 
     A revising statement writes only what it assigns: the shared Structured
     Column takes the ordered prepared patches of its assigned paths, so every key
     it does not name survives, and an assigned occurrence replaces its whole
-    subtree at its own path whatever its cardinality.
+    subtree at its own path whatever its cardinality. Every assigned value was
+    admitted before planning placed it here, so its encoding judges nothing.
     """
-    view = table.view
-    residence = table.residence
-    collections = table.collections
     attributes = assignments.attributes
     value_objects = assignments.value_objects
-    contributors: list[Hashable] = []
     values: list[object] = []
+    slots = 0
     matched = 0
-    for slot in table.columns:
+    for index, slot in enumerate(storage.slots):
         contributor = slot.contributor
         if isinstance(contributor, AttributeIdentity):
             if contributor not in attributes:
                 continue
             value: object = attributes[contributor]
-            matched += 1
-            element_type = collections.get(contributor) if collections else None
-            if element_type is not None:
-                value = _collection_cell(element_type, value)
-        elif isinstance(contributor, RelationalDocument):
-            resident = _residents(view, residence)
-            named = resident.named(attributes, value_objects)
-            if not named:
+            if slot.document:
+                value = _collection_cell(cast("NeutralType", slot.fact), value)
+        elif isinstance(contributor, ValueObjectIdentity):
+            if contributor not in value_objects:
                 continue
-            matched += named
-            value = PatchedDocument(
-                prepare_patches(
-                    resident.selection.shape,
-                    _resident_patches(resident, attributes, value_objects),
-                )
+            value = assigned_document(
+                cast("OccurrenceDefinition", slot.fact), value_objects[contributor]
             )
-        elif isinstance(contributor, ValueObjectIdentity) and contributor in value_objects:
-            stated = value_objects[contributor]
-            occurrence = _occurrence_binding(view, contributor)
-            value = None if stated is None else _occurrence_document(occurrence, stated)
-            matched += 1
+        elif isinstance(contributor, RelationalDocument) and storage.residents is not None:
+            patches = _resident_patches(storage, attributes, value_objects)
+            if not patches:
+                continue
+            matched += len(patches) - 1
+            value = PatchedDocument(prepare_managed_patches(storage.residents.shape, patches))
         else:
             continue
-        contributors.append(contributor)
+        matched += 1
+        slots |= 1 << index
         values.append(value)
-    _require_placed(view, matched, len(attributes) + len(value_objects))
-    return tuple(contributors), tuple(values)
-
-
-def _row_document(resident: _Residence, write_row: WriteRow) -> object:
-    """One row's Structured Column, given where its state came from.
-
-    A row that succeeds a milestone whose observation retained the predecessor's
-    raw document is that document patched at the members the row executes
-    alone, so every key it carries outside them survives the close-and-insert —
-    a key a newer application version wrote included (`m-document-codec`,
-    `m-write-plan`). Settlement already made that document recursively
-    immutable (`m-db-port`). An executed member is written whatever it assigns,
-    so an executed occurrence replaces its stored subtree whole even where its
-    declared members equal the stored ones.
-
-    Without a retained document there is nothing to preserve, so the row's own
-    complete member set composes the document.
-    """
-    row = write_row.row
-    origin = write_row.origin
-    if isinstance(origin, NewLineage) or origin.predecessor.document is None:
-        return _complete_document(resident, row.attributes, row.value_objects)
-    document = origin.predecessor.document
-    executed = write_row.executed
-    if not executed:
-        return document
-    patches = _resident_patches(
-        resident,
-        row.attributes,
-        row.value_objects,
-        executed,
-    )
-    if not patches:
-        return document
-    return apply_prepared_patches(document, prepare_patches(resident.selection.shape, patches))
-
-
-def _complete_document(
-    resident: _Residence,
-    attributes: Mapping[AttributeIdentity, object],
-    value_objects: Mapping[ValueObjectIdentity, object],
-) -> object:
-    """One row's complete Structured Column document from its own members.
-
-    Composed through the codec against the shape of every applicable
-    document-resident member rather than only the named ones, so presence
-    classification stays the codec's: a member the row omits is absent, one the
-    row sets to ``None`` is JSON null, and a `many` occurrence always contributes
-    its array even where the row never mentions it (`m-document-codec`).
-    """
-    values: dict[str, object] = {}
-    for binding, _ in resident.placements:
-        if isinstance(binding, AttributeMetadata):
-            if binding.identity in attributes:
-                values[binding.identity.name] = attributes[binding.identity]
-        elif binding.identity in value_objects:
-            values[binding.identity.path[-1]] = value_objects[binding.identity]
-    return encode_managed_document(resident.selection.shape, values)
+    if matched != len(attributes) + len(value_objects):  # pragma: no cover - planning places it
+        raise WritePlanningError(
+            f"{storage.entity.canonical}: a planned member occupies no Column of the target's "
+            "Table Layout"
+        )
+    return slots, tuple(values)
 
 
 def _resident_patches(
-    resident: _Residence,
+    storage: EntityStorage,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
-    selected: Container[AttributeIdentity | ValueObjectIdentity] | None = None,
-) -> tuple[DocumentPatch, ...]:
-    """The patches writing each named document-resident member at its path, in
-    canonical logical placement order — the order the in-memory patch and the
+) -> list[DocumentPatch]:
+    """The patches writing each assigned document-resident member at its path,
+    in canonical logical placement order — the order the in-memory patch and the
     equivalent path-patched statement both apply left to right
     (`m-storage-layout`).
 
     An assigned ``None`` writes JSON null rather than removing the key, which is
-    the one not-present state a NULL Column also has. ``selected``, where given,
-    narrows the named members to the ones it holds.
+    the one not-present state a NULL Column also has.
     """
+    residents = storage.residents
+    assert residents is not None  # a shared Structured Column owns residency
     patches: list[DocumentPatch] = []
-    for binding, path in resident.placements:
-        if selected is not None and binding.identity not in selected:
-            continue
-        if isinstance(binding, AttributeMetadata):
-            if binding.identity in attributes:
-                raw = attributes[binding.identity]
-                patches.append(SetScalar(path, NULL if raw is None else Present(raw)))
-        elif binding.identity in value_objects:
-            raw = value_objects[binding.identity]
-            patches.append(
-                SetValueObject(path, None if raw is None else _occurrence_document(binding, raw))
-            )
-    return tuple(patches)
-
-
-def _occurrence_document(occurrence: ValueObjectMetadata, value: object) -> object:
-    """One Value Object occurrence's document, spelled by the codec.
-
-    The write input carries each leaf in whatever portable spelling it was
-    authored or built in; the codec owns the ONE spelling stored, so the value
-    stored is composed here rather than handed to a serializer as it arrived.
-    That is what gives a ``decimal``, ``bytes``, ``date``, ``time``,
-    ``timestamp``, or ``uuid`` leaf inside an occurrence its storage form, and it
-    is idempotent over an already-encoded document because every decode leg is
-    the encode leg's inverse (`m-document-codec`).
-    """
-    shape = occurrence.document_shape
-    if occurrence.multiplicity is Multiplicity.MANY:
-        return encode_managed_many(shape, cast("Sequence[Mapping[str, object]]", value))
-    return encode_managed_document(shape, cast("Mapping[str, object]", value))
+    for member, identity, path in zip(
+        residents.shape.members, residents.identities, residents.paths, strict=True
+    ):
+        if isinstance(member, OccurrenceDefinition):
+            if identity in value_objects:
+                patches.append(
+                    SetValueObject(
+                        path,
+                        assigned_document(
+                            member, value_objects[cast("ValueObjectIdentity", identity)]
+                        ),
+                    )
+                )
+        elif identity in attributes:
+            raw = attributes[cast("AttributeIdentity", identity)]
+            patches.append(SetScalar(path, NULL if raw is None else Present(raw)))
+    return patches
 
 
 def _collection_cell(element_type: NeutralType, value: object) -> object:
     """A scalar collection's own structured Column: its encoded array, with the
-    null a stored row may carry read as the empty collection it denotes.
-
-    Final write preparation or stored-value judgement admitted every element
-    under ``element_type`` before planning placed it here.
-    """
-    elements = () if value is None else cast("Sequence[ManagedValue]", value)
+    null a stored row may carry read as the empty collection it denotes."""
+    elements = () if value is None else cast("tuple[ManagedValue, ...]", value)
     return encode_managed_scalar_many(element_type, elements)
-
-
-def _residents(view: EntityLayoutView, resident: _Residence | None) -> _Residence:
-    if resident is None:  # pragma: no cover - a Relational Document slot owns residency
-        raise ValueError(
-            f"{view.entity.canonical}: Relational Document slot has no resident selection"
-        )
-    return resident
-
-
-def _occurrence_binding(
-    view: EntityLayoutView, identity: ValueObjectIdentity
-) -> ValueObjectMetadata:
-    binding = view.member_selection.bindings[view.member_selection.position(identity)]
-    if isinstance(binding, AttributeMetadata):  # pragma: no cover - identities are disjoint
-        raise ValueError(f"{identity.path[-1]!r}: the Column contributor is not an occurrence")
-    return binding
 
 
 def _attribute_type(view: EntityLayoutView, identity: AttributeIdentity) -> object:
     binding = view.member_selection.bindings[view.member_selection.position(identity)]
     assert isinstance(binding, AttributeMetadata)  # identities are disjoint
     return binding.type
-
-
-def _require_placed(view: EntityLayoutView, matched: int, named: int) -> None:
-    if matched != named:  # pragma: no cover - finalization resolves against this view
-        raise ValueError(
-            f"{view.entity.canonical}: a planned member occupies no Column of the target's "
-            "Table Layout"
-        )
 
 
 def _stated_attributes(row: ManagedRow) -> Iterator[AttributeIdentity]:

@@ -48,7 +48,7 @@ from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
 from parallax.core.write_plan.managed_row import ManagedRow
-from parallax.core.write_plan.payload import RowPayload
+from parallax.core.write_plan.payload import RowPayload, RowSlots
 from parallax.core.write_plan.steps import INFINITY as OPEN_END
 from parallax.core.write_plan.steps import (
     MAX_PLUS_ONE,
@@ -70,6 +70,7 @@ from parallax.core.write_plan.steps import (
 from tests._support.clock_probes import instant_at
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests._support.managed_rows import managed_row_of
+from tests._support.row_slots import observed_slots
 from tests.unit._corpus_model_support import corpus_records, formed
 
 _GROUPED_INSERT_CAP: Final = "parallax.core._execution._write_lowering._GROUPED_INSERT_ROWS"
@@ -170,12 +171,14 @@ class _Preparer(LayoutPayloadPreparer):
         self.prepared: list[WriteRow] = []
         self.failing = dict(failing or {})
 
-    def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
+    def row_slots(self, entity: EntityIdentity, presence: int) -> RowSlots:
+        return observed_slots(super().row_slots(entity, presence), self._prepare)
+
+    def _prepare(self, write_row: WriteRow) -> None:
         failure = self.failing.get(id(write_row))
         if failure is not None:
             raise failure
         self.prepared.append(write_row)
-        return super().row(entity, write_row)
 
 
 def _cursor(
@@ -412,21 +415,13 @@ def test_a_later_preparation_failure_ends_the_run_with_the_prefix_unchanged() ->
     assert _prefix_after(steps, _cursor(steps, preparer)).failure is failure
 
 
-def test_a_later_typed_cell_refusal_ends_the_run_with_the_prefix_unchanged() -> None:
-    steps = _openings(2)
-    wrong = _opening(_row(1, _MAR, _JUN, value="not a decimal"))
-    opening = _prefix_after((*steps, wrong), _cursor((*steps, wrong, *_openings(1))))
-    assert isinstance(opening.failure, SqlGenError)
-
-
 def test_a_later_entry_storing_other_cells_than_its_shape_promised_ends_the_run() -> None:
     steps = _openings(3)
-    narrowed = LayoutPayloadPreparer(_META).row(_POSITION, steps[2].entries[0])
+    preparer = LayoutPayloadPreparer(_META)
+    entry = steps[2].entries[0]
+    narrower = preparer.row_slots(_POSITION, entry.row.presence & ~1)
     promise_broken = RowPayload(
-        entity=_POSITION,
-        source=steps[2].entries[0],
-        contributors=narrowed.contributors[1:],
-        values=narrowed.values[1:],
+        slots=narrower, source=entry, values=preparer.row(_POSITION, entry).values[1:]
     )
     broken = replace(steps[2], entries=(replace(steps[2].entries[0], prepared=promise_broken),))
     opening = _prefix_after((*steps[:2], broken), _cursor((*steps[:2], broken)))

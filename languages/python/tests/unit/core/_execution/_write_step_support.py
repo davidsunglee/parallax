@@ -35,7 +35,7 @@ from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import TransactionSettings, UnitOfWork
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import SUPERSEDED, WritePlan
-from parallax.core.write_plan.payload import AssignmentPayload, RowPayload, WritePayloadPreparer
+from parallax.core.write_plan.payload import AssignmentPayload, RowSlots, WritePayloadPreparer
 from parallax.core.write_plan.plan import CurrentRowOutput, WriteEffects
 from parallax.core.write_plan.steps import (
     INFINITY,
@@ -59,6 +59,7 @@ from parallax.core.write_plan.steps import (
 from tests._support.db_port import OrderedCall, ScriptedAdapter, WriteCall
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import NO_COUNTED_STEPS, NO_ROW_READS, TEST_ACTOR_IDENTITY
+from tests._support.row_slots import observed_slots
 
 POSITIONS: Final = MODELS["position"]
 POSITION_META: Final = model_of(POSITIONS)
@@ -189,9 +190,8 @@ class RecordingPreparer(LayoutPayloadPreparer):
     def positions(self) -> list[int]:
         return [index for index, _calls in self.prepared]
 
-    def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
-        self._prepare(write_row)
-        return super().row(entity, write_row)
+    def row_slots(self, entity: EntityIdentity, presence: int) -> RowSlots:
+        return observed_slots(super().row_slots(entity, presence), self._prepare)
 
     def assignments(
         self, entity: EntityIdentity, assignments: PlannedAssignments

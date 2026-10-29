@@ -66,7 +66,7 @@ from parallax.core.document_codec import (
     prepared_raw_member_classifier,
     reduce_declared_members,
 )
-from parallax.core.document_codec._document import encode_managed_document, encode_managed_many
+from parallax.core.document_codec._document import encode_managed_many
 from parallax.core.document_codec._leaf import LeafEncodingError
 from parallax.core.entity import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.metamodel import (
@@ -77,6 +77,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, loads
+from tests._support.managed_documents import OMITTED, encoded_document
 
 _INSTANT = dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)
 _TOKEN = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
@@ -219,7 +220,7 @@ def test_a_canonical_float32_number_need_not_be_exactly_a_binary32_value() -> No
 
 def test_decode_reads_a_float32_leaf_at_its_declared_width() -> None:
     shape = MemberShape(members=(ScalarDefinition(name="ratio", type=FLOAT32, nullable=True),))
-    stored = encode_managed_document(shape, {"ratio": 1048576.25})
+    stored = encoded_document(shape, {"ratio": 1048576.25})
     assert stored == {"ratio": 1048576.2}
     assert _read_member(shape, stored, "ratio") == (1048576.25, ())
 
@@ -699,7 +700,7 @@ def test_a_declared_shape_names_leaves_then_occurrences_in_declaration_order() -
 
 
 def test_encode_emits_the_presence_table() -> None:
-    document = encode_managed_document(_SHAPE, {"flag": None, "day": dt.date(2026, 1, 15)})
+    document = encoded_document(_SHAPE, {"flag": None, "day": dt.date(2026, 1, 15)})
     # A required member's encoding, an explicit null, an omitted key that is simply
     # absent, and a `many` given nothing at all — which still stores `[]`, its sole
     # zero-element representation.
@@ -731,12 +732,12 @@ def test_occurrence_encoding_gives_an_absent_many_its_zero_value() -> None:
 def test_a_many_member_stores_the_empty_array_for_every_zero_state() -> None:
     zero_states: list[dict[str, object]] = [{}, {"entries": None}, {"entries": []}]
     for zero in zero_states:
-        assert encode_managed_document(_SHAPE, zero)["entries"] == ()
-    assert encode_managed_many(_ENTRY.member_shape, []) == ()
+        assert encoded_document(_SHAPE, zero)["entries"] == ()
+    assert encode_managed_many(_ENTRY.member_shape, [], OMITTED) == ()
 
 
 def test_nesting_composes_from_the_leaves_up() -> None:
-    document = encode_managed_document(
+    document = encoded_document(
         _SHAPE,
         {
             "origin": {"city": "Oslo"},
@@ -757,7 +758,7 @@ def test_managed_encoding_builds_an_immutable_document() -> None:
         "origin": {"city": "Oslo"},
         "entries": ({"kind": "home", "price": decimal.Decimal("19.99")},),
     }
-    encoded = encode_managed_document(_SHAPE, managed)
+    encoded = encoded_document(_SHAPE, managed)
 
     assert encoded == {
         "origin": {"city": "Oslo"},
@@ -766,7 +767,7 @@ def test_managed_encoding_builds_an_immutable_document() -> None:
     with pytest.raises(TypeError):
         cast("dict[str, object]", encoded["origin"])["city"] = "Bergen"
 
-    zero_many = encode_managed_document(_SHAPE, {"origin": None})
+    zero_many = encoded_document(_SHAPE, {"origin": None})
     assert zero_many == {"origin": None, "entries": ()}
 
 
@@ -918,7 +919,7 @@ def test_an_occurrence_patch_replaces_the_whole_subtree_it_names() -> None:
     replaced = _patched(
         _SHAPE,
         stored,
-        [SetValueObject(("origin",), encode_managed_document(_ORIGIN.member_shape, {}))],
+        [SetValueObject(("origin",), encoded_document(_ORIGIN.member_shape, {}))],
     )
     assert replaced == {"unknown": 1, "origin": {}}
 
@@ -1097,7 +1098,7 @@ def test_nested_and_overlapping_patches_reuse_the_latest_changed_ancestor() -> N
 
 
 def test_patch_reuses_safe_untouched_subtrees_and_owns_aliased_replacements() -> None:
-    predecessor = encode_managed_document(
+    predecessor = encoded_document(
         _SHAPE, {"origin": {"city": "Oslo"}, "entries": ({"kind": "home"},)}
     )
     replacement = {"city": "Bergen"}
@@ -1277,7 +1278,7 @@ def test_a_returned_document_is_immutable_and_shares_no_mutable_input_state() ->
         cast("dict[str, object]", patched["origin"])["city"] = "Tromso"
 
     origin = {"city": "Oslo"}
-    encoded = encode_managed_document(_SHAPE, {"origin": origin})
+    encoded = encoded_document(_SHAPE, {"origin": origin})
     with pytest.raises(TypeError):
         cast("dict[str, object]", encoded["origin"])["city"] = "Bergen"
     assert origin == {"city": "Oslo"}
@@ -1290,13 +1291,13 @@ def test_a_returned_document_is_immutable_and_shares_no_mutable_input_state() ->
     assert origin == {"city": "Alta"}
 
     payload: list[object] = [{"value": 1}]
-    encoded_payload = encode_managed_document(_one_leaf(JSON), {"leaf": payload})
+    encoded_payload = encoded_document(_one_leaf(JSON), {"leaf": payload})
     cast("dict[str, object]", payload[0])["value"] = 2
     assert encoded_payload == {"leaf": ({"value": 1},)}
 
 
 def test_immutable_codec_outputs_compose_through_decode_compare_and_patch() -> None:
-    encoded = encode_managed_document(
+    encoded = encoded_document(
         _SHAPE,
         {"origin": {"city": "Oslo"}, "entries": ({"kind": "home"},)},
     )
@@ -1386,4 +1387,4 @@ def test_a_shape_over_no_members_encodes_the_empty_document() -> None:
     # An Entity declaring the layout but no document-resident member still
     # carries a document: the Structured Column is NOT NULL and the empty object
     # is what a row with nothing inside it holds (m-storage-layout).
-    assert encode_managed_document(MemberShape(members=()), {}) == {}
+    assert encoded_document(MemberShape(members=()), {}) == {}

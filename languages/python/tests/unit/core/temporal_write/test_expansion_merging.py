@@ -36,7 +36,7 @@ from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import ObjectKey, PredecessorRow
 from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.managed_row import ManagedRow, projected_row
-from parallax.core.write_plan.payload import RowPayload
+from parallax.core.write_plan.payload import RowPayload, RowSlots
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
@@ -61,6 +61,7 @@ from parallax.core.write_plan.steps import (
 from tests._support.clock_probes import inert_instant
 from tests._support.managed_rows import managed_row_of, row_selection_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY
+from tests._support.row_slots import observed_slots
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._unit_work._ownership_support import OpenedRows
 
@@ -105,6 +106,9 @@ class _CountingPayloads:
 
     def assignments(self, entity: EntityIdentity, assignments: PlannedAssignments) -> Any:
         return self.real.assignments(entity, assignments)
+
+    def row_slots(self, entity: EntityIdentity, presence: int) -> RowSlots:
+        return observed_slots(self.real.row_slots(entity, presence), self.rows.append)
 
     def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
         self.rows.append(write_row)

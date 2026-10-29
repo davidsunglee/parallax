@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -30,7 +31,7 @@ from parallax.core.metamodel import (
 from parallax.core.storage_layout import RelationalDocument
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow, WritePlanningError
-from parallax.core.write_plan.payload import PatchedDocument, RowPayload
+from parallax.core.write_plan.payload import PatchedDocument, RowPayload, RowSlots
 from parallax.core.write_plan.steps import (
     MAX_PLUS_ONE,
     NEW_LINEAGE,
@@ -372,15 +373,29 @@ def test_rows_of_two_entities_or_misaligned_cells_are_never_equal() -> None:
     preparer = LayoutPayloadPreparer(_EXPEDITIONS)
     payload = preparer.row(_EXPEDITION, _successor(NEW_LINEAGE))
     elsewhere = RowPayload(
-        entity=EntityIdentity("parallax.compatibility", "Nowhere"),
+        slots=cast(
+            "RowSlots",
+            SimpleNamespace(
+                entity=EntityIdentity("parallax.compatibility", "Nowhere"),
+                contributors=payload.contributors,
+            ),
+        ),
         source=payload.source,
-        contributors=payload.contributors,
         values=payload.values,
     )
     swapped = RowPayload(
-        entity=_EXPEDITION,
+        slots=cast(
+            "RowSlots",
+            SimpleNamespace(
+                entity=_EXPEDITION,
+                contributors=(
+                    payload.contributors[1],
+                    payload.contributors[0],
+                    *payload.contributors[2:],
+                ),
+            ),
+        ),
         source=payload.source,
-        contributors=(payload.contributors[1], payload.contributors[0], *payload.contributors[2:]),
         values=(payload.values[1], payload.values[0], *payload.values[2:]),
     )
 

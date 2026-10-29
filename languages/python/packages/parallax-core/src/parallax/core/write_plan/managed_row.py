@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -13,7 +13,7 @@ from parallax.core.metamodel import (
     ScalarDefinition,
     ValueObjectIdentity,
 )
-from parallax.core.write_plan.observe import PredecessorRow, occurrence_value
+from parallax.core.write_plan.observe import PredecessorRow, occurrence_value, viewed_document
 
 if TYPE_CHECKING:
     from parallax.core.inheritance import EntityMemberSelection
@@ -26,6 +26,7 @@ __all__ = [
     "full_width",
     "managed_row",
     "named_members",
+    "occurrence_cells",
     "positional_occurrence",
     "predecessor_state",
     "projected_row",
@@ -253,6 +254,31 @@ def positional_occurrence(value: object, declared: OccurrenceDefinition, absent:
             for element in cast("tuple[object, ...]", value)
         )
     return _positional_document(value, declared, absent)
+
+
+_PROJECTED_ABSENT: Final = object()
+
+
+def occurrence_cells(value: object, declared: OccurrenceDefinition) -> tuple[object, object]:
+    """One stated Value Object member value in its full-width positional form,
+    beside the marker spelling an omitted nested member there.
+
+    A document viewed by :func:`occurrence_value` answers the positional row it
+    views, and a Many of such views the tuple of theirs; any other document is
+    projected structurally by declared name, nothing judged.
+    """
+    if declared.multiplicity is Multiplicity.MANY:
+        viewed = [viewed_document(element) for element in cast("tuple[object, ...]", value)]
+        absent = viewed[0][1] if viewed and viewed[0] is not None else None
+        if all(view is not None and view[1] is absent for view in viewed):
+            return tuple(cast("tuple[tuple[object, ...], object]", view)[0] for view in viewed), (
+                absent if viewed else _PROJECTED_ABSENT
+            )
+    else:
+        view = viewed_document(value)
+        if view is not None:
+            return view
+    return positional_occurrence(value, declared, _PROJECTED_ABSENT), _PROJECTED_ABSENT
 
 
 def _positional_document(value: object, declared: OccurrenceDefinition, absent: object) -> object:
