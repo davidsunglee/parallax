@@ -647,9 +647,11 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         _require_declared(shape, entity, touched, "authored_row")
         _require_supplied(names, entity, (shape.members[key].name,), "authored_row")
         positions = tuple(
-            position
-            for position, member in enumerate(shape.members)
-            if member.name in touched and position != key
+            sorted(
+                position
+                for position in map(shape.position, touched)
+                if position is not None and position != key
+            )
         )
         _require_supplied(
             names, entity, tuple(shape.members[p].name for p in positions), "authored_row"

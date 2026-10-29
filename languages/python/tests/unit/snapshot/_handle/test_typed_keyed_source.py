@@ -36,6 +36,7 @@ from parallax.core._execution._publication import write_projection
 from parallax.core.base import INFINITY, DocumentValue, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
+from parallax.core.entity import _entity as entity_module
 from parallax.core.metamodel import Metamodel
 from parallax.core.read_delivery import InvalidData
 from parallax.core.temporal_read import TimeInterval
@@ -145,6 +146,27 @@ def test_prepare_states_every_touched_member_as_its_literal_assignment() -> None
 
     assert named_members(prepared.rows[0]) == {"id": 1, "balance": Decimal("125.00")}
     assert prepared.assigns
+
+
+def test_an_edited_amendment_reads_its_key_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    reads: list[tuple[int, ...]] = []
+    supplied = entity_module._supplied_value  # pyright: ignore[reportPrivateUsage]
+
+    def recorded(value: Any, names: Any, shape: Any, entity: Any, positions: Any, op: Any) -> Any:
+        reads.append(positions)
+        return supplied(value, names, shape, entity, positions, op)
+
+    monkeypatch.setattr(entity_module, "_supplied_value", recorded)
+    meta = _accounts()
+    source = TypedKeyedWriteSource(_published_account().edit(balance=Decimal("125.00")))
+
+    source.prepare(
+        preparation_for(meta), "amend", source.resolve(meta, "amend"), valid_from=None, until=None
+    )
+
+    (read,) = reads
+    key = preparation_for(meta).entity(mm.Account.identity).key
+    assert read.count(key) == 1
 
 
 def test_a_wholly_restoring_chain_still_assigns_the_member_it_took_back() -> None:

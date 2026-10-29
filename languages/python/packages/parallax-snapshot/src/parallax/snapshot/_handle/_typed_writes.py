@@ -199,13 +199,12 @@ class TypedKeyedWriteSource:
                 until=until,
             )
         shape = prepared.selection.members.shape
-        identity = value.__parallax_identity_pairs__(shape, entity.identity, prepared.key)
         if mutation in ASSIGNMENT_MUTATIONS and self._assignments:
             return instructions.prepare_typed_keyed_write(
                 preparation,
                 mutation,
                 entity,
-                pairs=identity,
+                pairs=value.__parallax_identity_pairs__(shape, entity.identity, prepared.key),
                 members=self._explicit(preparation.meta, entity),
                 valid_from=valid_from,
                 until=until,
@@ -219,7 +218,11 @@ class TypedKeyedWriteSource:
             preparation,
             mutation,
             entity,
-            pairs=identity if authored is None else authored,
+            pairs=(
+                value.__parallax_identity_pairs__(shape, entity.identity, prepared.key)
+                if authored is None
+                else authored
+            ),
             valid_from=valid_from,
             until=until,
         )

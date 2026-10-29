@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any, Final
 
@@ -25,11 +26,13 @@ from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.entity import DomainModel, EntityDefinitionError
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
 from parallax.core.entity._errors import ENTITY_ROW_CODES, EntityRowError
-from parallax.core.metamodel import UnresolvedEntityDeclaration
+from parallax.core.entity._model import model_of
+from parallax.core.metamodel import MemberDefinition, MemberShape, UnresolvedEntityDeclaration
 from tests._support import mirrored_models as mm
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
 from tests._support.typed_write_source import TypedWriteSource
+from tests._support.write_preparation import write_preparation_of
 from tests.unit._authored_storage_support import (
     answering_for_instance_state,
     forge_into_storage,
@@ -424,6 +427,33 @@ def test_an_authored_row_follows_the_models_member_order_with_its_key_last() -> 
     authored = _accounts().authored(edited)
     assert authored is not None
     assert list(authored) == ["owner", "balance", "id"]
+
+
+class _UnwalkedMembers(tuple[MemberDefinition, ...]):
+    """Declared members open to lookup by position and closed to a walk."""
+
+    def __iter__(self) -> Iterator[MemberDefinition]:
+        raise AssertionError("a sparse authored row walked every declared member")
+
+
+def test_an_authored_row_reaches_only_the_members_its_chain_touched() -> None:
+    # A sparse edit of a wide Entity costs what it touched, not what the Entity
+    # declares.
+    entry = write_preparation_of(model_of(mm.ACCOUNT_MODEL)).entity(mm.Account.identity)
+    shape = MemberShape(entry.selection.members.shape.members)
+    object.__setattr__(shape, "members", _UnwalkedMembers(shape.members))
+    edited = _account().edit(balance=Decimal("175.00"))
+
+    authored = edited.__parallax_authored_pairs__(shape, mm.Account.identity, entry.key)
+
+    assert authored is not None
+    assert [(shape.members[position].name, held) for position, held in authored] == [
+        ("balance", Decimal("175.00")),
+        ("id", 1),
+    ]
+    assert (
+        _account().edit().__parallax_authored_pairs__(shape, mm.Account.identity, entry.key) is None
+    )
 
 
 def test_an_authored_row_borrows_the_occurrence_it_now_holds() -> None:
