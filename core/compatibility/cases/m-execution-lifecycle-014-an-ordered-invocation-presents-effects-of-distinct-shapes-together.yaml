@@ -1,0 +1,126 @@
+model: models/account.yaml
+tags: [m-execution-lifecycle, m-unit-work, m-opt-lock, m-sql, scenario, ordered-write-transport, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the writes settle against the versions a find step of their own unit of work observed (m-case-format 'Settling against a grouped find')"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: edit
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          lessThan: { path: parallax.compatibility.Account.id, value: 3 }
+        orderBy:
+          - { attr: parallax.compatibility.Account.id, direction: asc }
+      databaseCalls: 1
+      note: observe both accounts' versions
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id < ? order by t0.id asc
+          binds: [3]
+      expectRows:
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+    - uow: edit
+      write:
+        - { mutation: amend, "on": 0, entity: parallax.compatibility.Account, rows: [{ id: 1, balance: "150.00" }] }
+        - { mutation: amend, "on": 0, entity: parallax.compatibility.Account, rows: [{ id: 2, owner: Lin }] }
+      databaseCalls: 2
+      note: the two gated updates assign different members, so each is the only effect of its shape and none is a grouped effect; the conformance connection's ordered write transport presents both in one invocation, so both calls start before either finishes
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: ["150.00", 2, 1, 1]
+        - sql:
+            postgres: update account set owner = ?, version = ? where id = ? and version = ?
+          binds: [Lin, 2, 2, 1]
+then:
+  databaseCalls: 3
+  tableState:
+    account:
+      - { id: 1, owner: Ada, balance: "150.00", version: 2 }
+      - { id: 2, owner: Lin, balance: "250.00", version: 2 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted: { invocation: outer, accessMode: read-write, concurrency: optimistic, retries: 10, isolation: read-committed }
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: { edition: account }
+          - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: {}
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: wire }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read, statement: 0 }
+          - sequence: 7
+            activity: 5
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 2 }
+          - sequence: 8
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            flushStarted: { trigger: pre-commit }
+          - sequence: 10
+            activity: 7
+            parent: 6
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write, statement: 1 }
+          - sequence: 11
+            activity: 8
+            parent: 6
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write, statement: 2 }
+          - sequence: 12
+            activity: 7
+            parent: 6
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 13
+            activity: 8
+            parent: 6
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 14
+            activity: 6
+            parent: 2
+            flushFinished: { outcome: completed }
+          - sequence: 15
+            activity: 9
+            parent: 2
+            releaseStarted: {}
+          - sequence: 16
+            activity: 9
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 17
+            activity: 2
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 18
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }

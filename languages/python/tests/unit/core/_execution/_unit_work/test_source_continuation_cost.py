@@ -274,9 +274,17 @@ def _amended(tx: Any, values: list[Any]) -> None:
 
 def _amending(count: int) -> tuple[Any, ...]:
     """What the port answers :func:`_amended` of ``count`` values with: each
-    one's row closed, the parts they leave opened in one insert, then the
+    one's row closed — several in one grouped effect returning each one's
+    source ordinal — the parts they leave opened in one insert, then the
     read."""
-    return (Write(times=count), Write(), Read(rows=[])) if count else (Read(rows=[]),)
+    if not count:
+        return (Read(rows=[]),)
+    closes = (
+        Write()
+        if count == 1
+        else Read(rows=[{"v.ord": ordinal} for ordinal in range(1, count + 1)])
+    )
+    return (closes, Write(), Read(rows=[]))
 
 
 def _held_for_continuation() -> tuple[int, int]:

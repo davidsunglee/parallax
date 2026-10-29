@@ -1,11 +1,12 @@
 """DB-free tests for how the harness reads a PostgreSQL grouped effect.
 
 A grouped effect (`m-sql` *Grouped effects*) is one ``update … from unnest(…) with
-ordinality v(…) … returning v.ord`` statement applying one keyed update per source
-row. These tests pin, without a database, that the harness reads such a golden
-back as the lone updates it applies, types each source array by the column or
-document path it reaches, refuses a malformed source or result, binds each
-document path value as JSON, and leaves every other statement alone.
+ordinality v(…) … returning v.ord`` or ``delete … using unnest(…) …`` statement
+applying one keyed effect per source row. These tests pin, without a database,
+that the harness reads such a golden back as the lone statements it applies,
+types each source array by the column or document path it reaches, refuses a
+malformed source or result, binds each document path value as JSON, and leaves
+every other statement alone.
 """
 
 from __future__ import annotations
@@ -78,6 +79,80 @@ def test_document_paths_keep_their_shared_binds_beside_each_rows_values() -> Non
     ]
 
 
+_CLOSE = (
+    "update coverage_span t set out_z = v.c3 from unnest(cast(? as bigint[]), "
+    "cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, ord) "
+    "where t.id = v.c1 and t.thru_z = v.c2 and t.out_z = ? returning v.ord"
+)
+_CLOSE_BINDS: list[object] = [
+    [1, 2],
+    ["2024-06-01T00:00:00.000000Z", "infinity"],
+    ["2024-10-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z"],
+    "infinity",
+]
+
+
+def test_a_grouped_delete_reads_back_as_the_lone_deletes_it_applies() -> None:
+    statement = (
+        "delete from account t using unnest(cast(? as bigint[]), cast(? as int[])) with "
+        "ordinality v(c1, c2, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord"
+    )
+    assert ungrouped_effect(statement, [[1, 2], [1, 4]]) == [
+        ("delete from account where id = ? and version = ?", [1, 1]),
+        ("delete from account where id = ? and version = ?", [2, 4]),
+    ]
+
+
+def test_a_grouped_close_reads_back_as_each_milestones_lone_close() -> None:
+    lone = "update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?"
+    assert ungrouped_effect(_CLOSE, _CLOSE_BINDS) == [
+        (lone, ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", "infinity"]),
+        (lone, ["2024-10-01T00:00:00.000000Z", 2, "infinity", "infinity"]),
+    ]
+
+
+def test_a_grouped_guard_reads_back_as_its_self_assigning_lone_guard() -> None:
+    statement = (
+        "update balance t set in_z = t.in_z from unnest(cast(? as bigint[]), "
+        "cast(? as timestamptz[])) with ordinality v(c1, c2, ord) where t.bal_id = v.c1 "
+        "and t.out_z = ? and t.in_z = v.c2 returning v.ord"
+    )
+    rows = ungrouped_effect(statement, [[1], ["2024-01-01T00:00:00.000000Z"], "infinity"])
+    assert rows == [
+        (
+            "update balance set in_z = in_z where bal_id = ? and out_z = ? and in_z = ?",
+            [1, "infinity", "2024-01-01T00:00:00.000000Z"],
+        )
+    ]
+
+
+def test_each_milestone_source_array_is_typed_by_the_column_it_addresses() -> None:
+    case = _case("shared-coverage-layout-twin-columns")
+    targets = infer_statement_bind_targets(case, _CLOSE, _CLOSE_BINDS, "postgres")
+    assert {index: getattr(targets[index], "column", None) for index in (0, 1, 2)} == {
+        0: "id",
+        1: "thru_z",
+        2: "out_z",
+    }
+    assert array_cast_mismatches(case, _CLOSE, _CLOSE_BINDS) == ()
+    narrowed = _CLOSE.replace(
+        "cast(? as timestamptz[]), cast(? as timestamptz[])",
+        "cast(? as timestamptz[]), cast(? as date[])",
+    )
+    (mismatch,) = array_cast_mismatches(case, narrowed, _CLOSE_BINDS)
+    assert (mismatch.index, mismatch.expected, mismatch.column) == (2, "timestamptz", "out_z")
+
+
+def test_a_grouped_delete_source_is_typed_by_the_column_it_compares() -> None:
+    case = _case("account")
+    statement = (
+        "delete from account t using unnest(cast(? as int[]), cast(? as int[])) with "
+        "ordinality v(c1, c2, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord"
+    )
+    (mismatch,) = array_cast_mismatches(case, statement, [[1, 2], [1, 4]])
+    assert (mismatch.index, mismatch.expected, mismatch.column) == (0, "bigint", "id")
+
+
 def test_a_shared_tag_guard_binds_once_for_every_row() -> None:
     statement = (
         "update payment t set amount = v.c2 from unnest(cast(? as bigint[]), "
@@ -96,6 +171,7 @@ def test_a_shared_tag_guard_binds_once_for_every_row() -> None:
         "update wallet set balance = ? where id = ?",
         "insert into wallet(id) select * from unnest(cast(? as bigint[]))",
         "delete from wallet where id in (?, ?)",
+        "delete from wallet where id = ?",
     ],
 )
 def test_any_other_statement_is_left_alone(statement: str) -> None:

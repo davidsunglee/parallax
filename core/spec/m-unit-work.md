@@ -1023,20 +1023,25 @@ laid out the same way.
 A group of two or more writes lays its effects out **shape by shape**, in one
 pass. An effect's shape is what lets it share one grouped effect with another
 (`m-execution`): the same step kind, Entity, and key, the same assigned members,
-and the same gate kind. An update of one key expecting an exact count has a
-shape, unless it advances a registry (`m-pk-gen`) or assigns a member of a
-unique key other than the primary key, an As-Of Axis end excepted, since a
-unique value one object hands another must be released in authored order;
-every other effect has none. Effects are laid out in blocks of one shape each, in the
+the same gate kind, and for a milestone the same As-Of Axis ends, each bound per
+effect or shared as the open Transaction-Time end. An update or delete of one
+key expecting an exact count has a shape, and so does every close, guard,
+revision, and removal of one milestone, planned or bound from a deferred range,
+unless it advances a registry (`m-pk-gen`) or assigns a member of a unique key
+other than the primary key, an As-Of Axis end excepted, since a unique value one
+object hands another must be released in authored order; every other effect has
+none. Effects are laid out in blocks of one shape each, in the
 order each block first appears. An effect joins the latest block of its shape
 unless that block precedes the block holding its own write's previous effect,
 in which case it opens a later block of that shape; an effect with no shape
 stands alone as a **barrier** that no later effect joins a block across. Each
 block of two or more effects is recorded as an **effect span** over the group's
-steps. A group of one write keeps its own steps and records no span. So
-effects of distinct objects may run out of authored order across shapes, while
-each write's own effects keep their order and an effect assigning a unique key
-member keeps its authored place. Nothing else is reordered: the phases, the
+steps. A group of one write keeps its own steps and records no span. Several
+effects of one write may share a block where nothing of that write lies between
+them, as the closes of a temporal write's distinct milestones do; each still
+addresses its own row. So effects of distinct objects may run out of authored
+order across shapes, while each write's own effects keep their order and an
+effect assigning a unique key member keeps its authored place. Nothing else is reordered: the phases, the
 referential order, and otherwise the authored order of updates are stage 4's,
 and no key sort applies. As it forms the groups, settlement also records which
 consecutive deferred settled writes share coverage acquisition (*Shared coverage

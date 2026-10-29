@@ -21,6 +21,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
+from parallax.core import storage_layout
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -58,7 +59,14 @@ from parallax.core.write_plan.steps import (
 from tests._support.db_port import Read, ScriptedAdapter
 from tests.unit.core._execution._grouped_effect_support import (
     ACCOUNT,
+    BALANCE,
+    POSITION,
     WALLET,
+    close,
+    delete,
+    instant,
+    milestone,
+    removal,
     update,
 )
 from tests.unit.core._execution._write_step_support import open_flush, run_plan
@@ -110,12 +118,17 @@ def _grouped(steps: Sequence[PlannedStep], meta: Any = WALLET) -> WriteGroup:
     )
 
 
-def _executor(port: _Port, meta: Any = WALLET, payloads: Any = None) -> WriteStepExecutor:
+def _executor(
+    port: _Port,
+    meta: Any = WALLET,
+    payloads: Any = None,
+    recognized: list[DatabaseError] | None = None,
+) -> WriteStepExecutor:
     return WriteStepExecutor(
         cast("DatabaseConnection", port),
         payloads=LayoutPayloadPreparer(meta) if payloads is None else payloads,
         meta=meta,
-        recoverable=lambda error: None,
+        recoverable=(lambda error: None) if recognized is None else recognized.append,
     )
 
 
@@ -126,10 +139,11 @@ def _run(
     meta: Any = WALLET,
     payloads: Any = None,
     provider: RecordingLifecycleProvider | None = None,
+    recognized: list[DatabaseError] | None = None,
 ) -> BaseException | None:
     try:
         with open_flush(provider) as flush:
-            _executor(port, meta, payloads).execute(
+            _executor(port, meta, payloads, recognized).execute(
                 group.steps, effect_spans=group.effect_spans, allocates=False, flush=flush
             )
     except BaseException as error:
@@ -389,6 +403,26 @@ def test_a_group_completes_its_writes_only_once_its_grouped_effect_is_enforced(
     assert len(port.calls) == 1
 
 
+@pytest.mark.parametrize(("rows", "completes"), [([2, 1], True), ([2], False)])
+def test_a_group_completes_its_closes_only_once_their_grouped_effect_is_enforced(
+    rows: list[int], completes: bool
+) -> None:
+    steps = [
+        close(BALANCE, "Balance", milestone(BALANCE, "Balance", key, bitemporal=False))
+        for key in (1, 2)
+    ]
+    group = _grouped(steps, BALANCE)
+    port = ScriptedAdapter(Read(rows=[{"v.ord": ordinal} for ordinal in rows]))
+    completed: list[int] = []
+    try:
+        with open_flush() as flush:
+            run_plan(port, WritePlan((group,)), flush, BALANCE, completed=completed)
+    except StaleWriteError:
+        assert not completes
+    assert completed == ([1, 1] if completes else [])
+    assert len(port.calls) == 1
+
+
 def test_a_failed_precondition_policy_raises_its_own_error() -> None:
     steps = [
         dataclasses.replace(step, affected_rows=ExactCount(1, FAILED_PRECONDITION))
@@ -399,3 +433,68 @@ def test_a_failed_precondition_policy_raises_its_own_error() -> None:
     raised = _run(_Port([(2,)]), _grouped(steps, ACCOUNT), meta=ACCOUNT)
     assert isinstance(raised, WritePreconditionError)
     assert raised.expected == 4
+
+
+def test_a_deletes_missing_ordinal_names_its_own_key() -> None:
+    steps = [delete(ACCOUNT, "Account", key, observed=1) for key in (1, 2)]
+    port = _Port([(1,)])
+    raised = _run(port, _grouped(steps, ACCOUNT), meta=ACCOUNT)
+    assert isinstance(raised, OptimisticLockConflictError)
+    assert raised.target is steps[1].target
+    ((sql, _binds),) = port.calls
+    assert sql.startswith("delete from account t using unnest(")
+
+
+@pytest.mark.parametrize(
+    ("observed", "error"),
+    [(None, StaleWriteError), (instant(1), OptimisticLockConflictError)],
+    ids=["ungated", "gated"],
+)
+def test_a_closes_missing_ordinal_names_its_own_milestone(
+    observed: Any, error: type[BaseException]
+) -> None:
+    steps = [
+        close(
+            BALANCE,
+            "Balance",
+            milestone(BALANCE, "Balance", key, bitemporal=False),
+            observed=observed,
+        )
+        for key in (1, 2, 3)
+    ]
+    raised = _run(_Port([(3,), (1,)]), _grouped(steps, BALANCE), meta=BALANCE)
+    assert isinstance(raised, error)
+    assert isinstance(raised, StaleWriteError | OptimisticLockConflictError)
+    assert raised.target is steps[1].target
+
+
+def test_a_matched_milestone_counts_once_whatever_it_changed() -> None:
+    steps = [
+        removal(POSITION, "Position", milestone(POSITION, "Position", key), observed=instant(1))
+        for key in (1, 2)
+    ]
+    assert _run(_Port([(2,), (1,)]), _grouped(steps, POSITION), meta=POSITION) is None
+
+
+def test_an_exclusion_refusal_is_recognized_against_the_statements_entity() -> None:
+    steps = [close(POSITION, "Position", milestone(POSITION, "Position", key)) for key in (1, 2)]
+    exclusion = storage_layout.view(POSITION).entity(steps[0].entity)
+    assert exclusion is not None and exclusion.layout.temporal_constraints is not None
+    failure = DatabaseError(
+        category="constraintViolation",
+        native_code="23P01",
+        message="conflicting key value violates exclusion constraint",
+        constraint_name=exclusion.layout.temporal_constraints.exclusion_name,
+    )
+    recognized: list[DatabaseError] = []
+    raised = _run(_Port(failure), _grouped(steps, POSITION), meta=POSITION, recognized=recognized)
+    assert raised is failure
+    assert recognized == [failure]
+
+
+def test_a_shortfall_is_no_exclusion_and_is_not_recognized_as_one() -> None:
+    steps = [close(POSITION, "Position", milestone(POSITION, "Position", key)) for key in (1, 2)]
+    recognized: list[DatabaseError] = []
+    raised = _run(_Port([(2,)]), _grouped(steps, POSITION), meta=POSITION, recognized=recognized)
+    assert isinstance(raised, StaleWriteError)
+    assert recognized == []

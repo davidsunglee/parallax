@@ -426,8 +426,8 @@ WritePayloadPreparer
 
 RowSlots(entity, presence, contributors: [contributor])
   cells(WriteRow)                         -> [value]
-EffectSlots(entity, keySources, gateSource?, assignmentSources, elementTypes)
-  columnCells([PlannedStep], [AssignmentPayload]) -> [[value]]
+EffectSlots(kind, entity, keySources, endSources, gateSource?, assignmentSources, elementTypes)
+  columnCells([PlannedStep], [AssignmentPayload | absent]) -> [[value]]
 RowPayload(slots: RowSlots, source: WriteRow, cells: [PayloadCell])
 AssignmentPayload(entity, assignments: PlannedAssignments, cells: [PayloadCell])
 PayloadCell(contributor, value)
@@ -445,9 +445,10 @@ an effect without one runs alone. A Write Group records where each run of
 effects of one shape lies among its steps as its **effect spans**: half-open
 ranges over its steps in execution order, each holding at least two steps, in
 order and never overlapping, and none in a group of one write. The **Effect
-Slots** of a shape name each per-row source column a grouped effect binds — its
-role among the key, the gate, and the assigned cells, and its Neutral Type — and
-gather each column from the steps and their Assignment Payloads.
+Slots** of a shape name its step kind and each per-row source column a grouped
+effect binds — its role among the key, each As-Of Axis end bound per row, the
+gate, and the assigned cells, and its Neutral Type — and gather each column from
+the steps and their Assignment Payloads, a step assigning nothing having none.
 
 A Planned Step states what a write means; what it **persists** is its payload.
 This module declares the payload vocabulary and the interface that prepares it,

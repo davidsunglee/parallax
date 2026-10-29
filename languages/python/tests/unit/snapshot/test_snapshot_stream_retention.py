@@ -320,7 +320,8 @@ class _GeneratingPort(ConnectsAsItself):
 
 class _WritingPort(_GeneratingPort):
     """The same generator over a model a loop can write, answering every write
-    and recording none of them.
+    — a grouped effect's with every ordinal its source binds — and recording
+    none of them.
 
     The buffer is the subject of the reading it serves, so what the port must not
     do is accumulate beside it: a recorded statement per write would grow with
@@ -339,6 +340,9 @@ class _WritingPort(_GeneratingPort):
         read_only: bool = False,
     ) -> list[Row]:
         del document_reads
+        if sql.endswith(" returning v.ord"):
+            keys = cast("ArrayBind", binds[0])
+            return [(ordinal,) for ordinal in range(1, len(keys.values) + 1)]
         return [
             projected_row(sql, _account_row(account_id))
             for account_id in self._next_page(cast("int", binds[-1]))
@@ -894,11 +898,14 @@ def test_a_writing_loops_buffer_grows_with_the_page_and_not_with_the_result() ->
             buffered[batch_size] = held - retained(unwritten)
         # Affine in the page size, which is the bound stated rather than merely
         # ordered: fixed transaction bookkeeping cancels between adjacent arms,
-        # leaving the same marginal cost for each additional buffered write.
+        # leaving the same marginal cost for each additional buffered write. A
+        # page of one write flushes it alone, while every larger page flushes
+        # as one grouped effect whose slots the model then keeps once, so the
+        # affine reading starts where every arm keeps them.
         marginal = [
             (later_price - earlier_price) / (later_size - earlier_size)
             for (earlier_size, earlier_price), (later_size, later_price) in pairwise(
-                buffered.items()
+                (size, price) for size, price in buffered.items() if size > 1
             )
         ]
         assert min(marginal) > 0, buffered

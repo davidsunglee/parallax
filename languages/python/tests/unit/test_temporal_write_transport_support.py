@@ -84,6 +84,11 @@ def test_the_tally_counts_each_call_and_the_rows_each_insert_carried() -> None:
     tally = PortTally()
     connection = _counting(inner, tally)
     connection.execute("select 1", [])
+    connection.execute(
+        "update t set a = v.c2 from unnest(cast(%s as bigint[]), cast(%s as bigint[])) "
+        "with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord",
+        [ArrayBind(INT64, [1, 2]), ArrayBind(INT64, [3, 4])],
+    )
     connection.execute_pipeline(cast("Any", ("a", "b")))
     connection.execute_write("update t set a = %s", [1])
     connection.execute_write("insert into t(a) values (%s)", [1])
@@ -96,10 +101,11 @@ def test_the_tally_counts_each_call_and_the_rows_each_insert_carried() -> None:
     )
     assert transport_call(("x", "y")) == ("result", 2)
     transport_call(("z",))
-    assert tally.realization() == Realization(1, 2, 3, 2, 2, 4, 3)
+    assert tally.realization() == Realization(1, 2, 3, 2, 2, 4, 3, 1, 2, 2)
     assert tally.reads == 3
-    assert tally.logical_writes == 8
+    assert tally.logical_writes == 10
     assert [call[0] for call in cast("list[tuple[str, object]]", inner.calls)] == [
+        "read",
         "read",
         "pipeline",
         "write",
@@ -171,15 +177,29 @@ def test_a_transaction_hands_its_body_a_connection_counting_into_the_same_tally(
         (Cell("target-replace", 1), True, Realization(1, 0, 0, 0, 1, 3, 3)),
         (Cell("target-replace", 64), True, Realization(0, 1, 64, 64, 1, 3, 3)),
         (Cell("collection-amend", 64), True, Realization(0, 1, 64, 64, 1, 66, 66)),
-        # A full span's 96 closes, then its 160 openings; the 33rd object alone.
-        (Cell("keyed-amend", 3, 33), True, Realization(0, 2 + 1, 96 + 3, 64, 2, 165, 160)),
-        (Cell("keyed-amend", 3, 33), False, Realization(99, 0, 0, 0, 2, 165, 160)),
-        (Cell("keyed-amend", 3, 33, "unordered"), True, Realization(99, 0, 0, 0, 2, 165, 160)),
-        # Seven column arrays fit the narrow limit, so no opening count splits.
-        (Cell("keyed-amend", 3, 33, "narrow"), True, Realization(0, 3, 99, 64, 2, 165, 160)),
-        (Cell("keyed-amend", 70, 3), True, Realization(0, 4, 210, 64, 1, 216, 216)),
-        (Cell("target-replace", 4, 32), True, Realization(0, 2, 128, 64, 1, 96, 96)),
-        (Cell("collection-amend", 4, 8), True, Realization(0, 1, 32, 32, 1, 48, 48)),
+        # A full span's 96 closes in one grouped effect, then its 160 openings;
+        # the 33rd object alone, its group of one presenting its own closes.
+        (
+            Cell("keyed-amend", 3, 33),
+            True,
+            Realization(0, 1, 3, 3, 2, 165, 160, 1, 96, 96),
+        ),
+        (Cell("keyed-amend", 3, 33), False, Realization(3, 0, 0, 0, 2, 165, 160, 1, 96, 96)),
+        (
+            Cell("keyed-amend", 3, 33, "unordered"),
+            True,
+            Realization(3, 0, 0, 0, 2, 165, 160, 1, 96, 96),
+        ),
+        # Seven column arrays fit the narrow limit, and so do the closes' few
+        # source arrays, so neither statement splits.
+        (
+            Cell("keyed-amend", 3, 33, "narrow"),
+            True,
+            Realization(0, 1, 3, 3, 2, 165, 160, 1, 96, 96),
+        ),
+        (Cell("keyed-amend", 70, 3), True, Realization(0, 0, 0, 0, 1, 216, 216, 1, 210, 210)),
+        (Cell("target-replace", 4, 32), True, Realization(0, 0, 0, 0, 1, 96, 96, 1, 128, 128)),
+        (Cell("collection-amend", 4, 8), True, Realization(0, 0, 0, 0, 1, 48, 48, 1, 32, 32)),
         # Each object alone: three closes in one invocation, five openings.
         (Cell("interleaved-amend", 3, 4), True, Realization(0, 4, 12, 3, 4, 20, 5)),
     ],
@@ -188,8 +208,9 @@ def test_a_transaction_hands_its_body_a_connection_counting_into_the_same_tally(
 def test_a_cells_realization_follows_from_its_closes_and_openings(
     cell: Cell, ordered: bool, realized: Realization
 ) -> None:
-    # A lone close runs alone, as does one a capped invocation leaves behind;
-    # every Write Group's openings ride one insert.
+    # A group of several objects closes in one grouped effect; in a group of
+    # one, a lone close runs alone, as does one a capped invocation leaves
+    # behind; every Write Group's openings ride one insert.
     assert expected_realization(cell, ordered=ordered) == realized
 
 
@@ -200,13 +221,17 @@ def test_a_cells_realization_follows_from_its_closes_and_openings(
         (Cell("keyed-amend", 64), [("read", 63), ("write", 65)]),
         (
             Cell("keyed-amend", 3, 33),
-            [("read", 64), ("write", 96 + 1), ("read", 2), ("write", 3 + 1)],
+            [("read", 64), ("write", 1 + 1), ("read", 2), ("write", 3 + 1)],
         ),
         (
             Cell("keyed-amend", 3, 33, "narrow"),
+            [("read", 64), ("write", 1 + 1), ("read", 2), ("write", 3 + 1)],
+        ),
+        (
+            Cell("keyed-amend", 3, 33, "expanding"),
             [("read", 64), ("write", 96 + 1), ("read", 2), ("write", 3 + 1)],
         ),
-        (Cell("target-replace", 4, 32), [("read", 96), ("write", 128 + 1)]),
+        (Cell("target-replace", 4, 32), [("read", 96), ("write", 1 + 1)]),
         (Cell("interleaved-amend", 3, 4), [("read", 2), ("write", 3 + 1)] * 4),
     ],
     ids=lambda value: value.id if isinstance(value, Cell) else "",
