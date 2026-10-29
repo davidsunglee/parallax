@@ -9,7 +9,9 @@ is here: that PostgreSQL returns exactly the ordinals of the rows it changed or
 removed, so another session's committed change refuses exactly its own object's
 gate or milestone; that grouped closes, revisions, and removals store the
 history their lone statements store under the generated interval checks and
-exclusion; that a statement failure fails the whole grouped effect, an exclusion
+exclusion; that a null Value Object a grouped amendment assigns is stored as
+its lone amendment stores it, SQL NULL in its own Column and JSON null at its
+path; that a statement failure fails the whole grouped effect, an exclusion
 refusal recognized as the recoverable conflict it is; and that a unique value
 handed between objects still succeeds in authored order.
 """
@@ -35,6 +37,7 @@ from parallax.core import (
     Entity,
     Int32,
     TxTemporal,
+    ValueObject,
     attr,
     index,
 )
@@ -72,6 +75,20 @@ class Ticket(Entity, table="grp_ticket", namespace=_NAMESPACE, layout=Document()
     note: Attr[str | None] = attr(max_length=16)
 
 
+class Place(ValueObject):
+    city: Attr[str] = attr()
+
+
+class Venue(Entity, table="grp_venue", namespace=_NAMESPACE):
+    id: Attr[int] = attr(primary_key=True)
+    place: Attr[Place | None] = attr()
+
+
+class VenueSheet(Entity, table="grp_venue_sheet", namespace=_NAMESPACE, layout=Document()):
+    id: Attr[int] = attr(primary_key=True)
+    place: Attr[Place | None] = attr()
+
+
 class Seat(
     Entity,
     table="grp_seat",
@@ -99,7 +116,7 @@ class DocumentSpan(Bitemporal, table="grp_document_span", namespace=_NAMESPACE, 
     note: Attr[str | None] = attr(max_length=16)
 
 
-_MODEL = DomainModel(Order, Ticket, Seat, Book, Span, DocumentSpan)
+_MODEL = DomainModel(Order, Ticket, Venue, VenueSheet, Seat, Book, Span, DocumentSpan)
 _KEYS = tuple(range(1, 6))
 type _Row = tuple[object, ...]
 type _Concurrency = Literal["optimistic", "locking"]
@@ -193,6 +210,55 @@ def test_one_grouped_update_stores_what_each_update_alone_stores(
     first = statement.statement.binds[-1]
     assert isinstance(first, ArrayBind)
     assert len(first.values) == len(_KEYS)
+
+
+def _swap_places(entity: type[Any]) -> Any:
+    def swap(tx: TxnContext) -> None:
+        for venue in tx.find(entity.where(entity.id >= 1)).results():
+            tx.amend(venue.edit(place=None if venue.place else Place(city=f"c{venue.id}")))
+
+    return swap
+
+
+@pytest.mark.parametrize(
+    ("entity", "table", "place", "absent"),
+    [
+        (Venue, "grp_venue", "place", (True, None)),
+        (VenueSheet, "grp_venue_sheet", "payload->'place'", (False, "null")),
+    ],
+)
+def test_a_grouped_amendment_stores_a_null_value_object_as_one_alone_does(
+    profile_run: Any,
+    entity: type[Any],
+    table: str,
+    place: str,
+    absent: tuple[bool, str | None],
+) -> None:
+    stored: list[list[_Row]] = []
+    writes: list[int] = []
+    for grouped in (False, True):
+        provider = RecordingLifecycleProvider()
+        db = _database(profile_run, provider, grouped=grouped)
+        for key in _KEYS:
+            venue = entity(id=key, place=Place(city="old") if key % 2 else None)
+            db.transact(lambda tx, venue=venue: tx.insert(venue))
+        db.transact(_swap_places(entity))
+        stored.append(
+            [
+                tuple(row)
+                for row in profile_run.port.execute(
+                    f"select id, {place} is null, jsonb_typeof({place}), {place}->>'city' "
+                    f"from {table} order by id",
+                    [],
+                )
+            ]
+        )
+        writes.append(len(_writes(provider)))
+    assert writes == [len(_KEYS), 1]
+    swapped = [
+        (key, *absent, None) if key % 2 else (key, False, "object", f"c{key}") for key in _KEYS
+    ]
+    assert stored == [swapped, swapped]
 
 
 def _another_writer_advances(db: ScopedDatabase, key: int) -> None:

@@ -6,7 +6,7 @@ from typing import cast
 
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY, INFINITY_LITERAL, FrozenMap, NeutralType
-from parallax.core.db_port import ArrayBind, JsonDocument
+from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
 from parallax.core.dialect import (
     Dialect,
     DocumentAssignment,
@@ -462,9 +462,12 @@ class GroupedEffectBuilder:
         for _, binds in terms:
             ctx.bind_structural_all(binds)
         element_types = slots.element_types
-        for element_type, cells in zip(
-            element_types, slots.column_cells(steps, payloads), strict=True
-        ):
+        columns = slots.column_cells(steps, payloads)
+        for source in slots.assignment_sources:
+            if isinstance(source, tuple):
+                for column in source:
+                    _null_paths_as_json_null(columns[column])
+        for element_type, cells in zip(element_types, columns, strict=True):
             ctx.bind_array(ArrayBind(element_type, cells))
         arrays = ", ".join(
             [dialect.array_parameter(element_type) for element_type in element_types]
@@ -481,6 +484,15 @@ class GroupedEffectBuilder:
             f"update {table} t set {', '.join([sql for sql, _ in terms])} from {source} "
             f"where {where} returning {_SOURCE}.ord"
         )
+
+
+def _null_paths_as_json_null(cells: list[object]) -> None:
+    """An assigned path's null as the literal JSON null document, exactly as a
+    lone patch assigns it: a SQL NULL element would null the whole Structured
+    Column through `jsonb_set`."""
+    for index, cell in enumerate(cells):
+        if cell is None:
+            cells[index] = JSON_NULL
 
 
 def _shaped_address(step: _Effect, slots: EffectSlots) -> bool:
