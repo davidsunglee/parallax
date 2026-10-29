@@ -4,12 +4,13 @@ execution*), taken here mostly through temporal openings.
 
 A run of contiguous single-entry inserts of one Entity that name the same
 members and hold no generated value compiles, one entry at a time, into one
-multi-row insert carrying exactly the binds and bind metadata the inserts' own
-statements carry, in order. The run ends untouched at a step that cannot
-join it, and at its capacity before another step is even taken; a later
+multi-row insert binding one array per Column, each holding the bind the
+inserts' own statements carry at its position, in order. The run ends untouched
+at a step that cannot join it, and at no entry count or bind limit; a later
 opening's ordinary failure leaves the statement holding exactly the openings
-before it. A dry traversal of settled steps answers the statements execution
-runs, through the same cursor operations.
+before it. A dialect binding no arrays groups nothing. A dry traversal of
+settled steps answers the statements execution runs, through the same cursor
+operations.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from parallax.core._execution._write_lowering import (
     stream_physical,
 )
 from parallax.core.base import INFINITY as OPEN
+from parallax.core.db_port import ArrayBind, JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -41,9 +43,6 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._context import (
-    _RepeatedTypedBindSpan,  # pyright: ignore[reportPrivateUsage]
-)
 from parallax.core.unit_work import KeyedWriteInstruction
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import PredecessorRow, TemporalObservation
@@ -73,7 +72,6 @@ from tests._support.managed_rows import managed_row_of
 from tests._support.row_slots import observed_slots
 from tests.unit._corpus_model_support import corpus_records, formed
 
-_GROUPED_INSERT_CAP: Final = "parallax.core._execution._write_lowering._GROUPED_INSERT_ROWS"
 _META: Final = model_of(MODELS["position"])
 _ENTITY = entity_by_name(_META, "Position")
 assert _ENTITY is not None
@@ -214,22 +212,46 @@ def _alone(step: PlannedStep, meta: Metamodel = _META) -> LoweredStatement:
     return lowered(step, LayoutPayloadPreparer(meta), meta, POSTGRES)
 
 
+_ARRAY_ELEMENTS: Final[Mapping[str, tuple[str, ...]]] = {
+    "position": ("bigint", "text", "decimal", *("timestamptz",) * 4),
+    "opn_columns_span": ("bigint", *("timestamptz",) * 4, "jsonb", "jsonb"),
+    "opn_document_span": ("bigint", *("timestamptz",) * 4, "jsonb"),
+}
+"""Each test Table's Columns' array element types, in Table Layout order."""
+
+
+def _spelled(statement: LoweredStatement) -> tuple[str, tuple[object, ...]]:
+    """``statement``'s text and binds, each array bind as its elements."""
+    return statement.sql, tuple(
+        bind.values if isinstance(bind, ArrayBind) else bind for bind in statement.binds
+    )
+
+
 def _joined(*steps: PlannedStep, meta: Metamodel = _META) -> tuple[str, tuple[object, ...]]:
-    """The multi-row statement ``steps``' own statements spell together: the
-    first's column list, one value tuple per step, and every step's binds in
-    order."""
+    """What ``steps``' own statements spell together: one step's own text and
+    binds, or the first's column list over one array per Column, each holding
+    every step's bind at its position, in order, a document as itself."""
     statements = [_alone(step, meta) for step in steps]
-    head, values = statements[0].sql.split(" values ")
     for statement in statements:
         assert statement.sql == statements[0].sql
-    return (
-        f"{head} values {', '.join([values] * len(steps))}",
-        tuple(bind for statement in statements for bind in statement.binds),
+    if len(statements) == 1:
+        return _spelled(statements[0])
+    head, _values = statements[0].sql.split(" values ")
+    table = head.removeprefix("insert into ").split("(")[0]
+    arrays = ", ".join(f"cast(? as {element}[])" for element in _ARRAY_ELEMENTS[table])
+    return f"{head} select * from unnest({arrays})", tuple(
+        [bind.value if isinstance(bind, JsonDocument) else bind for bind in column]
+        for column in zip(*(statement.binds for statement in statements), strict=True)
     )
 
 
 def _wire(*steps: PlannedStep, meta: Metamodel = _META) -> tuple[object, ...]:
-    return tuple(bind for step in steps for bind in _alone(step, meta).wire_binds())
+    """What ``steps``' own statements project together: one step's own Wire
+    binds, or one list per Column of every step's Wire bind there, in order."""
+    projected = [_alone(step, meta).wire_binds() for step in steps]
+    if len(projected) == 1:
+        return projected[0]
+    return tuple(list(column) for column in zip(*projected, strict=True))
 
 
 # --------------------------------------------------------------------------- #
@@ -274,6 +296,15 @@ def test_every_other_step_lowers_alone() -> None:
         assert cursor.grouped_insert_start(step) is None
 
 
+def test_no_insert_begins_a_grouped_insert_on_a_dialect_binding_no_arrays() -> None:
+    (opening,) = _openings(1)
+    expanding = replace(POSTGRES, name="mariadb", binds_arrays=False)
+    steps = _openings(3)
+    assert _cursor((), dialect=expanding).grouped_insert_start(opening) is None
+    statements = list(stream_physical(steps, LayoutPayloadPreparer(_META), _META, expanding))
+    assert [_spelled(statement) for statement in statements] == [_joined(step) for step in steps]
+
+
 # --------------------------------------------------------------------------- #
 # One statement for a compatible run.                                          #
 # --------------------------------------------------------------------------- #
@@ -284,18 +315,18 @@ def test_a_run_of_openings_is_one_statement_of_every_entry_in_order() -> None:
     preparer = _Preparer()
     cursor = _cursor(steps, preparer)
     statement, following, failure = _grouped(cursor)
-    assert (statement.sql, statement.binds) == _joined(*steps)
+    assert _spelled(statement) == _joined(*steps)
     assert statement.wire_binds() == _wire(*steps)
     assert statement.is_compiler_proven
     assert (following, failure, _remaining(cursor)) == (None, None, [])
     assert preparer.prepared == [step.entries[0] for step in steps]
 
 
-def test_entries_of_one_signature_share_repeated_bind_metadata() -> None:
+def test_a_runs_arrays_name_their_element_types_and_need_no_span_metadata() -> None:
     statement, _following, _failure = _grouped(_cursor(_openings(3)))
-    spans = statement.typed_bind_spans
-    assert spans
-    assert all(isinstance(span, _RepeatedTypedBindSpan) and span.repetitions == 3 for span in spans)
+    assert [type(bind) for bind in statement.binds] == [ArrayBind] * 7
+    assert (statement.typed_bind_spans, statement.wire_bind_overrides) == ((), ())
+    assert statement.wire_binds()[6] == ["infinity"] * 3
 
 
 def test_backing_an_entry_already_carries_is_inserted_without_preparing_it_again() -> None:
@@ -311,7 +342,7 @@ def test_backing_an_entry_already_carries_is_inserted_without_preparing_it_again
     preparer = _Preparer()
     statement, _following, _failure = _grouped(_cursor(steps, preparer))
     assert preparer.prepared == []
-    assert (statement.sql, statement.binds) == _joined(*plain)
+    assert _spelled(statement) == _joined(*plain)
 
 
 # --------------------------------------------------------------------------- #
@@ -344,7 +375,7 @@ def test_a_step_that_cannot_join_ends_the_run_taken_but_unprepared(kind: str) ->
     statement, following, failure = _grouped(cursor)
     assert following is boundary
     assert failure is None
-    assert (statement.sql, statement.binds) == _joined(*steps[:2])
+    assert _spelled(statement) == _joined(*steps[:2])
     assert _remaining(cursor) == list(steps[len(run) + 1 :])
     assert preparer.prepared == [step.entries[0] for step in run]
 
@@ -353,42 +384,24 @@ def test_another_objects_opening_of_the_same_shape_joins_the_run() -> None:
     steps = (*_openings(1), _opening(_row(2, _JUN)))
     statement, following, _failure = _grouped(_cursor(steps))
     assert following is None
-    assert (statement.sql, statement.binds) == _joined(*steps)
+    assert _spelled(statement) == _joined(*steps)
 
 
-def test_the_entry_cap_ends_a_run_before_another_step_is_taken(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(_GROUPED_INSERT_CAP, 2)
-    steps = _openings(5)
+def test_no_entry_count_ends_a_run() -> None:
+    steps = tuple(_opening(_row(key, _JAN)) for key in range(1, 71))
     cursor = _cursor(steps)
-    first = _grouped(cursor)
-    assert (first.statement.sql, first.statement.binds) == _joined(*steps[:2])
-    assert (first.following, first.failure) == (None, None)
-    second = _grouped(cursor)
-    assert (second.statement.sql, second.statement.binds) == _joined(*steps[2:4])
-    third = _grouped(cursor)
-    assert (third.statement.sql, third.statement.binds) == _joined(steps[4])
-    assert _remaining(cursor) == []
+    statement, following, failure = _grouped(cursor)
+    assert _spelled(statement) == _joined(*steps)
+    assert (following, failure, _remaining(cursor)) == (None, None, [])
 
 
-def test_the_dialects_bind_limit_bounds_every_statement_of_a_run() -> None:
+def test_a_bind_limit_the_columns_fit_never_splits_a_run() -> None:
     steps = _openings(5)
     width = len(_alone(steps[0]).binds)
-    cursor = _cursor(steps, dialect=replace(POSTGRES, max_bind_parameters=2 * width + 1))
-    assert [
-        (opening.statement.sql, opening.statement.binds)
-        for opening in (_grouped(cursor), _grouped(cursor), _grouped(cursor))
-    ] == [_joined(*steps[:2]), _joined(*steps[2:4]), _joined(steps[4])]
-
-
-def test_an_opening_wider_than_the_bind_limit_alone_still_inserts_alone() -> None:
-    steps = _openings(2)
-    width = len(_alone(steps[0]).binds)
-    cursor = _cursor(steps, dialect=replace(POSTGRES, max_bind_parameters=width - 1))
+    cursor = _cursor(steps, dialect=replace(POSTGRES, max_bind_parameters=width))
     statement, following, failure = _grouped(cursor)
-    assert (statement.sql, statement.binds) == _joined(steps[0])
-    assert (following, failure, _remaining(cursor)) == (None, None, [steps[1]])
+    assert _spelled(statement) == _joined(*steps)
+    assert (following, failure, _remaining(cursor)) == (None, None, [])
 
 
 # --------------------------------------------------------------------------- #
@@ -399,7 +412,7 @@ def test_an_opening_wider_than_the_bind_limit_alone_still_inserts_alone() -> Non
 def _prefix_after(steps: tuple[PlannedStep, ...], cursor: LoweringCursor) -> GroupedInsert:
     opening = _grouped(cursor)
     assert opening.following is None
-    assert (opening.statement.sql, opening.statement.binds) == _joined(*steps[:2])
+    assert _spelled(opening.statement) == _joined(*steps[:2])
     assert opening.statement.wire_binds() == _wire(*steps[:2])
     assert (
         opening.statement.typed_bind_spans
@@ -456,10 +469,10 @@ def test_a_dry_traversal_groups_each_run_in_place_and_never_transposes_objects()
     first, second = _openings(2), (_opening(_row(2, _JAN)), _opening(_row(2, _MAR)))
     steps = (_close(1), *first, _close(2), *second)
     statements = list(stream_physical(steps, LayoutPayloadPreparer(_META), _META, POSTGRES))
-    assert [(statement.sql, statement.binds) for statement in statements] == [
-        (_alone(steps[0]).sql, _alone(steps[0]).binds),
+    assert [_spelled(statement) for statement in statements] == [
+        _joined(steps[0]),
         _joined(*first),
-        (_alone(steps[3]).sql, _alone(steps[3]).binds),
+        _joined(steps[3]),
         _joined(*second),
     ]
 
@@ -473,8 +486,8 @@ def test_a_dry_traversal_answers_the_prefix_then_raises_a_later_openings_failure
     with pytest.raises(ValueError) as raised:
         answered.extend(stream_physical(steps, preparer, _META, POSTGRES))
     assert raised.value is failure
-    assert [(statement.sql, statement.binds) for statement in answered] == [
-        (_alone(steps[0]).sql, _alone(steps[0]).binds),
+    assert [_spelled(statement) for statement in answered] == [
+        _joined(steps[0]),
         _joined(*steps[1:3]),
     ]
 
@@ -513,17 +526,15 @@ def test_a_settled_range_keeps_its_logical_steps_and_groups_only_its_openings() 
     assert [type(step) for step in steps] == [PlannedClose, *[PlannedInsert] * 3]
     raw = lower_instruction(instruction, model, POSTGRES, "locking", at, observation=observation)
     physical = list(stream_physical(steps, LayoutPayloadPreparer(model), model, POSTGRES))
-    assert [(statement.sql, statement.binds) for statement in physical] == [
-        (raw[0].sql, raw[0].binds),
+    assert [_spelled(statement) for statement in physical] == [
+        _spelled(raw[0]),
         _joined(*steps[1:], meta=model),
     ]
-    assert physical[1].wire_binds() == tuple(
-        bind for statement in raw[1:] for bind in statement.wire_binds()
-    )
+    assert physical[1].wire_binds() == _wire(*steps[1:], meta=model)
     assert [
-        (statement.sql, statement.binds)
+        _spelled(statement)
         for _step, statement in lowered_steps(steps, LayoutPayloadPreparer(model), model, POSTGRES)
-    ] == [(statement.sql, statement.binds) for statement in raw]
+    ] == [_spelled(statement) for statement in raw]
 
 
 # --------------------------------------------------------------------------- #
@@ -602,14 +613,9 @@ def test_a_collection_binds_as_one_document_and_its_elements_widen_no_entry(name
         steps,
         LayoutPayloadPreparer(_SPANS),
         _SPANS,
-        replace(POSTGRES, max_bind_parameters=2 * width),
+        replace(POSTGRES, max_bind_parameters=width),
     )
-    runs = [_grouped(cursor), _grouped(cursor)]
-    assert [(run.statement.sql, run.statement.binds) for run in runs] == [
-        _joined(*steps[:2], meta=_SPANS),
-        _joined(*steps[2:], meta=_SPANS),
-    ]
-    assert [run.statement.wire_binds() for run in runs] == [
-        _wire(*steps[:2], meta=_SPANS),
-        _wire(*steps[2:], meta=_SPANS),
-    ]
+    statement, following, failure = _grouped(cursor)
+    assert (following, failure) == (None, None)
+    assert _spelled(statement) == _joined(*steps, meta=_SPANS)
+    assert statement.wire_binds() == _wire(*steps, meta=_SPANS)

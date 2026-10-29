@@ -2135,9 +2135,17 @@ def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execut
     assert database_calls == 1
     assert len(port.writes) == 1
     sql, binds = port.writes[0]
-    assert sql == "insert into wallet(id, owner, balance) values (%s, %s, %s), (%s, %s, %s)"
-    assert binds == [10, "Mira", decimal.Decimal("100.0"), 11, "Omar", decimal.Decimal("20.0")]
-    assert isinstance(binds[2], decimal.Decimal) and isinstance(binds[5], decimal.Decimal)
+    assert sql == (
+        "insert into wallet(id, owner, balance) select * from "
+        "unnest(cast(%s as bigint[]), cast(%s as text[]), cast(%s as decimal[]))"
+    )
+    columns = [cast("ArrayBind", bind).values for bind in binds]
+    assert columns == [
+        [10, 11],
+        ["Mira", "Omar"],
+        [decimal.Decimal("100.0"), decimal.Decimal("20.0")],
+    ]
+    assert all(isinstance(balance, decimal.Decimal) for balance in columns[2])
 
 
 def test_insert_entry_refuses_a_row_missing_a_required_attribute() -> None:
@@ -2295,7 +2303,9 @@ def test_pk_gen_managed_insert_rows_stay_their_own_steps_in_one_grouped_insert()
     )
     emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
     assert database_calls == 1
-    assert [e.sql for e in emissions] == ["insert into pass(id, zone) values (?, ?), (?, ?)"]
+    assert [e.sql for e in emissions] == [
+        "insert into pass(id, zone) select * from unnest(cast(? as bigint[]), cast(? as text[]))"
+    ]
 
 
 def test_elided_no_op_row_is_not_counted_as_a_statement() -> None:
@@ -4336,7 +4346,7 @@ def test_a_bounded_temporal_target_step_reads_its_coverage_then_writes_its_windo
         INFINITY,
     ]
     assert [sql.split(" ", 1)[0] for sql, _ in port.writes] == ["insert", "update", "insert"]
-    assert port.writes[2][0].count("), (") == 2
+    assert {len(cast("ArrayBind", column).values) for column in port.writes[2][1]} == {3}
 
 
 @pytest.mark.parametrize("state_graded", [False, True])
@@ -4516,21 +4526,16 @@ def test_an_insertion_pointer_retains_every_row_of_its_submission(account_id: in
     assert run.errors == [] and run.units == {"g": {"outcome": "committed"}}
     assert run.database_calls == 1 and port.reads == []
     assert port.commits == 1 and port.rollbacks == 0
-    assert port.writes == [
-        (
-            "insert into account(id, owner, balance, version) values (%s, %s, %s, %s), "
-            "(%s, %s, %s, %s)",
-            [
-                90,
-                "Ada" if account_id == 90 else "Noether",
-                decimal.Decimal("5.00"),
-                1,
-                91,
-                "Ada" if account_id == 91 else "Noether",
-                decimal.Decimal("5.00"),
-                1,
-            ],
-        )
+    ((sql, binds),) = port.writes
+    assert sql == (
+        "insert into account(id, owner, balance, version) select * from unnest("
+        "cast(%s as bigint[]), cast(%s as text[]), cast(%s as decimal[]), cast(%s as int[]))"
+    )
+    assert [cast("ArrayBind", bind).values for bind in binds] == [
+        [90, 91],
+        ["Ada" if account_id == key else "Noether" for key in (90, 91)],
+        [decimal.Decimal("5.00")] * 2,
+        [1, 1],
     ]
     assert len(run.emissions) == 1
     assert run.emissions[0].sql.replace("?", "%s") == port.writes[0][0]

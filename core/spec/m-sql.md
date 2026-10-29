@@ -1259,8 +1259,8 @@ Postgres DML:
 |---|---|
 | **insertUntil** | one `insert into position(cols…) values (?, …, ?)` with Valid Time `[vf, until)` and Transaction Time `[txInstant, infinity)` |
 | **amendUntil** (inactivate) | `update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?` — binds `[txInstant, pk, observedValidEnd, infinity]` (closes Transaction Time of the addressed rectangle) |
-| **amendUntil** (head / middle / tail) | one `insert into position(cols…) values (?, …, ?), (?, …, ?), (?, …, ?)` at Transaction Time `[txInstant, infinity)` — `head` Valid Time `[from_z, vf)` old value, `middle` Valid Time `[vf, until)` new value, `tail` Valid Time `[until, infinity)` old value, one value tuple each (*Requested ranges*) |
-| **terminateUntil** | the inactivate `update` + one `insert` of the `head` and `tail` tuples only (**no** `middle`) |
+| **amendUntil** (head / middle / tail) | one `insert into position(cols…) select * from unnest(cast(? as bigint[]), …)` at Transaction Time `[txInstant, infinity)`, one array per Column (*Batched insert / update*) — `head` Valid Time `[from_z, vf)` old value, `middle` Valid Time `[vf, until)` new value, `tail` Valid Time `[until, infinity)` old value, one row each (*Requested ranges*) |
+| **terminateUntil** | the inactivate `update` + one `insert` of the `head` and `tail` rows only (**no** `middle`) |
 
 The inactivate `update` **addresses** the one rectangle it closes: the primary key
 plus one exclusive upper bound **per As-Of Axis** — the observed rectangle's own
@@ -1403,10 +1403,9 @@ been.
 Each successor and gap row remains its own Planned Step; the statements that
 carry them are physical realization. Contiguous openings of one Entity that
 name the same members and carry no generated value share one multi-row insert
-of the *Batched insert / update* form below, one value tuple per opening in the
-order above, each statement within the dialect's bind limit and an internal
-entry cap (`m-execution` *Flush execution*). Such a statement succeeds or fails
-as a whole, and its error is the statement's own rather than any one opening's.
+of the *Batched insert / update* form below, one row per opening in the order
+above (`m-execution` *Flush execution*). Such a statement succeeds or fails as
+a whole, and its error is the statement's own rather than any one opening's.
 
 A rectangle the write leaves unchanged (`m-temporal-write` *Unchanged milestones*) is
 neither inactivated nor reopened. Under Optimistic, where the dialect's write
@@ -1495,14 +1494,40 @@ half of the contract.
 ### Batched insert / update
 
 The unit of work flushes buffered writes as set-based SQL (`m-batch-write`). A
-batched **insert** of N rows of one entity is a **single multi-row `INSERT`** —
-one statement, N value tuples — not N statements:
+batched **insert** of N rows of one entity is a **single multi-row `INSERT`**,
+not N statements. Its spelling is the dialect's multi-row insert form
+(`m-dialect` **array parameter cast form**). On Postgres it binds **one array
+per Column**, cast to that Column's array element type, and selects its rows
+from them; the text and the bind count therefore follow the column list alone,
+whatever N is:
 
 ```yaml
 - sql:
-    postgres: insert into account(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
+    postgres: insert into account(id, owner, balance) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))
+  binds: [[<id1>, <id2>, <id3>], [<owner1>, <owner2>, <owner3>], [<balance1>, <balance2>, <balance3>]]
+```
+
+Each array holds its Column's value from every row, in row order, so the arrays
+are equally long and their elements at one index are one row. Each bind is one
+array carrier (`m-db-port`) of the Column's own Neutral Type; a nullable
+Column's array holds SQL NULL where a row states that member null. A Column
+storing a whole document — a Value Object, a scalar collection, or the shared
+Structured Column — binds a `json` array holding one complete document per row,
+JSON `null` included, cast to `jsonb[]`; a table-per-hierarchy discriminator
+binds a `string` array repeating the row's tag. A dialect without array
+parameters spells the same rows as **multi-row `VALUES`**, one value tuple of
+binds per row, and splits them across statements so each stays within its bind
+limit (`m-dialect` *Bind parameter limit*):
+
+```yaml
+- sql:
+    mariadb: insert into account(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
   binds: [<row1…>, <row2…>, <row3…>]
 ```
+
+A single-row insert keeps `values (?, …)` with one bind per cell on every
+dialect, and so does a generated-value insert, which folds its allocation into
+one row (`m-pk-gen`).
 
 Separate single-entry inserts of one entity naming the same members and holding
 no generated value — inserts of distinct objects one Write Group lays out
@@ -1513,8 +1538,8 @@ when they are adjacent, each row still its own Planned Step (`m-execution`
 
 ```yaml
 - sql:
-    postgres: insert into pass(id, zone) values (?, ?), (?, ?)
-  binds: [1, north, 2, south]
+    postgres: insert into pass(id, zone) select * from unnest(cast(? as bigint[]), cast(? as text[]))
+  binds: [[1, 2], [north, south]]
 ```
 
 A batched **update** of the same column over several keys is one keyed `UPDATE`

@@ -16,7 +16,6 @@ from psycopg.errors import error_from_result
 from psycopg.pq import DiagnosticField, ExecStatus, Format, TransactionStatus
 from psycopg.pq.abc import PGresult
 from psycopg.rows import RowMaker, TupleRow, tuple_row
-from psycopg.types.array import ListBinaryDumper
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
 from parallax.core.base import (
@@ -29,6 +28,7 @@ from parallax.core.base import (
     Float64,
     Int32,
     Int64,
+    Json,
     NeutralType,
     String,
     TemporalBound,
@@ -219,6 +219,16 @@ _ARRAY_ELEMENT_TYPES: Final[Mapping[type[NeutralType], str]] = {
 }
 
 _TIMESTAMPTZ_OID: Final = postgres.types["timestamptz"].oid
+_JSONB: Final = postgres.types["jsonb"]
+
+# A binary array's header — dimensions, null flag, element OID — one
+# dimension's length and lower bound, each element's length, and a null
+# element's; and a binary jsonb datum's version byte.
+_ARRAY_HEAD: Final = struct.Struct("!iiI")
+_ARRAY_DIMENSION: Final = struct.Struct("!ii")
+_ELEMENT_LENGTH: Final = struct.Struct("!i")
+_NULL_ELEMENT: Final = _ELEMENT_LENGTH.pack(-1)
+_JSONB_VERSION: Final = b"\x01"
 
 # PostgreSQL's binary timestamp `infinity`: the largest int64 microsecond count.
 _BINARY_INFINITY: Final = struct.pack("!q", 2**63 - 1)
@@ -241,20 +251,64 @@ class _TimestampBinaryDumper(Dumper):
         return _BINARY_INFINITY if obj is INFINITY else self._finite.dump(obj)
 
 
-class _ArrayElementsDumper(ListBinaryDumper):
+def _document_text(document: object) -> bytes:
+    return dump_document(document).encode()
+
+
+class _ArrayElementsDumper(Dumper):
     """Dumps an :class:`ArrayBind`'s own value list as a one-dimensional binary
-    array of a fixed element dumper's type, without inspecting the elements to
-    choose one."""
+    array, each element through one fixed encoding the carrier's element type
+    chose, never by inspecting the elements.
+
+    The array is written in one pass over the list into one growing buffer
+    rather than through psycopg's list dumper, whose dimension discovery
+    allocates per array, which keeps every element's encoding alive until the
+    array is joined, and which would read a document's JSON array as a further
+    dimension. A ``None`` element is SQL NULL only where ``sql_nulls`` holds; a
+    document encoding serializes it as JSON null instead.
+    """
+
+    format = Format.BINARY
 
     def __init__(
-        self, element: ElementDumper, array_oid: int, context: AdaptContext | None
+        self,
+        encode: Callable[[Any], Buffer | None],
+        element_oid: int,
+        array_oid: int,
+        context: AdaptContext | None,
+        *,
+        prefix: bytes = b"",
+        sql_nulls: bool = True,
     ) -> None:
-        super().__init__(list, context)
-        self.sub_dumper = element
+        super().__init__(ArrayBind, context)
         self.oid = array_oid
+        self._encode = encode
+        self._element_oid = element_oid
+        self._prefix = prefix
+        self._sql_nulls = sql_nulls
 
-    def dump(self, obj: ArrayBind) -> Buffer | None:  # pyright: ignore[reportIncompatibleMethodOverride] - psycopg hands this dumper only the carrier it was upgraded for
-        return super().dump(obj.values)
+    def dump(self, obj: ArrayBind) -> Buffer:
+        values = obj.values
+        if not values:
+            return _ARRAY_HEAD.pack(0, 0, self._element_oid)
+        array = bytearray(_ARRAY_HEAD.size)
+        array += _ARRAY_DIMENSION.pack(len(values), 1)
+        encode, prefix, sql_nulls = self._encode, self._prefix, self._sql_nulls
+        width = len(prefix)
+        pack_length = _ELEMENT_LENGTH.pack
+        has_null = 0
+        for value in values:
+            item = None if value is None and sql_nulls else encode(value)
+            if item is None:
+                has_null = 1
+                array += _NULL_ELEMENT
+                continue
+            array += pack_length(len(item) + width)
+            if width:
+                array += prefix
+            array += item
+        _ARRAY_HEAD.pack_into(array, 0, 1, has_null, self._element_oid)
+        return array
 
 
 class _ArrayBindDumper(RecursiveDumper):
@@ -276,13 +330,22 @@ class _ArrayBindDumper(RecursiveDumper):
     def upgrade(self, obj: ArrayBind, format: PyFormat) -> Dumper:
         del format
         element_type = type(obj.element_type)
+        if element_type is Json:
+            return _ArrayElementsDumper(
+                _document_text,
+                _JSONB.oid,
+                _JSONB.array_oid,
+                self._tx,
+                prefix=_JSONB_VERSION,
+                sql_nulls=False,
+            )
         info = self._tx.adapters.types[_ARRAY_ELEMENT_TYPES[element_type]]
         if element_type is Timestamp:
             element: ElementDumper = _TimestampBinaryDumper(type(None), self._tx)
         else:
             dumper = self._tx.adapters.get_dumper_by_oid(info.oid, Format.BINARY)
             element = dumper(type(None), self._tx)
-        return _ArrayElementsDumper(element, info.array_oid, self._tx)
+        return _ArrayElementsDumper(element.dump, info.oid, info.array_oid, self._tx)
 
     def dump(self, obj: object) -> Buffer | None:  # pragma: no cover - only upgrades dump
         raise TypeError("an array bind dumps through the dumper of its element type")

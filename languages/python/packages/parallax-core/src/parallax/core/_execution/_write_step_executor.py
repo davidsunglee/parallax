@@ -242,8 +242,7 @@ class WriteStepExecutor:
         prepared ends the run: the inserts appended before it are inserted as
         selected, and only if they succeed does that failure propagate.
         ``first`` failing inserts nothing, and a control-flow or fatal exception
-        inserts none of the run. The step after a run that reached its capacity
-        is taken only once the run's statement has run.
+        inserts none of the run.
         """
         statement, following, failure = cursor.lowered_grouped_insert(first)
         try:
@@ -254,7 +253,7 @@ class WriteStepExecutor:
             failure = None
             raise
         _raise_held(failure)
-        return cursor.take() if following is None else following
+        return following
 
     def _run_single(
         self, step: PlannedStep, statement: LoweredStatement, flush: FlushActivity

@@ -263,7 +263,8 @@ def test_same_shape_insert_run_collapses_into_one_multi_row_statement() -> None:
         ),
     ]
     assert [statement.sql for statement in _flush_and_lower(buffer, model)] == [
-        "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?)"
+        "insert into wallet(id, owner, balance) select * from "
+        "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
     ]
 
 
@@ -365,5 +366,6 @@ def test_row_member_order_alone_never_splits_a_batch_group() -> None:
         ),
     ]
     assert [statement.sql for statement in _flush_and_lower(buffer, model)] == [
-        "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?)"
+        "insert into wallet(id, owner, balance) select * from "
+        "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
     ]

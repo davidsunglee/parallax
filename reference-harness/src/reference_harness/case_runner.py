@@ -1974,8 +1974,8 @@ def _assert_until_input(
         ``validFrom`` / ``until`` and the reconstructed rectangle's own bounds, in
         head / middle / tail order;
       * the chained rows are contiguous openings of one Entity naming the same
-        members, so they share ONE multi-row INSERT, one value tuple per row
-        (`m-sql` *Requested ranges*), read apart by :func:`write_plan.insert_value_rows`.
+        members, so they share ONE multi-row INSERT, one row each (`m-sql`
+        *Requested ranges*), read apart by :func:`write_plan.insert_value_rows`.
 
     The domain values are carried, not derived, so they are graded observably by
     ``then.tableState`` in the run rather than restated in ①.

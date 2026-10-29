@@ -54,6 +54,7 @@ from parallax.core._execution._unit_work.write_items import KeyedInsert, StateOb
 from parallax.core._execution._unit_work.write_runner import ExecuteCountedStep, ExecuteWriteSteps
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel, entity_by_name
@@ -792,7 +793,7 @@ def test_writes_a_span_completed_before_its_later_read_failed_stay_published_unt
     assert raised.value is deadlock
     # The first write executed and completed before the second read; no
     # waiting write executed.
-    assert {_close_key(statement) for statement in simulated.statements} == {1}
+    assert set().union(*map(_written_keys, simulated.statements)) == {1}
     assert _completed_changes(uow, writes) == [True] + [False] * (len(writes) - 1)
     ownership = uow.source_authority.planning_ownership(concluding=False)
     for ends in ((Finite(instant=day(2)), PLANNED_INFINITY), (PLANNED_INFINITY, PLANNED_INFINITY)):
@@ -805,10 +806,13 @@ def test_writes_a_span_completed_before_its_later_read_failed_stay_published_unt
     )
 
 
-def _close_key(statement: LoweredStatement) -> object:
-    """The key of the object ``statement`` writes."""
+def _written_keys(statement: LoweredStatement) -> set[object]:
+    """The keys of the objects ``statement`` writes."""
     binds = statement.binds
-    return binds[0] if statement.sql.startswith("insert") else binds[1]
+    if not statement.sql.startswith("insert"):
+        return {binds[1]}
+    key = binds[0]
+    return set(key.values) if isinstance(key, ArrayBind) else {key}
 
 
 # --------------------------------------------------------------------------- #
@@ -857,8 +861,10 @@ def test_a_ready_group_completes_before_the_read_its_successors_wait_for() -> No
     first, second = seen
     assert first == (0, 0)
     assert second[0] == 1
-    assert [_close_key(statement) for statement in simulated.statements[: second[1]]] == [1] * 3
-    assert {_close_key(statement) for statement in simulated.statements[second[1] :]} == {2, 3}
+    assert [_written_keys(statement) for statement in simulated.statements[: second[1]]] == [
+        {1}
+    ] * 3
+    assert set().union(*map(_written_keys, simulated.statements[second[1] :])) == {2, 3}
     assert uow.source_authority.freshness == 3
 
 
@@ -885,7 +891,7 @@ def test_a_failing_completion_keeps_its_groups_earlier_publications_and_complete
         uow.flush(trigger="pre_commit")
     assert raised.value is refused
     # One group executed every object's steps; only the first completed.
-    assert {_close_key(statement) for statement in simulated.statements} == {1, 2, 3}
+    assert set().union(*map(_written_keys, simulated.statements)) == {1, 2, 3}
     assert len(completed) == 2
     writes = [write for key in (1, 2, 3) for write in frag(ShareCols, key, 1)]
     assert _completed_changes(uow, writes) == [True, False, False]

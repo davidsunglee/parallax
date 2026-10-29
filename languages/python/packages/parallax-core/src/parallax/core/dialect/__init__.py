@@ -599,15 +599,16 @@ class Dialect:
 
     def array_parameter(self, neutral_type: NeutralType, *, extracted: bool = False) -> str:
         """One array bind cast to the array of the type an expression of
-        ``neutral_type`` compares in: its column type, or, when ``extracted``
-        from a document, the type :meth:`nested_cast` casts the text to, else
-        text.
+        ``neutral_type`` compares in or a Column of it stores: its column type,
+        or, when ``extracted`` from a document, the type :meth:`nested_cast`
+        casts the text to, else text.
 
         The driver types an untyped array by its elements, so small integers would
         arrive as a narrower integer array and make the comparison cross-type. The
         element type carries no length or precision modifier: an explicit cast to
         ``varchar(n)`` truncates and one to ``decimal(p, s)`` rounds, so either
-        could make a value equal a key it does not equal.
+        could make a value equal a key it does not equal, or store a value other
+        than the one bound where assignment into the Column would refuse it.
         """
         if not extracted:
             element = _ARRAY_ELEMENT_TYPES[type(neutral_type)]
@@ -772,6 +773,7 @@ _ARRAY_ELEMENT_TYPES: Final[Mapping[type, str]] = {
     Time: "time",
     Timestamp: "timestamptz",
     Uuid: "uuid",
+    Json: "jsonb",
 }
 
 # Postgres reserved words that appear as declared columns in the corpus and so

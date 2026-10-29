@@ -289,14 +289,20 @@ or inserts of distinct objects one Write Group lays out together — with one
 multi-row statement (`m-sql` *Requested ranges* and *Batched insert / update*),
 on every connection, whatever the Entity's temporality. Each insert remains its
 own Planned Step, and the statement is one ordinary Database Call. Whether an
-insert may join is decided from the step before its payload is demanded. Before another step is looked at the statement must have
-room for one more entry within the dialect's bind limit (`m-dialect`) and an
-internal entry cap; at that capacity the statement runs before another step is
-looked at, and otherwise the one step looked at that cannot join waits,
-unprepared, until the statement has run. A run never crosses a Write Group or
-a non-insert step, so no insert moves ahead of a non-insert step before it. A logical
-multi-entry insert, which batching formed by membership (`m-batch-write`), runs
-alone and is never split or joined; any other insert runs alone as before.
+insert may join is decided from the step before its payload is demanded. Where
+the dialect has the array parameter cast form (`m-dialect`), the statement
+binds one array per Column however many inserts join, so no entry count or
+bind limit ends the run. Elsewhere, before another step is looked at, the
+statement must have room for one more row within the dialect's bind limit; at
+that capacity the statement runs before another step is looked at. Otherwise
+the run ends at the one step looked at that cannot join, which waits,
+unprepared, until the statement has run, or where the steps run out. A run
+never crosses a Write Group or a non-insert step, so no insert moves ahead of a
+non-insert step before it. A logical multi-entry insert, which batching formed
+by membership (`m-batch-write`), runs alone and is never joined; where the
+dialect has the array parameter cast form it is never split either, and
+elsewhere it spans as many statements as its dialect's bind limit requires
+(`m-dialect` *Bind parameter limit*). Any other insert runs alone as before.
 
 Preparing or appending a later insert of a run may fail ordinarily.
 The inserts appended before it are then inserted as the one statement they were

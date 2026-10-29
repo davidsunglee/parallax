@@ -5,7 +5,7 @@ from operator import itemgetter
 from typing import Final, cast
 
 from parallax.core import storage_layout
-from parallax.core.base import Json, ManagedValue, NeutralType
+from parallax.core.base import JSON, STRING, Json, ManagedValue, NeutralType
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
@@ -243,6 +243,13 @@ def _part(slot: _Slot, presence: int) -> tuple[int, int, object] | None:
     return None
 
 
+def _element_type(slot: _Slot) -> NeutralType:
+    """The Neutral Type every cell ``slot`` stores shares."""
+    if slot.kind == _DIRECT:
+        return cast("NeutralType", slot.fact)
+    return JSON if slot.document else STRING
+
+
 def _packed(presence: int, position: int) -> int:
     """The index of member ``position``'s cell in a row stating ``presence``."""
     return (presence & ((1 << position) - 1)).bit_count()
@@ -282,6 +289,7 @@ class RowSlots:
         "columns",
         "contributors",
         "documents",
+        "element_types",
         "entity",
         "presence",
         "shared_document",
@@ -297,6 +305,7 @@ class RowSlots:
         columns: list[str] = []
         types: list[NeutralType | None] = []
         documents: list[bool] = []
+        element_types: list[NeutralType] = []
         parts: list[tuple[int, int, object]] = []
         placed = 0
         self.shared_document: int | None = None
@@ -321,6 +330,7 @@ class RowSlots:
             columns.append(slot.column)
             types.append(cast("NeutralType", slot.fact) if slot.kind == _DIRECT else None)
             documents.append(slot.document)
+            element_types.append(_element_type(slot))
         if placed != presence.bit_count():
             raise WritePlanningError(
                 f"{storage.entity.canonical}: a planned member occupies no Column of the "
@@ -330,6 +340,7 @@ class RowSlots:
         self.columns: tuple[str, ...] = tuple(columns)
         self.types: tuple[NeutralType | None, ...] = tuple(types)
         self.documents: tuple[bool, ...] = tuple(documents)
+        self.element_types: tuple[NeutralType, ...] = tuple(element_types)
         direct = all(kind == _DIRECT for kind, _, _ in parts)
         self._gather = _gather([index for _, index, _ in parts]) if direct else None
         self._parts: tuple[tuple[int, int, object], ...] = tuple(parts)
@@ -371,6 +382,21 @@ class RowSlots:
             else:
                 stored.append(self._shared_document(write_row, cells, absent))
         return tuple(stored)
+
+    def column_cells(self, rows: Sequence[tuple[object, ...]]) -> tuple[list[object], ...]:
+        """``rows``' cells as one new list per slot, in row order.
+
+        Each row holds the cells :meth:`cells` gathered, its documents already
+        encoded, so a column is read straight out of the rows and a value the
+        slot fixes is repeated rather than read.
+        """
+        count = len(rows)
+        return tuple(
+            [
+                [fact] * count if kind == _CONSTANT else list(map(itemgetter(index), rows))
+                for index, (kind, _, fact) in enumerate(self._parts)
+            ]
+        )
 
     def _shared_document(
         self, write_row: WriteRow, cells: tuple[object, ...], absent: object

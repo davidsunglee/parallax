@@ -32,25 +32,30 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into customer(id, name, address) values (?, ?, ?), (?, ?, ?)
+        postgres: insert into customer(id, name, address) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))
         mariadb: insert into customer(id, name, address) values (?, ?, ?), (?, ?, ?)
       binds:
-        - 200
-        - Ann
-        - street: 1 Aurora Ave
-          city: Oslo
-          geo:
-            country: "NO"
-          phones:
-            - { type: home, number: '555-0201' }
-        - 201
-        - Bo
-        - street: 2 Birch Rd
-          city: Bergen
-          geo:
-            country: "NO"
-          phones:
-            - { type: work, number: '555-0202' }
+        postgres:
+          - [200, 201]
+          - [Ann, Bo]
+          - [{street: "1 Aurora Ave", city: Oslo, geo: {country: "NO"}, phones: [{type: home, number: "555-0201"}]}, {street: "2 Birch Rd", city: Bergen, geo: {country: "NO"}, phones: [{type: work, number: "555-0202"}]}]
+        mariadb:
+          - 200
+          - Ann
+          - street: 1 Aurora Ave
+            city: Oslo
+            geo:
+              country: "NO"
+            phones:
+              - { type: home, number: '555-0201' }
+          - 201
+          - Bo
+          - street: 2 Birch Rd
+            city: Bergen
+            geo:
+              country: "NO"
+            phones:
+              - { type: work, number: '555-0202' }
   tableState:
     customer:
       - id: 200

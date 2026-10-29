@@ -3,10 +3,11 @@ execution*, `m-sql` *Requested ranges*), and the Write Group a keyed loop over
 distinct objects executes as (`m-unit-work` *Write Group formation*).
 
 Each opening proof runs the same public writes twice: once as execution
-realizes them, grouping the openings, and once with the internal entry cap at
-one, so each opening runs as the singleton statement it lowers to alone. What a
-scripted port cannot establish is here: that PostgreSQL stores from one
-multi-row statement exactly the history the singleton statements store,
+realizes them, grouping the openings into one column-array insert, and once
+over a connection reporting a dialect that binds no arrays, under which each
+opening runs as the singleton statement it lowers to alone. What a scripted
+port cannot establish is here: that PostgreSQL stores from one multi-row
+statement exactly the history the singleton statements store,
 collections of every shape included, and that a grouped statement fails as a
 whole with its own native diagnostic — which can differ from the error the
 earliest failing opening raises alone — while the attempt still rolls back,
@@ -18,10 +19,11 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
+from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.core import (
@@ -34,9 +36,9 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core._execution import _write_lowering
 from parallax.core._execution._unit_work import write_settlement
 from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import ArrayBind
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import (
@@ -51,6 +53,7 @@ from parallax.core.unit_work import OptimisticLockConflictError, RollbackOnlyErr
 from parallax.core.write_plan.steps import MilestoneTarget
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
+from tests._support.temporal_write_transport import CountingConnection, PortTally
 
 _NAMESPACE = "temporal.openings"
 
@@ -85,6 +88,11 @@ class Ledger(TxTemporal, table="opn_ledger", namespace=_NAMESPACE):
 
 
 _MODEL = DomainModel(ColumnsSpan, DocumentSpan, Account, Ledger)
+_ARRAY_ELEMENTS: dict[type[Any], tuple[str, ...]] = {
+    ColumnsSpan: ("bigint", "text", "bigint", *("timestamptz",) * 4, "jsonb", "jsonb"),
+    DocumentSpan: ("bigint", *("timestamptz",) * 4, "jsonb"),
+}
+"""Each span Table's Columns' array element types, in Table Layout order."""
 _TABLES: dict[type[Any], str] = {
     ColumnsSpan: "opn_columns_span",
     DocumentSpan: "opn_document_span",
@@ -107,17 +115,27 @@ class _Realized:
 
     rows: list[_Row]
     writes: list[str]
+    inserted: list[int]
 
 
-def _database(profile_run: Any, provider: RecordingLifecycleProvider) -> ScopedDatabase:
+def _database(
+    profile_run: Any, provider: RecordingLifecycleProvider, *, grouped: bool = True
+) -> ScopedDatabase:
+    """A root over the server, whose connections report a dialect binding no
+    arrays unless ``grouped``, so no opening joins another."""
     profile_run.reset(model_of(_MODEL), {})
-    return own_root(
-        connect(
+    port = (
+        profile_run.port
+        if grouped
+        else DecoratingAdapter(
             profile_run.port,
-            _MODEL,
-            clock=ScriptedClock([_T0, _TA]),
-            lifecycle_provider=provider,
+            lambda connection: cast(
+                "Any", CountingConnection(connection, PortTally(), "expanding")
+            ),
         )
+    )
+    return own_root(
+        connect(port, _MODEL, clock=ScriptedClock([_T0, _TA]), lifecycle_provider=provider)
     ).using_database_login()
 
 
@@ -161,47 +179,45 @@ def _writes(events: list[ExecutionEvent]) -> list[str]:
     ]
 
 
-def _singletons(patched: pytest.MonkeyPatch) -> None:
-    """Cap each grouped opening at one entry, so every opening runs alone."""
-    patched.setattr(_write_lowering, "_GROUPED_INSERT_ROWS", 1)
+def _inserted_rows(events: list[ExecutionEvent]) -> list[int]:
+    """The rows each insert statement carried: its column arrays' length, or
+    the one row a single-row insert binds."""
+    return [
+        len(first.values) if isinstance(first := event.statement.binds[0], ArrayBind) else 1
+        for event in events
+        if isinstance(event, DatabaseCallStarted)
+        and event.kind == "write"
+        and event.statement.sql.startswith("insert")
+    ]
 
 
 def _realized(
-    profile_run: Any,
-    monkeypatch: pytest.MonkeyPatch,
-    entity: type[Any],
-    concurrency: _Concurrency,
-    *,
-    grouped: bool,
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency, *, grouped: bool
 ) -> _Realized:
     provider = RecordingLifecycleProvider()
-    db = _database(profile_run, provider)
+    db = _database(profile_run, provider, grouped=grouped)
     _seed(db, entity, _TAGS)
-    with monkeypatch.context() as patched:
-        if not grouped:
-            _singletons(patched)
-        db.transact(lambda tx: _amend(tx, entity), concurrency=concurrency)
-    return _Realized(_rows(profile_run, entity), _writes(_events(provider)))
+    db.transact(lambda tx: _amend(tx, entity), concurrency=concurrency)
+    events = _events(provider)
+    return _Realized(_rows(profile_run, entity), _writes(events), _inserted_rows(events))
 
 
 @pytest.mark.parametrize("entity", [ColumnsSpan, DocumentSpan], ids=["columns", "document"])
 @pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
 def test_one_grouped_statement_stores_the_history_each_opening_alone_stores(
-    profile_run: Any,
-    monkeypatch: pytest.MonkeyPatch,
-    entity: type[Any],
-    concurrency: _Concurrency,
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency
 ) -> None:
-    raw = _realized(profile_run, monkeypatch, entity, concurrency, grouped=False)
-    grouped = _realized(profile_run, monkeypatch, entity, concurrency, grouped=True)
+    raw = _realized(profile_run, entity, concurrency, grouped=False)
+    grouped = _realized(profile_run, entity, concurrency, grouped=True)
     assert grouped.rows == raw.rows
     assert len(raw.rows) == 4
     close, *openings = raw.writes
     assert len(openings) == 3
     assert all(opening == openings[0] for opening in openings)
-    single = openings[0]
-    values = single.split(" values ")[1]
-    assert grouped.writes == [close, f"{single}, {values}, {values}"]
+    head = openings[0].split(" values ")[0]
+    arrays = ", ".join(f"cast(? as {element}[])" for element in _ARRAY_ELEMENTS[entity])
+    assert grouped.writes == [close, f"{head} select * from unnest({arrays})"]
+    assert (raw.inserted, grouped.inserted) == ([1, 1, 1], [3])
 
 
 def _conflicting_amendment(
@@ -247,26 +263,20 @@ class _Failed:
     attempts: list[TransactionAttemptFinished]
     failed: list[DatabaseCallFinished]
     writes: list[str]
+    inserted: list[int]
     rows: list[_Row]
 
 
 def _failed(
-    profile_run: Any,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    grouped: bool,
-    then: Callable[[TxnContext], None] = lambda tx: None,
+    profile_run: Any, *, grouped: bool, then: Callable[[TxnContext], None] = lambda tx: None
 ) -> _Failed:
     provider = RecordingLifecycleProvider()
-    db = _database(profile_run, provider)
+    db = _database(profile_run, provider, grouped=grouped)
     _seed(db, ColumnsSpan, ())
     before = _rows(profile_run, ColumnsSpan)
     edit = _conflicting_amendment(profile_run, ColumnsSpan, then)
-    with monkeypatch.context() as patched:
-        if not grouped:
-            _singletons(patched)
-        with pytest.raises(ExecutionFailure) as escaped:
-            db.transact(edit, max_retries=2)
+    with pytest.raises(ExecutionFailure) as escaped:
+        db.transact(edit, max_retries=2)
     events = _events(provider)
     rows = _rows(profile_run, ColumnsSpan)
     assert rows == before
@@ -280,6 +290,7 @@ def _failed(
             and isinstance(event.outcome, DatabaseCallFailed)
         ],
         _writes(events),
+        _inserted_rows(events),
         rows,
     )
 
@@ -291,10 +302,10 @@ def _diagnostic(failed: _Failed) -> tuple[object, object]:
 
 
 def test_a_grouped_statement_fails_whole_with_its_own_diagnostic_and_retry_verdict(
-    profile_run: Any, monkeypatch: pytest.MonkeyPatch
+    profile_run: Any,
 ) -> None:
-    raw = _failed(profile_run, monkeypatch, grouped=False)
-    grouped = _failed(profile_run, monkeypatch, grouped=True)
+    raw = _failed(profile_run, grouped=False)
+    grouped = _failed(profile_run, grouped=True)
 
     # Alone, the head fails first, on the account constraint its statement
     # checks as it ends.
@@ -310,7 +321,7 @@ def test_a_grouped_statement_fails_whole_with_its_own_diagnostic_and_retry_verdi
     assert grouped.cause.constraint_name == "opn_span_amount"
     assert _diagnostic(grouped) == ("constraintViolation", "23514")
     assert len(grouped.writes) == 2
-    assert grouped.writes[1].count("), (") == 2
+    assert grouped.inserted == [3]
     for failed in (raw, grouped):
         (finished,) = failed.attempts
         assert isinstance(finished.outcome, AttemptRolledBack)
@@ -319,7 +330,7 @@ def test_a_grouped_statement_fails_whole_with_its_own_diagnostic_and_retry_verdi
 
 
 def test_a_grouped_statements_failure_leaves_the_attempt_rollback_only(
-    profile_run: Any, monkeypatch: pytest.MonkeyPatch
+    profile_run: Any,
 ) -> None:
     outcomes: list[BaseException] = []
 
@@ -332,7 +343,7 @@ def test_a_grouped_statements_failure_leaves_the_attempt_rollback_only(
             except Exception as failure:
                 outcomes.append(failure)
 
-    failed = _failed(profile_run, monkeypatch, grouped=True, then=then)
+    failed = _failed(profile_run, grouped=True, then=then)
     flush_failure, refused = outcomes
     assert isinstance(flush_failure, DatabaseError)
     assert flush_failure.category == "constraintViolation"
@@ -402,7 +413,8 @@ def test_a_grouped_insert_of_distinct_objects_fails_whole_naming_no_row(
     assert all(close.startswith("update opn_ledger") for close in closes)
     # Every object's successor in one statement, presented once and never replayed.
     (insert,) = inserts
-    assert insert.count("), (") == 2
+    assert " select * from unnest(" in insert
+    assert _inserted_rows(events) == [3]
     failed = [
         event
         for event in events

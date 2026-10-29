@@ -233,8 +233,10 @@ then:
 above is the authored form wherever the bind holes are shared across dialects.
 Where the hole structure *diverges* — the structured-document extraction, where
 Postgres carries one bind per JSON path segment while MariaDB carries a single
-`'$.a.b'` path bind (`m-dialect`), or a membership list, which Postgres binds as
-one array and MariaDB as one bind per value (`m-sql`) — `binds` is a
+`'$.a.b'` path bind (`m-dialect`), a membership list, which Postgres binds as
+one array and MariaDB as one bind per value, or a multi-row insert, which
+Postgres binds as one array per Column and MariaDB as one bind per cell
+(`m-sql`) — `binds` is a
 **dialect-keyed map** whose keys **MUST** equal that statement's `sql` map's keys
 (harness-asserted):
 

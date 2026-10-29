@@ -73,8 +73,6 @@ from tests.unit.memory_instruments import (
     tracked_objects,
 )
 
-_GROUPED_INSERT_CAP: Final = "parallax.core._execution._write_lowering._GROUPED_INSERT_ROWS"
-
 
 @dataclass
 class _Executed:
@@ -218,18 +216,6 @@ def test_a_run_of_openings_is_one_call_and_the_step_ending_it_is_prepared_only_a
     assert finished.shared_timing_id is None
 
 
-def test_the_step_after_a_capped_run_is_prepared_only_once_its_statement_ran(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(_GROUPED_INSERT_CAP, 2)
-    openings = (opening(1), opening(2), opening(3))
-    port = ScriptedAdapter(Write(affected=2), Write())
-    executed = _execute(port, openings)
-    assert executed.raised is None
-    assert port.calls == [*physical(*openings[:2]), *physical(openings[2])]
-    assert executed.preparer.prepared == [(0, 0), (1, 0), (2, 1)]
-
-
 def test_a_later_opening_failing_to_be_prepared_inserts_the_prefix_then_propagates() -> None:
     prefix = (opening(1), opening(2))
     failure = RuntimeError("the third opening cannot be prepared")
@@ -273,14 +259,11 @@ def test_a_control_flow_exception_preparing_a_later_opening_inserts_none_of_the_
     assert port.calls == []
 
 
-def test_the_statements_execution_runs_are_the_ones_a_dry_traversal_answers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(_GROUPED_INSERT_CAP, 2)
+def test_the_statements_execution_runs_are_the_ones_a_dry_traversal_answers() -> None:
     steps = (close(1), opening(1), opening(2), opening(3), close(2), opening(4))
     statements = physical(*steps)
-    assert len(statements) == 5
-    port = ScriptedAdapter(Write(), Write(affected=2), Write(), Write(), Write())
+    assert len(statements) == 4
+    port = ScriptedAdapter(Write(), Write(affected=3), Write(), Write())
     executed = _execute(port, steps)
     assert executed.raised is None
     assert port.calls == statements

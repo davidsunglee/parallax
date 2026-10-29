@@ -22,8 +22,11 @@ when:
 then:
   statements:
     - sql:
-        postgres: insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
-      binds: [10, Mira, "100.00", 11, Omar, "20.00", 12, Nell, "30.00"]
+        postgres: insert into wallet(id, owner, balance) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))
+      binds:
+        - [10, 11, 12]
+        - [Mira, Omar, Nell]
+        - ["100.00", "20.00", "30.00"]
     - sql:
         postgres: update wallet set balance = ? where id in (?, ?)
       binds: ["500.00", 10, 11]

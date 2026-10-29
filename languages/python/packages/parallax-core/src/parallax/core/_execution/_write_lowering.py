@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from typing import Final, NamedTuple, cast
+from typing import NamedTuple, cast
 
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import (
@@ -46,16 +46,13 @@ __all__ = [
     "stream_physical",
 ]
 
-_GROUPED_INSERT_ROWS: Final = 64
-
 
 class GroupedInsert(NamedTuple):
     """One statement inserting a run of single-entry inserts, and how the run
     ended: at ``following``, the step that could not join it, taken but neither
     prepared nor lowered; at ``failure``, raised ordinarily preparing or
     appending a later insert, the statement then holding exactly the entries
-    appended before it; or at neither, where the statement reached its capacity
-    or the steps ran out."""
+    appended before it; or at neither, where the steps ran out."""
 
     statement: LoweredStatement
     following: PlannedStep | None
@@ -146,10 +143,12 @@ class LoweringCursor:
 
     def grouped_insert_start(self, step: PlannedStep) -> PlannedInsert | None:
         """``step`` where it can begin a grouped insert — a single-entry insert
-        holding no generated value — decided before its payload is demanded;
+        holding no generated value, on a dialect binding the column arrays a
+        multi-row insert takes — decided before its payload is demanded;
         ``None`` where it lowers alone."""
         if (
-            isinstance(step, PlannedInsert)
+            self._dialect.binds_arrays
+            and isinstance(step, PlannedInsert)
             and len(step.entries) == 1
             and not _generates(step.entries[0])
         ):
@@ -157,18 +156,17 @@ class LoweringCursor:
         return None
 
     def lowered_grouped_insert(self, first: PlannedInsert) -> GroupedInsert:
-        """``first`` and the compatible inserts following it, as one
+        """``first`` and every compatible insert following it, as one
         multi-row statement.
 
-        Before another step is taken the statement must have room for one more
-        entry within the internal entry cap and the dialect's bind limit, and
-        before a taken step's payload is demanded the step must be a
-        single-entry insert of the same Entity naming the same members and
-        holding no generated value; values, origins, and audit values may
-        differ. Every entry stores the Row Slots ``first`` selects, and each
-        entry's cells are the backing it already carries, or the ones gathered
-        now. ``first`` failing raises, and a control-flow or fatal exception
-        propagates with nothing returned.
+        Its column arrays bind one parameter per cell slot however many entries
+        join, so no entry count or bind limit ends the run. Before a taken
+        step's payload is demanded the step must be a single-entry insert of
+        the same Entity naming the same members and holding no generated
+        value; values, origins, and audit values may differ. Every entry stores
+        the Row Slots ``first`` selects, and each entry's cells are the backing
+        it already carries, or the ones gathered now. ``first`` failing raises,
+        and a control-flow or fatal exception propagates with nothing returned.
         """
         (entry,) = first.entries
         entity = first.entity
@@ -177,9 +175,7 @@ class LoweringCursor:
         builder = InsertStatementBuilder(
             slots, self._captured_cells(entity, slots, entry), self._meta, self._dialect
         )
-        binds = self._dialect.max_bind_parameters
-        following: PlannedStep | None = None
-        while builder.has_capacity(_GROUPED_INSERT_ROWS, binds):
+        while True:
             following = self.take()
             joining = _joining(following, entity, presence)
             if joining is None:
@@ -188,7 +184,6 @@ class LoweringCursor:
                 builder.append(self._captured_cells(entity, slots, joining))
             except Exception as error:
                 return GroupedInsert(builder.finish(), None, error)
-            following = None
         return GroupedInsert(builder.finish(), following, None)
 
 
@@ -232,7 +227,7 @@ def stream_physical(
         yield statement
         if failure is not None:
             raise failure
-        step = cursor.take() if following is None else following
+        step = following
 
 
 def lowered(

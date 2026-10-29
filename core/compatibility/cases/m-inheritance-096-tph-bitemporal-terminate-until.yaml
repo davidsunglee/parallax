@@ -33,8 +33,16 @@ then:
         postgres: update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?
       binds: ["2024-02-15T00:00:00.000000Z", 2, stock, infinity, infinity]
     - sql:
-        postgres: insert into instrument(id, kind, price, ticker, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)
-      binds: [2, stock, "100.00", ACME, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-02-15T00:00:00.000000Z", infinity, 2, stock, "100.00", ACME, "2024-09-01T00:00:00.000000Z", infinity, "2024-02-15T00:00:00.000000Z", infinity]
+        postgres: insert into instrument(id, kind, price, ticker, from_z, thru_z, in_z, out_z) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), cast(? as text[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]))
+      binds:
+        - [2, 2]
+        - [stock, stock]
+        - ["100.00", "100.00"]
+        - [ACME, ACME]
+        - ["2024-01-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z"]
+        - ["2024-03-01T00:00:00.000000Z", infinity]
+        - ["2024-02-15T00:00:00.000000Z", "2024-02-15T00:00:00.000000Z"]
+        - [infinity, infinity]
   tableState:
     instrument:
       - id: 2

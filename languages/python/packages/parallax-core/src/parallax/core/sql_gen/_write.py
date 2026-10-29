@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import cast
 
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY, INFINITY_LITERAL, FrozenMap, NeutralType
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import ArrayBind, JsonDocument
 from parallax.core.dialect import (
     Dialect,
     DocumentAssignment,
@@ -228,26 +228,30 @@ def _require_no_payload(step: PlannedStep, payload: StepPayload) -> None:
 
 
 class InsertStatementBuilder:
-    """One non-generated `insert into <table>(<participating columns in Table
-    Layout order>) values (?, …)[, (?, …)…]`, compiled one entry at a time.
+    """One non-generated insert of every entry appended, in entry order, into
+    `<table>(<participating columns in Table Layout order>)`.
 
-    ``slots`` fix the Table, the column list, and so every value tuple's
-    width; an entry omitting a nullable member produces a narrower `INSERT`,
-    never an explicit `NULL` bind. Each entry's ``cells`` are the ones
-    ``slots`` gathered from its row, which admission already judged, so they
-    bind as they are (:meth:`StatementBuilder.bind_managed_row`); a refused
-    entry leaves the earlier entries' binds and bind metadata as they were and
-    :meth:`finish` still renders exactly the entries appended. A
-    generated-value expression folds into its own statement and never reaches
-    this builder.
+    ``slots`` fix the Table and the column list; an entry omitting a nullable
+    member produces a narrower `INSERT`, never an explicit `NULL` bind. Each
+    entry's ``cells`` are the ones ``slots`` gathered from its row, which
+    admission already judged, so they bind as they are. A refused entry is not
+    held, so :meth:`finish` still renders exactly the entries appended before
+    it. A generated-value expression folds into its own statement and never
+    reaches this builder.
+
+    One entry renders `values (?, …)` with one bind per cell
+    (:meth:`StatementBuilder.bind_managed_row`). Several render the dialect's
+    column-array form, `select * from unnest(cast(? as <type>[]), …)`, with
+    one array bind per cell slot whatever the number of entries, so its text
+    and bind count follow the slots alone (`m-sql` *Batched insert / update*).
+    A dialect without array binds has no multi-row form here.
 
     One builder compiles either a logical multi-entry insert, every entry of
-    which it holds before finishing, or a run of single-entry openings
-    execution groups into one physical statement, which ends wherever
-    :meth:`has_capacity` stops admitting another entry.
+    which it holds before finishing, or a run of single-entry inserts execution
+    groups into one physical statement.
     """
 
-    __slots__ = ("_column_sql", "_documents", "_entries", "_pattern", "_statement", "_table")
+    __slots__ = ("_dialect", "_meta", "_rows", "_slots")
 
     def __init__(
         self,
@@ -256,35 +260,53 @@ class InsertStatementBuilder:
         meta: Metamodel,
         dialect: Dialect,
     ) -> None:
-        self._documents = slots.documents
-        self._pattern: tuple[tuple[NeutralType, Literal["MANAGED"]] | None, ...] = tuple(
-            [
-                None if neutral_type is None else (neutral_type, "MANAGED")
-                for neutral_type in slots.types
-            ]
-        )
-        self._table = slots.table
-        self._column_sql = ", ".join([dialect.quote(column) for column in slots.columns])
-        self._statement = _ctx(meta, dialect)
-        self._statement.bind_managed_row(_bound(cells, self._documents), self._pattern)
-        self._entries = 1
-
-    def has_capacity(self, entries: int, binds: int) -> bool:
-        """Whether one more entry keeps the statement within ``entries``
-        entries and ``binds`` binds. Every entry binds exactly one value per
-        cell its slots place, a whole document included."""
-        return self._entries < entries and (self._entries + 1) * len(self._pattern) <= binds
+        self._slots = slots
+        self._meta = meta
+        self._dialect = dialect
+        self._rows = [_placed(slots, cells)]
 
     def append(self, cells: tuple[object, ...]) -> None:
-        self._statement.bind_managed_row(_bound(cells, self._documents), self._pattern)
-        self._entries += 1
+        self._rows.append(_placed(self._slots, cells))
 
     def finish(self) -> LoweredStatement:
-        row = f"({', '.join('?' for _ in self._pattern)})"
-        return self._statement.finish(
-            f"insert into {self._table}({self._column_sql}) values "
-            f"{', '.join([row] * self._entries)}"
+        slots = self._slots
+        dialect = self._dialect
+        rows = self._rows
+        statement = _ctx(self._meta, dialect)
+        column_sql = ", ".join([dialect.quote(column) for column in slots.columns])
+        if len(rows) == 1:
+            statement.bind_managed_row(
+                _bound(rows[0], slots.documents),
+                tuple(
+                    [
+                        None if neutral_type is None else (neutral_type, "MANAGED")
+                        for neutral_type in slots.types
+                    ]
+                ),
+            )
+            holes = ", ".join(["?"] * len(slots.columns))
+            return statement.finish(f"insert into {slots.table}({column_sql}) values ({holes})")
+        if not dialect.binds_arrays:
+            raise SqlGenError(
+                f"{slots.entity.canonical}: the {dialect.name!r} dialect binds no arrays, and "
+                "a multi-row insert has no other form here"
+            )
+        element_types = slots.element_types
+        for element_type, column in zip(element_types, slots.column_cells(rows), strict=True):
+            statement.bind_array(ArrayBind(element_type, column))
+        arrays = ", ".join(
+            [dialect.array_parameter(element_type) for element_type in element_types]
         )
+        return statement.finish(
+            f"insert into {slots.table}({column_sql}) select * from unnest({arrays})"
+        )
+
+
+def _placed(slots: RowSlots, cells: tuple[object, ...]) -> tuple[object, ...]:
+    """``cells`` as one row ``slots`` place: one cell per slot."""
+    if len(cells) != len(slots.columns):
+        raise SqlGenError("a repeated bind pattern has inconsistent row widths")
+    return cells
 
 
 def _lower_insert(
@@ -293,7 +315,8 @@ def _lower_insert(
     """One logical insert's statement: every entry through one
     :class:`InsertStatementBuilder`, or the pk-gen `max` INSERT…SELECT form when
     a cell carries a generated-value expression, ending `returning <column>`
-    where that allocation is returned."""
+    where that allocation is returned. Several entries need the dialect's
+    column-array form, so a dialect without array binds refuses them."""
     slots = payload.slots
     first, *rest = payload.rows
     if not any(isinstance(value, MaxPlusOne) for value in first):

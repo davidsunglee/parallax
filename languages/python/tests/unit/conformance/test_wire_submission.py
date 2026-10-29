@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 import pytest
@@ -21,7 +21,7 @@ from parallax.conformance._wire_submission import (
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.simulated_temporal_store import SimulatedTemporalStore
 from parallax.core.base import INFINITY
-from parallax.core.db_port import MappingRow
+from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.execution import KeyedWriteValueError, ServingModel, prepare_model
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -59,6 +59,15 @@ def _run[T](
             max_retries=max_retries,
             concurrency=cast("Any", concurrency),
         )
+
+
+def _bound(binds: Sequence[object]) -> list[object]:
+    """Every value ``binds`` carry, each column array's elements in place."""
+    return [
+        value
+        for bind in binds
+        for value in (bind.values if isinstance(bind, ArrayBind) else (bind,))
+    ]
 
 
 def _entry(
@@ -282,7 +291,7 @@ def test_own_insertion_and_multi_row_pointer_need_no_read(key: int, named: bool)
 
     _run("account", port, body)
     assert port.reads == [] and len(port.writes) == 1
-    assert "Grace" in port.writes[0][1]
+    assert "Grace" in _bound(port.writes[0][1])
 
 
 def test_a_refused_insert_opens_no_pointer_to_an_earlier_insertion() -> None:
@@ -516,7 +525,7 @@ def test_unit_insertions_publish_in_order_before_a_dependent_submission(
         assert port.writes == []
     else:
         _run("account", port, body)
-        assert port.writes and any("Grace" in binds for _, binds in port.writes)
+        assert port.writes and any("Grace" in _bound(binds) for _, binds in port.writes)
     assert len(port.reads) == 1 and hooks == [1]
 
 

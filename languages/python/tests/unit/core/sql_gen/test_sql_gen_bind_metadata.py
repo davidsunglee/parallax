@@ -701,7 +701,7 @@ def test_positions_name_their_marker_s_source_and_form() -> None:
     assert (positions.source, positions.form) == (("limit",), PAGE_CAP)
 
 
-def test_multirow_write_uses_one_repeated_descriptor_per_typed_row_run() -> None:
+def test_a_multi_row_insert_binds_self_describing_arrays_with_no_span_metadata() -> None:
     statement = lower_instruction(
         KeyedWriteInstruction(
             "insert",
@@ -717,28 +717,9 @@ def test_multirow_write_uses_one_repeated_descriptor_per_typed_row_run() -> None
         "locking",
     )[0]
 
-    spans = statement.typed_bind_spans
-    assert len(spans) == 3
-    assert [
-        (span.start, span.width, span.stride, span.repetitions, span.form)
-        for span in spans
-        if isinstance(span, _RepeatedTypedBindSpan)
-    ] == [
-        (0, 1, 3, 3, "MANAGED"),
-        (1, 1, 3, 3, "MANAGED"),
-        (2, 1, 3, 3, "MANAGED"),
-    ]
-    assert statement.wire_binds() == (
-        1,
-        "A",
-        "10.00",
-        2,
-        "B",
-        "20.00",
-        3,
-        "C",
-        "30.00",
-    )
+    assert [type(bind) for bind in statement.binds] == [ArrayBind] * 3
+    assert (statement.typed_bind_spans, statement.wire_bind_overrides) == ((), ())
+    assert statement.wire_binds() == ([1, 2, 3], ["A", "B", "C"], ["10.00", "20.00", "30.00"])
 
 
 def test_same_type_bind_growth_retains_one_descriptor() -> None:
