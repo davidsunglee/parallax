@@ -164,7 +164,7 @@ excluded as a timing baseline; those diagnostics did not rehabilitate them.
 Current cross-day comparisons likewise describe observations under their recorded
 conditions rather than attributing every change to production code.
 
-## Collect, compare, reclassify, and redigest
+## Collect, compare, reclassify, redigest, and replace a member
 
 Run from the repository root. Capture into a run directory outside Git:
 
@@ -229,6 +229,35 @@ instrument hashes remain unchanged. It refuses a changed Budget Contract, a
 prior adjustment, missing producing history or source proof, or a meaningful
 workload or frozen-input change and writes nothing. Use a new capture for a
 changed measured workload. Do not amend the fixed historical bases.
+
+When a complete canonical capture failed to produce one member, re-measure that
+member alone instead of recapturing every member:
+
+```sh
+uv run --project languages/python python languages/python/tools/cost_report.py \
+  --replace-member write-lowering --from /tmp/parallax-cost-run \
+  --out /tmp/parallax-cost-run-completed
+```
+
+The member must be absent from the capture with exactly one recorded collection
+failure; a member the capture produced is never re-measured. The checkout must
+be clean and descend from the kept members' single producing commit. Before
+measuring, the command proves that HEAD changed nothing the kept members
+measured through: their recorded instrument and control sources, workload
+digests, and Budget Contract equal HEAD's, and no production package, the
+dependency lock, or any tool other than the collector and the replaced
+member's own instruments changed. It then passes the canonical authority
+preflight and measures the member exactly as collection does, refusing a
+repeated failure, a dirty or different producing commit, or an interpreter
+other than the kept members'.
+
+It writes a new directory and never the original. The kept envelopes,
+conditions, and duration spans are unchanged beside the new member, its
+conditions, and its span. The adjustment in conditions records the member, the
+original and replacement commits, the replaced failure, and both collection
+intervals. Verification accepts the members' differing commits only as that
+record assigns them, and verification and comparison state the replacement. It
+refuses a capture that already records an adjustment.
 
 The former previous/COR-191 comparisons can be reconstructed using Git revisions
 `3535d3e0f` and `dc65ef88`. Export both `portfolio.json` and `conditions.json`

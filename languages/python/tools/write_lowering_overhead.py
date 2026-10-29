@@ -148,14 +148,11 @@ REPEATED_METRICS: Final = (
 checkpoint, a work count is exact, and every ``calls.*`` observation is one
 median, so each carries a single sample."""
 POSITIVE_METRICS: Final = frozenset(
-    {
-        "elapsedUs",
-        "plan.elapsedUs",
-        "execution.elapsedUs",
-        "binding.elapsedUs",
-        *(m for m in _FLUSH_CELL_UNITS if m.startswith("work.")),
-    }
+    {"elapsedUs", "plan.elapsedUs", "execution.elapsedUs", "binding.elapsedUs"}
 )
+"""The timings, which every measured run takes time over. A ``work.*`` count is
+exact and may truthfully be zero, as an ordered invocation is in a flush whose
+every effect groups; the child already refuses any count other than its case's."""
 
 KEYED_WINDOW: Final = "keyed-write"
 RESPONSE_WINDOW: Final = "wire-insert-response"
