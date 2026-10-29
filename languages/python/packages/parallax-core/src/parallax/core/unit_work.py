@@ -24,7 +24,7 @@ from parallax.core._execution._unit_work.effects import (
     WriteResultError,
     allocated_keys,
     enforce_affected_rows,
-    returns_rows,
+    returns_allocated_keys,
 )
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
@@ -149,5 +149,5 @@ __all__ = [
     "enforce_affected_rows",
     "keyed_intent",
     "object_key",
-    "returns_rows",
+    "returns_allocated_keys",
 ]

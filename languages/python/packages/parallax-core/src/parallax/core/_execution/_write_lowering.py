@@ -10,6 +10,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._write import (
+    GroupedEffectBuilder,
     InsertStatementBuilder,
     StepPayload,
     compile_write_step,
@@ -17,11 +18,13 @@ from parallax.core.sql_gen._write import (
 )
 from parallax.core.write_plan.payload import (
     AssignmentPayload,
+    EffectSlots,
     InsertPayload,
     PatchedDocument,
     RowSlots,
     WritePayloadPreparer,
 )
+from parallax.core.write_plan.plan import EffectSpan
 from parallax.core.write_plan.steps import (
     ExactCount,
     KeyTarget,
@@ -38,6 +41,7 @@ from parallax.core.write_plan.steps import (
 )
 
 __all__ = [
+    "GroupedEffect",
     "GroupedInsert",
     "LoweringCursor",
     "lowered",
@@ -59,6 +63,18 @@ class GroupedInsert(NamedTuple):
     failure: Exception | None
 
 
+class GroupedEffect(NamedTuple):
+    """One statement applying the effects of one effect span, and how its
+    lowering ended: with every effect of the span in ``steps``, or at
+    ``failure``, raised ordinarily preparing or appending a later effect, the
+    statement then holding exactly the effects in ``steps``. Source ordinal
+    ``i`` of the statement's result is ``steps[i - 1]``."""
+
+    statement: LoweredStatement
+    steps: tuple[PlannedStep, ...]
+    failure: Exception | None
+
+
 class LoweringCursor:
     """``steps`` taken one at a time, each lowered only when asked, storing the
     payload its statement demands.
@@ -66,6 +82,10 @@ class LoweringCursor:
     Execution's route from a sequence of Planned Steps to statements: taking a
     step reads it and prepares nothing, so a step can be looked at before
     anything is prepared for it, and only preparing or lowering it can fail.
+
+    ``effect_spans`` are the grouped effects among ``steps``, which a dialect
+    binding arrays presents as one statement each; a dialect binding none
+    reads none of them.
 
     Each insert entry's payload, as it is demanded, hands ``capture_insert``
     the entry and the Structured Column document it stores — ``None`` where it
@@ -80,6 +100,10 @@ class LoweringCursor:
         "_dialect",
         "_meta",
         "_payloads",
+        "_position",
+        "_span",
+        "_span_slots",
+        "_spans",
         "_steps",
     )
 
@@ -90,11 +114,16 @@ class LoweringCursor:
         meta: Metamodel,
         dialect: Dialect,
         *,
+        effect_spans: tuple[EffectSpan, ...] = (),
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
         | None = None,
     ) -> None:
-        self._steps = iter(steps)
+        self._steps = steps
+        self._position = -1
+        self._spans = iter(effect_spans if dialect.binds_arrays else ())
+        self._span: EffectSpan | None = next(self._spans, None)
+        self._span_slots: EffectSlots | None = None
         self._payloads = payloads
         self._meta = meta
         self._dialect = dialect
@@ -103,7 +132,13 @@ class LoweringCursor:
 
     def take(self) -> PlannedStep | None:
         """The next step, or ``None`` once the steps are exhausted."""
-        return next(self._steps, None)
+        steps = self._steps
+        position = self._position + 1
+        if position >= len(steps):
+            self._position = len(steps)
+            return None
+        self._position = position
+        return steps[position]
 
     def lowered(self, step: PlannedStep) -> LoweredStatement:
         return self._lowered(step)
@@ -115,10 +150,55 @@ class LoweringCursor:
         return _within(step, parameter_ceiling, self._lowered(step))
 
     def _lowered(self, step: PlannedStep) -> LoweredStatement:
-        payload = _demanded(step, self._payloads)
+        return compile_write_step(step, self._demanded_payload(step), self._meta, self._dialect)
+
+    def _demanded_payload(self, step: PlannedStep) -> StepPayload:
+        payload = _demanded_payload(step, self._payloads)
         if self._capture_insert is not None or self._capture_revision is not None:
             self._capture(step, payload)
-        return compile_write_step(step, payload, self._meta, self._dialect)
+        return payload
+
+    def grouped_effect_start(self, step: PlannedStep) -> EffectSpan | None:
+        """The effect span ``step``, the step last taken, opens, where its
+        statement fits the dialect's parameter limit; ``None`` where ``step``
+        opens none and lowers as it would alone. Decided before any payload is
+        demanded, and answered alike however often it is asked."""
+        span = self._span
+        position = self._position
+        while span is not None and span.start < position:
+            span = self._span = next(self._spans, None)
+            self._span_slots = None
+        if span is None or span.start != position or self._steps[position] is not step:
+            return None
+        slots = self._span_slots
+        if slots is None:
+            slots = self._span_slots = self._payloads.effect_slots(step.entity, span.shape)
+        return span if slots.parameter_count <= self._dialect.max_bind_parameters else None
+
+    def lowered_grouped_effect(self, first: PlannedStep, span: EffectSpan) -> GroupedEffect:
+        """``first`` and every later effect of ``span``, taken in order, as one
+        statement whose source binds one array per source column.
+
+        The span already says which steps the statement holds, so nothing
+        beyond it is taken. ``first`` failing raises; a later effect failing
+        ordinarily to be prepared or appended ends the statement before it;
+        and a control-flow or fatal exception propagates with nothing
+        returned.
+        """
+        slots = self._span_slots
+        if slots is None or self._span is not span:
+            raise SqlGenError(f"{first.entity.canonical}: a grouped effect opens at its own span")
+        builder = GroupedEffectBuilder(slots, self._meta, self._dialect)
+        builder.append(first, self._demanded_payload(first))
+        steps = [first]
+        for _ in range(span.stop - span.start - 1):
+            step = cast("PlannedStep", self.take())
+            try:
+                builder.append(step, self._demanded_payload(step))
+            except Exception as error:
+                return GroupedEffect(builder.finish(), tuple(steps), error)
+            steps.append(step)
+        return GroupedEffect(builder.finish(), tuple(steps), None)
 
     def _capture(self, step: PlannedStep, payload: StepPayload) -> None:
         capture_insert = self._capture_insert
@@ -193,31 +273,42 @@ def stream_physical(
     meta: Metamodel,
     dialect: Dialect,
     *,
+    effect_spans: tuple[EffectSpan, ...] = (),
     capture_insert: Callable[[WriteRow, object | None], None] | None = None,
     capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
     | None = None,
 ) -> Iterator[LoweredStatement]:
-    """Each statement ``steps`` execute as, in order: a run of compatible
-    single-entry inserts as the one statement inserting them all, and every
-    other step as the one statement it lowers to, each payload captured as
-    :class:`LoweringCursor` captures it.
+    """Each statement ``steps`` execute as, in order: the effects of one of
+    ``effect_spans`` as the one grouped effect applying them all, a run of
+    compatible single-entry inserts as the one statement inserting them all,
+    and every other step as the one statement it lowers to, each payload
+    captured as :class:`LoweringCursor` captures it.
 
-    The runs are selected and lowered by the very cursor operations execution
-    selects and lowers them by, so the statements a dry traversal of settled
-    steps answers are the statements their execution runs. A run ended by a
-    later insert's failure answers the statement holding the inserts before
-    it, then raises that failure.
+    The statements are selected and lowered by the very cursor operations
+    execution selects and lowers them by, so the statements a dry traversal of
+    settled steps answers are the statements their execution runs. A grouped
+    effect or run ended by a later step's failure answers the statement
+    holding the steps before it, then raises that failure.
     """
     cursor = LoweringCursor(
         steps,
         payloads,
         meta,
         dialect,
+        effect_spans=effect_spans,
         capture_insert=capture_insert,
         capture_revision=capture_revision,
     )
     step = cursor.take()
     while step is not None:
+        span = cursor.grouped_effect_start(step)
+        if span is not None:
+            grouped = cursor.lowered_grouped_effect(step, span)
+            yield grouped.statement
+            if grouped.failure is not None:
+                raise grouped.failure
+            step = cursor.take()
+            continue
         first = cursor.grouped_insert_start(step)
         if first is None:
             yield cursor.lowered(step)
@@ -236,7 +327,7 @@ def lowered(
     """The one statement ``step`` lowers to, storing the payload its statement
     demands: backing settlement already prepared where an entry carries it, and
     otherwise what ``payloads`` prepares now."""
-    return compile_write_step(step, _demanded(step, payloads), meta, dialect)
+    return compile_write_step(step, _demanded_payload(step, payloads), meta, dialect)
 
 
 def ordered_parameter_ceiling(step: PlannedStep, dialect: Dialect) -> int | None:
@@ -293,7 +384,7 @@ def _within(
     return statement
 
 
-def _demanded(step: PlannedStep, payloads: WritePayloadPreparer) -> StepPayload:
+def _demanded_payload(step: PlannedStep, payloads: WritePayloadPreparer) -> StepPayload:
     match step:
         case PlannedInsert(entity=entity, entries=entries):
             slots = _entry_slots(payloads, entity, entries[0])

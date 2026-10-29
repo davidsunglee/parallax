@@ -237,7 +237,8 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     }
 )
 _SCALAR_COLLECTION_LIFECYCLE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
-    {"m-opt-lock-032", "m-opt-lock-033", "m-inheritance-143", "m-inheritance-144"}
+    {"m-opt-lock-032", "m-opt-lock-033", "m-opt-lock-042", "m-opt-lock-043"}
+    | {"m-inheritance-143", "m-inheritance-144"}
 )
 _LAYOUT_TWIN_WRITES: Final[frozenset[str]] = frozenset(
     {f"m-storage-layout-{n:03d}" for n in (*range(29, 35), 37, 38)}

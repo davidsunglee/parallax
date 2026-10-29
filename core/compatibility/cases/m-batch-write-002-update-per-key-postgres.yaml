@@ -1,0 +1,32 @@
+# Batched UPDATE, per-distinct-key form (m-batch-write): non-uniform new values.
+# Each key stays its own keyed update; PostgreSQL applies the updates assigning
+# one member set as one grouped effect whose source binds one array per column
+# and returns each changed row's source ordinal. Its MariaDB twin keeps one
+# statement per key.
+model: models/wallet.yaml
+tags: [m-batch-write, m-sql, write-sequence, per-key, grouped-effect, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  writeSequence:
+    - mutation: amend
+      entity: parallax.compatibility.Wallet
+      statements: 1
+      note: two distinct keys take DIFFERENT new balances ⇒ one keyed UPDATE each, applied as one grouped effect
+      rows:
+        - { id: 1, balance: "111.00" }
+        - { id: 2, balance: "222.00" }
+then:
+  statements:
+    - sql:
+        postgres: update wallet t set balance = v.c2 from unnest(cast(? as bigint[]), cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord
+      binds:
+        - [1, 2]
+        - ["111.00", "222.00"]
+  tableState:
+    wallet:
+      - { id: 1, owner: Ada, balance: "111.00" }
+      - { id: 2, owner: Linus, balance: "222.00" }
+      - { id: 3, owner: Grace, balance: "10.00" }
+  databaseCalls: 2

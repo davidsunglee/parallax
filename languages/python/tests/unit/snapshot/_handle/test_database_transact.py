@@ -304,15 +304,20 @@ def test_a_failed_unit_stops_the_flush_before_any_later_unit_executes() -> None:
         {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
         {"id": 4, "owner": "Ada", "balance": Decimal("20.00"), "version": 1},
     ]
-    port = ScriptedAdapter(Transact(Read(rows=rows), Write(affected=0)))
+    # Both updates share one grouped effect, whose result returns only the
+    # second's ordinal: the first's refused gate fails the flush, and nothing
+    # runs after the statement.
+    port = ScriptedAdapter(Transact(Read(rows=rows), Read(rows=[{"v.ord": 2}])))
 
     def callback(tx: TxnContext) -> None:
         for current in tx.find(mm.Account.where(mm.Account.id >= 3)).results():
             tx.amend(current.edit(balance=Decimal("30.00")))
 
-    with raises_contextualized(OptimisticLockConflictError):
+    with raises_contextualized(OptimisticLockConflictError) as raised:
         account_db(port).transact(callback, concurrency="optimistic", max_retries=0)
-    assert sum(isinstance(call, WriteCall) for call in port.calls) == 1
+    assert raised.value.target.key_values == ((3,),)
+    writes = [call for call in port.calls if isinstance(call, ReadCall | WriteCall)][1:]
+    assert len(writes) == 1
 
 
 def test_a_zero_bound_root_surfaces_a_conflict_and_an_explicit_bound_replays_it() -> None:

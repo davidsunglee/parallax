@@ -7,7 +7,7 @@ from parallax.core import storage_layout
 from parallax.core._execution._unit_work.effects import (
     allocated_keys,
     enforce_affected_rows,
-    returns_rows,
+    returns_allocated_keys,
 )
 from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.db_error import DatabaseError
@@ -15,11 +15,11 @@ from parallax.core.db_port import (
     DatabaseConnection,
     OrderedWriteResult,
     OrderedWriteResultComplete,
-    OrderedWriteResultIntegrityError,
     OrderedWriteResultInterrupted,
     OrderedWriteTransport,
     StatementFailed,
     StatementNotExecuted,
+    WriteResultIntegrityError,
 )
 from parallax.core.diagnostics import qualified_type
 from parallax.core.dialect import Dialect
@@ -31,6 +31,7 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.write_plan.payload import PatchedDocument, WritePayloadPreparer
+from parallax.core.write_plan.plan import EffectSpan
 from parallax.core.write_plan.steps import (
     PlannedDelete,
     PlannedInsert,
@@ -86,6 +87,7 @@ class WriteStepExecutor:
         steps: tuple[PlannedStep, ...],
         /,
         *,
+        effect_spans: tuple[EffectSpan, ...] = (),
         allocates: bool,
         flush: FlushActivity,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
@@ -108,9 +110,12 @@ class WriteStepExecutor:
         connection has ordered write transport, a run of two or more contiguous
         count-only effects on one row each is instead lowered whole and
         presented together before any of it is enforced (:meth:`_run_ordered`).
-        A run of contiguous compatible single-entry inserts is inserted by one
-        multi-row statement (:meth:`_run_grouped_insert`), each insert remaining
-        its own step.
+        On a dialect binding arrays, the effects of each of ``effect_spans`` are
+        instead applied by one grouped effect (:meth:`_run_grouped_effect`),
+        and no ordered run takes the step opening one. A run of contiguous
+        compatible single-entry inserts is inserted by one multi-row statement
+        (:meth:`_run_grouped_insert`). Either way each step remains its own
+        step, enforced against its own count.
 
         This performs NO classification of its own: the adopted Write Planner
         already spent the concurrency mode while settling each step, and this
@@ -134,11 +139,16 @@ class WriteStepExecutor:
             self._payloads,
             self._meta,
             self._connection.dialect,
+            effect_spans=effect_spans,
             capture_insert=capture_insert,
             capture_revision=capture_revision,
         )
         step = cursor.take()
         while step is not None:
+            span = cursor.grouped_effect_start(step)
+            if span is not None:
+                step = self._run_grouped_effect(step, span, cursor, flush)
+                continue
             if transport is not None:
                 parameter_ceiling = cursor.ordered_parameter_ceiling(step)
                 if parameter_ceiling is not None:
@@ -149,7 +159,7 @@ class WriteStepExecutor:
                 step = self._run_grouped_insert(first, cursor, flush)
                 continue
             statement = cursor.lowered(step)
-            if allocates and returns_rows(step):
+            if allocates and returns_allocated_keys(step):
                 allocated.extend(self._run_returning_insert(step, statement, flush))
             else:
                 self._run_single(step, statement, flush)
@@ -182,7 +192,8 @@ class WriteStepExecutor:
         transport cannot carry it, or none remains, ``first`` would be the
         run's only effect and runs alone instead.
 
-        Otherwise the run ends before a step transport cannot carry, and at
+        Otherwise the run ends before a step transport cannot carry or one
+        opening a grouped effect, and at
         :data:`_ORDERED_STATEMENTS` before another step is even taken. Lowering
         a later effect may fail ordinarily: the effects already lowered are
         then presented and enforced as they were selected, and only if they
@@ -190,9 +201,7 @@ class WriteStepExecutor:
         nothing, and a control-flow or fatal exception presents none of them.
         """
         following = cursor.take()
-        following_ceiling = (
-            None if following is None else cursor.ordered_parameter_ceiling(following)
-        )
+        following_ceiling = _joining_ceiling(cursor, following)
         if following is None or following_ceiling is None:
             self._run_single(first, cursor.lowered(first), flush)
             return following
@@ -213,7 +222,7 @@ class WriteStepExecutor:
             if following is None:
                 capped = False
                 break
-            following_ceiling = cursor.ordered_parameter_ceiling(following)
+            following_ceiling = _joining_ceiling(cursor, following)
             if following_ceiling is None:
                 capped = False
                 break
@@ -254,6 +263,48 @@ class WriteStepExecutor:
             raise
         _raise_held(failure)
         return following
+
+    def _run_grouped_effect(
+        self, first: PlannedStep, span: EffectSpan, cursor: LoweringCursor, flush: FlushActivity
+    ) -> PlannedStep | None:
+        """Apply ``first`` and the later effects of ``span`` with one grouped
+        effect (:meth:`LoweringCursor.lowered_grouped_effect`), and answer the
+        step after it, taken from ``cursor`` but not lowered, or ``None``
+        where ``cursor`` ran out.
+
+        The statement is one row-producing Database Call returning the source
+        ordinal of every row it changed. Its whole result is validated before
+        any count is read, and then each effect, in order, is enforced against
+        the number of times its own ordinal returned. A statement failure is
+        the whole statement's own, attributed to no effect. A later effect
+        failing ordinarily to be prepared ends the statement before it: the
+        effects before it are applied and enforced, and only if they succeed
+        does that failure propagate. ``first`` failing applies nothing, and a
+        control-flow or fatal exception applies none of the span.
+        """
+        statement, steps, failure = cursor.lowered_grouped_effect(first, span)
+        try:
+            connection = self._connection
+            with flush.database_call(statement, "write", first.entity) as call:
+                try:
+                    rows = connection.execute(
+                        connection.dialect.to_driver_sql(statement.sql), statement.binds
+                    )
+                except DatabaseError as error:
+                    self._recognize(first, error)
+                    raise
+                call.write_rows_completed(rows)
+            counts = _step_counts(rows, len(steps))
+            with flush.enforcing(call):
+                for step, count in zip(steps, counts, strict=True):
+                    enforce_affected_rows(step, count)
+        except BaseException:
+            # The statement's own failure is the one raised; the preparation
+            # failure it overtook is dropped rather than kept reachable from it.
+            failure = None
+            raise
+        _raise_held(failure)
+        return cursor.take()
 
     def _run_single(
         self, step: PlannedStep, statement: LoweredStatement, flush: FlushActivity
@@ -376,6 +427,50 @@ class OrderedInvocation(Sequence[LoweredStatement]):
         return self._steps[index].entity
 
 
+def _joining_ceiling(cursor: LoweringCursor, step: PlannedStep | None) -> int | None:
+    """The parameter ceiling ``step`` joins an ordered run under, or ``None``
+    where it cannot join one: where none remains, transport cannot carry it,
+    or it opens a grouped effect of its own."""
+    if step is None or cursor.grouped_effect_start(step) is not None:
+        return None
+    return cursor.ordered_parameter_ceiling(step)
+
+
+def _step_counts(rows: object, presented: int) -> list[int]:
+    """How many target rows each of the ``presented`` effects of one grouped
+    effect changed, from the source ordinals ``rows`` returned in any order.
+
+    The whole result is proved well formed first: a sequence of rows, each
+    holding exactly one ordinal, an integer — never a Boolean — naming one of
+    the effects. A missing ordinal counts zero and a repeated one counts each
+    return; interpreting either stays the unit of work's.
+    """
+    if not isinstance(rows, list | tuple):
+        raise _grouped_integrity(f"is a {qualified_type(rows)}, not a sequence of rows")
+    counts = [0] * presented
+    for index, row in enumerate(cast("Sequence[object]", rows)):
+        if not isinstance(row, tuple | list):
+            raise _grouped_integrity(f"answers a {qualified_type(row)} for row {index}")
+        cells = cast("Sequence[object]", row)
+        if len(cells) != 1:
+            raise _grouped_integrity(f"answers {len(cells)} cells in row {index}, not one ordinal")
+        ordinal = cells[0]
+        if type(ordinal) is not int:
+            raise _grouped_integrity(
+                f"answers a {qualified_type(ordinal)} ordinal in row {index}, not an integer"
+            )
+        if not 1 <= ordinal <= presented:
+            raise _grouped_integrity(
+                f"answers row {index} an ordinal outside the {presented} effects presented"
+            )
+        counts[ordinal - 1] += 1
+    return counts
+
+
+def _grouped_integrity(problem: str) -> WriteResultIntegrityError:
+    return WriteResultIntegrityError(f"a grouped effect's result {problem}")
+
+
 def _raise_held(failure: Exception | None) -> None:
     """Raise ``failure``, the ordinary failure a run stopped at, once the steps
     selected before it have succeeded."""
@@ -383,8 +478,8 @@ def _raise_held(failure: Exception | None) -> None:
         raise failure
 
 
-def _integrity(problem: str) -> OrderedWriteResultIntegrityError:
-    return OrderedWriteResultIntegrityError(f"an ordered write transport result {problem}")
+def _integrity(problem: str) -> WriteResultIntegrityError:
+    return WriteResultIntegrityError(f"an ordered write transport result {problem}")
 
 
 def _validate_ordered_result(result: object, presented: int) -> None:

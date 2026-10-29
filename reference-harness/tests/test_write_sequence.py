@@ -68,7 +68,8 @@ def test_write_step_count_consistency_holds_for_authored_cases() -> None:
     for case in discover_cases(COMPATIBILITY_ROOT):
         if case.is_write_sequence:
             # Must not raise: per-step counts sum to the DML count and databaseCalls.
-            _assert_write_step_count(case, "postgres")
+            for dialect in sorted(case.golden_dialects) or ["postgres"]:
+                _assert_write_step_count(case, dialect)
 
 
 def test_write_step_count_mismatch_is_rejected() -> None:
@@ -166,6 +167,41 @@ def test_a_collapsed_batch_whose_column_arrays_disagree_with_its_rows_is_refused
 ) -> None:
     with pytest.raises(CaseFailure, match=refusal):
         _assert_write_input_columns(_collapsed_batch_as_column_arrays(arrays), "postgres")
+
+
+def _grouped_case(prefix: str, binds: list[Any]) -> Case:
+    case = copy.deepcopy(
+        next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.path.stem.startswith(prefix))
+    )
+    case.then["statements"][0]["binds"] = binds
+    return case
+
+
+@pytest.mark.parametrize("prefix", ["m-batch-write-002", "m-opt-lock-042", "m-opt-lock-043"])
+def test_a_grouped_effect_is_graded_row_by_row(prefix: str) -> None:
+    case = next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.path.stem.startswith(prefix))
+    _assert_write_input_columns(case, "postgres")
+
+
+@pytest.mark.parametrize(
+    ("binds", "refusal"),
+    [
+        pytest.param([[1, 2], ["222.00", "111.00"]], "!= golden bind", id="values-swapped"),
+        pytest.param([[1], ["111.00"]], "ONE statement over several keys", id="row-missing"),
+        pytest.param([[1, 2], ["111.00"]], "unequal lengths", id="unequal-lengths"),
+    ],
+)
+def test_a_grouped_effect_whose_source_disagrees_with_its_rows_is_refused(
+    binds: list[Any], refusal: str
+) -> None:
+    with pytest.raises(CaseFailure, match=refusal):
+        _assert_write_input_columns(_grouped_case("m-batch-write-002", binds), "postgres")
+
+
+def test_a_versioned_grouped_effect_must_gate_each_row_on_its_own_observation() -> None:
+    case = _grouped_case("m-opt-lock-042", [[1, 2], [4, 1], [2, 5], [["c", "c"], ["d"]]])
+    with pytest.raises(CaseFailure, match="!= golden bind"):
+        _assert_write_input_columns(case, "postgres")
 
 
 def _account_case(raw: dict) -> Case:

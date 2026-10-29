@@ -22,7 +22,8 @@ optional `orderedWriteTransport(statements) → ordered write result` /
 DML that needs write-outcome classification uses `executeWrite` and **MUST NOT**
 append dialect-specific row-returning clauses merely to infer an affected count.
 **Row-producing DML** — a statement that answers facts no plan holds, such as
-the key the database allocated for a row it inserts — runs through `execute`
+the key the database allocated for a row it inserts, or the source ordinal of
+each row a grouped effect changed (`m-execution`) — runs through `execute`
 instead, which returns its one result set as positional managed rows exactly as
 it returns a read's. The distinction is the result's shape, not the statement's
 verb: the rows are the statement's answer, never its affected-row count, and
@@ -181,9 +182,11 @@ Counts and span lengths are nonnegative integers, never Booleans, and every
 failure a result carries is an ordinary exception. The consumer validates the
 whole result against the statements it presented before interpreting any of
 it: a result they contradict is a broken adapter contract, refused as a
-non-retriable **Ordered Write Result Integrity Error** whose diagnostic is
+non-retriable **Write Result Integrity Error** whose diagnostic is
 bounded structure — positions, counts, and type names — rather than
-statements, binds, or outcome values. Interpreting a valid result's counts
+statements, binds, or outcome values. The same error refuses a grouped effect's
+returned rows where they are not one ordinal of a presented step each
+(`m-execution`). Interpreting a valid result's counts
 stays the unit of work's (`m-unit-work`).
 
 A control-flow or fatal exception, cancellation included, is never converted

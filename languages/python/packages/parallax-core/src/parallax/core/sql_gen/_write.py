@@ -32,6 +32,7 @@ from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.wire import WireValue
 from parallax.core.write_plan.payload import (
     AssignmentPayload,
+    EffectSlots,
     InsertPayload,
     PatchedDocument,
     RowSlots,
@@ -60,6 +61,7 @@ from parallax.core.write_plan.steps import (
 )
 
 __all__ = [
+    "GroupedEffectBuilder",
     "InsertStatementBuilder",
     "StepPayload",
     "compile_write_step",
@@ -351,6 +353,135 @@ def _lower_insert(
         f"insert into {table}({column_sql}) select {', '.join(select_parts)} from {table} t0"
         f"{returning}"
     )
+
+
+_SOURCE = "v"
+"""The alias of a grouped effect's source; its columns are ``c1`` onward and
+its ordinal ``ord``, and the target Table is aliased ``t``, so no name either
+side declares can capture a reference to the other."""
+
+
+def _source_column(index: int) -> str:
+    return f"{_SOURCE}.c{index + 1}"
+
+
+class GroupedEffectBuilder:
+    """One statement applying every effect appended, in append order, each
+    effect's per-row values drawn from one row of its source and the
+    statement returning the source ordinal of every target row it changed
+    (`m-sql` *Grouped effects*).
+
+    ``slots`` fix the source columns: each binds one array, whatever the
+    number of effects, through the dialect's array-parameter cast, and the
+    source is `unnest(…) with ordinality`. Every effect is an update of one
+    key of ``slots``' shape, and its assignments render in the clause grammar
+    a lone update's do, each value taken from its source column rather than a
+    bind; a version advance and a version gate are per-row values like any
+    other. A refused effect is not held, so :meth:`finish` still renders
+    exactly the effects appended before it. A dialect without array binds has
+    no grouped effect.
+    """
+
+    __slots__ = ("_dialect", "_meta", "_payloads", "_slots", "_steps")
+
+    def __init__(self, slots: EffectSlots, meta: Metamodel, dialect: Dialect) -> None:
+        if not dialect.binds_arrays:
+            raise SqlGenError(
+                f"{slots.entity.canonical}: the {dialect.name!r} dialect binds no arrays, and "
+                "a grouped effect has no other form"
+            )
+        self._slots = slots
+        self._meta = meta
+        self._dialect = dialect
+        self._steps: list[PlannedUpdate] = []
+        self._payloads: list[AssignmentPayload] = []
+
+    def append(self, step: PlannedStep, payload: StepPayload) -> None:
+        """Hold ``step`` with the payload prepared from its assignments,
+        refusing a step of another shape than the slots place."""
+        slots = self._slots
+        if not isinstance(step, PlannedUpdate) or step.entity != slots.entity:
+            raise SqlGenError(
+                f"{slots.entity.canonical}: a grouped effect holds updates of its own Entity"
+            )
+        assigned = _assignment_payload(step, payload)
+        if len(assigned.values) != len(slots.assignment_sources) or any(
+            isinstance(source, tuple)
+            and (
+                not isinstance(value, PatchedDocument)
+                or len(value.patches) != len(source)
+                or any(patch.removes for patch in value.patches)
+            )
+            for value, source in zip(assigned.values, slots.assignment_sources, strict=True)
+        ):
+            raise SqlGenError(
+                f"{slots.entity.canonical}: a grouped effect's update assigns a cell or path "
+                "its shape does not place"
+            )
+        self._steps.append(step)
+        self._payloads.append(assigned)
+
+    def finish(self) -> LoweredStatement:
+        slots, meta, dialect = self._slots, self._meta, self._dialect
+        steps, payloads = self._steps, self._payloads
+        first, payload = steps[0], payloads[0]
+        entity = _entity(meta, first.entity)
+        view = _layout(meta, entity)
+        ctx = _ctx(meta, dialect)
+        concurrency = first.concurrency
+        version_column = (
+            _column(view, concurrency.attribute, entity)
+            if isinstance(concurrency, Versioned)
+            else None
+        )
+        terms: list[tuple[str, list[object]]] = []
+        advance: tuple[str, list[object]] | None = None
+        for column, value, source in zip(
+            payload.placement.columns, payload.values, slots.assignment_sources, strict=True
+        ):
+            quoted = dialect.quote(column)
+            if isinstance(source, tuple):
+                expression, binds = dialect.sourced_document_mutation(
+                    f"t.{quoted}",
+                    [patch.path for patch in cast("PatchedDocument", value).patches],
+                    [_source_column(index) for index in source],
+                )
+                term = (f"{quoted} = {expression}", binds)
+            else:
+                term = (f"{quoted} = {_source_column(source)}", list[object]())
+            if column == version_column:
+                advance = term
+            else:
+                terms.append(term)
+        if advance is not None:
+            terms.append(advance)
+        for _, binds in terms:
+            ctx.bind_structural_all(binds)
+        element_types = slots.element_types
+        for element_type, cells in zip(
+            element_types, slots.column_cells(steps, payloads), strict=True
+        ):
+            ctx.bind_array(ArrayBind(element_type, cells))
+        arrays = ", ".join(
+            [dialect.array_parameter(element_type) for element_type in element_types]
+        )
+        names = ", ".join([f"c{index + 1}" for index in range(len(element_types))])
+        target = cast("KeyTarget", first.target)
+        where = [
+            f"t.{dialect.quote(_column(view, attribute, entity))} = {_source_column(source)}"
+            for attribute, source in zip(target.key_attributes, slots.key_sources, strict=True)
+        ]
+        discriminator = view.discriminator
+        if discriminator is not None:
+            ctx.bind_framework(discriminator.value)
+            where.append(f"t.{dialect.quote(discriminator.slot.column.name)} = ?")
+        if slots.gate_source is not None and version_column is not None:
+            where.append(f"t.{dialect.quote(version_column)} = {_source_column(slots.gate_source)}")
+        return ctx.finish(
+            f"update {view.layout.table.name} t set {', '.join([sql for sql, _ in terms])} "
+            f"from unnest({arrays}) with ordinality {_SOURCE}({names}, ord) "
+            f"where {' and '.join(where)} returning {_SOURCE}.ord"
+        )
 
 
 def _lower_update(

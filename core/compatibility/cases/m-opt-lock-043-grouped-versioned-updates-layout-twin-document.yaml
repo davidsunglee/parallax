@@ -1,0 +1,39 @@
+# Document half of the grouped versioned update proof: the same writes patch one
+# path of the shared document per source row beside each object's own gate and
+# advance. Its twin authors the same writes under Columns.
+model: models/scalar-collection-lifecycle-layout-twin-document.yaml
+tags: [m-opt-lock, m-unit-work, m-storage-layout, m-document-codec, m-sql, write-sequence, update, json, grouped-effect, layout-twin, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  writeSequence:
+    - mutation: amend
+      entity: parallax.compatibility.TagLedger
+      statements: 1
+      note: each object's own gate and advance ride its own source row of one grouped update
+      rows:
+        - { id: 1, tags: [c, c], observedVersion: 1 }
+        - { id: 2, tags: [d], observedVersion: 4 }
+then:
+  statements:
+    - sql:
+        postgres: update tag_ledger t set payload = jsonb_set(t.payload, ?, v.c4), version = v.c3 from unnest(cast(? as bigint[]), cast(? as int[]), cast(? as int[]), cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord
+      binds: ['{tags}', [1, 2], [1, 4], [2, 5], [[c, c], [d]]]
+  tableState:
+    tag_ledger:
+      - id: 1
+        version: 2
+        payload:
+          label: open
+          tags: [c, c]
+          route:
+            stops: [x, y]
+      - id: 2
+        version: 5
+        payload:
+          label: kept
+          tags: [d]
+  databaseCalls: 2

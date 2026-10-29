@@ -262,6 +262,7 @@ def _assert_flush_reading(name: str) -> None:
         "work.invocations": [case.work.invocations],
         "work.largestOrderedInvocation": [case.work.largest_ordered_invocation],
         "work.largestGroupedInsert": [case.work.largest_grouped_insert],
+        "work.largestGroupedEffect": [case.work.largest_grouped_effect],
     }
     if case.deferred:
         binding = samples["binding.transientBytes"]

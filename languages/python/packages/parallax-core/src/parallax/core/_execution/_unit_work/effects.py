@@ -33,7 +33,7 @@ __all__ = [
     "WriteResultError",
     "allocated_keys",
     "enforce_affected_rows",
-    "returns_rows",
+    "returns_allocated_keys",
 ]
 
 type AddressedTarget = KeyTarget | MilestoneTarget
@@ -151,7 +151,7 @@ class WriteResultError(RuntimeError):
         )
 
 
-def returns_rows(step: PlannedStep) -> TypeGuard[PlannedInsert]:
+def returns_allocated_keys(step: PlannedStep) -> TypeGuard[PlannedInsert]:
     """Whether ``step``'s statement answers rows: an insert whose key the
     database allocates and returns. Every entry of one Planned Insert carries
     the same generated-value shape, so the first answers for all."""
