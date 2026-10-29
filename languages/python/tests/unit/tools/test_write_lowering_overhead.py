@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import json
 import re
@@ -45,6 +46,7 @@ from parallax.core.db_port import (
     OrderedWriteResultComplete,
     Row,
 )
+from parallax.core.dialect import POSTGRES
 from parallax.core.write_plan.steps import PlannedInsert
 from tests._support.db_port import WriteCall, inserted_rows
 from tests.unit import _leaf_type_support as leaf_support
@@ -996,7 +998,7 @@ def test_the_cross_object_family_is_keyed_loops_and_deferred_spans_read_on_every
             "typed",
             "columns",
             130,
-            (64, 64, 2),
+            (130,),
         ),
         "cross-object.bitemporal.interior-64.document.wire": (
             lowering_support.BiDocument,
@@ -1309,7 +1311,7 @@ _GROUPED: Final = ["grouped", "statement"]
 
 _GROUP_CALLS: Final[dict[str, list[list[str]]]] = {
     "cross-object.txtime.changed-64.columns.typed": [_GROUPED],
-    "cross-object.txtime.changed-130.columns.typed": [_GROUPED] * 3,
+    "cross-object.txtime.changed-130.columns.typed": [_GROUPED],
     "cross-object.bitemporal.interior-64.document.wire": [_GROUPED],
     "cross-object.bitemporal.deferred-32x4.columns.typed": [_GROUPED],
     "cross-object.bitemporal.deferred-32x12.document.wire": [_GROUPED],
@@ -1419,6 +1421,33 @@ def test_each_cross_object_flush_writes_every_object_through_its_call_shapes() -
         assert case.work.largest_grouped_insert == max(case.groups) * successors
         assert case.work.statements == 2 * len(case.groups)
         assert case.work.invocations == 2 * len(case.groups)
+
+
+def test_an_arrayless_cross_object_flush_presents_its_closes_in_ordered_invocations_of_64(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The control a dialect binding no arrays realizes: one Write Group of 130
+    # closes, which no grouped effect applies, presented as the ordered
+    # invocations whose 64-statement bound the larger group leaves unchanged.
+    monkeypatch.setattr(
+        lowering_support.OrderedAcceptingPort,
+        "dialect",
+        dataclasses.replace(POSTGRES, binds_arrays=False),
+    )
+    case = lowering_support.cross_object_case_named("cross-object.txtime.changed-130.columns.typed")
+    assert case.groups == (130,)
+    port = lowering_support.flush_port(case)
+    with (
+        lowering_support.flush_database(case, port) as handle,
+        lowering_support.marked_flushes(lowering_support.FlushRegions()),
+    ):
+        lowering_support.flush_objects(handle, case)
+    work = port.work()
+    assert work.largest_grouped_effect == 0
+    assert work.largest_ordered_invocation == 64
+    # The 130 closes share three invocations; every other statement is a call
+    # of its own.
+    assert work.statements - work.invocations == 130 - 3
 
 
 def test_a_requesting_deferred_flush_hands_each_write_the_rows_its_source_continues() -> None:

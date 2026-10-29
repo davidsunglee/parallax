@@ -31,6 +31,7 @@ from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import POSITION_MODEL, Position
 from parallax.core import LATEST
+from parallax.core._execution._unit_work import write_settlement
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.dialect import POSTGRES
@@ -334,9 +335,11 @@ def test_a_default_page_delivers_1024_roots_so_a_writing_loop_flushes_1024_write
     # second page's statement, which still asks for one root past its batch.
     rows = [_account_row(account_id) for account_id in range(1, 1026)]
     first, second = paged_reads(rows, size=1024)
-    # Each Write Group of the first page's writes applies its 64 updates as one
+    # Each Write Group of the first page's writes applies its updates as one
     # grouped effect.
-    port = ScriptedAdapter(Transact(first, *(_effects(64) for _ in range(16)), second, Write()))
+    limit = write_settlement._GROUP_WRITES  # pyright: ignore[reportPrivateUsage] - the group bound
+    groups = [_effects(min(limit, 1024 - start)) for start in range(0, 1024, limit)]
+    port = ScriptedAdapter(Transact(first, *groups, second, Write()))
 
     def fn(tx: TxnContext) -> None:
         if namespace == "typed":
