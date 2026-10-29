@@ -300,6 +300,7 @@ class AuthoringPlan:
         required: int,
         omitted: int = 0,
         nulled: int = 0,
+        excluded: int = 0,
         root: RootPolicy | None = None,
         addressing: int = 0,
         check: MemberCheck | None = None,
@@ -308,12 +309,13 @@ class AuthoringPlan:
         carries.
 
         ``raws`` holds one value per member, ``absent`` where the row states
-        none. A member in ``omitted`` is read as unstated. An unstated ``many``
-        member is its empty collection, an unstated member in ``nulled`` is
-        stated as null, and an unstated or null member in ``required`` is
-        refused. ``check`` judges each stated member first, and ``root``
-        authors a marker-shaped document at a top-level scalar outside
-        ``addressing``, where it is the ordinary value it spells.
+        none. A member in ``omitted`` is read as unstated. An unstated member
+        in ``excluded`` stays unstated; any other unstated ``many`` member is
+        its empty collection, an unstated member in ``nulled`` is stated as
+        null, and an unstated or null member in ``required`` is refused.
+        ``check`` judges each stated member first, and ``root`` authors a
+        marker-shaped document at a top-level scalar outside ``addressing``,
+        where it is the ordinary value it spells.
 
         Raises :class:`AuthoringRefusal` for the first refused member.
         """
@@ -328,7 +330,7 @@ class AuthoringPlan:
         for position, raw in enumerate(raws):
             bit = 1 << position
             if raw is absent or omitted & bit:
-                completed = self._completed(position, bit, required, nulled)
+                completed = self._completed(position, bit, required, nulled, excluded)
                 if completed is not _UNSTATED:
                     cells.append(completed)
                     presence |= bit
@@ -470,8 +472,12 @@ class AuthoringPlan:
                 position, _mismatch("", self.shape.members[position], raw, failure), failure
             ) from None
 
-    def _completed(self, position: int, bit: int, required: int, nulled: int) -> object:
+    def _completed(
+        self, position: int, bit: int, required: int, nulled: int, excluded: int
+    ) -> object:
         """An unstated top-level member's completed cell, or ``_UNSTATED``."""
+        if excluded & bit:
+            return _UNSTATED
         if self._many & bit:
             return ()
         if required & bit:

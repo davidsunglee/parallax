@@ -417,12 +417,13 @@ def test_an_authored_row_states_a_changed_value_object_beside_a_raw_identity() -
     assert authored["address"] is edited.address
 
 
-def test_an_authored_row_follows_the_models_member_order() -> None:
-    # One order, from the model, whatever order the caller edited members in.
+def test_an_authored_row_follows_the_models_member_order_with_its_key_last() -> None:
+    # One order, from the model, whatever order the caller edited members in;
+    # the key addresses the object the edited members assign, so it comes last.
     edited = _account("100.00").edit(balance=Decimal("175.00"), owner="Grace")
     authored = _accounts().authored(edited)
     assert authored is not None
-    assert list(authored) == ["id", "owner", "balance"]
+    assert list(authored) == ["owner", "balance", "id"]
 
 
 def test_an_authored_row_borrows_the_occurrence_it_now_holds() -> None:

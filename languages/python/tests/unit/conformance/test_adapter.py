@@ -1959,12 +1959,16 @@ _LEDGER = models.accepted_model(
             "attributes": [
                 {"name": "id", "type": "int64", "primaryKey": True},
                 {"name": "tags", "type": "string", "multiplicity": "many"},
+                {"name": "amounts", "type": "decimal(18,2)", "multiplicity": "many"},
             ],
             "valueObjects": [
                 {
                     "name": "lines",
                     "multiplicity": "many",
-                    "attributes": [{"name": "sku", "type": "string"}],
+                    "attributes": [
+                        {"name": "sku", "type": "string"},
+                        {"name": "price", "type": "decimal(18,2)", "nullable": True},
+                    ],
                 }
             ],
         }
@@ -1992,3 +1996,42 @@ def test_case_row_decoding_keeps_stated_state_its_structure_refuses_as_stated() 
         "tags": "untagged",
         "lines": ({"sku": "a"}, "loose", {}),
     }
+
+
+def test_case_row_decoding_reads_each_element_of_a_collection_its_structure_refuses() -> None:
+    decoded = _case_ingress.decode_case_row(
+        {
+            "id": 1,
+            "amounts": [None, "1.00"],
+            "lines": ({"sku": "a", "price": "2.50"}, "loose"),
+        },
+        _LEDGER,
+        _LEDGER_ENTITY,
+    )
+
+    assert decoded == {
+        "id": 1,
+        "amounts": (None, Decimal("1.00")),
+        "lines": ({"sku": "a", "price": Decimal("2.50")}, "loose"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("row", "path"),
+    [
+        ({"amounts": [None, "bad"]}, "parallax.compatibility.Ledger.amounts[1]"),
+        (
+            {"lines": ("loose", {"sku": "a", "price": "bad"})},
+            "parallax.compatibility.Ledger.lines[1].price",
+        ),
+    ],
+    ids=["scalar-collection", "occurrence-collection"],
+)
+def test_case_row_decoding_refuses_a_literal_beside_a_structural_refusal(
+    row: Mapping[str, object], path: str
+) -> None:
+    with pytest.raises(instructions.InstructionRejectedError) as caught:
+        _case_ingress.decode_case_row({"id": 1, **row}, _LEDGER, _LEDGER_ENTITY)
+
+    assert caught.value.rule == "neutral-literal-type-mismatch"
+    assert str(caught.value).startswith(f"{path}: ")

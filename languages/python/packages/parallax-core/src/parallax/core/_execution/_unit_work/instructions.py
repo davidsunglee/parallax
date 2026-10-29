@@ -1343,6 +1343,8 @@ def _assigned_row(
     """
     shape = entry.selection.members.shape
     try:
+        if entry.framework_owned:
+            _refuse_owned_names(entry, pairs, entry.framework_owned)
         prepared = entry.plan.partial_row(
             pairs,
             lane=lane,
@@ -1376,17 +1378,25 @@ def _replacement_row(
     A replacement states that state whatever authorized it: an omitted
     required member is refused where it falls, an omitted nullable one is
     written empty, and an omitted ``many`` the empty collection, so no value
-    is ever carried forward from the state it replaces. A member in
-    ``omitted`` is read as unstated, and neither completed nor refused.
+    is ever carried forward from the state it replaces. That state excludes
+    framework-owned and read-only members, which are never completed, and a
+    member in ``omitted`` is read as unstated.
     """
     shape = entry.selection.members.shape
     try:
+        owned = entry.framework_owned & ~omitted
+        if owned:
+            raws = tuple(raws)
+            absent = entry.selection.absent
+            stated = ((position, raw) for position, raw in enumerate(raws) if raw is not absent)
+            _refuse_owned_names(entry, stated, owned)
         prepared = entry.plan.complete_row(
             raws,
             lane=lane,
             required=entry.replace_required,
             omitted=omitted,
             nulled=entry.replace_nulled,
+            excluded=entry.framework_owned | entry.read_only,
             root=_marker_planning(entity, shape, _assignment_context(model, entity)),
             addressing=1 << entry.key,
             check=entry.assignment_rules,
@@ -1397,6 +1407,17 @@ def _replacement_row(
         refused = _replacement_refusal(entry, entity, refusal)
         raise refused from refused.__cause__
     return managed_row(entry.selection, prepared.cells, prepared.presence)
+
+
+def _refuse_owned_names(
+    entry: EntityPreparation, pairs: Iterable[tuple[int, object]], owned: int
+) -> None:
+    """Refuse the first member of ``owned``, framework-owned ones, that
+    ``pairs`` states, by its assignment rule and before any value is judged:
+    its name alone refuses it."""
+    for position, raw in pairs:
+        if owned >> position & 1:
+            entry.assignment_rules(position, raw)
 
 
 def _row_refusal(
@@ -1582,9 +1603,20 @@ def _named_pairs(
 
 def _positioned(entry: EntityPreparation, row: Mapping[str, object]) -> list[tuple[int, object]]:
     """``row``'s members, every one already judged declared, by position in
-    the order ``row`` states them."""
+    the order ``row`` states them, its key after them: the key addresses the
+    object every other member assigns."""
     shape = entry.selection.members.shape
-    return [(cast("int", shape.position(name)), value) for name, value in row.items()]
+    key = entry.key
+    pairs: list[tuple[int, object]] = []
+    addressed: tuple[tuple[int, object], ...] = ()
+    for name, value in row.items():
+        position = cast("int", shape.position(name))
+        if position == key:
+            addressed = ((position, value),)
+        else:
+            pairs.append((position, value))
+    pairs.extend(addressed)
+    return pairs
 
 
 def _assigns(entry: EntityPreparation, rows: tuple[ManagedRow, ...]) -> bool:
@@ -2073,18 +2105,7 @@ def _assignment_payload(
     """``row`` as the row assigning one existing object every member it
     states beside the key, in the order ``row`` states them, its key
     addressing that object."""
-    shape = entry.selection.members.shape
-    key = entry.key
-    pairs: list[tuple[int, object]] = []
-    addressed: tuple[tuple[int, object], ...] = ()
-    for name, value in row.items():
-        position = cast("int", shape.position(name))
-        if position == key:
-            addressed = ((position, value),)
-        else:
-            pairs.append((position, value))
-    pairs.extend(addressed)
-    return _assigned_row(model, entry, entity, pairs, lane=lane)
+    return _assigned_row(model, entry, entity, _positioned(entry, row), lane=lane)
 
 
 def _judge_row_members(
