@@ -1191,7 +1191,7 @@ def test_the_span_port_answers_each_read_with_the_milestones_it_names_once() -> 
     assert port.execute(as_of, [1, 9, middle, middle, INFINITY]) == [(1, _START)]
     assert port.coverage_reads == 1
     port.reset()
-    assert (port.coverage_reads, port.work()) == (0, lowering_support.FlushWork(0, 0, 0, 0))
+    assert (port.coverage_reads, port.work()) == (0, lowering_support.FlushWork(0, 0, 0, 0, 0))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1213,23 +1213,32 @@ def test_the_flush_port_serializes_every_statement_and_counts_one_flush_in_const
     port = lowering_support.OrderedAcceptingPort()
     transport = port.ordered_write_transport
     assert transport is not None
-    assert port.work() == lowering_support.FlushWork(0, 0, 0, 0)
+    assert port.work() == lowering_support.FlushWork(0, 0, 0, 0, 0)
     assert port.execute_write(
         "insert into t(a, b) select * from unnest(cast(%s as bigint[]), cast(%s as bigint[]))",
         [ArrayBind(INT64, [1, 1, 1]), ArrayBind(INT64, [2, 2, 2])],
     )
     assert port.execute_write("update t set a = %s where b = %s", [1, 2])
+    assert port.execute(
+        "update t t set a = v.c2 from unnest(cast(%s as bigint[]), cast(%s as bigint[])) "
+        "with ordinality v(c1, c2, ord) where t.b = v.c1 returning v.ord",
+        [ArrayBind(INT64, [7, 8]), ArrayBind(INT64, [1, 2])],
+    ) == [(1,), (2,)]
     result = transport(
         [_Statement("update t set a = ? where b = ?", (1, 2)) for _ in range(3)]
         + [_Statement("delete from t where b = ?", (JsonDocument({"b": 1}),))]
     )
     assert result == OrderedWriteResultComplete((1, 1, 1, 1))
-    assert serialized == [2, 2, 2, 2, 2, 1]
+    assert serialized == [2, 2, 2, 2, 2, 2, 1]
     assert port.work() == lowering_support.FlushWork(
-        statements=6, invocations=3, largest_ordered_invocation=4, largest_grouped_insert=3
+        statements=7,
+        invocations=4,
+        largest_ordered_invocation=4,
+        largest_grouped_insert=3,
+        largest_grouped_effect=2,
     )
     port.reset()
-    assert port.work() == lowering_support.FlushWork(0, 0, 0, 0)
+    assert port.work() == lowering_support.FlushWork(0, 0, 0, 0, 0)
 
 
 def _observed_flush(
@@ -1374,7 +1383,7 @@ def _calculated_work(name: str) -> lowering_support.FlushWork:
         statements += closes + 1
         invocations += full + (1 if rest else 0) + 1
         largest = max(largest, sum(objects[index][1] for index in group))
-    return lowering_support.FlushWork(statements, invocations, 64, largest)
+    return lowering_support.FlushWork(statements, invocations, 64, largest, 0)
 
 
 def test_each_cross_object_flush_writes_every_object_through_its_call_shapes() -> None:
@@ -1575,7 +1584,11 @@ def test_a_batch_insert_flushes_every_row_as_one_collapsed_column_array_insert(
     assert isinstance(step, PlannedInsert)
     assert len(step.entries) == case.rows
     assert port.work() == lowering_support.FlushWork(
-        statements=1, invocations=1, largest_ordered_invocation=0, largest_grouped_insert=case.rows
+        statements=1,
+        invocations=1,
+        largest_ordered_invocation=0,
+        largest_grouped_insert=case.rows,
+        largest_grouped_effect=0,
     )
     assert case.work == port.work()
     (statement,) = port.executed

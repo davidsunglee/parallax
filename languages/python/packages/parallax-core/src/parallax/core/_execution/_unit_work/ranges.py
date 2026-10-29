@@ -977,7 +977,9 @@ class RangeBindings:
             raise StopIteration
         while pending[0].ready_after_reads > self._completed_reads:
             self._read(invocation)
-        return WriteGroup.from_members(self._bind_ready_writes(invocation))
+        return WriteGroup.from_members(
+            self._bind_ready_writes(invocation), effect_shape=invocation.payloads.effect_shape
+        )
 
     def _bind_ready_writes(
         self, invocation: _Invocation

@@ -11,6 +11,7 @@ from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.write_plan.payload import PatchedDocument, WritePayloadPreparer
+from parallax.core.write_plan.plan import EffectSpan
 from parallax.core.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
@@ -97,6 +98,7 @@ class SimulatedWriteSteps:
         steps: tuple[PlannedStep, ...],
         /,
         *,
+        effect_spans: tuple[EffectSpan, ...] = (),
         allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
@@ -110,6 +112,7 @@ class SimulatedWriteSteps:
                     self._payloads,
                     self._meta,
                     self._dialect,
+                    effect_spans=effect_spans,
                     capture_insert=capture_insert,
                     capture_revision=capture_revision,
                 )

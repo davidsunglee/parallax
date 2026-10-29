@@ -10,14 +10,23 @@ from decimal import Decimal as PyDecimal
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr, storage_layout
-from parallax.core.base import INT64, JSON, STRING, FrozenMap
+from parallax.core.base import INT32, INT64, JSON, STRING, FrozenMap
 from parallax.core.entity import Document
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
 from parallax.core.storage_layout import InheritanceDiscriminator, RelationalDocument
-from parallax.core.write_payload._storage import ROW_SLOTS_PER_ENTITY, StorageCatalog
+from parallax.core.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape, StorageCatalog
 from parallax.core.write_plan import WritePlanningError
-from parallax.core.write_plan.steps import NEW_LINEAGE, WriteRow
+from parallax.core.write_plan.steps import (
+    MISSING_TARGET,
+    NEW_LINEAGE,
+    UNVERSIONED,
+    ExactCount,
+    KeyTarget,
+    PlannedAssignments,
+    PlannedUpdate,
+    WriteRow,
+)
 from tests._support.managed_rows import managed_row_of
 from tests.unit._corpus_model_support import model as corpus_model
 
@@ -294,3 +303,62 @@ def test_a_catalog_keeps_no_model_alive() -> None:
     del model, catalog
     gc.collect()
     assert layout() is None
+
+
+def test_one_effect_shape_shares_one_effect_slots_and_the_cache_retains_a_bounded_number() -> None:
+    storage = StorageCatalog(_META).entity(_PEG)
+    key = (AttributeIdentity(_PEG, "id"),)
+    shapes = [
+        EffectShape(PlannedUpdate, _PEG, key, optional << 1, None) for optional in range(1, 1 << 5)
+    ]
+    assert len(shapes) > ROW_SLOTS_PER_ENTITY
+    retained = [storage.effect_slots(shape) for shape in shapes[:ROW_SLOTS_PER_ENTITY]]
+    beyond = shapes[ROW_SLOTS_PER_ENTITY]
+    first, second = storage.effect_slots(beyond), storage.effect_slots(beyond)
+
+    assert all(
+        storage.effect_slots(shape) is slots for shape, slots in zip(shapes, retained, strict=False)
+    )
+    assert first is not second
+    assert first.element_types == second.element_types
+    assert first.key_sources == (0,)
+    assert first.gate_source is None
+    assert first.assignment_sources == tuple(range(1, beyond.presence.bit_count() + 1))
+
+
+def test_only_a_non_primary_unique_key_member_makes_an_update_ungroupable() -> None:
+    passport = corpus_model("person")
+    storage = StorageCatalog(passport).entity(EntityIdentity("parallax.compatibility", "Passport"))
+
+    def update(member: str) -> PlannedUpdate:
+        identity = AttributeIdentity(storage.entity, member)
+        return PlannedUpdate(
+            entity=storage.entity,
+            target=KeyTarget(
+                key_attributes=(AttributeIdentity(storage.entity, "id"),), key_values=((1,),)
+            ),
+            assignments=PlannedAssignments(
+                attributes={identity: 7 if member == "personId" else "N"}
+            ),
+            concurrency=UNVERSIONED,
+            affected_rows=ExactCount(1, MISSING_TARGET),
+        )
+
+    assert storage.effect_shape(update("personId")) is None
+    assert storage.effect_shape(update("number")) is not None
+
+
+def test_effect_slots_of_a_document_twin_skip_a_shared_document_no_path_of_which_is_assigned() -> (
+    None
+):
+    meta = corpus_model("scalar-collection-lifecycle-layout-twin-document")
+    entity = EntityIdentity("parallax.compatibility", "TagLedger")
+    storage = StorageCatalog(meta).entity(entity)
+    version = AttributeIdentity(entity, "version")
+    position = storage.view.member_selection.index[version]
+    slots = storage.effect_slots(
+        EffectShape(PlannedUpdate, entity, (AttributeIdentity(entity, "id"),), 1 << position, None)
+    )
+    assert slots.assignment_sources == (1,)
+    assert slots.element_types == (INT64, INT32)
+    assert slots.parameter_count == 2

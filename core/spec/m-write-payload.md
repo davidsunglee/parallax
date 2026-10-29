@@ -22,6 +22,8 @@ WritePayloadPreparer(model)
   proven_unequal_non_interval(entity, WriteRow, WriteRow) -> Boolean
   equal_non_interval(RowPayload, RowPayload)              -> Boolean
   rebound(RowPayload, WriteRow)                           -> RowPayload
+  effect_shape(PlannedStep)                               -> shape | absent
+  effect_slots(entity, shape)                             -> EffectSlots
 ```
 
 The interface and its result vocabulary are `m-write-plan`'s; this module
@@ -42,6 +44,16 @@ directly. Each cell names its contributor by model identity — a member, the
 Table's shared Structured Column, or the table-per-hierarchy discriminator —
 never by physical column. Each payload is bound to the inputs it was prepared
 from (`m-write-plan` *Write payloads*).
+
+An effect's **shape** (`m-unit-work` *Write Group formation*) is decided from
+the step alone, before any payload is prepared, and compared by value, so
+whether two effects share a grouped effect never depends on what a bounded
+cache retains. A shape's **Effect Slots** name each per-row source column a
+grouped effect binds — each key, the gate, and each cell or assigned document
+path the shape's assignments place — with its Neutral Type, and gather each
+column from the steps and their Assignment Payloads without judging a value
+again; they are placed once per Entity and shape like Row Slots, and prepare
+nothing a lone update would not.
 
 ## Row assembly
 

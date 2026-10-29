@@ -24,10 +24,16 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.storage_layout import ColumnTier, EntityLayoutView, RelationalDocument
-from parallax.core.write_payload._storage import EntityStorage, StorageCatalog, assigned_document
+from parallax.core.write_payload._storage import (
+    EffectShape,
+    EntityStorage,
+    StorageCatalog,
+    assigned_document,
+)
 from parallax.core.write_plan.managed_row import ManagedRow
 from parallax.core.write_plan.payload import (
     AssignmentPayload,
+    EffectSlots,
     PatchedDocument,
     RowPayload,
     RowSlots,
@@ -36,6 +42,7 @@ from parallax.core.write_plan.planned_rows import WritePlanningError
 from parallax.core.write_plan.steps import (
     MaxPlusOne,
     PlannedAssignments,
+    PlannedStep,
     SelfIncrement,
     WriteRow,
 )
@@ -63,6 +70,16 @@ class LayoutPayloadPreparer:
     def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
         slots = self.row_slots(entity, write_row.row.presence)
         return RowPayload(slots=slots, source=write_row, values=slots.cells(write_row))
+
+    def effect_shape(self, step: PlannedStep) -> EffectShape | None:
+        return self._storage.entity(step.entity).effect_shape(step)
+
+    def effect_slots(self, entity: EntityIdentity, shape: Hashable) -> EffectSlots:
+        if not isinstance(shape, EffectShape) or shape.entity != entity:
+            raise WritePlanningError(
+                f"{entity.canonical}: an effect shape names the Effect Slots of its own Entity"
+            )
+        return self._storage.entity(entity).effect_slots(shape)
 
     def assignments(
         self, entity: EntityIdentity, assignments: PlannedAssignments

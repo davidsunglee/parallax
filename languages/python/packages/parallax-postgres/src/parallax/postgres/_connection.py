@@ -55,7 +55,6 @@ from parallax.core.db_port import (
     JsonDocument,
     OrderedWriteResult,
     OrderedWriteResultComplete,
-    OrderedWriteResultIntegrityError,
     OrderedWriteResultInterrupted,
     OrderedWriteTransport,
     PipelineStatement,
@@ -66,6 +65,7 @@ from parallax.core.db_port import (
     StatementFailed,
     StatementNotExecuted,
     TransactionOutcome,
+    WriteResultIntegrityError,
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.wire._json import dump_document, prepared_loads
@@ -889,7 +889,7 @@ def _answered(
     for index, cursor in enumerate(recorded):
         outcome = cast("_Established", cursor.outcome)
         if isinstance(outcome, _Unexpected):
-            raise OrderedWriteResultIntegrityError(
+            raise WriteResultIntegrityError(
                 f"PostgreSQL answered statement {index} of an ordered write with "
                 f"{outcome.description}, which no count-only statement produces"
             )

@@ -103,6 +103,11 @@ def infer_statement_bind_targets(
         return {}
     targets = _insert_targets(case, tree, binds)
     targets.update(_update_targets(case, tree, binds))
+    targets.update(
+        (index, target)
+        for argument, target, _column in _grouped_sources(case, tree, binds)
+        if (index := bound_placeholder_index(argument)) is not None
+    )
     for placeholder in tree.find_all(exp.Placeholder):
         index = placeholder_index(placeholder)
         if index is None or index in targets:
@@ -249,6 +254,112 @@ def _update_targets(
             members = _document_members(case, slot, guarded)
             targets.update(_path_assignment_targets(members, assignment, binds))
     return targets
+
+
+@dataclass(frozen=True, slots=True)
+class _GroupedSource:
+    """A grouped effect's target layout and alias, and its source alias and the
+    array argument each source column reads."""
+
+    layout: TableLayout
+    target: str
+    alias: str
+    arguments: Mapping[str, Expr]
+
+    def argument(self, expression: Expr | None) -> Expr | None:
+        if isinstance(expression, exp.Column) and expression.table == self.alias:
+            return self.arguments.get(expression.name)
+        return None
+
+
+def _grouped_source(case: Case, tree: Expr) -> _GroupedSource | None:
+    if not isinstance(tree, exp.Update) or not isinstance(tree.this, exp.Table):
+        return None
+    source = tree.args.get("from_")
+    unnest = source.this if isinstance(source, exp.From) else None
+    if not isinstance(unnest, exp.Unnest):
+        return None
+    alias = unnest.args.get("alias")
+    layout = case.model.storage_layout.table(tree.this.name)
+    if not isinstance(alias, exp.TableAlias) or layout is None:
+        return None
+    arguments = dict(
+        zip((column.name for column in alias.columns), unnest.expressions, strict=False)
+    )
+    return _GroupedSource(layout, tree.this.alias_or_name, alias.name, arguments)
+
+
+def _grouped_sources(
+    case: Case, tree: Expr, binds: Sequence[object]
+) -> Iterator[tuple[Expr, ColumnSlot | DocumentMember, str]]:
+    """Each source array of a grouped effect (``update t set … from unnest(…) with
+    ordinality v(…) … returning v.ord``) beside what types its elements: the slot
+    of the column a source column is assigned to or compared with, or the document
+    member a path assignment writes it to, and that column's name."""
+    grouped = _grouped_source(case, tree)
+    if grouped is None:
+        return
+    for assignment in tree.expressions:
+        if isinstance(assignment, exp.EQ) and isinstance(assignment.this, exp.Column):
+            yield from _assigned_sources(case, grouped, assignment, binds)
+    where = tree.args.get("where")
+    for comparison in () if where is None else _conjuncts(where.this):
+        if isinstance(comparison, exp.EQ):
+            yield from _compared_sources(grouped, comparison)
+
+
+def _assigned_sources(
+    case: Case, grouped: _GroupedSource, assignment: exp.EQ, binds: Sequence[object]
+) -> Iterator[tuple[Expr, ColumnSlot | DocumentMember, str]]:
+    slot = grouped.layout.column(assignment.this.name)
+    if slot is None:
+        return
+    argument = grouped.argument(assignment.expression)
+    if argument is not None:
+        yield argument, slot, slot.column
+        return
+    if not isinstance(slot.contributor, RelationalDocument):
+        return
+    by_path = {member.path: member for member in _document_members(case, slot, {})}
+    for path, value in _sourced_paths(assignment.expression):
+        index = placeholder_index(path)
+        member = (
+            by_path.get(_document_path(binds[index]))
+            if index is not None and index < len(binds)
+            else None
+        )
+        argument = grouped.argument(value)
+        if member is not None and argument is not None:
+            yield argument, member, slot.column
+
+
+def _compared_sources(
+    grouped: _GroupedSource, comparison: exp.EQ
+) -> Iterator[tuple[Expr, ColumnSlot | DocumentMember, str]]:
+    for guarded, operand in (
+        (comparison.this, comparison.expression),
+        (comparison.expression, comparison.this),
+    ):
+        argument = grouped.argument(operand)
+        if (
+            argument is not None
+            and isinstance(guarded, exp.Column)
+            and guarded.table == grouped.target
+            and (slot := grouped.layout.column(guarded.name)) is not None
+        ):
+            yield argument, slot, slot.column
+
+
+def _sourced_paths(expression: Expr) -> Iterator[tuple[exp.Placeholder, Expr]]:
+    """The (path placeholder, value) pairs of a nested ``jsonb_set`` whose values
+    are read from a grouped effect's source rather than bound."""
+    current = expression
+    while isinstance(current, exp.Anonymous) and current.name.lower() == "jsonb_set":
+        if len(current.expressions) != 3:
+            return
+        current, path, value = current.expressions
+        if isinstance(path, exp.Placeholder):
+            yield path, value
 
 
 def _path_assignment_targets(
@@ -456,7 +567,23 @@ def array_cast_mismatches(
         if mismatch is not None:
             mismatches.append(mismatch)
     mismatches.extend(_column_array_cast_mismatches(case, tree))
+    mismatches.extend(_grouped_source_cast_mismatches(case, tree, binds))
     return tuple(sorted(mismatches, key=lambda mismatch: mismatch.index))
+
+
+def _grouped_source_cast_mismatches(
+    case: Case, tree: Expr, binds: Sequence[object]
+) -> Iterator[ArrayCastMismatch]:
+    declarations = declared_contributors(case.model)
+    for argument, target, column in _grouped_sources(case, tree, binds):
+        element = (
+            "jsonb"
+            if isinstance(target, DocumentMember)
+            else column_array_element(slot_neutral_type(target, declarations))
+        )
+        mismatch = _array_cast_mismatch(argument, exp.DataType.build(element, dialect="postgres"))
+        if mismatch is not None:
+            yield ArrayCastMismatch(mismatch.index, mismatch.cast, mismatch.expected, column)
 
 
 def _column_array_cast_mismatches(case: Case, tree: Expr) -> Iterator[ArrayCastMismatch]:

@@ -421,9 +421,13 @@ WritePayloadPreparer
   proven_unequal_non_interval(entity, WriteRow, WriteRow) -> Boolean
   equal_non_interval(RowPayload, RowPayload)              -> Boolean
   rebound(RowPayload, WriteRow)                           -> RowPayload
+  effect_shape(PlannedStep)                               -> shape | absent
+  effect_slots(entity, shape)                             -> EffectSlots
 
 RowSlots(entity, presence, contributors: [contributor])
   cells(WriteRow)                         -> [value]
+EffectSlots(entity, keySources, gateSource?, assignmentSources, elementTypes)
+  columnCells([PlannedStep], [AssignmentPayload]) -> [[value]]
 RowPayload(slots: RowSlots, source: WriteRow, cells: [PayloadCell])
 AssignmentPayload(entity, assignments: PlannedAssignments, cells: [PayloadCell])
 PayloadCell(contributor, value)
@@ -434,6 +438,16 @@ members of one presence stores, and gathers them from such a row. Its cells
 depend on the Entity and that presence alone, so the entries of one insert
 share one, and a Row Payload is one row's cells under its Row Slots, retained
 where a comparison prepared them.
+
+An **effect shape** is an opaque value compared by equality: two effects of one
+shape may share one grouped effect (`m-unit-work` *Write Group formation*), and
+an effect without one runs alone. A Write Group records where each run of
+effects of one shape lies among its steps as its **effect spans**: half-open
+ranges over its steps in execution order, each holding at least two steps, in
+order and never overlapping, and none in a group of one write. The **Effect
+Slots** of a shape name each per-row source column a grouped effect binds — its
+role among the key, the gate, and the assigned cells, and its Neutral Type — and
+gather each column from the steps and their Assignment Payloads.
 
 A Planned Step states what a write means; what it **persists** is its payload.
 This module declares the payload vocabulary and the interface that prepares it,

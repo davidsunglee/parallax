@@ -47,6 +47,9 @@ from parallax.core._execution._unit_work.write_items import (
 )
 from parallax.core.base import (
     INFINITY,
+    INT64,
+    Decimal,
+    String,
     TemporalBound,
 )
 from parallax.core.db_error import DatabaseError
@@ -2213,11 +2216,12 @@ def test_update_entry_uniform_within_each_physical_group_collapses_per_group() -
     assert [e.binds for e in emissions] == [(500.00, 1, 2), ("Zed", 3, 4)]
 
 
-def test_update_entry_non_uniform_within_a_physical_group_rejects_a_grouped_count() -> None:
+def test_update_entry_non_uniform_within_a_physical_group_rejects_a_per_row_count() -> None:
     # The same two physical groups as above, but each group's own rows assign
-    # DIFFERENT values, so neither collapses and the entry emits one keyed
-    # UPDATE per row. `statements` stays a real assertion: an authored count of
-    # 2 (the group count, not the statement count) is an authoring error and
+    # DIFFERENT values, so neither collapses: each row stays its own keyed
+    # update, and execution applies each assigned-member set's updates as one
+    # grouped effect. `statements` stays a real assertion: an authored count of
+    # 4 (the row count, not the statement count) is an authoring error and
     # refuses loudly rather than being accepted as "close enough".
     case = _synthetic_write(
         "writeSequence",
@@ -2228,7 +2232,7 @@ def test_update_entry_non_uniform_within_a_physical_group_rejects_a_grouped_coun
                     {
                         "mutation": "amend",
                         "entity": "Wallet",
-                        "statements": 2,
+                        "statements": 4,
                         "rows": [
                             {"id": 1, "balance": "111.00"},
                             {"id": 2, "balance": "222.00"},
@@ -2240,14 +2244,14 @@ def test_update_entry_non_uniform_within_a_physical_group_rejects_a_grouped_coun
             },
         },
     )
-    with pytest.raises(EngineError, match="does not match the 4 statement"):
+    with pytest.raises(EngineError, match="does not match the 2 statement"):
         scenario.compile_write_sequence_case(case, "postgres")
 
 
-def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
-    # m-batch-write-002's own shape: non-uniform per-key values decompose into
-    # one UPDATE per distinct key — genuinely lowering end to end (neither
-    # versioned nor pk-gen-managed, so neither needs the multi-row refusal).
+def test_non_uniform_multi_row_update_applies_one_grouped_effect_per_member_set() -> None:
+    # m-batch-write-002's own shape: non-uniform per-key values stay one keyed
+    # update per key, and execution presents updates assigning the same members
+    # as one grouped effect binding one array per source column.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -2260,7 +2264,9 @@ def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
                         "statements": 2,
                         "rows": [
                             {"id": 1, "balance": "111.00"},
+                            {"id": 3, "owner": "Zed"},
                             {"id": 2, "balance": "222.00"},
+                            {"id": 4, "owner": "Ada"},
                         ],
                     }
                 ]
@@ -2270,8 +2276,17 @@ def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
     emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
     assert database_calls == 2
     assert [e.sql for e in emissions] == [
-        "update wallet set balance = ? where id = ?",
-        "update wallet set balance = ? where id = ?",
+        "update wallet t set balance = v.c2 from unnest(cast(? as bigint[]), "
+        "cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 "
+        "returning v.ord",
+        "update wallet t set owner = v.c2 from unnest(cast(? as bigint[]), "
+        "cast(? as text[])) with ordinality v(c1, c2, ord) where t.id = v.c1 "
+        "returning v.ord",
+    ]
+    arrays = [[cast("ArrayBind", bind) for bind in e.binds] for e in emissions]
+    assert [[(bind.element_type, bind.values) for bind in binds] for binds in arrays] == [
+        [(INT64, [1, 2]), (Decimal(18, 2), [111.00, 222.00])],
+        [(INT64, [3, 4]), (String(), ["Zed", "Ada"])],
     ]
 
 

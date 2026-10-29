@@ -92,6 +92,7 @@ from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
 from parallax.core.write_plan.payload import PatchedDocument
+from parallax.core.write_plan.plan import EffectSpan
 from parallax.core.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
@@ -826,19 +827,23 @@ class TxnAttempt(_TxnAttemptBase):
         steps: tuple[PlannedStep, ...],
         /,
         *,
+        effect_spans: tuple[EffectSpan, ...] = (),
         allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
         | None = None,
     ) -> tuple[object, ...]:
         """Execute ``steps`` as calls of the current flush's Flush activity,
-        handing their demanded payloads to the capture hooks the unit of work
-        gives."""
+        presenting ``effect_spans`` as grouped effects and handing their
+        demanded payloads to the capture hooks the unit of work gives."""
         executor = self._step_executor
         if capture_insert is None and capture_revision is None:
-            return executor.execute(steps, allocates=allocates, flush=self._flush)
+            return executor.execute(
+                steps, effect_spans=effect_spans, allocates=allocates, flush=self._flush
+            )
         return executor.execute(
             steps,
+            effect_spans=effect_spans,
             allocates=allocates,
             flush=self._flush,
             capture_insert=capture_insert,

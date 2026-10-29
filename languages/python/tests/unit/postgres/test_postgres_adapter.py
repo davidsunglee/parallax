@@ -74,13 +74,13 @@ from parallax.core.db_port import (
     JsonDocument,
     OrderedWriteResult,
     OrderedWriteResultComplete,
-    OrderedWriteResultIntegrityError,
     OrderedWriteResultInterrupted,
     PipelineStatement,
     RollbackFailed,
     RolledBack,
     StatementFailed,
     StatementNotExecuted,
+    WriteResultIntegrityError,
     isolation_level,
 )
 from parallax.core.dialect import PhysicalIndexName
@@ -1392,7 +1392,7 @@ def test_a_result_no_count_only_statement_produces_is_an_integrity_failure(
     server = Server(script([counted(1)], answered, [counted(1)]))
     with native_session(monkeypatch, server) as native:
         facade = PostgresConnection(native)
-        with pytest.raises(OrderedWriteResultIntegrityError) as refused:
+        with pytest.raises(WriteResultIntegrityError) as refused:
             _ordered_writes(facade)
 
     message = str(refused.value)
