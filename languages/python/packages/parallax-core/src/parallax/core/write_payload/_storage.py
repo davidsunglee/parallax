@@ -476,7 +476,8 @@ def occurrence_document(definition: OccurrenceDefinition, value: object, absent:
 
 def assigned_document(definition: OccurrenceDefinition, value: object) -> object:
     """One assigned Value Object member's value as its stored document,
-    encoded unchecked; JSON null for ``None``."""
+    encoded unchecked; ``None`` for a null one, which its own Column stores as
+    SQL NULL and a shared Structured Column as JSON null at its path."""
     if value is None:
         return None
     cells, absent = occurrence_cells(value, definition)

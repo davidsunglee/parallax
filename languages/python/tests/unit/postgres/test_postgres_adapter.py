@@ -62,6 +62,7 @@ from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
+    JSON_NULL,
     AccessMode,
     ArrayBind,
     BeginFailed,
@@ -722,10 +723,11 @@ def test_a_timestamp_array_binds_the_open_bound_as_native_infinity() -> None:
 
 
 @pytest.mark.usefixtures("no_element_scan")
-def test_a_document_array_is_one_dimension_of_documents_none_holding_json_null() -> None:
+def test_a_document_array_is_one_dimension_of_documents_none_being_sql_null() -> None:
     adapters = _initialized()
     documents: list[object] = [
         None,
+        JSON_NULL,
         {"kind": "object"},
         ["nested", None],
         [],
@@ -738,6 +740,7 @@ def test_a_document_array_is_one_dimension_of_documents_none_holding_json_null()
     assert dumped == _binary_array(
         3802,
         [
+            None,
             b"\x01null",
             b'\x01{"kind": "object"}',
             b'\x01["nested", null]',
@@ -767,10 +770,11 @@ def test_a_document_array_serializes_each_document_once_through_the_codec(
         return '"stub"'
 
     monkeypatch.setattr(connection_module, "dump_document", recording)
-    documents: list[object] = [{"a": 1}, None, [2]]
-    _dumped(adapters, ArrayBind(JSON, documents))
-    assert serialized == documents
-    assert all(left is right for left, right in zip(serialized, documents, strict=True))
+    first, second = {"a": 1}, [2]
+    _dumped(adapters, ArrayBind(JSON, [first, None, JSON_NULL, second]))
+    assert serialized == [first, second]
+    assert serialized[0] is first
+    assert serialized[1] is second
 
 
 class _ReadOnce(list[object]):
