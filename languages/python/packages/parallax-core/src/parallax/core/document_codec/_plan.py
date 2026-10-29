@@ -286,6 +286,12 @@ class AuthoringPlan:
         lane = AuthoringLane(converter_for, MAPPING_DOCUMENTS, definition_converter)
         return AuthoringCatalog((lane,), absent=absent).plan(shape)
 
+    def scalar_converter(self, lane: int, position: int) -> ScalarConverter:
+        """The converter ``lane`` admits the single scalar at ``position`` with."""
+        if not self._scalar >> position & 1:
+            raise ValueError(f"{self.shape.members[position].name!r} is no single scalar")
+        return cast("ScalarConverter", self._steps[lane * len(self.shape.members) + position])
+
     def authored_values(self, payload: Mapping[str, object]) -> tuple[object, ...]:
         """``payload``'s members in this plan's order, ``absent`` where it names
         none."""

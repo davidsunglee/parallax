@@ -605,6 +605,7 @@ def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:
     ("changes", "error", "match"),
     [
         ({"id": 2}, instructions.WriteInstructionError, "addresses the write and never changes it"),
+        ({"id": "1"}, instructions.InstructionRejectedError, "Account.id: .*type-mismatch"),
         ({"version": 9}, instructions.WriteInstructionError, "framework-owned"),
         ({"nope": 1}, instructions.WriteInstructionError, "undeclared member"),
         ({"passport": {}}, instructions.WriteInstructionError, "undeclared member"),

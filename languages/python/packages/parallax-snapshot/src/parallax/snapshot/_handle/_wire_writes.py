@@ -528,7 +528,7 @@ class WireKeyedWriteSource:
             valid_from=valid_from,
             until=until,
             members=lambda: instructions.addressed_members(
-                model, entity, _published_address(model, entity, node, object_key), stated
+                preparation, entity, _published_address(model, entity, node, object_key), stated
             ),
         )
 
