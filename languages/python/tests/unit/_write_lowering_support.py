@@ -77,6 +77,16 @@ read-dependency flush a later read causes, with every source still held, so it
 captures the rows its writes leave for their sources; the others are the
 concluding pre-commit flush, which captures nothing.
 
+The batch inserts open many new objects of one non-temporal,
+application-keyed Entity in one transaction, through one public insert verb
+each, so the pre-commit flush collapses them into one multi-entry Planned
+Insert and binds it as one column array per physical column. Their model is
+their own, an Entity under each storage layout carrying the Address Value
+Object and a nullable member every fourth row leaves null, so the structural
+model's preparation is unchanged. Their window is a keyed write's, from the
+first verb until ``transact`` returns, read per row, and their port counts the
+flush's work as a cross-object flush's port does.
+
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
 carried by this MODULE's underscore. Never imported by production code.
@@ -149,6 +159,10 @@ from tests.unit import _structural_geometry_support as geometry_support
 
 __all__ = [
     "ANCESTOR_KEY",
+    "BATCH_CASES",
+    "BATCH_ENTITY_CLASSES",
+    "BATCH_MODEL",
+    "BATCH_PREFIX",
     "CASES",
     "CATALOG",
     "CROSS_OBJECT_CASES",
@@ -160,6 +174,7 @@ __all__ = [
     "MODEL",
     "RESPONSE_CASES",
     "AcceptingPort",
+    "BatchCase",
     "Case",
     "CrossObjectCase",
     "Executed",
@@ -170,12 +185,15 @@ __all__ = [
     "OrderedAcceptingPort",
     "ResponseCase",
     "SpanAcceptingPort",
+    "batch_case_named",
+    "batch_database",
     "case_named",
     "cross_object_case_named",
     "database",
     "flush_database",
     "flush_objects",
     "flush_port",
+    "insert_batch",
     "insert_response",
     "lowered",
     "marked_flushes",
@@ -300,6 +318,32 @@ FAMILY_ENTITY_CLASSES: Final[tuple[type[Entity], ...]] = (Pet, Dog, Cat)
 whole of the model its preparation is priced over."""
 
 FAMILY_MODEL: Final = DomainModel(*FAMILY_ENTITY_CLASSES)
+
+
+class BatchColumns(Entity, table="write_lowering_batch_columns", namespace=_NAMESPACE):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str]
+    note: Attr[str | None]
+    address: Attr[Address]
+
+
+class BatchDocument(
+    Entity,
+    table="write_lowering_batch_document",
+    namespace=_NAMESPACE,
+    layout=Document(column="payload"),
+):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str]
+    note: Attr[str | None]
+    address: Attr[Address]
+
+
+BATCH_ENTITY_CLASSES: Final[tuple[type[Entity], ...]] = (BatchColumns, BatchDocument)
+"""The Entities the batch inserts open rows of, one per storage layout, and the
+whole of the model they are connected over."""
+
+BATCH_MODEL: Final = DomainModel(*BATCH_ENTITY_CLASSES)
 
 _CATEGORICAL: Final[Mapping[tuple[str, Layout], type[Entity]]] = {
     ("txtime", "columns"): TxColumns,
@@ -1520,6 +1564,129 @@ def flush_objects(handle: ScopedDatabase, case: CrossObjectCase) -> None:
             tx.find(nothing.as_of(valid_time=case.reads[0])).results()
 
     handle.transact(body)
+
+
+BATCH_PREFIX: Final = "batch.insert."
+_NULL_EVERY: Final = 4
+
+
+@dataclass(frozen=True, slots=True)
+class BatchCase:
+    """One transaction opening ``rows`` new objects of one non-temporal,
+    application-keyed Entity, one public insert verb each.
+
+    ``instances`` holds the Typed values a Typed case inserts and ``payloads``
+    the Create Payloads a Wire case states, in Wire spellings; each is composed
+    outside every window as a caller's arrives, and the other is empty.
+    ``work`` is what the pre-commit flush presents to its port.
+    """
+
+    name: str
+    entity: type[Entity]
+    ingress: Ingress
+    layout: Layout
+    instances: tuple[Entity, ...]
+    payloads: tuple[Mapping[str, object], ...]
+    work: FlushWork
+
+    @property
+    def rows(self) -> int:
+        return len(self.instances) + len(self.payloads)
+
+
+def _batch_note(key: int) -> str | None:
+    return None if key % _NULL_EVERY == 0 else f"note-{key}"
+
+
+def _batch_payload(key: int) -> dict[str, object]:
+    return {
+        "id": key,
+        "title": f"title-{key}",
+        "note": _batch_note(key),
+        "address": {"city": f"city-{key}", "geo": {"country": f"country-{key}"}},
+    }
+
+
+def _batch_instance(cls: type[Entity], key: int) -> Entity:
+    return cls(
+        id=key,
+        title=f"title-{key}",
+        note=_batch_note(key),
+        address=Address(city=f"city-{key}", geo=Geo(country=f"country-{key}")),
+    )
+
+
+def _batch_case(rows: int, layout: Layout, ingress: Ingress) -> BatchCase:
+    """``rows`` inserts keyed from one, which the flush collapses into one
+    statement of that many rows, presented alone."""
+    cls = BatchColumns if layout == "columns" else BatchDocument
+    keys = range(1, rows + 1)
+    return BatchCase(
+        f"{BATCH_PREFIX}{rows}.{layout}.{ingress}",
+        cls,
+        ingress,
+        layout,
+        tuple(_batch_instance(cls, key) for key in keys) if ingress == "typed" else (),
+        tuple(_batch_payload(key) for key in keys) if ingress == "wire" else (),
+        FlushWork(1, 1, 0, rows),
+    )
+
+
+BATCH_CASES: Final[tuple[BatchCase, ...]] = (
+    _batch_case(2, "columns", "typed"),
+    _batch_case(8, "columns", "typed"),
+    _batch_case(1000, "columns", "typed"),
+    _batch_case(1000, "document", "typed"),
+    _batch_case(1000, "columns", "wire"),
+)
+"""Small batches, where a column-array insert's fixed per-statement work weighs
+most against its rows, and large ones under each layout and ingress, where its
+per-row work dominates."""
+
+
+def batch_case_named(name: str) -> BatchCase:
+    for case in BATCH_CASES:
+        if case.name == name:
+            return case
+    raise KeyError(f"{name!r} is not a batch insert case: {[case.name for case in BATCH_CASES]}")
+
+
+@contextmanager
+def batch_database(port: OrderedAcceptingPort) -> Generator[ScopedDatabase]:
+    """A login-scoped handle over the batch model writing through ``port``,
+    composed outside every window, flushing at :data:`INSTANT`."""
+    with Database(port.open(), BATCH_MODEL, clock=FixedClock(INSTANT)) as root:
+        yield root.using_database_login()
+
+
+def insert_batch(
+    handle: ScopedDatabase,
+    case: BatchCase,
+    *,
+    opened: Checkpoint | None = None,
+    buffered: Checkpoint | None = None,
+    closed: Checkpoint | None = None,
+) -> None:
+    """Run ``case`` as one committed transaction, marked as :func:`write` marks
+    a keyed write: ``opened`` before the first verb, ``buffered`` once the last
+    has buffered, and ``closed`` once ``transact`` has returned."""
+
+    def body(tx: TxnContext) -> None:
+        if opened is not None:
+            opened()
+        if case.ingress == "wire":
+            name = case.entity.identity.name
+            for payload in case.payloads:
+                tx.wire.insert(name, payload)
+        else:
+            for instance in case.instances:
+                tx.insert(instance)
+        if buffered is not None:
+            buffered()
+
+    handle.transact(body)
+    if closed is not None:
+        closed()
 
 
 def unmarked() -> None:

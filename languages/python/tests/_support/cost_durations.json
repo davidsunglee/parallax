@@ -102,6 +102,7 @@
  "tests/unit/tools/test_snapshot_delivery_reading_gates.py::test_the_uuid_leaf_reads_under_columns_stay_within_their_memory_gates": 41.0,
  "tests/unit/tools/test_snapshot_delivery_reading_gates.py::test_the_uuid_leaf_reads_under_document_stay_within_their_memory_gates": 39.3,
  "tests/unit/tools/test_snapshot_delivery_reading_gates.py::test_the_width_and_sparse_reads_stay_within_their_memory_gates": 32.1,
+ "tests/unit/tools/test_write_lowering_reading.py::test_a_batch_insert_reads_its_batch_window_per_row": 0.8,
  "tests/unit/tools/test_write_lowering_reading.py::test_a_bitemporal_interior_update_reads_its_keyed_window": 2.6,
  "tests/unit/tools/test_write_lowering_reading.py::test_a_changed_ancestor_successor_reads_its_keyed_window": 3.3,
  "tests/unit/tools/test_write_lowering_reading.py::test_a_cross_object_flush_reads_its_planning_and_group_execution_regions": 26.8,

@@ -11,7 +11,9 @@ supported minors the leaf-type manifest scopes them to. The cross-object
 flushes are read on every supported minor: each one flush of keyed amendments
 over many distinct objects, read as its planning and Write Group execution
 regions, and where it reaches deferred spans as its range-binding advances
-too. Measurements are observations: only an incomplete matrix changes this
+too. The batch inserts are read on every supported minor too: each one
+transaction of many inserts its flush collapses into one statement, read per
+row. Measurements are observations: only an incomplete matrix changes this
 command's exit status.
 """
 
@@ -158,6 +160,7 @@ KEYED_WINDOW: Final = "keyed-write"
 RESPONSE_WINDOW: Final = "wire-insert-response"
 MODEL_WINDOW: Final = "model-preparation"
 FLUSH_WINDOW: Final = "cross-object-flush"
+BATCH_WINDOW: Final = "batch-insert"
 MODEL_CASE: Final = "model.prepared"
 MODEL_FAMILY_CASE: Final = "model.prepared.family"
 WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
@@ -190,6 +193,15 @@ WINDOW_DESCRIPTIONS: Final[Mapping[str, str]] = {
         "the reads before the flush, the authored inputs, admission, and the commit precede "
         "or follow every region; per-object bytes divide a flush's by its objects"
     ),
+    BATCH_WINDOW: (
+        "one transaction of many public Typed or Wire inserts of new objects of one "
+        "non-temporal, application-keyed Entity, from the first verb until transact returns: "
+        "preparation and buffering of every insert, the pre-commit flush's collapse of them "
+        "into one multi-entry Planned Insert, its SQL lowering with one column array per "
+        "physical column, production bind adaptation, the serialization of a connection the "
+        "adapter initialized, and the commit; no database execution; per-row readings divide "
+        "the transaction's by its inserts"
+    ),
 }
 
 sys.path.insert(0, str(WORKSPACE))
@@ -210,6 +222,7 @@ WINDOWS: Final[Mapping[str, str]] = {
     MODEL_CASE: MODEL_WINDOW,
     MODEL_FAMILY_CASE: MODEL_WINDOW,
     **{case.name: FLUSH_WINDOW for case in lowering_support.CROSS_OBJECT_CASES},
+    **{case.name: BATCH_WINDOW for case in lowering_support.BATCH_CASES},
 }
 """Every case the child can be asked for, and the window it reads."""
 
@@ -237,6 +250,15 @@ DEFERRED_CROSS_OBJECT_CASE_NAMES: Final = tuple(
     case.name for case in lowering_support.CROSS_OBJECT_CASES if case.deferred
 )
 """The cross-object flushes reaching deferred spans."""
+BATCH_ROWS: Final[Mapping[str, int]] = {
+    case.name: case.rows for case in lowering_support.BATCH_CASES
+}
+"""Each batch insert and the rows it inserts: the denominator of its per-row
+readings."""
+BATCH_CASE_NAMES: Final = tuple(BATCH_ROWS)
+CASE_UNITS: Final[Mapping[str, int]] = {**CROSS_OBJECT_OBJECTS, **BATCH_ROWS}
+"""The units a child must divide each multi-unit case's readings by; every
+other case's are its own."""
 RETIRED_WINDOWS: Final[Mapping[str, str]] = {
     "acquisition.rows-8.columns": "predicate-acquisition",
     "acquisition.rows-32.columns": "predicate-acquisition",
@@ -350,9 +372,9 @@ def _samples(value: object, name: str, expected: int, *, positive: bool) -> tupl
 
 def _units(value: object, case: str) -> int:
     units = _positive_integer(value, "units")
-    objects = CROSS_OBJECT_OBJECTS.get(case, units)
-    if units != objects:
-        raise ValueError(f"the child divided by {units} objects, expected {objects}")
+    expected = CASE_UNITS.get(case, units)
+    if units != expected:
+        raise ValueError(f"the child divided by {units} units, expected {expected}")
     return units
 
 
