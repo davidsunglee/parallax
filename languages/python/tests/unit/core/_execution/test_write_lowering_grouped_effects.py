@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import sys
 from collections.abc import Sequence
 from decimal import Decimal
 
@@ -514,6 +515,50 @@ def test_a_grouped_effect_refuses_an_effect_gated_otherwise_than_its_shape() -> 
     with pytest.raises(SqlGenError, match="addresses or gates its row otherwise than its shape"):
         builder.append(delete(ACCOUNT, "Account", 2, observed=1), None)
     assert arrays(builder.finish()) == [(INT64, [1])]
+
+
+def test_a_grouped_effect_keeps_no_payload_but_its_first_past_its_append() -> None:
+    preparer = LayoutPayloadPreparer(WALLET)
+    steps = _three()
+    shape = preparer.effect_shape(steps[0])
+    assert shape is not None
+    builder = GroupedEffectBuilder(preparer.effect_slots(steps[0].entity, shape), WALLET, POSTGRES)
+    payloads = [preparer.assignments(step.entity, step.assignments) for step in steps]
+    unheld = [sys.getrefcount(payload) for payload in payloads]
+    for index, step in enumerate(steps):
+        builder.append(step, payloads[index])
+    # The first effect's placement renders the statement; every later one's
+    # cells are already in its source columns.
+    held = [sys.getrefcount(payload) for payload in payloads]
+    assert [now - before for now, before in zip(held, unheld, strict=True)] == [1, 0, 0]
+    del payloads
+    assert arrays(builder.finish())[0] == (INT64, [1, 2, 3])
+
+
+def test_effect_slots_gather_a_whole_row_or_nothing() -> None:
+    preparer = LayoutPayloadPreparer(WALLET)
+    step = _three()[0]
+    shape = preparer.effect_shape(step)
+    assert shape is not None
+    slots = preparer.effect_slots(step.entity, shape)
+    payload = preparer.assignments(step.entity, step.assignments)
+    narrow: list[list[object]] = [[] for _ in slots.element_types[:-1]]
+    with pytest.raises(WritePlanningError, match="one cell per source column"):
+        slots.gather(narrow, step, payload)
+    assert narrow == [[] for _ in narrow]
+    columns: list[list[object]] = [[] for _ in slots.element_types]
+    slots.gather(columns, step, payload)
+    assert [len(column) for column in columns] == [1] * len(columns)
+
+
+def test_a_grouped_effect_holding_no_effect_has_no_statement() -> None:
+    preparer = LayoutPayloadPreparer(WALLET)
+    step = _three()[0]
+    shape = preparer.effect_shape(step)
+    assert shape is not None
+    builder = GroupedEffectBuilder(preparer.effect_slots(step.entity, shape), WALLET, POSTGRES)
+    with pytest.raises(SqlGenError, match="holds an effect"):
+        builder.finish()
 
 
 def test_effect_slots_answer_only_a_shape_of_their_own_entity() -> None:

@@ -33,6 +33,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core._execution import _planning as planning_composition
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
+from parallax.core._execution._unit_work import write_settlement
 from parallax.core._execution._unit_work.acquisition import (
     AcquireRows,
     CoverageReadRequest,
@@ -1112,7 +1113,9 @@ def test_each_settled_write_publishes_its_change_before_the_next_group_executes(
 
 
 def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
-    claims = [_account_claim(account_id, 1) for account_id in range(1, 131)]
+    limit = write_settlement._GROUP_WRITES  # pyright: ignore[reportPrivateUsage] - the group bound
+    accounts = 2 * limit + 2
+    claims = [_account_claim(account_id, 1) for account_id in range(1, accounts + 1)]
     spent: list[int] = []
 
     def body(uow: UnitOfWork) -> None:
@@ -1127,10 +1130,10 @@ def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
             observe=lambda _position, _steps: spent.append(sum(c.invalidated for c in claims)),
         ),
     )
-    assert spent == [0, 64, 128]
+    assert spent == [0, limit, 2 * limit]
     assert all(claim.invalidated for claim in claims)
 
-    failing = [_account_claim(account_id, 1) for account_id in range(1, 131)]
+    failing = [_account_claim(account_id, 1) for account_id in range(1, accounts + 1)]
     steps = ObservedSteps(_simulated(), failing=1, failure=RuntimeError("the second group failed"))
 
     def failed(uow: UnitOfWork) -> None:
@@ -1141,7 +1144,7 @@ def test_full_groups_publish_in_turn_and_a_failed_one_ends_the_flush() -> None:
 
     with pytest.raises(RollbackOnlyError):
         _run(failed, steps=steps)
-    assert [claim.invalidated for claim in failing] == [True] * 64 + [False] * 66
+    assert [claim.invalidated for claim in failing] == [True] * limit + [False] * (limit + 2)
     assert steps.executions == 2
 
 

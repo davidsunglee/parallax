@@ -391,12 +391,15 @@ class GroupedEffectBuilder:
     value taken from its source column rather than a bind: a key, a bounded
     axis end, a version advance, an assigned cell, and a version or
     Transaction-Time start gate alike. Only the table-per-hierarchy tag and
-    the open Transaction-Time end bind once. A refused effect is not held, so
-    :meth:`finish` still renders exactly the effects appended before it. A
-    dialect without array binds has no grouped effect.
+    the open Transaction-Time end bind once. Each effect's cells join the
+    source columns as it is appended, so no effect's payload is held past its
+    own append but the first's, whose placement renders the statement. A
+    refused effect gathers nothing, so :meth:`finish` still renders exactly the
+    effects appended before it. A dialect without array binds has no grouped
+    effect.
     """
 
-    __slots__ = ("_dialect", "_meta", "_payloads", "_slots", "_steps")
+    __slots__ = ("_columns", "_dialect", "_first", "_meta", "_slots")
 
     def __init__(self, slots: EffectSlots, meta: Metamodel, dialect: Dialect) -> None:
         if not dialect.binds_arrays:
@@ -407,12 +410,13 @@ class GroupedEffectBuilder:
         self._slots = slots
         self._meta = meta
         self._dialect = dialect
-        self._steps: list[_Effect] = []
-        self._payloads: list[AssignmentPayload | None] = []
+        self._columns: tuple[list[object], ...] = tuple([[] for _ in slots.element_types])
+        self._first: tuple[_Effect, AssignmentPayload | None] | None = None
 
     def append(self, step: PlannedStep, payload: StepPayload) -> None:
-        """Hold ``step`` with the payload prepared from its assignments,
-        refusing a step of another shape than the slots place."""
+        """Gather ``step``'s cells, taking its assigned ones from the payload
+        prepared from its assignments, refusing a step of another shape than the
+        slots place."""
         slots = self._slots
         if (
             isinstance(step, PlannedInsert)
@@ -448,21 +452,23 @@ class GroupedEffectBuilder:
                 )
         else:
             _require_no_payload(step, payload)
-        self._steps.append(step)
-        self._payloads.append(assigned)
+        slots.gather(self._columns, step, assigned)
+        if self._first is None:
+            self._first = (step, assigned)
 
     def finish(self) -> LoweredStatement:
         slots, meta, dialect = self._slots, self._meta, self._dialect
-        steps, payloads = self._steps, self._payloads
-        first = steps[0]
+        if self._first is None:
+            raise SqlGenError(f"{slots.entity.canonical}: a grouped effect holds an effect")
+        first, payload = self._first
         entity = _entity(meta, first.entity)
         view = _layout(meta, entity)
         ctx = _ctx(meta, dialect)
-        terms = _sourced_terms(first, payloads[0], slots, view, entity, dialect)
+        terms = _sourced_terms(first, payload, slots, view, entity, dialect)
         for _, binds in terms:
             ctx.bind_structural_all(binds)
         element_types = slots.element_types
-        columns = slots.column_cells(steps, payloads)
+        columns = self._columns
         for source in slots.assignment_sources:
             if isinstance(source, tuple):
                 for column in source:
