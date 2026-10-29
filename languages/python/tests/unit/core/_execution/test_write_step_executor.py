@@ -26,7 +26,9 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_typed_write,
 )
+from parallax.core.base import INT64
 from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import ArrayBind
 from parallax.core.entity._model import model_of
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
@@ -36,8 +38,10 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
 from parallax.core.unit_work import (
+    CardinalityCorruptionError,
     KeyedWriteInstruction,
     MissingTargetError,
+    WriteEffectError,
     WritePlanningRequest,
     admitted_write,
 )
@@ -126,6 +130,36 @@ def test_a_shortfall_is_enforced_before_the_next_step_is_presented() -> None:
             (_delete(1), _delete(2)), allocates=False, flush=flush
         )
     assert len(port.calls) == 1
+
+
+_KEYS: Final = KeyTarget((_ID,), ((1,), (2,), (3,)))
+
+
+@pytest.mark.parametrize(
+    ("affected", "raised"),
+    [(2, MissingTargetError), (4, CardinalityCorruptionError)],
+    ids=["shortfall", "excess"],
+)
+def test_an_array_bound_multi_key_step_is_enforced_whole_against_its_aggregate_count(
+    affected: int, raised: type[WriteEffectError]
+) -> None:
+    step = PlannedDelete(
+        entity=_ACCOUNT.identity,
+        target=_KEYS,
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(3, MISSING_TARGET),
+    )
+    port = ScriptedAdapter(Write(affected=affected))
+    with pytest.raises(raised) as caught, open_flush() as flush:
+        step_executor(port, _ACCOUNT_META).execute((step,), allocates=False, flush=flush)
+    assert port.calls == [
+        WriteCall(
+            "delete from account where id = any(cast(%s as bigint[]))",
+            (ArrayBind(INT64, [1, 2, 3]),),
+        )
+    ]
+    assert caught.value.target is _KEYS
+    assert (caught.value.expected, caught.value.actual) == (3, affected)
 
 
 class Span(Bitemporal, table="span", namespace="parallax.execution.allocated"):

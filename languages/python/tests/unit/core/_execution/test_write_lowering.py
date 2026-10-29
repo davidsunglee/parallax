@@ -177,6 +177,7 @@ PK_MAX = corpus_model("pk-max")
 PK_SEQUENCE = corpus_model("pk-sequence")
 WALLET = corpus_model("wallet")
 BALANCE = corpus_model("balance")
+_EXPANDING = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
 
 
 def _lower(
@@ -934,15 +935,28 @@ def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row(
     )
 
 
-def test_batched_update_collapses_to_one_in_list_statement() -> None:
+def test_batched_update_collapses_to_one_statement_binding_its_keys_as_one_array() -> None:
     # m-batch-write-001's own update entry: a UNIFORM-value multi-row UPDATE
-    # collapses to one `set ... where id in (...)` statement.
+    # collapses to one statement whose keys bind as one array, so its text and
+    # bind count follow the key Columns rather than the keys.
     update = KeyedWriteInstruction(
         "amend",
         "Wallet",
         ({"id": 10, "balance": Decimal("500.00")}, {"id": 11, "balance": Decimal("500.00")}),
     )
     statement = _lower(update, WALLET)[0]
+    assert statement.sql == "update wallet set balance = ? where id = any(cast(? as bigint[]))"
+    assert statement.binds == (500.00, ArrayBind(INT64, [10, 11]))
+    assert statement.wire_binds() == ("500.00", [10, 11])
+
+
+def test_a_dialect_binding_no_arrays_lists_a_collapsed_updates_keys() -> None:
+    update = KeyedWriteInstruction(
+        "amend",
+        "Wallet",
+        ({"id": 10, "balance": Decimal("500.00")}, {"id": 11, "balance": Decimal("500.00")}),
+    )
+    statement = _lower(update, WALLET, dialect=_EXPANDING)[0]
     assert statement.sql == "update wallet set balance = ? where id in (?, ?)"
     assert statement.binds == (500.00, 10, 11)
 
@@ -967,26 +981,33 @@ def test_a_preformed_multi_row_update_still_faces_the_collapse_decision() -> Non
     assert second.binds == (222.00, 11)
 
 
-def test_multi_row_delete_collapses_to_one_in_list_statement() -> None:
+def test_multi_row_delete_collapses_to_one_statement_binding_its_keys_as_one_array() -> None:
     # m-batch-write-003: a non-versioned target's multi-row DELETE collapses
-    # to one `delete ... where id in (...)` statement.
+    # to one statement over one array of its keys.
     delete = KeyedWriteInstruction("delete", "Wallet", ({"id": 1}, {"id": 2}, {"id": 3}))
     statement = _lower(delete, WALLET)[0]
-    assert statement.sql == "delete from wallet where id in (?, ?, ?)"
-    assert statement.binds == (1, 2, 3)
+    assert statement.sql == "delete from wallet where id = any(cast(? as bigint[]))"
+    assert statement.binds == (ArrayBind(INT64, [1, 2, 3]),)
+
+    expanded = _lower(delete, WALLET, dialect=_EXPANDING)[0]
+    assert expanded.sql == "delete from wallet where id in (?, ?, ?)"
+    assert expanded.binds == (1, 2, 3)
 
 
 def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard() -> None:
-    # A collapsed IN-list statement reuses the SAME family tag guard the
-    # single-row identity predicate carries (`_tag_guard`). CardPayment and
-    # CashPayment share the `payment` table, so an UNGUARDED
-    # `delete from payment where id in (...)` would remove a sibling subtype's
-    # rows whose ids happen to be in the list — the tag is what keeps a batch
-    # collapse inside one concrete subtype.
+    # A collapsed statement reuses the SAME family tag guard the single-row
+    # identity predicate carries (`_tag_guard`), after the key's membership on
+    # every dialect. CardPayment and CashPayment share the `payment` table, so an
+    # UNGUARDED membership delete would remove a sibling subtype's rows whose ids
+    # happen to be listed — the tag is what keeps a batch collapse inside one
+    # concrete subtype.
     delete = KeyedWriteInstruction("delete", "CardPayment", ({"id": 1}, {"id": 2}))
     statement = _lower(delete, PAYMENT)[0]
-    assert statement.sql == "delete from payment where id in (?, ?) and kind = ?"
-    assert statement.binds == (1, 2, "card")
+    assert statement.sql == "delete from payment where id = any(cast(? as bigint[])) and kind = ?"
+    assert statement.binds == (ArrayBind(INT64, [1, 2]), "card")
+    expanded = _lower(delete, PAYMENT, dialect=_EXPANDING)[0]
+    assert expanded.sql == "delete from payment where id in (?, ?) and kind = ?"
+    assert expanded.binds == (1, 2, "card")
 
     update = KeyedWriteInstruction(
         "amend",
@@ -994,8 +1015,13 @@ def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard
         ({"id": 1, "amount": Decimal("5.00")}, {"id": 2, "amount": Decimal("5.00")}),
     )
     updated = _lower(update, PAYMENT)[0]
-    assert updated.sql == "update payment set amount = ? where id in (?, ?) and kind = ?"
-    assert updated.binds == (5.00, 1, 2, "card")
+    assert updated.sql == (
+        "update payment set amount = ? where id = any(cast(? as bigint[])) and kind = ?"
+    )
+    assert updated.binds == (5.00, ArrayBind(INT64, [1, 2]), "card")
+    expanded = _lower(update, PAYMENT, dialect=_EXPANDING)[0]
+    assert expanded.sql == "update payment set amount = ? where id in (?, ?) and kind = ?"
+    assert expanded.binds == (5.00, 1, 2, "card")
 
 
 # A COMPOSITE-key entity: the corpus declares none, but a composite primary key
@@ -1026,12 +1052,8 @@ def test_a_composite_primary_key_does_not_form() -> None:
         formed(_LEDGER)
 
 
-def test_a_multi_column_key_target_renders_a_row_constructor() -> None:
-    # The form that branch keeps: `(<pk1>, <pk2>) in ((?, ?), …)`, one tuple per
-    # addressed row in planner order, key columns in the target's own order. No
-    # accepted Metamodel can reach it through finalization (the rule above), so
-    # the step is built by hand with a two-Attribute key.
-    step = PlannedDelete(
+def _two_column_key_delete() -> PlannedDelete:
+    return PlannedDelete(
         entity=_identity(WALLET, "Wallet"),
         target=KeyTarget(
             key_attributes=(
@@ -1043,9 +1065,48 @@ def test_a_multi_column_key_target_renders_a_row_constructor() -> None:
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=2, on_shortfall=MISSING_TARGET),
     )
-    statement = lowered(step, LayoutPayloadPreparer(WALLET), WALLET, POSTGRES)
+
+
+def test_a_multi_column_key_target_binds_one_array_per_key_column() -> None:
+    # The form that branch keeps: a membership of the row of key Columns, in the
+    # target's own key order, read from one array per key Column whose elements
+    # follow planner order. No accepted Metamodel can reach it through
+    # finalization (the rule above), so the step is built by hand with a
+    # two-Attribute key.
+    statement = lowered(_two_column_key_delete(), LayoutPayloadPreparer(WALLET), WALLET, POSTGRES)
+    assert statement.sql == (
+        "delete from wallet where (id, owner) in "
+        "(select * from unnest(cast(? as bigint[]), cast(? as text[])))"
+    )
+    assert statement.binds == (ArrayBind(INT64, [1, 2]), ArrayBind(STRING, ["Ada", "Bo"]))
+    assert statement.wire_binds() == ([1, 2], ["Ada", "Bo"])
+
+
+def test_a_dialect_binding_no_arrays_renders_a_multi_column_key_as_a_row_constructor() -> None:
+    statement = lowered(_two_column_key_delete(), LayoutPayloadPreparer(WALLET), WALLET, _EXPANDING)
     assert statement.sql == "delete from wallet where (id, owner) in ((?, ?), (?, ?))"
     assert statement.binds == (1, "Ada", 2, "Bo")
+
+
+def test_a_collapsed_targets_text_and_bind_count_follow_its_key_columns_alone() -> None:
+    statements = [
+        _lower(
+            KeyedWriteInstruction(
+                "amend",
+                "Wallet",
+                tuple({"id": key, "balance": Decimal("1.00")} for key in range(1, count + 1)),
+            ),
+            WALLET,
+        )[0]
+        for count in (2, 3, 70_000)
+    ]
+    assert len({statement.sql for statement in statements}) == 1
+    assert [len(statement.binds) for statement in statements] == [2, 2, 2]
+    assert [len(cast("ArrayBind", statement.binds[1]).values) for statement in statements] == [
+        2,
+        3,
+        70_000,
+    ]
 
 
 def test_readless_predicate_delete_lowers_to_one_statement() -> None:

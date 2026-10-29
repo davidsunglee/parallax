@@ -15,6 +15,7 @@ slot selections match (`m-sql` "Physical DML ordering").
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Literal
 
 import pytest
 
@@ -22,6 +23,8 @@ from parallax.conformance import models
 from parallax.core import batch_write
 from parallax.core._execution._keyed_sql import collapse_group_key
 from parallax.core._execution._planning import build_write_planner
+from parallax.core.base import INT64
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -38,6 +41,16 @@ from parallax.core.unit_work import (
     WriteRejectedError,
 )
 from parallax.core.write_payload import LayoutPayloadPreparer
+from parallax.core.write_plan.payload import AssignmentPayload, WritePayloadPreparer
+from parallax.core.write_plan.steps import (
+    MISSING_TARGET,
+    ExactCount,
+    KeyTarget,
+    PlannedAssignments,
+    PlannedDelete,
+    PlannedStep,
+    PlannedUpdate,
+)
 from parallax.descriptor import _records
 from tests._support.clock_probes import inert_instant
 from tests._support.lowering_probes import lowered_steps
@@ -102,6 +115,33 @@ def _flush_and_lower(
     buffer: list[AdmittedWrite | KeyedWriteInstruction], model: Metamodel
 ) -> list[LoweredStatement]:
     """Plan ``buffer`` with the production wiring, then lower the plan."""
+    return [
+        statement
+        for _step, statement in _flush_and_lower_steps(buffer, model, LayoutPayloadPreparer(model))
+    ]
+
+
+class _CountingPreparer(LayoutPayloadPreparer):
+    """The layout preparer, counting the Assignment Payloads it prepares."""
+
+    def __init__(self, model: Metamodel) -> None:
+        super().__init__(model)
+        self.assignments_prepared = 0
+
+    def assignments(
+        self, entity: EntityIdentity, assignments: PlannedAssignments
+    ) -> AssignmentPayload:
+        self.assignments_prepared += 1
+        return super().assignments(entity, assignments)
+
+
+def _flush_and_lower_steps(
+    buffer: list[AdmittedWrite | KeyedWriteInstruction],
+    model: Metamodel,
+    payloads: WritePayloadPreparer,
+) -> list[tuple[PlannedStep, LoweredStatement]]:
+    """Plan ``buffer`` with the production wiring, then lower each planned step
+    through ``payloads``."""
     instant = inert_instant()
     plan = build_write_planner(model).finalize(
         WritePlanningRequest(
@@ -111,12 +151,7 @@ def _flush_and_lower(
             composed_writes=observed_buffer(buffer, model, None),
         )
     )
-    return [
-        statement
-        for _step, statement in lowered_steps(
-            plan_steps(plan), LayoutPayloadPreparer(model), model, POSTGRES
-        )
-    ]
+    return list(lowered_steps(plan_steps(plan), payloads, model, POSTGRES))
 
 
 def test_insert_collapses_for_an_unversioned_non_pk_gen_entity() -> None:
@@ -318,7 +353,7 @@ def test_grouping_an_unmappable_row_answers_one_undifferentiated_group() -> None
 def test_delete_grouping_ignores_members_the_statement_never_uses() -> None:
     # A DELETE's emitted statement selects the key columns alone, so two rows
     # carrying different non-key payload members are the SAME physical shape and
-    # must reach one `IN`-list statement.
+    # must reach one key-membership statement.
     model, _ = WALLET
     buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
         KeyedWriteInstruction(
@@ -327,8 +362,10 @@ def test_delete_grouping_ignores_members_the_statement_never_uses() -> None:
         KeyedWriteInstruction("delete", "Wallet", ({"id": 11},)),
     ]
     statements = _flush_and_lower(buffer, model)
-    assert [statement.sql for statement in statements] == ["delete from wallet where id in (?, ?)"]
-    assert [statement.binds for statement in statements] == [(10, 11)]
+    assert [statement.sql for statement in statements] == [
+        "delete from wallet where id = any(cast(? as bigint[]))"
+    ]
+    assert [statement.binds for statement in statements] == [(ArrayBind(INT64, [10, 11]),)]
 
 
 def test_update_grouping_still_splits_on_a_differing_set_clause() -> None:
@@ -344,13 +381,41 @@ def test_update_grouping_still_splits_on_a_differing_set_clause() -> None:
     ]
     statements = _flush_and_lower(buffer, model)
     assert [statement.sql for statement in statements] == [
-        "update wallet set balance = ? where id in (?, ?)",
-        "update wallet set owner = ? where id in (?, ?)",
+        "update wallet set balance = ? where id = any(cast(? as bigint[]))",
+        "update wallet set owner = ? where id = any(cast(? as bigint[]))",
     ]
     assert [statement.binds for statement in statements] == [
-        (Decimal("5.00"), 10, 11),
-        ("Omar", 12, 13),
+        (Decimal("5.00"), ArrayBind(INT64, [10, 11])),
+        ("Omar", ArrayBind(INT64, [12, 13])),
     ]
+
+
+@pytest.mark.parametrize("mutation", ["amend", "delete"])
+def test_a_collapse_wider_than_the_parameter_limit_stays_one_step_and_one_statement(
+    mutation: Literal["amend", "delete"],
+) -> None:
+    # Array-bound keys change only how the target binds: the uniform run still
+    # plans as one step over every key, unsplit and uncapped, with one aggregate
+    # expectation and one Assignment Payload shared by every addressed row.
+    model, _ = WALLET
+    keys = range(1, 70_002)
+    buffer: list[AdmittedWrite | KeyedWriteInstruction] = [
+        KeyedWriteInstruction(
+            mutation,
+            "Wallet",
+            ({"id": key} if mutation == "delete" else {"id": key, "balance": Decimal("5.00")},),
+        )
+        for key in keys
+    ]
+    payloads = _CountingPreparer(model)
+    ((step, statement),) = _flush_and_lower_steps(buffer, model, payloads)
+    assert isinstance(step, PlannedUpdate | PlannedDelete)
+    assert isinstance(step.target, KeyTarget)
+    assert step.target.key_values == tuple((key,) for key in keys)
+    assert step.affected_rows == ExactCount(expected=len(keys), on_shortfall=MISSING_TARGET)
+    assert payloads.assignments_prepared == (1 if mutation == "amend" else 0)
+    assert statement.binds[-1] == ArrayBind(INT64, list(keys))
+    assert len(statement.binds) == (2 if mutation == "amend" else 1)
 
 
 def test_row_member_order_alone_never_splits_a_batch_group() -> None:

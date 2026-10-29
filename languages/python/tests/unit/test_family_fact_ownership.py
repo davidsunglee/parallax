@@ -238,7 +238,7 @@ def test_planning_and_lowering_prepared_writes_take_the_version_from_its_owner(
     settled = _settled_versions([step for step, _statement in lowered])
     assert {entity.name for entity, _version in settled} == {"Account", "Fridge"}
     assert all(version is _owner_version(entity) for entity, version in settled)
-    assert "update wallet set balance = ? where id in (?, ?)" in [
+    assert "update wallet set balance = ? where id = any(cast(? as bigint[]))" in [
         statement.sql for _step, statement in lowered
     ]
 
