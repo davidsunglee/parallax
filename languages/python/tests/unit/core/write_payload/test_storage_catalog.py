@@ -209,6 +209,8 @@ def test_one_presence_shares_one_slots_and_the_cache_retains_a_bounded_number() 
 
 def test_a_member_without_a_column_is_refused_and_a_tableless_entity_has_no_storage() -> None:
     catalog = StorageCatalog(_META)
+    with pytest.raises(WritePlanningError, match="occupies no Column"):
+        catalog.entity(_PEG).row_slots(1 << 30)
     with pytest.raises(WritePlanningError, match="no effective table"):
         catalog.entity(EntityIdentity(_NS, "Nowhere"))
 
