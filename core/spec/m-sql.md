@@ -25,7 +25,7 @@ SQL compilation is private behind two closed entry points:
 compilePlannedRead(PlannedEntityQuery, Dialect) -> CompiledRead
 compilePlannedStep(PlannedStep, StepPayload, Dialect) -> LoweredStatement
 
-StepPayload = [RowPayload] | AssignmentPayload | none
+StepPayload = InsertPayload(RowSlots, [cells]) | AssignmentPayload | none
 ```
 
 Neither entry point accepts a public Object Query, Predicate, Write Instruction,
@@ -38,9 +38,9 @@ row decoding and deep-fetch key gathering. A `PlannedStep` carries the closed
 `m-write-plan` variant, exact member identities, managed values or generated-value
 expressions, target, concurrency decision, and affected-row policy. Its
 `StepPayload` is what the statement stores, prepared by `m-write-payload`
-(`m-write-plan` *Write payloads*): one Row Payload per Write Row in entry
-order, the Assignment Payload a revising step writes, and nothing for a step that
-stores no represented value.
+(`m-write-plan` *Write payloads*): each Write Row's cells in entry order under
+the one Row Slots their shared presence selects, the Assignment Payload a
+revising step writes, and nothing for a step that stores no represented value.
 
 The write compiler places, renders, and binds prepared values; it never
 assembles, encodes, or patches a payload itself. A missing payload, or one

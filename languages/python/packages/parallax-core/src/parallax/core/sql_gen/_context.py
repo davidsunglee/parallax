@@ -15,7 +15,6 @@ from parallax.core.base import (
     ManagedValue,
     NeutralType,
     detach_json_container,
-    matches_neutral_type,
 )
 from parallax.core.db_port import ArrayBind, JsonDocument
 from parallax.core.dialect import Dialect
@@ -744,31 +743,37 @@ class StatementBuilder[RowScope = object]:
         for value in values:
             self.bind_framework(value)
 
-    def bind_typed_rows(
+    def bind_managed_rows(
         self,
         rows: Sequence[Sequence[object]],
         pattern: Sequence[_TypedBindSlot | None],
     ) -> None:
-        """Append ``rows`` as one closed run of :meth:`bind_typed_row`."""
+        """Append ``rows`` as one closed run of :meth:`bind_managed_row`."""
         for row in rows:
-            self.bind_typed_row(row, pattern)
+            self.bind_managed_row(row, pattern)
         self._seal_typed_rows()
 
-    def bind_typed_row(
+    def bind_managed_row(
         self, row: Sequence[object], pattern: Sequence[_TypedBindSlot | None]
     ) -> None:
-        """Append ``row`` once every cell is valid for its slot in ``pattern``.
+        """Append ``row``, whose every value its write already admitted at the
+        slot ``pattern`` gives it, without judging any value again.
 
-        A refused row binds nothing, so every earlier bind and its metadata stand.
-        Consecutive rows form one run whose typed spans are recorded when it
-        seals — at the next other bind, fragment, or :meth:`finish`: rows of
-        one actual non-null type/form signature share a repeated span per run
-        of equal slots, and a row of another signature starts the next group.
+        A row of another width than ``pattern`` is refused and binds nothing,
+        so every earlier bind and its metadata stand. Consecutive rows form one
+        run whose typed spans are recorded when it seals — at the next other
+        bind, fragment, or :meth:`finish`: rows of one actual signature share a
+        repeated span per run of equal slots, and a row of another signature
+        starts the next group. A row's signature is its pattern but where a
+        value is null or the open upper bound, which binds outside every span.
         """
         if len(row) != len(pattern):
             raise SqlGenError("a repeated bind pattern has inconsistent row widths")
         signature = tuple(
-            [self._typed_row_slot(value, slot) for value, slot in zip(row, pattern, strict=True)]
+            [
+                None if value is None or value is INFINITY else slot
+                for value, slot in zip(row, pattern, strict=True)
+            ]
         )
         binds = self._binds
         if not self._row_count or signature != self._row_signature:
@@ -869,24 +874,6 @@ class StatementBuilder[RowScope = object]:
             self._seal_typed_rows()
         self._binds.append(value)
         self._classified += 1
-
-    def _typed_row_slot(self, value: object, slot: _TypedBindSlot | None) -> _TypedBindSlot | None:
-        if slot is None or value is None:
-            return None
-        neutral_type, form = slot
-        if value is INFINITY:
-            return None
-        valid = (
-            matches_neutral_type(value, neutral_type)
-            if form == "MANAGED"
-            else isinstance(value, str)
-        )
-        if not valid:
-            raise SqlGenError(
-                f"repeated bind carrier {type(value).__name__} does not match "
-                f"{form} slot {neutral_type!r}"
-            )
-        return slot
 
     def _bind_typed(self, value: object, neutral_type: NeutralType, form: _BindForm) -> None:
         index = len(self._binds)

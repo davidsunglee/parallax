@@ -416,15 +416,24 @@ mutation did not name — rides forward exactly as stored.
 ```text
 WritePayloadPreparer
   assignments(entity, PlannedAssignments) -> AssignmentPayload
+  row_slots(entity, presence)             -> RowSlots
   row(entity, WriteRow)                   -> RowPayload
   proven_unequal_non_interval(entity, WriteRow, WriteRow) -> Boolean
   equal_non_interval(RowPayload, RowPayload)              -> Boolean
   rebound(RowPayload, WriteRow)                           -> RowPayload
 
-RowPayload(entity, source: WriteRow, cells: [PayloadCell])
+RowSlots(entity, presence, contributors: [contributor])
+  cells(WriteRow)                         -> [value]
+RowPayload(slots: RowSlots, source: WriteRow, cells: [PayloadCell])
 AssignmentPayload(entity, assignments: PlannedAssignments, cells: [PayloadCell])
 PayloadCell(contributor, value)
 ```
+
+A **Row Slots** fixes the cells every row of one Entity stating exactly the
+members of one presence stores, and gathers them from such a row. Its cells
+depend on the Entity and that presence alone, so the entries of one insert
+share one, and a Row Payload is one row's cells under its Row Slots, retained
+where a comparison prepared them.
 
 A Planned Step states what a write means; what it **persists** is its payload.
 This module declares the payload vocabulary and the interface that prepares it,

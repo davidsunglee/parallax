@@ -17,6 +17,7 @@ the Write Planner it configures; `m-sql` renders and binds what it prepares.
 ```text
 WritePayloadPreparer(model)
   assignments(entity, PlannedAssignments) -> AssignmentPayload
+  row_slots(entity, presence)             -> RowSlots
   row(entity, WriteRow)                   -> RowPayload
   proven_unequal_non_interval(entity, WriteRow, WriteRow) -> Boolean
   equal_non_interval(RowPayload, RowPayload)              -> Boolean
@@ -32,8 +33,12 @@ of a packed run in advance, and repeating a demand without
 retained backing may prepare again rather than consult a cache.
 
 A **Row Payload** holds one Write Row's persisted cells in Table Layout slot
-order, and an **Assignment Payload** the values one revising step writes, in the
-same order. Each cell names its contributor by model identity — a member, the
+order, under the **Row Slots** its presence selects, and an **Assignment
+Payload** the values one revising step writes, in the same order. A Row Slots
+is placed once per Entity and presence and gathers any such row's cells
+without judging a value again: every ordinary cell a Write Row holds was
+already admitted, so a document it stores is encoded from its managed values
+directly. Each cell names its contributor by model identity — a member, the
 Table's shared Structured Column, or the table-per-hierarchy discriminator —
 never by physical column. Each payload is bound to the inputs it was prepared
 from (`m-write-plan` *Write payloads*).

@@ -35,7 +35,6 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleProvider,
 )
 from parallax.core.metamodel import AttributeIdentity, entity_by_name
-from parallax.core.sql_gen import SqlGenError
 from parallax.core.unit_work import (
     KeyedWriteInstruction,
     MissingTargetError,
@@ -231,15 +230,6 @@ def test_the_step_after_a_capped_run_is_prepared_only_once_its_statement_ran(
     assert executed.preparer.prepared == [(0, 0), (1, 0), (2, 1)]
 
 
-def test_a_later_openings_refusal_inserts_the_prefix_then_propagates() -> None:
-    prefix = (opening(1), opening(2))
-    port = ScriptedAdapter(Write(affected=2))
-    executed = _execute(port, (*prefix, opening(3, "no decimal"), opening(4)))
-    assert isinstance(executed.raised, SqlGenError)
-    assert port.calls == physical(*prefix)
-    assert executed.preparer.positions == [0, 1, 2]
-
-
 def test_a_later_opening_failing_to_be_prepared_inserts_the_prefix_then_propagates() -> None:
     prefix = (opening(1), opening(2))
     failure = RuntimeError("the third opening cannot be prepared")
@@ -255,7 +245,12 @@ def test_the_prefixs_own_failure_wins_over_the_refusal_it_overtook() -> None:
         category="uniqueViolation", native_code="23505", message="duplicate key"
     )
     port = ScriptedAdapter(Write(raises=violation))
-    executed = _execute(port, (opening(1), opening(2), opening(3, "no decimal")))
+    executed = _execute(
+        port,
+        (opening(1), opening(2), opening(3)),
+        failing=2,
+        failure=RuntimeError("the third opening cannot be prepared"),
+    )
     assert executed.raised is violation
     assert violation.__context__ is None
     assert violation.__cause__ is None
@@ -263,8 +258,9 @@ def test_the_prefixs_own_failure_wins_over_the_refusal_it_overtook() -> None:
 
 def test_a_failure_preparing_the_first_opening_inserts_nothing() -> None:
     port = ScriptedAdapter()
-    executed = _execute(port, (opening(1, "no decimal"), opening(2)))
-    assert isinstance(executed.raised, SqlGenError)
+    failure = RuntimeError("the first opening cannot be prepared")
+    executed = _execute(port, (opening(1), opening(2)), failing=0, failure=failure)
+    assert executed.raised is failure
     assert port.calls == []
     assert executed.preparer.prepared == [(0, 0)]
 
@@ -337,9 +333,14 @@ def test_a_grouped_run_keeps_no_builder_alive_once_it_ran_or_its_failure_is_rele
     assert _execute(port, (opening(1), opening(2), opening(3))).raised is None
     assert _builders() <= before
     port = ScriptedAdapter(Write(affected=1))
-    executed = _execute(port, (opening(1), opening(2, "no decimal")))
-    assert isinstance(executed.raised, SqlGenError)
-    executed.raised = None
+    executed = _execute(
+        port,
+        (opening(1), opening(2)),
+        failing=1,
+        failure=RuntimeError("the second opening cannot be prepared"),
+    )
+    assert isinstance(executed.raised, RuntimeError)
+    executed.raised = executed.preparer.failure = None
     assert _builders() <= before
 
 

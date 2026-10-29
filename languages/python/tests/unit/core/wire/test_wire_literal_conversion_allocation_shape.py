@@ -74,7 +74,7 @@ def _heterogeneous_rows(row_count: int) -> Callable[[], LoweredStatement]:
     def build() -> LoweredStatement:
         builder = _builder()
         rows = (("managed", "comparison"),) * row_count
-        builder.bind_typed_rows(
+        builder.bind_managed_rows(
             rows,
             ((STRING, "MANAGED"), (STRING, "COMPARISON_TEXT")),
         )

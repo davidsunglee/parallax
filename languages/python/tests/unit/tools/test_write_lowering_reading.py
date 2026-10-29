@@ -20,7 +20,7 @@ from parallax.core.document_codec import (
     _document,
 )
 from parallax.core.metamodel import Multiplicity
-from parallax.core.write_payload import _preparer as payload_preparer
+from parallax.core.write_payload import _storage as payload_storage
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import (
     OWN_INTERPRETER_VARIABLE,
@@ -49,7 +49,7 @@ def test_observer_counts_nested_calls() -> None:
 
 def test_the_observed_functions_are_the_managed_encoders_payload_preparation_calls() -> None:
     assert tuple(OBSERVED_FUNCTIONS) == write_lowering_overhead.CALL_NAMES
-    lowering = vars(payload_preparer)
+    lowering = vars(payload_storage)
     assert (
         OBSERVED_FUNCTIONS["encodeManagedDocument"]
         is _document.encode_managed_document
@@ -81,12 +81,11 @@ def test_managed_encoder_observations_count_returns_not_rows() -> None:
             OccurrenceDefinition("many", Multiplicity.MANY, False, element),
         )
     )
+    absent = object()
     observer = Observer(OBSERVED_FUNCTIONS)
     with observer:
-        _document.encode_managed_document(
-            shape, {"scalar": 1, "one": {"leaf": 2}, "many": [{"leaf": 3}, {"leaf": 4}, {}]}
-        )
-        _document.encode_managed_document(shape, {"scalar": 5})
+        _document.encode_managed_document(shape, (1, (2,), ((3,), (4,), (absent,))), absent)
+        _document.encode_managed_document(shape, (5, absent, absent), absent)
     calls = observer.observation().calls
     assert calls["encodeManagedDocument"] == 6
     assert calls["encodeManagedMany"] == 1

@@ -6,12 +6,14 @@ from typing import cast
 from parallax.core.base import (
     Bytes,
     Date,
+    Json,
     ManagedValue,
     NeutralType,
     String,
     Time,
     Timestamp,
     Uuid,
+    retain_document_value,
 )
 from parallax.core.wire import (
     WireDecodingError,
@@ -26,6 +28,7 @@ __all__ = [
     "LeafEncodingError",
     "decode_leaf",
     "encode_leaf",
+    "encode_managed_leaf",
     "encode_managed_scalar_many",
     "encode_scalar_many",
     "is_text_compared",
@@ -100,6 +103,17 @@ def encode_scalar_many(element_type: NeutralType, values: Iterable[object]) -> t
         except WireEncodingError as exc:
             raise LeafEncodingError(f"element {index}: {exc}") from exc
     return tuple(encoded)
+
+
+def encode_managed_leaf(neutral_type: NeutralType, value: object) -> object:
+    """:func:`encode_leaf`'s spelling of a value already admitted under exactly
+    ``neutral_type``, retained recursively immutable.
+
+    Nothing here checks membership, so a value outside that space has no
+    defined result rather than a refusal.
+    """
+    encoded = encode_managed_wire(neutral_type, cast("ManagedValue", value))
+    return retain_document_value(encoded) if isinstance(neutral_type, Json) else encoded
 
 
 def encode_managed_scalar_many(

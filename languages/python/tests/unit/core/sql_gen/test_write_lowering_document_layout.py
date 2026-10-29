@@ -17,7 +17,6 @@ suites' claims are about one declaration seen from both sides.
 from __future__ import annotations
 
 import copy
-import dataclasses
 import datetime as dt
 from collections.abc import Mapping
 from typing import Final, cast
@@ -279,7 +278,7 @@ def test_same_membered_rows_collapse_into_one_multi_row_insert() -> None:
 
 def test_a_refused_entry_leaves_every_appended_document_bound_as_it_was() -> None:
     # Each entry's complete document binds whole and uncopied, and an entry
-    # refused for its key cell binds neither that cell nor its document.
+    # refused for its width binds neither its key cell nor its document.
     payloads = LayoutPayloadPreparer(DOCUMENT)
     entries = tuple(
         WriteRow(
@@ -295,11 +294,11 @@ def test_a_refused_entry_leaves_every_appended_document_bound_as_it_was() -> Non
         for key, name in ((1, "Ada"), (2, "Bo"), (3, "Cy"))
     )
     first, second, third = (payloads.row(PERSON, entry) for entry in entries)
-    builder = InsertStatementBuilder(PERSON, entries[0], first, DOCUMENT, POSTGRES)
-    builder.append(entries[1], second)
+    builder = InsertStatementBuilder(first.slots, first.values, DOCUMENT, POSTGRES)
+    builder.append(second.values)
 
-    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
-        builder.append(entries[2], dataclasses.replace(third, values=("3", *third.values[1:])))
+    with pytest.raises(SqlGenError, match="inconsistent row widths"):
+        builder.append(third.values[:1])
 
     statement = builder.finish()
     assert statement == lowered(

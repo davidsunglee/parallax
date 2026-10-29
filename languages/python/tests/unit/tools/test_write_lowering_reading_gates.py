@@ -38,7 +38,6 @@ import pytest
 
 import write_lowering_reading
 from parallax.conformance.budget import MemoryGates
-from parallax.core._execution import _write_lowering
 from parallax.core._execution._unit_work import instructions
 from parallax.core._execution._write_lowering import LoweringCursor
 from parallax.core.base import detach_json_container
@@ -302,9 +301,9 @@ def test_a_duplicate_lowering_traversal_stays_within_every_gate_and_doubles_its_
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(LoweringCursor, "lowered", _lowering_twice(LoweringCursor.lowered))
         patched.setattr(
-            _write_lowering,
-            "_row_payload",
-            _lowering_twice(_write_lowering._row_payload),  # pyright: ignore[reportPrivateUsage] - an opening row's own lowering
+            LoweringCursor,
+            "_captured_cells",
+            _lowering_twice(LoweringCursor._captured_cells),  # pyright: ignore[reportPrivateUsage] - an opening row's own lowering
         )
         seeded = _Reading(TRAVERSED_CASE)
     assert not _outside(TRAVERSED_CASE, RETAINED, seeded)

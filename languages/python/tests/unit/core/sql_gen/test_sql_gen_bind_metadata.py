@@ -361,7 +361,7 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
     builder.bind_deferred(("keys",), keys_form)
     builder.bind_comparison_text("tail", STRING)
     builder.bind_framework("trailing-driver", wire_value="trailing-wire")
-    builder.bind_typed_rows((("a",), ("b",)), ((STRING, "MANAGED"),))
+    builder.bind_managed_rows((("a",), ("b",)), ((STRING, "MANAGED"),))
     member = "any(?)" if postgres_array else f"({EXPANDING_PLACEHOLDER})"
     statement = builder.finish(f"select ?, ?, {member}, ?, ?, {member}, {member}, ?, ?, ?, ?")
     template = _template(statement)
@@ -755,7 +755,7 @@ def test_same_type_bind_growth_retains_one_descriptor() -> None:
 def test_heterogeneous_row_growth_retains_one_descriptor_per_column() -> None:
     row_count = 4_096
     builder = _builder()
-    builder.bind_typed_rows(
+    builder.bind_managed_rows(
         (("managed", "comparison"),) * row_count,
         ((STRING, "MANAGED"), (STRING, "COMPARISON_TEXT")),
     )
@@ -770,7 +770,7 @@ def test_heterogeneous_row_growth_retains_one_descriptor_per_column() -> None:
 
 def test_repeated_typed_rows_leave_nullable_none_positions_unannotated() -> None:
     builder = _builder()
-    builder.bind_typed_rows(
+    builder.bind_managed_rows(
         (("a", None, "c"), ("d", None, "f"), ("g", "h", "i"), ("j", "k", "l")),
         ((STRING, "MANAGED"), (STRING, "MANAGED"), (STRING, "MANAGED")),
     )
@@ -801,9 +801,9 @@ def test_append_fragment_coalesces_touching_ordinary_spans_with_equal_type_and_f
     )
 
 
-def test_repeated_typed_rows_retain_form_and_reject_mismatched_carriers() -> None:
+def test_repeated_managed_rows_retain_each_slots_form() -> None:
     builder = _builder()
-    builder.bind_typed_rows(
+    builder.bind_managed_rows(
         (("a", "b"), ("c", "d")),
         ((STRING, "MANAGED"), (STRING, "COMPARISON_TEXT")),
     )
@@ -817,11 +817,17 @@ def test_repeated_typed_rows_retain_form_and_reject_mismatched_carriers() -> Non
         (1, 1, 2, 2, "COMPARISON_TEXT"),
     ]
 
-    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
-        _builder().bind_typed_rows(
-            (("not-a-date",), ("still-not-a-date",)),
-            ((DATE, "MANAGED"),),
-        )
+
+def test_a_managed_row_binds_the_cells_its_write_admitted_without_judging_them() -> None:
+    # Each cell crossed its write's admission, so its slot spans it whatever it
+    # holds; only null and the open bound bind outside the span.
+    builder = _builder()
+    builder.bind_managed_rows((("not-a-date",), ("still-not-a-date",)), ((DATE, "MANAGED"),))
+
+    statement = builder.finish("values (?), (?)")
+
+    assert statement.binds == ("not-a-date", "still-not-a-date")
+    assert statement.typed_bind_spans == (_RepeatedTypedBindSpan(0, 1, 1, 2, DATE, "MANAGED"),)
 
 
 @pytest.mark.parametrize(
@@ -869,17 +875,17 @@ def test_finish_rejects_invalid_typed_descriptor_dimensions(
         builder.finish("select ?, ?")
 
 
-def test_typed_row_binding_handles_empty_single_and_changing_patterns() -> None:
+def test_managed_row_binding_handles_empty_single_and_changing_patterns() -> None:
     empty = _builder()
-    empty.bind_typed_rows((), ((STRING, "MANAGED"),))
+    empty.bind_managed_rows((), ((STRING, "MANAGED"),))
     assert empty.finish("").binds == ()
 
     single = _builder()
-    single.bind_typed_rows((("one",),), ((STRING, "MANAGED"),))
+    single.bind_managed_rows((("one",),), ((STRING, "MANAGED"),))
     assert single.finish("select ?").wire_binds() == ("one",)
 
     changing = _builder()
-    changing.bind_typed_rows(
+    changing.bind_managed_rows(
         (("one", INFINITY), (None, INFINITY)),
         ((STRING, "MANAGED"), None),
     )
@@ -894,8 +900,8 @@ def test_managed_infinity_binds_outside_typed_spans_and_observes_its_canonical_l
     builder.bind_framework(INFINITY, wire_value="explicit")
     builder.bind_framework("infinity")
     builder.bind_framework(7)
-    builder.bind_typed_rows(((INFINITY,),), ((TIMESTAMP, "MANAGED"),))
-    builder.bind_typed_rows(((INFINITY,), (INFINITY,)), ((TIMESTAMP, "MANAGED"),))
+    builder.bind_managed_rows(((INFINITY,),), ((TIMESTAMP, "MANAGED"),))
+    builder.bind_managed_rows(((INFINITY,), (INFINITY,)), ((TIMESTAMP, "MANAGED"),))
 
     lowered = builder.finish("select ?, ?, ?, ?, ?, ?, ?")
 
@@ -919,19 +925,9 @@ def test_managed_infinity_binds_outside_typed_spans_and_observes_its_canonical_l
     )
 
 
-@pytest.mark.parametrize("rows", [(("infinity",),), (("infinity",), ("infinity",))])
-def test_typed_row_binding_rejects_the_literal_open_bound_at_a_timestamp_slot(
-    rows: tuple[tuple[object, ...], ...],
-) -> None:
-    # A row cell holds the managed open bound; its spelling is an observation
-    # this builder supplies, never a cell value it admits.
-    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
-        _builder().bind_typed_rows(rows, ((TIMESTAMP, "MANAGED"),))
-
-
-def test_typed_row_binding_rejects_inconsistent_widths() -> None:
+def test_managed_row_binding_rejects_inconsistent_widths() -> None:
     with pytest.raises(SqlGenError, match="inconsistent row widths"):
-        _builder().bind_typed_rows((("one",), ("two", "extra")), ((STRING, "MANAGED"),))
+        _builder().bind_managed_rows((("one",), ("two", "extra")), ((STRING, "MANAGED"),))
 
 
 _MIXED_ROW: tuple[_TypedBindSlot | None, ...] = (
@@ -946,17 +942,15 @@ def _mixed_row(key: int, day: object) -> tuple[object, ...]:
     return (key, JsonDocument({"key": key}), INFINITY, day)
 
 
-def test_a_refused_typed_row_binds_nothing_after_valid_scalar_document_and_open_cells() -> None:
+def test_a_refused_managed_row_binds_nothing_after_valid_scalar_document_and_open_cells() -> None:
     prefix = _builder()
     refused = _builder()
     for builder in (prefix, refused):
-        builder.bind_typed_row(_mixed_row(1, dt.date(2024, 1, 1)), _MIXED_ROW)
-        builder.bind_typed_row(_mixed_row(2, dt.date(2024, 1, 2)), _MIXED_ROW)
+        builder.bind_managed_row(_mixed_row(1, dt.date(2024, 1, 1)), _MIXED_ROW)
+        builder.bind_managed_row(_mixed_row(2, dt.date(2024, 1, 2)), _MIXED_ROW)
 
-    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
-        refused.bind_typed_row(_mixed_row(3, "not-a-date"), _MIXED_ROW)
     with pytest.raises(SqlGenError, match="inconsistent row widths"):
-        refused.bind_typed_row(_mixed_row(4, dt.date(2024, 1, 4))[:-1], _MIXED_ROW)
+        refused.bind_managed_row(_mixed_row(4, dt.date(2024, 1, 4))[:-1], _MIXED_ROW)
 
     expected = prefix.finish("values (?, ?, ?, ?), (?, ?, ?, ?)")
     actual = refused.finish("values (?, ?, ?, ?), (?, ?, ?, ?)")
@@ -977,7 +971,7 @@ def test_each_signature_change_seals_the_group_of_rows_before_it() -> None:
     builder = _builder()
     pattern: tuple[_TypedBindSlot, ...] = ((STRING, "MANAGED"), (STRING, "MANAGED"))
     for row in (("a", "b"), ("c", "d"), (None, "e"), ("f", "g"), ("h", "i")):
-        builder.bind_typed_row(row, pattern)
+        builder.bind_managed_row(row, pattern)
 
     statement = builder.finish("")
 
@@ -991,14 +985,14 @@ def test_each_signature_change_seals_the_group_of_rows_before_it() -> None:
 def test_an_open_row_run_seals_before_any_other_bind_or_fragment() -> None:
     builder = _builder()
     builder.bind_managed("lead", STRING)
-    builder.bind_typed_row(("a", "b"), ((STRING, "MANAGED"), (STRING, "MANAGED")))
+    builder.bind_managed_row(("a", "b"), ((STRING, "MANAGED"), (STRING, "MANAGED")))
     builder.bind_framework(INFINITY)
-    builder.bind_typed_row(("c",), ((STRING, "MANAGED"),))
-    builder.bind_typed_row(("d",), ((STRING, "MANAGED"),))
+    builder.bind_managed_row(("c",), ((STRING, "MANAGED"),))
+    builder.bind_managed_row(("d",), ((STRING, "MANAGED"),))
     fragment = _builder()
     fragment.bind_managed("tail", STRING)
     builder.append_fragment(fragment.finish(""))
-    builder.bind_typed_row(("e",), ((STRING, "MANAGED"),))
+    builder.bind_managed_row(("e",), ((STRING, "MANAGED"),))
 
     statement = builder.finish("")
 
@@ -1017,7 +1011,7 @@ def test_wide_homogeneous_rows_share_one_repeated_descriptor() -> None:
     slot: _TypedBindSlot = (STRING, "MANAGED")
     pattern = (slot,) * width
     for _ in range(row_count):
-        builder.bind_typed_row(("value",) * width, pattern)
+        builder.bind_managed_row(("value",) * width, pattern)
 
     statement = builder.finish("")
 
@@ -1035,7 +1029,7 @@ def test_wide_heterogeneous_rows_compact_each_slot_run_within_each_group() -> No
     holed = tuple(None if offset == 5 else value for offset, value in enumerate(full))
     builder = _builder()
     for row in (full, full, full, holed, full, full):
-        builder.bind_typed_row(row, pattern)
+        builder.bind_managed_row(row, pattern)
 
     spans = builder.finish("").typed_bind_spans
 

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from itertools import islice
-from typing import Final, Literal, cast
-from weakref import WeakKeyDictionary
+from typing import Literal, cast
 
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY, INFINITY_LITERAL, FrozenMap, NeutralType
@@ -30,18 +28,13 @@ from parallax.core.sql_gen._context import (
     SqlGenError,
     StatementBuilder,
 )
-from parallax.core.storage_layout import (
-    ColumnContributor,
-    ColumnTier,
-    EntityLayoutView,
-    InheritanceDiscriminator,
-    StorageLayoutFacet,
-)
+from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.wire import WireValue
 from parallax.core.write_plan.payload import (
     AssignmentPayload,
+    InsertPayload,
     PatchedDocument,
-    RowPayload,
+    RowSlots,
 )
 from parallax.core.write_plan.steps import (
     Finite,
@@ -63,7 +56,6 @@ from parallax.core.write_plan.steps import (
     TemporalGate,
     Versioned,
     VersionGate,
-    WriteRow,
     WriteTarget,
 )
 
@@ -74,10 +66,10 @@ __all__ = [
     "non_insert_parameter_ceiling",
 ]
 
-type StepPayload = tuple[RowPayload, ...] | AssignmentPayload | None
-"""The prepared values one step's statement stores: one Row Payload per insert
-entry, in entry order, the Assignment Payload a revising step writes, or
-nothing for a step that stores no represented value."""
+type StepPayload = InsertPayload | AssignmentPayload | None
+"""The prepared values one step's statement stores: an insert's entries' cells,
+in entry order, under their Row Slots, the Assignment Payload a revising step
+writes, or nothing for a step that stores no represented value."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,7 +134,7 @@ def compile_write_step(
     """
     match step:
         case PlannedInsert():
-            return _lower_insert(step, _row_payloads(step, payload), meta, dialect)
+            return _lower_insert(step, _insert_payload(step, payload), meta, dialect)
         case PlannedUpdate():
             return _lower_update(step, _assignment_payload(step, payload), meta, dialect)
         case PlannedClose() | PlannedTemporalRevision():
@@ -201,26 +193,18 @@ def _gated(concurrency: TemporalConcurrency | NonTemporalConcurrency) -> bool:
     )
 
 
-def _row_payloads(step: PlannedInsert, payload: StepPayload) -> tuple[RowPayload, ...]:
-    if not isinstance(payload, tuple) or len(payload) != len(step.entries):
+def _insert_payload(step: PlannedInsert, payload: StepPayload) -> InsertPayload:
+    if (
+        not isinstance(payload, InsertPayload)
+        or len(payload.rows) != len(step.entries)
+        or payload.slots.entity != step.entity
+        or payload.slots.presence != step.entries[0].row.presence
+    ):
         raise SqlGenError(
-            f"{step.entity.canonical}: an insert stores one prepared Row Payload per entry"
+            f"{step.entity.canonical}: an insert stores one prepared row per entry, under the "
+            "Row Slots its entries state"
         )
-    for entry, prepared in zip(step.entries, payload, strict=True):
-        _require_prepared_from(step.entity, entry, prepared)
     return payload
-
-
-def _require_prepared_from(entity: EntityIdentity, entry: WriteRow, payload: RowPayload) -> None:
-    if not payload.prepared_from(entry) or payload.entity != entity:
-        raise SqlGenError(f"{entity.canonical}: a prepared Row Payload belongs to another entry")
-
-
-def _require_cells(
-    entity: EntityIdentity, contributors: tuple[Hashable, ...], payload: RowPayload
-) -> None:
-    if payload.contributors != contributors:
-        raise SqlGenError(f"{entity.name!r}: every entry of one insert stores the same cells")
 
 
 def _assignment_payload(
@@ -247,14 +231,15 @@ class InsertStatementBuilder:
     """One non-generated `insert into <table>(<participating columns in Table
     Layout order>) values (?, …)[, (?, …)…]`, compiled one entry at a time.
 
-    The first entry's prepared cells fix the Table, the column list, and so
-    every value tuple's width; an entry omitting a nullable member produces a
-    narrower `INSERT`, never an explicit `NULL` bind. :meth:`append` admits a
-    later entry only once its payload is its own, stores the same cells, and
-    holds a value every typed slot accepts, so a refused entry leaves the
-    earlier entries' binds and bind metadata as they were and :meth:`finish`
-    still renders exactly the entries appended. A generated-value expression
-    folds into its own statement and never reaches this builder.
+    ``slots`` fix the Table, the column list, and so every value tuple's
+    width; an entry omitting a nullable member produces a narrower `INSERT`,
+    never an explicit `NULL` bind. Each entry's ``cells`` are the ones
+    ``slots`` gathered from its row, which admission already judged, so they
+    bind as they are (:meth:`StatementBuilder.bind_managed_row`); a refused
+    entry leaves the earlier entries' binds and bind metadata as they were and
+    :meth:`finish` still renders exactly the entries appended. A
+    generated-value expression folds into its own statement and never reaches
+    this builder.
 
     One builder compiles either a logical multi-entry insert, every entry of
     which it holds before finishing, or a run of single-entry openings
@@ -262,51 +247,36 @@ class InsertStatementBuilder:
     :meth:`has_capacity` stops admitting another entry.
     """
 
-    __slots__ = (
-        "_column_sql",
-        "_contributors",
-        "_documents",
-        "_entity",
-        "_entries",
-        "_pattern",
-        "_statement",
-        "_table",
-    )
+    __slots__ = ("_column_sql", "_documents", "_entries", "_pattern", "_statement", "_table")
 
     def __init__(
         self,
-        entity: EntityIdentity,
-        entry: WriteRow,
-        payload: RowPayload,
+        slots: RowSlots,
+        cells: tuple[object, ...],
         meta: Metamodel,
         dialect: Dialect,
     ) -> None:
-        _require_prepared_from(entity, entry, payload)
-        metadata = _entity(meta, entity)
-        view = _layout(meta, metadata)
-        columns, types, documents = _placed(meta, view, metadata, payload.contributors, _ROW)
-        self._entity = entity
-        self._contributors = payload.contributors
-        self._documents = documents
+        self._documents = slots.documents
         self._pattern: tuple[tuple[NeutralType, Literal["MANAGED"]] | None, ...] = tuple(
-            [None if neutral_type is None else (neutral_type, "MANAGED") for neutral_type in types]
+            [
+                None if neutral_type is None else (neutral_type, "MANAGED")
+                for neutral_type in slots.types
+            ]
         )
-        self._table = view.layout.table.name
-        self._column_sql = ", ".join(dialect.quote(column) for column in columns)
+        self._table = slots.table
+        self._column_sql = ", ".join([dialect.quote(column) for column in slots.columns])
         self._statement = _ctx(meta, dialect)
-        self._statement.bind_typed_row(_bound(payload.values, documents), self._pattern)
+        self._statement.bind_managed_row(_bound(cells, self._documents), self._pattern)
         self._entries = 1
 
     def has_capacity(self, entries: int, binds: int) -> bool:
         """Whether one more entry keeps the statement within ``entries``
         entries and ``binds`` binds. Every entry binds exactly one value per
-        cell the first entry placed, a whole document included."""
+        cell its slots place, a whole document included."""
         return self._entries < entries and (self._entries + 1) * len(self._pattern) <= binds
 
-    def append(self, entry: WriteRow, payload: RowPayload) -> None:
-        _require_prepared_from(self._entity, entry, payload)
-        _require_cells(self._entity, self._contributors, payload)
-        self._statement.bind_typed_row(_bound(payload.values, self._documents), self._pattern)
+    def append(self, cells: tuple[object, ...]) -> None:
+        self._statement.bind_managed_row(_bound(cells, self._documents), self._pattern)
         self._entries += 1
 
     def finish(self) -> LoweredStatement:
@@ -318,40 +288,31 @@ class InsertStatementBuilder:
 
 
 def _lower_insert(
-    step: PlannedInsert, payloads: tuple[RowPayload, ...], meta: Metamodel, dialect: Dialect
+    step: PlannedInsert, payload: InsertPayload, meta: Metamodel, dialect: Dialect
 ) -> LoweredStatement:
     """One logical insert's statement: every entry through one
     :class:`InsertStatementBuilder`, or the pk-gen `max` INSERT…SELECT form when
     a cell carries a generated-value expression, ending `returning <column>`
-    where that allocation is returned.
-
-    Every entry is checked for the first entry's cells before any entry's
-    values bind, so an earlier entry's refused value never preempts a later
-    entry's refusal for storing other cells.
-    """
-    entity = _entity(meta, step.entity)
-    view = _layout(meta, entity)
-    first = payloads[0]
-    columns, types, documents = _placed(meta, view, entity, first.contributors, _ROW)
-    for payload in islice(payloads, 1, None):
-        _require_cells(step.entity, first.contributors, payload)
-    if not any(isinstance(value, MaxPlusOne) for value in first.values):
-        builder = InsertStatementBuilder(step.entity, step.entries[0], first, meta, dialect)
-        for index in range(1, len(payloads)):
-            builder.append(step.entries[index], payloads[index])
+    where that allocation is returned."""
+    slots = payload.slots
+    first, *rest = payload.rows
+    if not any(isinstance(value, MaxPlusOne) for value in first):
+        builder = InsertStatementBuilder(slots, first, meta, dialect)
+        for cells in rest:
+            builder.append(cells)
         return builder.finish()
-    column_sql = ", ".join(dialect.quote(column) for column in columns)
-    table = view.layout.table.name
-    ctx = _ctx(meta, dialect)
-    if len(payloads) > 1:
+    if rest:
         raise SqlGenError(
-            f"multi-entry insert on {entity.identity.name!r}: a generated-value expression "
+            f"multi-entry insert on {step.entity.name!r}: a generated-value expression "
             "folds into the statement itself, so it renders one row at a time (m-pk-gen)"
         )
+    column_sql = ", ".join(dialect.quote(column) for column in slots.columns)
+    table = slots.table
+    ctx = _ctx(meta, dialect)
     select_parts: list[str] = []
     returned: list[str] = []
     for column, value, neutral_type in zip(
-        columns, _bound(first.values, documents), types, strict=True
+        slots.columns, _bound(first, slots.documents), slots.types, strict=True
     ):
         if isinstance(value, MaxPlusOne):
             select_parts.append(f"coalesce(max(t0.{dialect.quote(column)}), ?) + ?")
@@ -480,7 +441,8 @@ def _assignment_clause(
     dialect: Dialect,
 ) -> str:
     version_column = None if version is None else _column(view, version, entity)
-    columns, types, documents = _placed(meta, view, entity, payload.contributors, _ASSIGNMENT)
+    placement = payload.placement
+    columns, types, documents = placement.columns, placement.types, placement.documents
     parts: list[str] = []
     advance: tuple[str, object, NeutralType | None] | None = None
     for column, value, neutral_type, document in zip(
@@ -644,7 +606,7 @@ def _key_predicate(
     keys_sql = f"({', '.join(dialect.quote(column) for column in columns)})"
     row_hole = f"({', '.join('?' for _ in columns)})"
     holes = ", ".join(row_hole for _ in target.key_values)
-    ctx.bind_typed_rows(
+    ctx.bind_managed_rows(
         target.key_values,
         tuple((neutral_type, "MANAGED") for neutral_type in types),
     )
@@ -707,94 +669,11 @@ def _temporal_gate(
     return f"{dialect.quote(column)} = ?"
 
 
-type _Placement = tuple[Sequence[str], Sequence[NeutralType | None], Sequence[bool]]
-"""The physical Column of each prepared cell, its Attribute's Neutral Type where
-it binds a scalar, and whether it binds a whole document."""
-
-type _Placed = tuple[tuple[Hashable, ...], _Placement]
-type _RecentByEntity = dict[EntityIdentity, list[_Placed | None]]
-
-_ROW, _ASSIGNMENT = range(2)
-
-_RECENT: Final[WeakKeyDictionary[StorageLayoutFacet, _RecentByEntity]] = WeakKeyDictionary()
-"""Each model's most recently placed row and assignment contributors, by Entity.
-
-A placement is a pure function of the immutable Storage Layout Facet, the
-Entity, and its contributors, so a remembered one never goes stale, and keying
-by the facet weakly ends it with its model. One row and one assignment shape
-are kept per Entity because one write interleaves both. Prepared contributors
-are the layout's own identity objects, so a repeated shape is recognized by
-tuple equality that its identical members answer without hashing."""
-
-
-def _placed(
-    meta: Metamodel,
-    view: EntityLayoutView,
-    entity: EntityMetadata,
-    contributors: tuple[Hashable, ...],
-    kind: int,
-) -> _Placement:
-    facet = storage_layout.view(meta)
-    entities = _RECENT.get(facet)
-    if entities is None:
-        entities = _RECENT[facet] = {}
-    recent = entities.get(entity.identity)
-    if recent is None:
-        recent = entities[entity.identity] = [None, None]
-    placed = recent[kind]
-    if placed is None or placed[0] != contributors:
-        placed = recent[kind] = (contributors, _placement(view, entity, contributors))
-    return placed[1]
-
-
-def _placement(
-    view: EntityLayoutView,
-    entity: EntityMetadata,
-    contributors: Sequence[Hashable],
-) -> _Placement:
-    """Where each prepared cell lands: the physical Column its contributor's
-    slot occupies.
-
-    A document a cell stores — a Value Object occurrence or a scalar
-    collection with a Column of its own, or the Table's shared Structured
-    Column — binds as one :class:`~parallax.core.db_port.JsonDocument`, never
-    decomposed. A scalar binds at its Attribute's Neutral Type.
-    """
-    columns: list[str] = []
-    types: list[NeutralType | None] = []
-    documents: list[bool] = []
-    selection = view.member_selection
-    for contributor in contributors:
-        if isinstance(contributor, InheritanceDiscriminator):
-            discriminator = view.discriminator
-            if discriminator is None or discriminator.slot.contributor != contributor:
-                raise SqlGenError(
-                    f"{entity.identity.name!r}: a prepared discriminator cell names no tag slot"
-                )
-            columns.append(discriminator.slot.column.name)
-            types.append(None)
-            documents.append(False)
-            continue
-        slot = view.layout.contribution(cast("ColumnContributor", contributor))
-        if slot is None:
-            raise SqlGenError(
-                f"{entity.identity.name!r}: a prepared cell's contributor occupies no Column of "
-                "the target's Table Layout"
-            )
-        columns.append(slot.column.name)
-        if isinstance(contributor, AttributeIdentity) and slot.tier is not ColumnTier.DOCUMENT:
-            binding = selection.bindings[selection.position(contributor)]
-            types.append(cast("AttributeMetadata", binding).type)
-            documents.append(False)
-        else:
-            types.append(None)
-            documents.append(True)
-    return tuple(columns), tuple(types), tuple(documents)
-
-
 def _bound(values: tuple[object, ...], documents: Sequence[bool]) -> Sequence[object]:
     """One row's bind values: each stored document wrapped as the port's
     structured-document carrier, every other value as it is."""
+    if len(values) != len(documents):
+        raise SqlGenError("a repeated bind pattern has inconsistent row widths")
     if not any(documents):
         return values
     return [

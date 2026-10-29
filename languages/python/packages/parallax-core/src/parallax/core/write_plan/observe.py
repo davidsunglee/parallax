@@ -30,6 +30,7 @@ __all__ = [
     "TemporalObservation",
     "VersionObservation",
     "occurrence_value",
+    "viewed_document",
 ]
 
 
@@ -158,6 +159,10 @@ class _EntityDocumentRow(Mapping[str, object]):
     def items(self) -> ItemsView[str, object]:
         return _DocumentItems(self, self._shape.members, self._values, self._absent)
 
+    def positional(self) -> tuple[tuple[object, ...], object]:
+        """The positional member row this views beside its absence marker."""
+        return self._values, self._absent
+
 
 class _AlignedItems(ItemsView[str, object]):
     __slots__ = ("_absent", "_aligned", "_members")
@@ -225,6 +230,15 @@ def occurrence_value(
     if not isinstance(value, tuple):  # pragma: no cover - accepted Page state is positional
         raise TypeError("a Value Object Entity State is positional")
     return _EntityDocumentRow(cast("tuple[object, ...]", value), shape, absent)
+
+
+def viewed_document(value: object) -> tuple[tuple[object, ...], object] | None:
+    """The positional member row and absence marker ``value`` views, where it
+    is one Value Object document :func:`occurrence_value` answered; ``None``
+    for any other value."""
+    if isinstance(value, _EntityDocumentRow):
+        return value.positional()
+    return None
 
 
 @dataclass(frozen=True, slots=True)

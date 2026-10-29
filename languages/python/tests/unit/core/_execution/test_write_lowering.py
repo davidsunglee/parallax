@@ -98,7 +98,6 @@ from parallax.core.sql_gen._context import (
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
 from parallax.core.sql_gen._write import InsertStatementBuilder, StepPayload, compile_write_step
-from parallax.core.storage_layout import InheritanceDiscriminator
 from parallax.core.temporal_read import TransactionTimeOnly
 from parallax.core.unit_work import (
     Concurrency,
@@ -119,8 +118,10 @@ from parallax.core.write_plan import (
 )
 from parallax.core.write_plan.payload import (
     AssignmentPayload,
+    InsertPayload,
     PatchedDocument,
     RowPayload,
+    RowSlots,
     WritePayloadPreparer,
 )
 from parallax.core.write_plan.plan import SettledWrite, WriteGroup, WritePlan
@@ -157,6 +158,7 @@ from tests._support.db_port import ScriptedAdapter, Write, WriteCall
 from tests._support.lowering_probes import lower_instruction, lower_instruction_steps, lowered_steps
 from tests._support.managed_rows import managed_row_of
 from tests._support.planner_probes import TEST_ACTOR_IDENTITY, observed_buffer, plan_steps
+from tests._support.row_slots import observed_slots
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._corpus_identity_support import corpus_object_key
 from tests.unit._corpus_model_support import formed, records
@@ -1616,19 +1618,22 @@ def _crate_update(note: str = "fragile") -> PlannedUpdate:
 
 
 def test_the_compiler_refuses_a_payload_not_prepared_from_its_own_step() -> None:
-    # Lowering never assembles a payload: a missing one, one prepared from
-    # another entry or assignment set, or one in another entry order is a broken
-    # caller contract rather than a request to prepare.
+    # Lowering never assembles a payload: a missing one, one holding another
+    # number of entries or the Row Slots of other members, or one prepared
+    # from another assignment set is a broken caller contract rather than a
+    # request to prepare.
     payloads = LayoutPayloadPreparer(_CRATE_MODEL)
     insert = _crate_insert(1, 2)
-    first, second = (payloads.row(_CRATE, entry) for entry in insert.entries)
+    slots = payloads.row_slots(_CRATE, insert.entries[0].row.presence)
+    first, second = (slots.cells(entry) for entry in insert.entries)
+    narrow = payloads.row_slots(_CRATE, 1 << 0)
     update = _crate_update()
     foreign = payloads.assignments(_CRATE, _crate_update().assignments)
     refused: list[tuple[PlannedStep, StepPayload]] = [
         (insert, None),
-        (insert, (first,)),
-        (insert, (second, first)),
-        (insert, (first, payloads.row(_CRATE, _crate_insert(2).entries[0]))),
+        (insert, InsertPayload(slots, (first,))),
+        (insert, InsertPayload(narrow, (first, second))),
+        (insert, foreign),
         (update, None),
         (update, foreign),
         (
@@ -1644,12 +1649,13 @@ def test_the_compiler_refuses_a_payload_not_prepared_from_its_own_step() -> None
     for step, payload in refused:
         with pytest.raises(SqlGenError):
             compile_write_step(step, payload, _CRATE_MODEL, POSTGRES)
-    narrower = dataclasses.replace(
-        second, contributors=second.contributors[:-1], values=second.values[:-1]
-    )
-    with pytest.raises(SqlGenError, match="every entry of one insert stores the same cells"):
-        compile_write_step(insert, (first, narrower), _CRATE_MODEL, POSTGRES)
-    assert compile_write_step(insert, (first, second), _CRATE_MODEL, POSTGRES).binds == (
+    with pytest.raises(SqlGenError, match="inconsistent row widths"):
+        compile_write_step(
+            insert, InsertPayload(slots, (first, second[:-1])), _CRATE_MODEL, POSTGRES
+        )
+    assert compile_write_step(
+        insert, InsertPayload(slots, (first, second)), _CRATE_MODEL, POSTGRES
+    ).binds == (
         1,
         "n",
         JsonDocument(()),
@@ -1661,8 +1667,8 @@ def test_the_compiler_refuses_a_payload_not_prepared_from_its_own_step() -> None
 
 def test_lowering_reuses_backing_an_entry_already_carries() -> None:
     class _Unprepared(LayoutPayloadPreparer):
-        def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
-            raise AssertionError(f"lowering prepared {entity} again")
+        def row_slots(self, entity: EntityIdentity, presence: int) -> RowSlots:
+            return observed_slots(super().row_slots(entity, presence), _prepared_again)
 
     (entry,) = _crate_insert(7).entries
     carried = entry.with_prepared(LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, entry))
@@ -1676,6 +1682,10 @@ def test_lowering_reuses_backing_an_entry_already_carries() -> None:
         entry.with_prepared(
             LayoutPayloadPreparer(_CRATE_MODEL).row(_CRATE, _crate_insert(8).entries[0])
         )
+
+
+def _prepared_again(write_row: WriteRow) -> None:
+    raise AssertionError(f"lowering prepared {write_row} again")
 
 
 def test_backing_a_row_inherits_through_another_input_is_refused() -> None:
@@ -1698,7 +1708,7 @@ def test_backing_a_row_inherits_through_another_input_is_refused() -> None:
 
 def test_a_narrow_update_prepares_its_assignments_alone() -> None:
     class _AssignmentsOnly(LayoutPayloadPreparer):
-        def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
+        def row_slots(self, entity: EntityIdentity, presence: int) -> RowSlots:
             raise AssertionError("a narrow update demanded a complete row")
 
     statement = lowered(_crate_update(), _AssignmentsOnly(_CRATE_MODEL), _CRATE_MODEL, POSTGRES)
@@ -1875,22 +1885,17 @@ def test_a_refused_revision_fails_its_group_after_earlier_groups_completed() -> 
     assert uow.source_authority.freshness == 1
 
 
-def test_the_compiler_places_no_cell_its_layout_does_not_hold() -> None:
-    # A cell is placed by its contributor's slot; one naming a member the Table
-    # does not hold, or a document key removal no assignment can express, is
-    # refused rather than silently dropped.
+def test_a_payload_aligns_one_value_with_each_placed_cell() -> None:
+    # A cell is placed by its contributor's slot, and a document key removal no
+    # assignment can express is refused rather than silently dropped.
+    payloads = LayoutPayloadPreparer(_CRATE_MODEL)
     update = _crate_update()
-    stray = AttributeIdentity(_CRATE, "missing")
-    misplaced = AssignmentPayload(
-        entity=_CRATE, assignments=update.assignments, contributors=(stray,), values=("value",)
-    )
-    with pytest.raises(SqlGenError, match="occupies no Column"):
-        compile_write_step(update, misplaced, _CRATE_MODEL, POSTGRES)
+    assigned = payloads.assignments(_CRATE, update.assignments)
     with pytest.raises(ValueError, match="aligns one value with each contributor"):
-        dataclasses.replace(misplaced, values=())
+        dataclasses.replace(assigned, values=())
     (entry,) = _crate_insert(7).entries
     with pytest.raises(ValueError, match="aligns one value with each contributor"):
-        RowPayload(entity=_CRATE, source=entry, contributors=(stray,), values=())
+        RowPayload(slots=payloads.row_slots(_CRATE, entry.row.presence), source=entry, values=())
 
     document = document_model()
     step = PlannedUpdate(
@@ -1901,28 +1906,14 @@ def test_the_compiler_places_no_cell_its_layout_does_not_hold() -> None:
         affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
     )
     prepared = LayoutPayloadPreparer(document).assignments(PERSON, step.assignments)
-    (root,) = prepared.contributors
     (patched,) = prepared.values
     assert isinstance(patched, PatchedDocument)
     (score,) = patched.patches
-    removal = AssignmentPayload(
-        entity=PERSON,
-        assignments=step.assignments,
-        contributors=(root,),
-        values=(PatchedDocument((dataclasses.replace(score, removes=True),)),),
+    removal = dataclasses.replace(
+        prepared, values=(PatchedDocument((dataclasses.replace(score, removes=True),)),)
     )
     with pytest.raises(SqlGenError, match="removes no document key"):
         compile_write_step(step, removal, document, POSTGRES)
-    tagged = RowPayload(
-        entity=_CRATE,
-        source=entry,
-        contributors=(_CRATE_ID, InheritanceDiscriminator(_CRATE)),
-        values=(7, "crate"),
-    )
-    with pytest.raises(SqlGenError, match="names no tag slot"):
-        compile_write_step(
-            PlannedInsert(entity=_CRATE, entries=(entry,)), (tagged,), _CRATE_MODEL, POSTGRES
-        )
 
 
 def _noted_crate(column: str) -> Metamodel:
@@ -1962,12 +1953,6 @@ def test_each_statement_is_placed_by_its_own_cells_as_shapes_alternate() -> None
     payloads = LayoutPayloadPreparer(model)
     narrow, full = _crate_row({_CRATE_ID: 1}), _crate_row({_CRATE_ID: 2, _CRATE_NOTE: "n"})
     update = _crate_update()
-    stray = AssignmentPayload(
-        entity=_CRATE,
-        assignments=update.assignments,
-        contributors=(AttributeIdentity(_CRATE, "missing"),),
-        values=("value",),
-    )
     for _ in range(2):
         assert lowered(narrow, payloads, model, POSTGRES).sql == "insert into crate(id) values (?)"
         assert lowered(full, payloads, model, POSTGRES).sql == (
@@ -1976,8 +1961,6 @@ def test_each_statement_is_placed_by_its_own_cells_as_shapes_alternate() -> None
         assert lowered(update, payloads, model, POSTGRES).sql == (
             "update crate set note = ? where id = ?"
         )
-        with pytest.raises(SqlGenError, match="occupies no Column"):
-            compile_write_step(update, stray, model, POSTGRES)
 
 
 def test_lowering_keeps_no_model_alive() -> None:
@@ -2032,24 +2015,17 @@ def _ledger_entry(key: int, memo: str | None = "kept") -> WriteRow:
     )
 
 
-def _ledger_payload(entry: WriteRow) -> RowPayload:
-    return LayoutPayloadPreparer(_BUILDER_MODEL).row(_BUILDER_LEDGER, entry)
+def _ledger_cells(entry: WriteRow) -> tuple[object, ...]:
+    return LayoutPayloadPreparer(_BUILDER_MODEL).row(_BUILDER_LEDGER, entry).values
 
 
 def _ledger_builder(*entries: WriteRow) -> InsertStatementBuilder:
     first, *rest = entries
-    builder = InsertStatementBuilder(
-        _BUILDER_LEDGER, first, _ledger_payload(first), _BUILDER_MODEL, POSTGRES
-    )
+    slots = LayoutPayloadPreparer(_BUILDER_MODEL).row_slots(_BUILDER_LEDGER, first.row.presence)
+    builder = InsertStatementBuilder(slots, _ledger_cells(first), _BUILDER_MODEL, POSTGRES)
     for entry in rest:
-        builder.append(entry, _ledger_payload(entry))
+        builder.append(_ledger_cells(entry))
     return builder
-
-
-def _with_value(payload: RowPayload, index: int, value: object) -> RowPayload:
-    values = list(payload.values)
-    values[index] = value
-    return dataclasses.replace(payload, values=tuple(values))
 
 
 def test_an_insert_compiles_each_entrys_cells_and_compacts_equal_signature_runs() -> None:
@@ -2101,34 +2077,23 @@ def test_an_insert_compiles_each_entrys_cells_and_compacts_equal_signature_runs(
     assert statement.wire_binds()[16:18] == ("infinity", {"label": "shelf-3"})
 
 
-@pytest.mark.parametrize(
-    ("refusal", "message"),
-    [
-        ("another entry's payload", "belongs to another entry"),
-        ("other cells", "every entry of one insert stores the same cells"),
-        ("an invalid scalar cell", "does not match MANAGED slot"),
-        ("an invalid open bound after valid scalar cells", "does not match MANAGED slot"),
-    ],
-)
-def test_a_refused_entry_leaves_the_compiled_prefix_unchanged(refusal: str, message: str) -> None:
+def test_a_managed_row_binds_the_cells_admission_judged_without_judging_them_again() -> None:
+    # Every cell already crossed its write's admission, so a value no
+    # admission would have produced still binds where its slot puts it.
+    entries = (_ledger_entry(1), _ledger_entry(2))
+    builder = _ledger_builder(*entries)
+    unjudged = list(_ledger_cells(_ledger_entry(3)))
+    unjudged[1] = "thirty"
+    builder.append(tuple(unjudged))
+    assert builder.finish().binds[13] == "thirty"
+
+
+def test_a_refused_entry_leaves_the_compiled_prefix_unchanged() -> None:
     entries = (_ledger_entry(1), _ledger_entry(2, memo=None))
-    candidate = _ledger_entry(3)
-    payload = _ledger_payload(candidate)
-    match refusal:
-        case "another entry's payload":
-            payload = _ledger_payload(_ledger_entry(3))
-        case "other cells":
-            payload = dataclasses.replace(
-                payload, contributors=payload.contributors[:-1], values=payload.values[:-1]
-            )
-        case "an invalid scalar cell":
-            payload = _with_value(payload, 1, "thirty")
-        case _:
-            payload = _with_value(payload, 4, "infinity")
     builder = _ledger_builder(*entries)
 
-    with pytest.raises(SqlGenError, match=message):
-        builder.append(candidate, payload)
+    with pytest.raises(SqlGenError, match="inconsistent row widths"):
+        builder.append(_ledger_cells(_ledger_entry(3))[:-1])
 
     statement = builder.finish()
     expected = _ledger_builder(*entries).finish()
@@ -2141,104 +2106,85 @@ class _PreparationFailure(Exception):
     pass
 
 
-def _scripted_rows(
-    script: Mapping[int, Callable[[WriteRow, RowPayload], RowPayload]],
-    demanded: list[int] | None = None,
-) -> LayoutPayloadPreparer:
-    """A preparer whose payload for each ledger key ``script`` may replace."""
+type _Script = Mapping[int, Callable[[tuple[object, ...]], tuple[object, ...]]]
+
+
+class _ScriptedSlots:
+    """Row Slots whose cells for each ledger key ``script`` may replace."""
+
+    def __init__(self, slots: RowSlots, script: _Script, demanded: list[int] | None) -> None:
+        self._slots = slots
+        self._script = script
+        self._demanded = demanded
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._slots, name)
+
+    def cells(self, write_row: WriteRow) -> tuple[object, ...]:
+        key = cast("int", write_row.row.attributes[AttributeIdentity(_BUILDER_LEDGER, "id")])
+        if self._demanded is not None:
+            self._demanded.append(key)
+        return self._script.get(key, lambda cells: cells)(self._slots.cells(write_row))
+
+
+def _scripted_rows(script: _Script, demanded: list[int] | None = None) -> LayoutPayloadPreparer:
+    """A preparer whose cells for each ledger key ``script`` may replace."""
 
     class _Scripted(LayoutPayloadPreparer):
-        def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
-            key = cast("int", write_row.row.attributes[AttributeIdentity(_BUILDER_LEDGER, "id")])
-            if demanded is not None:
-                demanded.append(key)
-            prepared = super().row(entity, write_row)
-            return script.get(key, lambda _entry, payload: payload)(write_row, prepared)
+        def row_slots(self, entity: EntityIdentity, presence: int) -> RowSlots:
+            return cast(
+                "RowSlots",
+                _ScriptedSlots(super().row_slots(entity, presence), script, demanded),
+            )
 
     return _Scripted(_BUILDER_MODEL)
 
 
-def _invalid_cell(_entry: WriteRow, payload: RowPayload) -> RowPayload:
-    return _with_value(payload, 1, "invalid")
+def _narrower(cells: tuple[object, ...]) -> tuple[object, ...]:
+    return cells[:-1]
 
 
-def _foreign(_entry: WriteRow, _payload: RowPayload) -> RowPayload:
-    return _ledger_payload(_ledger_entry(99))
-
-
-def _narrower(_entry: WriteRow, payload: RowPayload) -> RowPayload:
-    return dataclasses.replace(
-        payload, contributors=payload.contributors[:-1], values=payload.values[:-1]
-    )
-
-
-def _unprepared(_entry: WriteRow, _payload: RowPayload) -> RowPayload:
+def _unprepared(_cells: tuple[object, ...]) -> tuple[object, ...]:
     raise _PreparationFailure
 
 
-@pytest.mark.parametrize(
-    ("script", "winner", "message"),
-    [
-        pytest.param(
-            {1: _invalid_cell, 2: _unprepared}, _PreparationFailure, "", id="type-vs-prep"
-        ),
-        pytest.param({1: _foreign, 2: _unprepared}, _PreparationFailure, "", id="source-vs-prep"),
-        pytest.param({1: _narrower, 3: _unprepared}, _PreparationFailure, "", id="cells-vs-prep"),
-        pytest.param(
-            {1: _invalid_cell, 2: _foreign}, SqlGenError, "another entry", id="type-vs-source"
-        ),
-        pytest.param(
-            {2: _narrower, 3: _foreign}, SqlGenError, "another entry", id="cells-vs-source"
-        ),
-        pytest.param(
-            {1: _invalid_cell, 3: _narrower}, SqlGenError, "same cells", id="type-vs-cells"
-        ),
-    ],
-)
-def test_an_earlier_entrys_refusal_never_overtakes_a_later_higher_priority_one(
-    script: Mapping[int, Callable[[WriteRow, RowPayload], RowPayload]],
-    winner: type[Exception],
-    message: str,
-) -> None:
-    # A logical insert prepares every entry, then proves every payload its
-    # own, then checks every entry for the first entry's cells, and only then
-    # binds values — so whichever barrier an entry fails first decides the
-    # error, wherever that entry sits in the step.
+def test_a_logical_insert_gathers_every_entrys_cells_before_binding_any() -> None:
+    # An earlier entry's refused cells never preempt a later entry's failure
+    # to be prepared at all.
     demanded: list[int] = []
     step = PlannedInsert(
         entity=_BUILDER_LEDGER, entries=tuple(_ledger_entry(key) for key in (1, 2, 3))
     )
 
-    with pytest.raises(winner, match=message or None):
-        lowered(step, _scripted_rows(script, demanded), _BUILDER_MODEL, POSTGRES)
+    with pytest.raises(_PreparationFailure):
+        lowered(
+            step, _scripted_rows({1: _narrower, 3: _unprepared}, demanded), _BUILDER_MODEL, POSTGRES
+        )
 
-    unprepared = [key for key, prepare in script.items() if prepare is _unprepared]
-    assert demanded == [key for key in (1, 2, 3) if key <= min(unprepared, default=3)]
+    assert demanded == [1, 2, 3]
 
 
 def test_an_ordinary_insert_yields_no_statement_until_every_entry_compiles() -> None:
     step = PlannedInsert(
         entity=_BUILDER_LEDGER, entries=tuple(_ledger_entry(key) for key in (1, 2, 3))
     )
-    statements = lowered_steps(
-        (step,), _scripted_rows({3: _invalid_cell}), _BUILDER_MODEL, POSTGRES
-    )
+    statements = lowered_steps((step,), _scripted_rows({3: _narrower}), _BUILDER_MODEL, POSTGRES)
 
-    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
+    with pytest.raises(SqlGenError, match="inconsistent row widths"):
         next(statements)
 
 
-def test_a_multi_entry_generated_value_refusal_follows_the_shared_cells_check() -> None:
+def test_a_multi_entry_generated_value_insert_is_refused() -> None:
     attendee = _identity(PK_MAX, "Attendee")
     row = managed_row_of(PK_MAX, {_attribute(PK_MAX, "Attendee", "id"): MAX_PLUS_ONE})
     entries = (WriteRow(row=row, origin=NEW_LINEAGE), WriteRow(row=row, origin=NEW_LINEAGE))
-    payloads = LayoutPayloadPreparer(PK_MAX)
-    first, second = (payloads.row(attendee, entry) for entry in entries)
-    narrower = dataclasses.replace(
-        second, contributors=second.contributors[:-1], values=second.values[:-1]
-    )
+    slots = LayoutPayloadPreparer(PK_MAX).row_slots(attendee, row.presence)
+    cells = tuple(slots.cells(entry) for entry in entries)
 
-    with pytest.raises(SqlGenError, match="every entry of one insert stores the same cells"):
+    with pytest.raises(SqlGenError, match="renders one row at a time"):
         compile_write_step(
-            PlannedInsert(entity=attendee, entries=entries), (first, narrower), PK_MAX, POSTGRES
+            PlannedInsert(entity=attendee, entries=entries),
+            InsertPayload(slots, cells),
+            PK_MAX,
+            POSTGRES,
         )

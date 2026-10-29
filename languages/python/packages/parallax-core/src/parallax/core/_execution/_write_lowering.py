@@ -15,11 +15,11 @@ from parallax.core.sql_gen._write import (
     compile_write_step,
     non_insert_parameter_ceiling,
 )
-from parallax.core.storage_layout import RelationalDocument
 from parallax.core.write_plan.payload import (
     AssignmentPayload,
+    InsertPayload,
     PatchedDocument,
-    RowPayload,
+    RowSlots,
     WritePayloadPreparer,
 )
 from parallax.core.write_plan.steps import (
@@ -127,21 +127,22 @@ class LoweringCursor:
         capture_insert = self._capture_insert
         if isinstance(step, PlannedInsert):
             if capture_insert is not None:
-                for entry, prepared in zip(
-                    step.entries, cast("tuple[RowPayload, ...]", payload), strict=True
-                ):
-                    capture_insert(entry, _stored_document(prepared))
+                inserted = cast("InsertPayload", payload)
+                for entry, cells in zip(step.entries, inserted.rows, strict=True):
+                    capture_insert(entry, _stored_document(inserted.slots, cells))
             return
         capture_revision = self._capture_revision
         if isinstance(step, PlannedTemporalRevision) and capture_revision is not None:
             capture_revision(step, _document_patches(cast("AssignmentPayload", payload)))
 
-    def _captured_row(self, entity: EntityIdentity, entry: WriteRow) -> RowPayload:
-        payload = _row_payload(self._payloads, entity, entry)
+    def _captured_cells(
+        self, entity: EntityIdentity, slots: RowSlots, entry: WriteRow
+    ) -> tuple[object, ...]:
+        cells = _entry_cells(entity, slots, entry)
         capture_insert = self._capture_insert
         if capture_insert is not None:
-            capture_insert(entry, _stored_document(payload))
-        return payload
+            capture_insert(entry, _stored_document(slots, cells))
+        return cells
 
     def grouped_insert_start(self, step: PlannedStep) -> PlannedInsert | None:
         """``step`` where it can begin a grouped insert — a single-entry insert
@@ -164,15 +165,17 @@ class LoweringCursor:
         before a taken step's payload is demanded the step must be a
         single-entry insert of the same Entity naming the same members and
         holding no generated value; values, origins, and audit values may
-        differ. Each entry's payload is the backing it already carries, or the
-        one prepared now. ``first`` failing raises, and a control-flow or fatal
-        exception propagates with nothing returned.
+        differ. Every entry stores the Row Slots ``first`` selects, and each
+        entry's cells are the backing it already carries, or the ones gathered
+        now. ``first`` failing raises, and a control-flow or fatal exception
+        propagates with nothing returned.
         """
         (entry,) = first.entries
         entity = first.entity
         presence = entry.row.presence
+        slots = _entry_slots(self._payloads, entity, entry)
         builder = InsertStatementBuilder(
-            entity, entry, self._captured_row(entity, entry), self._meta, self._dialect
+            slots, self._captured_cells(entity, slots, entry), self._meta, self._dialect
         )
         binds = self._dialect.max_bind_parameters
         following: PlannedStep | None = None
@@ -182,7 +185,7 @@ class LoweringCursor:
             if joining is None:
                 break
             try:
-                builder.append(joining, self._captured_row(entity, joining))
+                builder.append(self._captured_cells(entity, slots, joining))
             except Exception as error:
                 return GroupedInsert(builder.finish(), None, error)
             following = None
@@ -297,12 +300,10 @@ def _within(
 
 def _demanded(step: PlannedStep, payloads: WritePayloadPreparer) -> StepPayload:
     match step:
-        case PlannedInsert(entity=entity, entries=(entry,)):
-            return (payloads.row(entity, entry) if entry.prepared is None else entry.prepared,)
         case PlannedInsert(entity=entity, entries=entries):
-            return tuple(
-                payloads.row(entity, entry) if entry.prepared is None else entry.prepared
-                for entry in entries
+            slots = _entry_slots(payloads, entity, entries[0])
+            return InsertPayload(
+                slots, tuple([_entry_cells(entity, slots, entry) for entry in entries])
             )
         case PlannedTemporalRevision():
             return _predictable_revision(step, payloads.assignments(step.entity, step.assignments))
@@ -325,19 +326,39 @@ def _predictable_revision(
     return payload
 
 
-def _row_payload(
+def _entry_slots(
     payloads: WritePayloadPreparer, entity: EntityIdentity, entry: WriteRow
-) -> RowPayload:
-    return payloads.row(entity, entry) if entry.prepared is None else entry.prepared
+) -> RowSlots:
+    """The Row Slots ``entry`` stores: those of the backing it carries, or the
+    ones its presence selects."""
+    prepared = entry.prepared
+    if prepared is None:
+        return payloads.row_slots(entity, entry.row.presence)
+    return prepared.slots
 
 
-def _stored_document(payload: RowPayload) -> object | None:
-    """The complete Structured Column document ``payload`` stores, or ``None``
-    where its Table has none."""
-    for contributor, value in zip(payload.contributors, payload.values, strict=True):
-        if isinstance(contributor, RelationalDocument):
-            return value
-    return None
+def _entry_cells(entity: EntityIdentity, slots: RowSlots, entry: WriteRow) -> tuple[object, ...]:
+    """``entry``'s cells under ``slots``: the backing settlement already
+    prepared from it, else gathered now.
+
+    Backing prepared from other inputs than ``entry``'s own, or storing other
+    cells than ``slots`` places, is a broken caller contract.
+    """
+    prepared = entry.prepared
+    if prepared is None:
+        return slots.cells(entry)
+    if not prepared.prepared_from(entry) or prepared.entity != entity:
+        raise SqlGenError(f"{entity.canonical}: a prepared Row Payload belongs to another entry")
+    if prepared.slots is not slots and prepared.slots.contributors != slots.contributors:
+        raise SqlGenError(f"{entity.name!r}: every entry of one insert stores the same cells")
+    return prepared.values
+
+
+def _stored_document(slots: RowSlots, cells: tuple[object, ...]) -> object | None:
+    """The complete Structured Column document ``cells`` store, or ``None``
+    where their Table has none."""
+    index = slots.shared_document
+    return None if index is None else cells[index]
 
 
 def _document_patches(payload: AssignmentPayload) -> PatchedDocument | None:

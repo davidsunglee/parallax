@@ -8,6 +8,7 @@ from parallax.core.base import (
     SQL_NULL,
     DocumentValue,
     FrozenMap,
+    ManagedValue,
     NeutralType,
     PresentDocument,
     SqlNull,
@@ -20,6 +21,8 @@ from parallax.core.document_codec._leaf import (
     LeafEncodingError,
     decode_leaf,
     encode_leaf,
+    encode_managed_leaf,
+    encode_managed_scalar_many,
     encode_scalar_many,
     is_text_compared,
 )
@@ -58,6 +61,7 @@ __all__ = [
     "locate_raw_entity_member",
     "located_occurrence",
     "persisted_document_equal",
+    "prepare_managed_patches",
     "prepare_patches",
     "prepared_raw_member_classifier",
     "reduce_declared_members",
@@ -559,40 +563,46 @@ back as invalid stored data."""
 
 
 def encode_managed_document(
-    shape: MemberShape, values: Mapping[str, object]
+    shape: MemberShape, cells: Sequence[object], absent: object
 ) -> FrozenMap[str, object]:
-    """Encode one managed occurrence directly into recursively immutable storage."""
+    """Encode one managed occurrence's positional cells directly into
+    recursively immutable storage.
+
+    ``cells`` aligns with ``shape``'s members, ``absent`` marking an omitted
+    one, and every nested occurrence keeps the same positional form. Every
+    value was already admitted under its declared type, so nothing here judges
+    one again.
+    """
     document: dict[str, object] = {}
-    for member in shape.members:
-        if member.name not in values:
+    for member, value in zip(shape.members, cells, strict=True):
+        if value is absent:
             if member.multiplicity is Multiplicity.MANY:
                 document[member.name] = ()
             continue
-        value = values[member.name]
         if value is None:
             document[member.name] = () if _is_many(member) else None
         elif isinstance(member, ScalarDefinition):
             document[member.name] = (
-                encode_scalar_many(member.type, cast("Iterable[object]", value))
+                encode_managed_scalar_many(member.type, cast("Iterable[ManagedValue]", value))
                 if member.multiplicity is Multiplicity.MANY
-                else retain_document_value(encode_leaf(member.type, value))
+                else encode_managed_leaf(member.type, value)
             )
         elif member.multiplicity is Multiplicity.MANY:
             document[member.name] = encode_managed_many(
-                member.shape, cast("Sequence[Mapping[str, object]]", value)
+                member.shape, cast("Sequence[Sequence[object]]", value), absent
             )
         else:
             document[member.name] = encode_managed_document(
-                member.shape, cast("Mapping[str, object]", value)
+                member.shape, cast("Sequence[object]", value), absent
             )
     return adopt_frozen_map(document)
 
 
 def encode_managed_many(
-    shape: MemberShape, elements: Sequence[Mapping[str, object]]
+    shape: MemberShape, elements: Sequence[Sequence[object]], absent: object
 ) -> tuple[FrozenMap[str, object], ...]:
     """Encode managed Many elements once, preserving their semantic order."""
-    return tuple(encode_managed_document(shape, element) for element in elements)
+    return tuple(encode_managed_document(shape, element, absent) for element in elements)
 
 
 def comparison_text(neutral_type: NeutralType, value: object) -> str:
@@ -649,6 +659,44 @@ def prepare_patches(
     other shape all produce a document this same shape then reads back as invalid
     stored data, and nothing here refuses them.
     """
+    return _prepared_patches(
+        shape, patches, _validated_leaf, encode_scalar_many, retain_document_value
+    )
+
+
+def prepare_managed_patches(
+    shape: MemberShape, patches: Sequence[DocumentPatch]
+) -> tuple[PreparedPatch, ...]:
+    """:func:`prepare_patches` for patches whose every value was already
+    admitted under its declared type, which nothing here judges again, and
+    whose every occurrence document is already encoded and owned."""
+    return _prepared_patches(
+        shape,
+        patches,
+        encode_managed_leaf,
+        cast("_ManyEncoder", encode_managed_scalar_many),
+        _owned,
+    )
+
+
+def _validated_leaf(neutral_type: NeutralType, value: object) -> object:
+    return retain_document_value(encode_leaf(neutral_type, value))
+
+
+def _owned(document: object) -> object:
+    return document
+
+
+type _ManyEncoder = Callable[[NeutralType, Iterable[object]], tuple[object, ...]]
+
+
+def _prepared_patches(
+    shape: MemberShape,
+    patches: Sequence[DocumentPatch],
+    leaf: Callable[[NeutralType, object], object],
+    many: _ManyEncoder,
+    document: Callable[[object], object],
+) -> tuple[PreparedPatch, ...]:
     if not patches:
         raise ValueError("a patch sequence is nonempty")
     prepared: list[PreparedPatch] = []
@@ -658,7 +706,7 @@ def prepare_patches(
         if isinstance(patch, SetValueObject):
             if not isinstance(member, OccurrenceDefinition):
                 raise ValueError(f"{dotted!r} names a leaf; use SetScalar")
-            prepared.append(PreparedPatch(patch.path, retain_document_value(patch.document), None))
+            prepared.append(PreparedPatch(patch.path, document(patch.document), None))
             continue
         if not isinstance(member, ScalarDefinition):
             raise ValueError(f"{dotted!r} names an occurrence; use SetValueObject")
@@ -671,13 +719,11 @@ def prepare_patches(
                 if isinstance(presence, ExplicitNull) or presence.value is None
                 else cast("Iterable[object]", presence.value)
             )
-            prepared.append(
-                PreparedPatch(patch.path, encode_scalar_many(member.type, elements), None)
-            )
+            prepared.append(PreparedPatch(patch.path, many(member.type, elements), None))
         elif isinstance(presence, ExplicitNull):
             prepared.append(PreparedPatch(patch.path, None, member.type))
         else:
-            encoded = retain_document_value(encode_leaf(member.type, presence.value))
+            encoded = leaf(member.type, presence.value)
             prepared.append(PreparedPatch(patch.path, encoded, member.type))
     return tuple(prepared)
 
