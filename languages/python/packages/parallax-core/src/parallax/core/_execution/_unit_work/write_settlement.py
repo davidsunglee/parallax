@@ -100,12 +100,14 @@ from parallax.core.write_plan.steps import (
 __all__ = ["WritePlanCompiler"]
 
 
-_GROUP_WRITES: Final = 64
+_GROUP_WRITES: Final = 1024
 """The most settled writes one Write Group holds. In a group of updates or
 deletes every insert waits behind every non-insert step of the group, so this
 bounds how many settled writes' non-insert steps a failing insert wastes,
 whatever the flush's size; a batch counts once however many rows it covers. It
-is not the executor's per-call statement or row cap."""
+is not the executor's per-call statement or row cap. Each effect shape of a
+group is one statement, so a group this large applies a thousand like
+amendments as one statement where a smaller one would cut them into several."""
 
 type _GroupKey = tuple[AttributeIdentity, object]
 """One object a settled write writes: its family's primary-key Attribute and the

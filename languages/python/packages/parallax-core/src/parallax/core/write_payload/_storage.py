@@ -610,10 +610,6 @@ type _MilestoneEffect = (
 )
 
 
-def _key_columns(keys: Sequence[tuple[object, ...]], width: int) -> list[list[object]]:
-    return [[key[index] for key in keys] for index in range(width)]
-
-
 def _upper_bound(bound: TemporalUpperBound) -> object:
     return bound.instant if isinstance(bound, Finite) else INFINITY
 
@@ -690,54 +686,47 @@ class EffectSlots:
         shared_ends = end_sources.count(None)
         self.parameter_count = len(types) + paths + tag + shared_ends
 
-    def column_cells(
-        self, steps: Sequence[PlannedStep], payloads: Sequence[AssignmentPayload | None]
-    ) -> tuple[list[object], ...]:
-        """One new list per source column, in step order: each key value, axis
-        end, and observed version or Transaction-Time start read from its step,
-        and each assigned cell from its step's payload — a path's prepared
-        encoded value where the shared Structured Column is patched."""
+    def gather(
+        self,
+        columns: Sequence[list[object]],
+        step: PlannedStep,
+        payload: AssignmentPayload | None,
+    ) -> None:
+        """Append ``step``'s cell to each of ``columns``, one list per source
+        column: each key value, axis end, and observed version or
+        Transaction-Time start read from the step, and each assigned cell from
+        its payload — a path's prepared encoded value where the shared
+        Structured Column is patched. Every cell is read before any is
+        appended, so ``columns`` gain a whole row or nothing."""
         if self._keyed:
-            keyed = cast("Sequence[PlannedUpdate | PlannedDelete]", steps)
-            columns = _key_columns(
-                [cast("KeyTarget", step.target).key_values[0] for step in keyed],
-                len(self.key_sources),
-            )
+            keyed = cast("PlannedUpdate | PlannedDelete", step)
+            cells = list(cast("KeyTarget", keyed.target).key_values[0])
             if self.gate_source is not None:
-                columns.append(
-                    [
-                        cast(
-                            "VersionGate", cast("Versioned", step.concurrency).gate
-                        ).observed_version
-                        for step in keyed
-                    ]
-                )
+                gate = cast("VersionGate", cast("Versioned", keyed.concurrency).gate)
+                cells.append(gate.observed_version)
         else:
-            milestones = cast("Sequence[_MilestoneEffect]", steps)
-            columns = _key_columns(
-                [step.target.key_values for step in milestones], len(self.key_sources)
-            )
+            milestone = cast("_MilestoneEffect", step)
+            target = milestone.target
+            cells = list(target.key_values)
+            ends = target.end_values
             for index, source in enumerate(self.end_sources):
                 if source is not None:
-                    columns.append(
-                        [_upper_bound(step.target.end_values[index]) for step in milestones]
-                    )
+                    cells.append(_upper_bound(ends[index]))
             if self.gate_source is not None:
-                columns.append(
-                    [cast("TemporalGate", step.concurrency).observed_start for step in milestones]
+                cells.append(cast("TemporalGate", milestone.concurrency).observed_start)
+        if self._gathers:
+            values = cast("AssignmentPayload", payload).values
+            for value, patch in self._gathers:
+                cell = values[value]
+                cells.append(
+                    cell if patch < 0 else cast("PatchedDocument", cell).patches[patch].value
                 )
-        assigned = cast("Sequence[AssignmentPayload]", payloads)
-        for value, patch in self._gathers:
-            if patch < 0:
-                columns.append([payload.values[value] for payload in assigned])
-            else:
-                columns.append(
-                    [
-                        cast("PatchedDocument", payload.values[value]).patches[patch].value
-                        for payload in assigned
-                    ]
-                )
-        return tuple(columns)
+        if len(cells) != len(columns):
+            raise WritePlanningError(
+                f"{self.entity.canonical}: a grouped effect gathers one cell per source column"
+            )
+        for column, cell in zip(columns, cells, strict=True):
+            column.append(cell)
 
 
 class AssignmentPlacement:

@@ -216,19 +216,52 @@ def _observed(
     return observations
 
 
+_LIMIT = settlement._GROUP_WRITES  # pyright: ignore[reportPrivateUsage] - the group bound
+
+
 @pytest.mark.parametrize(
     ("objects", "sizes"),
-    [(0, []), (1, [1]), (64, [64]), (65, [64, 1]), (130, [64, 64, 2])],
+    [
+        (0, []),
+        (1, [1]),
+        (_LIMIT - 1, [_LIMIT - 1]),
+        (_LIMIT, [_LIMIT]),
+        (_LIMIT + 1, [_LIMIT, 1]),
+        (2 * _LIMIT + 2, [_LIMIT, _LIMIT, 2]),
+    ],
+    ids=["none", "one", "just-below", "at", "just-above", "two-full-and-two"],
 )
-def test_writes_of_distinct_objects_share_groups_of_at_most_64(
+def test_writes_of_distinct_objects_share_groups_of_at_most_the_group_bound(
     objects: int, sizes: list[int]
 ) -> None:
-    # Distinct balances, so batching merges none of them into one step.
+    # Distinct balances, so batching merges none of them into one step, and
+    # every full group's updates are one shape: a span over all of them, with
+    # no row cap of its own.
     plan = _plan([_amend_wallet(key, f"{key}.00") for key in range(1, objects + 1)], _WALLET)
     assert _sizes(plan) == sizes
     assert [key for step in plan_steps(plan) for key in _keys(step)] == list(range(1, objects + 1))
     for group in _groups(plan):
         assert len(group.steps) == len(group.writes)
+        spans = [(span.start, span.stop) for span in group.effect_spans]
+        assert spans == ([] if len(group.writes) == 1 else [(0, len(group.writes))])
+
+
+def test_a_repeated_object_starts_the_next_group_however_far_below_the_bound() -> None:
+    # Object 1 again after `_LIMIT - 1` writes: its group closes one short of
+    # the bound, and the next fills to the bound before the rest. The writes
+    # reach the planner as admitted, without admission coalescing the later
+    # write of object 1 into the earlier one.
+    keys = [*range(1, _LIMIT), 1, *range(_LIMIT, 2 * _LIMIT)]
+    preparation = write_preparation_of(_WALLET)
+    buffer = [
+        unobserved_write(
+            prepare_typed_write(_amend_wallet(key, f"{index}.00"), preparation), _WALLET
+        )
+        for index, key in enumerate(keys)
+    ]
+    plan = _finalize(buffer, _WALLET)
+    assert _sizes(plan) == [_LIMIT - 1, _LIMIT, 1]
+    assert [key for step in plan_steps(plan) for key in _keys(step)] == keys
 
 
 def test_a_group_runs_every_writes_non_insert_steps_before_any_of_their_inserts() -> None:

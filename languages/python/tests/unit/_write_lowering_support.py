@@ -1313,8 +1313,8 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
         "typed",
         first_key=2001,
         label="after",
-        groups=(64, 64, 2),
-        work=FlushWork(6, 6, 0, 64, 64),
+        groups=(130,),
+        work=FlushWork(2, 2, 0, 130, 130),
     ),
     _cross_object_case(
         "bitemporal",
@@ -1329,7 +1329,7 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
     *DEFERRED_CASES,
 )
 """Keyed amendments under the default Optimistic strategy: each Write Group's
-closes share ordered invocations and its successors one grouped insert, and a
+closes are one grouped effect and its successors one grouped insert, and a
 Bitemporal interior amendment opens a head, a changed middle, and a tail. The
 deferred spans follow."""
 

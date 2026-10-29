@@ -204,16 +204,21 @@ class EffectSlots(Protocol):
     @property
     def parameter_count(self) -> int: ...
 
-    def column_cells(
-        self, steps: Sequence[PlannedStep], payloads: Sequence[AssignmentPayload | None]
-    ) -> tuple[list[object], ...]:
-        """One new list per source column holding each of ``steps``' cells
-        there, in step order, read from the step and from the Assignment
-        Payload prepared from its assignments — ``None`` for a step assigning
-        nothing.
+    def gather(
+        self,
+        columns: Sequence[list[object]],
+        step: PlannedStep,
+        payload: AssignmentPayload | None,
+    ) -> None:
+        """Append ``step``'s cell to each of ``columns``, one list per source
+        column, read from the step and from the Assignment Payload prepared
+        from its assignments — ``None`` for a step assigning nothing — so a
+        statement's columns grow one effect at a time and no effect's payload
+        need outlive its own append. A step either fills a row of every column
+        or none.
 
-        Every step has this shape and each payload is its own step's, so
-        nothing here judges a value again.
+        ``step`` has this shape and ``payload`` is its own, so nothing here
+        judges a value again.
         """
         ...
 
