@@ -446,6 +446,10 @@ def test_a_checkout_that_cannot_complete_the_capture_is_refused(
         "languages/python/tools/interpreter_matrix.py",
         "languages/python/tools/snapshot_delivery_overhead.py",
         "languages/python/tools/lifecycle_overhead.py",
+        "languages/python/tests/_support/db_port.py",
+        "languages/python/tests/_support/document_reads.py",
+        "languages/python/tests/_support/model_capabilities.py",
+        "languages/python/tests/_support/__init__.py",
     ],
 )
 def test_a_change_to_what_a_kept_member_measured_through_is_refused(
@@ -656,8 +660,17 @@ def _recorded(**fields: object) -> dict[str, object]:
         (_recorded(member="unknown"), 1, "is not a collected member"),
         (_recorded(originalCommit="a" * 12), 1, "is not a full commit hash"),
         (_recorded(replacementCommit=None), 1, "is not a non-empty string"),
+        ({REPLACEMENT_KEY: None}, 1, f"{REPLACEMENT_KEY} is not an object"),
     ],
-    ids=["none", "other-adjustment", "recorded", "unknown-member", "short-commit", "absent"],
+    ids=[
+        "none",
+        "other-adjustment",
+        "recorded",
+        "unknown-member",
+        "short-commit",
+        "absent",
+        "null-replacement",
+    ],
 )
 def test_verification_reads_the_replacement_recorded_beside_the_portfolio(
     tmp_path: Path,

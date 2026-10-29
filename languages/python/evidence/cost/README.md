@@ -244,9 +244,9 @@ failure; a member the capture produced is never re-measured. The checkout must
 be clean and descend from the kept members' single producing commit. Before
 measuring, the command proves that HEAD changed nothing the kept members
 measured through: their recorded instrument and control sources, workload
-digests, and Budget Contract equal HEAD's, and no production package, the
-dependency lock, or any tool other than the collector and the replaced
-member's own instruments changed. It then passes the canonical authority
+digests, and Budget Contract equal HEAD's, and no test module those sources
+import, production package, the dependency lock, or any tool other than the
+collector and the replaced member's own instruments changed. It then passes the canonical authority
 preflight and measures the member exactly as collection does, refusing a
 repeated failure, a dirty or different producing commit, or an interpreter
 other than the kept members'.

@@ -60,6 +60,7 @@ provenance whole and naming every cell it could not compare.
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
 import functools
 import hashlib
@@ -2113,10 +2114,9 @@ REPLACEMENT_SPAN: Final = "python-report-cost-replacement"
 
 
 def _recorded_replacement(adjustment: Mapping[str, object]) -> MemberReplacement | None:
-    recorded = adjustment.get(REPLACEMENT_KEY)
-    if recorded is None:
+    if REPLACEMENT_KEY not in adjustment:
         return None
-    fields = _object(recorded, f"{ADJUSTMENT_FIELD} {REPLACEMENT_KEY}")
+    fields = _object(adjustment[REPLACEMENT_KEY], f"{ADJUSTMENT_FIELD} {REPLACEMENT_KEY}")
     member = _text(fields, "member")
     if member not in {known.subject for known in MEMBERS}:
         raise ValueError(f"the replaced member {member!r} is not a collected member")
@@ -2206,14 +2206,45 @@ def _kept_commit(kept: Sequence[Document]) -> str:
     return _commit(commit, "the kept members' producing commit")
 
 
+def _imported_test_sources(roots: Iterable[str]) -> frozenset[str]:
+    """``roots`` and every workspace ``tests`` module they import, transitively,
+    including the packages enclosing each, by workspace-relative path."""
+    found: set[str] = set()
+    pending = list(roots)
+    while pending:
+        path = pending.pop()
+        if path in found:
+            continue
+        found.add(path)
+        for node in ast.walk(ast.parse((WORKSPACE / path).read_bytes())):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names = [f"{node.module}.{alias.name}" for alias in node.names]
+            else:
+                continue
+            for name in names:
+                parts = name.split(".")
+                if parts[0] != "tests":
+                    continue
+                for end in range(1, len(parts) + 1):
+                    stem = "/".join(parts[:end])
+                    pending.extend(
+                        candidate
+                        for candidate in (f"{stem}.py", f"{stem}/__init__.py")
+                        if (WORKSPACE / candidate).is_file()
+                    )
+    return frozenset(found)
+
+
 def _prove_kept_unchanged(
     kept: Sequence[Document], conditions: Conditions, changed: frozenset[str], replaced: str
 ) -> None:
     """Refuse unless HEAD differs from the producing commit in nothing a kept
-    member measured through: its recorded instrument and control sources, its
-    workload digest, and the Budget Contract it embeds, nor any production
-    package, the dependency lock, or a tool other than the collector and the
-    replaced member's own instruments."""
+    member measured through: its recorded instrument and control sources, the
+    test modules they import, its workload digest, and the Budget Contract it
+    embeds, nor any production package, the dependency lock, or a tool other
+    than the collector and the replaced member's own instruments."""
     contract = committed_contract()
     kept_sources: set[str] = set()
     for envelope in kept:
@@ -2240,9 +2271,12 @@ def _prove_kept_unchanged(
         for path in (*MEMBER_SOURCES[replaced].instruments, "tools/cost_report.py")
         if path not in kept_sources
     }
+    imported = {f"{workspace}/{path}" for path in _imported_test_sources(kept_sources)}
     shared = (f"{workspace}/packages/", f"{workspace}/tools/")
     measured_through = sorted(
-        path for path in changed - own if path.startswith(shared) or path == f"{workspace}/uv.lock"
+        path
+        for path in changed - own
+        if path.startswith(shared) or path in imported or path == f"{workspace}/uv.lock"
     )
     if measured_through:
         raise ValueError(
@@ -2358,9 +2392,10 @@ def replace_member(run_dir: Path, subject: str, out: Path, runner: Runner = run_
                 "replacement": _interval(span),
                 "proven": (
                     "HEAD descends from the original commit, and the kept members' recorded "
-                    "instrument and control sources, workload digests, and Budget Contract, "
-                    "the dependency lock, every production package, and every tool other than "
-                    "the collector and the replaced member's own instruments equal HEAD's"
+                    "instrument and control sources, the test modules they import, workload "
+                    "digests, and Budget Contract, the dependency lock, every production "
+                    "package, and every tool other than the collector and the replaced "
+                    "member's own instruments equal HEAD's"
                 ),
                 "unchanged": "every kept member's envelope, conditions, and duration spans",
             },
