@@ -380,8 +380,8 @@ removed and reinserted this way.
               │   pending Bitemporal opening    → settle_opening
               │       → BoundRange (steps now) | DeferredTemporalRange (no step yet)
               │   group: consecutive settled writes of one phase over distinct
-              │     objects, at most 64; a write the database allocates a key for,
-              │     or naming no complete key, alone; effects before inserts
+              │     objects, up to the group bound; a write the database allocates
+              │     a key for, or naming no complete key, alone; effects before inserts
               │   a deferred write: an entry of its own; consecutive eligible ones
               │     are recorded as an AcquisitionSpan of at most 32
               ▼
@@ -600,7 +600,7 @@ owns it and so revises or removes it in place, and the successors it opens.
 | Gates and versions | [`m-opt-lock`](../../../../core/spec/m-opt-lock.md), [`m-read-lock`](../../../../core/spec/m-read-lock.md) |
 | Coalescing and composition | [`m-unit-work`](../../../../core/spec/m-unit-work.md#same-transaction-write-coalescing), [ADR 0023](../../../../docs/adr/0023-same-transaction-writes-coalesce-in-the-unit-of-work.md) |
 | Batching and predicate writes | [`m-batch-write`](../../../../core/spec/m-batch-write.md), [ADR 0075](../../../../docs/adr/0075-predicate-writes-are-readless-only.md), [ADR 0077](../../../../docs/adr/0077-predicate-writes-execute-at-the-call-and-sources-continue-across-flushes.md) |
-| Write Planner, stage order, Write Plan, Write Groups | [`m-unit-work`](../../../../core/spec/m-unit-work.md#write-finalization), [ADR 0041](../../../../docs/adr/0041-write-finalization-is-centralized-behind-a-typed-planner.md), [ADR 0076](../../../../docs/adr/0076-write-groups-run-every-effect-before-any-insert.md) |
+| Write Planner, stage order, Write Plan, Write Groups | [`m-unit-work`](../../../../core/spec/m-unit-work.md#write-finalization), [ADR 0041](../../../../docs/adr/0041-write-finalization-is-centralized-behind-a-typed-planner.md), [ADR 0076](../../../../docs/adr/0076-write-groups-run-every-effect-before-any-insert.md), [ADR 0080](../../../../docs/adr/0080-write-groups-hold-up-to-1024-settled-writes.md) |
 | Planned Steps and State Observations | [`m-write-plan`](../../../../core/spec/m-write-plan.md), [ADR 0068](../../../../docs/adr/0068-the-planned-write-algebra-is-its-own-module.md) |
 | Temporal expansion | [`m-temporal-write`](../../../../core/spec/m-temporal-write.md#temporal-expansion), [ADR 0042](../../../../docs/adr/0042-temporal-plans-retain-complete-predecessor-state-and-close-cause.md), [ADR 0045](../../../../docs/adr/0045-temporal-mutations-expand-in-place-after-ordering.md), [ADR 0069](../../../../docs/adr/0069-temporal-writes-settle-through-one-coverage-transform-and-predecessor-expansion.md) |
 | Audit of produced rows | [ADR 0071](../../../../docs/adr/0071-audit-finalizes-represented-rows-before-their-realization-is-chosen.md) |

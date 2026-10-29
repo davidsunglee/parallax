@@ -46,3 +46,8 @@ groups or transactions, and under Locking it would not prevent the deadlock on
 the shared lock's upgrade; a cross-transaction lock-order protocol is separate
 work. An unbounded group would let a failing insert waste work, and hold
 locks, in proportion to the whole flush.
+
+*Superseded in part (2026-10, [ADR 0080](0080-write-groups-hold-up-to-1024-settled-writes.md)):*
+a group now holds at most 1,024 settled writes, because each effect shape of a
+group executes as one statement. The effects-first layout, the bound's purpose,
+and the accepted failure precedence stand.
