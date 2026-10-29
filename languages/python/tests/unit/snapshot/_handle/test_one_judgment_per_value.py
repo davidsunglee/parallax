@@ -562,12 +562,11 @@ def test_a_temporal_write_admits_once_and_its_successors_carry_cells_unjudged(
     assert opening.sql.startswith("insert into where_position(")
 
 
+_OPENED_POSITION: Final = WherePosition(id=1, acct_num="A", value=PyDecimal("100.00"))
+
+
 def _typed_insert_until(tx: TxnContext, _source: object) -> None:
-    tx.insert(
-        WherePosition(id=1, acct_num="A", value=PyDecimal("100.00")),
-        valid_from=_VALID_FROM,
-        until=_UNTIL,
-    )
+    tx.insert(_OPENED_POSITION, valid_from=_VALID_FROM, until=_UNTIL)
 
 
 def _wire_insert_until(tx: TxnContext, _source: object) -> None:
