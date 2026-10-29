@@ -112,6 +112,23 @@ def test_the_owners_partition_every_address_the_instruments_gate() -> None:
     assert all(cross_object_addresses)
     assert claimed_flush_addresses == cross_object_addresses
 
+    batch_addresses = {
+        address: unit
+        for address, unit in predicted.items()
+        if address[0] == gate_support.WRITE_SUBJECT
+        and write_report.WINDOWS[address[1]] == write_report.BATCH_WINDOW
+    }
+    assert batch_addresses == {
+        (gate_support.WRITE_SUBJECT, case, cell): "B/row"
+        for case in write_report.BATCH_CASE_NAMES
+        for cell in ("retainedBytes", "transientBytes")
+    }
+    claimed_batch_addresses = {
+        (gate.subject, gate.workload, gate.cell)
+        for gate in gate_support.BATCH_INSERT_OWNER.gates(every_predicted)
+    }
+    assert claimed_batch_addresses == set(batch_addresses)
+
 
 @pytest.mark.usefixtures("committed_cost_evidence")
 def test_every_memory_gate_is_an_address_the_instruments_read() -> None:

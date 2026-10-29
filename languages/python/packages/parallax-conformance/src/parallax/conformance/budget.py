@@ -33,6 +33,7 @@ kibibytes, each converted to bytes by :func:`reading_bytes`."""
 
 GATED_WINDOWS: Final = frozenset(
     {
+        "batch-insert",
         "cross-object-flush",
         "keyed-write",
         "model-preparation",
