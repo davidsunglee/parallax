@@ -6,7 +6,7 @@ what each original and insertion contributes to them."""
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from itertools import combinations, pairwise, product
 from typing import Any, Final, cast
@@ -36,7 +36,7 @@ from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan import ObjectKey, PredecessorRow
 from parallax.core.write_plan.keys import TemporalObjectStateKey
 from parallax.core.write_plan.managed_row import ManagedRow, projected_row
-from parallax.core.write_plan.payload import RowPayload, RowSlots
+from parallax.core.write_plan.payload import EffectSlots, RowPayload, RowSlots
 from parallax.core.write_plan.plan import (
     NO_TEMPORAL_WRITE_OWNERSHIP,
     OPEN_BITEMPORAL_ENDS,
@@ -124,6 +124,12 @@ class _CountingPayloads:
 
     def rebound(self, payload: RowPayload, write_row: WriteRow) -> RowPayload:
         return self.real.rebound(payload, write_row)
+
+    def effect_shape(self, step: PlannedStep) -> Hashable | None:
+        return self.real.effect_shape(step)
+
+    def effect_slots(self, entity: EntityIdentity, shape: Hashable) -> EffectSlots:
+        return self.real.effect_slots(entity, shape)
 
 
 def _expansion(

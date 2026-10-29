@@ -116,6 +116,7 @@ FLUSH_UNITS: Final[Mapping[str, str]] = {
     "work.invocations": "invocations",
     "work.largestOrderedInvocation": "statements",
     "work.largestGroupedInsert": "rows",
+    "work.largestGroupedEffect": "rows",
 }
 """Every cell a cross-object flush answers, with its unit. A ``B`` reading is
 per flush and its ``B/row`` peer the same reading divided by the flush's

@@ -558,6 +558,25 @@ class Dialect:
             )
         return expression, binds
 
+    def sourced_document_mutation(
+        self, document: str, paths: Sequence[tuple[str, ...]], sources: Sequence[str]
+    ) -> tuple[str, list[object]]:
+        """The `SET` expression assigning each of ``paths`` inside ``document``
+        the value of its own already-rendered ``sources`` expression, and its
+        ordered path binds.
+
+        It is :meth:`document_mutation`'s form where each assigned value is a
+        per-row column of a grouped statement's source rather than a bind: the
+        source column already carries the document type, so it takes no value
+        expression of its own, and only the paths bind.
+        """
+        expression = document
+        binds: list[object] = []
+        for path, source in zip(paths, sources, strict=True):
+            expression = f"jsonb_set({expression}, ?, {source})"
+            binds.append(self.document_path(path))
+        return expression, binds
+
     # -- placeholders ------------------------------------------------------ #
     def to_driver_sql(self, canonical_sql: str) -> str:
         """Translate the canonical `?` placeholders to this driver's form (`%s`),

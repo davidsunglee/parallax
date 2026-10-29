@@ -205,7 +205,6 @@
     "MappingRow",
     "OrderedWriteResult",
     "OrderedWriteResultComplete",
-    "OrderedWriteResultIntegrityError",
     "OrderedWriteResultInterrupted",
     "OrderedWriteTransport",
     "Password",
@@ -228,6 +227,7 @@
     "StatementFailed",
     "StatementNotExecuted",
     "TransactionOutcome",
+    "WriteResultIntegrityError",
     "isolation_level",
     "report_resource_issues",
     "report_unregistration_failure"

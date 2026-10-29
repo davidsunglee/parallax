@@ -31,10 +31,10 @@ from parallax.core._execution._write_step_executor import OrderedInvocation
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     OrderedWriteResultComplete,
-    OrderedWriteResultIntegrityError,
     OrderedWriteResultInterrupted,
     StatementFailed,
     StatementNotExecuted,
+    WriteResultIntegrityError,
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
@@ -435,7 +435,7 @@ def test_a_malformed_result_outranks_the_earlier_shortfall_it_reports(
     provider = RecordingLifecycleProvider()
     port = ScriptedAdapter(Ordered(result), ordered=True)
     executed = _execute(port, close(1), close(2), provider=provider)
-    assert isinstance(executed.raised, OrderedWriteResultIntegrityError)
+    assert isinstance(executed.raised, WriteResultIntegrityError)
     # The diagnostic is structure, never a statement or a value it was handed.
     assert "update" not in str(executed.raised)
     calls = _finished_calls(provider)

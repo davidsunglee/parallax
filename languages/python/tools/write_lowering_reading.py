@@ -121,6 +121,7 @@ WORK_CELLS: Final[Mapping[str, Callable[[lowering_support.FlushWork], int]]] = {
     "work.invocations": lambda work: work.invocations,
     "work.largestOrderedInvocation": lambda work: work.largest_ordered_invocation,
     "work.largestGroupedInsert": lambda work: work.largest_grouped_insert,
+    "work.largestGroupedEffect": lambda work: work.largest_grouped_effect,
 }
 FLUSH_METRICS: Final = (
     "plan.elapsedUs",

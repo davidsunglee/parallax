@@ -88,7 +88,6 @@ __all__ = [
     "MappingRow",
     "OrderedWriteResult",
     "OrderedWriteResultComplete",
-    "OrderedWriteResultIntegrityError",
     "OrderedWriteResultInterrupted",
     "OrderedWriteTransport",
     "Password",
@@ -110,6 +109,7 @@ __all__ = [
     "StatementFailed",
     "StatementNotExecuted",
     "TransactionOutcome",
+    "WriteResultIntegrityError",
     "isolation_level",
     "report_resource_issues",
     "report_unregistration_failure",
@@ -201,9 +201,10 @@ type OrderedWriteTransport = Callable[[Sequence[CanonicalWriteStatement]], Order
 in one invocation, answered with exact original-order outcomes."""
 
 
-class OrderedWriteResultIntegrityError(RuntimeError):
-    """An ordered write transport answered a result its own presented statements
-    contradict: a broken adapter contract, never a database failure, and never
+class WriteResultIntegrityError(RuntimeError):
+    """A write answered a result its own presented statements contradict — an
+    ordered write transport result, or the source ordinals a grouped effect
+    returned: a broken adapter contract, never a database failure, and never
     retriable.
 
     Its message is bounded structure — positions, counts, and type names — and

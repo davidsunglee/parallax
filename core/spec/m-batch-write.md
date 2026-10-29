@@ -51,8 +51,11 @@ Delete whose Key Target holds several key tuples.
   `INSERT`** rather than one statement per row, spelled in the dialect's
   multi-row insert form (`m-sql` *Batched insert / update*, `m-dialect`).
 - Multiple updates of the same entity that set the same columns collapse into a
-  **batched `UPDATE`** — executed once per distinct key, or as a single statement
-  with an `IN` predicate when the new value is uniform across the keys.
+  single statement with an `IN` predicate when the new value is uniform across
+  the keys. Otherwise each key stays its own step, and a dialect with array
+  parameters applies the steps setting one member set as one grouped effect
+  (`m-sql` *Grouped effects*), where a dialect without them runs one statement
+  per key.
 - Multiple deletes of the same **non-versioned** entity collapse into a **single
   `DELETE`** with an `IN` predicate (`delete from t where id in (?, …)`) rather
   than one statement per row — the delete analogue of the multi-row `INSERT`. (A
@@ -64,9 +67,12 @@ The canonical Postgres golden SQL (`m-sql`), as `then.statements` entries:
 # m-batch-write-001 (set-based flush) then.statements:
 - sql:
     postgres: insert into wallet(id, owner, balance) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))
-# m-batch-write-002 (update per key) then.statements:
+# m-batch-write-001 (uniform update collapse) then.statements:
 - sql:
-    postgres: update account set balance = ? where id in (?, ?)
+    postgres: update wallet set balance = ? where id in (?, ?)
+# m-batch-write-002 (update per key, one grouped effect) then.statements:
+- sql:
+    postgres: update wallet t set balance = v.c2 from unnest(cast(? as bigint[]), cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord
 # m-batch-write-003 (batch DELETE collapse) then.statements:
 - sql:
     postgres: delete from wallet where id in (?, ?, ?)
@@ -78,7 +84,8 @@ The canonical Postgres golden SQL (`m-sql`), as `then.statements` entries:
 The suite proves the batched forms against real data by **applying** the golden
 DML and asserting the resulting table state — the write-sequence machinery
 (`m-case-format`), reused for the non-temporal batched case (cases
-`m-batch-write-001` / `m-batch-write-002` for the insert/update collapse,
+`m-batch-write-001` / `m-batch-write-002` for the insert/update collapse and the
+per-key updates, with `m-batch-write-064` for MariaDB's one statement per key,
 `m-batch-write-003` for the DELETE collapse, `m-batch-write-004` for the versioned
 per-key delete). So "buffered writes flush as set-based SQL" is verified by the
 rows it leaves behind, not merely asserted.

@@ -22,6 +22,7 @@ from testcontainers.community.postgres import PostgresContainer
 
 from .. import errors
 from .._declared_contributor import TEMPORAL_INFINITY
+from .._grouped_effects import sourced_path_value_indexes
 from .._sql_placeholders import array_bind_indexes
 from ..ddl_builder import quote_identifier
 from ..document_codec import ParsedJsonString, is_document
@@ -144,8 +145,13 @@ def _adapt_array(values: Any) -> Any:
 def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
     physical = adapt_document_scalar_binds(sql, binds, "postgres")
     array_binds = array_bind_indexes(sql)
+    path_values = sourced_path_value_indexes(sql)
     return tuple(
-        _adapt_array(value) if index in array_binds else _adapt(value)
+        [Jsonb(element) for element in value]
+        if index in path_values and isinstance(value, list)
+        else _adapt_array(value)
+        if index in array_binds
+        else _adapt(value)
         for index, value in enumerate(physical)
     )
 

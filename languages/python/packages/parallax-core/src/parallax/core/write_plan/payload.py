@@ -7,11 +7,12 @@ from typing import Protocol
 from parallax.core.base import NeutralType
 from parallax.core.document_codec import PreparedPatch
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.write_plan.steps import PlannedAssignments, WriteRow
+from parallax.core.write_plan.steps import PlannedAssignments, PlannedStep, WriteRow
 
 __all__ = [
     "AssignmentPayload",
     "ColumnPlacement",
+    "EffectSlots",
     "InsertPayload",
     "PatchedDocument",
     "RowPayload",
@@ -165,6 +166,49 @@ class AssignmentPayload:
         return self.placement.contributors
 
 
+class EffectSlots(Protocol):
+    """The source columns one grouped effect binds, one array each, for every
+    effect of one shape of one Entity (`m-sql` *Grouped effects*).
+
+    Each source column is one per-effect role, numbered by its position:
+    ``key_sources`` gives the column of each key Attribute in target order,
+    ``gate_source`` the version gate's, ``None`` where the shape is ungated,
+    and ``assignment_sources`` one entry per cell the shape's assignments
+    place, aligned with their placement — the column of a cell assigned
+    directly, or one column per path the shared Structured Column's patches
+    assign, in patch order. ``element_types`` holds each column's Neutral
+    Type: its scalar type, and ``json`` for a stored document or an assigned
+    path's encoded value. ``parameter_count`` is how many parameters the
+    grouped statement binds: one per column, one per assigned path, and the
+    table-per-hierarchy tag where the Entity has one.
+    """
+
+    @property
+    def entity(self) -> EntityIdentity: ...
+    @property
+    def key_sources(self) -> tuple[int, ...]: ...
+    @property
+    def gate_source(self) -> int | None: ...
+    @property
+    def assignment_sources(self) -> tuple[int | tuple[int, ...], ...]: ...
+    @property
+    def element_types(self) -> tuple[NeutralType, ...]: ...
+    @property
+    def parameter_count(self) -> int: ...
+
+    def column_cells(
+        self, steps: Sequence[PlannedStep], payloads: Sequence[AssignmentPayload]
+    ) -> tuple[list[object], ...]:
+        """One new list per source column holding each of ``steps``' cells
+        there, in step order, read from the step and from the Assignment
+        Payload prepared from its assignments.
+
+        Every step has this shape and each payload is its own step's, so
+        nothing here judges a value again.
+        """
+        ...
+
+
 class WritePayloadPreparer(Protocol):
     """Model-scoped preparation of the values a write persists.
 
@@ -187,6 +231,17 @@ class WritePayloadPreparer(Protocol):
 
     def row(self, entity: EntityIdentity, write_row: WriteRow) -> RowPayload:
         """The complete persisted cells ``write_row`` stores."""
+        ...
+
+    def effect_shape(self, step: PlannedStep) -> Hashable | None:
+        """The shape every effect that may share a grouped effect with
+        ``step`` has, compared by equality, or ``None`` where ``step`` runs
+        alone."""
+        ...
+
+    def effect_slots(self, entity: EntityIdentity, shape: Hashable) -> EffectSlots:
+        """The source columns a grouped effect of ``entity``'s effects of
+        ``shape`` binds."""
         ...
 
     def proven_unequal_non_interval(

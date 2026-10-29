@@ -35,7 +35,7 @@ from parallax.core.unit_work import (
     WriteResultError,
     allocated_keys,
     enforce_affected_rows,
-    returns_rows,
+    returns_allocated_keys,
 )
 from parallax.core.write_plan import SUPERSEDED, PlannedClose, PlannedInsert
 from parallax.core.write_plan.steps import (
@@ -276,10 +276,10 @@ def _allocating(key: object = RETURNED_MAX_PLUS_ONE) -> PlannedInsert:
 
 
 def test_only_an_insert_returning_its_allocated_key_answers_rows() -> None:
-    assert returns_rows(_allocating())
-    assert not returns_rows(_allocating(MAX_PLUS_ONE))
-    assert not returns_rows(_insert())
-    assert not returns_rows(_update())
+    assert returns_allocated_keys(_allocating())
+    assert not returns_allocated_keys(_allocating(MAX_PLUS_ONE))
+    assert not returns_allocated_keys(_insert())
+    assert not returns_allocated_keys(_update())
 
 
 def test_the_allocated_key_is_read_from_the_one_row_its_insert_answered() -> None:

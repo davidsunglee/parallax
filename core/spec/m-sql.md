@@ -1543,15 +1543,60 @@ when they are adjacent, each row still its own Planned Step (`m-execution`
   binds: [[1, 2], [north, south]]
 ```
 
-A batched **update** of the same column over several keys is one keyed `UPDATE`
-per distinct key (or a single statement with an `IN` predicate when the new value
-is uniform across the keys):
+A batched **update** of the same column over several keys is a single statement
+with an `IN` predicate when the new value is uniform across the keys:
 
 ```yaml
 - sql:
     postgres: update account set balance = ? where id in (?, ?)
   binds: [<new-balance>, <key1>, <key2>]
 ```
+
+Otherwise each key stays its own keyed `UPDATE` (`m-batch-write`), which a dialect
+with array parameters applies together as a grouped effect (*Grouped effects*,
+below) and a dialect without them runs one statement per key.
+
+### Grouped effects
+
+A **grouped effect** applies the keyed updates of one effect span (`m-unit-work`
+*Write Group formation*; `m-execution` *Flush execution*) with one statement. Its
+source is `unnest(…) with ordinality`: one array bind per **source column**,
+each cast in the **array parameter cast form** (`m-dialect`), aliased `v` with
+columns `c1` onward and the ordinal `ord`, while the target Table is aliased
+`t`. Row *i* of the source holds update *i*'s per-row values, and the statement
+returns `v.ord` for every target row it changed:
+
+```yaml
+- sql:
+    postgres: update account t set balance = v.c3, version = v.c4 from unnest(cast(? as bigint[]), cast(? as int[]), cast(? as decimal[]), cast(? as int[])) with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord
+  binds: [[<pk1>, <pk2>], [<observed1>, <observed2>], [<balance1>, <balance2>], [<new-version1>, <new-version2>]]
+```
+
+The source columns are the key Columns in key order, then the version gate's
+observed version where the updates are gated, then one column per cell the
+assignments place, in Table Layout slot order; a path of the shared Structured
+Column the updates patch is one column per assigned path, in canonical logical
+placement order. Every value a lone update binds per row — a key, an observed
+version, an already planned version advance, an assigned value, a document
+path's encoded value — is a source column, never recomputed in SQL; a value
+every row shares, the table-per-hierarchy tag, binds once as a scalar. The
+assignments render in the clause grammar a lone update's do, each value read
+from its source column where the lone form binds `?`, with the version advance
+last: a Column takes `col = v.cN`, and the shared Structured Column takes the
+dialect's document mutation expression over `t.<column>`, each path still one
+bind and each value its source column (`m-dialect` *Document mutation-expression
+form*):
+
+```yaml
+- sql:
+    postgres: update tag_ledger t set payload = jsonb_set(t.payload, ?, v.c4), version = v.c3 from unnest(cast(? as bigint[]), cast(? as int[]), cast(? as int[]), cast(? as jsonb[])) with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord
+  binds: ['{tags}', [<pk1>, <pk2>], [<observed1>, <observed2>], [<new-version1>, <new-version2>], [<tags1>, <tags2>]]
+```
+
+The predicate is the lone update's, each conjunct qualified by `t` and each
+per-row operand a source column: the key, then the tag guard, then the gate.
+Binds follow the text: the paths the assignments bind, then the source arrays,
+then the tag. A dialect without array parameters has no grouped effect.
 
 The harness proves the batched forms against real data by **applying** the golden
 DML in order to a loaded table and asserting the resulting table state (the
@@ -1605,10 +1650,12 @@ real data.
 
 There is **no** set-based versioned `UPDATE` template — no versioned analogue of
 the batched `where <pk> in (…)` form above — because the gate binds a *per-row*
-observed version a single statement cannot carry. A predicate-selected write over
-a versioned entity is therefore refused (`m-batch-write`), and a versioned
-entity's buffered keyed writes each lower to one per-object statement of the
-gated optimistic form or the ungated locking form above.
+observed version a single shared predicate cannot carry. A predicate-selected
+write over a versioned entity is therefore refused (`m-batch-write`), and a
+versioned entity's buffered keyed writes each lower to one per-object step of the
+gated optimistic form or the ungated locking form above; a grouped effect
+(*Grouped effects*) applies several of them in one statement with each object's
+own observed version and advance as source columns.
 
 ### Versioned-read projection
 

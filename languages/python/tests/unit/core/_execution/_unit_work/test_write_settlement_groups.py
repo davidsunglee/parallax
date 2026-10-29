@@ -551,3 +551,32 @@ def test_the_ready_writes_of_a_full_span_fit_one_write_group() -> None:
     ranges = settlement._ACQUISITION_RANGES  # pyright: ignore[reportPrivateUsage] - the span bound
     writes = settlement._GROUP_WRITES  # pyright: ignore[reportPrivateUsage] - the group bound
     assert ranges <= writes
+
+
+def test_a_group_lays_its_updates_out_shape_by_shape_and_records_their_spans() -> None:
+    buffer = [
+        _amend_wallet(1, "1.00"),
+        KeyedWriteInstruction("amend", "Wallet", ({"id": 2, "owner": "Bo"},)),
+        _amend_wallet(3, "3.00"),
+        KeyedWriteInstruction("amend", "Wallet", ({"id": 4, "owner": "Di"},)),
+        KeyedWriteInstruction(
+            "amend", "Wallet", ({"id": 5, "owner": "Ed", "balance": Decimal("5")},)
+        ),
+    ]
+    (group,) = _groups(_plan(buffer, _WALLET))
+    assert [_keys(step) for step in group.steps] == [(1,), (3,), (2,), (4,), (5,)]
+    assert [(span.start, span.stop) for span in group.effect_spans] == [(0, 2), (2, 4)]
+
+
+def test_one_settled_write_forms_a_group_without_effect_spans() -> None:
+    (group,) = _groups(_plan([_amend_wallet(1, "1.00")], _WALLET))
+    assert group.effect_spans == ()
+
+
+def test_a_group_of_temporal_effects_records_no_span_yet() -> None:
+    buffer = [
+        KeyedWriteInstruction("amend", "Balance", ({"id": key, "value": Decimal("2.00")},))
+        for key in (1, 2)
+    ]
+    (group,) = _groups(_plan(buffer, _BALANCE, _observed(_BALANCE, buffer, _balance_observation)))
+    assert group.effect_spans == ()
