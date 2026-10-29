@@ -51,19 +51,24 @@ Delete whose Key Target holds several key tuples.
   `INSERT`** rather than one statement per row, spelled in the dialect's
   multi-row insert form (`m-sql` *Batched insert / update*, `m-dialect`).
 - Multiple updates of the same entity that set the same columns collapse into a
-  single statement with an `IN` predicate when the new value is uniform across
-  the keys. Otherwise each key stays its own step, and a dialect with array
-  parameters applies the steps setting one member set as one grouped effect
-  (`m-sql` *Grouped effects*), where a dialect without them runs one statement
-  per key.
-- Multiple deletes of the same **non-versioned** entity collapse into a **single
-  `DELETE`** with an `IN` predicate (`delete from t where id in (?, …)`) rather
-  than one statement per row — the delete analogue of the multi-row `INSERT`. A
-  **versioned** entity's deletes cannot collapse: each key stays its own step,
-  under its own observation and exactly-one expectation, however its steps are
-  then presented. A dialect with array parameters applies them as one grouped
-  effect (`m-sql` *Grouped effects*), and a dialect without them runs one
+  single statement over a membership of their keys when the new value is
+  uniform across the keys. Otherwise each key stays its own step, and a dialect
+  with array parameters applies the steps setting one member set as one grouped
+  effect (`m-sql` *Grouped effects*), where a dialect without them runs one
   statement per key.
+- Multiple deletes of the same **non-versioned** entity collapse into a **single
+  `DELETE`** over a membership of their keys rather than one statement per row —
+  the delete analogue of the multi-row `INSERT`. A **versioned** entity's
+  deletes cannot collapse: each key stays its own step, under its own
+  observation and exactly-one expectation, however its steps are then
+  presented. A dialect with array parameters applies them as one grouped effect
+  (`m-sql` *Grouped effects*), and a dialect without them runs one statement per
+  key.
+- A collapsed update or delete stays one step and one statement however many
+  keys it holds. A dialect with array parameters binds its membership as one
+  array per key Column, so its bind count follows its key Columns rather than
+  its keys; a dialect without them binds one placeholder per key value (`m-sql`
+  *Batched insert / update*).
 
 The canonical Postgres golden SQL (`m-sql`), as `then.statements` entries:
 
@@ -73,13 +78,13 @@ The canonical Postgres golden SQL (`m-sql`), as `then.statements` entries:
     postgres: insert into wallet(id, owner, balance) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))
 # m-batch-write-001 (uniform update collapse) then.statements:
 - sql:
-    postgres: update wallet set balance = ? where id in (?, ?)
+    postgres: update wallet set balance = ? where id = any(cast(? as bigint[]))
 # m-batch-write-002 (update per key, one grouped effect) then.statements:
 - sql:
     postgres: update wallet t set balance = v.c2 from unnest(cast(? as bigint[]), cast(? as decimal[])) with ordinality v(c1, c2, ord) where t.id = v.c1 returning v.ord
 # m-batch-write-003 (batch DELETE collapse) then.statements:
 - sql:
-    postgres: delete from wallet where id in (?, ?, ?)
+    postgres: delete from wallet where id = any(cast(? as bigint[]))
 # m-batch-write-004 (versioned delete keeps one step per key, one grouped effect, locking mode) then.statements:
 - sql:
     postgres: delete from account t using unnest(cast(? as bigint[])) with ordinality v(c1, ord) where t.id = v.c1 returning v.ord
@@ -260,8 +265,8 @@ constraint the database defers still fails at commit.
 ## What the suite pins down
 
 The existing `m-batch-write-001`–`-004` cases prove only **buffered tracked-row
-batching**: multi-row insert, uniform-key update, non-versioned `IN` delete, and
-versioned per-key delete. The predicate-write witnesses prove a distinct target:
+batching**: multi-row insert, uniform-key update, non-versioned collapsed
+delete, and versioned per-key delete. The predicate-write witnesses prove a distinct target:
 
 | Case | Target | Predicate-write witness |
 |---|---|---|
@@ -284,7 +289,7 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | `m-batch-write-011` | unversioned, non-temporal `OrderItem` update after a buffered delete and before buffered inserts | runs at its call after the delete; the inserts follow at commit |
 | `m-execution-lifecycle-011` | non-versioned `Wallet` updates and deletes after a buffered insert | each nonempty write is one `predicate-write` Flush returning its count, an unchanged match and a match of nothing included; the empty one opens none |
 
-The two families share SQL terminology but not an observation contract: an `IN`
-list can collapse an already tracked set, whereas a predicate write starts from an
+The two families share SQL terminology but not an observation contract: a key
+membership can collapse an already tracked set, whereas a predicate write starts from an
 operation, observes nothing, and so writes only a target that needs no per-row
 observation.

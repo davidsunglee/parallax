@@ -785,11 +785,12 @@ def _target_predicate(
 ) -> str:
     """The row selection ``target`` names, rendered against this Table Layout.
 
-    A singleton Key Target keys by equality and a multi-key one by an `IN` list —
-    two renderings of one selection, chosen by cardinality alone. Either way the
-    table-per-hierarchy tag guard follows the key, because every addressed row of
-    one step is the same concrete subtype. A Milestone Target adds its axis upper
-    bounds after that guard, so the whole address renders before any gate. A
+    A singleton Key Target keys by equality and a multi-key one by a membership
+    of the key — two renderings of one selection, chosen by cardinality alone.
+    Either way the table-per-hierarchy tag guard follows the key, because every
+    addressed row of one step is the same concrete subtype. A Milestone Target
+    adds its axis upper bounds after that guard, so the whole address renders
+    before any gate. A
     Resolved Mutation Selection renders its predicate in place, or tests the
     membership of the Table's physical key in the key selection its compiled
     predicate is, inside this one statement. A readless target pins no temporal
@@ -856,6 +857,9 @@ def _key_predicate(
     meta: Metamodel,
     dialect: Dialect,
 ) -> str:
+    """The Key Target's rows: each key Column equal to its value for one key,
+    and for several a membership of the key, through one array per key Column
+    where the dialect binds arrays and one placeholder per value otherwise."""
     columns = [_column(view, attribute, entity) for attribute in target.key_attributes]
     types = tuple(_attribute(meta, attribute).type for attribute in target.key_attributes)
     if len(target.key_values) == 1:
@@ -863,6 +867,15 @@ def _key_predicate(
         for value, neutral_type in zip(target.key_values[0], types, strict=True):
             _bind(ctx, value, neutral_type)
         return predicate
+    if dialect.binds_arrays:
+        arrays: list[str] = []
+        for index, neutral_type in enumerate(types):
+            ctx.bind_array(ArrayBind(neutral_type, [values[index] for values in target.key_values]))
+            arrays.append(dialect.array_parameter(neutral_type))
+        if len(columns) == 1:
+            return f"{dialect.quote(columns[0])} = any({arrays[0]})"
+        keys_sql = ", ".join(dialect.quote(column) for column in columns)
+        return f"({keys_sql}) in (select * from unnest({', '.join(arrays)}))"
     if len(columns) == 1:
         holes = ", ".join("?" for _ in target.key_values)
         for values in target.key_values:

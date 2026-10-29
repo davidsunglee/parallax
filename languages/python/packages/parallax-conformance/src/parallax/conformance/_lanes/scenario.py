@@ -480,11 +480,11 @@ def _binds_row_observations(
       decomposes (the gate/advance binds a per-row observed version,
       `m-opt-lock`, ADR 0014); an unversioned target decomposes per distinct
       key only when its rows assign NON-uniform values (``m-batch-write-002``),
-      collapsing into one `IN`-predicate statement when uniform
+      collapsing into one key-membership statement when uniform
       (``m-batch-write-001``'s own update entry);
     - `batch_write.delete_collapses` — a VERSIONED target's delete always
       decomposes (``m-batch-write-004``'s versioned per-key delete
-      materialize); an unversioned one collapses to one `IN`-list statement.
+      materialize); an unversioned one collapses to one key-membership statement.
     """
     if len(raw_rows) == 1:
         return True

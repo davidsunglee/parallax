@@ -1,5 +1,6 @@
 # Batched DELETE collapse (m-batch-write): buffered deletes of a NON-versioned
-# entity flush as ONE set-based `DELETE ... WHERE id IN (...)`, not one per row.
+# entity flush as ONE set-based `DELETE` over a membership of their keys, not one
+# per row.
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -10,7 +11,7 @@ when:
     - mutation: delete
       entity: parallax.compatibility.Wallet
       statements: 1
-      note: three buffered deletes collapse into ONE `delete ... where id in (?, ?, ?)`
+      note: three buffered deletes collapse into ONE delete over the membership of their keys
       rows:
         - { id: 1 }
         - { id: 2 }
@@ -18,8 +19,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: delete from wallet where id in (?, ?, ?)
-      binds: [1, 2, 3]
+        postgres: delete from wallet where id = any(cast(? as bigint[]))
+      binds: [[1, 2, 3]]
   tableState:
     wallet: []
   databaseCalls: 2

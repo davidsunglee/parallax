@@ -1548,12 +1548,26 @@ when they are adjacent, each row still its own Planned Step (`m-execution`
 ```
 
 A batched **update** of the same column over several keys is a single statement
-with an `IN` predicate when the new value is uniform across the keys:
+over a membership of its keys when the new value is uniform across the keys, and
+a batched **delete** of a non-versioned Entity is one statement over the same
+membership. A dialect with array parameters binds the membership as **one array
+per key Column**, in key order, each cast in the **array parameter cast form**
+(`m-dialect`) and holding that Column's values in the Key Target's planner
+order, so the statement's text and bind count follow its key Columns and never
+its keys: a one-Column key is `<key> = any(cast(? as <type>[]))`, and a
+several-Column key is `(<key1>, <key2>) in (select * from unnest(cast(? as
+<type1>[]), cast(? as <type2>[])))`. A dialect without array parameters lists
+the keys, one placeholder per key value: `<key> in (?, ?)`, or `(<key1>, <key2>)
+in ((?, ?), (?, ?))`. One key keys by equality on every dialect. The
+table-per-hierarchy tag guard follows the membership as it follows a single key:
 
 ```yaml
 - sql:
-    postgres: update account set balance = ? where id in (?, ?)
-  binds: [<new-balance>, <key1>, <key2>]
+    postgres: update account set balance = ? where id = any(cast(? as bigint[]))
+    mariadb: update account set balance = ? where id in (?, ?)
+  binds:
+    postgres: [<new-balance>, [<key1>, <key2>]]
+    mariadb: [<new-balance>, <key1>, <key2>]
 ```
 
 Otherwise each key stays its own keyed `UPDATE` (`m-batch-write`), which a dialect

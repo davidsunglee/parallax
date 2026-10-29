@@ -82,7 +82,7 @@ def update_collapses(
     model: Metamodel, entity: EntityMetadata, rows: Sequence[Mapping[str, object]]
 ) -> bool:
     """Whether a run of same-entity ``update`` rows collapses into ONE
-    ``UPDATE ... WHERE id IN (...)`` statement (`m-batch-write.md` "Batching is a
+    ``UPDATE`` over a membership of their keys (`m-batch-write.md` "Batching is a
     membership decision"): only
     when the target is UNVERSIONED, non-temporal, no row carries an explicit
     observation control key, and every row assigns the IDENTICAL non-key
@@ -110,7 +110,7 @@ def update_collapses(
 
 def delete_collapses(model: Metamodel, entity: EntityMetadata) -> bool:
     """Whether same-entity ``delete`` rows collapse into one
-    ``DELETE ... WHERE id IN (...)`` statement (`m-batch-write.md` "Batching is a
+    ``DELETE`` over a membership of their keys (`m-batch-write.md` "Batching is a
     membership decision" — the delete analogue of the multi-row INSERT). ``False``
     for a temporal entity (`terminate`/`terminateUntil` are `m-temporal-write`
     territory) or a VERSIONED one — a versioned entity's set-based delete NEVER

@@ -67,7 +67,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six text-compared types compare as the canonical document text on both dialects |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
-| **array parameter cast form** (`m-sql` membership, deferred key set, multi-row insert, and grouped effect) | `cast(? as <type>[])` — the one list or key-set array cast to the array of the unmodified type its subject compares in, a multi-row insert's `select * from unnest(…)` over one such array per Column, and a grouped effect's `unnest(…) with ordinality` source over one such array per source column, returning each changed or removed row's ordinal (see below) | none — the list or key set expands to one placeholder per element, a multi-row insert is multi-row `VALUES`, and each keyed effect of a grouped effect runs as its own statement |
+| **array parameter cast form** (`m-sql` membership, deferred key set, collapsed key target, multi-row insert, and grouped effect) | `cast(? as <type>[])` — the one list or key-set array cast to the array of the unmodified type its subject compares in, a collapsed update or delete's key membership over one such array per key Column, a multi-row insert's `select * from unnest(…)` over one such array per Column, and a grouped effect's `unnest(…) with ordinality` source over one such array per source column, returning each changed or removed row's ordinal (see below) | none — the list, key set, or collapsed key target expands to one placeholder per element, a multi-row insert is multi-row `VALUES`, and each keyed effect of a grouped effect runs as its own statement |
 | **scalar element projection** (`m-predicate` scalar quantifiers) | `case when jsonb_typeof(t1.value) = ? then <typed projection of t1.value #>> ?> end` — the element's declared JSON kind guards the projection (see below) | none — a filtered scalar quantifier is outside the MariaDB lane and is refused (see below) |
 | **single-object presence** (`m-predicate` `exists` over a value object) | `coalesce(jsonb_typeof(jsonb_extract_path(col, ?, …)) = ?, false)` | none — outside the MariaDB lane |
 | **Boolean result envelope** (`m-sql` target-local narrowing with an operand) | `(coalesce((select array [ <boolean> ] …), array [ false ])) [ 1 ]` — keeps a selected target's unknown apart from an absent target (see below) | none — outside the MariaDB lane |
@@ -257,7 +257,7 @@ there, while Postgres casts each to its own type. A future dialect supplies its 
 placeholder-cast spelling behind this same decision point; nothing above the seam
 names the concrete cast type.
 
-### Array parameter cast form (`m-sql` membership, deferred key set, and multi-row insert)
+### Array parameter cast form (`m-sql` membership, deferred key set, collapsed key target, multi-row insert, and grouped effect)
 
 Postgres binds an authored membership's list, and a child level's gathered key
 set, as one array parameter (`m-sql`), crossing the port as one `m-db-port`
@@ -303,6 +303,13 @@ converts into its Column by assignment exactly as a single bound value does, so
 an over-long string or an out-of-range number fails as it would alone rather
 than being truncated or rounded by the cast. MariaDB has no array parameter and
 spells a multi-row insert as multi-row `VALUES`, one placeholder per cell.
+
+A collapsed update or delete's Key Target (`m-sql` *Batched insert / update*)
+binds one array per key Column through the same casts, each holding that
+Column's values in the target's planner order: `<key> = any(cast(? as
+<type>[]))` for a one-Column key, and `(<key1>, <key2>) in (select * from
+unnest(cast(? as <type1>[]), cast(? as <type2>[])))` for a several-Column key.
+MariaDB has no array parameter and lists one placeholder per key value.
 
 A grouped effect (`m-sql` *Grouped effects*) binds one array per source column
 through the same casts — a key, axis end, gate, or assigned Column's array cast
@@ -749,7 +756,10 @@ within the limit and the remaining rows continue in the next statement of the
 same form; one logical multi-entry insert then spans several statements, each
 failing with its own error, inside one transaction. Otherwise a statement whose
 bind count one Planned Step already fixes is neither split nor refused on this
-account, and the database's own refusal stands.
+account, and the database's own refusal stands. A collapsed update or delete is
+such a statement; with the array parameter cast form its key membership binds
+one array per key Column, so its bind count follows its key Columns and never
+its keys.
 
 ### `NULL` ordering
 

@@ -61,6 +61,7 @@ from sqlglot import exp
 from . import errors, serde
 from ._case_execution import CaseExecution
 from ._grouped_effects import GroupedEffectShapeError, ungrouped_effect
+from ._sql_placeholders import array_bind_indexes
 from .case import (
     Case,
     Entity,
@@ -1343,7 +1344,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         elif mutation == "insert":
             _assert_insert_input(case, entity, classified, step_statements, step_binds)
         elif mutation in ("delete", "cascadeDelete"):
-            _assert_delete_input(case, classified, step_binds)
+            _assert_delete_input(case, classified, step_statements, step_binds)
         elif version_column(entity) is not None:
             _assert_versioned_update_input(
                 case,
@@ -1697,14 +1698,17 @@ def _assert_uniform_assignments(
 def _assert_delete_input(
     case: Case,
     classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
+    step_statements: list[str],
     step_binds: list[list[Any]],
 ) -> None:
     # A delete / cascadeDelete row carries only the pk (the `where` key — no written
     # columns), so ① supplies no INSERT/SET column list to cross-check; assert the
     # pk value(s) appear in the DELETE binds.
     pk_values = [pk for _, pk, _, _ in classified]
-    # A COLLAPSED set-based DELETE (m-batch-write-003) is ONE statement whose
-    # `id in (…)` binds carry EVERY buffered pk. Cross-check that all of them appear
+    # A COLLAPSED set-based DELETE (m-batch-write-003) is ONE statement whose key
+    # membership — one array of the keys compared through `any` on PostgreSQL, or
+    # `id in (…)` with one bind per key where a dialect binds no arrays — carries
+    # EVERY buffered pk. Cross-check that all of them appear
     # — a meaningful check for the collapse (a dropped/typo'd key is caught). The
     # per-statement path below (one statement per row: the FK-ordered m-unit-work-007
     # deletes, the versioned per-key m-batch-write-004 deletes — read back one per
@@ -1713,8 +1717,8 @@ def _assert_delete_input(
     # "this statement's binds carry SOME pk" check, since those bind a single key.
     collapsed = len(step_binds) == 1 and len(pk_values) > 1
     if collapsed:
-        binds = step_binds[0]
-        # A collapsed `id in (?, …)` binds EXACTLY the buffered pks, in ① order — the
+        binds = _array_elements(step_statements[0], step_binds[0])
+        # A collapsed membership binds EXACTLY the buffered pks, in ① order — the
         # same exact-bind discipline the insert/update input cross-checks apply. Require
         # positional bind equality against the pk list, rejecting a reordered, duplicated,
         # or extra bind (not the weaker "every pk appears somewhere", which tolerated all
@@ -1734,6 +1738,20 @@ def _assert_delete_input(
                 f"{case.path.name}: the neutral write input pk value(s) {pk_values} appear "
                 f"in none of the DELETE binds {binds}."
             )
+
+
+def _array_elements(statement: str, binds: list[Any]) -> list[Any]:
+    """*binds* with each array the PostgreSQL *statement* binds whole spread into
+    its elements in place, so a key membership bound as one array reads as the
+    same keys its expanded `in (?, …)` form binds one by one."""
+    arrays = array_bind_indexes(statement)
+    spread: list[Any] = []
+    for index, bind in enumerate(binds):
+        if index in arrays and isinstance(bind, list):
+            spread.extend(bind)
+        else:
+            spread.append(bind)
+    return spread
 
 
 def _assert_temporal_input(

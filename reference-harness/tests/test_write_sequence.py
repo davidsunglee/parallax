@@ -730,32 +730,41 @@ def test_fk_delete_ordering_deletes_child_before_parent() -> None:
 
 
 def test_collapsed_delete_input_requires_exact_ordered_binds() -> None:
-    # m-batch-write-003: three buffered deletes collapse into ONE
-    # `delete ... where id in (?, ?, ?)` binding EVERY pk. The ① ↔ ② cross-check MUST
-    # require the collapsed binds equal the pk list EXACTLY and IN ORDER — a reordered
-    # or extra bind is a corpus error, not a tolerated variant (the earlier membership
-    # check accepted both).
+    # m-batch-write-003: three buffered deletes collapse into ONE delete over the
+    # membership of EVERY pk, bound as one array on PostgreSQL. The ① ↔ ② cross-check
+    # MUST require the collapsed keys equal the pk list EXACTLY and IN ORDER — a
+    # reordered or extra key is a corpus error, not a tolerated variant (the earlier
+    # membership check accepted both).
     case = _write_case_by_id("m-batch-write-003")
-    # As authored (binds [1, 2, 3] == the pk order) it passes.
+    assert case.golden_statements("postgres") == [
+        "delete from wallet where id = any(cast(? as bigint[]))"
+    ]
+    # As authored (one array [1, 2, 3] == the pk order) it passes.
     _assert_write_input_columns(case, "postgres")
 
-    # Reordered binds (same set, wrong order) MUST now be rejected.
-    reordered = copy.deepcopy(_write_case_by_id("m-batch-write-003"))
-    reordered.then["statements"][0]["binds"] = [3, 2, 1]
-    with pytest.raises(CaseFailure):
-        _assert_write_input_columns(reordered, "postgres")
+    for corrupted in ([3, 2, 1], [1, 2, 3, 4], [1, 2, 2]):
+        # Reordered, extra, and duplicated keys MUST be rejected.
+        broken = copy.deepcopy(_write_case_by_id("m-batch-write-003"))
+        broken.then["statements"][0]["binds"] = [corrupted]
+        with pytest.raises(CaseFailure):
+            _assert_write_input_columns(broken, "postgres")
 
-    # An EXTRA bind (superset of the pks) MUST be rejected.
-    extra = copy.deepcopy(_write_case_by_id("m-batch-write-003"))
-    extra.then["statements"][0]["binds"] = [1, 2, 3, 4]
+    # The expanded `in (?, …)` form a dialect without arrays spells binds the same
+    # keys one by one, under the same exact-order discipline.
+    expanded = copy.deepcopy(_write_case_by_id("m-batch-write-003"))
+    expanded.then["statements"][0]["sql"]["postgres"] = "delete from wallet where id in (?, ?, ?)"
+    expanded.then["statements"][0]["binds"] = [1, 2, 3]
+    _assert_write_input_columns(expanded, "postgres")
+    expanded.then["statements"][0]["binds"] = [3, 2, 1]
     with pytest.raises(CaseFailure):
-        _assert_write_input_columns(extra, "postgres")
+        _assert_write_input_columns(expanded, "postgres")
 
-    # A DUPLICATED bind (a pk repeated, another dropped) MUST be rejected.
-    duplicated = copy.deepcopy(_write_case_by_id("m-batch-write-003"))
-    duplicated.then["statements"][0]["binds"] = [1, 2, 2]
+    # A list bound where the statement compares no array is not read as keys.
+    unspread = copy.deepcopy(expanded)
+    unspread.then["statements"][0]["sql"]["postgres"] = "delete from wallet where id in (?)"
+    unspread.then["statements"][0]["binds"] = [[1, 2, 3]]
     with pytest.raises(CaseFailure):
-        _assert_write_input_columns(duplicated, "postgres")
+        _assert_write_input_columns(unspread, "postgres")
 
 
 # --- table-per-hierarchy tag on write (m-inheritance) ------------------------

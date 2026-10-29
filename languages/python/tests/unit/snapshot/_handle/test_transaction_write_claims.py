@@ -12,6 +12,8 @@ import pytest
 
 from parallax.conformance.read_models import Person
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core.base import INT64
+from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import WriteEvidenceError
 from parallax.snapshot import Database, TxnContext
@@ -484,7 +486,10 @@ def test_writes_of_two_unversioned_objects_stay_independent_and_batch() -> None:
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == [
-        WriteCall(POSTGRES.to_driver_sql("delete from person where id in (?, ?)"), (1, 2))
+        WriteCall(
+            POSTGRES.to_driver_sql("delete from person where id = any(cast(? as bigint[]))"),
+            (ArrayBind(INT64, [1, 2]),),
+        )
     ]
 
 
