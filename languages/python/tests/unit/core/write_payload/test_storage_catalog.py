@@ -10,7 +10,7 @@ from decimal import Decimal as PyDecimal
 import pytest
 
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr, storage_layout
-from parallax.core.base import INT64, STRING, FrozenMap
+from parallax.core.base import INT64, JSON, STRING, FrozenMap
 from parallax.core.entity import Document
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
@@ -184,6 +184,77 @@ def test_a_subtypes_slots_store_its_discriminator_as_a_constant() -> None:
     assert slots.cells(row)[tag] == "car"
     assert slots.types[tag] is None
     assert not slots.documents[tag]
+
+
+def test_each_slot_names_the_one_element_type_every_cell_it_stores_shares() -> None:
+    row = _row(_BIN, **_FULL)
+    bin_slots = StorageCatalog(_META).entity(_BIN).row_slots(row.row.presence)
+    crate_slots = StorageCatalog(_META).entity(_CRATE).row_slots(row.row.presence)
+
+    assert bin_slots.element_types == (INT64, STRING, STRING, bin_slots.types[3], JSON, JSON)
+    assert crate_slots.element_types == (INT64, JSON)
+    vehicles = corpus_model("vehicle")
+    car = EntityIdentity("parallax.compatibility", "Car")
+    vehicle = EntityIdentity("parallax.compatibility", "Vehicle")
+    car_row = managed_row_of(
+        vehicles,
+        {AttributeIdentity(vehicle, "id"): 1, AttributeIdentity(car, "doors"): 2},
+        entity=car,
+    )
+    car_slots = StorageCatalog(vehicles).entity(car).row_slots(car_row.presence)
+    assert [
+        element_type
+        for contributor, element_type in zip(
+            car_slots.contributors, car_slots.element_types, strict=True
+        )
+        if isinstance(contributor, InheritanceDiscriminator)
+    ] == [STRING]
+
+
+def test_column_cells_answer_one_new_list_per_slot_in_row_order() -> None:
+    storage = StorageCatalog(_META).entity(_BIN)
+    rows = [
+        _row(_BIN, name="N", id=7, price=PyDecimal("1.00"), sizes=()),
+        _row(_BIN, name="M", id=8, price=PyDecimal("2.00"), sizes=(4,)),
+    ]
+    slots = storage.row_slots(rows[0].row.presence)
+    gathered = [slots.cells(row) for row in rows]
+
+    columns = slots.column_cells(gathered)
+
+    assert columns == (
+        [7, 8],
+        ["N", "M"],
+        [PyDecimal("1.00"), PyDecimal("2.00")],
+        [(), (4,)],
+    )
+    assert all(type(column) is list for column in columns)
+    assert columns[3][1] is gathered[1][3]
+    assert slots.column_cells([]) == ([], [], [], [])
+
+
+def test_a_column_the_slot_fixes_repeats_its_value_for_every_row() -> None:
+    vehicles = corpus_model("vehicle")
+    car = EntityIdentity("parallax.compatibility", "Car")
+    vehicle = EntityIdentity("parallax.compatibility", "Vehicle")
+    rows = [
+        WriteRow(
+            row=managed_row_of(
+                vehicles,
+                {AttributeIdentity(vehicle, "id"): key, AttributeIdentity(car, "doors"): 2},
+                entity=car,
+            ),
+            origin=NEW_LINEAGE,
+        )
+        for key in (1, 2, 3)
+    ]
+    slots = StorageCatalog(vehicles).entity(car).row_slots(rows[0].row.presence)
+    tag = next(
+        index
+        for index, contributor in enumerate(slots.contributors)
+        if isinstance(contributor, InheritanceDiscriminator)
+    )
+    assert slots.column_cells([slots.cells(row) for row in rows])[tag] == ["car"] * 3
 
 
 def test_one_presence_shares_one_slots_and_the_cache_retains_a_bounded_number() -> None:

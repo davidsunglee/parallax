@@ -12,9 +12,10 @@ of the same roots buffers every write into one Flush, and a source written again
 after its write completed reads nothing.
 
 A tail stored as many milestones, each labelled apart, keeps every amended
-piece apart, so one ready group closes and opens more rows than one ordered
-invocation or one insert carries: its closes span several invocations and its
-openings several inserts, while each statement stays one Database Call.
+piece apart, so one ready group closes more rows than one ordered invocation
+carries: its closes span several invocations, while its openings, however many,
+share one insert binding one array per Column, and each statement stays one
+Database Call.
 
 Each case reads the whole stored history back and compares it with the one
 these inputs determine. Every write runs under a clock answering 2024-11-01.
@@ -68,14 +69,12 @@ _JAN, _MAR, _JUN, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month i
 # Each write closes its head and its tail and opens three rows: the head's
 # unamended part, the merged amended parts, and the tail's rest.
 _CLOSES: Final = 2
-_OPENINGS: Final = 3
-_INSERT_ENTRIES: Final = 64
 
 
 def _group_writes(writes: int) -> int:
     """The statements one Write Group of ``writes`` such writes presents:
-    every close, then its openings in inserts of at most 64 entries."""
-    return writes * _CLOSES + -(-writes * _OPENINGS // _INSERT_ENTRIES)
+    every close, then all its openings in one insert."""
+    return writes * _CLOSES + 1
 
 
 # 70 roots at 33 per page: pages of 33, 33, and 4 roots. A 33-write Flush is
@@ -398,7 +397,7 @@ def _invocations(closes: int) -> int:
 def _fragmented_group(writes: int) -> tuple[list[Call], int, int]:
     """One ready group of ``writes``: its coverage read and statements, its
     ordered invocations, and its insert statements."""
-    inserts = -(-writes * _FRAGMENT_OPENINGS // _INSERT_ENTRIES)
+    inserts = 1
     calls: list[Call] = [
         ("read", writes * _PIECES),
         ("write", writes * _FRAGMENT_CLOSES + inserts),
@@ -408,7 +407,7 @@ def _fragmented_group(writes: int) -> tuple[list[Call], int, int]:
 
 @_LAYOUTS
 @_REPRESENTATIONS
-def test_a_ready_groups_many_milestones_span_several_invocations_and_inserts_of_one_call_each(
+def test_a_ready_groups_many_milestones_span_several_invocations_and_one_insert_of_a_call_each(
     profile_run: Any, layout: _Layout, representation: _Representation
 ) -> None:
     _seeded(profile_run, layout, _FRAGMENTED, tail_pieces=_PIECES)
@@ -433,7 +432,7 @@ def test_a_ready_groups_many_milestones_span_several_invocations_and_inserts_of_
     assert _flushes(calls) == [("read_dependency", [*span, *alone]), ("pre_commit", last)]
     closes = _FRAGMENTED * _FRAGMENT_CLOSES
     inserts = span_inserts + alone_inserts + last_inserts
-    assert (span_invocations, span_inserts) == (21, 22)
+    assert (span_invocations, span_inserts) == (21, 1)
     if psycopg.capabilities.has_pipeline():
         # 1312 closes in 21 invocations, 41 in one, and 82 in two: one
         # Database Call per statement, whichever invocation presented it.
@@ -448,7 +447,7 @@ def test_a_ready_groups_many_milestones_span_several_invocations_and_inserts_of_
     assert (tally.inserts, tally.inserted_rows, tally.widest_insert) == (
         inserts,
         _FRAGMENTED * _FRAGMENT_OPENINGS,
-        _INSERT_ENTRIES,
+        32 * _FRAGMENT_OPENINGS,
     )
     assert _history(profile_run, layout) == _fragmented_corrected(
         range(1, _FRAGMENTED + 1), _PIECES

@@ -33,8 +33,15 @@ then:
         postgres: update loan_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?
       binds: ["2024-02-15T00:00:00.000000Z", 2, infinity, infinity]
     - sql:
-        postgres: insert into loan_rate(id, amount, spread, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
-      binds: [2, "6.75", "1.25", "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-02-15T00:00:00.000000Z", infinity, 2, "6.75", "1.25", "2024-09-01T00:00:00.000000Z", infinity, "2024-02-15T00:00:00.000000Z", infinity]
+        postgres: insert into loan_rate(id, amount, spread, from_z, thru_z, in_z, out_z) select * from unnest(cast(? as bigint[]), cast(? as decimal[]), cast(? as decimal[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]))
+      binds:
+        - [2, 2]
+        - ["6.75", "6.75"]
+        - ["1.25", "1.25"]
+        - ["2024-01-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z"]
+        - ["2024-03-01T00:00:00.000000Z", infinity]
+        - ["2024-02-15T00:00:00.000000Z", "2024-02-15T00:00:00.000000Z"]
+        - [infinity, infinity]
   tableState:
     loan_rate:
       - id: 2

@@ -28,8 +28,12 @@ when:
             postgres: insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
           binds: [7, Grouped, G-7, 2, "3.00", true, 2024-09-01]
         - sql:
-            postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?), (?, ?, ?, ?)
-          binds: [13, 7, N-13, 1, 14, 7, N-14, 2]
+            postgres: insert into order_item(id, order_id, sku, quantity) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as text[]), cast(? as int[]))
+          binds:
+            - [13, 14]
+            - [7, 7]
+            - [N-13, N-14]
+            - [1, 2]
 then:
   databaseCalls: 2
   tableState:

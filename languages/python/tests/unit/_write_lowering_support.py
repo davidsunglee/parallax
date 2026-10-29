@@ -90,9 +90,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Literal, cast
 
+import psycopg
 from psycopg import postgres
 from psycopg.abc import Buffer
-from psycopg.adapt import PyFormat, Transformer
+from psycopg.adapt import AdaptersMap, PyFormat, Transformer
+from psycopg.rows import TupleRow
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.workloads import GEOMETRY_LEVELS, leaf_type_digest, structural_digest
@@ -117,6 +119,7 @@ from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.base import detach_json_container
 from parallax.core.db_port import (
+    ArrayBind,
     CanonicalWriteStatement,
     DatabaseConnection,
     DocumentReadOrdinals,
@@ -138,7 +141,7 @@ from parallax.core.write_plan.managed_row import managed_row, named_members
 from parallax.core.write_plan.payload import PatchedDocument
 from parallax.core.write_plan.plan import WriteGroup, WritePlan
 from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
-from parallax.postgres._connection import adapt_binds
+from parallax.postgres._connection import adapt_binds, initialize_connection
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
 from tests.unit import _leaf_type_support as leaf_support
@@ -724,11 +727,35 @@ def response_case_named(name: str) -> ResponseCase:
     )
 
 
+class _Session:
+    """The connection facts the adapter's initialization reads: psycopg's
+    defaults as the connection's own adapter map, and its session settings."""
+
+    encoding = "utf-8"
+
+    def __init__(self) -> None:
+        self.adapters = AdaptersMap(postgres.adapters)
+        self.info = self
+
+    def parameter_status(self, name: str) -> str | None:
+        return "ISO, MDY" if name == "DateStyle" else None
+
+
+def _connection_adapters() -> AdaptersMap:
+    session = _Session()
+    initialize_connection(cast("psycopg.Connection[TupleRow]", session))
+    return session.adapters
+
+
+_CONNECTION_ADAPTERS: Final = _connection_adapters()
+
+
 def serialize(binds: Sequence[object]) -> Sequence[Buffer | None]:
     """The driver bytes ``binds`` become: production bind adaptation followed by
-    the transformer dump ``cursor.execute`` performs."""
+    the dump of the transformer ``cursor.execute`` creates over a connection the
+    adapter initialized, its own dumpers included."""
     adapted = adapt_binds(binds)
-    transformer = Transformer(postgres.adapters)
+    transformer = Transformer(_CONNECTION_ADAPTERS)
     return transformer.dump_sequence(adapted, [PyFormat.AUTO] * len(adapted))
 
 
@@ -1150,9 +1177,9 @@ def _partial_successor_case(*, first_key: int) -> CrossObjectCase:
         tuple(observed),
         _deferred_changes(keys),
         (1, 2),
-        # Alone: 66 closes in two invocations, 67 openings in two inserts;
-        # together: 68 closes in two, 69 openings in two.
-        FlushWork(66 + 2 + 68 + 2, 2 + 2 + 2 + 2, 64, 64),
+        # Alone: 66 closes in two invocations, 67 openings in one insert;
+        # together: 68 closes in two, 69 openings in one.
+        FlushWork(66 + 1 + 68 + 1, 2 + 1 + 2 + 1, 64, 69),
         acquired=tuple(acquired),
         reads=tuple(VALID_START + _DAY * index for index in range(0, 66, 2)),
         reach=2 * _DAY,
@@ -1161,7 +1188,7 @@ def _partial_successor_case(*, first_key: int) -> CrossObjectCase:
 
 
 DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
-    # 128 closes in two invocations, 192 openings in three inserts.
+    # 128 closes in two invocations, 192 openings in one insert.
     _deferred_span_case(
         "deferred",
         "columns",
@@ -1169,9 +1196,9 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=4001,
         objects=32,
         milestones=4,
-        work=FlushWork(128 + 3, 2 + 3, 64, 64),
+        work=FlushWork(128 + 1, 2 + 1, 64, 192),
     ),
-    # 384 closes in six invocations, 448 openings in seven inserts.
+    # 384 closes in six invocations, 448 openings in one insert.
     _deferred_span_case(
         "deferred",
         "document",
@@ -1179,7 +1206,7 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=5001,
         objects=32,
         milestones=12,
-        work=FlushWork(384 + 7, 6 + 7, 64, 64),
+        work=FlushWork(384 + 1, 6 + 1, 64, 448),
     ),
     _deferred_span_case(
         "requesting",
@@ -1188,10 +1215,10 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=6001,
         objects=32,
         milestones=12,
-        work=FlushWork(384 + 7, 6 + 7, 64, 64),
+        work=FlushWork(384 + 1, 6 + 1, 64, 448),
         requesting=True,
     ),
-    # 1024 closes in 16 invocations, 1088 openings in 17 inserts.
+    # 1024 closes in 16 invocations, 1088 openings in one insert.
     _deferred_span_case(
         "deferred",
         "columns",
@@ -1199,7 +1226,7 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=7001,
         objects=32,
         milestones=32,
-        work=FlushWork(1024 + 17, 16 + 17, 64, 64),
+        work=FlushWork(1024 + 1, 16 + 1, 64, 1088),
     ),
     _partial_successor_case(first_key=8001),
 )
@@ -1237,12 +1264,12 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=3001,
         label="middle",
         groups=(64,),
-        work=FlushWork(67, 4, 64, 64),
+        work=FlushWork(65, 2, 64, 192),
     ),
     *DEFERRED_CASES,
 )
 """Keyed amendments under the default Optimistic strategy: each Write Group's
-closes share ordered invocations and its successors grouped inserts, and a
+closes share ordered invocations and its successors one grouped insert, and a
 Bitemporal interior amendment opens a head, a changed middle, and a tail. The
 deferred spans follow."""
 
@@ -1256,8 +1283,13 @@ def cross_object_case_named(name: str) -> CrossObjectCase:
     )
 
 
-def _inserted_rows(sql: str) -> int:
-    return sql.count("), (") + 1 if sql.startswith("insert") else 0
+def _inserted_rows(sql: str, binds: Sequence[object]) -> int:
+    """The rows an insert statement carries: the length of its column arrays,
+    or the one row a single-row insert binds."""
+    if not sql.startswith("insert"):
+        return 0
+    first = binds[0] if binds else None
+    return len(first.values) if isinstance(first, ArrayBind) else 1
 
 
 class OrderedAcceptingPort(AcceptingPort):
@@ -1302,7 +1334,7 @@ class OrderedAcceptingPort(AcceptingPort):
         affected = super().execute_write(sql, binds)
         self._statements += 1
         self._invocations += 1
-        self._largest_insert = max(self._largest_insert, _inserted_rows(sql))
+        self._largest_insert = max(self._largest_insert, _inserted_rows(sql, binds))
         return affected
 
     def _ordered_writes(self, statements: Sequence[CanonicalWriteStatement]) -> OrderedWriteResult:

@@ -72,8 +72,8 @@ from parallax.core._execution._write_lowering import (
 )
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY as OPEN_BOUND
-from parallax.core.base import INT64, STRING, TIMESTAMP, FrozenMap
-from parallax.core.db_port import JsonDocument
+from parallax.core.base import INT64, JSON, STRING, TIMESTAMP, FrozenMap
+from parallax.core.db_port import ArrayBind, JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -94,7 +94,6 @@ from parallax.core.metamodel import Table as CoreTable
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._context import (
-    _RepeatedTypedBindSpan,  # pyright: ignore[reportPrivateUsage]
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
 from parallax.core.sql_gen._write import InsertStatementBuilder, StepPayload, compile_write_step
@@ -189,6 +188,12 @@ def _lower(
     concurrency: Concurrency = "locking",
 ) -> list[LoweredStatement]:
     return lower_instruction(instruction, model, dialect, concurrency, observation=observation)
+
+
+def _array_values(statement: LoweredStatement) -> tuple[list[object], ...]:
+    """A column-array insert's arrays' elements, each array a typed carrier."""
+    assert all(isinstance(bind, ArrayBind) for bind in statement.binds)
+    return tuple(cast("ArrayBind", bind).values for bind in statement.binds)
 
 
 def _flush_and_lower(
@@ -433,8 +438,8 @@ def test_update_sets_every_layout_slot_the_row_names_except_the_model_key() -> N
 
 def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None:
     # A collapsed multi-row INSERT emits ONE column list: the layout slot order
-    # filtered to the members every row carries, with the derived discriminator at
-    # its own slot in each value tuple.
+    # filtered to the members every row carries, with the derived discriminator's
+    # array at its own slot, repeating each row's tag.
     statement = _lower(
         KeyedWriteInstruction(
             "insert",
@@ -448,9 +453,21 @@ def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None
     )[0]
     assert _insert_columns(statement) == _layout_columns(PAYMENT, "CardPayment")
     assert statement.sql == (
-        "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?), (?, ?, ?, ?)"
+        "insert into payment(id, kind, amount, card_network) select * from "
+        "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), cast(? as text[]))"
     )
-    assert statement.binds == (1, "card", 10.00, "Visa", 2, "card", 20.00, "Amex")
+    assert _array_values(statement) == (
+        [1, 2],
+        ["card", "card"],
+        [Decimal("10.00"), Decimal("20.00")],
+        ["Visa", "Amex"],
+    )
+    assert statement.wire_binds() == (
+        [1, 2],
+        ["card", "card"],
+        ["10.00", "20.00"],
+        ["Visa", "Amex"],
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -842,8 +859,8 @@ def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
     # (`handle.collapse_group_key`), so no PLANNED instruction is ever
     # mixed-shape — a hand-built one is a caller wiring defect, and a silent
     # one: the emitted INSERT names the FIRST row's columns, so every later
-    # value tuple would bind positionally against a column list it does not
-    # match (here `balance`'s hole would take `Omar`'s absent member).
+    # row would bind positionally against a column list it does not match
+    # (here `balance`'s column would take `Omar`'s absent member).
     # Uniform membership is a Planned Insert's own construction invariant, so
     # the mixed shape is refused while the step is being settled — before any
     # column list exists to mis-emit against.
@@ -869,7 +886,7 @@ def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
 
 def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None:
     # m-batch-write-001's own insert entry: the multi-row INSERT collapse
-    # renders ONE statement with one value tuple per row, in row order —
+    # renders ONE statement binding one array per Column, each in row order —
     # the m-batch-write set-based flush's own multi-entry insert.
     insert = KeyedWriteInstruction(
         "insert",
@@ -880,8 +897,11 @@ def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None
         ),
     )
     statement = _lower(insert, WALLET)[0]
-    assert statement.sql == "insert into wallet(id, owner, balance) values (?, ?, ?), (?, ?, ?)"
-    assert statement.binds == (10, "Mira", 100.00, 11, "Omar", 20.00)
+    assert statement.sql == (
+        "insert into wallet(id, owner, balance) select * from "
+        "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))"
+    )
+    assert _array_values(statement) == ([10, 11], ["Mira", "Omar"], [100.00, 20.00])
 
 
 def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row() -> None:
@@ -902,19 +922,15 @@ def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row(
         ),
     )
     statement = _lower(insert, ACCOUNT)[0]
-    assert (
-        statement.sql
-        == "insert into account(id, owner, balance, version) values (?, ?, ?, ?), (?, ?, ?, ?)"
+    assert statement.sql == (
+        "insert into account(id, owner, balance, version) select * from unnest("
+        "cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), cast(? as int[]))"
     )
-    assert statement.binds == (
-        20,
-        "Curie",
-        10.00,
-        opt_lock.INITIAL_VERSION,
-        21,
-        "Bohr",
-        20.00,
-        opt_lock.INITIAL_VERSION,
+    assert _array_values(statement) == (
+        [20, 21],
+        ["Curie", "Bohr"],
+        [10.00, 20.00],
+        [opt_lock.INITIAL_VERSION, opt_lock.INITIAL_VERSION],
     )
 
 
@@ -1444,8 +1460,8 @@ def test_step_lowering_reads_column_participation_and_order_from_the_layout() ->
 
 
 def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> None:
-    # The tag is a layout fact, so it lands at its own slot in every value tuple
-    # while no entry carries it — the one cell lowering adds rather than reads.
+    # The tag is a layout fact, so it lands at its own slot in every row while
+    # no entry carries it — the one cell lowering adds rather than reads.
     row = managed_row_of(
         PAYMENT,
         {
@@ -1656,12 +1672,9 @@ def test_the_compiler_refuses_a_payload_not_prepared_from_its_own_step() -> None
     assert compile_write_step(
         insert, InsertPayload(slots, (first, second)), _CRATE_MODEL, POSTGRES
     ).binds == (
-        1,
-        "n",
-        JsonDocument(()),
-        2,
-        "n",
-        JsonDocument(()),
+        ArrayBind(INT64, [1, 2]),
+        ArrayBind(STRING, ["n", "n"]),
+        ArrayBind(JSON, [(), ()]),
     )
 
 
@@ -2028,7 +2041,37 @@ def _ledger_builder(*entries: WriteRow) -> InsertStatementBuilder:
     return builder
 
 
-def test_an_insert_compiles_each_entrys_cells_and_compacts_equal_signature_runs() -> None:
+def test_one_entry_binds_its_cells_and_compacts_its_typed_runs() -> None:
+    (entry,) = entries = (_ledger_entry(3, memo=None),)
+
+    statement = lowered(
+        PlannedInsert(entity=_BUILDER_LEDGER, entries=entries),
+        LayoutPayloadPreparer(_BUILDER_MODEL),
+        _BUILDER_MODEL,
+        POSTGRES,
+    )
+
+    assert statement.sql == (
+        "insert into builder_ledger(id, amount, memo, in_z, out_z, shelf) values (?, ?, ?, ?, ?, ?)"
+    )
+    assert statement == _ledger_builder(entry).finish()
+    assert statement.binds == (
+        3,
+        30,
+        None,
+        _BUILDER_OPENED,
+        OPEN_BOUND,
+        JsonDocument(FrozenMap({"label": "shelf-3"})),
+    )
+    assert statement.typed_bind_spans == (
+        _TypedBindSpan(0, 2, INT64, "MANAGED"),
+        _TypedBindSpan(3, 4, TIMESTAMP, "MANAGED"),
+    )
+    assert [override.index for override in statement.wire_bind_overrides] == [4]
+    assert statement.wire_binds()[4:] == ("infinity", {"label": "shelf-3"})
+
+
+def test_several_entries_bind_one_typed_array_per_column_in_entry_order() -> None:
     entries = (
         _ledger_entry(1),
         _ledger_entry(2),
@@ -2043,38 +2086,59 @@ def test_an_insert_compiles_each_entrys_cells_and_compacts_equal_signature_runs(
         POSTGRES,
     )
 
-    row = "(?, ?, ?, ?, ?, ?)"
     assert statement.sql == (
-        f"insert into builder_ledger(id, amount, memo, in_z, out_z, shelf) values "
-        f"{row}, {row}, {row}, {row}"
+        "insert into builder_ledger(id, amount, memo, in_z, out_z, shelf) select * from "
+        "unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as text[]), "
+        "cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))"
     )
     assert statement == _ledger_builder(*entries).finish()
-    assert statement.binds[12:] == (
-        3,
-        30,
-        None,
-        _BUILDER_OPENED,
-        OPEN_BOUND,
-        JsonDocument(FrozenMap({"label": "shelf-3"})),
-        4,
-        40,
-        "kept",
-        _BUILDER_OPENED,
-        OPEN_BOUND,
-        JsonDocument(FrozenMap({"label": "shelf-4"})),
+    assert statement.binds == (
+        ArrayBind(INT64, [1, 2, 3, 4]),
+        ArrayBind(INT64, [10, 20, 30, 40]),
+        ArrayBind(STRING, ["kept", "kept", None, "kept"]),
+        ArrayBind(TIMESTAMP, [_BUILDER_OPENED] * 4),
+        ArrayBind(TIMESTAMP, [OPEN_BOUND] * 4),
+        ArrayBind(JSON, [FrozenMap({"label": f"shelf-{key}"}) for key in (1, 2, 3, 4)]),
     )
-    assert statement.typed_bind_spans == (
-        _RepeatedTypedBindSpan(0, 2, 6, 2, INT64, "MANAGED"),
-        _RepeatedTypedBindSpan(2, 1, 6, 2, STRING, "MANAGED"),
-        _RepeatedTypedBindSpan(3, 1, 6, 2, TIMESTAMP, "MANAGED"),
-        _TypedBindSpan(12, 14, INT64, "MANAGED"),
-        _TypedBindSpan(15, 16, TIMESTAMP, "MANAGED"),
-        _TypedBindSpan(18, 20, INT64, "MANAGED"),
-        _TypedBindSpan(20, 21, STRING, "MANAGED"),
-        _TypedBindSpan(21, 22, TIMESTAMP, "MANAGED"),
+    assert statement.typed_bind_spans == ()
+    assert statement.wire_bind_overrides == ()
+    assert statement.wire_binds()[3:] == (
+        ["2024-01-01T00:00:00.000000Z"] * 4,
+        ["infinity"] * 4,
+        [{"label": f"shelf-{key}"} for key in (1, 2, 3, 4)],
     )
-    assert [override.index for override in statement.wire_bind_overrides] == [4, 10, 16, 22]
-    assert statement.wire_binds()[16:18] == ("infinity", {"label": "shelf-3"})
+
+
+def test_a_multi_row_inserts_text_and_bind_count_follow_its_columns_alone() -> None:
+    statements = [
+        _ledger_builder(*(_ledger_entry(key) for key in range(1, count + 1))).finish()
+        for count in (2, 3, 65)
+    ]
+    assert len({statement.sql for statement in statements}) == 1
+    assert [len(statement.binds) for statement in statements] == [6, 6, 6]
+    assert [
+        {len(cast("ArrayBind", bind).values) for bind in statement.binds}
+        for statement in statements
+    ] == [{2}, {3}, {65}]
+
+
+def test_a_dialect_binding_no_arrays_inserts_one_entry_and_refuses_several() -> None:
+    expanding = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=False)
+    payloads = LayoutPayloadPreparer(_BUILDER_MODEL)
+    alone = lowered(
+        PlannedInsert(entity=_BUILDER_LEDGER, entries=(_ledger_entry(1),)),
+        payloads,
+        _BUILDER_MODEL,
+        expanding,
+    )
+    assert alone.sql.endswith("values (?, ?, ?, ?, ?, ?)")
+    with pytest.raises(SqlGenError, match="binds no arrays"):
+        lowered(
+            PlannedInsert(entity=_BUILDER_LEDGER, entries=(_ledger_entry(1), _ledger_entry(2))),
+            payloads,
+            _BUILDER_MODEL,
+            expanding,
+        )
 
 
 def test_a_managed_row_binds_the_cells_admission_judged_without_judging_them_again() -> None:
@@ -2085,7 +2149,7 @@ def test_a_managed_row_binds_the_cells_admission_judged_without_judging_them_aga
     unjudged = list(_ledger_cells(_ledger_entry(3)))
     unjudged[1] = "thirty"
     builder.append(tuple(unjudged))
-    assert builder.finish().binds[13] == "thirty"
+    assert cast("ArrayBind", builder.finish().binds[1]).values == [10, 20, "thirty"]
 
 
 def test_a_refused_entry_leaves_the_compiled_prefix_unchanged() -> None:
@@ -2099,7 +2163,7 @@ def test_a_refused_entry_leaves_the_compiled_prefix_unchanged() -> None:
     expected = _ledger_builder(*entries).finish()
     assert statement == expected
     assert statement.wire_binds() == expected.wire_binds()
-    assert statement.sql.endswith("values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)")
+    assert {len(cast("ArrayBind", bind).values) for bind in statement.binds} == {2}
 
 
 class _PreparationFailure(Exception):

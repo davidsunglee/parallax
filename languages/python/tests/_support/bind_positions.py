@@ -8,8 +8,10 @@ while a Json position and a document key no declaration names keep JSON-value
 equality. Nothing in a bind value says which it is, so the position is read off
 the statement and the case's model: a Column an ``insert`` lists or an ``update``
 assigns, a document path a mutation expression assigns, or the operand a bind is
-compared with. A position this cannot resolve stays untyped and compares as
-JSON; a type is never guessed from a value.
+compared with. A multi-row insert's column array holds its Column's position at
+every element, and a shared Structured Column's array the document each row's
+own discriminator tag selects. A position this cannot resolve stays untyped and
+compares as JSON; a type is never guessed from a value.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from parallax.core.storage_layout import ColumnSlot, RelationalDocument, TableLa
 __all__ = [
     "BindPosition",
     "Document",
+    "EachElement",
     "Elements",
     "assert_zero_signs",
     "statement_bind_positions",
@@ -54,12 +57,21 @@ class Document:
 
 @dataclass(frozen=True, slots=True)
 class Elements:
-    """A JSON array, each element at ``element``: a Value Object ``many``."""
+    """An array, each element at ``element``: a Value Object ``many``, or a
+    column array of one Column."""
 
     element: BindPosition
 
 
-type BindPosition = NeutralType | Document | Elements
+@dataclass(frozen=True, slots=True)
+class EachElement:
+    """A column array whose element at each index sits at the position of the
+    same index: one shared Structured Column under each row's own tag."""
+
+    elements: tuple[BindPosition, ...]
+
+
+type BindPosition = NeutralType | Document | Elements | EachElement
 
 _BIND: Final = "bind"
 _COMPARISONS: Final = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
@@ -129,6 +141,16 @@ def zero_signs_agree(observed: object, expected: object, position: BindPosition)
                 cast("list[object]", observed), cast("list[object]", expected), strict=False
             )
             return all(zero_signs_agree(left, right, element) for left, right in pairs)
+        case EachElement(elements):
+            if not isinstance(observed, list) or not isinstance(expected, list):
+                return True
+            triples = zip(
+                cast("list[object]", observed),
+                cast("list[object]", expected),
+                elements,
+                strict=False,
+            )
+            return all(zero_signs_agree(left, right, element) for left, right, element in triples)
         case _:
             return True
 
@@ -240,12 +262,17 @@ class _Statement:
     def _inserted(self, tree: exp.Insert) -> dict[int, BindPosition]:
         target = tree.this
         values = tree.expression
-        if not isinstance(target, exp.Schema) or not isinstance(values, exp.Values):
+        if not isinstance(target, exp.Schema):
             return {}
         layout = self._layouts.get(target.this.name) if isinstance(target.this, exp.Table) else None
         if layout is None:
             return {}
         columns = [identifier.name for identifier in target.expressions]
+        arrays = _column_arrays(values)
+        if arrays is not None:
+            return self._arrays_inserted(layout, columns, arrays)
+        if not isinstance(values, exp.Values):
+            return {}
         positions: dict[int, BindPosition] = {}
         for row in values.expressions:
             if not isinstance(row, exp.Tuple):
@@ -258,6 +285,46 @@ class _Statement:
                 position = None if slot is None else self._slot_position(slot, known)
                 if index is not None and position is not None:
                     positions[index] = position
+        return positions
+
+    def _arrays_inserted(
+        self, layout: TableLayout, columns: Sequence[str], arrays: Sequence[exp.Expr]
+    ) -> dict[int, BindPosition]:
+        """Each column array's position: its Column's at every element, or a
+        shared Structured Column's per row, under the tag the row's own
+        element of the tag Column's array holds."""
+        if len(columns) != len(arrays):
+            return {}
+        indexes = {name: _bare_bind(array) for name, array in zip(columns, arrays, strict=True)}
+        elements = {
+            name: cast("list[object]", value)
+            for name, index in indexes.items()
+            if index is not None and isinstance(value := self._bound(index), list)
+        }
+        rows = max((len(values) for values in elements.values()), default=0)
+        positions: dict[int, BindPosition] = {}
+        for name, index in indexes.items():
+            slot = _slot_named(layout, name)
+            if index is None or slot is None:
+                continue
+            if isinstance(slot.contributor, RelationalDocument):
+                positions[index] = EachElement(
+                    tuple(
+                        self._relational_document(
+                            slot,
+                            {
+                                column: values[row]
+                                for column, values in elements.items()
+                                if row < len(values)
+                            },
+                        )
+                        for row in range(rows)
+                    )
+                )
+                continue
+            position = self._slot_position(slot, {})
+            if position is not None:
+                positions[index] = Elements(position)
         return positions
 
     def _assigned(self, tree: exp.Update) -> dict[int, BindPosition]:
@@ -394,6 +461,20 @@ class _Statement:
         index = _bare_bind(expression)
         value = None if index is None else self._bound(index)
         return value if isinstance(value, str) else None
+
+
+def _column_arrays(source: exp.Expr | None) -> list[exp.Expr] | None:
+    """The arguments of an ``insert``'s ``select * from unnest(…)`` source, one
+    column array each, or ``None`` for any other source."""
+    if not isinstance(source, exp.Select):
+        return None
+    origin = source.args.get("from_")
+    relation = origin.this if isinstance(origin, exp.From) else None
+    if not isinstance(relation, exp.Unnest) or len(source.expressions) != 1:
+        return None
+    if not isinstance(source.expressions[0], exp.Star):
+        return None
+    return list(relation.expressions)
 
 
 def _compared_operand(placeholder: exp.Placeholder) -> tuple[exp.Expr, bool] | None:

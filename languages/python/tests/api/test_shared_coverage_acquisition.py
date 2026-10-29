@@ -260,7 +260,7 @@ def test_a_peer_commit_between_two_shared_reads_is_the_later_reads_to_observe(
     # The first read finishes object 4, which completes before the second
     # read reads object 2.
     first = next(flush for flush in calls.flushes if flush.calls)
-    expected = [("read", 64), ("write", 130), ("read", 1), ("write", 3)]
+    expected = [("read", 64), ("write", 128 + 1), ("read", 1), ("write", 3)]
     if isolation == "repeatable_read":
         assert call_runs(first.calls)[:3] == expected[:3]
     else:

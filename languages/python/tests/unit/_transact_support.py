@@ -22,9 +22,10 @@ from typing import Any, Final, cast
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import DomainModel
-from parallax.core.base import INFINITY, TemporalBound
+from parallax.core.base import INFINITY, Json, TemporalBound
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    ArrayBind,
     DatabaseAdapter,
     JsonDocument,
     MappingRow,
@@ -173,8 +174,14 @@ class WriteDocumentBinds:
             return
         for bind in event.statement.binds:
             if isinstance(bind, JsonDocument):
-                self.documents.append(bind.value)
-                self._mutate(bind.value)
+                self._deliver(bind.value)
+            elif isinstance(bind, ArrayBind) and isinstance(bind.element_type, Json):
+                for document in bind.values:
+                    self._deliver(document)
+
+    def _deliver(self, document: object) -> None:
+        self.documents.append(document)
+        self._mutate(document)
 
     def _mutate(self, value: object) -> None:
         if isinstance(value, Mapping):

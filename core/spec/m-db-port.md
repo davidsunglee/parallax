@@ -49,12 +49,15 @@ it carries, a number retained from an earlier read included; the adapter
 interprets no numeric provenance itself. The final serialized bytes and driver
 buffers remain necessary adapter output.
 
-An array bind crosses the port as one **array carrier**: the scalar Neutral
-Type its elements share, and its managed elements in order, with no
-per-element wrapper. A null element is SQL NULL, and a `timestamp` element may
-be the open upper bound (`m-core`). The carrier is the only owner of the
-element type: a concrete adapter binds the array as that type's array, and
-MUST NOT infer a type from the elements or copy them into another sequence
+An array bind crosses the port as one **array carrier**: the Neutral Type its
+elements share, and its managed elements in order, with no per-element wrapper.
+Under a scalar element type a null element is SQL NULL, and a `timestamp`
+element may be the open upper bound (`m-core`). Under `json` each element is
+one portable codec document, serialized as the structured-document bind above
+serializes it: a null element is JSON `null`, never SQL NULL, and a JSON array
+is one element, never a further array dimension. The carrier is the only owner
+of the element type: a concrete adapter binds the array as that type's array,
+and MUST NOT infer a type from the elements or copy them into another sequence
 first. The statement casts the parameter to its array type (`m-dialect`
 **array parameter cast form**), so an adapter whose driver has no native array
 binding MAY instead bind one correctly escaped array literal of the elements'

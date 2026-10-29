@@ -179,19 +179,19 @@ def test_a_transaction_time_loop_costs_two_calls_per_group(
 
 def test_a_bitemporal_loop_groups_every_objects_successors_behind_every_close() -> None:
     # Each object closes its milestone and opens a head before the change
-    # and the changed tail, 128 rows for the first group's 64 objects.
-    port = _run("bitemporal", 65, (_effects(64), Write(times=3), Write(), Write()))
+    # and the changed tail, 128 rows in one insert for the first group's 64
+    # objects.
+    port = _run("bitemporal", 65, (_effects(64), Write(times=3)))
     assert _shapes(port.calls) == [
         ("ordered", 64),
-        ("insert", 64),
-        ("insert", 64),
+        ("insert", 128),
         ("alone", 1),
         ("insert", 2),
     ]
-    first, second, *_tail = (
+    first, *_tail = (
         call for call in port.calls if isinstance(call, WriteCall) and call.sql.startswith("insert")
     )
-    keys = [row[0] for call in (first, second) for row in inserted_rows(call)]
+    keys = [row[0] for row in inserted_rows(first)]
     assert keys == [key for key in range(1, 65) for _ in range(2)]
 
 
@@ -209,16 +209,17 @@ def test_without_ordered_transport_each_effect_runs_alone_and_the_inserts_still_
     assert _shapes(port.calls) == [("alone", 1)] * 3 + [("insert", 3)]
 
 
-def test_a_narrow_bind_limit_splits_the_grouped_insert_and_writes_the_same_rows() -> None:
+def test_a_bind_limit_its_columns_fit_never_splits_the_grouped_insert() -> None:
     wide = _run("transaction-time", 5, (_effects(5), Write()))
-    # Five columns a row, so two rows fill a statement.
+    # Five columns a row: a limit two rows of scalars would fill, while their
+    # five arrays carry every row.
     narrow = _run(
         "transaction-time",
         5,
-        (_effects(5), Write(times=3)),
+        (_effects(5), Write()),
         dialect=replace(POSTGRES, max_bind_parameters=10),
     )
-    assert _shapes(narrow.calls) == [("ordered", 5), ("insert", 2), ("insert", 2), ("insert", 1)]
+    assert _shapes(narrow.calls) == [("ordered", 5), ("insert", 5)]
 
     def rows(port: ScriptedAdapter) -> list[object]:
         return [

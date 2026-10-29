@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Hashable
+from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -56,6 +56,9 @@ class RowSlots(ColumnPlacement, Protocol):
     Fixed by the Entity and ``presence`` alone, so every row of one insert
     statement shares one. ``shared_document`` is the index of the Table's
     shared Structured Column among the cells, ``None`` where it has none.
+    ``element_types`` holds the Neutral Type every cell of a slot shares: its
+    scalar type, ``json`` for a stored document, and ``string`` for the
+    table-per-hierarchy discriminator's tag.
     """
 
     @property
@@ -66,6 +69,8 @@ class RowSlots(ColumnPlacement, Protocol):
     def table(self) -> str: ...
     @property
     def shared_document(self) -> int | None: ...
+    @property
+    def element_types(self) -> tuple[NeutralType, ...]: ...
 
     def cells(self, write_row: WriteRow) -> tuple[object, ...]:
         """``write_row``'s persisted cells, aligned with :attr:`contributors`.
@@ -73,6 +78,15 @@ class RowSlots(ColumnPlacement, Protocol):
         ``write_row`` states exactly the members :attr:`presence` names, and
         every ordinary cell it holds was already admitted, so nothing here
         judges a value again.
+        """
+        ...
+
+    def column_cells(self, rows: Sequence[tuple[object, ...]]) -> tuple[list[object], ...]:
+        """``rows``' cells as one new list per slot, in row order, aligned with
+        :attr:`contributors`.
+
+        Each row holds the cells :meth:`cells` gathered for one row stating
+        :attr:`presence`, so every row is as wide as the slots.
         """
         ...
 

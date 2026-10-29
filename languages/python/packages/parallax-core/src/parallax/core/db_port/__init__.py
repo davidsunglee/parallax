@@ -268,8 +268,10 @@ class ArrayBind:
     """A neutral carrier for one array bind whose elements share ``element_type``.
 
     ``values`` holds the managed elements in order, with no per-element
-    wrapper; a ``None`` element is SQL NULL, and a ``timestamp`` element may be
-    the open upper bound ``INFINITY``. The carrier is the only owner of
+    wrapper. Under a scalar element type a ``None`` element is SQL NULL, and a
+    ``timestamp`` element may be the open upper bound ``INFINITY``; under
+    ``json`` each element is one encoded document, ``None`` being JSON null and
+    a list one document rather than a dimension. The carrier is the only owner of
     its element type, so a concrete adapter binds the array from that type
     alone rather than by inspecting its elements. ``values`` is the caller's own
     list, handed over unchanged: it must not be mutated after binding.

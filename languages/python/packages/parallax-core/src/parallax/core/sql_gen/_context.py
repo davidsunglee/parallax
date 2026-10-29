@@ -12,6 +12,7 @@ from parallax.core.base import (
     INFINITY_LITERAL,
     JSON,
     STRING,
+    Json,
     ManagedValue,
     NeutralType,
     detach_json_container,
@@ -438,6 +439,10 @@ def _wire_bind(value: object) -> WireValue:
         return _array_wire_bind(value)
     if isinstance(value, JsonDocument):
         value = detach_json_container(value.value)
+    return _document_wire_bind(value)
+
+
+def _document_wire_bind(value: object) -> WireValue:
     if value is None:
         return None
     try:
@@ -451,6 +456,8 @@ def _wire_bind(value: object) -> WireValue:
 
 def _array_wire_bind(array: ArrayBind) -> WireValue:
     element_type = array.element_type
+    if isinstance(element_type, Json):
+        return [_document_wire_bind(detach_json_container(element)) for element in array.values]
     return [
         None
         if element is None
@@ -703,6 +710,9 @@ class StatementBuilder[RowScope = object]:
             self.bind_structural(value)
 
     def bind_document(self, value: JsonDocument) -> None:
+        self._append(value)
+
+    def bind_array(self, value: ArrayBind) -> None:
         self._append(value)
 
     def bind_managed(self, value: object, neutral_type: NeutralType) -> None:

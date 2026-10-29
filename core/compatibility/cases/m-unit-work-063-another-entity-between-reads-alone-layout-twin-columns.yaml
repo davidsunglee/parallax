@@ -54,20 +54,41 @@ when:
             postgres: update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_span(id, amount, label, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
-          binds: [1, 100, a, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, 1, 150, a, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity]
+            postgres: insert into coverage_span(id, amount, label, from_z, thru_z, in_z, out_z) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as text[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]))
+          binds:
+            - [1, 1]
+            - [100, 150]
+            - [a, a]
+            - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"]
+            - ["2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z"]
+            - ["2024-10-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z"]
+            - [infinity, infinity]
         - sql:
             postgres: update coverage_ledger set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_ledger(id, amount, label, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
-          binds: [1, 100, l, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, 1, 150, l, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity]
+            postgres: insert into coverage_ledger(id, amount, label, from_z, thru_z, in_z, out_z) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as text[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]))
+          binds:
+            - [1, 1]
+            - [100, 150]
+            - [l, l]
+            - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"]
+            - ["2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z"]
+            - ["2024-10-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z"]
+            - [infinity, infinity]
         - sql:
             postgres: update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 2, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_span(id, amount, label, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
-          binds: [2, 100, b, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, 2, 150, b, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity]
+            postgres: insert into coverage_span(id, amount, label, from_z, thru_z, in_z, out_z) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as text[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]))
+          binds:
+            - [2, 2]
+            - [100, 150]
+            - [b, b]
+            - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"]
+            - ["2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z"]
+            - ["2024-10-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z"]
+            - [infinity, infinity]
 then:
   databaseCalls: 11
   tableState:

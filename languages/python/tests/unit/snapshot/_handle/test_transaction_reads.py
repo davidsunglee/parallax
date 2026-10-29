@@ -1042,7 +1042,12 @@ def test_stale_web_edit_branch_render_then_submit_pins_valid_time_only() -> None
     assert close_sql.startswith("update branch set out_z = ")
     assert in_z in close_binds  # the OBSERVED Transaction-Time coordinate gates the close
     # The correction's replacement rows carry the edited field.
-    assert any("New Name" in op.binds for op in write_ops[1:])
+    assert any(
+        "New Name" in row
+        for op in write_ops[1:]
+        if op.sql.startswith("insert")
+        for row in inserted_rows(op)
+    )
 
 
 def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_read() -> None:

@@ -20,7 +20,7 @@ import json
 import operator
 import struct
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from time import monotonic
 from types import FrameType, FunctionType, ModuleType, SimpleNamespace
 from typing import Any, cast
@@ -33,7 +33,7 @@ from psycopg.adapt import AdaptersMap, PyFormat, Transformer
 from psycopg.pq import ExecStatus, Format, TransactionStatus
 from psycopg.rows import TupleRow
 from psycopg.sql import Composable
-from psycopg.types.array import BaseListDumper, ListBinaryDumper
+from psycopg.types.array import BaseListDumper
 from psycopg.types.json import Jsonb, JsonbLoader
 
 import parallax.postgres
@@ -47,6 +47,7 @@ from parallax.core.base import (
     INFINITY,
     INT32,
     INT64,
+    JSON,
     SQL_NULL,
     STRING,
     TIME,
@@ -720,27 +721,79 @@ def test_a_timestamp_array_binds_the_open_bound_as_native_infinity() -> None:
     )
 
 
-def test_an_array_bind_reaches_the_driver_as_its_own_value_list(
+@pytest.mark.usefixtures("no_element_scan")
+def test_a_document_array_is_one_dimension_of_documents_none_holding_json_null() -> None:
+    adapters = _initialized()
+    documents: list[object] = [
+        None,
+        {"kind": "object"},
+        ["nested", None],
+        [],
+        FrozenMap({"frozen": (1, None)}),
+    ]
+
+    dumped, oid, format_ = _dumped(adapters, ArrayBind(JSON, documents))
+
+    assert (oid, format_) == (3807, Format.BINARY)
+    assert dumped == _binary_array(
+        3802,
+        [
+            b"\x01null",
+            b'\x01{"kind": "object"}',
+            b'\x01["nested", null]',
+            b"\x01[]",
+            b'\x01{"frozen": [1, null]}',
+        ],
+    )
+
+
+@pytest.mark.usefixtures("no_element_scan")
+def test_an_empty_document_array_keeps_its_element_type() -> None:
+    assert _dumped(_initialized(), ArrayBind(JSON, [])) == (
+        _binary_array(3802, []),
+        3807,
+        Format.BINARY,
+    )
+
+
+def test_a_document_array_serializes_each_document_once_through_the_codec(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     adapters = _initialized()
-    values: list[object] = [3, 1, 2]
+    serialized: list[object] = []
+
+    def recording(document: object) -> str:
+        serialized.append(document)
+        return '"stub"'
+
+    monkeypatch.setattr(connection_module, "dump_document", recording)
+    documents: list[object] = [{"a": 1}, None, [2]]
+    _dumped(adapters, ArrayBind(JSON, documents))
+    assert serialized == documents
+    assert all(left is right for left, right in zip(serialized, documents, strict=True))
+
+
+class _ReadOnce(list[object]):
+    """A value list recording each pass over it."""
+
+    passes: int = 0
+
+    def __iter__(self) -> Iterator[object]:
+        self.passes += 1
+        return super().__iter__()
+
+
+def test_an_array_bind_reaches_the_driver_as_its_own_value_list() -> None:
+    adapters = _initialized()
+    values = _ReadOnce([3, None, 2])
     bind = ArrayBind(INT64, values)
-    dumped_lists: list[object] = []
-    dump = ListBinaryDumper.dump
-
-    def recording(self: ListBinaryDumper, obj: list[Any]) -> object:
-        dumped_lists.append(obj)
-        return dump(self, obj)
-
-    monkeypatch.setattr(ListBinaryDumper, "dump", recording)
 
     (adapted,) = adapt_binds([bind])
     assert adapted is bind
-    _dumped(adapters, bind)
-    assert len(dumped_lists) == 1
-    assert dumped_lists[0] is values
-    assert values == [3, 1, 2]
+    dumped, _oid, _format = _dumped(adapters, bind)
+    assert dumped == _binary_array(20, [struct.pack("!q", 3), None, struct.pack("!q", 2)])
+    assert values.passes == 1
+    assert values == [3, None, 2]
 
 
 def test_the_array_dumper_is_registered_on_the_connection_alone() -> None:

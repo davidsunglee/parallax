@@ -50,33 +50,41 @@ then:
         mariadb: update charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
       binds: ["2026-02-15T00:00:00.000000Z", 1, infinity, infinity]
     - sql:
-        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
+        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
         mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
       binds:
-        - 1
-        - "2026-01-01T00:00:00.000000Z"
-        - "2026-03-01T00:00:00.000000Z"
-        - "2026-02-15T00:00:00.000000Z"
-        - infinity
-        - route: Oslo-Bergen
-          terms:
-            clause: standard
-        - 1
-        - "2026-03-01T00:00:00.000000Z"
-        - "2026-09-01T00:00:00.000000Z"
-        - "2026-02-15T00:00:00.000000Z"
-        - infinity
-        - route: Oslo-Tromso
-          terms:
-            clause: winter
-        - 1
-        - "2026-09-01T00:00:00.000000Z"
-        - infinity
-        - "2026-02-15T00:00:00.000000Z"
-        - infinity
-        - route: Oslo-Bergen
-          terms:
-            clause: standard
+        postgres:
+          - [1, 1, 1]
+          - ["2026-01-01T00:00:00.000000Z", "2026-03-01T00:00:00.000000Z", "2026-09-01T00:00:00.000000Z"]
+          - ["2026-03-01T00:00:00.000000Z", "2026-09-01T00:00:00.000000Z", infinity]
+          - ["2026-02-15T00:00:00.000000Z", "2026-02-15T00:00:00.000000Z", "2026-02-15T00:00:00.000000Z"]
+          - [infinity, infinity, infinity]
+          - [{route: Oslo-Bergen, terms: {clause: standard}}, {route: Oslo-Tromso, terms: {clause: winter}}, {route: Oslo-Bergen, terms: {clause: standard}}]
+        mariadb:
+          - 1
+          - "2026-01-01T00:00:00.000000Z"
+          - "2026-03-01T00:00:00.000000Z"
+          - "2026-02-15T00:00:00.000000Z"
+          - infinity
+          - route: Oslo-Bergen
+            terms:
+              clause: standard
+          - 1
+          - "2026-03-01T00:00:00.000000Z"
+          - "2026-09-01T00:00:00.000000Z"
+          - "2026-02-15T00:00:00.000000Z"
+          - infinity
+          - route: Oslo-Tromso
+            terms:
+              clause: winter
+          - 1
+          - "2026-09-01T00:00:00.000000Z"
+          - infinity
+          - "2026-02-15T00:00:00.000000Z"
+          - infinity
+          - route: Oslo-Bergen
+            terms:
+              clause: standard
   tableState:
     charter:
       - id: 1

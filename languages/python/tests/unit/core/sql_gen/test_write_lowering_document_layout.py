@@ -31,8 +31,8 @@ from parallax.core._execution._unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core._execution._write_lowering import lowered
-from parallax.core.base import FrozenMap, retain_document_value
-from parallax.core.db_port import JsonDocument
+from parallax.core.base import JSON, FrozenMap, retain_document_value
+from parallax.core.db_port import ArrayBind, JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import _managed as managed
 from parallax.core.document_codec import persisted_document_equal
@@ -76,6 +76,13 @@ def _lower(instruction: WriteInstruction, model: Metamodel = DOCUMENT) -> list[L
 
 def _document(statement: LoweredStatement, index: int = -1) -> object:
     return cast("JsonDocument", statement.binds[index]).value
+
+
+def _documents(statement: LoweredStatement, index: int = -1) -> list[object]:
+    """The documents a multi-row insert's ``json`` column array holds."""
+    array = statement.binds[index]
+    assert isinstance(array, ArrayBind) and array.element_type == JSON
+    return array.values
 
 
 def test_an_insert_binds_one_document_at_the_structured_column() -> None:
@@ -263,17 +270,24 @@ def test_a_columns_layout_twin_writes_the_same_members_to_their_own_columns() ->
     assert statement.sql == "insert into person(id, display_name, tags) values (?, ?, ?)"
 
 
+_DOCUMENT_ROWS: Final = (
+    "insert into person(id, payload) select * from unnest(cast(? as bigint[]), cast(? as jsonb[]))"
+)
+
+
 def test_same_membered_rows_collapse_into_one_multi_row_insert() -> None:
-    # The collapse the shared shape below admits: one column list and one value
-    # tuple per row, each binding that row's own complete document.
+    # The collapse the shared shape below admits: one column list and one
+    # document array holding each row's own complete document.
     (statement,) = _lower(
         KeyedWriteInstruction(
             "insert", "Person", ({"id": 1, "displayName": "Ada"}, {"id": 2, "displayName": "Bo"})
         )
     )
-    assert statement.sql == "insert into person(id, payload) values (?, ?), (?, ?)"
-    assert _document(statement, 1) == {"displayName": "Ada", "tags": []}
-    assert _document(statement, 3) == {"displayName": "Bo", "tags": []}
+    assert statement.sql == _DOCUMENT_ROWS
+    assert _documents(statement) == [
+        {"displayName": "Ada", "tags": []},
+        {"displayName": "Bo", "tags": []},
+    ]
 
 
 def test_a_refused_entry_leaves_every_appended_document_bound_as_it_was() -> None:
@@ -304,9 +318,11 @@ def test_a_refused_entry_leaves_every_appended_document_bound_as_it_was() -> Non
     assert statement == lowered(
         PlannedInsert(entity=PERSON, entries=entries[:2]), payloads, DOCUMENT, POSTGRES
     )
-    assert statement.sql == "insert into person(id, payload) values (?, ?), (?, ?)"
-    assert _document(statement, 1) is first.values[1]
-    assert _document(statement, 3) is second.values[1]
+    assert statement.sql == _DOCUMENT_ROWS
+    documents = _documents(statement)
+    assert len(documents) == 2
+    assert documents[0] is first.values[1]
+    assert documents[1] is second.values[1]
 
 
 def test_two_rows_naming_different_document_members_do_not_share_one_statement() -> None:
@@ -345,9 +361,11 @@ def test_an_unnamed_many_occurrence_shares_a_statement_with_one_that_names_it() 
             ({"id": 1, "displayName": "Ada", "tags": []}, {"id": 2, "displayName": "Bo"}),
         )
     )
-    assert statement.sql == "insert into person(id, payload) values (?, ?), (?, ?)"
-    assert _document(statement, 1) == {"displayName": "Ada", "tags": []}
-    assert _document(statement, 3) == {"displayName": "Bo", "tags": []}
+    assert statement.sql == _DOCUMENT_ROWS
+    assert _documents(statement) == [
+        {"displayName": "Ada", "tags": []},
+        {"displayName": "Bo", "tags": []},
+    ]
 
 
 def test_the_columns_layout_twin_shares_a_statement_the_same_way() -> None:
@@ -363,10 +381,10 @@ def test_the_columns_layout_twin_shares_a_statement_the_same_way() -> None:
         COLUMNS,
     )
     assert statement.sql == (
-        "insert into person(id, display_name, tags) values (?, ?, ?), (?, ?, ?)"
+        "insert into person(id, display_name, tags) select * from "
+        "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
     )
-    assert _document(statement, 2) == ()
-    assert _document(statement, 5) == ()
+    assert _documents(statement) == [(), ()]
 
 
 def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:

@@ -54,20 +54,38 @@ when:
             postgres: update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
-          binds: [1, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 100, label: a }, 1, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 150, label: a }]
+            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [1, 1]
+            - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"]
+            - ["2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z"]
+            - ["2024-10-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z"]
+            - [infinity, infinity]
+            - [{amount: 100, label: a}, {amount: 150, label: a}]
         - sql:
             postgres: update coverage_ledger set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_ledger(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
-          binds: [1, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 100, label: l }, 1, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 150, label: l }]
+            postgres: insert into coverage_ledger(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [1, 1]
+            - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"]
+            - ["2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z"]
+            - ["2024-10-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z"]
+            - [infinity, infinity]
+            - [{amount: 100, label: l}, {amount: 150, label: l}]
         - sql:
             postgres: update coverage_span set out_z = ? where id = ? and thru_z = ? and out_z = ?
           binds: ["2024-10-01T00:00:00.000000Z", 2, "2024-06-01T00:00:00.000000Z", infinity]
         - sql:
-            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)
-          binds: [2, "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 100, label: b }, 2, "2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z", infinity, { amount: 150, label: b }]
+            postgres: insert into coverage_span(id, from_z, thru_z, in_z, out_z, payload) select * from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
+          binds:
+            - [2, 2]
+            - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"]
+            - ["2024-03-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z"]
+            - ["2024-10-01T00:00:00.000000Z", "2024-10-01T00:00:00.000000Z"]
+            - [infinity, infinity]
+            - [{amount: 100, label: b}, {amount: 150, label: b}]
 then:
   databaseCalls: 11
   tableState:

@@ -63,46 +63,55 @@ then:
         mariadb: update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ? and in_z = ?
       binds: ["2024-02-15T00:00:00.000000Z", 1, infinity, infinity, "2024-01-01T00:00:00.000000Z"]
     - sql:
-        postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
+        postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as jsonb[]))
         mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
       binds:
-        - 1
-        - Central Branch
-        - "2024-01-01T00:00:00.000000Z"
-        - "2024-03-01T00:00:00.000000Z"
-        - "2024-02-15T00:00:00.000000Z"
-        - infinity
-        - street: 10 Old Road
-          city: Helsinki
-          geo:
-            country: FI
-          phones:
-            - { type: main, number: '555-1000' }
-        - 1
-        - Central Branch
-        - "2024-03-01T00:00:00.000000Z"
-        - "2024-09-01T00:00:00.000000Z"
-        - "2024-02-15T00:00:00.000000Z"
-        - infinity
-        - street: 30 New Road
-          city: Tampere
-          geo:
-            country: FI
-          phones:
-            - { type: main, number: '555-3000' }
-            - { type: fax, number: '555-3001' }
-        - 1
-        - Central Branch
-        - "2024-09-01T00:00:00.000000Z"
-        - infinity
-        - "2024-02-15T00:00:00.000000Z"
-        - infinity
-        - street: 10 Old Road
-          city: Helsinki
-          geo:
-            country: FI
-          phones:
-            - { type: main, number: '555-1000' }
+        postgres:
+          - [1, 1, 1]
+          - [Central Branch, Central Branch, Central Branch]
+          - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z"]
+          - ["2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z", infinity]
+          - ["2024-02-15T00:00:00.000000Z", "2024-02-15T00:00:00.000000Z", "2024-02-15T00:00:00.000000Z"]
+          - [infinity, infinity, infinity]
+          - [{street: "10 Old Road", city: Helsinki, geo: {country: FI}, phones: [{type: main, number: "555-1000"}]}, {street: "30 New Road", city: Tampere, geo: {country: FI}, phones: [{type: main, number: "555-3000"}, {type: fax, number: "555-3001"}]}, {street: "10 Old Road", city: Helsinki, geo: {country: FI}, phones: [{type: main, number: "555-1000"}]}]
+        mariadb:
+          - 1
+          - Central Branch
+          - "2024-01-01T00:00:00.000000Z"
+          - "2024-03-01T00:00:00.000000Z"
+          - "2024-02-15T00:00:00.000000Z"
+          - infinity
+          - street: 10 Old Road
+            city: Helsinki
+            geo:
+              country: FI
+            phones:
+              - { type: main, number: '555-1000' }
+          - 1
+          - Central Branch
+          - "2024-03-01T00:00:00.000000Z"
+          - "2024-09-01T00:00:00.000000Z"
+          - "2024-02-15T00:00:00.000000Z"
+          - infinity
+          - street: 30 New Road
+            city: Tampere
+            geo:
+              country: FI
+            phones:
+              - { type: main, number: '555-3000' }
+              - { type: fax, number: '555-3001' }
+          - 1
+          - Central Branch
+          - "2024-09-01T00:00:00.000000Z"
+          - infinity
+          - "2024-02-15T00:00:00.000000Z"
+          - infinity
+          - street: 10 Old Road
+            city: Helsinki
+            geo:
+              country: FI
+            phones:
+              - { type: main, number: '555-1000' }
   tableState:
     branch:
       - br_id: 1
