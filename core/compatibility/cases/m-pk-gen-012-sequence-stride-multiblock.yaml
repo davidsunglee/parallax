@@ -43,17 +43,25 @@ then:
         mariadb: update pk_sequence set next_val = next_val + ? where name = ?
       binds: [20, voucher_seq]
     - sql:
-        postgres: insert into voucher(id, label) values (?, ?), (?, ?)
+        postgres: insert into voucher(id, label) select * from unnest(cast(? as bigint[]), cast(? as text[]))
         mariadb: insert into voucher(id, label) values (?, ?), (?, ?)
-      binds: [100, spring, 110, summer]
+      binds:
+        postgres:
+          - [100, 110]
+          - [spring, summer]
+        mariadb: [100, spring, 110, summer]
     - sql:
         postgres: update pk_sequence set next_val = next_val + ? where name = ?
         mariadb: update pk_sequence set next_val = next_val + ? where name = ?
       binds: [20, voucher_seq]
     - sql:
-        postgres: insert into voucher(id, label) values (?, ?), (?, ?)
+        postgres: insert into voucher(id, label) select * from unnest(cast(? as bigint[]), cast(? as text[]))
         mariadb: insert into voucher(id, label) values (?, ?), (?, ?)
-      binds: [120, autumn, 130, winter]
+      binds:
+        postgres:
+          - [120, 130]
+          - [autumn, winter]
+        mariadb: [120, autumn, 130, winter]
   tableState:
     voucher:
       - { id: 100, label: spring }

@@ -417,7 +417,7 @@ def test_plain_two_way_split_and_plain_terminate_statement_shapes() -> None:
     assert update_step["statements"] == 2
     assert len(split.golden_statements("postgres")) == 3
     chained = split.golden_statements("postgres")[2]
-    assert len(insert_value_rows(split, chained, split.statement_binds(2))) == 2
+    assert len(insert_value_rows(split, chained, split.statement_binds(2, "postgres"))) == 2
     _assert_write_step_count(split, "postgres")
 
     # The plain terminate is inactivate + head (old) only — no tail: the `terminate`
@@ -628,7 +628,10 @@ def test_rectangle_split_has_inactivate_plus_one_three_row_insert() -> None:
     assert step["statements"] == 2
     assert len(update_until.golden_statements("postgres")) == 3
     chained = update_until.golden_statements("postgres")[2]
-    assert len(insert_value_rows(update_until, chained, update_until.statement_binds(2))) == 3
+    assert (
+        len(insert_value_rows(update_until, chained, update_until.statement_binds(2, "postgres")))
+        == 3
+    )
 
 
 def test_a_split_rendering_its_chained_rows_as_separate_inserts_is_refused() -> None:
@@ -640,10 +643,13 @@ def test_a_split_rendering_its_chained_rows_as_separate_inserts_is_refused() -> 
     )
     statements = case.then["statements"]
     grouped = statements[2]
-    rows = insert_value_rows(case, grouped["sql"]["postgres"], case.statement_binds(2))
+    rows = insert_value_rows(case, grouped["sql"]["postgres"], case.statement_binds(2, "postgres"))
+    head = grouped["sql"]["postgres"].split(" select * from unnest(")[0]
     single = {
-        dialect: re.sub(r"(\) values \([^()]*\))(, \([^()]*\))+$", r"\1", sql)
-        for dialect, sql in grouped["sql"].items()
+        "postgres": f"{head} values ({', '.join(['?'] * len(rows[0]))})",
+        "mariadb": re.sub(
+            r"(\) values \([^()]*\))(, \([^()]*\))+$", r"\1", grouped["sql"]["mariadb"]
+        ),
     }
     statements[2:] = [{"sql": dict(single), "binds": row} for row in rows]
     step = next(s for s in case.write_sequence if s["mutation"] == "amendUntil")

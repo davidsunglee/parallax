@@ -132,17 +132,26 @@ def compare_binds(
     document before comparing, so it reconciles against the golden's plain
     dict/list literal exactly like `parallax.conformance.engine._json_bind`'s
     own emission-wire rendering; an array bind (an ``ArrayBind`` carrier)
-    reconciles element by element against the golden's list; everything else
-    is exact wire equality.
+    reconciles element by element, each element as a bind of its own, against
+    the golden's list of equal length; everything else is exact wire equality.
 
     At each of ``positions`` the bind additionally carries the golden's float
     zero sign (`tests._support.bind_positions`).
     """
+    from parallax.core.db_port import ArrayBind
+
     obs = [_wire_value(_array_elements(value)) for value in observed]
     exp = [_wire_value(value) for value in expected]
     assert len(obs) == len(exp), f"bind count: observed {obs!r} != expected {exp!r}"
-    for index, (left, right) in enumerate(zip(obs, exp, strict=True)):
-        assert _scalar_equal(left, right), (index, left, right)
+    for index, (bind, left, right) in enumerate(zip(observed, obs, exp, strict=True)):
+        if isinstance(bind, ArrayBind):
+            elements = cast("list[object]", left)
+            assert isinstance(right, list), (index, left, right)
+            golden = cast("list[object]", right)
+            assert len(elements) == len(golden), (index, left, right)
+            assert all(map(_scalar_equal, elements, golden)), (index, left, right)
+        else:
+            assert _scalar_equal(left, right), (index, left, right)
     if positions:
         from tests._support.bind_positions import assert_zero_signs
 

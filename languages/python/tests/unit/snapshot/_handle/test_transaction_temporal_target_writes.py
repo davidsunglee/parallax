@@ -1043,7 +1043,7 @@ def _plain(value: object) -> object:
 
 def _inserted(call: WriteCall) -> list[dict[str, object]]:
     """Each row ``call`` inserts, by Column name."""
-    columns = call.sql[call.sql.index("(") + 1 : call.sql.index(") values")].split(", ")
+    columns = call.sql[call.sql.index("(") + 1 : call.sql.index(")")].split(", ")
     return [
         {column: _plain(value) for column, value in zip(columns, row, strict=True)}
         for row in inserted_rows(call)

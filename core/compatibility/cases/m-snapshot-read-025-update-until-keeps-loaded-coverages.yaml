@@ -49,8 +49,15 @@ when:
             postgres: update coverage set out_z = ? where id = ? and thru_z = ? and out_z = ? and in_z = ?
           binds: ["2024-07-01T00:00:00.000000Z", 20, infinity, infinity, "2024-01-01T00:00:00.000000Z"]
         - sql:
-            postgres: insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)
-          binds: [20, 2, "300.00", "2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity, 20, 2, "999.00", "2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity, 20, 2, "300.00", "2024-09-01T00:00:00.000000Z", infinity, "2024-07-01T00:00:00.000000Z", infinity]
+            postgres: insert into coverage(id, policy_id, amount, from_z, thru_z, in_z, out_z) select * from unnest(cast(? as bigint[]), cast(? as bigint[]), cast(? as decimal[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]))
+          binds:
+            - [20, 20, 20]
+            - [2, 2, 2]
+            - ["300.00", "999.00", "300.00"]
+            - ["2024-01-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z"]
+            - ["2024-03-01T00:00:00.000000Z", "2024-09-01T00:00:00.000000Z", infinity]
+            - ["2024-07-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z"]
+            - [infinity, infinity, infinity]
     - action: access
       "on": 0
       path: coverages

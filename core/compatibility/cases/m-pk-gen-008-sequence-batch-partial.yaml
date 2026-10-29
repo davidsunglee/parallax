@@ -30,9 +30,13 @@ then:
         mariadb: update pk_sequence set next_val = next_val + ? where name = ?
       binds: [3, pass_seq]
     - sql:
-        postgres: insert into pass(id, zone) values (?, ?), (?, ?)
+        postgres: insert into pass(id, zone) select * from unnest(cast(? as bigint[]), cast(? as text[]))
         mariadb: insert into pass(id, zone) values (?, ?), (?, ?)
-      binds: [1, north, 2, south]
+      binds:
+        postgres:
+          - [1, 2]
+          - [north, south]
+        mariadb: [1, north, 2, south]
   tableState:
     pass:
       - { id: 1, zone: north }

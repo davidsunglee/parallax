@@ -395,7 +395,10 @@ def _driver_goldens(entries: list[dict[str, Any]]) -> list[tuple[str, list[objec
     for entry in entries:
         sql: Any = entry["sql"]
         text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
-        out.append((POSTGRES.to_driver_sql(cast("str", text)), list(entry.get("binds", []))))
+        binds: Any = entry.get("binds", [])
+        if isinstance(binds, dict):
+            binds = cast("dict[str, list[object]]", binds)["postgres"]
+        out.append((POSTGRES.to_driver_sql(cast("str", text)), list(binds)))
     return out
 
 

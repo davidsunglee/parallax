@@ -162,9 +162,6 @@ _WRITE_FLOWS: Final[frozenset[Flow]] = frozenset({"source-keyed", "target-patch"
 _READ_ROOTS: Final = 128
 _PAGE_SIZE: Final = 32
 _REFUSALS_PER_WINDOW: Final = 4
-_OPENINGS_PER_INSERT: Final = 64
-"""The most openings one multi-row insert carries (`m-execution` *Flush
-execution*)."""
 _STRIDE: Final = 5
 """The destruction workload's i-th termination removes row ``(i * 5) % size``:
 five is coprime with every size, so the order visits every row, neither
@@ -291,9 +288,9 @@ class Outcome:
 
 
 def _inserts(rows: int) -> int:
-    """The statements inserting ``rows`` contiguous openings of one shape:
-    one multi-row insert per :data:`_OPENINGS_PER_INSERT` of them."""
-    return -(-rows // _OPENINGS_PER_INSERT)
+    """The statements inserting ``rows`` contiguous openings of one shape: one
+    insert however many there are (`m-execution` *Flush execution*)."""
+    return 1 if rows else 0
 
 
 def expected_outcome(cell: Cell) -> Outcome:

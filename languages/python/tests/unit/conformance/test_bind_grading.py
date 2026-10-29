@@ -16,7 +16,12 @@ import pytest
 
 from parallax.conformance import case_format, engine
 from parallax.core.base import FLOAT32, FLOAT64, INT64, STRING, Decimal
-from tests._support.bind_positions import Document, statement_bind_positions
+from tests._support.bind_positions import (
+    Document,
+    EachElement,
+    Elements,
+    statement_bind_positions,
+)
 from tests._support.case_corpus import case as corpus_case
 from tests._support.corpus import case_document, compare_binds
 from tests._support.sweep_goldens import assert_wire_binds, write_golden_statements
@@ -141,3 +146,66 @@ def test_a_shared_document_is_typed_only_by_a_tag_its_own_row_is_pinned_to(
     model = engine.load_case_metamodel(corpus_case("m-inheritance-125"))
     sql = f"select p.id from payment_document p where {where}"
     assert statement_bind_positions(model, sql, binds) == expected
+
+
+_FLOAT_ARRAYS = (
+    "insert into writable_scalars(id, f32, f64) select * from "
+    "unnest(cast(? as bigint[]), cast(? as real[]), cast(? as double precision[]))"
+)
+
+
+def test_a_declared_float_column_array_refuses_negative_zero_at_any_element() -> None:
+    case = corpus_case("m-core-010")
+    golden: list[Any] = [[1, 2], [0.0, 1.5], [2.5, 0.0]]
+    assert statement_bind_positions(engine.load_case_metamodel(case), _FLOAT_ARRAYS, golden) == {
+        0: Elements(INT64),
+        1: Elements(FLOAT32),
+        2: Elements(FLOAT64),
+    }
+    _grade(case, _FLOAT_ARRAYS, golden, copy.deepcopy(golden))
+    for column, row in ((1, 0), (2, 1)):
+        observed = copy.deepcopy(golden)
+        observed[column][row] = -0.0
+        with pytest.raises(AssertionError, match=rf"^bind {column}: "):
+            _grade(case, _FLOAT_ARRAYS, golden, observed)
+
+
+def test_a_document_column_array_refuses_a_negative_zero_leaf_in_any_row() -> None:
+    case = corpus_case("m-document-codec-016")
+    sql = (
+        "insert into sample(id, label, profile) select * from "
+        "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
+    )
+    golden: list[Any] = [
+        [160, 161],
+        ["SignedZero", "Other"],
+        [{"ratio": 0.0, "measure": 0.0}, {"ratio": 1.0, "measure": 0.0, "extension": 0.0}],
+    ]
+    extension_negative = copy.deepcopy(golden)
+    extension_negative[2][1]["extension"] = -0.0
+    _grade(case, sql, golden, extension_negative)
+
+    leaf_negative = copy.deepcopy(golden)
+    leaf_negative[2][1]["measure"] = -0.0
+    with pytest.raises(AssertionError, match=r"^bind 2: "):
+        _grade(case, sql, golden, leaf_negative)
+
+
+def test_a_shared_document_column_array_types_each_row_by_its_own_tag() -> None:
+    model = engine.load_case_metamodel(corpus_case("m-inheritance-125"))
+    sql = (
+        "insert into payment_document(id, kind, payload) select * from "
+        "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))"
+    )
+    binds: list[object] = [
+        [10, 11, 12],
+        ["card", "cash", "card"],
+        [{"detail": "a"}, {"detail": "25.00"}, {"detail": "b"}],
+    ]
+    documents = statement_bind_positions(model, sql, binds)[2]
+    assert isinstance(documents, EachElement)
+    assert [cast("Document", document).members["detail"] for document in documents.elements] == [
+        STRING,
+        Decimal(18, 2),
+        STRING,
+    ]

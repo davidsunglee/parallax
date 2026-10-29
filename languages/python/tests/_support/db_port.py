@@ -49,9 +49,11 @@ from parallax.conformance._mechanism.sole_connection import (
     SoleConnectionScope,
     body_outcome,
 )
+from parallax.core.base import Json
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     AccessMode,
+    ArrayBind,
     BeginFailed,
     Bind,
     CanonicalWriteStatement,
@@ -64,6 +66,7 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
+    JsonDocument,
     OrderedWriteResult,
     OrderedWriteResultComplete,
     OrderedWriteResultInterrupted,
@@ -133,13 +136,32 @@ class WriteCall:
 
 
 def inserted_rows(call: WriteCall) -> tuple[tuple[Bind, ...], ...]:
-    """The binds of each row the insert ``call`` carries, one per value tuple
-    its statement renders: a run of single-entry inserts shares one multi-row
-    statement (`m-execution` *Flush execution*)."""
-    tuples = call.sql.count("), (") + 1
-    width, extra = divmod(len(call.binds), tuples)
-    assert call.sql.startswith("insert") and not extra, call.sql
-    return tuple(call.binds[index * width : (index + 1) * width] for index in range(tuples))
+    """The binds each row the insert ``call`` carries would bind alone.
+
+    A single-row insert binds its row's cells; a multi-row insert binds one
+    typed column array per cell slot (`m-sql` *Batched insert / update*), read
+    back here row by row, with each document element as the document carrier
+    it binds as alone. The arrays must agree in length.
+    """
+    assert call.sql.startswith("insert"), call.sql
+    if not call.binds or not all(isinstance(bind, ArrayBind) for bind in call.binds):
+        assert "unnest(" not in call.sql and "), (" not in call.sql, call.sql
+        return (call.binds,)
+    assert " select * from unnest(" in call.sql, call.sql
+    columns = cast("tuple[ArrayBind, ...]", call.binds)
+    lengths = {len(column.values) for column in columns}
+    assert len(lengths) == 1, lengths
+    return tuple(
+        zip(
+            *(
+                [JsonDocument(value) for value in column.values]
+                if isinstance(column.element_type, Json)
+                else column.values
+                for column in columns
+            ),
+            strict=True,
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -48,8 +48,8 @@ Delete whose Key Target holds several key tuples.
 ## Set-based flush
 
 - Multiple inserts of the same entity collapse into a **single multi-row
-  `INSERT`** (one statement, many value tuples) rather than one statement per
-  row.
+  `INSERT`** rather than one statement per row, spelled in the dialect's
+  multi-row insert form (`m-sql` *Batched insert / update*, `m-dialect`).
 - Multiple updates of the same entity that set the same columns collapse into a
   **batched `UPDATE`** — executed once per distinct key, or as a single statement
   with an `IN` predicate when the new value is uniform across the keys.
@@ -63,7 +63,7 @@ The canonical Postgres golden SQL (`m-sql`), as `then.statements` entries:
 ```yaml
 # m-batch-write-001 (set-based flush) then.statements:
 - sql:
-    postgres: insert into account(id, owner, balance) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
+    postgres: insert into wallet(id, owner, balance) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]))
 # m-batch-write-002 (update per key) then.statements:
 - sql:
     postgres: update account set balance = ? where id in (?, ?)

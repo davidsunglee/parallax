@@ -880,7 +880,7 @@ def test_a_bounded_removal_reaching_every_end_the_insertion_opened_is_complete()
 
     _transact(port, fn)
     openings, removal, insert = _writes(port)
-    assert len(openings.binds) == 14
+    assert len(inserted_rows(openings)) == 2
     assert removal.sql.startswith("delete from where_position")
     assert insert.binds[2:5] == (Decimal("200.00"), _MAR, INFINITY_INSTANT)
 

@@ -19,8 +19,9 @@ from parallax.core._execution._unit_work.ranges import RangeBindings
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core._execution._write_step_executor import WriteStepExecutor
-from parallax.core.base import INFINITY, detach_json_container
+from parallax.core.base import INFINITY, INT64, Json, detach_json_container
 from parallax.core.db_port import (
+    ArrayBind,
     CanonicalWriteStatement,
     DocumentReadOrdinals,
     JsonDocument,
@@ -28,6 +29,7 @@ from parallax.core.db_port import (
     OrderedWriteResultComplete,
     Row,
 )
+from tests._support.db_port import WriteCall, inserted_rows
 from tests.unit import _leaf_type_support as leaf_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.tools._provenance_support import pin_dirty_tree
@@ -363,18 +365,18 @@ def _documents(statement_binds: Sequence[object]) -> list[object]:
 
 
 def _rows(statement: lowering_support.Executed) -> list[tuple[object, ...]]:
-    """The binds of each value tuple ``statement`` renders: one per Planned
-    Step, since contiguous compatible single-entry inserts share one grouped
-    insert (`m-execution` *Flush execution*); any other statement is one."""
-    tuples = statement.sql.count("), (") + 1 if statement.sql.startswith("insert") else 1
-    width = len(statement.binds) // tuples
-    return [statement.binds[index * width : (index + 1) * width] for index in range(tuples)]
+    """The binds of each row ``statement`` writes: one per Planned Step, since
+    contiguous compatible single-entry inserts share one grouped insert
+    (`m-execution` *Flush execution*); any other statement is one."""
+    if not statement.sql.startswith("insert"):
+        return [statement.binds]
+    return list(inserted_rows(WriteCall(statement.sql, statement.binds)))
 
 
 def _physical(case: lowering_support.Case) -> list[tuple[str, int]]:
-    """The statements ``case``'s flush executes, each with the value tuples it
-    renders: a temporal change closes its predecessor, then opens every
-    successor in one insert."""
+    """The statements ``case``'s flush executes, each with the rows it writes:
+    a temporal change closes its predecessor, then opens every successor in
+    one insert."""
     if case.mutation == "insert":
         return [("insert", 1)]
     if case.family == "plain":
@@ -406,6 +408,11 @@ def test_every_keyed_case_lowers_its_stated_writes_and_dumps_each_document(
                 assert (
                     bytes(buffer or b"") == json.dumps(detach_json_container(bind.value)).encode()
                 )
+            elif isinstance(bind, ArrayBind) and isinstance(bind.element_type, Json):
+                dumped = bytes(buffer or b"")
+                for document in bind.values:
+                    encoded = json.dumps(detach_json_container(document)).encode()
+                    assert b"\x01" + encoded in dumped
 
 
 def test_typed_and_wire_ingress_lower_to_the_same_statements() -> None:
@@ -1185,14 +1192,17 @@ def test_the_flush_port_serializes_every_statement_and_counts_one_flush_in_const
     transport = port.ordered_write_transport
     assert transport is not None
     assert port.work() == lowering_support.FlushWork(0, 0, 0, 0)
-    assert port.execute_write("insert into t(a, b) values (%s, %s), (%s, %s), (%s, %s)", [1] * 6)
+    assert port.execute_write(
+        "insert into t(a, b) select * from unnest(cast(%s as bigint[]), cast(%s as bigint[]))",
+        [ArrayBind(INT64, [1, 1, 1]), ArrayBind(INT64, [2, 2, 2])],
+    )
     assert port.execute_write("update t set a = %s where b = %s", [1, 2])
     result = transport(
         [_Statement("update t set a = ? where b = ?", (1, 2)) for _ in range(3)]
         + [_Statement("delete from t where b = ?", (JsonDocument({"b": 1}),))]
     )
     assert result == OrderedWriteResultComplete((1, 1, 1, 1))
-    assert serialized == [6, 2, 2, 2, 2, 1]
+    assert serialized == [2, 2, 2, 2, 2, 1]
     assert port.work() == lowering_support.FlushWork(
         statements=6, invocations=3, largest_ordered_invocation=4, largest_grouped_insert=3
     )
@@ -1267,17 +1277,15 @@ def _presented(invocations: int, inserts: int) -> list[str]:
 _GROUP_CALLS: Final[dict[str, list[list[str]]]] = {
     "cross-object.txtime.changed-64.columns.typed": [["ordered", "statement"]],
     "cross-object.txtime.changed-130.columns.typed": [["ordered", "statement"]] * 3,
-    "cross-object.bitemporal.interior-64.document.wire": [
-        ["ordered", "statement", "statement", "statement"]
-    ],
-    "cross-object.bitemporal.deferred-32x4.columns.typed": [_presented(2, 3)],
-    "cross-object.bitemporal.deferred-32x12.document.wire": [_presented(6, 7)],
-    "cross-object.bitemporal.requesting-32x12.document.wire": [_presented(6, 7)],
-    "cross-object.bitemporal.deferred-32x32.columns.typed": [_presented(16, 17)],
-    "cross-object.bitemporal.partial-3x66.columns.typed": [_presented(2, 2), _presented(2, 2)],
+    "cross-object.bitemporal.interior-64.document.wire": [["ordered", "statement"]],
+    "cross-object.bitemporal.deferred-32x4.columns.typed": [_presented(2, 1)],
+    "cross-object.bitemporal.deferred-32x12.document.wire": [_presented(6, 1)],
+    "cross-object.bitemporal.requesting-32x12.document.wire": [_presented(6, 1)],
+    "cross-object.bitemporal.deferred-32x32.columns.typed": [_presented(16, 1)],
+    "cross-object.bitemporal.partial-3x66.columns.typed": [_presented(2, 1), _presented(2, 1)],
 }
 """What each Write Group presents: its closes' ordered invocations, then its
-openings' inserts."""
+openings' one insert."""
 
 
 @pytest.mark.parametrize("case", lowering_support.CROSS_OBJECT_CASES, ids=lambda case: case.name)
@@ -1335,19 +1343,19 @@ holds."""
 def _calculated_work(name: str) -> lowering_support.FlushWork:
     """A deferred case's work under the realization contract: each group's
     closes in ordered invocations of at most 64, a lone remainder alone, and
-    its openings in inserts of at most 64."""
+    all its openings in one insert."""
     objects, groups = _DEFERRED_GEOMETRY[name]
-    statements = invocations = 0
+    statements = invocations = largest = 0
     for group in groups:
         closes = sum(objects[index][0] for index in group)
-        inserts = -(-sum(objects[index][1] for index in group) // 64)
         full, rest = divmod(closes, 64)
-        statements += closes + inserts
-        invocations += full + (1 if rest else 0) + inserts
-    return lowering_support.FlushWork(statements, invocations, 64, 64)
+        statements += closes + 1
+        invocations += full + (1 if rest else 0) + 1
+        largest = max(largest, sum(objects[index][1] for index in group))
+    return lowering_support.FlushWork(statements, invocations, 64, largest)
 
 
-def test_each_cross_object_flush_writes_every_object_through_its_capped_call_shapes() -> None:
+def test_each_cross_object_flush_writes_every_object_through_its_call_shapes() -> None:
     for case in lowering_support.CROSS_OBJECT_CASES:
         port = lowering_support.flush_port(case)
         with (
@@ -1365,11 +1373,10 @@ def test_each_cross_object_flush_writes_every_object_through_its_capped_call_sha
             assert port.coverage_reads == case.coverage_reads == len(case.groups)
             continue
         successors = 3 if case.bounded else 1
-        largest = case.work.largest_grouped_insert
-        assert case.work.largest_ordered_invocation == largest == 64
-        inserts = sum(-(-size * successors // largest) for size in case.groups)
-        assert case.work.statements == case.objects + inserts
-        assert case.work.invocations == len(case.groups) + inserts
+        assert case.work.largest_ordered_invocation == 64
+        assert case.work.largest_grouped_insert == max(case.groups) * successors
+        assert case.work.statements == case.objects + len(case.groups)
+        assert case.work.invocations == 2 * len(case.groups)
 
 
 def test_a_requesting_deferred_flush_hands_each_write_the_rows_its_source_continues() -> None:
