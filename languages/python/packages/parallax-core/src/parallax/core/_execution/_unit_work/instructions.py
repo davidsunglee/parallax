@@ -2398,7 +2398,7 @@ def assigned_members(
 
 
 def addressed_members(
-    model: AcceptedMetamodel,
+    preparation: WritePreparation,
     entity: EntityMetadata,
     address: tuple[tuple[str, object], ...],
     document: Mapping[str, object],
@@ -2410,14 +2410,22 @@ def addressed_members(
     A source supplies the address a source-authorized write addresses, so a
     key member its caller also states is addressing data the write checks and
     then sets aside: never an assignment, a replacement member, or an override
-    of that address. Each is decoded through the key's declared type first, so
-    a key member that is no value of that type is refused as such, and one
-    naming another object is refused before anything is buffered.
+    of that address. Each is admitted by the Wire lane's own conversion for the
+    key first, so a key member that is no value of its type is refused as
+    such, and one naming another object is refused before anything is
+    buffered.
     """
     stated = {name: addressed for name, addressed in address if name in document}
-    key = _inheritance_entity_view(model, entity).primary_key
+    prepared = preparation.entity(entity.identity)
+    convert = prepared.plan.scalar_converter(WIRE_LANE, prepared.key)
     for name, addressed in stated.items():
-        value = _decoded_wire(key.type, document[name], f"{entity.identity.canonical}.{name}")
+        try:
+            value = convert(document[name])
+        except WireDecodingError as error:
+            raise InstructionRejectedError(
+                f"neutral-literal-{error.reason}",
+                f"{entity.identity.canonical}.{name}: {error}",
+            ) from error
         if value != addressed:
             raise WriteInstructionError(
                 f"{entity.identity.canonical}.{name}: the document names {document[name]!r}, and "

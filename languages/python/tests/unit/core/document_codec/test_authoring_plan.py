@@ -443,3 +443,17 @@ def test_a_lane_converts_one_exact_definition_apart_from_its_neutral_type() -> N
     row = plan.complete_row(("a", {"label": "b"}), lane=0, required=0)
 
     assert row.cells == ("own", ("b",))
+
+
+def test_a_single_scalars_lane_converter_is_the_one_its_rows_are_admitted_with() -> None:
+    catalog = AuthoringCatalog(_LANES, absent=_ABSENT)
+    plan = catalog.plan(_ROW)
+    (key, *_) = _ROW.members
+
+    assert plan.scalar_converter(_WIRE, 0) is catalog.converter(
+        _WIRE, cast("ScalarDefinition", key)
+    )
+    assert plan.scalar_converter(_TYPED, 1)("Ada") == "Ada"
+    for position in (3, 4):
+        with pytest.raises(ValueError, match="no single scalar"):
+            plan.scalar_converter(_WIRE, position)

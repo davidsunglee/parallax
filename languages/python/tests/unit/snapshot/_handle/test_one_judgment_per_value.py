@@ -40,7 +40,8 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.entity import Document
 from parallax.core.unit_work import UnitOfWork
 from parallax.core.wire import decode_wire, encode_wire
-from parallax.core.wire._codec import wire_converter
+from parallax.core.wire._codec import encode_managed_wire, wire_converter
+from parallax.core.write_plan import PredecessorRow
 from parallax.snapshot import TxnContext, WireEntity
 from parallax.snapshot._publication._wire import opened_wire_entity
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write, WriteCall
@@ -79,7 +80,9 @@ _AUTHORED_SCALARS: Final = 7
 
 _CONVERT: Final = "convert"
 _GENERAL: Final = "general"
+_ENCODE: Final = "encode"
 _LABELS: Final[Mapping[CodeType, str]] = {
+    encode_managed_wire.__code__: _ENCODE,
     **{
         factory(declared).__code__: _CONVERT
         for factory in (typed_converter, wire_converter)
@@ -102,6 +105,7 @@ _READ: Final = "read"
 _VERB: Final = "verb"
 _NODE: Final = "returned-node"
 _FLUSH: Final = "flush"
+_STORED_STATE: Final = "stored-state"
 
 
 @dataclass(slots=True)
@@ -121,6 +125,9 @@ class _Observation:
             if frame.f_code is _NODE_CODE:
                 phase = _NODE
                 break
+            if frame.f_code is _STORED_STATE_CODE:
+                phase = _STORED_STATE
+                break
             if frame.f_code is _PREDICATE_EXECUTION_CODE:
                 phase = _FLUSH
                 break
@@ -132,6 +139,9 @@ class _Observation:
 
 
 _NODE_CODE: Final = opened_wire_entity.__code__
+# A temporal successor patches the document its predecessor was read with, which
+# settlement owns once; that stored state is no value the write authored.
+_STORED_STATE_CODE: Final = PredecessorRow.with_bindable_document.__code__
 # A predicate write executes at its verb: its statement's lowering is a flush.
 _PREDICATE_EXECUTION_CODE: Final = UnitOfWork._execute_predicate.__code__  # pyright: ignore[reportPrivateUsage]
 
@@ -226,6 +236,15 @@ _STORED: Final[Mapping[type[Entity], list[object]]] = {
 }
 
 
+# The fields each layout's storage encodes: Columns binds its scalars as they
+# are and encodes the collection's elements and the occurrence's members, and
+# the Relational Document Layout encodes every member its document holds.
+_STORAGE_ENCODED: Final[Mapping[type[Entity], int]] = {Shelf: 4, Drawer: 6}
+# A Wire node renders a Boolean, Integer, or String as it is, so of the
+# opening's fields only the Decimal `price` is spelled.
+_NODE_ENCODED: Final = 1
+
+
 @pytest.mark.parametrize("lane", [_TYPED, _WIRE])
 @pytest.mark.parametrize("entity", [Shelf, Drawer], ids=["columns", "document"])
 def test_an_opening_converts_each_authored_scalar_once_and_judges_it_nowhere_else(
@@ -234,11 +253,13 @@ def test_an_opening_converts_each_authored_scalar_once_and_judges_it_nowhere_els
     observation, call = _write(entity, _opening(entity, lane))
     assert observation.count(_CONVERT, _VERB) == _AUTHORED_SCALARS
     assert observation.count(_GENERAL, _VERB) == 0
-    # Neither the Wire node the verb answers nor the flush admits a value
-    # again. The flush's storage encoding and bind signature still consult
-    # general membership.
-    assert observation.count(_CONVERT, _NODE) == 0
-    assert observation.count(_CONVERT, _FLUSH) == 0
+    # Neither the Wire node the verb answers nor the flush admits or judges a
+    # value again: each encodes a field it stores or renders, once, unchecked.
+    for phase in (_NODE, _FLUSH):
+        assert observation.count(_CONVERT, phase) == 0
+        assert observation.count(_GENERAL, phase) == 0
+    assert observation.count(_ENCODE, _FLUSH) == _STORAGE_ENCODED[entity]
+    assert observation.count(_ENCODE, _NODE) == (_NODE_ENCODED if lane == _WIRE else 0)
     assert _stored(call) == _STORED[entity]
 
 
@@ -256,10 +277,12 @@ def test_the_observer_sees_a_judgment_a_verb_makes() -> None:
 
 def _admitted_once(observation: _Observation, converted: int) -> None:
     """``converted`` values were each converted once by the verb, and no value
-    again by anything after it."""
+    judged again by anything after it, its planning, settlement, and lowering
+    included."""
     assert observation.count(_CONVERT, _VERB) == converted
     assert observation.count(_GENERAL, _VERB) == 0
     assert observation.count(_CONVERT, _FLUSH) == 0
+    assert observation.count(_GENERAL, _FLUSH) == 0
 
 
 # A stored Shelf as its Columns read returns it.
@@ -321,6 +344,10 @@ def _wire_replace(tx: TxnContext, source: Any) -> None:
     tx.wire.replace(source, dict(_SHELF_STATE))
 
 
+def _wire_restating_replace(tx: TxnContext, source: Any) -> None:
+    tx.wire.replace(source, {"id": 1, **_SHELF_STATE})
+
+
 def _typed_delete(tx: TxnContext, source: Any) -> None:
     tx.delete(source)
 
@@ -339,6 +366,14 @@ def _wire_delete(tx: TxnContext, source: Any) -> None:
         pytest.param(_wire_shelf, _wire_amend, 2, id="wire-amend"),
         pytest.param(_renamed_shelf, _typed_replace, _AUTHORED_SCALARS, id="typed-replace"),
         pytest.param(_wire_shelf, _wire_replace, _AUTHORED_SCALARS, id="wire-replace"),
+        # A document restating its source's key states one more value, which
+        # the key's own conversion admits as addressing data.
+        pytest.param(
+            _wire_shelf,
+            _wire_restating_replace,
+            _AUTHORED_SCALARS + 1,
+            id="wire-replace-restating-its-key",
+        ),
         pytest.param(_shelf, _typed_delete, 1, id="typed-delete"),
         pytest.param(_wire_shelf, _wire_delete, 1, id="wire-delete"),
     ],
@@ -556,6 +591,7 @@ def test_a_temporal_write_admits_once_and_its_successors_carry_cells_unjudged(
         WHERE_POSITION_META, (Read(rows=[_POSITION_ROW]), Write(times=2)), write, read=read
     )
     _admitted_once(observation, converted)
+    assert observation.count(_GENERAL, _STORED_STATE) <= 1
     # The close, then one milestone insert of every successor it opens.
     close, opening = calls
     assert close.sql.startswith("update where_position")

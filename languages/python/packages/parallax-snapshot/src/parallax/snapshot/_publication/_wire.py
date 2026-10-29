@@ -46,7 +46,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel._temporal_structure import TEMPORAL_MEMBERS
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
 from parallax.core.temporal_read import Edge, Pin, TemporalFacet
-from parallax.core.wire import decode_canonical_wire, encode_wire
+from parallax.core.wire import decode_canonical_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import (
     RootConformance,
@@ -1005,12 +1005,14 @@ def opened_wire_entity(
             _put(
                 rendered,
                 name,
-                _wire_collection(binding.type, value, _OccurrenceLeafEncoder(encode_wire, False))
+                _wire_collection(
+                    binding.type, value, _OccurrenceLeafEncoder(encode_managed_wire, True)
+                )
                 if binding.multiplicity is Multiplicity.MANY
                 else _wire_scalar(binding.type, value),
             )
             continue
-        _put(rendered, name, _occurrence(value, binding, occurrences, encode_wire))
+        _put(rendered, name, _occurrence(value, binding, occurrences, trusted=True))
     if layout.family_variant is not None:
         _put(rendered, FAMILY_VARIANT_KEY, layout.family_variant)
     node = _frozen_mapping(_WireAuthoringNode, rendered)
