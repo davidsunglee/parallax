@@ -19,7 +19,7 @@ import pytest
 from parallax.core._execution._write_lowering import LoweringCursor, stream_physical
 from parallax.core.base import INFINITY, INT32, INT64, JSON, STRING, TIMESTAMP
 from parallax.core.base import Decimal as DecimalType
-from parallax.core.db_port import ArrayBind
+from parallax.core.db_port import JSON_NULL, ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
@@ -203,11 +203,11 @@ def test_document_paths_bind_once_and_their_values_one_jsonb_array_each() -> Non
         [["c", "c"], []],
         [None, {"stops": ["x"]}],
     )
+    label, _, route = [values for _, values in arrays(statement)[6:]]
+    assert (label[1], route[0]) == (JSON_NULL, JSON_NULL)
 
 
 def test_a_value_object_column_and_a_collection_column_bind_whole_documents() -> None:
-    # A null Value Object crosses as the document carrier's own null element; how
-    # an adapter stores it is the shared carrier's decision, not this one's.
     steps = [
         update(
             LEDGER_COLUMNS,
@@ -235,6 +235,7 @@ def test_a_value_object_column_and_a_collection_column_bind_whole_documents() ->
     )
     assert [element for element, _ in arrays(statement)[3:]] == [JSON, JSON]
     assert statement.wire_binds()[3:] == ([["c"], []], [None, {"stops": ["y"]}])
+    assert arrays(statement)[4][1][0] is None
 
 
 def test_differing_member_sets_form_one_grouped_effect_each_in_first_appearance_order() -> None:
@@ -501,6 +502,18 @@ def test_a_grouped_effect_refuses_an_effect_its_shape_does_not_place() -> None:
     with pytest.raises(SqlGenError, match="holds effects of its shape's kind"):
         builder.append(deletion, None)
     assert arrays(builder.finish())[0] == (INT64, [1])
+
+
+def test_a_grouped_effect_refuses_an_effect_gated_otherwise_than_its_shape() -> None:
+    preparer = LayoutPayloadPreparer(ACCOUNT)
+    ungated = delete(ACCOUNT, "Account", 1, versioned=True)
+    shape = preparer.effect_shape(ungated)
+    assert shape is not None
+    builder = GroupedEffectBuilder(preparer.effect_slots(ungated.entity, shape), ACCOUNT, POSTGRES)
+    builder.append(ungated, None)
+    with pytest.raises(SqlGenError, match="addresses or gates its row otherwise than its shape"):
+        builder.append(delete(ACCOUNT, "Account", 2, observed=1), None)
+    assert arrays(builder.finish()) == [(INT64, [1])]
 
 
 def test_effect_slots_answer_only_a_shape_of_their_own_entity() -> None:
