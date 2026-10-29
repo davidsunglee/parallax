@@ -1,8 +1,9 @@
 """Faults that turn a float zero negative at one conversion owner.
 
 Each replaces a module attribute of the Wire codec, so every caller resolving it
-at call time sees the fault. ``_canonical_spelling`` spells a document leaf's
-driver value (through ``encode_leaf``) and every reported Wire bind alike;
+at call time sees the fault. ``_canonical_spelling`` spells every reported Wire
+bind, and with the managed encoder the document codec spells a stored document
+leaf through, also replaced, a document leaf's driver value;
 ``_decode_float32`` and ``_decode_float64`` are how a decoded Wire number
 reaches a float member, and the Wire lane's float converters how an authored
 row's does, so their fault reaches a scalar driver bind while the reported
@@ -21,8 +22,17 @@ from typing import Any
 
 import pytest
 
+import parallax.core.document_codec._leaf as document_leaf
 import parallax.core.wire._codec as wire_codec
-from parallax.core.base import FLOAT32, FLOAT64, Float32, Float64, NeutralType, ScalarConverter
+from parallax.core.base import (
+    FLOAT32,
+    FLOAT64,
+    Float32,
+    Float64,
+    ManagedValue,
+    NeutralType,
+    ScalarConverter,
+)
 from parallax.core.wire import WireValue
 
 __all__ = ["project_float_zero_negative", "spell_float_zero_negative"]
@@ -37,6 +47,16 @@ def spell_float_zero_negative(monkeypatch: pytest.MonkeyPatch) -> None:
         return -0.0 if negative else spelled
 
     monkeypatch.setattr(wire_codec, "_canonical_spelling", spelling)
+    managed: Callable[[NeutralType, ManagedValue], WireValue] = vars(document_leaf)[
+        "encode_managed_wire"
+    ]
+
+    def managed_spelling(neutral_type: NeutralType, value: ManagedValue) -> WireValue:
+        spelled = managed(neutral_type, value)
+        negative = isinstance(neutral_type, (Float32, Float64)) and spelled == 0.0
+        return -0.0 if negative else spelled
+
+    monkeypatch.setattr(document_leaf, "encode_managed_wire", managed_spelling)
 
 
 def project_float_zero_negative(monkeypatch: pytest.MonkeyPatch) -> None:
