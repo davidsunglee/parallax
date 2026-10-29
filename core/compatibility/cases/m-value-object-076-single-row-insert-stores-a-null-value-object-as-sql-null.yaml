@@ -1,0 +1,35 @@
+# A read and `tableState` render SQL NULL and a stored JSON null alike, so the
+# read's `referenceSql` tests `address is null` to tell them apart.
+model: models/customer.yaml
+tags: [m-value-object, m-sql, scenario, insert, json, "null", slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.Customer
+          rows:
+            - { id: 300, name: Ari, address: null }
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: insert into customer(id, name, address) values (?, ?, ?)
+            mariadb: insert into customer(id, name, address) values (?, ?, ?)
+          binds: [300, Ari, null]
+    - objectQuery:
+        target: parallax.compatibility.Customer
+        predicate:
+          eq:
+            path: parallax.compatibility.Customer.id
+            value: 300
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = ? for share of t0
+            mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = ? lock in share mode
+          binds: { postgres: [300], mariadb: [300] }
+      referenceSql: select id, name, address from customer where id = 300 and address is null
+      expectRows:
+        - { id: 300, name: Ari, address: null }
+then:
+  databaseCalls: 2

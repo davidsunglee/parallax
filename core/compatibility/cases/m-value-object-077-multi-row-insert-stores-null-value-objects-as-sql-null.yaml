@@ -1,0 +1,67 @@
+# A read and `tableState` render SQL NULL and a stored JSON null alike, so the
+# read's `referenceSql` tests the stored state directly: SQL NULL for each null
+# address, and JSON null only at the members row 302 states as null inside its
+# present document.
+model: models/customer.yaml
+tags: [m-value-object, m-batch-write, m-sql, scenario, insert, json, "null", slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - write:
+        - mutation: insert
+          entity: parallax.compatibility.Customer
+          rows:
+            - { id: 301, name: Bea, address: null }
+            - id: 302
+              name: Cai
+              address: { street: 2 Birch Rd, city: null, geo: null, phones: [] }
+            - { id: 303, name: Dag, address: null }
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: insert into customer(id, name, address) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as jsonb[]))
+            mariadb: insert into customer(id, name, address) values (?, ?, ?), (?, ?, ?), (?, ?, ?)
+          binds:
+            postgres:
+              - [301, 302, 303]
+              - [Bea, Cai, Dag]
+              - [null, { street: 2 Birch Rd, city: null, geo: null, phones: [] }, null]
+            mariadb:
+              - 301
+              - Bea
+              - null
+              - 302
+              - Cai
+              - { street: 2 Birch Rd, city: null, geo: null, phones: [] }
+              - 303
+              - Dag
+              - null
+    - objectQuery:
+        target: parallax.compatibility.Customer
+        predicate:
+          in:
+            path: parallax.compatibility.Customer.id
+            values: [301, 302, 303]
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = any(cast(? as bigint[])) for share of t0
+            mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id in (?, ?, ?) lock in share mode
+          binds: { postgres: [[301, 302, 303]], mariadb: [301, 302, 303] }
+      referenceSql:
+        postgres: >-
+          select id, name, address from customer
+          where (id in (301, 303) and address is null)
+          or (id = 302 and jsonb_typeof(address -> 'city') = 'null' and jsonb_typeof(address -> 'geo') = 'null')
+        mariadb: >-
+          select id, name, address from customer
+          where (id in (301, 303) and address is null)
+          or (id = 302 and json_type(json_extract(address, '$.city')) = 'NULL' and json_type(json_extract(address, '$.geo')) = 'NULL')
+      expectRows:
+        - { id: 301, name: Bea, address: null }
+        - id: 302
+          name: Cai
+          address: { street: 2 Birch Rd, city: null, geo: null, phones: [] }
+        - { id: 303, name: Dag, address: null }
+then:
+  databaseCalls: 2

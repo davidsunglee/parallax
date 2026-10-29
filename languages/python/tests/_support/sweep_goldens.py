@@ -177,6 +177,9 @@ _READLESS_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset(
 _GROUPED_PREDICATE_WRITE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-batch-write-011"})
 _WRITE_GROUP_SCENARIOS: Final[frozenset[str]] = frozenset({"m-unit-work-058"})
 _LOCKING_FALLBACK_SCENARIOS: Final[frozenset[str]] = frozenset({"m-opt-lock-023"})
+_NULL_VALUE_OBJECT_SCENARIOS: Final[frozenset[str]] = frozenset(
+    f"m-value-object-{n:03d}" for n in (76, 77, 78)
+)
 _OBJECT_CLAIM_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-unit-work-026", "m-unit-work-027"}
 )
@@ -317,6 +320,7 @@ WRITE_EXERCISED: Final[frozenset[str]] = (
     | _GROUPED_PREDICATE_WRITE_SCENARIOS
     | _WRITE_GROUP_SCENARIOS
     | _LOCKING_FALLBACK_SCENARIOS
+    | _NULL_VALUE_OBJECT_SCENARIOS
     | _OBJECT_CLAIM_COALESCING_SCENARIOS
     | _PIN_CONTRAST_SCENARIOS
     | _PER_VIEW_PIN_SCENARIOS
