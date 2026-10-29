@@ -9,25 +9,17 @@ here is authored from the grammar, not read back from production.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from decimal import Decimal
-from typing import cast
 
 import pytest
 
-from parallax.core import inheritance
 from parallax.core._execution._write_lowering import LoweringCursor, stream_physical
 from parallax.core.base import INT32, INT64, JSON, STRING
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.metamodel import (
-    AttributeIdentity,
-    EntityIdentity,
-    Metamodel,
-    ValueObjectIdentity,
-    entity_by_name,
-)
+from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._write import GroupedEffectBuilder
 from parallax.core.write_payload import LayoutPayloadPreparer
@@ -37,7 +29,6 @@ from parallax.core.write_plan.plan import EffectSpan, SettledWrite, WriteGroup
 from parallax.core.write_plan.planned_rows import WritePlanningError
 from parallax.core.write_plan.steps import (
     MISSING_TARGET,
-    OPTIMISTIC_CONFLICT,
     UNVERSIONED,
     ExactCount,
     KeyTarget,
@@ -46,79 +37,20 @@ from parallax.core.write_plan.steps import (
     PlannedStep,
     PlannedUpdate,
     SelfIncrement,
-    Versioned,
-    VersionGate,
 )
 from tests.unit._corpus_model_support import model
+from tests.unit.core._execution._grouped_effect_support import (
+    ACCOUNT,
+    WALLET,
+    attribute_identity,
+    entity_identity,
+    update,
+)
 
-WALLET = model("wallet")
-ACCOUNT = model("account")
 PAYMENT = model("payment")
 PERSON = model("person")
 LEDGER_COLUMNS = model("scalar-collection-lifecycle-layout-twin-columns")
 LEDGER_DOCUMENT = model("scalar-collection-lifecycle-layout-twin-document")
-
-
-def _entity(meta: Metamodel, name: str) -> EntityIdentity:
-    entity = entity_by_name(meta, name)
-    assert entity is not None
-    return entity.identity
-
-
-def _attribute(meta: Metamodel, entity: str, member: str) -> AttributeIdentity:
-    position = inheritance.view(meta).entity(_entity(meta, entity))
-    assert position is not None
-    attribute = position.applicable_attribute(member)
-    assert attribute is not None
-    return attribute.identity
-
-
-def _value_object(meta: Metamodel, entity: str, member: str) -> ValueObjectIdentity:
-    position = inheritance.view(meta).entity(_entity(meta, entity))
-    assert position is not None
-    value_object = position.applicable_value_object(member)
-    assert value_object is not None
-    return value_object.identity
-
-
-def update(
-    meta: Metamodel,
-    entity: str,
-    key: object,
-    assigned: Mapping[str, object],
-    *,
-    value_objects: Mapping[str, object] | None = None,
-    observed: int | None = None,
-    key_members: Sequence[str] = ("id",),
-) -> PlannedUpdate:
-    """``entity``'s update of ``key`` assigning ``assigned``, gated on version
-    ``observed`` and advancing it where given."""
-    attributes: dict[AttributeIdentity, object] = {
-        _attribute(meta, entity, name): value for name, value in assigned.items()
-    }
-    concurrency = UNVERSIONED
-    shortfall = MISSING_TARGET
-    if observed is not None:
-        version = _attribute(meta, entity, "version")
-        attributes[version] = observed + 1
-        concurrency = Versioned(version, VersionGate(observed))
-        shortfall = OPTIMISTIC_CONFLICT
-    return PlannedUpdate(
-        entity=_entity(meta, entity),
-        target=KeyTarget(
-            key_attributes=tuple(_attribute(meta, entity, name) for name in key_members),
-            key_values=(cast("tuple[object, ...]", key) if isinstance(key, tuple) else (key,),),
-        ),
-        assignments=PlannedAssignments(
-            attributes=attributes,
-            value_objects={
-                _value_object(meta, entity, name): value
-                for name, value in (value_objects or {}).items()
-            },
-        ),
-        concurrency=concurrency,
-        affected_rows=ExactCount(1, shortfall),
-    )
 
 
 def grouped(
@@ -322,7 +254,7 @@ def test_a_registry_advance_runs_alone_beside_grouped_updates() -> None:
     advance = dataclasses.replace(
         update(WALLET, "Wallet", 2, {"balance": Decimal("2.00")}),
         assignments=PlannedAssignments(
-            attributes={_attribute(WALLET, "Wallet", "balance"): SelfIncrement(5)}
+            attributes={attribute_identity(WALLET, "Wallet", "balance"): SelfIncrement(5)}
         ),
     )
     assert preparer.effect_shape(advance) is None
@@ -364,20 +296,21 @@ def test_assigning_a_unique_key_member_is_a_barrier_in_authored_order() -> None:
     "step",
     [
         PlannedDelete(
-            entity=_entity(WALLET, "Wallet"),
+            entity=entity_identity(WALLET, "Wallet"),
             target=KeyTarget(
-                key_attributes=(_attribute(WALLET, "Wallet", "id"),), key_values=((1,),)
+                key_attributes=(attribute_identity(WALLET, "Wallet", "id"),), key_values=((1,),)
             ),
             concurrency=UNVERSIONED,
             affected_rows=ExactCount(1, MISSING_TARGET),
         ),
         PlannedUpdate(
-            entity=_entity(WALLET, "Wallet"),
+            entity=entity_identity(WALLET, "Wallet"),
             target=KeyTarget(
-                key_attributes=(_attribute(WALLET, "Wallet", "id"),), key_values=((1,), (2,))
+                key_attributes=(attribute_identity(WALLET, "Wallet", "id"),),
+                key_values=((1,), (2,)),
             ),
             assignments=PlannedAssignments(
-                attributes={_attribute(WALLET, "Wallet", "balance"): Decimal("1.00")}
+                attributes={attribute_identity(WALLET, "Wallet", "balance"): Decimal("1.00")}
             ),
             concurrency=UNVERSIONED,
             affected_rows=ExactCount(2, MISSING_TARGET),
@@ -391,7 +324,7 @@ def test_effects_outside_the_grouped_kinds_have_no_shape(step: PlannedStep) -> N
 
 def test_shapes_compare_by_value_past_the_retained_slots() -> None:
     preparer = LayoutPayloadPreparer(PAYMENT)
-    entity = _entity(PAYMENT, "CardPayment")
+    entity = entity_identity(PAYMENT, "CardPayment")
     for presence in range(ROW_SLOTS_PER_ENTITY + 2):
         preparer.effect_slots(entity, EffectShape(PlannedUpdate, entity, (), presence + 64, None))
     steps = [
@@ -558,7 +491,7 @@ def test_a_grouped_effect_refuses_an_effect_its_shape_does_not_place() -> None:
 def test_effect_slots_answer_only_a_shape_of_their_own_entity() -> None:
     preparer = LayoutPayloadPreparer(PAYMENT)
     with pytest.raises(WritePlanningError, match="Effect Slots of its own Entity"):
-        preparer.effect_slots(_entity(PAYMENT, "CardPayment"), "not a shape")
+        preparer.effect_slots(entity_identity(PAYMENT, "CardPayment"), "not a shape")
 
 
 def test_a_grouped_effect_opens_only_at_its_own_span() -> None:

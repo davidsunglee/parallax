@@ -1,7 +1,3 @@
-# Batched UPDATE, per-distinct-key form (m-batch-write): non-uniform new values.
-# MariaDB binds no arrays and reports one aggregate count for a joined update, so
-# each key's own keyed update runs as one statement. Its PostgreSQL twin applies
-# them as one grouped effect.
 model: models/wallet.yaml
 tags: [m-batch-write, m-sql, write-sequence, per-key]
 shape: writeSequence

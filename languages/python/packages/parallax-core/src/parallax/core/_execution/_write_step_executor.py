@@ -274,8 +274,10 @@ class WriteStepExecutor:
 
         The statement is one row-producing Database Call returning the source
         ordinal of every row it changed. Its whole result is validated before
-        any count is read, and then each effect, in order, is enforced against
-        the number of times its own ordinal returned. A statement failure is
+        any count is read — one that is no sequence of rows before the call is
+        completed, since it has no number of rows to complete it with — and
+        then each effect, in order, is enforced against the number of times its
+        own ordinal returned. A statement failure is
         the whole statement's own, attributed to no effect. A later effect
         failing ordinarily to be prepared ends the statement before it: the
         effects before it are applied and enforced, and only if they succeed
@@ -287,12 +289,13 @@ class WriteStepExecutor:
             connection = self._connection
             with flush.database_call(statement, "write", first.entity) as call:
                 try:
-                    rows = connection.execute(
+                    result = connection.execute(
                         connection.dialect.to_driver_sql(statement.sql), statement.binds
                     )
                 except DatabaseError as error:
                     self._recognize(first, error)
                     raise
+                rows = _returned_rows(result)
                 call.write_rows_completed(rows)
             counts = _step_counts(rows, len(steps))
             with flush.enforcing(call):
@@ -436,19 +439,25 @@ def _joining_ceiling(cursor: LoweringCursor, step: PlannedStep | None) -> int | 
     return cursor.ordered_parameter_ceiling(step)
 
 
-def _step_counts(rows: object, presented: int) -> list[int]:
+def _returned_rows(result: object) -> Sequence[object]:
+    """``result`` as the sequence of rows a grouped effect returned, refused
+    before the call that returned it can be completed with their number."""
+    if not isinstance(result, list | tuple):
+        raise _grouped_integrity(f"is a {qualified_type(result)}, not a sequence of rows")
+    return cast("Sequence[object]", result)
+
+
+def _step_counts(rows: Sequence[object], presented: int) -> list[int]:
     """How many target rows each of the ``presented`` effects of one grouped
     effect changed, from the source ordinals ``rows`` returned in any order.
 
-    The whole result is proved well formed first: a sequence of rows, each
-    holding exactly one ordinal, an integer — never a Boolean — naming one of
-    the effects. A missing ordinal counts zero and a repeated one counts each
-    return; interpreting either stays the unit of work's.
+    Every row is proved well formed first: exactly one ordinal, an integer —
+    never a Boolean — naming one of the effects. A missing ordinal counts zero
+    and a repeated one counts each return; interpreting either stays the unit
+    of work's.
     """
-    if not isinstance(rows, list | tuple):
-        raise _grouped_integrity(f"is a {qualified_type(rows)}, not a sequence of rows")
     counts = [0] * presented
-    for index, row in enumerate(cast("Sequence[object]", rows)):
+    for index, row in enumerate(rows):
         if not isinstance(row, tuple | list):
             raise _grouped_integrity(f"answers a {qualified_type(row)} for row {index}")
         cells = cast("Sequence[object]", row)
