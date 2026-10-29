@@ -25,7 +25,7 @@ def collapse_group_key(
     the first row's column list, so answering their shapes apart keeps them in
     separate runs. A `DELETE` renders its identity predicate alone, so its
     selection is the key columns and its non-key payload members are invisible
-    here — two legal deletes always share one `IN`-list statement.
+    here — two legal deletes always share one key-membership statement.
 
     Every member of one Entity has exactly one placement — a Column of its own,
     or a Document Path in the shared Structured Column — so the members a row

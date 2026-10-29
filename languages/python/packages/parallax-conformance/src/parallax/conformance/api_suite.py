@@ -1378,12 +1378,12 @@ SKIP_REASONS: Final[dict[str, str]] = {
     ),
     "m-batch-write": (
         "the set-based collapse and readless forms (multi-row INSERT collapse, batched "
-        "UPDATE, IN-list DELETE, and readless predicate update/delete) are graded "
+        "UPDATE, collapsed DELETE, and readless predicate update/delete) are graded "
         "end-to-end by the compile/run conformance lanes. The readless predicate delete "
         "and amendment have idiomatic stories (`m-batch-write-005`, `tx.delete_where`; "
         "`m-batch-write-006`, `tx.amend_where`); the remaining forms have none, "
         "each for its own reason. `-001`/`-002`/`-003` are BUFFERED keyed writes — "
-        "multi-row insert, per-key versus batched update, IN-list delete — spelling the "
+        "multi-row insert, per-key versus batched update, collapsed delete — spelling the "
         "same `tx.insert`/`tx.amend`/`tx.delete` verbs the exercised `m-unit-work` "
         "stories show (`-001`/`-005`/`-006`/`-009`), and adding only the planner's "
         "COLLAPSE decision, an emitted-SQL contract the compile lane grades byte-exact. "
@@ -1649,14 +1649,14 @@ _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON: Final[str] = (
     "caller spells — the `and version = ?` gate optimistic mode renders, and the "
     "multi-column SET ordering ahead of ONE version advance"
 )
-# A versioned set-based delete refuses the IN-list collapse its unversioned
+# A versioned set-based delete refuses the key-membership collapse its unversioned
 # sibling takes (m-batch-write-003) and lowers per resolved row instead.
 _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON: Final[str] = (
     "a versioned set-based delete's per-key materialize, running under the declared "
     "`locking` preference where each keyed delete is UNGATED: graded end-to-end by the "
     "run lane; no "
     "idiomatic story covers it because what it pins is the planner's refusal to collapse "
-    "a versioned set delete into one IN-list statement, an emitted-SQL contract rather "
+    "a versioned set delete into one key-membership statement, an emitted-SQL contract rather "
     "than a developer spelling"
 )
 # The optimistic-conflict boundary witnesses cover a conflict surfacing after
