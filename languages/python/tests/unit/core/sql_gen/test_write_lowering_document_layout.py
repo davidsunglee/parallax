@@ -738,4 +738,4 @@ def test_a_columns_successor_states_no_column_for_an_occurrence_its_predecessor_
     assert nulled.sql == (
         "insert into person(id, display_name, score, address, tags) values (?, ?, ?, ?, ?)"
     )
-    assert JsonDocument(None) in nulled.binds
+    assert nulled.binds[3] is None

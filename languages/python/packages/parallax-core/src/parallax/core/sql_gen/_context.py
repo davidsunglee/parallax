@@ -17,7 +17,7 @@ from parallax.core.base import (
     NeutralType,
     detach_json_container,
 )
-from parallax.core.db_port import ArrayBind, JsonDocument
+from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
@@ -457,7 +457,11 @@ def _document_wire_bind(value: object) -> WireValue:
 def _array_wire_bind(array: ArrayBind) -> WireValue:
     element_type = array.element_type
     if isinstance(element_type, Json):
-        return [_document_wire_bind(detach_json_container(element)) for element in array.values]
+        # A literal JSON null projects as null, exactly as `JsonDocument(None)` does alone.
+        return [
+            None if element is JSON_NULL else _document_wire_bind(detach_json_container(element))
+            for element in array.values
+        ]
     return [
         None
         if element is None

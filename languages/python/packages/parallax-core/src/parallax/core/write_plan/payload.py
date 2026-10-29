@@ -97,7 +97,8 @@ class RowPayload:
     presence selects, aligned with their contributors.
 
     A value is a planned scalar or generated-value expression, a complete
-    encoded document (``None`` for JSON null), or the discriminator's tag.
+    encoded document (``None`` for a null Value Object, which binds SQL NULL),
+    or the discriminator's tag.
     ``source`` is the Write Row the cells were prepared from, held by identity
     so a consumer can refuse a payload prepared from other inputs without
     comparing documents.

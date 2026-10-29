@@ -1513,8 +1513,9 @@ array carrier (`m-db-port`) of the Column's own Neutral Type; a nullable
 Column's array holds SQL NULL where a row states that member null. A Column
 storing a whole document — a Value Object, a scalar collection, or the shared
 Structured Column — binds a `json` array holding one complete document per row,
-JSON `null` included, cast to `jsonb[]`; a table-per-hierarchy discriminator
-binds a `string` array repeating the row's tag. A dialect without array
+or SQL NULL for a row whose value object is null (`m-value-object`), cast to
+`jsonb[]`; a table-per-hierarchy discriminator binds a `string` array repeating
+the row's tag. A dialect without array
 parameters spells the same rows as **multi-row `VALUES`**, one value tuple of
 binds per row, and splits them across statements so each stays within its bind
 limit (`m-dialect` *Bind parameter limit*):

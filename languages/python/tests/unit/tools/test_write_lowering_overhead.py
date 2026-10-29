@@ -36,6 +36,7 @@ from parallax.core.base import (
     detach_json_container,
 )
 from parallax.core.db_port import (
+    JSON_NULL,
     ArrayBind,
     CanonicalWriteStatement,
     DocumentReadOrdinals,
@@ -1621,13 +1622,13 @@ def _jsonb(document: object) -> bytes:
 def test_production_codecs_dump_the_open_bound_documents_and_arrays_as_a_connection_does() -> None:
     instant = dt.datetime(2026, 2, 1, 12, 30, tzinfo=dt.UTC)
     since_epoch = (instant - dt.datetime(2000, 1, 1, tzinfo=dt.UTC)) // dt.timedelta(microseconds=1)
-    documents: list[object] = [None, {"kind": "object"}, ["nested", None], []]
+    documents: list[object] = [{"kind": "object"}, ["nested", None], []]
     dumped = lowering_support.serialize(
         [
             INFINITY,
             JsonDocument({"a": [1, None]}),
             ArrayBind(TIMESTAMP, [instant, INFINITY, None]),
-            ArrayBind(JSON, documents),
+            ArrayBind(JSON, [None, JSON_NULL, *documents]),
             ArrayBind(INT64, [1, None]),
         ]
     )
@@ -1635,7 +1636,7 @@ def test_production_codecs_dump_the_open_bound_documents_and_arrays_as_a_connect
         b"infinity",
         json.dumps({"a": [1, None]}).encode(),
         _binary_array(1184, [struct.pack("!q", since_epoch), struct.pack("!q", 2**63 - 1), None]),
-        _binary_array(3802, [_jsonb(document) for document in documents]),
+        _binary_array(3802, [None, _jsonb(None), *(_jsonb(document) for document in documents)]),
         _binary_array(20, [struct.pack("!q", 1), None]),
     ]
     # psycopg's process-wide map knows neither the open bound's native spelling

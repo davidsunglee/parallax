@@ -38,6 +38,7 @@ from parallax.core.base import (
 )
 from parallax.core.db_error import DatabaseError, classify_error
 from parallax.core.db_port import (
+    JSON_NULL,
     AccessMode,
     ArrayBind,
     BeginFailed,
@@ -252,7 +253,7 @@ class _TimestampBinaryDumper(Dumper):
 
 
 def _document_text(document: object) -> bytes:
-    return dump_document(document).encode()
+    return b"null" if document is JSON_NULL else dump_document(document).encode()
 
 
 class _ArrayElementsDumper(Dumper):
@@ -264,8 +265,7 @@ class _ArrayElementsDumper(Dumper):
     rather than through psycopg's list dumper, whose dimension discovery
     allocates per array, which keeps every element's encoding alive until the
     array is joined, and which would read a document's JSON array as a further
-    dimension. A ``None`` element is SQL NULL only where ``sql_nulls`` holds; a
-    document encoding serializes it as JSON null instead.
+    dimension. A ``None`` element is SQL NULL under every element type.
     """
 
     format = Format.BINARY
@@ -278,14 +278,12 @@ class _ArrayElementsDumper(Dumper):
         context: AdaptContext | None,
         *,
         prefix: bytes = b"",
-        sql_nulls: bool = True,
     ) -> None:
         super().__init__(ArrayBind, context)
         self.oid = array_oid
         self._encode = encode
         self._element_oid = element_oid
         self._prefix = prefix
-        self._sql_nulls = sql_nulls
 
     def dump(self, obj: ArrayBind) -> Buffer:
         values = obj.values
@@ -293,12 +291,12 @@ class _ArrayElementsDumper(Dumper):
             return _ARRAY_HEAD.pack(0, 0, self._element_oid)
         array = bytearray(_ARRAY_HEAD.size)
         array += _ARRAY_DIMENSION.pack(len(values), 1)
-        encode, prefix, sql_nulls = self._encode, self._prefix, self._sql_nulls
+        encode, prefix = self._encode, self._prefix
         width = len(prefix)
         pack_length = _ELEMENT_LENGTH.pack
         has_null = 0
         for value in values:
-            item = None if value is None and sql_nulls else encode(value)
+            item = None if value is None else encode(value)
             if item is None:
                 has_null = 1
                 array += _NULL_ELEMENT
@@ -337,7 +335,6 @@ class _ArrayBindDumper(RecursiveDumper):
                 _JSONB.array_oid,
                 self._tx,
                 prefix=_JSONB_VERSION,
-                sql_nulls=False,
             )
         info = self._tx.adapters.types[_ARRAY_ELEMENT_TYPES[element_type]]
         if element_type is Timestamp:
