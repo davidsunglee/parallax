@@ -1230,7 +1230,11 @@ m-temporal-read`):
 The locking-mode close keeps the ungated form above (`… where bal_id = ? and
 out_z = ?`). A close **MUST** affect exactly one row; a zero-row close is a
 conflict (optimistic) or a stale/consistency error (locking), never silent
-(`m-temporal-write` / `m-opt-lock`).
+(`m-temporal-write` / `m-opt-lock`). Each close, guard, revision, and removal
+stays its own step with that expectation; where a Write Group holds several of
+one shape, a dialect with array parameters applies them as one grouped effect
+(*Grouped effects*, below), each still enforced against its own source
+ordinal's count.
 
 ### Bitemporal as-of reads (both axes)
 
@@ -1558,34 +1562,45 @@ below) and a dialect without them runs one statement per key.
 
 ### Grouped effects
 
-A **grouped effect** applies the keyed updates of one effect span (`m-unit-work`
+A **grouped effect** applies the keyed effects of one effect span (`m-unit-work`
 *Write Group formation*; `m-execution` *Flush execution*) with one statement. Its
 source is `unnest(…) with ordinality`: one array bind per **source column**,
 each cast in the **array parameter cast form** (`m-dialect`), aliased `v` with
 columns `c1` onward and the ordinal `ord`, while the target Table is aliased
-`t`. Row *i* of the source holds update *i*'s per-row values, and the statement
-returns `v.ord` for every target row it changed:
+`t`. Row *i* of the source holds effect *i*'s per-row values, and the statement
+returns `v.ord` for every target row it changed or removed. An update, close,
+guard, or revision is `update <table> t set … from <source> where … returning
+v.ord`; a delete or removal is `delete from <table> t using <source> where …
+returning v.ord`:
 
 ```yaml
 - sql:
     postgres: update account t set balance = v.c3, version = v.c4 from unnest(cast(? as bigint[]), cast(? as int[]), cast(? as decimal[]), cast(? as int[])) with ordinality v(c1, c2, c3, c4, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord
   binds: [[<pk1>, <pk2>], [<observed1>, <observed2>], [<balance1>, <balance2>], [<new-version1>, <new-version2>]]
+- sql:
+    postgres: delete from account t using unnest(cast(? as bigint[]), cast(? as int[])) with ordinality v(c1, c2, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord
+  binds: [[<pk1>, <pk2>], [<observed1>, <observed2>]]
 ```
 
-The source columns are the key Columns in key order, then the version gate's
-observed version where the updates are gated, then one column per cell the
-assignments place, in Table Layout slot order; a path of the shared Structured
-Column the updates patch is one column per assigned path, in canonical logical
-placement order. Every value a lone update binds per row — a key, an observed
-version, an already planned version advance, an assigned value, a document
-path's encoded value — is a source column, never recomputed in SQL; a value
-every row shares, the table-per-hierarchy tag, binds once as a scalar. The
-assignments render in the clause grammar a lone update's do, each value read
-from its source column where the lone form binds `?`, with the version advance
-last: a Column takes `col = v.cN`, and the shared Structured Column takes the
-dialect's document mutation expression over `t.<column>`, each path still one
-bind and each value its source column (`m-dialect` *Document mutation-expression
-form*):
+The source columns are the key Columns in key order, then for a milestone each
+As-Of Axis end its effects bind per row, then the gate's observed value — a
+version gate's observed version or a temporal gate's observed Transaction-Time
+start — where the effects are gated, then one column per cell the assignments
+place, in Table Layout slot order; a path of the shared Structured Column the
+effects patch is one column per assigned path, in canonical logical placement
+order. Every value a lone effect binds per row — a key, a bounded or open
+Valid-Time end, an observed version or start, an already planned version
+advance, the Transaction-Time end a close assigns, an assigned value, a
+document path's encoded value — is a source column, never recomputed in SQL; a
+value every row shares by construction binds once as a scalar: the
+table-per-hierarchy tag and the open Transaction-Time end every current
+milestone's address names. The assignments render in the clause grammar a lone
+statement's do, each value read from its source column where the lone form
+binds `?`, with the version advance last: a Column takes `col = v.cN`, a guard
+assigns its Transaction-Time start to itself as `in_z = t.in_z`, and the shared
+Structured Column takes the dialect's document mutation expression over
+`t.<column>`, each path still one bind and each value its source column
+(`m-dialect` *Document mutation-expression form*):
 
 ```yaml
 - sql:
@@ -1593,10 +1608,24 @@ form*):
   binds: ['{tags}', [<pk1>, <pk2>], [<observed1>, <observed2>], [<new-version1>, <new-version2>], [<tags1>, <tags2>]]
 ```
 
-The predicate is the lone update's, each conjunct qualified by `t` and each
-per-row operand a source column: the key, then the tag guard, then the gate.
+The predicate is the lone statement's, each conjunct qualified by `t` and each
+per-row operand a source column: the key, then the tag guard, then each axis
+end of a milestone address in canonical order, then the gate. A grouped close,
+guard, revision, or removal therefore addresses exactly the milestone its lone
+form does (*Milestone-chaining write sequences*, *Bitemporal write sequences*):
+
+```yaml
+- sql:
+    postgres: update position t set out_z = v.c4 from unnest(cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality v(c1, c2, c3, c4, ord) where t.pos_id = v.c1 and t.thru_z = v.c2 and t.out_z = ? and t.in_z = v.c3 returning v.ord
+  binds: [[<pk1>, <pk2>], [<thru1>, <thru2>], [<observedTxStart1>, <observedTxStart2>], [<txInstant>, <txInstant>], infinity]
+- sql:
+    postgres: update balance t set in_z = t.in_z from unnest(cast(? as bigint[]), cast(? as timestamptz[])) with ordinality v(c1, c2, ord) where t.bal_id = v.c1 and t.out_z = ? and t.in_z = v.c2 returning v.ord
+  binds: [[<pk1>, <pk2>], [<observedTxStart1>, <observedTxStart2>], infinity]
+```
+
 Binds follow the text: the paths the assignments bind, then the source arrays,
-then the tag. A dialect without array parameters has no grouped effect.
+then the tag and each shared open end. A dialect without array parameters has
+no grouped effect.
 
 The harness proves the batched forms against real data by **applying** the golden
 DML in order to a loaded table and asserting the resulting table state (the

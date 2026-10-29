@@ -11,9 +11,10 @@ golden — the structural rules that must hold on every run are
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any, NamedTuple
 
+from .._grouped_effects import GroupedEffectShapeError, ungrouped_effect
 from ..case import Case, Entity
 from ..case_assertions import CaseFailure, write_value_equal
 from ..ddl_builder import quote_identifier
@@ -339,11 +340,12 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, dialect: str) -> None:
 
     Every existing-row statement belongs to an entry of the step once every entry
     names its find; a step whose other entries name none leaves their statements
-    to the table state."""
+    to the table state. A grouped effect is graded as the lone statement each of
+    its source rows stands for (:func:`ungrouped_effect`)."""
     index = step.index
     settling = [
         (_statement_address(case, index, statement, binds, dialect), statement, binds)
-        for statement, binds in step.statements.pairs(dialect)
+        for statement, binds in _ungrouped_pairs(case, index, step.statements.pairs(dialect))
         if is_existing_row_statement(statement)
     ]
     aligned: set[int] = set()
@@ -383,6 +385,23 @@ def _assert_settled_step(case: Case, step: _GroupedWrite, dialect: str) -> None:
             f"buffer writes — every statement a settled flush emits belongs to one of the "
             f"objects written, and entries settling against one state coalesce into one."
         )
+
+
+def _ungrouped_pairs(
+    case: Case, index: int, pairs: Iterable[tuple[str, list[Any]]]
+) -> Iterator[tuple[str, list[Any]]]:
+    for statement, binds in pairs:
+        try:
+            rows = ungrouped_effect(statement, binds)
+        except GroupedEffectShapeError as exc:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] carries the grouped-effect golden "
+                f"{statement!r}, which {exc}."
+            ) from exc
+        if rows is None:
+            yield statement, binds
+        else:
+            yield from rows
 
 
 def _settled_start(

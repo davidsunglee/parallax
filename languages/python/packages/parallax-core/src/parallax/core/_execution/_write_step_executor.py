@@ -273,12 +273,13 @@ class WriteStepExecutor:
         where ``cursor`` ran out.
 
         The statement is one row-producing Database Call returning the source
-        ordinal of every row it changed. Its whole result is validated before
-        any count is read — one that is no sequence of rows before the call is
-        completed, since it has no number of rows to complete it with — and
-        then each effect, in order, is enforced against the number of times its
-        own ordinal returned. A statement failure is
-        the whole statement's own, attributed to no effect. A later effect
+        ordinal of every row it changed or removed. Its whole result is
+        validated before any count is read — one that is no sequence of rows
+        before the call is completed, since it has no number of rows to
+        complete it with — and then each effect, in order, is enforced against
+        the number of times its own ordinal returned. A statement failure is
+        the whole statement's own, attributed to no effect and recognized
+        against the Entity every effect shares. A later effect
         failing ordinarily to be prepared ends the statement before it: the
         effects before it are applied and enforced, and only if they succeed
         does that failure propagate. ``first`` failing applies nothing, and a

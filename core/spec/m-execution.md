@@ -249,7 +249,7 @@ Where the dialect has the array parameter cast form (`m-dialect`), execution
 applies the effects of each effect span of a Write Group (`m-unit-work` *Write
 Group formation*) with one **grouped effect**: one row-producing statement whose
 source binds one array per source column and returns the source ordinal of
-every target row it changed (`m-sql` *Grouped effects*). Each effect remains its
+every target row it changed or removed (`m-sql` *Grouped effects*). Each effect remains its
 own Planned Step, and the statement is one Database Call, submitted through the
 port's row-returning operation. Its whole result is validated before any count
 is read: every row holds exactly one ordinal, an integer that is no Boolean,
@@ -269,7 +269,8 @@ statement they were selected as, even one alone, and that failure propagates
 only where they succeed. A failure preparing the span's first effect applies
 nothing, and a control-flow or fatal exception applies none of the span. A
 grouped effect's statement failure is the statement's own, as a grouped
-insert's is below.
+insert's is below; every effect of it shares one Entity, which is the Entity a
+temporal exclusion refusal is recognized against.
 
 Where the connection holds ordered write transport (`m-db-port`), a run of two
 or more contiguous count-only non-insert steps on one row each — temporal closes,

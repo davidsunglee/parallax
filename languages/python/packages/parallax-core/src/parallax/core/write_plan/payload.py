@@ -170,23 +170,31 @@ class EffectSlots(Protocol):
     """The source columns one grouped effect binds, one array each, for every
     effect of one shape of one Entity (`m-sql` *Grouped effects*).
 
-    Each source column is one per-effect role, numbered by its position:
-    ``key_sources`` gives the column of each key Attribute in target order,
-    ``gate_source`` the version gate's, ``None`` where the shape is ungated,
-    and ``assignment_sources`` one entry per cell the shape's assignments
-    place, aligned with their placement — the column of a cell assigned
-    directly, or one column per path the shared Structured Column's patches
-    assign, in patch order. ``element_types`` holds each column's Neutral
-    Type: its scalar type, and ``json`` for a stored document or an assigned
-    path's encoded value. ``parameter_count`` is how many parameters the
-    grouped statement binds: one per column, one per assigned path, and the
-    table-per-hierarchy tag where the Entity has one.
+    ``kind`` is the step kind every effect of the shape is. Each source column
+    is one per-effect role, numbered by its position: ``key_sources`` gives the
+    column of each key Attribute in target order, ``end_sources`` one entry per
+    As-Of Axis end a milestone address names, in order — its column, or
+    ``None`` where every effect shares the open Transaction-Time end —
+    ``gate_source`` the version or Transaction-Time start gate's, ``None``
+    where the shape is ungated, and ``assignment_sources`` one entry per cell
+    the shape's assignments place, aligned with their placement — the column of
+    a cell assigned directly, or one column per path the shared Structured
+    Column's patches assign, in patch order. ``element_types`` holds each
+    column's Neutral Type: its scalar type, and ``json`` for a stored document
+    or an assigned path's encoded value. ``parameter_count`` is how many
+    parameters the grouped statement binds: one per column, one per assigned
+    path, one per shared open end, and the table-per-hierarchy tag where the
+    Entity has one.
     """
 
+    @property
+    def kind(self) -> type[PlannedStep]: ...
     @property
     def entity(self) -> EntityIdentity: ...
     @property
     def key_sources(self) -> tuple[int, ...]: ...
+    @property
+    def end_sources(self) -> tuple[int | None, ...]: ...
     @property
     def gate_source(self) -> int | None: ...
     @property
@@ -197,11 +205,12 @@ class EffectSlots(Protocol):
     def parameter_count(self) -> int: ...
 
     def column_cells(
-        self, steps: Sequence[PlannedStep], payloads: Sequence[AssignmentPayload]
+        self, steps: Sequence[PlannedStep], payloads: Sequence[AssignmentPayload | None]
     ) -> tuple[list[object], ...]:
         """One new list per source column holding each of ``steps``' cells
         there, in step order, read from the step and from the Assignment
-        Payload prepared from its assignments.
+        Payload prepared from its assignments — ``None`` for a step assigning
+        nothing.
 
         Every step has this shape and each payload is its own step's, so
         nothing here judges a value again.

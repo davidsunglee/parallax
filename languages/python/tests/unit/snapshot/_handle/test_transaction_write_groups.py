@@ -134,10 +134,15 @@ def _run(
 
 def _shapes(calls: Sequence[PortCall]) -> list[tuple[str, int]]:
     """Each DML call as its shape and size: an ordered invocation and how many
-    statements it presents, or a statement and how many rows it inserts."""
+    statements it presents, a grouped effect and how many source rows it binds,
+    or a statement and how many rows it inserts."""
     shapes: list[tuple[str, int]] = []
     for call in calls:
-        if isinstance(call, OrderedCall):
+        if isinstance(call, ReadCall) and call.sql.startswith(("update", "delete")):
+            keys = call.binds[0]
+            assert isinstance(keys, ArrayBind)
+            shapes.append(("grouped", len(keys.values)))
+        elif isinstance(call, OrderedCall):
             shapes.append(("ordered", len(call.writes)))
         elif isinstance(call, WriteCall):
             insert = call.sql.startswith("insert")
@@ -151,20 +156,24 @@ def _effects(count: int) -> ScriptEntry:
     return Ordered(OrderedWriteResultComplete((1,) * count)) if count > 1 else Write()
 
 
+def _ordinals(count: int) -> ScriptEntry:
+    return Read(rows=[{"v.ord": ordinal} for ordinal in range(1, count + 1)])
+
+
 @pytest.mark.parametrize(
     ("objects", "script", "shapes"),
     [
         (1, (Write(times=2),), [("alone", 1), ("insert", 1)]),
-        (64, (_effects(64), Write()), [("ordered", 64), ("insert", 64)]),
+        (64, (_ordinals(64), Write()), [("grouped", 64), ("insert", 64)]),
         (
             65,
-            (_effects(64), Write(times=3)),
-            [("ordered", 64), ("insert", 64), ("alone", 1), ("insert", 1)],
+            (_ordinals(64), Write(times=3)),
+            [("grouped", 64), ("insert", 64), ("alone", 1), ("insert", 1)],
         ),
         (
             130,
-            (_effects(64), Write(), _effects(64), Write(), _effects(2), Write()),
-            [("ordered", 64), ("insert", 64)] * 2 + [("ordered", 2), ("insert", 2)],
+            (_ordinals(64), Write(), _ordinals(64), Write(), _ordinals(2), Write()),
+            [("grouped", 64), ("insert", 64)] * 2 + [("grouped", 2), ("insert", 2)],
         ),
     ],
     ids=["1", "64", "65", "130"],
@@ -181,9 +190,9 @@ def test_a_bitemporal_loop_groups_every_objects_successors_behind_every_close() 
     # Each object closes its milestone and opens a head before the change
     # and the changed tail, 128 rows in one insert for the first group's 64
     # objects.
-    port = _run("bitemporal", 65, (_effects(64), Write(times=3)))
+    port = _run("bitemporal", 65, (_ordinals(64), Write(times=3)))
     assert _shapes(port.calls) == [
-        ("ordered", 64),
+        ("grouped", 64),
         ("insert", 128),
         ("alone", 1),
         ("insert", 2),
@@ -195,16 +204,16 @@ def test_a_bitemporal_loop_groups_every_objects_successors_behind_every_close() 
     assert keys == [key for key in range(1, 65) for _ in range(2)]
 
 
-def test_a_non_temporal_loop_presents_its_keyed_deletes_together() -> None:
-    port = _run("plain", 65, (_effects(64), Write()), delete=True)
-    assert _shapes(port.calls) == [("ordered", 64), ("alone", 1)]
-    (invocation,) = (call for call in port.calls if isinstance(call, OrderedCall))
-    # Each statement binds its object's observed version as its gate, last.
-    assert [write.binds[-1] for write in invocation.writes] == [1] * 64
-
-
-def _ordinals(count: int) -> ScriptEntry:
-    return Read(rows=[{"v.ord": ordinal} for ordinal in range(1, count + 1)])
+def test_a_non_temporal_loop_applies_each_groups_keyed_deletes_as_one_grouped_effect() -> None:
+    port = _run("plain", 65, (_ordinals(64), Write()), delete=True)
+    assert _shapes(port.calls) == [("grouped", 64), ("alone", 1)]
+    (call,) = (
+        call for call in port.calls if isinstance(call, ReadCall) and call.sql.startswith("delete")
+    )
+    # Each source row carries its own object's key and observed version as its gate.
+    keys, gates = call.binds
+    assert isinstance(keys, ArrayBind) and keys.values == list(range(1, 65))
+    assert isinstance(gates, ArrayBind) and gates.values == [1] * 64
 
 
 def test_a_non_temporal_loop_applies_each_groups_updates_as_one_grouped_effect() -> None:
@@ -217,25 +226,33 @@ def test_a_non_temporal_loop_applies_each_groups_updates_as_one_grouped_effect()
     keys, gates = call.binds[0], call.binds[1]
     assert isinstance(keys, ArrayBind) and keys.values == list(range(1, 65))
     assert isinstance(gates, ArrayBind) and gates.values == [1] * 64
-    assert _shapes(port.calls) == [("alone", 1)]
+    assert _shapes(port.calls) == [("grouped", 64), ("alone", 1)]
 
 
-def test_without_ordered_transport_each_effect_runs_alone_and_the_inserts_still_group() -> None:
-    port = _run("transaction-time", 3, (Write(times=4),), ordered=False)
-    assert _shapes(port.calls) == [("alone", 1)] * 3 + [("insert", 3)]
+def test_without_ordered_transport_the_effects_and_the_inserts_still_group() -> None:
+    port = _run("transaction-time", 3, (_ordinals(3), Write()), ordered=False)
+    assert _shapes(port.calls) == [("grouped", 3), ("insert", 3)]
+
+
+def test_without_array_binds_each_effect_runs_alone_or_in_an_ordered_invocation() -> None:
+    arrayless = replace(POSTGRES, binds_arrays=False)
+    ordered = _run("transaction-time", 3, (_effects(3), Write(times=3)), dialect=arrayless)
+    assert _shapes(ordered.calls) == [("ordered", 3)] + [("insert", 1)] * 3
+    alone = _run("transaction-time", 3, (Write(times=6),), ordered=False, dialect=arrayless)
+    assert _shapes(alone.calls) == [("alone", 1)] * 3 + [("insert", 1)] * 3
 
 
 def test_a_bind_limit_its_columns_fit_never_splits_the_grouped_insert() -> None:
-    wide = _run("transaction-time", 5, (_effects(5), Write()))
+    wide = _run("transaction-time", 5, (_ordinals(5), Write()))
     # Five columns a row: a limit two rows of scalars would fill, while their
     # five arrays carry every row.
     narrow = _run(
         "transaction-time",
         5,
-        (_effects(5), Write()),
+        (_ordinals(5), Write()),
         dialect=replace(POSTGRES, max_bind_parameters=10),
     )
-    assert _shapes(narrow.calls) == [("ordered", 5), ("insert", 5)]
+    assert _shapes(narrow.calls) == [("grouped", 5), ("insert", 5)]
 
     def rows(port: ScriptedAdapter) -> list[object]:
         return [
@@ -267,11 +284,12 @@ class _Calls:
 
 def test_one_flush_counts_a_database_call_per_presented_statement() -> None:
     observed = _Calls()
-    _run("transaction-time", 65, (_effects(64), Write(times=3)), lifecycle=observed)
+    _run("transaction-time", 65, (_ordinals(64), Write(times=3)), lifecycle=observed)
     assert observed.flushes == 1
-    # One per presented statement: the find, every close, ordered or alone,
-    # and each insert statement, however many objects' rows it holds.
-    assert observed.calls == 1 + 65 + 2
+    # One per presented statement: the find, each group's closes as one
+    # grouped effect or the lone close alone, and each insert statement,
+    # however many objects' rows it holds.
+    assert observed.calls == 1 + 2 + 2
 
 
 def test_a_failing_grouped_insert_reports_its_statement_error_and_replays_nothing() -> None:
@@ -283,7 +301,7 @@ def test_a_failing_grouped_insert_reports_its_statement_error_and_replays_nothin
     port = ScriptedAdapter(
         Transact(
             Read(rows=_rows("transaction-time", 3)),
-            _effects(3),
+            _ordinals(3),
             Write(raises=failure),
         ),
         ordered=True,
@@ -291,7 +309,7 @@ def test_a_failing_grouped_insert_reports_its_statement_error_and_replays_nothin
     with raises_contextualized(DatabaseError) as raised:
         db_for(_MODEL, port).transact(_loop("transaction-time"), concurrency="optimistic")
     assert raised.value is failure
-    assert _shapes(port.calls) == [("ordered", 3), ("insert", 3)]
+    assert _shapes(port.calls) == [("grouped", 3), ("insert", 3)]
     assert port.calls[-1] == RollbackCall()
 
 
@@ -301,7 +319,7 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
     port = ScriptedAdapter(
         Transact(
             Read(rows=_rows("transaction-time", 2)),
-            Ordered(OrderedWriteResultComplete((1, 0))),
+            _ordinals(1),
         ),
         ordered=True,
     )
@@ -312,8 +330,8 @@ def test_a_later_objects_shortfall_is_reported_before_an_earlier_objects_insert_
     target = raised.value.target
     assert isinstance(target, MilestoneTarget)
     assert target.key_values == (2,)
-    assert _shapes(port.calls) == [("ordered", 2)]
-    assert [type(call) for call in port.calls] == [BeginCall, ReadCall, OrderedCall, RollbackCall]
+    assert _shapes(port.calls) == [("grouped", 2)]
+    assert [type(call) for call in port.calls] == [BeginCall, ReadCall, ReadCall, RollbackCall]
 
 
 def test_inserts_of_distinct_objects_share_a_statement_where_their_members_agree() -> None:

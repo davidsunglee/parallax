@@ -1141,7 +1141,7 @@ trio), batched non-temporal writes, ordinary `delete`, and the minimal
 equal the sum of the `when.writeSequence` steps' declared statement counts, and
 `then.databaseCalls` MUST equal that total plus the resolving reads the sequence owes
 (*Resolving reads a write owes*, below). A grouped effect is one statement and
-one Database Call however many keyed updates it applies, so where PostgreSQL
+one Database Call however many keyed effects it applies, so where PostgreSQL
 groups effects that MariaDB runs one statement each, the dialects' counts
 differ and the case is authored once per dialect. A step on a **temporal** entity carries **exactly one**
 neutral write input row (`m-unit-work`: each row closes its own milestone and

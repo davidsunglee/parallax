@@ -6,12 +6,14 @@ A cell is one workload at one size over one or more objects, on a connection
 that holds the transport the server offers, holds none, or binds narrowly. Its
 writes close every seeded milestone the window reaches and open the rows the
 window leaves, so the cell's realization follows from the realization contract
-alone (`m-execution` *Flush execution*): a run of two or more contiguous closes
-is presented in ordered invocations of at most :data:`STATEMENT_CAP` statements
-wherever the connection holds ordered write transport, a close that would be
-its run's only one runs alone, and a run of contiguous openings is inserted by
-one statement binding one column array per Column, however many rows it
-carries and whatever bind limit the connection reports. Each write reaches
+alone (`m-execution` *Flush execution*): a Write Group of two or more objects
+applies every close as one grouped effect wherever the connection binds arrays;
+otherwise a run of two or more contiguous closes is presented in ordered
+invocations of at most :data:`STATEMENT_CAP` statements wherever the
+connection holds ordered write transport, and a close that would be its run's
+only one runs alone; and a run of contiguous openings is inserted by one
+statement binding one column array per Column, however many rows it carries
+and whatever bind limit the connection reports. Each write reaches
 milestones its transaction never read, so the flush reads their coverage first
 (`m-unit-work` *Shared coverage acquisition*): consecutive writes of one Entity
 share one read per span of at most :data:`SPAN_WRITES`, after which all of them
@@ -137,10 +139,12 @@ class PortTally:
 
     ``standalone_non_insert_statements`` counts writes other than inserts
     executed alone, outside ordered write transport, ``inserts`` insert
-    statements and ``inserted_rows`` the rows they carried, and ``ordered``
+    statements and ``inserted_rows`` the rows they carried, ``ordered``
     ordered write transport invocations and ``ordered_statements`` the
-    statements they presented; each ``widest_*`` is the most one statement or
-    invocation carried.
+    statements they presented, and ``grouped`` grouped effects and
+    ``grouped_rows`` the source rows they bound; each ``widest_*`` is the most
+    one statement or invocation carried. A grouped effect, submitted through
+    ``execute``, is no read.
     """
 
     reads: int = 0
@@ -151,6 +155,9 @@ class PortTally:
     ordered: int = 0
     ordered_statements: int = 0
     widest_ordered: int = 0
+    grouped: int = 0
+    grouped_rows: int = 0
+    widest_grouped: int = 0
 
     def realization(self) -> Realization:
         return Realization(
@@ -161,12 +168,20 @@ class PortTally:
             self.inserts,
             self.inserted_rows,
             self.widest_insert,
+            self.grouped,
+            self.grouped_rows,
+            self.widest_grouped,
         )
 
     @property
     def logical_writes(self) -> int:
         """The Planned Steps the statements carried, however they were grouped."""
-        return self.standalone_non_insert_statements + self.ordered_statements + self.inserted_rows
+        return (
+            self.standalone_non_insert_statements
+            + self.ordered_statements
+            + self.inserted_rows
+            + self.grouped_rows
+        )
 
 
 def _inserted_rows(binds: Sequence[object]) -> int:
@@ -174,6 +189,16 @@ def _inserted_rows(binds: Sequence[object]) -> int:
     or the one row a single-row insert binds."""
     first = binds[0] if binds else None
     return len(first.values) if isinstance(first, ArrayBind) else 1
+
+
+_GROUPED_EFFECT_RESULT: Final = " returning v.ord"
+"""How a grouped effect's statement ends: it returns each changed row's source
+ordinal."""
+
+
+def _source_rows(binds: Sequence[object]) -> int:
+    """The source rows one grouped effect binds: its source arrays' length."""
+    return next(len(bind.values) for bind in binds if isinstance(bind, ArrayBind))
 
 
 class CountingConnection:
@@ -219,7 +244,14 @@ class CountingConnection:
         *,
         read_only: bool = False,
     ) -> list[Row]:
-        self._tally.reads += 1
+        tally = self._tally
+        if sql.endswith(_GROUPED_EFFECT_RESULT):
+            rows = _source_rows(binds)
+            tally.grouped += 1
+            tally.grouped_rows += rows
+            tally.widest_grouped = max(tally.widest_grouped, rows)
+        else:
+            tally.reads += 1
         return self._inner.execute(sql, binds, document_reads, read_only=read_only)
 
     def execute_pipeline(
@@ -275,8 +307,9 @@ class CountingConnection:
 class Realization(NamedTuple):
     """How a transaction's writes crossed the port: non-insert statements run
     alone, ordered invocations with the statements they presented and the
-    widest of them, and insert statements with the rows they carried and the
-    widest of them."""
+    widest of them, insert statements with the rows they carried and the
+    widest of them, and grouped effects with the source rows they bound and
+    the widest of them."""
 
     standalone_non_insert_statements: int
     ordered: int
@@ -285,6 +318,16 @@ class Realization(NamedTuple):
     inserts: int
     inserted_rows: int
     widest_insert: int
+    grouped: int = 0
+    grouped_rows: int = 0
+    widest_grouped: int = 0
+
+
+def _grouping(cell: Cell, objects: int) -> bool:
+    """Whether a Write Group of ``objects`` of ``cell``'s applies its closes as
+    one grouped effect: every close of one Entity is one shape, and a group of
+    one write records no span."""
+    return objects > 1 and cell.connection != "expanding"
 
 
 def _closes(closes: int, *, ordered: bool) -> tuple[int, int, int, int]:
@@ -317,8 +360,11 @@ def _openings(cell: Cell) -> int:
 
 
 def _group_realization(cell: Cell, objects: int, *, ordered: bool) -> Realization:
-    alone, invocations, presented, widest = _closes(objects * cell.size, ordered=ordered)
+    closes = objects * cell.size
     openings = objects * _openings(cell)
+    if _grouping(cell, objects):
+        return Realization(0, 0, 0, 0, 1, openings, openings, 1, closes, closes)
+    alone, invocations, presented, widest = _closes(closes, ordered=ordered)
     return Realization(alone, invocations, presented, widest, 1, openings, openings)
 
 
@@ -327,8 +373,8 @@ def expected_realization(cell: Cell, *, ordered: bool) -> Realization:
     a server that does, or does not, offer ``ordered`` write transport.
 
     Each Write Group closes every seeded milestone its objects' windows reach,
-    in one contiguous run, and then opens every object's rows in one run of
-    openings, which one insert statement carries.
+    in one grouped effect or one contiguous run, and then opens every object's
+    rows in one run of openings, which one insert statement carries.
     """
     ordered = ordered and cell.connection != "unordered"
     groups = [_group_realization(cell, objects, ordered=ordered) for objects in _groups(cell)]
@@ -340,6 +386,9 @@ def expected_realization(cell: Cell, *, ordered: bool) -> Realization:
         sum(group.inserts for group in groups),
         sum(group.inserted_rows for group in groups),
         max(group.widest_insert for group in groups),
+        sum(group.grouped for group in groups),
+        sum(group.grouped_rows for group in groups),
+        max(group.widest_grouped for group in groups),
     )
 
 
@@ -348,13 +397,14 @@ def expected_flush_calls(cell: Cell) -> list[tuple[str, int]]:
     collapsed into one ``("write", count)``: before each Write Group, the
     shared coverage read returning every milestone its objects' windows reach
     beyond the one their transaction already holds, and then the group's
-    closes and insert statements. A window inside the one milestone held reads
-    nothing."""
+    closes — one grouped effect, or one call each — and insert statements. A
+    window inside the one milestone held reads nothing."""
     calls: list[tuple[str, int]] = []
     for objects in _groups(cell):
         if cell.size > 1:
             calls.append(("read", objects * (cell.size - 1)))
-        calls.append(("write", objects * cell.size + 1))
+        closes = 1 if _grouping(cell, objects) else objects * cell.size
+        calls.append(("write", closes + 1))
     return calls
 
 

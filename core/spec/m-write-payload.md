@@ -49,8 +49,9 @@ An effect's **shape** (`m-unit-work` *Write Group formation*) is decided from
 the step alone, before any payload is prepared, and compared by value, so
 whether two effects share a grouped effect never depends on what a bounded
 cache retains. A shape's **Effect Slots** name each per-row source column a
-grouped effect binds — each key, the gate, and each cell or assigned document
-path the shape's assignments place — with its Neutral Type, and gather each
+grouped effect binds — each key, each As-Of Axis end bound per row, the gate,
+and each cell or assigned document path the shape's assignments place — with
+its Neutral Type, and gather each
 column from the steps and their Assignment Payloads without judging a value
 again; they are placed once per Entity and shape like Row Slots, and prepare
 nothing a lone update would not.

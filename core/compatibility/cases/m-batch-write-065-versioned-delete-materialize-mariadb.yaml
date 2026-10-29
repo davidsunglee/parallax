@@ -1,6 +1,5 @@
-# Versioned set-based DELETE materializes per key (m-batch-write + m-opt-lock, ADR 0014).
 model: models/account.yaml
-tags: [m-batch-write, m-opt-lock, m-sql, write-sequence, materialize, slice-snapshot-1, slice-managed-1]
+tags: [m-batch-write, m-opt-lock, m-sql, write-sequence, materialize]
 shape: writeSequence
 given:
   fixtures: true
@@ -11,17 +10,17 @@ when:
     - mutation: delete
       entity: parallax.compatibility.Account
       statements: 2
-      note: a versioned set-based delete materializes to ONE keyed delete per key, ungated in locking mode
+      note: a versioned set-based delete keeps ONE keyed delete per key, ungated in locking mode
       rows:
         - { id: 1, observedVersion: 1 }
         - { id: 2, observedVersion: 1 }
 then:
   statements:
     - sql:
-        postgres: delete from account where id = ?
+        mariadb: delete from account where id = ?
       binds: [1]
     - sql:
-        postgres: delete from account where id = ?
+        mariadb: delete from account where id = ?
       binds: [2]
   tableState:
     account:

@@ -1532,6 +1532,7 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-execution-lifecycle-011-a-predicate-write-flushes-what-its-unit-buffered.yaml",
         "m-execution-lifecycle-012-a-shared-coverage-read-is-one-unindexed-call-of-its-flush-columns-layout.yaml",
         "m-execution-lifecycle-013-a-shared-coverage-read-is-one-unindexed-call-of-its-flush-document-layout.yaml",
+        "m-execution-lifecycle-014-an-ordered-invocation-presents-effects-of-distinct-shapes-together.yaml",
         "m-opt-lock-006-success.yaml",
         "m-read-delivery-001-a-whole-result-read-delivers-every-selected-row-in-one-read.yaml",
         "m-unit-work-035-a-join-may-not-renegotiate-the-isolation-level.yaml",

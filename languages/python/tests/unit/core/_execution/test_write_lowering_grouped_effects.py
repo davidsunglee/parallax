@@ -1,21 +1,23 @@
 """Grouped effects as lowering presents them (`m-sql` *Grouped effects*).
 
-Updates of one key each that a Write Group lays out in one effect span lower as
-one statement whose `unnest(…) with ordinality` source binds one typed array per
-source column and returns each changed row's source ordinal. Every expectation
-here is authored from the grammar, not read back from production.
+Effects of one key or milestone each that a Write Group lays out in one effect
+span lower as one statement whose `unnest(…) with ordinality` source binds one
+typed array per source column and returns each changed or removed row's source
+ordinal. Every expectation here is authored from the grammar, not read back from
+production.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 from collections.abc import Sequence
 from decimal import Decimal
 
 import pytest
 
 from parallax.core._execution._write_lowering import LoweringCursor, stream_physical
-from parallax.core.base import INT32, INT64, JSON, STRING
+from parallax.core.base import INFINITY, INT32, INT64, JSON, STRING, TIMESTAMP
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import ArrayBind
 from parallax.core.dialect import POSTGRES, Dialect
@@ -41,9 +43,21 @@ from parallax.core.write_plan.steps import (
 from tests.unit._corpus_model_support import model
 from tests.unit.core._execution._grouped_effect_support import (
     ACCOUNT,
+    BALANCE,
+    CLOSED_AT,
+    COVERAGE_DOCUMENT,
+    INSTRUMENT,
+    POSITION,
     WALLET,
     attribute_identity,
+    close,
+    delete,
     entity_identity,
+    guard,
+    instant,
+    milestone,
+    removal,
+    revision,
     update,
 )
 
@@ -298,10 +312,11 @@ def test_assigning_a_unique_key_member_is_a_barrier_in_authored_order() -> None:
         PlannedDelete(
             entity=entity_identity(WALLET, "Wallet"),
             target=KeyTarget(
-                key_attributes=(attribute_identity(WALLET, "Wallet", "id"),), key_values=((1,),)
+                key_attributes=(attribute_identity(WALLET, "Wallet", "id"),),
+                key_values=((1,), (2,)),
             ),
             concurrency=UNVERSIONED,
-            affected_rows=ExactCount(1, MISSING_TARGET),
+            affected_rows=ExactCount(2, MISSING_TARGET),
         ),
         PlannedUpdate(
             entity=entity_identity(WALLET, "Wallet"),
@@ -316,7 +331,7 @@ def test_assigning_a_unique_key_member_is_a_barrier_in_authored_order() -> None:
             affected_rows=ExactCount(2, MISSING_TARGET),
         ),
     ],
-    ids=["delete", "multi-key"],
+    ids=["multi-key-delete", "multi-key-update"],
 )
 def test_effects_outside_the_grouped_kinds_have_no_shape(step: PlannedStep) -> None:
     assert LayoutPayloadPreparer(WALLET).effect_shape(step) is None
@@ -483,7 +498,7 @@ def test_a_grouped_effect_refuses_an_effect_its_shape_does_not_place() -> None:
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(1, MISSING_TARGET),
     )
-    with pytest.raises(SqlGenError, match="holds updates of its own Entity"):
+    with pytest.raises(SqlGenError, match="holds effects of its shape's kind"):
         builder.append(deletion, None)
     assert arrays(builder.finish())[0] == (INT64, [1])
 
@@ -504,3 +519,280 @@ def test_a_grouped_effect_opens_only_at_its_own_span() -> None:
     assert first is not None
     with pytest.raises(SqlGenError, match="opens at its own span"):
         cursor.lowered_grouped_effect(first, EffectSpan(0, 3, shape))
+
+
+# --------------------------------------------------------------------------- #
+# Deletes and milestone effects.                                               #
+# --------------------------------------------------------------------------- #
+def test_unversioned_deletes_bind_one_key_array_and_return_each_removed_ordinal() -> None:
+    _, (statement,) = grouped(WALLET, [delete(WALLET, "Wallet", key) for key in (1, 2, 3)])
+    assert statement.sql == (
+        "delete from wallet t using unnest(cast(? as bigint[])) with ordinality "
+        "v(c1, ord) where t.id = v.c1 returning v.ord"
+    )
+    assert arrays(statement) == [(INT64, [1, 2, 3])]
+
+
+def test_gated_deletes_bind_each_rows_observed_version() -> None:
+    steps = [delete(ACCOUNT, "Account", 1, observed=3), delete(ACCOUNT, "Account", 2, observed=7)]
+    _, (statement,) = grouped(ACCOUNT, steps)
+    assert statement.sql == (
+        "delete from account t using unnest(cast(? as bigint[]), cast(? as int[])) with "
+        "ordinality v(c1, c2, ord) where t.id = v.c1 and t.version = v.c2 returning v.ord"
+    )
+    assert arrays(statement) == [(INT64, [1, 2]), (INT32, [3, 7])]
+
+
+def test_gated_and_ungated_deletes_of_one_entity_are_distinct_shapes() -> None:
+    steps = [
+        delete(ACCOUNT, "Account", 1, versioned=True),
+        delete(ACCOUNT, "Account", 2, observed=1),
+        delete(ACCOUNT, "Account", 3, versioned=True),
+    ]
+    group, statements = grouped(ACCOUNT, steps)
+    assert group.steps == (steps[0], steps[2], steps[1])
+    assert [statement.sql for statement in statements] == [
+        "delete from account t using unnest(cast(? as bigint[])) with ordinality v(c1, ord) "
+        "where t.id = v.c1 returning v.ord",
+        "delete from account where id = ? and version = ?",
+    ]
+
+
+def test_table_per_hierarchy_and_composite_key_deletes_keep_the_lone_address() -> None:
+    _, (tagged,) = grouped(PAYMENT, [delete(PAYMENT, "CardPayment", key) for key in (1, 2)])
+    assert tagged.sql == (
+        "delete from payment t using unnest(cast(? as bigint[])) with ordinality v(c1, ord) "
+        "where t.id = v.c1 and t.kind = ? returning v.ord"
+    )
+    assert arrays(tagged)[-1] == ("scalar", ["card"])
+    composite = [
+        delete(WALLET, "Wallet", key, key_members=("id", "owner"))
+        for key in ((1, "Ada"), (2, "Bo"))
+    ]
+    _, (statement,) = grouped(WALLET, composite)
+    assert statement.sql == (
+        "delete from wallet t using unnest(cast(? as bigint[]), cast(? as text[])) with "
+        "ordinality v(c1, c2, ord) where t.id = v.c1 and t.owner = v.c2 returning v.ord"
+    )
+
+
+def test_transaction_time_closes_bind_their_gate_and_instant_and_share_the_open_end() -> None:
+    steps = [
+        close(BALANCE, "Balance", milestone(BALANCE, "Balance", key, bitemporal=False), observed=at)
+        for key, at in ((1, instant(1)), (2, instant(2)))
+    ]
+    _, (statement,) = grouped(BALANCE, steps)
+    assert statement.sql == (
+        "update balance t set out_z = v.c3 from unnest(cast(? as bigint[]), "
+        "cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality "
+        "v(c1, c2, c3, ord) where t.bal_id = v.c1 and t.out_z = ? and t.in_z = v.c2 "
+        "returning v.ord"
+    )
+    assert arrays(statement) == [
+        (INT64, [1, 2]),
+        (TIMESTAMP, [instant(1), instant(2)]),
+        (TIMESTAMP, [CLOSED_AT, CLOSED_AT]),
+        ("scalar", ["infinity"]),
+    ]
+
+
+def test_bitemporal_closes_bind_each_finite_or_open_valid_end_per_row() -> None:
+    steps = [
+        close(POSITION, "Position", milestone(POSITION, "Position", 1, valid_end=instant(6))),
+        close(POSITION, "Position", milestone(POSITION, "Position", 2)),
+    ]
+    _, (statement,) = grouped(POSITION, steps)
+    assert statement.sql == (
+        "update position t set out_z = v.c3 from unnest(cast(? as bigint[]), "
+        "cast(? as timestamptz[]), cast(? as timestamptz[])) with ordinality "
+        "v(c1, c2, c3, ord) where t.pos_id = v.c1 and t.thru_z = v.c2 and t.out_z = ? "
+        "returning v.ord"
+    )
+    assert arrays(statement)[1] == (TIMESTAMP, [instant(6), INFINITY])
+    assert statement.wire_binds()[1] == ["2024-06-01T00:00:00.000000Z", "infinity"]
+
+
+def test_a_table_per_hierarchy_milestone_guards_its_tag_before_its_axis_ends() -> None:
+    steps = [
+        close(INSTRUMENT, "Bond", milestone(INSTRUMENT, "Bond", key), observed=instant(1))
+        for key in (1, 2)
+    ]
+    _, (statement,) = grouped(INSTRUMENT, steps)
+    assert statement.sql.split(" where ")[1] == (
+        "t.id = v.c1 and t.kind = ? and t.thru_z = v.c2 and t.out_z = ? and t.in_z = v.c3 "
+        "returning v.ord"
+    )
+    assert arrays(statement)[-2:] == [("scalar", ["bond"]), ("scalar", ["infinity"])]
+
+
+def test_a_composite_milestone_key_binds_one_array_per_key_column() -> None:
+    steps = [
+        close(
+            BALANCE,
+            "Balance",
+            milestone(BALANCE, "Balance", key, bitemporal=False, key_members=("id", "acctNum")),
+        )
+        for key in ((1, "A"), (2, "B"))
+    ]
+    _, (statement,) = grouped(BALANCE, steps)
+    assert statement.sql.split(" where ")[1] == (
+        "t.bal_id = v.c1 and t.acct_num = v.c2 and t.out_z = ? returning v.ord"
+    )
+    assert arrays(statement)[:2] == [(INT64, [1, 2]), (STRING, ["A", "B"])]
+
+
+def test_guards_assign_their_start_to_itself_and_gate_each_rows_observed_start() -> None:
+    steps = [
+        guard(BALANCE, "Balance", milestone(BALANCE, "Balance", key, bitemporal=False), observed=at)
+        for key, at in ((1, instant(1)), (2, instant(2)))
+    ]
+    _, (statement,) = grouped(BALANCE, steps)
+    assert statement.sql == (
+        "update balance t set in_z = t.in_z from unnest(cast(? as bigint[]), "
+        "cast(? as timestamptz[])) with ordinality v(c1, c2, ord) where t.bal_id = v.c1 "
+        "and t.out_z = ? and t.in_z = v.c2 returning v.ord"
+    )
+
+
+@pytest.mark.parametrize("observed", [None, instant(1)], ids=["ungated", "gated"])
+def test_removals_delete_each_addressed_milestone(observed: dt.datetime | None) -> None:
+    steps = [
+        removal(POSITION, "Position", milestone(POSITION, "Position", key), observed=observed)
+        for key in (1, 2)
+    ]
+    _, (statement,) = grouped(POSITION, steps)
+    gate = " and t.in_z = v.c3" if observed is not None else ""
+    sources = ", cast(? as timestamptz[])" if observed is not None else ""
+    names = "c1, c2, c3" if observed is not None else "c1, c2"
+    assert statement.sql == (
+        "delete from position t using unnest(cast(? as bigint[]), cast(? as timestamptz[])"
+        f"{sources}) with ordinality v({names}, ord) where t.pos_id = v.c1 and "
+        f"t.thru_z = v.c2 and t.out_z = ?{gate} returning v.ord"
+    )
+
+
+def test_revisions_assign_payload_and_valid_start_per_row() -> None:
+    steps = [
+        revision(
+            POSITION,
+            "Position",
+            milestone(POSITION, "Position", key),
+            {"value": Decimal(value), "validStart": instant(month)},
+        )
+        for key, value, month in ((1, "1.00", 3), (2, "2.00", 4))
+    ]
+    _, (statement,) = grouped(POSITION, steps)
+    assert statement.sql == (
+        "update position t set val = v.c3, from_z = v.c4 from unnest(cast(? as bigint[]), "
+        "cast(? as timestamptz[]), cast(? as decimal[]), cast(? as timestamptz[])) with "
+        "ordinality v(c1, c2, c3, c4, ord) where t.pos_id = v.c1 and t.thru_z = v.c2 and "
+        "t.out_z = ? returning v.ord"
+    )
+    assert arrays(statement)[2:4] == [
+        (DecimalType(18, 2), [Decimal("1.00"), Decimal("2.00")]),
+        (TIMESTAMP, [instant(3), instant(4)]),
+    ]
+
+
+def test_document_revisions_patch_each_path_from_the_source() -> None:
+    steps = [
+        revision(
+            COVERAGE_DOCUMENT,
+            "CoverageSpan",
+            milestone(COVERAGE_DOCUMENT, "CoverageSpan", key),
+            {"amount": amount},
+        )
+        for key, amount in ((1, 150), (2, 250))
+    ]
+    _, (statement,) = grouped(COVERAGE_DOCUMENT, steps)
+    assert statement.sql == (
+        "update coverage_span t set payload = jsonb_set(t.payload, ?, v.c3) from unnest("
+        "cast(? as bigint[]), cast(? as timestamptz[]), cast(? as jsonb[])) with ordinality "
+        "v(c1, c2, c3, ord) where t.id = v.c1 and t.thru_z = v.c2 and t.out_z = ? "
+        "returning v.ord"
+    )
+    assert statement.wire_binds()[0] == "{amount}"
+    assert statement.wire_binds()[3] == [150, 250]
+
+
+def test_a_revision_patching_a_document_not_known_to_be_an_object_ends_the_prefix() -> None:
+    preparer = LayoutPayloadPreparer(COVERAGE_DOCUMENT)
+    steps = [
+        revision(
+            COVERAGE_DOCUMENT,
+            "CoverageSpan",
+            milestone(COVERAGE_DOCUMENT, "CoverageSpan", key),
+            {"amount": key},
+            document_is_object=key != 3,
+        )
+        for key in (1, 2, 3)
+    ]
+    shape = preparer.effect_shape(steps[0])
+    assert shape is not None and preparer.effect_shape(steps[2]) == shape
+    span = EffectSpan(0, 3, shape)
+    cursor = LoweringCursor(
+        tuple(steps), preparer, COVERAGE_DOCUMENT, POSTGRES, effect_spans=(span,)
+    )
+    first = cursor.take()
+    assert first is not None and cursor.grouped_effect_start(first) is span
+    statement, held, raised = cursor.lowered_grouped_effect(first, span)
+    assert held == tuple(steps[:2])
+    assert isinstance(raised, SqlGenError) and "not known to be an object" in str(raised)
+    assert arrays(statement)[1] == (INT64, [1, 2])
+
+
+def test_each_milestone_kind_and_gate_is_its_own_shape() -> None:
+    preparer = LayoutPayloadPreparer(POSITION)
+    target = milestone(POSITION, "Position", 1)
+    shapes = [
+        preparer.effect_shape(step)
+        for step in (
+            close(POSITION, "Position", target),
+            close(POSITION, "Position", target, observed=instant(1)),
+            removal(POSITION, "Position", target),
+            guard(POSITION, "Position", target, observed=instant(1)),
+            revision(POSITION, "Position", target, {"value": Decimal(1)}),
+        )
+    ]
+    assert None not in shapes
+    assert len(set(shapes)) == len(shapes)
+    finite = close(POSITION, "Position", milestone(POSITION, "Position", 2, valid_end=instant(6)))
+    assert preparer.effect_shape(finite) == shapes[0]
+
+
+def test_one_writes_closes_of_distinct_milestones_share_its_shapes_statement() -> None:
+    preparer = LayoutPayloadPreparer(POSITION)
+    first = [
+        close(POSITION, "Position", milestone(POSITION, "Position", 1, valid_end=instant(6))),
+        close(POSITION, "Position", milestone(POSITION, "Position", 1)),
+    ]
+    second = [close(POSITION, "Position", milestone(POSITION, "Position", 2))]
+    group = WriteGroup.from_members(
+        [(SettledWrite(), tuple(first)), (SettledWrite(), tuple(second))],
+        effect_shape=preparer.effect_shape,
+    )
+    (statement,) = stream_physical(
+        group.steps, preparer, POSITION, POSTGRES, effect_spans=group.effect_spans
+    )
+    assert group.steps == (*first, *second)
+    assert arrays(statement)[0] == (INT64, [1, 1, 2])
+    assert arrays(statement)[1] == (TIMESTAMP, [instant(6), INFINITY, INFINITY])
+
+
+def test_a_writes_later_close_waits_behind_its_own_revision() -> None:
+    preparer = LayoutPayloadPreparer(POSITION)
+    own = [
+        close(POSITION, "Position", milestone(POSITION, "Position", 1, valid_end=instant(6))),
+        revision(POSITION, "Position", milestone(POSITION, "Position", 1), {"value": Decimal(1)}),
+        close(POSITION, "Position", milestone(POSITION, "Position", 1)),
+    ]
+    other = [close(POSITION, "Position", milestone(POSITION, "Position", 2))]
+    group = WriteGroup.from_members(
+        [(SettledWrite(), tuple(own)), (SettledWrite(), tuple(other))],
+        effect_shape=preparer.effect_shape,
+    )
+    # The later close cannot join the block before its own write's revision, so
+    # it opens a later block, which the other write's close then joins.
+    assert group.steps == (own[0], own[1], own[2], other[0])
+    (span,) = group.effect_spans
+    assert (span.start, span.stop) == (2, 4)
