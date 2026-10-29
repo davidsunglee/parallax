@@ -4268,7 +4268,7 @@ def test_a_target_replacement_step_completes_what_its_row_omits() -> None:
     )
     scenario.run_write_sequence_case(_load_case("m-unit-work-043"), port)
     _close, successor = port.writes
-    assert successor[1][-2:] == [JsonDocument(None), JsonDocument(())]
+    assert successor[1][-2:] == [None, JsonDocument(())]
 
 
 @pytest.mark.parametrize(

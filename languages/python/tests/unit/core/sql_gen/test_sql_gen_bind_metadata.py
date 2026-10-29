@@ -18,12 +18,14 @@ from parallax.core.base import (
     INFINITY,
     INFINITY_LITERAL,
     INT64,
+    JSON,
     STRING,
     TIMESTAMP,
+    FrozenMap,
     ManagedValue,
 )
 from parallax.core.base import Decimal as DecimalType
-from parallax.core.db_port import ArrayBind, JsonDocument
+from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
 from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
@@ -327,6 +329,16 @@ def test_an_array_bind_projects_each_element_under_its_own_element_type() -> Non
     assert statement.typed_bind_spans == (_TypedBindSpan(1, 2, INT64, "MANAGED"),)
     assert statement.wire_bind_overrides == ()
     assert statement.wire_binds() == (["2024-01-02T03:04:05.000000Z", INFINITY_LITERAL, None], 7)
+
+
+def test_a_document_array_projects_sql_null_and_the_literal_json_null_alike_as_null() -> None:
+    builder = _builder()
+    builder.bind_array(ArrayBind(JSON, [None, JSON_NULL, FrozenMap({"a": (1, None)}), []]))
+    builder.bind_document(JsonDocument(None))
+
+    statement = builder.finish("select ?, ?")
+
+    assert statement.wire_binds() == ([None, None, {"a": [1, None]}, []], None)
 
 
 def test_comparison_text_projection_retains_the_owned_text_without_codec_work() -> None:

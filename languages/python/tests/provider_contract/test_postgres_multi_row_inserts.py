@@ -5,8 +5,10 @@ Each shape inserts, in one transaction, more rows than 65,535 parameters would
 bind one by one: ``ceil(65_535 / W) + 1_000`` rows of a statement listing ``W``
 Columns. The insert is one statement binding ``W`` arrays of that many
 elements, and every row reads back exactly as the generator wrote it — every
-scalar Neutral Type with nulls, Value Objects with JSON null, scalar
-collections, both layouts, and both inheritance strategies. A ranged temporal
+scalar Neutral Type with nulls, Value Objects with nulls, scalar collections,
+both layouts, and both inheritance strategies. A null Value Object is SQL NULL
+in its own Column however many rows its insert holds, and a literal JSON-null
+document stays JSON null. A ranged temporal
 write opens every successor in one statement however many there are.
 
 The column-array form keeps the failures a row would raise alone: a duplicate
@@ -46,9 +48,9 @@ from parallax.core import (
     index,
     storage_layout,
 )
-from parallax.core.base import JSON
+from parallax.core.base import INT64, JSON, Json
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import ArrayBind
+from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import (
@@ -312,33 +314,100 @@ def test_every_scalar_type_null_and_document_inserts_past_the_limit_in_one_state
     assert len(stored) == rows
     for row, members in zip(stored, expected, strict=True):
         assert {name: getattr(row, name) for name in members} == members, members["id"]
-    table, place = (
-        ("mri_wide", "place") if entity is Wide else ("mri_wide_sheet", "payload->'place'")
+    # A null `place` is SQL NULL in its own Column, and JSON null at its path
+    # inside the shared Structured Column.
+    nulls = sum(members["place"] is None for members in expected)
+    table, place, stored_nulls = (
+        ("mri_wide", "place", (nulls, 0))
+        if entity is Wide
+        else ("mri_wide_sheet", "payload->'place'", (0, nulls))
     )
     ((sql_nulls, json_nulls),) = profile_run.port.execute(
         f"select count(*) filter (where {place} is null), "
         f"count(*) filter (where jsonb_typeof({place}) = 'null') from {table}",
         [],
     )
-    assert (sql_nulls, json_nulls) == (0, sum(members["place"] is None for members in expected))
+    assert (sql_nulls, json_nulls) == stored_nulls
 
 
-def test_a_document_array_holds_one_document_per_element_and_json_null_for_none(
+def test_a_document_array_holds_one_document_per_element_none_being_sql_null(
     profile_run: Any,
 ) -> None:
     profile_run.reset(model_of(_MODEL), {})
-    documents: list[object] = [None, {"kind": "object"}, ["nested", None], []]
+    documents: list[object] = [None, JSON_NULL, {"kind": "object"}, ["nested", None], []]
     rows = profile_run.port.execute(
         "select t.v is null, jsonb_typeof(t.v), t.v::text, array_ndims(%s::jsonb[]) "
         "from unnest(cast(%s as jsonb[])) with ordinality as t(v, n) order by t.n",
         [ArrayBind(JSON, documents), ArrayBind(JSON, documents)],
     )
     assert [tuple(row) for row in rows] == [
+        (True, None, None, 1),
         (False, "null", "null", 1),
         (False, "object", '{"kind": "object"}', 1),
         (False, "array", '["nested", null]', 1),
         (False, "array", "[]", 1),
     ]
+
+
+def _stored_places(profile_run: Any) -> list[tuple[object, ...]]:
+    """Each ``mri_wide`` row's ``place`` Column: SQL NULL, and its JSON kind."""
+    return [
+        tuple(row)
+        for row in profile_run.port.execute(
+            "select id, place is null, jsonb_typeof(place) from mri_wide order by id", []
+        )
+    ]
+
+
+def _assert_document_column(statement: LoweredStatement, rows: int) -> None:
+    assert " select * from unnest(" in statement.sql
+    documents = [
+        bind
+        for bind in statement.binds
+        if isinstance(bind, ArrayBind) and isinstance(bind.element_type, Json)
+    ]
+    assert documents and {len(bind.values) for bind in documents} == {rows}
+
+
+def test_a_null_value_object_is_sql_null_whether_written_alone_or_in_a_column_array(
+    profile_run: Any,
+) -> None:
+    observation = LifecycleObservation()
+    db = _database(profile_run, observation)
+
+    def batch(tx: TxnContext) -> None:
+        tx.insert(Wide(id=2, place=None))
+        tx.insert(Wide(id=3, place=Place(city="c", rank=1)))
+
+    db.transact(lambda tx: tx.insert(Wide(id=1, place=None)))
+    db.transact(batch)
+    db.transact(lambda tx: tx.amend(tx.find(Wide.where(Wide.id == 3)).result().edit(place=None)))
+
+    alone, columns = _inserts(observation)
+    assert " values (" in alone.sql
+    _assert_document_column(columns, rows=2)
+    assert _stored_places(profile_run) == [(1, True, None), (2, True, None), (3, True, None)]
+
+
+def test_a_literal_json_null_document_stays_json_null_alone_and_in_a_column_array(
+    profile_run: Any,
+) -> None:
+    profile_run.reset(model_of(_MODEL), {})
+    profile_run.port.execute_write(
+        "insert into mri_wide(id, place, tags, counts) values (%s, %s, %s, %s)",
+        [1, JsonDocument(None), JsonDocument([]), JsonDocument([])],
+    )
+    profile_run.port.execute_write(
+        "insert into mri_wide(id, place, tags, counts) select * from unnest("
+        "cast(%s as bigint[]), cast(%s as jsonb[]), cast(%s as jsonb[]), cast(%s as jsonb[]))",
+        [
+            ArrayBind(INT64, [2, 3]),
+            ArrayBind(JSON, [JSON_NULL, None]),
+            ArrayBind(JSON, [[], []]),
+            ArrayBind(JSON, [[], []]),
+        ],
+    )
+    assert _stored_places(profile_run) == [(1, False, "null"), (2, False, "null"), (3, True, None)]
 
 
 @pytest.mark.parametrize(

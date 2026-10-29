@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
@@ -50,6 +51,7 @@ from parallax.core.dialect import Dialect
 __all__ = [
     "DRIVER_MANAGED",
     "ISOLATION_LEVELS",
+    "JSON_NULL",
     "RESOURCE_LOGGER_NAME",
     "AccessMode",
     "AcquisitionReason",
@@ -82,6 +84,7 @@ __all__ = [
     "Invalidated",
     "IsolationLevel",
     "JsonDocument",
+    "JsonNull",
     "MappingRow",
     "OrderedWriteResult",
     "OrderedWriteResultComplete",
@@ -258,9 +261,21 @@ class JsonDocument:
     leaking them into the developer surface (m-db-port: managed carriers only).
     Recursively immutable encoded containers remain the same value inside this
     wrapper; an adapter serializes them directly rather than thawing another tree.
+    ``JsonDocument(None)`` is the literal JSON null document; SQL NULL binds as a
+    bare ``None``.
     """
 
     value: object
+
+
+class JsonNull(enum.Enum):
+    """The literal JSON ``null`` document as one element of a ``json``
+    :class:`ArrayBind`, distinct from ``None``, which is SQL NULL there."""
+
+    JSON_NULL = "null"
+
+
+JSON_NULL: Final = JsonNull.JSON_NULL
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,13 +283,14 @@ class ArrayBind:
     """A neutral carrier for one array bind whose elements share ``element_type``.
 
     ``values`` holds the managed elements in order, with no per-element
-    wrapper. Under a scalar element type a ``None`` element is SQL NULL, and a
-    ``timestamp`` element may be the open upper bound ``INFINITY``; under
-    ``json`` each element is one encoded document, ``None`` being JSON null and
-    a list one document rather than a dimension. The carrier is the only owner of
-    its element type, so a concrete adapter binds the array from that type
-    alone rather than by inspecting its elements. ``values`` is the caller's own
-    list, handed over unchanged: it must not be mutated after binding.
+    wrapper. A ``None`` element is SQL NULL under every element type, and a
+    ``timestamp`` element may be the open upper bound ``INFINITY``. Under
+    ``json`` every other element is one encoded document: ``JSON_NULL`` is the
+    literal JSON null document, and a list is one document rather than a
+    dimension. The carrier is the only owner of its element type, so a concrete
+    adapter binds the array from that type alone rather than by inspecting its
+    elements. ``values`` is the caller's own list, handed over unchanged: it
+    must not be mutated after binding.
     """
 
     element_type: NeutralType

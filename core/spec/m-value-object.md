@@ -202,12 +202,8 @@ therefore apply one containment walk, one required-member rule, one `many`
 normalization, and one immutable ownership boundary.
 
 A **null** value object (`nullable: true`, written absent) binds SQL `NULL` — the
-whole column is null, not a document of nulls. A multi-row insert that binds the
-column as one `json` array (`m-sql` *Batched insert / update*) stores it as that
-row's JSON `null` element instead, because a `json` array element is never SQL
-`NULL` (`m-db-port`); reads and predicates collapse the two to the same absent
-value object (`m-document-codec`, `m-predicate` absence-collapse rule). A
-`nullable: false` `one` occurrence MUST be present at write time (`m-predicate` / the `rejected`
+whole column is null, not a document of nulls. A `nullable: false` `one`
+occurrence MUST be present at write time (`m-predicate` / the `rejected`
 write-validation cases). A `many` occurrence carries no such requirement, because
 it has no absent state to require: `m-document-codec` fixes `Missing` and `[]` as
 one logical zero state for a `Many`, so a write input that does not name one has

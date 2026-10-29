@@ -133,7 +133,8 @@ def compare_binds(
     dict/list literal exactly like `parallax.conformance.engine._json_bind`'s
     own emission-wire rendering; an array bind (an ``ArrayBind`` carrier)
     reconciles element by element, each element as a bind of its own, against
-    the golden's list of equal length; everything else is exact wire equality.
+    the golden's list of equal length, a literal JSON-null element as null like
+    ``JsonDocument(None)``; everything else is exact wire equality.
 
     At each of ``positions`` the bind additionally carries the golden's float
     zero sign (`tests._support.bind_positions`).
@@ -159,9 +160,11 @@ def compare_binds(
 
 
 def _array_elements(bind: object) -> object:
-    from parallax.core.db_port import ArrayBind
+    from parallax.core.db_port import JSON_NULL, ArrayBind
 
-    return bind.values if isinstance(bind, ArrayBind) else bind
+    if not isinstance(bind, ArrayBind):
+        return bind
+    return [None if element is JSON_NULL else element for element in bind.values]
 
 
 def _wire_value(value: object) -> object:

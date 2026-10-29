@@ -52,6 +52,7 @@ from parallax.conformance._mechanism.sole_connection import (
 from parallax.core.base import Json
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    JSON_NULL,
     AccessMode,
     ArrayBind,
     BeginFailed,
@@ -140,8 +141,9 @@ def inserted_rows(call: WriteCall) -> tuple[tuple[Bind, ...], ...]:
 
     A single-row insert binds its row's cells; a multi-row insert binds one
     typed column array per cell slot (`m-sql` *Batched insert / update*), read
-    back here row by row, with each document element as the document carrier
-    it binds as alone. The arrays must agree in length.
+    back here row by row, with each document element as the bind it is alone:
+    SQL NULL as ``None``, the literal JSON null as ``JsonDocument(None)``, and
+    any other document in its carrier. The arrays must agree in length.
     """
     assert call.sql.startswith("insert"), call.sql
     if not call.binds or not all(isinstance(bind, ArrayBind) for bind in call.binds):
@@ -154,7 +156,7 @@ def inserted_rows(call: WriteCall) -> tuple[tuple[Bind, ...], ...]:
     return tuple(
         zip(
             *(
-                [JsonDocument(value) for value in column.values]
+                [_document_bind(value) for value in column.values]
                 if isinstance(column.element_type, Json)
                 else column.values
                 for column in columns
@@ -162,6 +164,12 @@ def inserted_rows(call: WriteCall) -> tuple[tuple[Bind, ...], ...]:
             strict=True,
         )
     )
+
+
+def _document_bind(element: object) -> Bind:
+    if element is None:
+        return None
+    return JsonDocument(None if element is JSON_NULL else element)
 
 
 @dataclass(frozen=True, slots=True)

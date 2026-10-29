@@ -473,7 +473,7 @@ def _assignment_clause(
     ):
         if isinstance(value, PatchedDocument):
             value = _document_assignments(value.patches, entity)
-        elif document:
+        elif document and value is not None:
             value = JsonDocument(value)
         if column == version_column:
             advance = (column, value, neutral_type)
@@ -694,11 +694,12 @@ def _temporal_gate(
 
 def _bound(values: tuple[object, ...], documents: Sequence[bool]) -> Sequence[object]:
     """One row's bind values: each stored document wrapped as the port's
-    structured-document carrier, every other value as it is."""
+    structured-document carrier, every other value as it is, ``None``
+    included, so a null Value Object binds SQL NULL."""
     if not any(documents):
         return values
     return [
-        JsonDocument(value) if document else value
+        JsonDocument(value) if document and value is not None else value
         for value, document in zip(values, documents, strict=True)
     ]
 
