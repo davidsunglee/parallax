@@ -56,12 +56,12 @@ from parallax.core.write_plan.steps import (
     Versioned,
 )
 from tests._support.db_port import Read, ScriptedAdapter
-from tests.unit.core._execution._write_step_support import open_flush, run_plan
-from tests.unit.core._execution.test_write_lowering_grouped_effects import (
+from tests.unit.core._execution._grouped_effect_support import (
     ACCOUNT,
     WALLET,
     update,
 )
+from tests.unit.core._execution._write_step_support import open_flush, run_plan
 
 
 class _Port:
@@ -210,12 +210,31 @@ def test_a_repeated_ordinal_is_an_excess_for_its_step() -> None:
         [()],
         [1],
         "rows",
+        None,
+        3,
+        iter([(1,), (2,)]),
     ],
-    ids=["bool", "zero", "past-the-end", "text", "two-cells", "no-cell", "bare", "not-rows"],
+    ids=[
+        "bool",
+        "zero",
+        "past-the-end",
+        "text",
+        "two-cells",
+        "no-cell",
+        "bare",
+        "not-rows",
+        "none",
+        "integer",
+        "iterator",
+    ],
 )
-def test_a_malformed_result_is_refused_before_any_step_is_enforced(rows: object) -> None:
+@pytest.mark.parametrize("observed", [False, True], ids=["unobserved", "observed"])
+def test_a_malformed_result_is_refused_before_any_step_is_enforced(
+    rows: object, observed: bool
+) -> None:
     # The first step is short too; the malformed row still outranks it.
-    raised = _run(_Port(rows), _grouped(_wallets(1, 2)))
+    provider = RecordingLifecycleProvider() if observed else None
+    raised = _run(_Port(rows), _grouped(_wallets(1, 2)), provider=provider)
     assert isinstance(raised, WriteResultIntegrityError)
     assert "grouped effect" in str(raised)
 
