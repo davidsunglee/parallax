@@ -1,12 +1,13 @@
-"""Read a PostgreSQL grouped effect as the keyed updates it applies, one per row.
+"""Read a PostgreSQL grouped effect as the keyed effects it applies, one per row.
 
 A grouped effect (`m-sql` *Grouped effects*) is one ``update <table> t set … from
 unnest(cast(? as T[]), …) with ordinality v(c1, …, ord) where … returning v.ord``
-statement: row ``i`` of its source carries the per-row values of the ``i``-th
-keyed update it applies, read wherever the statement names ``v.cN``. Spelling each
-row back as the lone update it stands for lets every per-row cross-check grade a
-grouped golden exactly as it grades one statement per row, without restating any
-production layout rule here.
+or ``delete from <table> t using unnest(…) with ordinality v(…) where … returning
+v.ord`` statement: row ``i`` of its source carries the per-row values of the
+``i``-th keyed update, delete, or milestone effect it applies, read wherever the
+statement names ``v.cN``. Spelling each row back as the lone statement it stands
+for lets every per-row cross-check grade a grouped golden exactly as it grades one
+statement per row, without restating any production layout rule here.
 """
 
 from __future__ import annotations
@@ -29,15 +30,18 @@ _LONE_PREFIX = "__parallax_lone_"
 _LONE_PLACEHOLDER = re.compile(r"%\(" + _LONE_PREFIX + r"\d+\)s")
 
 
+_SOURCE_ARGUMENT = {exp.Update: "from_", exp.Delete: "using"}
+
+
 class GroupedEffectShapeError(ValueError):
     """A grouped effect whose source does not bind one equal-length array per
     source column, or that returns anything but its source ordinal."""
 
 
 def ungrouped_effect(statement: str, binds: Sequence[Any]) -> list[tuple[str, list[Any]]] | None:
-    """Each keyed update the grouped effect *statement* applies, in source order,
-    as the canonical lone ``update`` it stands for with its own binds; ``None``
-    for any other statement.
+    """Each keyed effect the grouped effect *statement* applies, in source order,
+    as the canonical lone ``update`` or ``delete`` it stands for with its own
+    binds; ``None`` for any other statement.
 
     Every ``v.cN`` the statement reads becomes that row's element of the array
     bound to source column ``cN`` — cast to ``jsonb`` where the array is a
@@ -45,7 +49,7 @@ def ungrouped_effect(statement: str, binds: Sequence[Any]) -> list[tuple[str, li
     shared scalar keeps its own bind, and the target alias is dropped.
     """
     tree = parse_indexed_statement(statement, "postgres")
-    if not isinstance(tree, exp.Update):
+    if not isinstance(tree, exp.Update | exp.Delete):
         return None
     source = _source(tree)
     if source is None:
@@ -85,9 +89,13 @@ def ungrouped_effect(statement: str, binds: Sequence[Any]) -> list[tuple[str, li
     return [_lone(tree, alias.name, target, arrays, documents, binds, row) for row in range(rows)]
 
 
-def _source(tree: exp.Update) -> tuple[exp.Unnest, exp.TableAlias, str] | None:
-    source = tree.args.get("from_")
-    unnest = source.this if isinstance(source, exp.From) else None
+def _source(tree: exp.Update | exp.Delete) -> tuple[exp.Unnest, exp.TableAlias, str] | None:
+    source = tree.args.get(_SOURCE_ARGUMENT[type(tree)])
+    if isinstance(source, exp.From):
+        source = source.this
+    elif isinstance(source, list):
+        source = source[0] if len(source) == 1 else None
+    unnest = source
     if not isinstance(unnest, exp.Unnest):
         return None
     alias = unnest.args.get("alias")
@@ -98,7 +106,7 @@ def _source(tree: exp.Update) -> tuple[exp.Unnest, exp.TableAlias, str] | None:
 
 
 def _lone(
-    tree: exp.Update,
+    tree: exp.Update | exp.Delete,
     source: str,
     target: str,
     arrays: dict[str, list[Any]],
@@ -107,7 +115,7 @@ def _lone(
     row: int,
 ) -> tuple[str, list[Any]]:
     lone = tree.copy()
-    lone.set("from_", None)
+    lone.set(_SOURCE_ARGUMENT[type(tree)], None)
     lone.set("returning", None)
     table = lone.this
     if isinstance(table, exp.Table):

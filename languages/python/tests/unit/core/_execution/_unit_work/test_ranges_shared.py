@@ -422,6 +422,9 @@ def test_a_group_lays_every_members_non_insert_steps_before_any_insert() -> None
             group.steps, [step for steps in own for step in steps], strict=True
         )
     )
+    # Every close is one shape, so the bound group records them all as one span.
+    (span,) = group.effect_spans
+    assert (span.start, span.stop) == (0, 4 + 2)
 
 
 # --------------------------------------------------------------------------- #

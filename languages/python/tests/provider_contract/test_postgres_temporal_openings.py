@@ -409,10 +409,10 @@ def test_a_grouped_insert_of_distinct_objects_fails_whole_naming_no_row(
     assert (cause.category, cause.native_code) == ("constraintViolation", "23514")
     assert cause.constraint_name == "opn_ledger_amount"
     events = _events(provider)
-    closes, inserts = _writes(events)[:3], _writes(events)[3:]
-    assert all(close.startswith("update opn_ledger") for close in closes)
-    # Every object's successor in one statement, presented once and never replayed.
-    (insert,) = inserts
+    # Every object's close in one grouped effect, and every object's successor
+    # in one statement, presented once and never replayed.
+    close, insert = _writes(events)
+    assert close.startswith("update opn_ledger t set out_z = v.c")
     assert " select * from unnest(" in insert
     assert _inserted_rows(events) == [3]
     failed = [

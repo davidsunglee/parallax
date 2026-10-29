@@ -1261,7 +1261,7 @@ def _observed_flush(
         *,
         read_only: bool = False,
     ) -> list[Row]:
-        events.append("read")
+        events.append("grouped" if sql.endswith(" returning v.ord") else "read")
         return execute(port, sql, binds, document_reads, read_only=read_only)
 
     def writing(
@@ -1305,17 +1305,20 @@ def _presented(invocations: int, inserts: int) -> list[str]:
     return ["ordered"] * invocations + ["statement"] * inserts
 
 
+_GROUPED: Final = ["grouped", "statement"]
+
 _GROUP_CALLS: Final[dict[str, list[list[str]]]] = {
-    "cross-object.txtime.changed-64.columns.typed": [["ordered", "statement"]],
-    "cross-object.txtime.changed-130.columns.typed": [["ordered", "statement"]] * 3,
-    "cross-object.bitemporal.interior-64.document.wire": [["ordered", "statement"]],
-    "cross-object.bitemporal.deferred-32x4.columns.typed": [_presented(2, 1)],
-    "cross-object.bitemporal.deferred-32x12.document.wire": [_presented(6, 1)],
-    "cross-object.bitemporal.requesting-32x12.document.wire": [_presented(6, 1)],
-    "cross-object.bitemporal.deferred-32x32.columns.typed": [_presented(16, 1)],
-    "cross-object.bitemporal.partial-3x66.columns.typed": [_presented(2, 1), _presented(2, 1)],
+    "cross-object.txtime.changed-64.columns.typed": [_GROUPED],
+    "cross-object.txtime.changed-130.columns.typed": [_GROUPED] * 3,
+    "cross-object.bitemporal.interior-64.document.wire": [_GROUPED],
+    "cross-object.bitemporal.deferred-32x4.columns.typed": [_GROUPED],
+    "cross-object.bitemporal.deferred-32x12.document.wire": [_GROUPED],
+    "cross-object.bitemporal.requesting-32x12.document.wire": [_GROUPED],
+    "cross-object.bitemporal.deferred-32x32.columns.typed": [_GROUPED],
+    "cross-object.bitemporal.partial-3x66.columns.typed": [_presented(2, 1), _GROUPED],
 }
-"""What each Write Group presents: its closes' ordered invocations, then its
+"""What each Write Group presents: its closes as one grouped effect where it
+holds several objects, and otherwise in ordered invocations, then its
 openings' one insert."""
 
 
@@ -1373,17 +1376,24 @@ holds."""
 
 def _calculated_work(name: str) -> lowering_support.FlushWork:
     """A deferred case's work under the realization contract: each group's
-    closes in ordered invocations of at most 64, a lone remainder alone, and
-    all its openings in one insert."""
+    closes in one grouped effect where it holds several objects, and
+    otherwise in ordered invocations of at most 64, a lone remainder alone,
+    and all its openings in one insert."""
     objects, groups = _DEFERRED_GEOMETRY[name]
-    statements = invocations = largest = 0
+    statements = invocations = ordered = largest = grouped = 0
     for group in groups:
         closes = sum(objects[index][0] for index in group)
-        full, rest = divmod(closes, 64)
-        statements += closes + 1
-        invocations += full + (1 if rest else 0) + 1
+        if len(group) > 1:
+            statements += 2
+            invocations += 2
+            grouped = max(grouped, closes)
+        else:
+            full, rest = divmod(closes, 64)
+            statements += closes + 1
+            invocations += full + (1 if rest else 0) + 1
+            ordered = max(ordered, min(closes, 64))
         largest = max(largest, sum(objects[index][1] for index in group))
-    return lowering_support.FlushWork(statements, invocations, 64, largest, 0)
+    return lowering_support.FlushWork(statements, invocations, ordered, largest, grouped)
 
 
 def test_each_cross_object_flush_writes_every_object_through_its_call_shapes() -> None:
@@ -1404,9 +1414,10 @@ def test_each_cross_object_flush_writes_every_object_through_its_call_shapes() -
             assert port.coverage_reads == case.coverage_reads == len(case.groups)
             continue
         successors = 3 if case.bounded else 1
-        assert case.work.largest_ordered_invocation == 64
+        assert case.work.largest_ordered_invocation == 0
+        assert case.work.largest_grouped_effect == max(case.groups)
         assert case.work.largest_grouped_insert == max(case.groups) * successors
-        assert case.work.statements == case.objects + len(case.groups)
+        assert case.work.statements == 2 * len(case.groups)
         assert case.work.invocations == 2 * len(case.groups)
 
 

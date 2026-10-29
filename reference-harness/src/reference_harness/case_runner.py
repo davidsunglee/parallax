@@ -1707,7 +1707,8 @@ def _assert_delete_input(
     # `id in (…)` binds carry EVERY buffered pk. Cross-check that all of them appear
     # — a meaningful check for the collapse (a dropped/typo'd key is caught). The
     # per-statement path below (one statement per row: the FK-ordered m-unit-work-007
-    # deletes, the versioned per-key m-batch-write-004 deletes, the dependent-cascade
+    # deletes, the versioned per-key m-batch-write-004 deletes — read back one per
+    # source row where PostgreSQL groups them — the dependent-cascade
     # m-cascade-delete-001 statements keyed on a same-valued FK) keeps the weaker
     # "this statement's binds carry SOME pk" check, since those bind a single key.
     collapsed = len(step_binds) == 1 and len(pk_values) > 1

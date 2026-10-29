@@ -1953,14 +1953,13 @@ def test_write_sequence_compile_wraps_a_lowering_failure_as_engine_error() -> No
 # (`_check_statement_count_consistency`). A structured predicate-write        #
 # instruction reaching this seam refuses loudly, never a bare `KeyError`.     #
 # --------------------------------------------------------------------------- #
-def test_versioned_delete_decomposes_per_row() -> None:
-    # m-batch-write-004's own shape: a versioned entity's multi-row delete
-    # decomposes per row — each row is removed under its own prior observation,
-    # so `batch_write.delete_collapses` refuses to collapse it — regardless of
-    # the authored `statements` count matching `len(rows)` (which it does here
-    # too — the discriminator does not consult it either way). `Account` is
-    # versioned, so the default `optimistic` preference gates each key on its
-    # own observed version.
+def test_versioned_deletes_stay_per_row_and_apply_as_one_grouped_effect() -> None:
+    # m-batch-write-004's own shape: a versioned entity's multi-row delete keeps
+    # one step per row — each row is removed under its own prior observation,
+    # so `batch_write.delete_collapses` refuses to collapse it — and execution
+    # presents those steps as one grouped effect, each source row binding its
+    # own key and gate. `Account` is versioned, so the default `optimistic`
+    # preference gates each key on its own observed version.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -1969,10 +1968,10 @@ def test_versioned_delete_decomposes_per_row() -> None:
                     {
                         "mutation": "delete",
                         "entity": "Account",
-                        "statements": 2,
+                        "statements": 1,
                         "rows": [
                             {"id": 1, "observedVersion": 1},
-                            {"id": 2, "observedVersion": 1},
+                            {"id": 2, "observedVersion": 4},
                         ],
                     }
                 ]
@@ -1980,11 +1979,14 @@ def test_versioned_delete_decomposes_per_row() -> None:
         },
     )
     emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
-    assert database_calls == 2
-    assert [(e.sql, e.binds) for e in emissions] == [
-        ("delete from account where id = ? and version = ?", (1, 1)),
-        ("delete from account where id = ? and version = ?", (2, 1)),
-    ]
+    assert database_calls == 1
+    ((sql, binds),) = [(e.sql, e.binds) for e in emissions]
+    assert sql == (
+        "delete from account t using unnest(cast(? as bigint[]), cast(? as int[])) "
+        "with ordinality v(c1, c2, ord) where t.id = v.c1 and t.version = v.c2 "
+        "returning v.ord"
+    )
+    assert [cast("ArrayBind", bind).values for bind in binds] == [[1, 2], [1, 4]]
 
 
 def test_an_insert_row_authoring_an_observed_version_is_refused() -> None:
@@ -2386,8 +2388,8 @@ def test_authored_statement_count_mismatch_is_rejected() -> None:
     # `statements` is a count-consistency ASSERTION
     # (`compatibility-case.schema.json`), verified independently of the
     # derived instruction count — never the discriminator itself. Two rows of a
-    # versioned delete (which decomposes regardless), each carrying its own
-    # `observedVersion`, authored with a WRONG `statements: 1`.
+    # versioned delete (one step each, applied as one grouped effect), each
+    # carrying its own `observedVersion`, authored with a WRONG `statements: 2`.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -2396,7 +2398,7 @@ def test_authored_statement_count_mismatch_is_rejected() -> None:
                     {
                         "mutation": "delete",
                         "entity": "Account",
-                        "statements": 1,
+                        "statements": 2,
                         "rows": [
                             {"id": 1, "observedVersion": 1},
                             {"id": 2, "observedVersion": 1},

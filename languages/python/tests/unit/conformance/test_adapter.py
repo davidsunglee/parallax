@@ -668,7 +668,7 @@ def test_run_case_unsupported_for_an_out_of_claim_dialect() -> None:
 
 
 def test_run_case_unsupported_for_an_ordered_transport_case_on_a_connection_holding_none() -> None:
-    (case_path,) = case_format.default_cases_dir().glob("m-execution-lifecycle-012-*.yaml")
+    (case_path,) = case_format.default_cases_dir().glob("m-execution-lifecycle-014-*.yaml")
     envelope = adapter.run_case(case_path, _PROFILE.on_stand_in(_NeverCalledPort()))
     validate_adapter_envelope(envelope)
     assert envelope["status"] == "unsupported"

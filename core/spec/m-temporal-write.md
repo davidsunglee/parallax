@@ -617,6 +617,20 @@ several of a range's steps would fail, a lost
 start that a revised row holds therefore fails after every close, guard, and
 removal of the range.
 
+A grouped effect (`m-sql` *Grouped effects*) keeps this order. It holds effects
+of one kind only and never crosses into the inserts, so every close, guard, and
+removal of an object still runs before its successors open and before any
+revision of a row the attempt opened, and a write's later effect waits for a
+later grouped effect rather than joining one that runs before its earlier
+effect (`m-unit-work` *Write Group formation*). Within one statement the rows
+may be visited in any order: closes, guards, and removals of distinct
+milestones only end coverage or match it unchanged, and revisions of one write
+move only Valid-Time starts into coverage its earlier statement ended, so no
+row of any visiting order leaves two current rows of one object overlapping.
+Each effect is enforced against its own source ordinal's count, under the
+expectation its lone form carries, and a refused exclusion fails the whole
+statement as its own database error (`m-execution`).
+
 A row opening a **new lineage** — an `insert`'s, each surviving part of a pending
 insert (`m-unit-work` *Same-transaction write coalescing*), and each Coverage
 Gap — carries the authored state over its own coverage, stamped exactly as a

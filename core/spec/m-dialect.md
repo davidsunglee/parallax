@@ -67,7 +67,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six text-compared types compare as the canonical document text on both dialects |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
-| **array parameter cast form** (`m-sql` membership, deferred key set, multi-row insert, and grouped effect) | `cast(? as <type>[])` — the one list or key-set array cast to the array of the unmodified type its subject compares in, a multi-row insert's `select * from unnest(…)` over one such array per Column, and a grouped effect's `unnest(…) with ordinality` source over one such array per source column, returning each changed row's ordinal (see below) | none — the list or key set expands to one placeholder per element, a multi-row insert is multi-row `VALUES`, and each keyed update of a grouped effect runs as its own statement |
+| **array parameter cast form** (`m-sql` membership, deferred key set, multi-row insert, and grouped effect) | `cast(? as <type>[])` — the one list or key-set array cast to the array of the unmodified type its subject compares in, a multi-row insert's `select * from unnest(…)` over one such array per Column, and a grouped effect's `unnest(…) with ordinality` source over one such array per source column, returning each changed or removed row's ordinal (see below) | none — the list or key set expands to one placeholder per element, a multi-row insert is multi-row `VALUES`, and each keyed effect of a grouped effect runs as its own statement |
 | **scalar element projection** (`m-predicate` scalar quantifiers) | `case when jsonb_typeof(t1.value) = ? then <typed projection of t1.value #>> ?> end` — the element's declared JSON kind guards the projection (see below) | none — a filtered scalar quantifier is outside the MariaDB lane and is refused (see below) |
 | **single-object presence** (`m-predicate` `exists` over a value object) | `coalesce(jsonb_typeof(jsonb_extract_path(col, ?, …)) = ?, false)` | none — outside the MariaDB lane |
 | **Boolean result envelope** (`m-sql` target-local narrowing with an operand) | `(coalesce((select array [ <boolean> ] …), array [ false ])) [ 1 ]` — keeps a selected target's unknown apart from an absent target (see below) | none — outside the MariaDB lane |
@@ -305,13 +305,14 @@ than being truncated or rounded by the cast. MariaDB has no array parameter and
 spells a multi-row insert as multi-row `VALUES`, one placeholder per cell.
 
 A grouped effect (`m-sql` *Grouped effects*) binds one array per source column
-through the same casts — a key, gate, or assigned Column's array cast as that
-Column's, and an assigned document path's encoded values as `jsonb[]` — and
+through the same casts — a key, axis end, gate, or assigned Column's array cast
+as that Column's, an open Valid-Time end as the native `infinity` element, and an assigned document path's encoded values as `jsonb[]` — and
 spells `update <table> t set … from unnest(…) with ordinality v(c1, …, ord) where
-… returning v.ord`, so PostgreSQL reports which source row each changed target
+… returning v.ord`, or `delete from <table> t using unnest(…) …` for a delete or
+removal, so PostgreSQL reports which source row each changed or removed target
 row came from. MariaDB has no array parameter, and its joined update reports
 one aggregate count with no multi-table `RETURNING`, so it has no grouped effect
-and runs each keyed update as its own statement.
+and runs each keyed effect as its own statement.
 
 ### Array traversal form (`m-value-object`)
 

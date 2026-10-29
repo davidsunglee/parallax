@@ -493,7 +493,7 @@ def test_a_spans_ready_ranges_share_one_read_and_bind_together_before_their_grou
     assert reads == [(0, 0, (1, 2))]
     assert bindings == [(0, 0), (0, 0)]
     assert uow.source_authority.freshness == 2
-    assert statement_kinds(simulated.statements) == ["close", "close", "insert"]
+    assert statement_kinds(simulated.statements) == ["grouped close", "insert"]
 
 
 @pytest.mark.parametrize("deferred", [0, 2])
@@ -807,12 +807,13 @@ def test_writes_a_span_completed_before_its_later_read_failed_stay_published_unt
 
 
 def _written_keys(statement: LoweredStatement) -> set[object]:
-    """The keys of the objects ``statement`` writes."""
+    """The keys of the objects ``statement`` writes: a lone close's key, and
+    a grouped effect's or a multi-row insert's key array."""
     binds = statement.binds
-    if not statement.sql.startswith("insert"):
-        return {binds[1]}
-    key = binds[0]
-    return set(key.values) if isinstance(key, ArrayBind) else {key}
+    if statement.sql.startswith("insert") or statement.sql.endswith(" returning v.ord"):
+        key = binds[0]
+        return set(key.values) if isinstance(key, ArrayBind) else {key}
+    return {binds[1]}
 
 
 # --------------------------------------------------------------------------- #

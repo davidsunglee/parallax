@@ -1,33 +1,56 @@
 """Grouped effects against a real server (`m-execution` *Flush execution*,
-`m-sql` *Grouped effects*).
+`m-sql` *Grouped effects*, `m-temporal-write`).
 
 Each parity proof runs the same public writes twice: once as execution realizes
-them, applying the updates of one member set as one grouped update, and once
-over a connection reporting a dialect that binds no arrays, under which each
-update runs as the statement it lowers to alone. What a scripted port cannot
-establish is here: that PostgreSQL returns exactly the ordinals of the rows it
-changed, so another session's committed change refuses exactly its own object's
-gate; that a statement failure fails the whole grouped update; and that a unique
-value handed between objects still succeeds in authored order.
+them, applying the effects of one shape as one grouped effect, and once over a
+connection reporting a dialect that binds no arrays, under which each effect
+runs as the statement it lowers to alone. What a scripted port cannot establish
+is here: that PostgreSQL returns exactly the ordinals of the rows it changed or
+removed, so another session's committed change refuses exactly its own object's
+gate or milestone; that grouped closes, revisions, and removals store the
+history their lone statements store under the generated interval checks and
+exclusion; that a statement failure fails the whole grouped effect, an exclusion
+refusal recognized as the recoverable conflict it is; and that a unique value
+handed between objects still succeeds in authored order.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import threading
+from collections.abc import Callable
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 
 from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
-from parallax.core import Attr, Document, DomainModel, Entity, Int32, attr, index
+from parallax.conformance.scripted_clock import ScriptedClock
+from parallax.core import (
+    Attr,
+    Bitemporal,
+    Document,
+    DomainModel,
+    Entity,
+    Int32,
+    TxTemporal,
+    attr,
+    index,
+)
+from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure
-from parallax.core.execution_lifecycle import DatabaseCallStarted, TransactionAttemptFinished
+from parallax.core.execution_lifecycle import (
+    AttemptRolledBack,
+    DatabaseCallStarted,
+    TransactionAttemptFinished,
+)
+from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import OptimisticLockConflictError
+from parallax.core.write_plan.steps import MilestoneTarget
 from parallax.snapshot import ScopedDatabase, TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.temporal_write_transport import CountingConnection, PortTally
@@ -60,17 +83,46 @@ class Seat(
     seat_no: Attr[int]
 
 
-_MODEL = DomainModel(Order, Ticket, Seat)
+class Book(TxTemporal, table="grp_book", namespace=_NAMESPACE):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[int]
+
+
+class Span(Bitemporal, table="grp_span", namespace=_NAMESPACE):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[int]
+
+
+class DocumentSpan(Bitemporal, table="grp_document_span", namespace=_NAMESPACE, layout=Document()):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[int]
+    note: Attr[str | None] = attr(max_length=16)
+
+
+_MODEL = DomainModel(Order, Ticket, Seat, Book, Span, DocumentSpan)
 _KEYS = tuple(range(1, 6))
 type _Row = tuple[object, ...]
+type _Concurrency = Literal["optimistic", "locking"]
+
+_JAN, _FEB, _JUN, _SEP = (dt.datetime(2024, month, 1, tzinfo=dt.UTC) for month in (1, 2, 6, 9))
+_INSTANTS = tuple(dt.datetime(2023, 12, day, tzinfo=dt.UTC) for day in range(1, 29))
+"""One Transaction Instant per attempt, alike in every run of one proof, so the
+history each run stores compares whole."""
 
 
 def _database(
-    profile_run: Any, provider: RecordingLifecycleProvider, *, grouped: bool = True
+    profile_run: Any,
+    provider: RecordingLifecycleProvider,
+    *,
+    grouped: bool = True,
+    reset: bool = True,
+    instants: tuple[dt.datetime, ...] = _INSTANTS,
 ) -> ScopedDatabase:
     """A root over the server, whose connections report a dialect binding no
-    arrays unless ``grouped``, so every update runs alone."""
-    profile_run.reset(model_of(_MODEL), {})
+    arrays unless ``grouped``, so every effect runs alone, its Tables reset
+    first where ``reset``."""
+    if reset:
+        profile_run.reset(model_of(_MODEL), {})
     port = (
         profile_run.port
         if grouped
@@ -81,7 +133,9 @@ def _database(
             ),
         )
     )
-    return own_root(connect(port, _MODEL, lifecycle_provider=provider)).using_database_login()
+    return own_root(
+        connect(port, _MODEL, clock=ScriptedClock(instants), lifecycle_provider=provider)
+    ).using_database_login()
 
 
 def _seed(db: ScopedDatabase) -> None:
@@ -276,3 +330,326 @@ def test_a_unique_violation_fails_the_whole_grouped_update_naming_no_row(
     (statement,) = _writes(provider)
     assert statement.statement.sql.startswith("update grp_seat t set seat_no = v.c2 from unnest(")
     assert _rows(profile_run, "grp_seat") == before
+
+
+# --------------------------------------------------------------------------- #
+# Deletes and temporal effects.                                                #
+# --------------------------------------------------------------------------- #
+_HISTORY_ORDER = {"grp_order": "id", "grp_book": "id, in_z, out_z"}
+
+
+def _history(profile_run: Any, table: str) -> list[_Row]:
+    """Every row ``table`` stores, in one order whatever order wrote them."""
+    order = _HISTORY_ORDER.get(table, "id, in_z, out_z, from_z")
+    return [
+        tuple(row)
+        for row in profile_run.port.execute(f"select * from {table} order by {order}", [])
+    ]
+
+
+def _realized(
+    profile_run: Any,
+    table: str,
+    seed: Callable[[TxnContext], None],
+    edits: Callable[[TxnContext], None],
+    *,
+    grouped: bool,
+    concurrency: _Concurrency = "optimistic",
+    prepare: Callable[[TxnContext], None] | None = None,
+) -> tuple[list[_Row], list[str]]:
+    """What ``edits`` leave stored in ``table`` after ``seed`` and ``prepare``
+    committed, and the DML its transaction ran, grouped or each effect alone.
+
+    The seed and preparation run grouped, each at its own earlier instant, so
+    every run of one proof starts from the same stored history."""
+    seeding = _database(profile_run, RecordingLifecycleProvider(), instants=_INSTANTS[:2])
+    seeding.transact(seed)
+    if prepare is not None:
+        seeding.transact(prepare)
+    provider = RecordingLifecycleProvider()
+    db = _database(profile_run, provider, grouped=grouped, reset=False, instants=_INSTANTS[2:])
+    db.transact(edits, concurrency=concurrency)
+    return _history(profile_run, table), [event.statement.sql for event in _writes(provider)]
+
+
+def _seed_orders(tx: TxnContext) -> None:
+    for key in _KEYS:
+        tx.insert(Order(id=key, total=Decimal(key), note=None))
+
+
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_grouped_deletes_remove_what_each_delete_alone_removes(
+    profile_run: Any, concurrency: _Concurrency
+) -> None:
+    def remove(tx: TxnContext) -> None:
+        for order in tx.find(Order.where(Order.id >= 2)).results():
+            tx.delete(order)
+
+    alone, alone_writes = _realized(
+        profile_run, "grp_order", _seed_orders, remove, grouped=False, concurrency=concurrency
+    )
+    grouped, grouped_writes = _realized(
+        profile_run, "grp_order", _seed_orders, remove, grouped=True, concurrency=concurrency
+    )
+    assert grouped == alone
+    assert [row[0] for row in grouped] == [1]
+    assert len(alone_writes) == 4
+    (statement,) = grouped_writes
+    assert statement.startswith("delete from grp_order t using unnest(")
+
+
+def _seed_books(tx: TxnContext) -> None:
+    for key in _KEYS:
+        tx.insert(Book(id=key, amount=100))
+
+
+def _amend_books(tx: TxnContext) -> None:
+    for book in tx.find(Book.where(Book.id >= 1)).results():
+        tx.amend(book.edit(amount=book.amount + book.id))
+
+
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_grouped_transaction_time_closes_store_the_history_each_close_stores(
+    profile_run: Any, concurrency: _Concurrency
+) -> None:
+    alone, alone_writes = _realized(
+        profile_run, "grp_book", _seed_books, _amend_books, grouped=False, concurrency=concurrency
+    )
+    grouped, grouped_writes = _realized(
+        profile_run, "grp_book", _seed_books, _amend_books, grouped=True, concurrency=concurrency
+    )
+    assert grouped == alone
+    assert len(grouped) == 2 * len(_KEYS)
+    assert len(alone_writes) == 2 * len(_KEYS)
+    close, insert = grouped_writes
+    assert close.startswith("update grp_book t set out_z = v.c")
+    assert (" and t.in_z = v.c" in close) is (concurrency == "optimistic")
+    assert insert.startswith("insert into grp_book(")
+
+
+def test_grouped_guards_match_every_unchanged_milestone_and_change_nothing(
+    profile_run: Any,
+) -> None:
+    # Each amendment assigns the amount the book already holds, so under the
+    # optimistic strategy its milestone is proven unchanged by a guard that
+    # assigns its Transaction-Time start to itself: every row matches, none
+    # changes, and nothing opens.
+    def restate(tx: TxnContext) -> None:
+        for book in tx.find(Book.where(Book.id >= 1)).results():
+            tx.amend(book.edit(amount=book.amount))
+
+    runs = [
+        _realized(profile_run, "grp_book", _seed_books, restate, grouped=grouped)
+        for grouped in (False, True)
+    ]
+    (alone, alone_writes), (grouped, grouped_writes) = runs
+    assert grouped == alone
+    assert len(grouped) == len(_KEYS)
+    assert len(alone_writes) == len(_KEYS)
+    (guard,) = grouped_writes
+    assert guard.startswith("update grp_book t set in_z = t.in_z from unnest(")
+
+
+def _seed_spans(entity: type[Any]) -> Callable[[TxnContext], None]:
+    def seed(tx: TxnContext) -> None:
+        for key in _KEYS:
+            tx.insert(entity(id=key, amount=100), valid_from=_JAN)
+
+    return seed
+
+
+def _split_spans(entity: type[Any]) -> Callable[[TxnContext], None]:
+    """Amend every span from February until September: one close each, then a
+    head, a changed middle, and a tail."""
+
+    def split(tx: TxnContext) -> None:
+        for span in tx.find(entity.where(entity.id >= 1).as_of(valid_time=_FEB)).results():
+            tx.amend(span.edit(amount=span.amount + span.id), until=_SEP)
+
+    return split
+
+
+@pytest.mark.parametrize("entity", [Span, DocumentSpan], ids=["columns", "document"])
+@pytest.mark.parametrize("concurrency", ["optimistic", "locking"])
+def test_grouped_bitemporal_interior_splits_store_the_history_each_alone_stores(
+    profile_run: Any, entity: type[Any], concurrency: _Concurrency
+) -> None:
+    table = "grp_span" if entity is Span else "grp_document_span"
+    runs = [
+        _realized(
+            profile_run,
+            table,
+            _seed_spans(entity),
+            _split_spans(entity),
+            grouped=grouped,
+            concurrency=concurrency,
+        )
+        for grouped in (False, True)
+    ]
+    (alone, alone_writes), (grouped, grouped_writes) = runs
+    assert grouped == alone
+    assert len(grouped) == 4 * len(_KEYS)
+    assert len(alone_writes) == len(_KEYS) + 3 * len(_KEYS)
+    close, insert = grouped_writes
+    assert close.startswith(f"update {table} t set out_z = v.c")
+    assert insert.startswith(f"insert into {table}(")
+
+
+def _two_rectangles(tx: TxnContext) -> None:
+    """Each span's amount changes from June on, leaving it two current
+    rectangles: January to June and June onward."""
+    for span in tx.find(Span.where(Span.id >= 1).as_of(valid_time=_JUN)).results():
+        tx.amend(span.edit(amount=200))
+
+
+def test_grouped_closes_of_deferred_ranges_reach_every_rectangle_each_write_acquired(
+    profile_run: Any,
+) -> None:
+    # A find at February observes only each span's first rectangle, so each
+    # amendment until September acquires its June rectangle with the shared
+    # coverage read, and closes both of its own rectangles in one statement
+    # beside every other span's.
+    runs = [
+        _realized(
+            profile_run,
+            "grp_span",
+            _seed_spans(Span),
+            _split_spans(Span),
+            grouped=grouped,
+            prepare=_two_rectangles,
+        )
+        for grouped in (False, True)
+    ]
+    (alone, alone_writes), (grouped, grouped_writes) = runs
+    assert grouped == alone
+    closes = [sql for sql in alone_writes if sql.startswith("update")]
+    assert len(closes) == 2 * len(_KEYS)
+    close, insert = grouped_writes
+    assert close.startswith("update grp_span t set out_z = v.c")
+    assert insert.startswith("insert into grp_span(")
+
+
+def _revise_and_remove(tx: TxnContext) -> None:
+    """Amend every span from February until September, then once the flush has
+    run, amend the even spans' opened middles again, which revises them in
+    place, and terminate the odd spans' opened middles, which removes them."""
+    _split_spans(Span)(tx)
+    middles = tx.find(Span.where(Span.id >= 1).as_of(valid_time=_FEB)).results()
+    for span in middles:
+        if span.id % 2:
+            tx.terminate(span, until=_SEP)
+        else:
+            tx.amend(span.edit(amount=span.amount * 10), until=_SEP)
+
+
+def test_grouped_same_attempt_revisions_and_removals_store_what_each_alone_stores(
+    profile_run: Any,
+) -> None:
+    runs = [
+        _realized(profile_run, "grp_span", _seed_spans(Span), _revise_and_remove, grouped=grouped)
+        for grouped in (False, True)
+    ]
+    (alone, _alone_writes), (grouped, grouped_writes) = runs
+    assert grouped == alone
+    later = grouped_writes[2:]
+    assert any(sql.startswith("update grp_span t set ") for sql in later)
+    assert any(sql.startswith("delete from grp_span t using unnest(") for sql in later)
+
+
+def _advance_book(db: ScopedDatabase, key: int) -> None:
+    def write(tx: TxnContext) -> None:
+        book = tx.find(Book.where(Book.id == key)).result()
+        tx.amend(book.edit(amount=-1))
+
+    writer = threading.Thread(target=db.transact, args=(write,))
+    writer.start()
+    writer.join()
+
+
+def test_another_sessions_change_refuses_exactly_its_milestone_and_rolls_back_the_rest(
+    profile_run: Any,
+) -> None:
+    provider = RecordingLifecycleProvider()
+    db = _database(profile_run, provider)
+    db.transact(_seed_books)
+    conflicts: list[OptimisticLockConflictError] = []
+    attempts: list[list[int]] = []
+    stored: list[list[_Row]] = []
+
+    def amend(tx: TxnContext) -> None:
+        books = sorted(tx.find(Book.where(Book.id >= 1)).results(), key=lambda book: book.id)
+        attempts.append([book.amount for book in books])
+        if len(attempts) == 1:
+            _advance_book(db, 3)
+        for book in books:
+            tx.amend(book.edit(amount=book.amount + 1))
+        try:
+            tx.find(Book.where(Book.id == 1)).result()
+        except OptimisticLockConflictError as conflict:
+            conflicts.append(conflict)
+            stored.append(_history(profile_run, "grp_book"))
+            raise
+
+    db.transact(amend, max_retries=1)
+    (conflict,) = conflicts
+    target = conflict.target
+    assert isinstance(target, MilestoneTarget)
+    assert target.key_values == (3,)
+    assert attempts == [[100] * 5, [100, 100, -1, 100, 100]]
+    # Read from another session while the losing attempt was open, the history
+    # held only the seed and the other session's close and successor: the
+    # grouped close of every other book was never committed.
+    (losing,) = stored
+    assert len(losing) == len(_KEYS) + 1
+    rows = _history(profile_run, "grp_book")
+    assert len(rows) == len(losing) + len(_KEYS)
+    current = sorted((row[0], row[1]) for row in rows if row[-1] is INFINITY)
+    assert current == [(1, 101), (2, 101), (3, 0), (4, 101), (5, 101)]
+    finished = [
+        event for event in provider.roots[1].events if isinstance(event, TransactionAttemptFinished)
+    ]
+    assert len(finished) == 2
+    assert isinstance(finished[0].outcome, AttemptRolledBack)
+
+
+def test_an_exclusion_refusal_fails_the_whole_grouped_close_as_a_recoverable_conflict(
+    profile_run: Any,
+) -> None:
+    # The Table's own exclusion is replaced, under its own name, by one no two
+    # rows closed at one instant satisfy, so the grouped close refuses it
+    # whichever row it visits second, while no ordinal falls short.
+    provider = RecordingLifecycleProvider()
+    db = _database(profile_run, provider)
+    db.transact(_seed_books)
+    view = storage_layout_view(model_of(_MODEL)).entity(Book.identity)
+    assert view is not None and view.layout.temporal_constraints is not None
+    name = view.layout.temporal_constraints.exclusion_name
+    control = profile_run.control()
+    try:
+        control.execute_write(f"alter table grp_book drop constraint {name}", [])
+        control.execute_write(
+            f"alter table grp_book add constraint {name} exclude using btree (out_z with =) "
+            "where (out_z <> 'infinity')",
+            [],
+        )
+    finally:
+        control.close()
+    before = _history(profile_run, "grp_book")
+    with pytest.raises(ExecutionFailure) as escaped:
+        db.transact(_amend_books, max_retries=1)
+    cause = escaped.value.cause
+    assert isinstance(cause, DatabaseError)
+    assert (cause.native_code, cause.constraint_name) == ("23P01", name)
+    finished = [
+        event
+        for event in provider.roots[-1].events
+        if isinstance(event, TransactionAttemptFinished)
+    ]
+    # Recognized as a recoverable conflict, the refusal is replayed once.
+    assert len(finished) == 2
+    first, last = (attempt.outcome for attempt in finished)
+    assert isinstance(first, AttemptRolledBack) and isinstance(last, AttemptRolledBack)
+    assert first.failure.retry_eligible is True
+    grouped = [event for event in _writes(provider) if " t set out_z = v.c" in event.statement.sql]
+    assert len(grouped) == 2
+    assert _history(profile_run, "grp_book") == before

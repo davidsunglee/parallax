@@ -39,6 +39,7 @@ from parallax.core.write_plan.payload import (
 )
 from parallax.core.write_plan.steps import (
     Finite,
+    Infinity,
     KeyTarget,
     MaxPlusOne,
     MilestoneTarget,
@@ -365,21 +366,34 @@ def _source_column(index: int) -> str:
     return f"{_SOURCE}.c{index + 1}"
 
 
+type _Effect = (
+    PlannedUpdate
+    | PlannedDelete
+    | PlannedClose
+    | PlannedTemporalRevision
+    | PlannedTemporalRemoval
+    | PlannedTemporalGuard
+)
+
+
 class GroupedEffectBuilder:
     """One statement applying every effect appended, in append order, each
     effect's per-row values drawn from one row of its source and the
-    statement returning the source ordinal of every target row it changed
-    (`m-sql` *Grouped effects*).
+    statement returning the source ordinal of every target row it changed or
+    removed (`m-sql` *Grouped effects*).
 
-    ``slots`` fix the source columns: each binds one array, whatever the
-    number of effects, through the dialect's array-parameter cast, and the
-    source is `unnest(…) with ordinality`. Every effect is an update of one
-    key of ``slots``' shape, and its assignments render in the clause grammar
-    a lone update's do, each value taken from its source column rather than a
-    bind; a version advance and a version gate are per-row values like any
-    other. A refused effect is not held, so :meth:`finish` still renders
-    exactly the effects appended before it. A dialect without array binds has
-    no grouped effect.
+    ``slots`` fix the step kind and the source columns: each binds one array,
+    whatever the number of effects, through the dialect's array-parameter
+    cast, and the source is `unnest(…) with ordinality`. An update, close,
+    revision, or guard is an `update … from` the source and a delete or
+    removal a `delete … using` it. Each renders its assignments, address, and
+    gate in the clause grammar the lone step's statement does, each per-row
+    value taken from its source column rather than a bind: a key, a bounded
+    axis end, a version advance, an assigned cell, and a version or
+    Transaction-Time start gate alike. Only the table-per-hierarchy tag and
+    the open Transaction-Time end bind once. A refused effect is not held, so
+    :meth:`finish` still renders exactly the effects appended before it. A
+    dialect without array binds has no grouped effect.
     """
 
     __slots__ = ("_dialect", "_meta", "_payloads", "_slots", "_steps")
@@ -393,68 +407,58 @@ class GroupedEffectBuilder:
         self._slots = slots
         self._meta = meta
         self._dialect = dialect
-        self._steps: list[PlannedUpdate] = []
-        self._payloads: list[AssignmentPayload] = []
+        self._steps: list[_Effect] = []
+        self._payloads: list[AssignmentPayload | None] = []
 
     def append(self, step: PlannedStep, payload: StepPayload) -> None:
         """Hold ``step`` with the payload prepared from its assignments,
         refusing a step of another shape than the slots place."""
         slots = self._slots
-        if not isinstance(step, PlannedUpdate) or step.entity != slots.entity:
-            raise SqlGenError(
-                f"{slots.entity.canonical}: a grouped effect holds updates of its own Entity"
-            )
-        assigned = _assignment_payload(step, payload)
-        if len(assigned.values) != len(slots.assignment_sources) or any(
-            isinstance(source, tuple)
-            and (
-                not isinstance(value, PatchedDocument)
-                or len(value.patches) != len(source)
-                or any(patch.removes for patch in value.patches)
-            )
-            for value, source in zip(assigned.values, slots.assignment_sources, strict=True)
+        if (
+            isinstance(step, PlannedInsert)
+            or type(step) is not slots.kind
+            or step.entity != slots.entity
         ):
             raise SqlGenError(
-                f"{slots.entity.canonical}: a grouped effect's update assigns a cell or path "
-                "its shape does not place"
+                f"{slots.entity.canonical}: a grouped effect holds effects of its shape's kind "
+                "and Entity"
             )
+        if _gated(step.concurrency) != (slots.gate_source is not None) or not _shaped_address(
+            step, slots
+        ):
+            raise SqlGenError(
+                f"{slots.entity.canonical}: a grouped effect's step addresses or gates its row "
+                "otherwise than its shape"
+            )
+        assigned: AssignmentPayload | None = None
+        if isinstance(step, PlannedUpdate | PlannedClose | PlannedTemporalRevision):
+            assigned = _assignment_payload(step, payload)
+            if len(assigned.values) != len(slots.assignment_sources) or any(
+                isinstance(source, tuple)
+                and (
+                    not isinstance(value, PatchedDocument)
+                    or len(value.patches) != len(source)
+                    or any(patch.removes for patch in value.patches)
+                )
+                for value, source in zip(assigned.values, slots.assignment_sources, strict=True)
+            ):
+                raise SqlGenError(
+                    f"{slots.entity.canonical}: a grouped effect's step assigns a cell or path "
+                    "its shape does not place"
+                )
+        else:
+            _require_no_payload(step, payload)
         self._steps.append(step)
         self._payloads.append(assigned)
 
     def finish(self) -> LoweredStatement:
         slots, meta, dialect = self._slots, self._meta, self._dialect
         steps, payloads = self._steps, self._payloads
-        first, payload = steps[0], payloads[0]
+        first = steps[0]
         entity = _entity(meta, first.entity)
         view = _layout(meta, entity)
         ctx = _ctx(meta, dialect)
-        concurrency = first.concurrency
-        version_column = (
-            _column(view, concurrency.attribute, entity)
-            if isinstance(concurrency, Versioned)
-            else None
-        )
-        terms: list[tuple[str, list[object]]] = []
-        advance: tuple[str, list[object]] | None = None
-        for column, value, source in zip(
-            payload.placement.columns, payload.values, slots.assignment_sources, strict=True
-        ):
-            quoted = dialect.quote(column)
-            if isinstance(source, tuple):
-                expression, binds = dialect.sourced_document_mutation(
-                    f"t.{quoted}",
-                    [patch.path for patch in cast("PatchedDocument", value).patches],
-                    [_source_column(index) for index in source],
-                )
-                term = (f"{quoted} = {expression}", binds)
-            else:
-                term = (f"{quoted} = {_source_column(source)}", list[object]())
-            if column == version_column:
-                advance = term
-            else:
-                terms.append(term)
-        if advance is not None:
-            terms.append(advance)
+        terms = _sourced_terms(first, payloads[0], slots, view, entity, dialect)
         for _, binds in terms:
             ctx.bind_structural_all(binds)
         element_types = slots.element_types
@@ -466,22 +470,117 @@ class GroupedEffectBuilder:
             [dialect.array_parameter(element_type) for element_type in element_types]
         )
         names = ", ".join([f"c{index + 1}" for index in range(len(element_types))])
-        target = cast("KeyTarget", first.target)
-        where = [
-            f"t.{dialect.quote(_column(view, attribute, entity))} = {_source_column(source)}"
-            for attribute, source in zip(target.key_attributes, slots.key_sources, strict=True)
-        ]
-        discriminator = view.discriminator
-        if discriminator is not None:
-            ctx.bind_framework(discriminator.value)
-            where.append(f"t.{dialect.quote(discriminator.slot.column.name)} = ?")
-        if slots.gate_source is not None and version_column is not None:
-            where.append(f"t.{dialect.quote(version_column)} = {_source_column(slots.gate_source)}")
+        source = f"unnest({arrays}) with ordinality {_SOURCE}({names}, ord)"
+        where = " and ".join(_sourced_address(ctx, first, slots, view, entity, dialect))
+        table = view.layout.table.name
+        if isinstance(first, PlannedDelete | PlannedTemporalRemoval):
+            return ctx.finish(
+                f"delete from {table} t using {source} where {where} returning {_SOURCE}.ord"
+            )
         return ctx.finish(
-            f"update {view.layout.table.name} t set {', '.join([sql for sql, _ in terms])} "
-            f"from unnest({arrays}) with ordinality {_SOURCE}({names}, ord) "
-            f"where {' and '.join(where)} returning {_SOURCE}.ord"
+            f"update {table} t set {', '.join([sql for sql, _ in terms])} from {source} "
+            f"where {where} returning {_SOURCE}.ord"
         )
+
+
+def _shaped_address(step: _Effect, slots: EffectSlots) -> bool:
+    """Whether ``step`` addresses one row as ``slots`` bind it: one key, and
+    for a milestone the open Transaction-Time end wherever its effects share
+    it."""
+    target = step.target
+    if isinstance(target, MilestoneTarget):
+        sources = slots.end_sources
+        return len(target.end_values) == len(sources) and all(
+            source is not None or isinstance(bound, Infinity)
+            for bound, source in zip(target.end_values, sources, strict=True)
+        )
+    return isinstance(target, KeyTarget) and len(target.key_values) == 1 and not slots.end_sources
+
+
+def _sourced_terms(
+    first: _Effect,
+    payload: AssignmentPayload | None,
+    slots: EffectSlots,
+    view: EntityLayoutView,
+    entity: EntityMetadata,
+    dialect: Dialect,
+) -> list[tuple[str, list[object]]]:
+    """Each `set` term of a grouped effect, and its path binds, in the order a
+    lone statement of ``first``'s kind renders them; none for a deletion."""
+    if isinstance(first, PlannedTemporalGuard):
+        column = dialect.quote(_column(view, first.concurrency.start_attribute, entity))
+        return [(f"{column} = t.{column}", [])]
+    if payload is None:
+        return []
+    concurrency = first.concurrency
+    version_column = (
+        _column(view, concurrency.attribute, entity) if isinstance(concurrency, Versioned) else None
+    )
+    terms: list[tuple[str, list[object]]] = []
+    advance: tuple[str, list[object]] | None = None
+    for column, value, source in zip(
+        payload.placement.columns, payload.values, slots.assignment_sources, strict=True
+    ):
+        quoted = dialect.quote(column)
+        if isinstance(source, tuple):
+            expression, binds = dialect.sourced_document_mutation(
+                f"t.{quoted}",
+                [patch.path for patch in cast("PatchedDocument", value).patches],
+                [_source_column(index) for index in source],
+            )
+            term = (f"{quoted} = {expression}", binds)
+        else:
+            term = (f"{quoted} = {_source_column(source)}", list[object]())
+        if column == version_column:
+            advance = term
+        else:
+            terms.append(term)
+    if advance is not None:
+        terms.append(advance)
+    return terms
+
+
+def _sourced_address(
+    ctx: StatementBuilder,
+    first: _Effect,
+    slots: EffectSlots,
+    view: EntityLayoutView,
+    entity: EntityMetadata,
+    dialect: Dialect,
+) -> list[str]:
+    """A grouped effect's `where` conditions in the order a lone statement of
+    ``first``'s kind renders them — key, tag guard, each As-Of Axis end, then
+    the gate — binding the tag and every shared open end as it goes."""
+    target = first.target
+    key_attributes = cast("KeyTarget | MilestoneTarget", target).key_attributes
+    where = [
+        f"t.{dialect.quote(_column(view, attribute, entity))} = {_source_column(source)}"
+        for attribute, source in zip(key_attributes, slots.key_sources, strict=True)
+    ]
+    discriminator = view.discriminator
+    if discriminator is not None:
+        ctx.bind_framework(discriminator.value)
+        where.append(f"t.{dialect.quote(discriminator.slot.column.name)} = ?")
+    if isinstance(target, MilestoneTarget):
+        for attribute, source in zip(target.end_attributes, slots.end_sources, strict=True):
+            column = f"t.{dialect.quote(_column(view, attribute, entity))}"
+            if source is None:
+                ctx.bind_framework(INFINITY_LITERAL, wire_value=INFINITY_LITERAL)
+                where.append(f"{column} = ?")
+            else:
+                where.append(f"{column} = {_source_column(source)}")
+    gate = slots.gate_source
+    if gate is not None:
+        concurrency = first.concurrency
+        attribute = (
+            concurrency.attribute
+            if isinstance(concurrency, Versioned)
+            else cast("TemporalGate", concurrency).start_attribute
+        )
+        where.append(
+            f"t.{dialect.quote(_column(view, attribute, entity))} = {_source_column(gate)}"
+        )
+    return where
 
 
 def _lower_update(

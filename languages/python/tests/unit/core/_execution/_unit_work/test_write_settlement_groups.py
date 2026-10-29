@@ -45,6 +45,7 @@ from parallax.core.write_plan.plan import AcquisitionSpan, SettledWrite, WriteGr
 from parallax.core.write_plan.steps import (
     KeyTarget,
     MilestoneTarget,
+    PlannedClose,
     PlannedInsert,
     PlannedStep,
     PlannedUpdate,
@@ -573,10 +574,12 @@ def test_one_settled_write_forms_a_group_without_effect_spans() -> None:
     assert group.effect_spans == ()
 
 
-def test_a_group_of_temporal_effects_records_no_span_yet() -> None:
+def test_a_group_of_temporal_amendments_spans_their_closes_ahead_of_their_inserts() -> None:
     buffer = [
         KeyedWriteInstruction("amend", "Balance", ({"id": key, "value": Decimal("2.00")},))
         for key in (1, 2)
     ]
     (group,) = _groups(_plan(buffer, _BALANCE, _observed(_BALANCE, buffer, _balance_observation)))
-    assert group.effect_spans == ()
+    assert [type(step) for step in group.steps] == [PlannedClose] * 2 + [PlannedInsert] * 2
+    (span,) = group.effect_spans
+    assert (span.start, span.stop) == (0, 2)

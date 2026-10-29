@@ -1238,8 +1238,8 @@ def _partial_successor_case(*, first_key: int) -> CrossObjectCase:
         _deferred_changes(keys),
         (1, 2),
         # Alone: 66 closes in two invocations, 67 openings in one insert;
-        # together: 68 closes in two, 69 openings in one.
-        FlushWork(66 + 1 + 68 + 1, 2 + 1 + 2 + 1, 64, 69, 0),
+        # together: 68 closes in one grouped effect, 69 openings in one insert.
+        FlushWork(66 + 1 + 1 + 1, 2 + 1 + 1 + 1, 64, 69, 68),
         acquired=tuple(acquired),
         reads=tuple(VALID_START + _DAY * index for index in range(0, 66, 2)),
         reach=2 * _DAY,
@@ -1248,7 +1248,7 @@ def _partial_successor_case(*, first_key: int) -> CrossObjectCase:
 
 
 DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
-    # 128 closes in two invocations, 192 openings in one insert.
+    # 128 closes in one grouped effect, 192 openings in one insert.
     _deferred_span_case(
         "deferred",
         "columns",
@@ -1256,9 +1256,9 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=4001,
         objects=32,
         milestones=4,
-        work=FlushWork(128 + 1, 2 + 1, 64, 192, 0),
+        work=FlushWork(1 + 1, 1 + 1, 0, 192, 128),
     ),
-    # 384 closes in six invocations, 448 openings in one insert.
+    # 384 closes in one grouped effect, 448 openings in one insert.
     _deferred_span_case(
         "deferred",
         "document",
@@ -1266,7 +1266,7 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=5001,
         objects=32,
         milestones=12,
-        work=FlushWork(384 + 1, 6 + 1, 64, 448, 0),
+        work=FlushWork(1 + 1, 1 + 1, 0, 448, 384),
     ),
     _deferred_span_case(
         "requesting",
@@ -1275,10 +1275,10 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=6001,
         objects=32,
         milestones=12,
-        work=FlushWork(384 + 1, 6 + 1, 64, 448, 0),
+        work=FlushWork(1 + 1, 1 + 1, 0, 448, 384),
         requesting=True,
     ),
-    # 1024 closes in 16 invocations, 1088 openings in one insert.
+    # 1024 closes in one grouped effect, 1088 openings in one insert.
     _deferred_span_case(
         "deferred",
         "columns",
@@ -1286,7 +1286,7 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=7001,
         objects=32,
         milestones=32,
-        work=FlushWork(1024 + 1, 16 + 1, 64, 1088, 0),
+        work=FlushWork(1 + 1, 1 + 1, 0, 1088, 1024),
     ),
     _partial_successor_case(first_key=8001),
 )
@@ -1304,7 +1304,7 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=1001,
         label="after",
         groups=(64,),
-        work=FlushWork(65, 2, 64, 64, 0),
+        work=FlushWork(2, 2, 0, 64, 64),
     ),
     _cross_object_case(
         "txtime",
@@ -1314,7 +1314,7 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=2001,
         label="after",
         groups=(64, 64, 2),
-        work=FlushWork(133, 6, 64, 64, 0),
+        work=FlushWork(6, 6, 0, 64, 64),
     ),
     _cross_object_case(
         "bitemporal",
@@ -1324,7 +1324,7 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=3001,
         label="middle",
         groups=(64,),
-        work=FlushWork(65, 2, 64, 192, 0),
+        work=FlushWork(2, 2, 0, 192, 64),
     ),
     *DEFERRED_CASES,
 )

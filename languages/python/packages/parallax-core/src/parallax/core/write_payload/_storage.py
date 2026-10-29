@@ -6,7 +6,7 @@ from operator import itemgetter
 from typing import Final, cast
 
 from parallax.core import storage_layout
-from parallax.core.base import JSON, STRING, Json, ManagedValue, NeutralType
+from parallax.core.base import INFINITY, JSON, STRING, Json, ManagedValue, NeutralType
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
@@ -43,11 +43,24 @@ from parallax.core.write_plan.payload import AssignmentPayload, PatchedDocument
 from parallax.core.write_plan.planned_rows import WritePlanningError
 from parallax.core.write_plan.steps import (
     ExactCount,
+    Finite,
+    Infinity,
     KeyTarget,
+    MilestoneTarget,
     NewLineage,
+    NonTemporalConcurrency,
+    PlannedAssignments,
+    PlannedClose,
+    PlannedDelete,
     PlannedStep,
+    PlannedTemporalGuard,
+    PlannedTemporalRemoval,
+    PlannedTemporalRevision,
     PlannedUpdate,
     SelfIncrement,
+    TemporalConcurrency,
+    TemporalGate,
+    TemporalUpperBound,
     Versioned,
     VersionGate,
     WriteRow,
@@ -132,14 +145,17 @@ class EffectShape:
     Entity, and key Attributes, the members its assignments name as a
     ``presence`` mask over the Entity's members — which fixes where each
     assigned value lands, in a Column of its own or at a path of the shared
-    Structured Column — and the version Attribute it gates on, ``None`` where
-    it is ungated."""
+    Structured Column — the version or Transaction-Time start Attribute it
+    gates on, ``None`` where it is ungated, and for a milestone address each
+    As-Of Axis end it names, in order, with whether each effect binds its own
+    bound there or every effect shares the open Transaction-Time end."""
 
     kind: type[PlannedStep]
     entity: EntityIdentity
     key: tuple[AttributeIdentity, ...]
     presence: int
     gate: AttributeIdentity | None
+    ends: tuple[tuple[AttributeIdentity, bool], ...] = ()
 
 
 class EntityStorage:
@@ -152,6 +168,7 @@ class EntityStorage:
     __slots__ = (
         "_assignments",
         "_effects",
+        "_open_end",
         "_rows",
         "_unique",
         "entity",
@@ -218,6 +235,10 @@ class EntityStorage:
         self._assignments: dict[int, AssignmentPlacement] = {}
         self._effects: dict[EffectShape, EffectSlots] = {}
         self._unique = _unique_members(view)
+        constraints = view.layout.temporal_constraints
+        self._open_end: object = (
+            None if constraints is None else constraints.transaction_axis.end.contributor
+        )
 
     def row_slots(self, presence: int) -> RowSlots:
         """The Row Slots of every row stating exactly the members ``presence``
@@ -233,37 +254,61 @@ class EntityStorage:
         """The shape of the effects ``step`` may share a grouped effect with,
         ``None`` where it runs alone.
 
-        Only an update of one key expecting an exact count is shaped. One
+        An update or delete of one key expecting an exact count is shaped, and
+        so is every close, revision, removal, and guard of one milestone. One
         advancing a registry (a ``SelfIncrement``) runs alone, since its
         increment is no value a column can carry, and so does one assigning a
         member of a unique key other than the primary key, since a value it
         hands from one object to another must be released in authored order.
         """
+        assignments: PlannedAssignments | None = None
+        ends: tuple[tuple[AttributeIdentity, bool], ...] = ()
         match step:
             case PlannedUpdate(
                 target=KeyTarget(key_values=(_,)) as target, affected_rows=ExactCount()
             ):
+                assignments = step.assignments
+            case PlannedDelete(
+                target=KeyTarget(key_values=(_,)) as target, affected_rows=ExactCount()
+            ):
                 pass
+            case PlannedClose(target=target) | PlannedTemporalRevision(target=target):
+                assignments = step.assignments
+                ends = self._milestone_ends(target)
+            case PlannedTemporalRemoval(target=target) | PlannedTemporalGuard(target=target):
+                ends = self._milestone_ends(target)
             case _:
                 return None
-        assignments = step.assignments
-        index = self.view.member_selection.index
-        unique = self._unique
         presence = 0
-        for identity, value in assignments.attributes.items():
-            position = index.get(identity)
-            if position is None or isinstance(value, SelfIncrement) or identity in unique:
-                return None
-            presence |= 1 << position
-        for identity in assignments.value_objects:
-            presence |= 1 << index[identity]
-        concurrency = step.concurrency
-        gate = (
-            concurrency.attribute
-            if isinstance(concurrency, Versioned) and isinstance(concurrency.gate, VersionGate)
-            else None
+        if assignments is not None:
+            index = self.view.member_selection.index
+            unique = self._unique
+            for identity, value in assignments.attributes.items():
+                position = index.get(identity)
+                if position is None or isinstance(value, SelfIncrement) or identity in unique:
+                    return None
+                presence |= 1 << position
+            for identity in assignments.value_objects:
+                presence |= 1 << index[identity]
+        return EffectShape(
+            type(step),
+            self.entity,
+            target.key_attributes,
+            presence,
+            _gate_attribute(step.concurrency),
+            ends,
         )
-        return EffectShape(PlannedUpdate, self.entity, target.key_attributes, presence, gate)
+
+    def _milestone_ends(
+        self, target: MilestoneTarget
+    ) -> tuple[tuple[AttributeIdentity, bool], ...]:
+        open_end = self._open_end
+        return tuple(
+            [
+                (attribute, attribute != open_end or not isinstance(bound, Infinity))
+                for attribute, bound in zip(target.end_attributes, target.end_values, strict=True)
+            ]
+        )
 
     def effect_slots(self, shape: EffectShape) -> EffectSlots:
         """The source columns a grouped effect of ``shape`` binds."""
@@ -548,20 +593,49 @@ def _unique_members(view: EntityLayoutView) -> frozenset[AttributeIdentity]:
     )
 
 
+def _gate_attribute(
+    concurrency: NonTemporalConcurrency | TemporalConcurrency,
+) -> AttributeIdentity | None:
+    match concurrency:
+        case Versioned(attribute=attribute, gate=VersionGate()):
+            return attribute
+        case TemporalGate(start_attribute=attribute):
+            return attribute
+        case _:
+            return None
+
+
+type _MilestoneEffect = (
+    PlannedClose | PlannedTemporalRevision | PlannedTemporalRemoval | PlannedTemporalGuard
+)
+
+
+def _key_columns(keys: Sequence[tuple[object, ...]], width: int) -> list[list[object]]:
+    return [[key[index] for key in keys] for index in range(width)]
+
+
+def _upper_bound(bound: TemporalUpperBound) -> object:
+    return bound.instant if isinstance(bound, Finite) else INFINITY
+
+
 class EffectSlots:
     """The source columns a grouped effect of one :class:`EffectShape` binds:
-    each key Attribute's, then the version gate's, then one per cell its
-    assignments place in Table Layout slot order — one per assigned path of
-    the shared Structured Column, in canonical logical placement order.
+    each key Attribute's, then each As-Of Axis end's its effects bind their own
+    bound at, then the gate's, then one per cell its assignments place in Table
+    Layout slot order — one per assigned path of the shared Structured Column,
+    in canonical logical placement order.
     """
 
     __slots__ = (
         "_gathers",
+        "_keyed",
         "assignment_sources",
         "element_types",
+        "end_sources",
         "entity",
         "gate_source",
         "key_sources",
+        "kind",
         "parameter_count",
     )
 
@@ -575,6 +649,14 @@ class EffectSlots:
 
         types: list[NeutralType] = [attribute_type(identity) for identity in shape.key]
         self.key_sources: tuple[int, ...] = tuple(range(len(types)))
+        end_sources: list[int | None] = []
+        for attribute, sourced in shape.ends:
+            if sourced:
+                end_sources.append(len(types))
+                types.append(attribute_type(attribute))
+            else:
+                end_sources.append(None)
+        self.end_sources: tuple[int | None, ...] = tuple(end_sources)
         self.gate_source: int | None = None
         if shape.gate is not None:
             self.gate_source = len(types)
@@ -598,40 +680,61 @@ class EffectSlots:
                 gathers.append((len(sources), -1))
                 sources.append(len(types))
                 types.append(_element_type(slot))
+        self.kind = shape.kind
+        self._keyed = shape.kind is PlannedUpdate or shape.kind is PlannedDelete
         self.entity = storage.entity
         self.assignment_sources: tuple[int | tuple[int, ...], ...] = tuple(sources)
         self.element_types: tuple[NeutralType, ...] = tuple(types)
         self._gathers: tuple[tuple[int, int], ...] = tuple(gathers)
         tag = 0 if storage.view.discriminator is None else 1
-        self.parameter_count = len(types) + paths + tag
+        shared_ends = end_sources.count(None)
+        self.parameter_count = len(types) + paths + tag + shared_ends
 
     def column_cells(
-        self, steps: Sequence[PlannedStep], payloads: Sequence[AssignmentPayload]
+        self, steps: Sequence[PlannedStep], payloads: Sequence[AssignmentPayload | None]
     ) -> tuple[list[object], ...]:
-        """One new list per source column, in step order: each key value and
-        observed version read from its step, and each assigned cell from its
-        step's payload — a path's prepared encoded value where the shared
-        Structured Column is patched."""
-        updates = cast("Sequence[PlannedUpdate]", steps)
-        columns: list[list[object]] = [
-            [cast("KeyTarget", step.target).key_values[0][index] for step in updates]
-            for index in range(len(self.key_sources))
-        ]
-        if self.gate_source is not None:
-            columns.append(
-                [
-                    cast("VersionGate", cast("Versioned", step.concurrency).gate).observed_version
-                    for step in updates
-                ]
+        """One new list per source column, in step order: each key value, axis
+        end, and observed version or Transaction-Time start read from its step,
+        and each assigned cell from its step's payload — a path's prepared
+        encoded value where the shared Structured Column is patched."""
+        if self._keyed:
+            keyed = cast("Sequence[PlannedUpdate | PlannedDelete]", steps)
+            columns = _key_columns(
+                [cast("KeyTarget", step.target).key_values[0] for step in keyed],
+                len(self.key_sources),
             )
+            if self.gate_source is not None:
+                columns.append(
+                    [
+                        cast(
+                            "VersionGate", cast("Versioned", step.concurrency).gate
+                        ).observed_version
+                        for step in keyed
+                    ]
+                )
+        else:
+            milestones = cast("Sequence[_MilestoneEffect]", steps)
+            columns = _key_columns(
+                [step.target.key_values for step in milestones], len(self.key_sources)
+            )
+            for index, source in enumerate(self.end_sources):
+                if source is not None:
+                    columns.append(
+                        [_upper_bound(step.target.end_values[index]) for step in milestones]
+                    )
+            if self.gate_source is not None:
+                columns.append(
+                    [cast("TemporalGate", step.concurrency).observed_start for step in milestones]
+                )
+        assigned = cast("Sequence[AssignmentPayload]", payloads)
         for value, patch in self._gathers:
             if patch < 0:
-                columns.append([payload.values[value] for payload in payloads])
+                columns.append([payload.values[value] for payload in assigned])
             else:
                 columns.append(
                     [
                         cast("PatchedDocument", payload.values[value]).patches[patch].value
-                        for payload in payloads
+                        for payload in assigned
                     ]
                 )
         return tuple(columns)

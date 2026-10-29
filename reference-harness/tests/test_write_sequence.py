@@ -177,7 +177,9 @@ def _grouped_case(prefix: str, binds: list[Any]) -> Case:
     return case
 
 
-@pytest.mark.parametrize("prefix", ["m-batch-write-002", "m-opt-lock-042", "m-opt-lock-043"])
+@pytest.mark.parametrize(
+    "prefix", ["m-batch-write-002", "m-batch-write-004", "m-opt-lock-042", "m-opt-lock-043"]
+)
 def test_a_grouped_effect_is_graded_row_by_row(prefix: str) -> None:
     case = next(c for c in discover_cases(COMPATIBILITY_ROOT) if c.path.stem.startswith(prefix))
     _assert_write_input_columns(case, "postgres")
@@ -196,6 +198,11 @@ def test_a_grouped_effect_whose_source_disagrees_with_its_rows_is_refused(
 ) -> None:
     with pytest.raises(CaseFailure, match=refusal):
         _assert_write_input_columns(_grouped_case("m-batch-write-002", binds), "postgres")
+
+
+def test_a_grouped_delete_must_remove_each_rows_own_key() -> None:
+    with pytest.raises(CaseFailure, match="appear in none of the DELETE binds"):
+        _assert_write_input_columns(_grouped_case("m-batch-write-004", [[1, 3]]), "postgres")
 
 
 def test_a_versioned_grouped_effect_must_gate_each_row_on_its_own_observation() -> None:

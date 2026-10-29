@@ -13,9 +13,10 @@ after its write completed reads nothing.
 
 A tail stored as many milestones, each labelled apart, keeps every amended
 piece apart, so one ready group closes more rows than one ordered invocation
-carries: its closes span several invocations, while its openings, however many,
-share one insert binding one array per Column, and each statement stays one
-Database Call.
+carries: a group of several writes still closes them all in one grouped effect,
+and a group of one write in several invocations, while its openings, however
+many, share one insert binding one array per Column, and each statement stays
+one Database Call.
 
 Each case reads the whole stored history back and compares it with the one
 these inputs determine. Every write runs under a clock answering 2024-11-01.
@@ -72,9 +73,10 @@ _CLOSES: Final = 2
 
 
 def _group_writes(writes: int) -> int:
-    """The statements one Write Group of ``writes`` such writes presents:
-    every close, then all its openings in one insert."""
-    return writes * _CLOSES + 1
+    """The statements one Write Group of ``writes`` such writes presents: its
+    closes — one grouped effect where it holds several writes, and otherwise
+    one statement each — then all its openings in one insert."""
+    return (1 if writes > 1 else writes * _CLOSES) + 1
 
 
 # 70 roots at 33 per page: pages of 33, 33, and 4 roots. A 33-write Flush is
@@ -395,19 +397,22 @@ def _invocations(closes: int) -> int:
 
 
 def _fragmented_group(writes: int) -> tuple[list[Call], int, int]:
-    """One ready group of ``writes``: its coverage read and statements, its
-    ordered invocations, and its insert statements."""
-    inserts = 1
+    """One ready group of ``writes``: its coverage read and statements, the
+    closes its grouped effect applies, and its ordered invocations. A group of
+    several writes closes every milestone in one grouped effect; a group of
+    one presents its closes in ordered invocations."""
+    closes = writes * _FRAGMENT_CLOSES
+    grouped = closes if writes > 1 else 0
     calls: list[Call] = [
         ("read", writes * _PIECES),
-        ("write", writes * _FRAGMENT_CLOSES + inserts),
+        ("write", (1 if grouped else closes) + 1),
     ]
-    return calls, _invocations(writes * _FRAGMENT_CLOSES), inserts
+    return calls, grouped, 0 if grouped else _invocations(closes)
 
 
 @_LAYOUTS
 @_REPRESENTATIONS
-def test_a_ready_groups_many_milestones_span_several_invocations_and_one_insert_of_a_call_each(
+def test_a_ready_groups_many_milestones_close_in_one_grouped_effect_and_open_in_one_insert(
     profile_run: Any, layout: _Layout, representation: _Representation
 ) -> None:
     _seeded(profile_run, layout, _FRAGMENTED, tail_pieces=_PIECES)
@@ -425,27 +430,27 @@ def test_a_ready_groups_many_milestones_span_several_invocations_and_one_insert_
             _amend(tx, root, amount=150)
 
     db.transact(fn)
-    span, span_invocations, span_inserts = _fragmented_group(32)
-    alone, alone_invocations, alone_inserts = _fragmented_group(1)
-    last, last_invocations, last_inserts = _fragmented_group(_FRAGMENTED - _PAGE)
+    span, span_grouped, span_invocations = _fragmented_group(32)
+    alone, alone_grouped, alone_invocations = _fragmented_group(1)
+    last, last_grouped, last_invocations = _fragmented_group(_FRAGMENTED - _PAGE)
     assert calls.pages == [PageRead(_PAGE + 1, _PAGE + 1), PageRead(_PAGE + 1, 2)]
     assert _flushes(calls) == [("read_dependency", [*span, *alone]), ("pre_commit", last)]
-    closes = _FRAGMENTED * _FRAGMENT_CLOSES
-    inserts = span_inserts + alone_inserts + last_inserts
-    assert (span_invocations, span_inserts) == (21, 1)
+    # 1312 closes in one grouped effect and 82 in another, while the lone
+    # write's 41 closes take one ordered invocation.
+    assert (span_grouped, alone_grouped, last_grouped) == (1312, 0, 82)
+    assert (tally.grouped, tally.grouped_rows, tally.widest_grouped) == (2, 1312 + 82, 1312)
+    lone = _FRAGMENT_CLOSES
     if psycopg.capabilities.has_pipeline():
-        # 1312 closes in 21 invocations, 41 in one, and 82 in two: one
-        # Database Call per statement, whichever invocation presented it.
         assert (tally.ordered, tally.ordered_statements, tally.widest_ordered) == (
             span_invocations + alone_invocations + last_invocations,
-            closes,
-            _STATEMENT_CAP,
+            lone,
+            lone,
         )
         assert tally.standalone_non_insert_statements == 0
     else:
-        assert (tally.ordered, tally.standalone_non_insert_statements) == (0, closes)
+        assert (tally.ordered, tally.standalone_non_insert_statements) == (0, lone)
     assert (tally.inserts, tally.inserted_rows, tally.widest_insert) == (
-        inserts,
+        3,
         _FRAGMENTED * _FRAGMENT_OPENINGS,
         32 * _FRAGMENT_OPENINGS,
     )
