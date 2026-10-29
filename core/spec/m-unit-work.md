@@ -1000,9 +1000,9 @@ objects they write are distinct:
   Inheritance Family's primary key: every row of a batch, and the one object a
   keyed, composed, or step-less write names. A write naming an object the open
   group already holds starts the next group.
-- A group holds at most 64 settled writes, so a group's inserts wait behind the
-  non-insert steps of at most that many settled writes, however many the flush
-  holds.
+- A group holds at most 1,024 settled writes, so a group's inserts wait behind
+  the non-insert steps of at most that many settled writes, however many the
+  flush holds.
 - A write whose insert the database allocates a key for, and a write naming no
   complete key — an insert whose key is absent or database-computed — each form
   a group of their own.
@@ -1155,8 +1155,8 @@ and each consecutive ready write after it, up to the first that is not, as one
 Write Group laid out as *Write Group formation* lays out any group; it executes
 and completes that group before binding any later write or reading any further
 statement (*Write Groups complete before later work runs*). The span's bound of
-32 writes keeps every such group within the 64-write bound, and no statement is
-read, and no ready group delayed, to enlarge a group. Each write binds against
+32 writes keeps every such group within the 1,024-write bound, and no statement
+is read, and no ready group delayed, to enlarge a group. Each write binds against
 the rows read and the Attempt Ownership every earlier group published; the
 writes of one group name distinct objects, so none binds against another's
 completion. A deferred dependency is not coverage: no write's coverage is read

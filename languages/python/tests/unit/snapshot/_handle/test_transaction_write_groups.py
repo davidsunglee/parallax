@@ -12,6 +12,7 @@ from typing import Final
 import pytest
 
 from parallax.core import Attr, Bitemporal, DomainModel, Entity, Int32, TxTemporal, attr
+from parallax.core._execution._unit_work import write_settlement
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind, MappingRow, OrderedWriteResultComplete
@@ -77,6 +78,7 @@ class Card(Entity, table="wgh_card", namespace=_NS):
 
 
 _MODEL: Final = DomainModel(SpanRow, AuditedRow, PlainRow, Card)
+_LIMIT: Final = write_settlement._GROUP_WRITES  # pyright: ignore[reportPrivateUsage] - the group bound
 
 
 def _rows(kind: str, objects: int) -> list[MappingRow]:
@@ -164,19 +166,19 @@ def _ordinals(count: int) -> ScriptEntry:
     ("objects", "script", "shapes"),
     [
         (1, (Write(times=2),), [("alone", 1), ("insert", 1)]),
-        (64, (_ordinals(64), Write()), [("grouped", 64), ("insert", 64)]),
+        (_LIMIT, (_ordinals(_LIMIT), Write()), [("grouped", _LIMIT), ("insert", _LIMIT)]),
         (
-            65,
-            (_ordinals(64), Write(times=3)),
-            [("grouped", 64), ("insert", 64), ("alone", 1), ("insert", 1)],
+            _LIMIT + 1,
+            (_ordinals(_LIMIT), Write(times=3)),
+            [("grouped", _LIMIT), ("insert", _LIMIT), ("alone", 1), ("insert", 1)],
         ),
         (
-            130,
-            (_ordinals(64), Write(), _ordinals(64), Write(), _ordinals(2), Write()),
-            [("grouped", 64), ("insert", 64)] * 2 + [("grouped", 2), ("insert", 2)],
+            2 * _LIMIT + 2,
+            (_ordinals(_LIMIT), Write(), _ordinals(_LIMIT), Write(), _ordinals(2), Write()),
+            [("grouped", _LIMIT), ("insert", _LIMIT)] * 2 + [("grouped", 2), ("insert", 2)],
         ),
     ],
-    ids=["1", "64", "65", "130"],
+    ids=["one", "a-full-group", "one-past-a-full-group", "two-full-groups-and-two"],
 )
 def test_a_transaction_time_loop_costs_two_calls_per_group(
     objects: int, script: Sequence[ScriptEntry], shapes: list[tuple[str, int]]
@@ -188,12 +190,12 @@ def test_a_transaction_time_loop_costs_two_calls_per_group(
 
 def test_a_bitemporal_loop_groups_every_objects_successors_behind_every_close() -> None:
     # Each object closes its milestone and opens a head before the change
-    # and the changed tail, 128 rows in one insert for the first group's 64
-    # objects.
-    port = _run("bitemporal", 65, (_ordinals(64), Write(times=3)))
+    # and the changed tail: two rows in one insert for each of the first
+    # group's objects.
+    port = _run("bitemporal", _LIMIT + 1, (_ordinals(_LIMIT), Write(times=3)))
     assert _shapes(port.calls) == [
-        ("grouped", 64),
-        ("insert", 128),
+        ("grouped", _LIMIT),
+        ("insert", 2 * _LIMIT),
         ("alone", 1),
         ("insert", 2),
     ]
@@ -201,32 +203,32 @@ def test_a_bitemporal_loop_groups_every_objects_successors_behind_every_close() 
         call for call in port.calls if isinstance(call, WriteCall) and call.sql.startswith("insert")
     )
     keys = [row[0] for row in inserted_rows(first)]
-    assert keys == [key for key in range(1, 65) for _ in range(2)]
+    assert keys == [key for key in range(1, _LIMIT + 1) for _ in range(2)]
 
 
 def test_a_non_temporal_loop_applies_each_groups_keyed_deletes_as_one_grouped_effect() -> None:
-    port = _run("plain", 65, (_ordinals(64), Write()), delete=True)
-    assert _shapes(port.calls) == [("grouped", 64), ("alone", 1)]
+    port = _run("plain", _LIMIT + 1, (_ordinals(_LIMIT), Write()), delete=True)
+    assert _shapes(port.calls) == [("grouped", _LIMIT), ("alone", 1)]
     (call,) = (
         call for call in port.calls if isinstance(call, ReadCall) and call.sql.startswith("delete")
     )
     # Each source row carries its own object's key and observed version as its gate.
     keys, gates = call.binds
-    assert isinstance(keys, ArrayBind) and keys.values == list(range(1, 65))
-    assert isinstance(gates, ArrayBind) and gates.values == [1] * 64
+    assert isinstance(keys, ArrayBind) and keys.values == list(range(1, _LIMIT + 1))
+    assert isinstance(gates, ArrayBind) and gates.values == [1] * _LIMIT
 
 
 def test_a_non_temporal_loop_applies_each_groups_updates_as_one_grouped_effect() -> None:
-    port = _run("plain", 65, (_ordinals(64), Write()))
+    port = _run("plain", _LIMIT + 1, (_ordinals(_LIMIT), Write()))
     grouped = [
         call for call in port.calls if isinstance(call, ReadCall) and call.sql.startswith("update")
     ]
     (call,) = grouped
     # Each source row carries its own object's key and observed version as its gate.
     keys, gates = call.binds[0], call.binds[1]
-    assert isinstance(keys, ArrayBind) and keys.values == list(range(1, 65))
-    assert isinstance(gates, ArrayBind) and gates.values == [1] * 64
-    assert _shapes(port.calls) == [("grouped", 64), ("alone", 1)]
+    assert isinstance(keys, ArrayBind) and keys.values == list(range(1, _LIMIT + 1))
+    assert isinstance(gates, ArrayBind) and gates.values == [1] * _LIMIT
+    assert _shapes(port.calls) == [("grouped", _LIMIT), ("alone", 1)]
 
 
 def test_without_ordered_transport_the_effects_and_the_inserts_still_group() -> None:
@@ -284,7 +286,7 @@ class _Calls:
 
 def test_one_flush_counts_a_database_call_per_presented_statement() -> None:
     observed = _Calls()
-    _run("transaction-time", 65, (_ordinals(64), Write(times=3)), lifecycle=observed)
+    _run("transaction-time", _LIMIT + 1, (_ordinals(_LIMIT), Write(times=3)), lifecycle=observed)
     assert observed.flushes == 1
     # One per presented statement: the find, each group's closes as one
     # grouped effect or the lone close alone, and each insert statement,
