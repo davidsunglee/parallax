@@ -335,7 +335,7 @@ def _lower_insert(
     select_parts: list[str] = []
     returned: list[str] = []
     for column, value, neutral_type in zip(
-        slots.columns, _bound(first, slots.documents), slots.types, strict=True
+        slots.columns, _bound(_placed(slots, first), slots.documents), slots.types, strict=True
     ):
         if isinstance(value, MaxPlusOne):
             select_parts.append(f"coalesce(max(t0.{dialect.quote(column)}), ?) + ?")
@@ -695,8 +695,6 @@ def _temporal_gate(
 def _bound(values: tuple[object, ...], documents: Sequence[bool]) -> Sequence[object]:
     """One row's bind values: each stored document wrapped as the port's
     structured-document carrier, every other value as it is."""
-    if len(values) != len(documents):
-        raise SqlGenError("a repeated bind pattern has inconsistent row widths")
     if not any(documents):
         return values
     return [
