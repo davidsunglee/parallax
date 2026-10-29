@@ -2080,9 +2080,9 @@ def test_an_unversioned_row_authoring_an_observation_control_key_is_refused() ->
         scenario.compile_write_sequence_case(case, "postgres")
 
 
-def test_uniform_multi_row_update_collapses_to_one_in_list_statement() -> None:
+def test_uniform_multi_row_update_collapses_to_one_key_membership_statement() -> None:
     # m-batch-write-001's own update entry: an UNVERSIONED target whose rows
-    # assign the SAME value collapses into ONE multi-row `IN`-list UPDATE
+    # assign the SAME value collapses into ONE UPDATE over the array of its keys
     # (m-batch-write "Set-based flush").
     case = _synthetic_write(
         "writeSequence",
@@ -2105,8 +2105,10 @@ def test_uniform_multi_row_update_collapses_to_one_in_list_statement() -> None:
     )
     emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
     assert database_calls == 1
-    assert [e.sql for e in emissions] == ["update wallet set balance = ? where id in (?, ?)"]
-    assert emissions[0].binds == (decimal.Decimal("500.00"), 10, 11)
+    assert [e.sql for e in emissions] == [
+        "update wallet set balance = ? where id = any(cast(? as bigint[]))"
+    ]
+    assert emissions[0].binds == (decimal.Decimal("500.00"), ArrayBind(INT64, [10, 11]))
 
 
 def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execution() -> None:
@@ -2185,8 +2187,8 @@ def test_update_entry_uniform_within_each_physical_group_collapses_per_group() -
     # each physical group: the first two rows assign only `balance`, the last
     # two only `owner`. Batch grouping partitions them into two runs before
     # collapse eligibility is asked of either (m-sql "Physical DML ordering"),
-    # and each run's own rows ARE uniform, so both collapse into one `IN`-list
-    # UPDATE (m-batch-write "Set-based flush"). The authored `statements: 2`
+    # and each run's own rows ARE uniform, so both collapse into one
+    # key-membership UPDATE (m-batch-write "Set-based flush"). The authored `statements: 2`
     # must agree with that per-group accounting, not with the row count.
     case = _synthetic_write(
         "writeSequence",
@@ -2212,10 +2214,13 @@ def test_update_entry_uniform_within_each_physical_group_collapses_per_group() -
     emissions, database_calls = scenario.compile_write_sequence_case(case, "postgres")
     assert database_calls == 2
     assert [e.sql for e in emissions] == [
-        "update wallet set balance = ? where id in (?, ?)",
-        "update wallet set owner = ? where id in (?, ?)",
+        "update wallet set balance = ? where id = any(cast(? as bigint[]))",
+        "update wallet set owner = ? where id = any(cast(? as bigint[]))",
     ]
-    assert [e.binds for e in emissions] == [(500.00, 1, 2), ("Zed", 3, 4)]
+    assert [e.binds for e in emissions] == [
+        (500.00, ArrayBind(INT64, [1, 2])),
+        ("Zed", ArrayBind(INT64, [3, 4])),
+    ]
 
 
 def test_update_entry_non_uniform_within_a_physical_group_rejects_a_per_row_count() -> None:

@@ -28,8 +28,8 @@ then:
         - [Mira, Omar, Nell]
         - ["100.00", "20.00", "30.00"]
     - sql:
-        postgres: update wallet set balance = ? where id in (?, ?)
-      binds: ["500.00", 10, 11]
+        postgres: update wallet set balance = ? where id = any(cast(? as bigint[]))
+      binds: ["500.00", [10, 11]]
   tableState:
     wallet:
       - { id: 10, owner: Mira, balance: "500.00" }

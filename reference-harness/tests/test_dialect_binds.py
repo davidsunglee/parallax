@@ -253,6 +253,23 @@ def test_a_column_array_is_an_array_bind_through_casts_and_parentheses() -> None
     assert array_bind_indexes(statement) == {0, 1, 2}
 
 
+def test_each_key_column_array_of_a_collapsed_key_membership_is_an_array_bind() -> None:
+    composite = (
+        "delete from ledger where (book_id, line_no) in "
+        "(select * from unnest(cast(? as bigint[]), cast(? as int[]))) and kind = ?"
+    )
+
+    assert array_bind_indexes(composite) == {0, 1}
+    assert postgres_statement_binds(composite, [[1, 1], [10, 20], "card"]) == (
+        [1, 1],
+        [10, 20],
+        "card",
+    )
+    assert array_bind_indexes(
+        "update wallet set balance = ? where id = any(cast(? as bigint[]))"
+    ) == {1}
+
+
 _POSITION_COLUMN_ARRAYS = (
     "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) select * from "
     "unnest(cast(? as bigint[]), cast(? as text[]), cast(? as decimal[]), "
