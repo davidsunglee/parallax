@@ -121,6 +121,7 @@
  "tests/unit/tools/test_write_lowering_reading_gates.py::test_a_seeded_mutable_copy_of_every_document_bind_trips_the_transient_gate": 6.4,
  "tests/unit/tools/test_write_lowering_reading_gates.py::test_a_seeded_retained_duplicate_of_every_prepared_row_trips_the_retained_gate": 5.4,
  "tests/unit/tools/test_write_lowering_reading_gates.py::test_a_seeded_second_formed_model_trips_the_model_gate": 12.9,
+ "tests/unit/tools/test_write_lowering_reading_gates.py::test_the_batch_inserts_stay_within_their_memory_gates": 68.8,
  "tests/unit/tools/test_write_lowering_reading_gates.py::test_the_categorical_keyed_writes_stay_within_their_memory_gates": 41.9,
  "tests/unit/tools/test_write_lowering_reading_gates.py::test_the_changed_ancestor_successors_stay_within_their_memory_gates": 14.5,
  "tests/unit/tools/test_write_lowering_reading_gates.py::test_the_cross_object_bitemporal_deferred_32x12_document_wire_flush_stays_within_its_memory_gates": 92.5,

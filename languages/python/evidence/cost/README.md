@@ -9,7 +9,7 @@ owns what belongs in Git and how future runs are stored.
 
 | Capture | Role | Producing commit | Captured |
 |---|---|---|---|
-| [current](current/portfolio.json) | Current verification input and memory-gate basis | `731527616b9c02a7cf995982567bbf2c3aa109a3` | 2026-10-28 |
+| [current](current/portfolio.json) | Current verification input and memory-gate basis | `01a0ef034f21046d12b654f9e9e9bed6ffa6b8eb`; write lowering `b3ebdfcf3532ecf885783947dbc66e184fe95c31` | 2026-10-29 |
 | [structural-metadata-before](structural-metadata-before/portfolio.json) | Fixed recovery reference | `b7abe2d055fd3e0974829616f2de99b94ad5af97` | 2026-09-16 |
 | [structural-metadata-after](structural-metadata-after/portfolio.json) | Fixed regression comparison base | `1636e9f0ce072dce25ddd1ebeabd0b1368b65031` | 2026-09-17 |
 
@@ -19,10 +19,12 @@ compatibility with `--require-compatible`; they remain descriptive comparison
 bases with their original provenance.
 
 The current capture has five members: Snapshot delivery, write lowering, instance
-state, lifecycle overhead, and feature boundaries. All name the same clean
-producing commit, with no errors, incomplete cells, or collector failures.
-Snapshot delivery is authoritative under its embedded Budget Contract; the
-other members have their own protocols and are non-authoritative.
+state, lifecycle overhead, and feature boundaries, with no errors, incomplete
+cells, or collector failures. Write lowering names a clean descendant of the
+other members' clean producing commit, as its recorded member-replacement
+adjustment assigns. Snapshot delivery is authoritative under its embedded
+Budget Contract; the other members have their own protocols and are
+non-authoritative.
 
 The recorded commit is the fact of what was captured. Verifying an envelope
 reconstructs its embedded Budget Contract and checks internal consistency
@@ -35,67 +37,107 @@ ancestor of the inspected checkout; write-lowering redigest accepts the exact
 resolvable producing commit after proving its captured sources and workload
 identity. Prefer capturing at a commit already on `main`, so source history
 remains available. The current capture was taken on its change's branch because
-that change made the previous capture stale; its producing commit remains the
-original branch commit after a rebase merge.
+that change made the previous capture stale; its producing commits remain the
+original branch commits after a rebase merge.
 
-The current collector completed on 2026-10-28, 10:33:09–11:37:27 UTC, in
-64m18s wall time. It ran on a Mac17,4 (Apple M5, 10 cores, 32 GiB), macOS
-27.0.1 build 26A434, with CPython 3.13.18 and 3.14.8 and PostgreSQL 18.6 under
-OrbStack 2.2.5.
-[Conditions](current/conditions.json) record interpreter identities and instrument
-source hashes; [durations](current/durations.json) record collection telemetry.
-The dependency lock SHA-256 is
+The current collector ran on 2026-10-29, 17:38:54–18:42:46 UTC, in 63m51s
+wall time. Its write-lowering children refused to decode the grouped
+cross-object cells' zero `largestOrderedInvocation` counts, so that member
+produced no envelope. After the decoder accepted zero work counts,
+`--replace-member` re-measured write lowering alone at its recorded commit,
+19:55:21–20:09:34 UTC, in 14m13s; the adjustment in conditions records both
+commits, the replaced failure, and both intervals. Both ran on a Mac17,4 (Apple
+M5, 10 cores, 32 GiB), macOS 27.0.1 build 26A434, with CPython 3.13.18 and
+3.14.8 and PostgreSQL 18.6 under OrbStack 2.2.5. OrbStack was restarted, and the
+compiled loaders were rebuilt and checked on both interpreters, before the
+collector ran.
+[Conditions](current/conditions.json) record interpreter identities, instrument
+source hashes, and the adjustment; [durations](current/durations.json) record
+collection telemetry. The dependency lock SHA-256 is
 `5b94947c4c258495210274171de2408fcba6c45b4bffc9f6d6074d3f050d2956`.
 The portfolio SHA-256 is
-`1c664bc56afa1fb8d6f4b9ac7b0fa497b4aa2407926a517021a8dd5f3546e45b`.
+`aa58e26cf5e31f240b4db9d0447b00726816612ce3752ae0ea00aec3756fec6c`, and the
+conditions SHA-256 is
+`b6ca54f9b143fac069a5dc4fb1f5f525a58f3993bab5b2dd1362920be12d8e0d`.
 
-No competing measurements ran from this checkout; other sessions on the host
-were not controlled. The host was on AC power. The load average was 1.2 (one and
-five minutes) at the start and 2.9 (one minute) and 2.5 (five minutes) at the
-end. The run is not evidence of quiet-machine timing stability. The historical
-bases used macOS 26.6.2 and CPython 3.13.15/3.14.7 on the same machine, so
-current-versus-base timings cross host and interpreter conditions as well as
-implementation changes.
+No other session or measurement ran during either run; macOS background
+daemons were active. The collector ran on AC power, and the replacement on
+battery power with low-power mode off. Before the collector the load average was
+3.5 (one minute) and 2.6 (five minutes), 2.6 when the measurement lock was
+taken, and 2.9 and 3.1 at the end. Before the replacement it was 4.6 and 8.7,
+2.9 when the lock was taken, and 3.0 and 3.3 at the end. The runs are not
+evidence of quiet-machine timing stability. The outgoing capture used the same
+host, interpreters, PostgreSQL, and dependency lock. The historical bases used
+macOS 26.6.2 and CPython 3.13.15/3.14.7 on the same machine, so
+current-versus-base timings cross host and interpreter conditions as well as implementation changes.
 
-Against the superseded `c51ca3eac` capture, no memory reading rose past its
-former gate, and all 352 gate addresses were kept with none added or removed.
-The comparison crosses a CPython 3.13 patch release (3.13.17 to 3.13.18), a
-dependency lock change (`35b64b5d…` to `5b94947c…`), a changed write-lowering
-workload digest, changed Snapshot and write-lowering control sources, and
-changed Snapshot and lifecycle-overhead instruments; `--require-compatible`
-refuses the Snapshot and write-lowering pairs. Rederivation moves 240
-gates: 68 rise, 57 of them by at most 1%, and 172 fall, 133 of them by at most
-1%. Write lowering accounts for 218 of the moves, 160 of them falls: changed
-plain amendments' retained bytes fall 2095 to 1919 B/row (8.4%), geometry
-retained bytes fall 0.6–4.9%, and no write-lowering gate rises by more than
-1.3%, the prepared model's. Snapshot's largest rises are cold read-plan
-compilation peaks: guarded controls rise 2.4–5.9% and depth and width plans
-1.8–2.8%. Cold planning time also rose 5–18% on both runtimes. The highest new
-reading is 96.3% of its former gate, `control-guarded-3` `plan.cold.peakKiB`.
-Other Snapshot memory gates moved by at most 2%. Snapshot's advisory Budget
-Contract timing outcomes went from 22 to 6 outside: 16 cells came back within
-and none newly fell outside. The six are live `page32` time and throughput for
-`duplicate-include`, `document-heavy`, and `versioned-document`.
+Against the superseded `731527616` capture, gate addresses grew from 352 to 362:
+the `batch-insert` window's 10 gates were added, and none was removed. The
+comparison crosses a changed write-lowering workload digest (`9c2ca81c…` to
+`ff17d9c8…`) with new cases and counters, changed Snapshot control sources and
+instrument, and changed write-lowering, instance-state, and feature-boundary
+instruments; `--require-compatible` refuses the Snapshot and write-lowering
+pairs. Fourteen write-lowering readings rose past their former gates, and all
+were accepted as rebaselines under the unchanged rule:
 
-These changes span `c51ca3eac..731527616`, which includes read-plan reuse
-across predicate values, PostgreSQL temporal-conflict refusal, and first-use
-connection replacement, which removed checkout validation and the separate
-transaction-characteristics statement. No matched-source reading separates
-them, so changes are not attributed to individual commits. First-use
-replacement changed no read-planning or write-lowering production source, but
-that does not assign the planning or write movements to another commit. Live
-delivery owns one retained-pool checkout per eager read or stream page, so it is
-where dropping checkout validation could show; 61 of its 140 compared cells read
-faster and 5 slower. Readings that touch no database also moved: 48 of 190
-provider-free delivery cells read faster, 47 of them on CPython 3.14, and the
-lifecycle-overhead arms over their in-memory port read 6–9% faster at their
-medians. The live movement is therefore not separated from run conditions. The
-raw capture, its frozen predecessor gates and portfolio, the automated
-former-gate assessment and derivation deltas, the comparison and its
-compatibility refusal, host conditions, and the exact commands are archived at
-`~/.local/share/parallax/evidence/cor-248/cost-capture/`; its `SHA256SUMS`
+- Cross-object `execution.transientBytes` and
+  `execution.transientBytesPerObject` for
+  `bitemporal.deferred-32x32.columns.typed`,
+  `bitemporal.deferred-32x12.document.wire`,
+  `bitemporal.requesting-32x12.document.wire`,
+  `bitemporal.interior-64.document.wire`, and `txtime.changed-130.columns.typed`
+  read 12–162% over their former gates. Grouped inserts carry no row cap and a
+  Write Group now holds up to 1,024 writes, so one array-bound statement holds a
+  whole group's rows: on 3.14 the totals read 458,850, 173,042, 177,290,
+  164,711, and 187,719 B. In the same cells, statements fall 97–99.8%,
+  `execution.elapsedUs` falls 59–66%, `plan.retainedBytes` falls 7–34%, and
+  `binding.transientBytes`, where measured, falls 20–25%. No grouped-insert
+  bound was reintroduced.
+- `geometry.sparse-64` and `ancestor.sparse-64` Columns and Document
+  `retainedBytes` read 2,368 and 1,160 B/row on 3.14 (2,320 and 1,128 on 3.13)
+  against 1,602 and 1,021. Nested occurrences keep their full-width form, so
+  sparse nested retention grows with declared width.
+
+Rederivation moves 310 gates. Of the 39 that rise, 14 are those readings; six
+are `geometry.sparse-64` `transientBytes` (2.7–3.8%, the same cause) and
+`model.prepared` and `model.prepared.family` (1.7–4.0%, eager write
+preparation), all within their former gates; and 19 rise by at most 2.2%,
+within the comparison's byte allowance. Of the 271 that fall, 228 are write
+lowering and 37 fall by at most 1%; dense insert `retainedBytes` gates fall up
+to 58% (6,222 to 2,605 B/row). Snapshot's advisory Budget Contract timing
+outcomes went from 6 to none outside.
+
+Other readings beyond the movements expected of these changes were reviewed and
+accepted. All are advisory or ungated. Snapshot live `versioned-document`
+`streamedMemory.page1PeakKiB` rose 20% on 3.14 (24.0 to 28.9 KiB) and fell 3% on
+3.13. Seven Snapshot timing cells read 5–18% slower: `control-guarded-3` eager
+delivery and three read-plan compilations on 3.13, and one per-root cell each
+for `read-width-64` and `leaf-float64`. Write-lowering `model.prepared.family`
+elapsed rose 17.5% on 3.14, some cross-object `binding.elapsedUs` 5–8%, and
+`txtime.target-patch.document.wire` 5.8%. Instance-state microtimings read 49
+slower and 66 faster, and feature-boundary timings 7 slower and 18 faster.
+
+On `main`'s history these changes span `39c878576..01a0ef034`, where
+`39c878576` carries `731527616`'s tree after its rebase merge; write lowering
+also includes `01a0ef034..b3ebdfcf3`, which changed only the decoder and
+replacement tooling. The span includes one-pass Page root publication, typed
+array binds for memberships, gathered keys, multi-row inserts, and keyed-update
+runs, positional write rows prepared through compiled authoring plans, grouped
+deletes and temporal effects, and the 1,024-write Write Group bound. No
+matched-source reading separates them, so changes are not attributed to
+individual commits. All 80 live delivery timing cells read faster. Readings that
+touch no database also moved: 30 of 74 provider-free delivery timing cells read
+faster and 2 slower, and the lifecycle-overhead arms over their in-memory port
+read 15–21% faster at their medians, while their paired differences stayed
+within noise, so their relative overhead ratios rose 21–28%. The live movement
+is therefore not separated from run conditions. The completed capture and its
+invalid first attempt, the frozen predecessor portfolio, conditions, durations,
+gates, and README, the automated former-gate assessment and derivation deltas,
+the comparison and its compatibility refusal, host and run logs, the helper
+scripts, and the exact commands are archived at
+`~/.local/share/parallax/evidence/cor-251/cost-capture/`; its `SHA256SUMS`
 manifest has SHA-256
-`5168b1f7bf7c6ccff6897d1949a73e41bd373806e4f3345bad1a1aca11ad7e89`.
+`ba75cb79e2b57a7fe03dde8181b4c1e5a8178926cdab47eb6dfff5293e6008b6`.
 
 ## Method and interpretation
 
