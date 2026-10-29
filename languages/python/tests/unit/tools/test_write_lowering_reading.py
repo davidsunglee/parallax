@@ -5,6 +5,7 @@ import json
 import sys
 import tracemalloc
 from contextlib import redirect_stdout
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -112,7 +113,38 @@ def test_child_case_names_match_the_shared_workloads() -> None:
         write_lowering_reading.MODEL_CASE,
         write_lowering_reading.MODEL_FAMILY_CASE,
         *(case.name for case in lowering_support.CROSS_OBJECT_CASES),
+        *(case.name for case in lowering_support.BATCH_CASES),
     ) == CASE_NAMES
+
+
+def test_a_batch_insert_child_reads_the_reports_batch_window() -> None:
+    assert write_lowering_reading.BATCH_WINDOW == write_lowering_overhead.BATCH_WINDOW
+    assert {
+        name
+        for name, window in write_lowering_reading.WINDOWS.items()
+        if window == write_lowering_reading.BATCH_WINDOW
+    } == set(write_lowering_overhead.BATCH_CASE_NAMES)
+
+
+def test_a_batch_insert_run_refuses_a_flush_presenting_other_than_its_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = lowering_support.batch_case_named("batch.insert.2.columns.typed")
+    with write_lowering_reading.driver_for(case.name) as driver:
+        assert driver.units == case.rows
+        driver.run()
+    claimed = replace(case, work=replace(case.work, largest_grouped_insert=1))
+
+    def named(name: str) -> lowering_support.BatchCase:
+        del name
+        return claimed
+
+    monkeypatch.setattr(lowering_support, "batch_case_named", named)
+    with (
+        write_lowering_reading.driver_for(case.name) as driver,
+        pytest.raises(RuntimeError, match="presented"),
+    ):
+        driver.run()
 
 
 def test_a_cross_object_child_answers_exactly_the_reports_flush_cells() -> None:
@@ -286,6 +318,11 @@ def test_a_changed_ancestor_successor_reads_its_keyed_window() -> None:
 @in_a_child_interpreter
 def test_a_leaf_type_insert_reads_its_keyed_window() -> None:
     _assert_reading("leaf.float64.document.wire", units=1)
+
+
+@in_a_child_interpreter
+def test_a_batch_insert_reads_its_batch_window_per_row() -> None:
+    _assert_reading("batch.insert.8.columns.typed", units=8)
 
 
 @in_a_child_interpreter
