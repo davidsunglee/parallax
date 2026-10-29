@@ -149,7 +149,7 @@ from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.unit_work import KeyedMutation, TargetMutation
 from parallax.core.write_plan.managed_row import managed_row, named_members
 from parallax.core.write_plan.payload import PatchedDocument
-from parallax.core.write_plan.plan import WriteGroup, WritePlan
+from parallax.core.write_plan.plan import EffectSpan, WriteGroup, WritePlan
 from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision, WriteRow
 from parallax.postgres._connection import adapt_binds, initialize_connection
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
@@ -814,10 +814,21 @@ def _composed(value: object) -> object:
     return value
 
 
+_GROUPED_EFFECT_RESULT: Final = " returning v.ord"
+"""How a grouped effect's statement ends: it returns each changed row's source
+ordinal."""
+
+
+def _grouped_effects(binds: Sequence[object]) -> int:
+    """The effects a grouped effect's binds apply: its source arrays' length."""
+    return next(len(bind.values) for bind in binds if isinstance(bind, ArrayBind))
+
+
 class AcceptingPort(ConnectsAsItself):
     """A provider-free port that answers every read with ``stored``, serializes
     every DML statement's binds as the driver would, and counts it as one
-    affected row, committing every transaction.
+    affected row — a grouped effect's every source row as changed — committing
+    every transaction.
 
     The stored rows are copied per statement, so nothing a read answers is
     shared with the fixture or with an earlier read.
@@ -838,6 +849,9 @@ class AcceptingPort(ConnectsAsItself):
         *,
         read_only: bool = False,
     ) -> list[Row]:
+        if sql.endswith(_GROUPED_EFFECT_RESULT):
+            serialize(binds)
+            return [(ordinal,) for ordinal in range(1, _grouped_effects(binds) + 1)]
         del binds
         rows = (cast("Mapping[str, object]", _composed(row)) for row in self._stored)
         return projected_rows(sql, rows, document_reads)
@@ -1042,12 +1056,14 @@ CROSS_OBJECT_PREFIX: Final = "cross-object."
 class FlushWork:
     """What one flush presented to its port: every statement, every call that
     presented one or more of them, the most statements one ordered invocation
-    presented, and the most rows one insert statement wrote."""
+    presented, the most rows one insert statement wrote, and the most effects
+    one grouped effect applied."""
 
     statements: int
     invocations: int
     largest_ordered_invocation: int
     largest_grouped_insert: int
+    largest_grouped_effect: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -1223,7 +1239,7 @@ def _partial_successor_case(*, first_key: int) -> CrossObjectCase:
         (1, 2),
         # Alone: 66 closes in two invocations, 67 openings in one insert;
         # together: 68 closes in two, 69 openings in one.
-        FlushWork(66 + 1 + 68 + 1, 2 + 1 + 2 + 1, 64, 69),
+        FlushWork(66 + 1 + 68 + 1, 2 + 1 + 2 + 1, 64, 69, 0),
         acquired=tuple(acquired),
         reads=tuple(VALID_START + _DAY * index for index in range(0, 66, 2)),
         reach=2 * _DAY,
@@ -1240,7 +1256,7 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=4001,
         objects=32,
         milestones=4,
-        work=FlushWork(128 + 1, 2 + 1, 64, 192),
+        work=FlushWork(128 + 1, 2 + 1, 64, 192, 0),
     ),
     # 384 closes in six invocations, 448 openings in one insert.
     _deferred_span_case(
@@ -1250,7 +1266,7 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=5001,
         objects=32,
         milestones=12,
-        work=FlushWork(384 + 1, 6 + 1, 64, 448),
+        work=FlushWork(384 + 1, 6 + 1, 64, 448, 0),
     ),
     _deferred_span_case(
         "requesting",
@@ -1259,7 +1275,7 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=6001,
         objects=32,
         milestones=12,
-        work=FlushWork(384 + 1, 6 + 1, 64, 448),
+        work=FlushWork(384 + 1, 6 + 1, 64, 448, 0),
         requesting=True,
     ),
     # 1024 closes in 16 invocations, 1088 openings in one insert.
@@ -1270,7 +1286,7 @@ DEFERRED_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=7001,
         objects=32,
         milestones=32,
-        work=FlushWork(1024 + 1, 16 + 1, 64, 1088),
+        work=FlushWork(1024 + 1, 16 + 1, 64, 1088, 0),
     ),
     _partial_successor_case(first_key=8001),
 )
@@ -1288,7 +1304,7 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=1001,
         label="after",
         groups=(64,),
-        work=FlushWork(65, 2, 64, 64),
+        work=FlushWork(65, 2, 64, 64, 0),
     ),
     _cross_object_case(
         "txtime",
@@ -1298,7 +1314,7 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=2001,
         label="after",
         groups=(64, 64, 2),
-        work=FlushWork(133, 6, 64, 64),
+        work=FlushWork(133, 6, 64, 64, 0),
     ),
     _cross_object_case(
         "bitemporal",
@@ -1308,7 +1324,7 @@ CROSS_OBJECT_CASES: Final[tuple[CrossObjectCase, ...]] = (
         first_key=3001,
         label="middle",
         groups=(64,),
-        work=FlushWork(65, 2, 64, 192),
+        work=FlushWork(65, 2, 64, 192, 0),
     ),
     *DEFERRED_CASES,
 )
@@ -1345,6 +1361,7 @@ class OrderedAcceptingPort(AcceptingPort):
 
     __slots__ = (
         "_invocations",
+        "_largest_effect",
         "_largest_insert",
         "_largest_ordered",
         "_statements",
@@ -1354,6 +1371,7 @@ class OrderedAcceptingPort(AcceptingPort):
     _invocations: int
     _largest_ordered: int
     _largest_insert: int
+    _largest_effect: int
     _transport: OrderedWriteTransport
 
     def __init__(self, stored: Sequence[Mapping[str, object]] = ()) -> None:
@@ -1363,12 +1381,31 @@ class OrderedAcceptingPort(AcceptingPort):
 
     def reset(self) -> None:
         self._statements = self._invocations = 0
-        self._largest_ordered = self._largest_insert = 0
+        self._largest_ordered = self._largest_insert = self._largest_effect = 0
 
     def work(self) -> FlushWork:
         return FlushWork(
-            self._statements, self._invocations, self._largest_ordered, self._largest_insert
+            self._statements,
+            self._invocations,
+            self._largest_ordered,
+            self._largest_insert,
+            self._largest_effect,
         )
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+        *,
+        read_only: bool = False,
+    ) -> list[Row]:
+        rows = super().execute(sql, binds, document_reads, read_only=read_only)
+        if sql.endswith(_GROUPED_EFFECT_RESULT):
+            self._statements += 1
+            self._invocations += 1
+            self._largest_effect = max(self._largest_effect, len(rows))
+        return rows
 
     @property
     def ordered_write_transport(self) -> OrderedWriteTransport | None:
@@ -1430,6 +1467,8 @@ class SpanAcceptingPort(OrderedAcceptingPort):
         *,
         read_only: bool = False,
     ) -> list[Row]:
+        if sql.endswith(_GROUPED_EFFECT_RESULT):
+            return super().execute(sql, binds, document_reads, read_only=read_only)
         if " t0.from_z < " in sql:
             self.coverage_reads += 1
             rows = _covered(self._acquired, binds)
@@ -1628,7 +1667,7 @@ def _batch_case(rows: int, layout: Layout, ingress: Ingress) -> BatchCase:
         layout,
         tuple(_batch_instance(cls, key) for key in keys) if ingress == "typed" else (),
         tuple(_batch_payload(key) for key in keys) if ingress == "wire" else (),
-        FlushWork(1, 1, 0, rows),
+        FlushWork(1, 1, 0, rows, 0),
     )
 
 
@@ -1751,6 +1790,7 @@ def marked_flushes(regions: FlushRegions) -> Generator[None]:
         steps: tuple[PlannedStep, ...],
         /,
         *,
+        effect_spans: tuple[EffectSpan, ...] = (),
         allocates: bool,
         flush: FlushActivity,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
@@ -1761,6 +1801,7 @@ def marked_flushes(regions: FlushRegions) -> Generator[None]:
         answered = execute(
             executor,
             steps,
+            effect_spans=effect_spans,
             allocates=allocates,
             flush=flush,
             capture_insert=capture_insert,

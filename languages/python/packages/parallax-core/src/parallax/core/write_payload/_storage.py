@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from operator import itemgetter
 from typing import Final, cast
 
@@ -38,12 +39,25 @@ from parallax.core.storage_layout import (
     RelationalDocument,
 )
 from parallax.core.write_plan.managed_row import occurrence_cells
+from parallax.core.write_plan.payload import AssignmentPayload, PatchedDocument
 from parallax.core.write_plan.planned_rows import WritePlanningError
-from parallax.core.write_plan.steps import NewLineage, WriteRow
+from parallax.core.write_plan.steps import (
+    ExactCount,
+    KeyTarget,
+    NewLineage,
+    PlannedStep,
+    PlannedUpdate,
+    SelfIncrement,
+    Versioned,
+    VersionGate,
+    WriteRow,
+)
 
 __all__ = [
     "ROW_SLOTS_PER_ENTITY",
     "AssignmentPlacement",
+    "EffectShape",
+    "EffectSlots",
     "EntityStorage",
     "RowSlots",
     "StorageCatalog",
@@ -53,7 +67,7 @@ __all__ = [
 
 ROW_SLOTS_PER_ENTITY: Final = 16
 """The most Row Slots one Entity's storage retains, one per presence first
-seen, and likewise the most assignment placements. A row stating a further
+seen, and likewise the most assignment placements and Effect Slots. A row stating a further
 combination of optional members is placed for its own statement and not
 retained, so the members a writer chooses to state cannot grow what the model
 holds."""
@@ -112,15 +126,34 @@ class _Slot:
         self.document = document
 
 
+@dataclass(frozen=True, slots=True)
+class EffectShape:
+    """What every effect sharing one grouped effect has alike: its step kind,
+    Entity, and key Attributes, the members its assignments name as a
+    ``presence`` mask over the Entity's members — which fixes where each
+    assigned value lands, in a Column of its own or at a path of the shared
+    Structured Column — and the version Attribute it gates on, ``None`` where
+    it is ungated."""
+
+    kind: type[PlannedStep]
+    entity: EntityIdentity
+    key: tuple[AttributeIdentity, ...]
+    presence: int
+    gate: AttributeIdentity | None
+
+
 class EntityStorage:
     """One Entity's Table Layout, compiled for writing: each slot in Table
     Layout order, the document-resident members of its shared Structured
-    Column, and the Row Slots of each presence first seen, at most
-    :data:`ROW_SLOTS_PER_ENTITY` of them."""
+    Column, the Row Slots of each presence first seen, at most
+    :data:`ROW_SLOTS_PER_ENTITY` of them, and likewise the Effect Slots of each
+    effect shape first seen."""
 
     __slots__ = (
         "_assignments",
+        "_effects",
         "_rows",
+        "_unique",
         "entity",
         "interval_members",
         "residents",
@@ -183,6 +216,8 @@ class EntityStorage:
         }
         self._rows: dict[int, RowSlots] = {}
         self._assignments: dict[int, AssignmentPlacement] = {}
+        self._effects: dict[EffectShape, EffectSlots] = {}
+        self._unique = _unique_members(view)
 
     def row_slots(self, presence: int) -> RowSlots:
         """The Row Slots of every row stating exactly the members ``presence``
@@ -192,6 +227,51 @@ class EntityStorage:
             slots = RowSlots(self, presence)
             if len(self._rows) < ROW_SLOTS_PER_ENTITY:
                 self._rows[presence] = slots
+        return slots
+
+    def effect_shape(self, step: PlannedStep) -> EffectShape | None:
+        """The shape of the effects ``step`` may share a grouped effect with,
+        ``None`` where it runs alone.
+
+        Only an update of one key expecting an exact count is shaped. One
+        advancing a registry (a ``SelfIncrement``) runs alone, since its
+        increment is no value a column can carry, and so does one assigning a
+        member of a unique key other than the primary key, since a value it
+        hands from one object to another must be released in authored order.
+        """
+        match step:
+            case PlannedUpdate(
+                target=KeyTarget(key_values=(_,)) as target, affected_rows=ExactCount()
+            ):
+                pass
+            case _:
+                return None
+        assignments = step.assignments
+        index = self.view.member_selection.index
+        unique = self._unique
+        presence = 0
+        for identity, value in assignments.attributes.items():
+            position = index.get(identity)
+            if position is None or isinstance(value, SelfIncrement) or identity in unique:
+                return None
+            presence |= 1 << position
+        for identity in assignments.value_objects:
+            presence |= 1 << index[identity]
+        concurrency = step.concurrency
+        gate = (
+            concurrency.attribute
+            if isinstance(concurrency, Versioned) and isinstance(concurrency.gate, VersionGate)
+            else None
+        )
+        return EffectShape(PlannedUpdate, self.entity, target.key_attributes, presence, gate)
+
+    def effect_slots(self, shape: EffectShape) -> EffectSlots:
+        """The source columns a grouped effect of ``shape`` binds."""
+        slots = self._effects.get(shape)
+        if slots is None:
+            slots = EffectSlots(self, shape)
+            if len(self._effects) < ROW_SLOTS_PER_ENTITY:
+                self._effects[shape] = slots
         return slots
 
     def assignment_placement(self, slots: int) -> AssignmentPlacement:
@@ -446,6 +526,115 @@ class RowSlots:
         if not patches:
             return document
         return apply_prepared_patches(document, prepare_managed_patches(residents.shape, patches))
+
+
+def _unique_members(view: EntityLayoutView) -> frozenset[AttributeIdentity]:
+    """The Attributes of every unique key of ``view``'s Table but its primary
+    key, other than an As-Of Axis end."""
+    layout = view.layout
+    primary = layout.primary_key_index
+    ends: set[object] = set()
+    constraints = layout.temporal_constraints
+    if constraints is not None:
+        ends.add(constraints.transaction_axis.end.contributor)
+        if constraints.valid_axis is not None:
+            ends.add(constraints.valid_axis.end.contributor)
+    return frozenset(
+        slot.contributor
+        for key in layout.unique_keys
+        if key is not primary
+        for slot in key.columns
+        if isinstance(slot.contributor, AttributeIdentity) and slot.contributor not in ends
+    )
+
+
+class EffectSlots:
+    """The source columns a grouped effect of one :class:`EffectShape` binds:
+    each key Attribute's, then the version gate's, then one per cell its
+    assignments place in Table Layout slot order — one per assigned path of
+    the shared Structured Column, in canonical logical placement order.
+    """
+
+    __slots__ = (
+        "_gathers",
+        "assignment_sources",
+        "element_types",
+        "entity",
+        "gate_source",
+        "key_sources",
+        "parameter_count",
+    )
+
+    def __init__(self, storage: EntityStorage, shape: EffectShape) -> None:
+        selection = storage.view.member_selection
+        bindings = selection.bindings
+        presence = shape.presence
+
+        def attribute_type(identity: AttributeIdentity) -> NeutralType:
+            return cast("AttributeMetadata", bindings[selection.index[identity]]).type
+
+        types: list[NeutralType] = [attribute_type(identity) for identity in shape.key]
+        self.key_sources: tuple[int, ...] = tuple(range(len(types)))
+        self.gate_source: int | None = None
+        if shape.gate is not None:
+            self.gate_source = len(types)
+            types.append(attribute_type(shape.gate))
+        sources: list[int | tuple[int, ...]] = []
+        gathers: list[tuple[int, int]] = []
+        paths = 0
+        for slot in storage.slots:
+            kind = slot.kind
+            if kind == _SHARED:
+                residents = cast("_Residents", storage.residents)
+                assigned = sum(1 for position in residents.positions if presence >> position & 1)
+                if not assigned:
+                    continue
+                columns = tuple(range(len(types), len(types) + assigned))
+                gathers.extend((len(sources), patch) for patch in range(assigned))
+                types.extend([JSON] * assigned)
+                sources.append(columns)
+                paths += assigned
+            elif kind != _CONSTANT and presence >> slot.position & 1:
+                gathers.append((len(sources), -1))
+                sources.append(len(types))
+                types.append(_element_type(slot))
+        self.entity = storage.entity
+        self.assignment_sources: tuple[int | tuple[int, ...], ...] = tuple(sources)
+        self.element_types: tuple[NeutralType, ...] = tuple(types)
+        self._gathers: tuple[tuple[int, int], ...] = tuple(gathers)
+        tag = 0 if storage.view.discriminator is None else 1
+        self.parameter_count = len(types) + paths + tag
+
+    def column_cells(
+        self, steps: Sequence[PlannedStep], payloads: Sequence[AssignmentPayload]
+    ) -> tuple[list[object], ...]:
+        """One new list per source column, in step order: each key value and
+        observed version read from its step, and each assigned cell from its
+        step's payload — a path's prepared encoded value where the shared
+        Structured Column is patched."""
+        updates = cast("Sequence[PlannedUpdate]", steps)
+        columns: list[list[object]] = [
+            [cast("KeyTarget", step.target).key_values[0][index] for step in updates]
+            for index in range(len(self.key_sources))
+        ]
+        if self.gate_source is not None:
+            columns.append(
+                [
+                    cast("VersionGate", cast("Versioned", step.concurrency).gate).observed_version
+                    for step in updates
+                ]
+            )
+        for value, patch in self._gathers:
+            if patch < 0:
+                columns.append([payload.values[value] for payload in payloads])
+            else:
+                columns.append(
+                    [
+                        cast("PatchedDocument", payload.values[value]).patches[patch].value
+                        for payload in payloads
+                    ]
+                )
+        return tuple(columns)
 
 
 class AssignmentPlacement:

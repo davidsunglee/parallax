@@ -14,7 +14,7 @@ import pytest
 from parallax.core import Attr, Bitemporal, DomainModel, Entity, Int32, TxTemporal, attr
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import MappingRow, OrderedWriteResultComplete
+from parallax.core.db_port import ArrayBind, MappingRow, OrderedWriteResultComplete
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
@@ -195,13 +195,29 @@ def test_a_bitemporal_loop_groups_every_objects_successors_behind_every_close() 
     assert keys == [key for key in range(1, 65) for _ in range(2)]
 
 
-@pytest.mark.parametrize("delete", [False, True], ids=["updates", "deletes"])
-def test_a_non_temporal_loop_presents_its_keyed_effects_together(delete: bool) -> None:
-    port = _run("plain", 65, (_effects(64), Write()), delete=delete)
+def test_a_non_temporal_loop_presents_its_keyed_deletes_together() -> None:
+    port = _run("plain", 65, (_effects(64), Write()), delete=True)
     assert _shapes(port.calls) == [("ordered", 64), ("alone", 1)]
     (invocation,) = (call for call in port.calls if isinstance(call, OrderedCall))
     # Each statement binds its object's observed version as its gate, last.
     assert [write.binds[-1] for write in invocation.writes] == [1] * 64
+
+
+def _ordinals(count: int) -> ScriptEntry:
+    return Read(rows=[{"v.ord": ordinal} for ordinal in range(1, count + 1)])
+
+
+def test_a_non_temporal_loop_applies_each_groups_updates_as_one_grouped_effect() -> None:
+    port = _run("plain", 65, (_ordinals(64), Write()))
+    grouped = [
+        call for call in port.calls if isinstance(call, ReadCall) and call.sql.startswith("update")
+    ]
+    (call,) = grouped
+    # Each source row carries its own object's key and observed version as its gate.
+    keys, gates = call.binds[0], call.binds[1]
+    assert isinstance(keys, ArrayBind) and keys.values == list(range(1, 65))
+    assert isinstance(gates, ArrayBind) and gates.values == [1] * 64
+    assert _shapes(port.calls) == [("alone", 1)]
 
 
 def test_without_ordered_transport_each_effect_runs_alone_and_the_inserts_still_group() -> None:

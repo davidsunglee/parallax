@@ -273,7 +273,8 @@ given:
 
 A multi-statement (deep fetch) golden is an ordered list of entries — one per
 deep-fetch level or per DML statement a write sequence executes, so openings one
-multi-row insert carries are one entry (`m-sql` *Requested ranges*), not one
+multi-row insert carries are one entry (`m-sql` *Requested ranges*), and so are
+the effects one grouped effect applies (`m-sql` *Grouped effects*), not one
 per Planned Step; each entry carries only its own
 `binds`, and a statement with no binds omits the `binds` key entirely:
 
@@ -1139,7 +1140,10 @@ trio), batched non-temporal writes, ordinary `delete`, and the minimal
 `cascadeDelete` witness over dependent relationships. The DML statement count MUST
 equal the sum of the `when.writeSequence` steps' declared statement counts, and
 `then.databaseCalls` MUST equal that total plus the resolving reads the sequence owes
-(*Resolving reads a write owes*, below). A step on a **temporal** entity carries **exactly one**
+(*Resolving reads a write owes*, below). A grouped effect is one statement and
+one Database Call however many keyed updates it applies, so where PostgreSQL
+groups effects that MariaDB runs one statement each, the dialects' counts
+differ and the case is authored once per dialect. A step on a **temporal** entity carries **exactly one**
 neutral write input row (`m-unit-work`: each row closes its own milestone and
 chains its own successors, and a temporal entity never collapses into a set-based
 statement), so a chain per key is authored as a **step per key**. A

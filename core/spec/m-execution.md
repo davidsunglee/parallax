@@ -245,6 +245,32 @@ write of an acquisition span is row acquisition, not a step, and may run
 before an earlier group completes (`m-unit-work` *Shared coverage acquisition*). A failed execution completes
 no settled write, and the failure dooms the attempt.
 
+Where the dialect has the array parameter cast form (`m-dialect`), execution
+applies the effects of each effect span of a Write Group (`m-unit-work` *Write
+Group formation*) with one **grouped effect**: one row-producing statement whose
+source binds one array per source column and returns the source ordinal of
+every target row it changed (`m-sql` *Grouped effects*). Each effect remains its
+own Planned Step, and the statement is one Database Call, submitted through the
+port's row-returning operation. Its whole result is validated before any count
+is read: every row holds exactly one ordinal, an integer that is no Boolean,
+naming one of the statement's effects; a result that contradicts this fails
+with the write result integrity error (`m-db-port`) ahead of any shortfall.
+Each effect's count is then how many times its own ordinal returned, a missing
+ordinal counting zero and a repeated one each time, and the unit of work
+enforces the effects in canonical order against those counts, each under its
+own policy. The span says which steps the statement holds, so nothing beyond
+it is taken; it is enforced before any later step is prepared or lowered, and
+no ordered run takes the step opening a span. On a dialect without the array
+parameter cast form, and for an effect span whose fixed columns and shared
+scalars would exceed the dialect's bind limit, the spans are not read and each
+effect runs as it would otherwise. Preparing a later effect of the span may fail
+ordinarily; the effects before it are then applied and enforced as the one
+statement they were selected as, even one alone, and that failure propagates
+only where they succeed. A failure preparing the span's first effect applies
+nothing, and a control-flow or fatal exception applies none of the span. A
+grouped effect's statement failure is the statement's own, as a grouped
+insert's is below.
+
 Where the connection holds ordered write transport (`m-db-port`), a run of two
 or more contiguous count-only non-insert steps on one row each — temporal closes,
 guards, revisions, and removals, and Non-Temporal updates and deletes of one
@@ -311,8 +337,8 @@ propagates only where the statement succeeds. A failure preparing the run's
 first insert inserts nothing, and a control-flow or fatal exception inserts
 none of the run.
 
-A grouped statement succeeds or fails as a whole, however many objects its rows
-belong to. Its failure is the statement's own database error, classified and
+A grouped statement — a grouped effect or a grouped insert — succeeds or fails
+as a whole, however many objects its rows belong to. Its failure is the statement's own database error, classified and
 judged for retry as any statement's is; it can name another constraint,
 message, or category than the error the earliest failing row would raise alone,
 and it is neither attributed to a row or an object nor explained by replaying or
@@ -320,11 +346,12 @@ reading anything. A Write Group whose statement fails completes none of its
 settled writes, and its attempt rolls back and becomes rollback-only exactly as
 for any other failure.
 
-A Write Group presents every non-insert step before any insert (`m-unit-work`
-*Write Group formation*), so where two of its writes would each fail, the
-failure presented first is the one that propagates: a later write's affected-row
-shortfall can precede an earlier write's insert violation, and the two can
-differ in retry eligibility. Every deferred write of a group binds before the
+A Write Group presents every non-insert step before any insert, and lays its
+effects out shape by shape (`m-unit-work` *Write Group formation*), so where two
+of its writes would each fail, the failure presented first is the one that
+propagates: a later write's affected-row shortfall can precede an earlier
+write's insert violation, a grouped effect's statement failure can overtake
+another effect's refused gate, and the two can differ in retry eligibility. Every deferred write of a group binds before the
 group's steps reach execution, so a later write's binding failure likewise
 precedes an earlier write's statement failure (`m-unit-work` *Shared coverage
 acquisition*). Either way the group completes none of its writes and its

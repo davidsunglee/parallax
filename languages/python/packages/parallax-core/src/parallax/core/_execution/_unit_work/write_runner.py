@@ -5,7 +5,7 @@ from typing import Protocol
 
 from parallax.core.document_codec import apply_prepared_patches
 from parallax.core.write_plan.payload import PatchedDocument
-from parallax.core.write_plan.plan import CurrentRowOutput, WriteEffects
+from parallax.core.write_plan.plan import CurrentRowOutput, EffectSpan, WriteEffects
 from parallax.core.write_plan.steps import (
     PlannedDelete,
     PlannedStep,
@@ -19,7 +19,8 @@ __all__ = ["ExecuteCountedStep", "ExecuteWriteSteps"]
 
 class ExecuteWriteSteps(Protocol):
     """How a flush has one sequence of Planned Steps executed: a Write
-    Group's steps.
+    Group's steps, with the effect spans among them it may present as grouped
+    effects.
 
     A normal return means every step executed and its effect was enforced, in
     order; it completes no settled write and commits nothing. With
@@ -40,6 +41,7 @@ class ExecuteWriteSteps(Protocol):
         steps: tuple[PlannedStep, ...],
         /,
         *,
+        effect_spans: tuple[EffectSpan, ...] = (),
         allocates: bool,
         capture_insert: Callable[[WriteRow, object | None], None] | None = None,
         capture_revision: Callable[[PlannedTemporalRevision, PatchedDocument | None], None]
@@ -118,10 +120,16 @@ class _CurrentRowCapture:
         self._staged.clear()
 
     def execute(
-        self, execute: ExecuteWriteSteps, steps: tuple[PlannedStep, ...], *, allocates: bool
+        self,
+        execute: ExecuteWriteSteps,
+        steps: tuple[PlannedStep, ...],
+        *,
+        effect_spans: tuple[EffectSpan, ...],
+        allocates: bool,
     ) -> tuple[object, ...]:
         return execute(
             steps,
+            effect_spans=effect_spans,
             allocates=allocates,
             capture_insert=self.capture_insert,
             capture_revision=self.capture_revision,

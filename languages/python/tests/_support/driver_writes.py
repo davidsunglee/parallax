@@ -136,6 +136,8 @@ class _RecordingConnection:
         *,
         read_only: bool = False,
     ) -> list[Row]:
+        if not read_only and sql.lstrip().lower().startswith(_WRITE_VERBS):
+            self._writes.append((sql, list(binds)))
         return self._inner.execute(sql, binds, document_reads, read_only=read_only)
 
     def execute_pipeline(

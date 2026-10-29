@@ -1012,15 +1012,33 @@ objects they write are distinct:
   acquisition*).
 - A settled write with no step joins like any other and completes with its group.
 
-A group's Planned Steps are every write's non-insert steps — each step that is
-not an insert — followed by every write's inserts, each write's own order kept
+A group's Planned Steps are every write's **effects** — each step that is not
+an insert — followed by every write's inserts, each write's own order kept
 within both. An update- or delete-phase write's inserts open the successors of
-its own non-insert steps, and an insert-phase write produces only inserts, so
-the layout moves only successors, and only past other objects' steps: no insert
-moves behind a non-insert step of another mutation phase. A group of bound
-deferred writes is laid out the same way. Nothing else is reordered: the phases,
-the referential order, and the authored order of updates are stage 4's, and no
-key sort applies. As it forms the groups, settlement also records which
+its own effects, and an insert-phase write produces only inserts, so the layout
+moves only successors, and only past other objects' steps: no insert moves
+behind an effect of another mutation phase. A group of bound deferred writes is
+laid out the same way.
+
+A group of two or more writes lays its effects out **shape by shape**, in one
+pass. An effect's shape is what lets it share one grouped effect with another
+(`m-execution`): the same step kind, Entity, and key, the same assigned members,
+and the same gate kind. An update of one key expecting an exact count has a
+shape, unless it advances a registry (`m-pk-gen`) or assigns a member of a
+unique key other than the primary key, an As-Of Axis end excepted, since a
+unique value one object hands another must be released in authored order;
+every other effect has none. Effects are laid out in blocks of one shape each, in the
+order each block first appears. An effect joins the latest block of its shape
+unless that block precedes the block holding its own write's previous effect,
+in which case it opens a later block of that shape; an effect with no shape
+stands alone as a **barrier** that no later effect joins a block across. Each
+block of two or more effects is recorded as an **effect span** over the group's
+steps. A group of one write keeps its own steps and records no span. So
+effects of distinct objects may run out of authored order across shapes, while
+each write's own effects keep their order and an effect assigning a unique key
+member keeps its authored place. Nothing else is reordered: the phases, the
+referential order, and otherwise the authored order of updates are stage 4's,
+and no key sort applies. As it forms the groups, settlement also records which
 consecutive deferred settled writes share coverage acquisition (*Shared coverage
 acquisition*); that record reorders nothing.
 
@@ -1780,6 +1798,10 @@ keys, because that one target owns the aggregate expectation. An aggregate-only
 backend **MUST** execute distinct `ExactCount` steps separately; it MAY still
 reuse statement preparation and stream bind rows. This is what preserves exact
 attribution of a shortfall to the step that caused it.
+
+A grouped effect (`m-execution`) is such a batch: the source ordinals it returns
+give each of its steps its own count, a step whose ordinal is absent counting
+zero.
 
 Ordered write transport (`m-db-port`) is such a batch wherever its result
 confirms a count for a step. A statement failure, confirmed non-execution, an

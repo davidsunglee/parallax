@@ -23,7 +23,6 @@ import datetime as dt
 import gc
 import weakref
 from decimal import Decimal
-from itertools import groupby
 from typing import Any, Literal, cast
 
 import pytest
@@ -33,7 +32,7 @@ from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import POSITION_MODEL, Position
 from parallax.core import LATEST
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import MappingRow
+from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution import (
     ServingModel,
@@ -117,6 +116,37 @@ def _accounts() -> Any:
 
 def _kinds(port: ScriptedAdapter) -> list[type[PortCall]]:
     return [type(op) for op in port.calls]
+
+
+def _effects(count: int) -> Read | Write:
+    """The answer to one flush of ``count`` updates of distinct objects: one
+    statement alone, or one grouped effect returning every source ordinal."""
+    if count == 1:
+        return Write()
+    return Read(rows=[{"v.ord": ordinal} for ordinal in range(1, count + 1)])
+
+
+def _flushed(port: ScriptedAdapter) -> list[int]:
+    """How many objects each run of writes between two reads updated: one per
+    statement run alone, and one per source row of a grouped effect."""
+    runs: list[int] = []
+    written = False
+    for call in port.calls:
+        if isinstance(call, ReadCall) and call.sql.startswith("update"):
+            first = call.binds[0]
+            assert isinstance(first, ArrayBind)
+            count = len(first.values)
+        elif isinstance(call, WriteCall):
+            count = 1
+        else:
+            written = False
+            continue
+        if written:
+            runs[-1] += count
+        else:
+            runs.append(count)
+        written = True
+    return runs
 
 
 def _sql(port: ScriptedAdapter, position: int) -> str:
@@ -279,7 +309,7 @@ def test_a_writing_loop_never_holds_more_than_one_pages_writes(size: int) -> Non
             *(
                 entry
                 for read in paged_reads(rows, size=size)
-                for entry in (read, Write(times=min(len(read.rows), size)))
+                for entry in (read, _effects(min(len(read.rows), size)))
             )
         )
     )
@@ -290,11 +320,7 @@ def test_a_writing_loop_never_holds_more_than_one_pages_writes(size: int) -> Non
                 tx.amend(account.edit(balance=Decimal("125.00")))
 
     account_db(port).transact(fn)
-    flushed = [
-        len(list(run))
-        for writes, run in groupby(_kinds(port), key=lambda kind: kind is WriteCall)
-        if writes
-    ]
+    flushed = _flushed(port)
     assert sum(flushed) == len(rows)
     assert max(flushed) == size
 
@@ -308,7 +334,9 @@ def test_a_default_page_delivers_1024_roots_so_a_writing_loop_flushes_1024_write
     # second page's statement, which still asks for one root past its batch.
     rows = [_account_row(account_id) for account_id in range(1, 1026)]
     first, second = paged_reads(rows, size=1024)
-    port = ScriptedAdapter(Transact(first, Write(times=1024), second, Write()))
+    # Each Write Group of the first page's writes applies its 64 updates as one
+    # grouped effect.
+    port = ScriptedAdapter(Transact(first, *(_effects(64) for _ in range(16)), second, Write()))
 
     def fn(tx: TxnContext) -> None:
         if namespace == "typed":
@@ -321,13 +349,12 @@ def test_a_default_page_delivers_1024_roots_so_a_writing_loop_flushes_1024_write
                 tx.wire.amend(account, {"owner": "streamed"})
 
     account_db(port).transact(fn)
-    flushed = [
-        len(list(run))
-        for writes, run in groupby(_kinds(port), key=lambda kind: kind is WriteCall)
-        if writes
+    assert _flushed(port) == [1024, 1]
+    reads = [
+        call
+        for call in port.calls
+        if isinstance(call, ReadCall) and not call.sql.startswith("update")
     ]
-    assert flushed == [1024, 1]
-    reads = [call for call in port.calls if isinstance(call, ReadCall)]
     assert [read.binds[-1] for read in reads] == [1025, 1025]
 
 

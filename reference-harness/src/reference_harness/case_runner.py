@@ -60,6 +60,7 @@ from sqlglot import exp
 
 from . import errors, serde
 from ._case_execution import CaseExecution
+from ._grouped_effects import GroupedEffectShapeError, ungrouped_effect
 from .case import (
     Case,
     Entity,
@@ -1314,8 +1315,11 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             raise CaseFailure(
                 f"{case.path.name}: writeSequence step on {step['entity']}: {exc.detail}"
             ) from exc
-        step_statements = statements[stmt_index : stmt_index + count]
-        step_binds = [case.statement_binds(stmt_index + offset, dialect) for offset in range(count)]
+        step_statements, step_binds = _ungrouped_effects(
+            case,
+            statements[stmt_index : stmt_index + count],
+            [case.statement_binds(stmt_index + offset, dialect) for offset in range(count)],
+        )
         # A full-bitemporal step is a RECTANGLE SPLIT: the windowed `*Until` trio, or
         # a plain (unbounded) `update` / `terminate` on a two-axis entity (the everyday
         # retroactive correction / termination, `m-temporal-write-022` / `-023`). Both close
@@ -1369,6 +1373,31 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # _assert_temporal_input).
         assert_inheritance_write_routing(case, entity, step_statements, step_binds, dialect)
         stmt_index += count
+
+
+def _ungrouped_effects(
+    case: Case, statements: list[str], binds: list[list[Any]]
+) -> tuple[list[str], list[list[Any]]]:
+    """*statements* with each PostgreSQL grouped effect spelled as the keyed
+    updates it applies, one per source row (:func:`ungrouped_effect`), so a step's
+    per-row cross-check grades every row it writes whichever form executes them."""
+    expanded: list[str] = []
+    expanded_binds: list[list[Any]] = []
+    for statement, statement_binds in zip(statements, binds, strict=True):
+        try:
+            rows = ungrouped_effect(statement, statement_binds)
+        except GroupedEffectShapeError as exc:
+            raise CaseFailure(
+                f"{case.path.name}: the grouped-effect golden {statement!r} {exc}."
+            ) from exc
+        if rows is None:
+            expanded.append(statement)
+            expanded_binds.append(statement_binds)
+            continue
+        for lone, lone_binds in rows:
+            expanded.append(lone)
+            expanded_binds.append(lone_binds)
+    return expanded, expanded_binds
 
 
 def _assert_insert_input(

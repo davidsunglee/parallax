@@ -705,10 +705,15 @@ class UnitOfWork:
         captured: tuple[tuple[CurrentRowOutput, object | None], ...] = ()
         try:
             if capture is None:
-                allocated = self.execute_write_steps(steps, allocates=bool(expected))
+                allocated = self.execute_write_steps(
+                    steps, effect_spans=group.effect_spans, allocates=bool(expected)
+                )
             else:
                 allocated = capture.execute(
-                    self.execute_write_steps, steps, allocates=bool(expected)
+                    self.execute_write_steps,
+                    steps,
+                    effect_spans=group.effect_spans,
+                    allocates=bool(expected),
                 )
             if len(allocated) != expected:
                 raise UnitOfWorkError(

@@ -70,6 +70,7 @@ from parallax.core.write_plan.plan import (
     AcquisitionSpan,
     AllocatedOpening,
     BoundRange,
+    EffectShapeOf,
     Openings,
     SettledWrite,
     TemporalWriteOwnership,
@@ -218,8 +219,9 @@ class WritePlanCompiler:
         the rows it removes and opens, and what it leaves for the temporal
         sources it reaches. Consecutive settled writes
         of one mutation phase over distinct objects share a Write Group of at
-        most :data:`_GROUP_WRITES`, laid out as every write's non-insert steps
-        and then every write's inserts, each write's own order kept. A write
+        most :data:`_GROUP_WRITES`, laid out as every write's effects, shape by
+        shape where the model's payload preparer gives them shapes, and then
+        every write's inserts, each write's own order kept. A write
         whose insert the database allocates a key for and a write naming no
         complete object key form a group of their own, and a write naming an
         object the open group already writes starts the next group. A deferred
@@ -248,6 +250,7 @@ class WritePlanCompiler:
         spans: list[AcquisitionSpan] = []
         audit = AuditDecoration(self._audit, actor_identity, transaction_instant, self._settled)
         families = self._families
+        shape = self._payloads.effect_shape
         for phase in phases:
             members: list[tuple[SettledWrite, tuple[PlannedStep, ...]]] = []
             held: set[_GroupKey] = set()
@@ -257,7 +260,7 @@ class WritePlanCompiler:
                     item, concurrency, transaction_instant, ownership, audit, counts_unchanged_rows
                 )
                 if write.deferred is not None:
-                    _close_group(entries, members, held)
+                    _close_group(entries, members, held, shape)
                     run = _extend_run(
                         spans, run, len(entries), _acquisition_candidate(write, item, families)
                     )
@@ -265,14 +268,14 @@ class WritePlanCompiler:
                     continue
                 keys = None if write.opened.allocated else _group_keys(item, families)
                 if keys is None:
-                    _close_group(entries, members, held)
+                    _close_group(entries, members, held, shape)
                     entries.append(WriteGroup((write,), steps))
                     continue
                 if len(members) == _GROUP_WRITES or not held.isdisjoint(keys):
-                    _close_group(entries, members, held)
+                    _close_group(entries, members, held, shape)
                 members.append((write, steps))
                 held.update(keys)
-            _close_group(entries, members, held)
+            _close_group(entries, members, held, shape)
             _close_run(spans, run)
         return WritePlan(tuple(entries), tuple(spans))
 
@@ -774,9 +777,10 @@ def _close_group(
     entries: list[WriteGroup | SettledWrite],
     members: list[tuple[SettledWrite, tuple[PlannedStep, ...]]],
     held: set[_GroupKey],
+    effect_shape: EffectShapeOf,
 ) -> None:
     if members:
-        entries.append(WriteGroup.from_members(members))
+        entries.append(WriteGroup.from_members(members, effect_shape=effect_shape))
     members.clear()
     held.clear()
 
