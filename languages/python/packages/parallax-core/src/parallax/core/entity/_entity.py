@@ -630,9 +630,10 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     def __parallax_authored_pairs__(
         self, shape: MemberShape, entity: EntityIdentity, key: int, /
     ) -> tuple[tuple[int, object], ...] | None:
-        """The key plus every member this value's edit chain touched, at the
-        value each now holds, as ``(position, value)`` pairs in that order —
-        or ``None`` where the chain touched nothing.
+        """Every member this value's edit chain touched, then the key that
+        addresses its object, at the value each now holds, as ``(position,
+        value)`` pairs in that order — or ``None`` where the chain touched
+        nothing.
 
         Effectiveness is weighed nowhere here: a member set back to its
         original is still touched. The whole selection is judged before any
@@ -655,7 +656,7 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         )
         if not touched:
             return None
-        selected = (key, *positions)
+        selected = (*positions, key)
         values = _supplied_value(self, names, shape, entity, selected, "authored_row")
         return tuple(zip(selected, values, strict=True))
 

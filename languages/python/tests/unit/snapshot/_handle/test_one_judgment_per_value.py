@@ -470,12 +470,45 @@ def _revalued(tx: TxnContext) -> WherePosition:
     return _position(tx).edit(value=PyDecimal("200.00"))
 
 
+_WIRE_POSITION_QUERY: Final[Mapping[str, object]] = {
+    "target": "parallax.compatibility.WherePosition",
+    "predicate": {"eq": {"path": "parallax.compatibility.WherePosition.id", "value": 1}},
+    "temporal": {
+        "transaction-time": {"asOf": "latest"},
+        "valid-time": {"asOf": "2024-06-01T00:00:00.000000Z"},
+    },
+}
+
+
+def _wire_position(tx: TxnContext) -> WireEntity:
+    return tx.wire.find(_WIRE_POSITION_QUERY).result()
+
+
 def _amend_until(tx: TxnContext, source: Any) -> None:
     tx.amend(source, until=_UNTIL)
 
 
+def _wire_revalue(tx: TxnContext, source: Any) -> None:
+    tx.wire.amend(source, {"value": "200.00"})
+
+
+def _wire_revalue_until(tx: TxnContext, source: Any) -> None:
+    tx.wire.amend(source, {"value": "200.00"}, until=_UNTIL)
+
+
 def _replace_until(tx: TxnContext, source: Any) -> None:
     tx.replace(source, until=_UNTIL)
+
+
+_POSITION_STATE: Final[Mapping[str, object]] = {"acctNum": "A", "value": "200.00"}
+
+
+def _wire_restate(tx: TxnContext, source: Any) -> None:
+    tx.wire.replace(source, dict(_POSITION_STATE))
+
+
+def _wire_restate_until(tx: TxnContext, source: Any) -> None:
+    tx.wire.replace(source, dict(_POSITION_STATE), until=_UNTIL)
 
 
 def _terminate(tx: TxnContext, source: Any) -> None:
@@ -486,15 +519,32 @@ def _terminate_until(tx: TxnContext, source: Any) -> None:
     tx.terminate(source, until=_UNTIL)
 
 
+def _wire_terminate(tx: TxnContext, source: Any) -> None:
+    tx.wire.terminate(source)
+
+
+def _wire_terminate_until(tx: TxnContext, source: Any) -> None:
+    tx.wire.terminate(source, until=_UNTIL)
+
+
+# A temporal write's scalars as the keyed matrix counts them: an amendment's
+# key and revalued `value`, a replacement's key and both other members, and a
+# termination's key.
 @pytest.mark.parametrize(
     ("read", "write", "converted"),
     [
-        pytest.param(_revalued, _typed_amend, 2, id="amend"),
-        pytest.param(_revalued, _amend_until, 2, id="amend-until"),
-        pytest.param(_revalued, _typed_replace, 3, id="replace"),
-        pytest.param(_revalued, _replace_until, 3, id="replace-until"),
-        pytest.param(_position, _terminate, 1, id="terminate"),
-        pytest.param(_position, _terminate_until, 1, id="terminate-until"),
+        pytest.param(_revalued, _typed_amend, 2, id="typed-amend"),
+        pytest.param(_wire_position, _wire_revalue, 2, id="wire-amend"),
+        pytest.param(_revalued, _amend_until, 2, id="typed-amend-until"),
+        pytest.param(_wire_position, _wire_revalue_until, 2, id="wire-amend-until"),
+        pytest.param(_revalued, _typed_replace, 3, id="typed-replace"),
+        pytest.param(_wire_position, _wire_restate, 3, id="wire-replace"),
+        pytest.param(_revalued, _replace_until, 3, id="typed-replace-until"),
+        pytest.param(_wire_position, _wire_restate_until, 3, id="wire-replace-until"),
+        pytest.param(_position, _terminate, 1, id="typed-terminate"),
+        pytest.param(_wire_position, _wire_terminate, 1, id="wire-terminate"),
+        pytest.param(_position, _terminate_until, 1, id="typed-terminate-until"),
+        pytest.param(_wire_position, _wire_terminate_until, 1, id="wire-terminate-until"),
     ],
 )
 def test_a_temporal_write_admits_once_and_its_successors_carry_cells_unjudged(
@@ -509,4 +559,39 @@ def test_a_temporal_write_admits_once_and_its_successors_carry_cells_unjudged(
     # The close, then one milestone insert of every successor it opens.
     close, opening = calls
     assert close.sql.startswith("update where_position")
+    assert opening.sql.startswith("insert into where_position(")
+
+
+def _typed_insert_until(tx: TxnContext, _source: object) -> None:
+    tx.insert(
+        WherePosition(id=1, acct_num="A", value=PyDecimal("100.00")),
+        valid_from=_VALID_FROM,
+        until=_UNTIL,
+    )
+
+
+def _wire_insert_until(tx: TxnContext, _source: object) -> None:
+    tx.wire.insert(
+        "WherePosition",
+        {"id": 1, "acctNum": "A", "value": "100.00"},
+        valid_from=_VALID_FROM,
+        until=_UNTIL,
+    )
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        pytest.param(_typed_insert_until, id="typed-insert-until"),
+        pytest.param(_wire_insert_until, id="wire-insert-until"),
+    ],
+)
+def test_a_bounded_opening_converts_each_member_it_states_once(
+    write: Callable[[TxnContext, object], object],
+) -> None:
+    observation, calls = _run(WHERE_POSITION_META, (Write(),), write)
+    # Its key and both other members; the bounds are no member it states.
+    _admitted_once(observation, 3)
+    assert observation.count(_CONVERT, _NODE) == 0
+    (opening,) = calls
     assert opening.sql.startswith("insert into where_position(")

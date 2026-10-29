@@ -56,7 +56,20 @@ class Ledgered(Entity, table="ledgered", namespace=_NS):
     version: Attr[int] = attr(type=Int32, optimistic_locking=True)
 
 
-_MODEL: Final = model_of(DomainModel(Ledger, Ledgered))
+class Sealed(Entity, table="sealed", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    owner: Attr[str]
+    tags: Attr[tuple[str, ...]] = attr(read_only=True)
+
+
+class Sealeded(Entity, table="sealeded", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    owner: Attr[str]
+    tags: Attr[tuple[str, ...]] = attr(read_only=True)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
+_MODEL: Final = model_of(DomainModel(Ledger, Ledgered, Sealed, Sealeded))
 _COMPLETED: Final[Mapping[str, object]] = {
     "id": 1,
     "owner": "A",
@@ -159,6 +172,59 @@ def test_a_required_member_stated_null_is_refused_as_an_assignment(
     del addressed, empty
     with pytest.raises(wi.WriteInstructionError, match=r"owner: required attribute is absent"):
         prepare(form({"id": 1, "owner": None}), write_preparation_of(_MODEL))
+
+
+def _sealed_keyed(row: Mapping[str, object]) -> wi.WriteInstruction:
+    return wi.KeyedWriteInstruction("replace", f"{_NS}.Sealed", (row,))
+
+
+def _sealed_target(row: Mapping[str, object]) -> wi.WriteInstruction:
+    return wi.TargetWriteInstruction("replace", f"{_NS}.Sealeded", row, if_version=3)
+
+
+def _sealed_predicate(row: Mapping[str, object]) -> wi.WriteInstruction:
+    node = predicate_algebra.deserialize({"eq": {"path": f"{_NS}.Sealed.id", "value": 1}})
+    return wi.PredicateWriteInstruction(
+        "replace", wi.PredicateSelection(f"{_NS}.Sealed", node), row=row
+    )
+
+
+_SEALED_FORMS: Final = pytest.mark.parametrize(
+    ("form", "addressed"),
+    [
+        pytest.param(_sealed_keyed, True, id="keyed"),
+        pytest.param(_sealed_target, True, id="target"),
+        pytest.param(_sealed_predicate, False, id="predicate"),
+    ],
+)
+
+
+@_SEALED_FORMS
+@_LANES
+def test_a_replacement_leaves_an_omitted_read_only_collection_unstated(
+    form: _Form, addressed: bool, prepare: _Prepare, empty: object
+) -> None:
+    del empty
+    prepared = prepare(form({"id": 1, "owner": "A"}), write_preparation_of(_MODEL))
+
+    expected = {"id": 1, "owner": "A"} if addressed else {"owner": "A"}
+    assert named_members(_row(prepared)) == expected
+
+
+def test_a_typed_keyed_replacement_reads_a_held_read_only_collection_as_unstated() -> None:
+    preparation = write_preparation_of(_MODEL)
+    target = _MODEL.entity(Sealed.identity)
+    assert target is not None
+    entry = preparation.entity(target.identity)
+    values = Sealed(id=1, owner="A", tags=("t",)).__parallax_row_values__(
+        entry.selection.members.shape, target.identity
+    )
+
+    prepared = wi.prepare_typed_keyed_write(
+        preparation, "replace", target, values=values, valid_from=None, until=None
+    )
+
+    assert named_members(_row(prepared)) == {"id": 1, "owner": "A"}
 
 
 @_LANES

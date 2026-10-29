@@ -150,7 +150,7 @@ class _StateReading:
 
     Stated state is weighed by nothing, so a member the plan refuses for its
     structure is read where it can be and kept as stated where it cannot: a
-    document member by member, a ``many`` occurrence element by element, and
+    document member by member, a ``many`` member element by element, and
     anything else as the value it is. Only a value its declared type cannot
     decode is refused. Only the root reads a stored DB-computed marker, which
     it keeps as the document it spells.
@@ -177,33 +177,61 @@ class _StateReading:
         except AuthoringRefusal as refusal:
             cause = refusal.cause
             if isinstance(cause, WireDecodingError):
-                raise instructions.InstructionRejectedError(
-                    f"neutral-literal-{cause.reason}",
-                    f"{_joined(path, refusal.violation.path)}: {cause}",
-                ) from cause
+                raise _rejected(_joined(path, refusal.violation.path), cause) from cause
             return self._kept(member, value, path)
         (cell,) = authored.cells
         return _named_member(member, cell)
 
     def _kept(self, member: MemberDefinition, value: object, path: str) -> object:
-        if not isinstance(member, OccurrenceDefinition):
+        read: Callable[[object, str], object]
+        if isinstance(member, OccurrenceDefinition):
+            nested = _StateReading(
+                AuthoringPlan.compile(member.shape, _case_converter, absent=_ABSENT), root=False
+            )
+            if member.multiplicity is Multiplicity.ONE:
+                return nested._document_or_kept(value, path)
+            read = nested._document_or_kept
+        else:
+            # A single scalar is refused only for its literal; a scalar
+            # collection for its carrier or a null element.
+            read = _ElementReading(_case_converter(member.type)).read
+        elements = _sequence(value)
+        if elements is None:
             return retain_document_value(value)
-        nested = _StateReading(
-            AuthoringPlan.compile(member.shape, _case_converter, absent=_ABSENT), root=False
-        )
-        if member.multiplicity is Multiplicity.ONE:
-            return nested._document_or_kept(value, path)
-        if not isinstance(value, list):
-            return retain_document_value(value)
-        return tuple(
-            nested._document_or_kept(element, f"{path}[{index}]")
-            for index, element in enumerate(cast("list[object]", value))
-        )
+        return tuple(read(element, f"{path}[{index}]") for index, element in enumerate(elements))
 
     def _document_or_kept(self, value: object, path: str) -> object:
         if isinstance(value, Mapping):
             return self.document(cast("Mapping[str, object]", value), path)
         return retain_document_value(value)
+
+
+@dataclass(frozen=True, slots=True)
+class _ElementReading:
+    """A scalar collection's element read through ``convert``, a null one kept
+    as stated."""
+
+    convert: ScalarConverter
+
+    def read(self, element: object, path: str) -> object:
+        if element is None:
+            return None
+        try:
+            return self.convert(element)
+        except WireDecodingError as error:
+            raise _rejected(path, error) from error
+
+
+def _rejected(path: str, error: WireDecodingError) -> instructions.InstructionRejectedError:
+    return instructions.InstructionRejectedError(
+        f"neutral-literal-{error.reason}", f"{path}: {error}"
+    )
+
+
+def _sequence(value: object) -> Sequence[object] | None:
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray | memoryview):
+        return None
+    return cast("Sequence[object]", value)
 
 
 def _kept_marker(_position: int, marker: Mapping[str, object]) -> object:

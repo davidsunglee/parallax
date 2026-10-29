@@ -378,6 +378,19 @@ def test_a_complete_row_states_an_unstated_nulled_member_as_null() -> None:
     assert row.presence == 0b111111
 
 
+def test_a_complete_row_leaves_an_unstated_excluded_member_unstated() -> None:
+    row = _plan().complete_row(
+        (7, _ABSENT, _ABSENT, _ABSENT, _ABSENT, _ABSENT),
+        lane=_TYPED,
+        required=0,
+        nulled=0b10,
+        excluded=0b1010,
+    )
+
+    assert row.cells == (7, ())
+    assert row.presence == 0b100001
+
+
 def test_a_complete_row_judges_a_stated_member_by_its_check_before_its_value() -> None:
     def refuse_name(position: int, _raw: object) -> None:
         if position == 1:
