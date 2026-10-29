@@ -63,9 +63,19 @@ DUPLICATED_CASES: Final = (
     "bitemporal.interior.document.wire",
 )
 """Where the retained-duplication seed is proved to trip. The seed adds one
-prepared row per row, which is 17% to 35% of a categorical checkpoint against a 10%
+prepared row per row, which is 59% to 63% of a categorical checkpoint against a 10%
 headroom: the smallest Typed checkpoint and the three Wire successors, whose
 checkpoints are the largest of the categorical cases."""
+
+PREPARATION_ENTRIES: Final = (
+    "prepare_typed_insert",
+    "prepare_typed_keyed_write",
+    "prepare_typed_write",
+    "prepare_wire_insert",
+    "prepare_wire_write",
+)
+"""The preparation entries Typed and Wire sources call, each answering the
+prepared rows the retained-duplication seed copies."""
 
 COPIED_CASES: Final = (
     "geometry.width-64.document.typed",
@@ -78,7 +88,7 @@ widest, so that :data:`BIND_COPIES` complete copies of them exceed the headroom.
 BIND_COPIES: Final = 1
 """How many complete mutable copies of each document bind the peak seed holds
 across the driver dump. One copy is what the immutable-serialization bridge
-removed, and on the widest cases it is 19% to 23% of the high-water mark against a
+removed, and on the widest cases it is 21% to 30% of the high-water mark against a
 10% headroom."""
 
 TRAVERSED_CASE: Final = "txtime.changed.document.wire"
@@ -237,14 +247,13 @@ def test_a_seeded_retained_duplicate_of_every_prepared_row_trips_the_retained_ga
     # must move the checkpoint past its gate on every case it is proved on; the
     # high-water mark it also raises is not what this seed is proved on.
     with pytest.MonkeyPatch.context() as patched:
-        patched.setattr(
-            instructions, "prepare_typed_write", _duplicating(instructions.prepare_typed_write)
-        )
-        patched.setattr(
-            instructions, "prepare_wire_write", _duplicating(instructions.prepare_wire_write)
-        )
+        for entry in PREPARATION_ENTRIES:
+            patched.setattr(instructions, entry, _duplicating(getattr(instructions, entry)))
         for workload in DUPLICATED_CASES:
-            assert _outside(workload, RETAINED, _Reading(workload)), workload
+            kept = len(_REGISTRY.kept)
+            reading = _Reading(workload)
+            assert len(_REGISTRY.kept) > kept, (workload, "the seed duplicated no prepared row")
+            assert _outside(workload, RETAINED, reading), workload
     _REGISTRY.clear()
 
 
