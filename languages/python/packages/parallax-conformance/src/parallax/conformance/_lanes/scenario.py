@@ -45,6 +45,7 @@ from parallax.conformance._mechanism.transaction_control import (
     absorbing_rollback,
     committed,
     transact,
+    underlying,
     write_adapter,
     write_connection,
 )
@@ -999,18 +1000,15 @@ def _compile_find(
     """The statements a scenario ``find`` step's read issues over a database
     holding no rows — the COMPILE lane's own oracle.
 
-    The read runs as the RUN lanes run it (:func:`run_standalone_find`,
-    :func:`_run_uow_group`): a Wire read inside ``db.transact`` with the
-    scenario's authored keywords over a root connected with its configured
-    options, so the shared-row-lock suffix is the one production resolves for
-    the step's own target Entity.
+    Only a grouped step participates in a transaction. An ungrouped step
+    uses the standalone read, including under a root configured for locking.
     """
     return planned_read(
         context.serving,
         context.options,
         dialect,
         step_query(step, context.model),
-        transaction=context.requests,
+        transaction=context.requests if isinstance(step.get("uow"), str) else None,
     )
 
 
@@ -1034,16 +1032,7 @@ def run_standalone_find(
     step: Mapping[str, object],
     lifecycle: LifecycleRun,
 ) -> tuple[Snapshot[WireEntity], LifecycleObservation]:
-    """Run one UNGROUPED scenario find step through the production Wire read.
-
-    A step runs inside a real ``db.transact`` under exactly the options its
-    scenario authored, so the read participates exactly as
-    :func:`~parallax.conformance._lanes.reads.run_read_case` does and exactly
-    as a developer's ``tx.find`` would: whether it takes the shared row lock is
-    then the target Entity's own Effective Concurrency Strategy under the
-    preference production resolves, never a property of the planning value
-    alone or of what the scenario goes on to write.
-    """
+    """Run an ungrouped scenario find without opening a transaction."""
     query = step_query(step, context.model)
     observed = lifecycle.observation()
     with Database.connect(
@@ -1051,7 +1040,7 @@ def run_standalone_find(
     ) as _root_db:
         db = _root_db.using_database_login()
         return (
-            transact(db, lambda tx: tx.wire.find(query), **context.requests),
+            underlying(lambda: db.wire.find(query)),
             observed,
         )
 

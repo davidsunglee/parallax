@@ -262,15 +262,9 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
         "/scenario/1/objectQuery",
     ]
     assert run.emissions[0].sql.startswith("insert into account")
-    # Account is versioned, so the case's default preference resolves it to the
-    # Optimistic strategy and the participating find renders no lock suffix.
     assert not run.emissions[1].sql.endswith("for share of t0")
     assert len(port.writes) == 1 and len(port.reads) == 1
-    # An UNGROUPED find runs in its OWN transaction, exactly as `run_read_case`
-    # does: every scenario resolves a Concurrency Preference (declared or the
-    # default), and a participating read needs a boundary to demarcate whatever
-    # lock its target Entity's own strategy calls for — so the find commits one.
-    assert port.commits == 2 and port.rollbacks == 0
+    assert port.commits == 1 and port.rollbacks == 0
 
 
 def test_run_scenario_case_rollback_step_aborts_but_counts_the_database_call() -> None:
@@ -278,11 +272,7 @@ def test_run_scenario_case_rollback_step_aborts_but_counts_the_database_call() -
     run = scenario.run_scenario_case(_case("m-unit-work-011"), port)
     assert run.database_calls == 2  # the aborted insert still counts one Database Call
     assert len(port.writes) == 1  # the DML executed before the abort
-    # An UNGROUPED find runs in its OWN transaction, exactly as `run_read_case`
-    # does: every scenario resolves a Concurrency Preference (declared or the
-    # default), and a participating read needs a boundary to demarcate whatever
-    # lock its target Entity's own strategy calls for — so the find commits one.
-    assert port.rollbacks == 1 and port.commits == 1
+    assert port.rollbacks == 1 and port.commits == 0
     assert run.emissions[0].case_pointer == "/scenario/0/write"
 
 
@@ -749,11 +739,7 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     ]
     assert len(port.writes) == 1  # the doomed write's DML still executed (and counted)
     assert len(port.reads) == 2  # the grouped observe find + the ungrouped post-abort find
-    # An UNGROUPED find runs in its OWN transaction, exactly as `run_read_case`
-    # does: every scenario resolves a Concurrency Preference (declared or the
-    # default), and a participating read needs a boundary to demarcate whatever
-    # lock its target Entity's own strategy calls for — so the find commits one.
-    assert port.commits == 1 and port.rollbacks == 1
+    assert port.commits == 0 and port.rollbacks == 1
 
 
 def test_run_scenario_case_rereads_the_original_milestone_after_an_ungrouped_abort() -> None:
@@ -3802,17 +3788,17 @@ def test_an_authored_request_overrides_the_root_for_the_group_it_names() -> None
     assert not run.emissions[0].sql.endswith("for share of t0")
 
 
-def test_an_ungrouped_keyed_unit_and_an_ungrouped_find_each_open_at_the_roots_level() -> None:
-    # m-unit-work-001: an ungrouped insert unit and an ungrouped dependent find,
-    # each its own transaction, each resolved against the root this lane
-    # connected — two boundaries, both at the root's Serializable, and the find
-    # locking under the root's preference.
+def test_only_the_ungrouped_write_opens_at_the_roots_level() -> None:
     port = FakeWritePort(
         find_rows=[{"id": 7, "owner": "Newton", "balance": decimal.Decimal("5.00"), "version": 1}]
     )
-    run = scenario.run_scenario_case(_rooted(_case("m-unit-work-001")), port)
-    assert port.levels == ["serializable", "serializable"]
-    assert run.emissions[1].sql.endswith("for share of t0")
+    case = _rooted(_case("m-unit-work-001"))
+    run = scenario.run_scenario_case(case, port)
+    compiled, _database_calls = scenario.compile_scenario_case(case, "postgres")
+    assert port.levels == ["serializable"]
+    assert port.commits == 1
+    assert not run.emissions[1].sql.endswith("for share of t0")
+    assert compiled[1].sql == run.emissions[1].sql
 
 
 def test_a_readless_predicate_write_opens_at_the_roots_level() -> None:
