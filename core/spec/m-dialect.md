@@ -859,26 +859,19 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
   (`t0.id, t0.name`) from a single aliased table (`from orders t0`), with each
   selected Structured Column expanded to `m-sql`'s adjacent presence/value pair.
   The alias scheme is `t0, t1, …` (see `m-sql` normalization). No `SELECT *`.
-- **Identifier quoting.** Simple lowercase identifiers are unquoted on both
-  dialects. A reserved word or otherwise non-simple name MUST be quoted, and the
-  quote **character diverges** — Postgres double-quotes (`"order"`), MariaDB
-  backticks (`` `order` ``). **Which names are reserved is itself per-dialect** — a
-  database's keyword list differs — so the quoting *decision*, not only the quote
-  character, is per-dialect; that **rule** is owned here, but the concrete
-  reserved-word list is **not enumerated here**. `position` is a reserved function
-  name on MariaDB (an unquoted `position` table emits an unparseable `POSITION(`
-  call) but not on Postgres, so the Bitemporal `m-temporal-write` cases quote `` `position` `` on
-  MariaDB while leaving `position` bare on Postgres. The compatibility case
-  `m-descriptor-001` witnesses the shared-reserved `order` on both dialects (a
-  column literally named `order`); the `m-sql` normalizer preserves quoted
-  identifiers, and the harness quotes reserved identifiers in the DDL/DML it
-  generates while leaving simple names unquoted. The concrete per-dialect
-  reserved-word lists themselves are **currently maintained by each conforming
-  implementation** — the reference harness's DDL builder and each language's dialect
-  layer — so a divergence such as MariaDB's `position` lives in those lists rather
-  than in a shared table. A single shared normative reserved-word artifact (one
-  `core` list the implementations derive from, with a cross-implementation drift
-  guard) is a **deferred follow-on**, not yet part of `core`.
+- **Identifier quoting.** Simple lowercase identifiers are unquoted unless they
+  belong to the dialect's curated set in
+  [`dialect-reserved-words.json`](../schemas/dialect-reserved-words.json).
+  This normative artifact defines the exact canonical Parallax keyword-based
+  quoting sets, not complete vendor keyword catalogs; it does not promise to
+  cover every vendor-reserved identifier. A member of that set or otherwise
+  non-simple name MUST be quoted, for both tables and columns. The quote
+  character is per-dialect: Postgres double-quotes (`"order"`), MariaDB backticks
+  (`` `order` ``). `position` belongs only to the MariaDB set, so the Bitemporal
+  `m-temporal-write` cases quote it on MariaDB and leave it bare on Postgres.
+  `m-descriptor-001` witnesses the shared `order` keyword, and the `m-sql`
+  normalizer preserves quoted identifiers. Implementations derive their sets
+  from the artifact; generated package copies are not independently authored.
 - **Infinity representation.** The open upper bound of a temporal interval
   (`m-core`) is owned here. **Postgres** uses native `'infinity'::timestamptz`, so
   the current-row predicate is `to = infinity` and a milestone insert writes

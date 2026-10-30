@@ -99,7 +99,14 @@ def test_core_alone(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     # actually RESOLVES outside the source tree — a missing module, a leftover
     # import of the retired `compile`, or an import cycle among the five private
     # modules fails here and nowhere else in the clean-install lane.
-    assert _import_ok(python, "parallax.core.sql_gen")
+    _run(
+        python,
+        "from parallax.core import sql_gen\n"
+        "from parallax.core.dialect import POSTGRES\n"
+        "assert POSTGRES.quote('constraint') == '\"constraint\"'\n"
+        "assert POSTGRES.quote('position') == 'position'\n"
+        "assert POSTGRES.quote('owner') == 'owner'\n",
+    )
     # The execution runtime and read delivery are core's own: both cold-import
     # with no lifecycle extension installed.
     assert _import_ok(python, "parallax.core.execution")

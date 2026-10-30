@@ -59,6 +59,19 @@ def test_production_wheels_exclude_conformance_and_tests(wheelhouse: Wheelhouse)
         assert all(n.startswith(f"{own}/") for n in code), package
 
 
+def test_core_distributions_ship_normative_reserved_words(wheelhouse: Wheelhouse) -> None:
+    resource = "parallax/core/dialect/dialect-reserved-words.json"
+    source = (REPO_ROOT / "core/schemas/dialect-reserved-words.json").read_bytes()
+    with zipfile.ZipFile(wheelhouse.wheels["parallax-core"]) as archive:
+        assert archive.read(resource) == source
+    (sdist,) = wheelhouse.directory.glob("parallax_core-*.tar.gz")
+    with tarfile.open(sdist) as archive:
+        member = next(name for name in archive.getnames() if name.endswith(f"/src/{resource}"))
+        packaged = archive.extractfile(member)
+        assert packaged is not None
+        assert packaged.read() == source
+
+
 def test_core_wheel_contains_spine_scopes(wheelhouse: Wheelhouse) -> None:
     names = _names(wheelhouse, "parallax-core")
     assert "parallax/core/__init__.py" in names

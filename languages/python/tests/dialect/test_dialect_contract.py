@@ -15,7 +15,9 @@ and runs in the ``dbfree`` class.
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from importlib.resources import files
 
 import pytest
 
@@ -52,9 +54,22 @@ from parallax.core.dialect import (
     Unsupported,
     scalar_result,
 )
+from tests._support.repo import REPO_ROOT
 
 DIALECTS: list[Dialect] = [POSTGRES]
 IDS = [d.name for d in DIALECTS]
+
+
+def test_packaged_reserved_words_match_normative_source() -> None:
+    source = (REPO_ROOT / "core/schemas/dialect-reserved-words.json").read_bytes()
+    packaged = files("parallax.core.dialect").joinpath("dialect-reserved-words.json").read_bytes()
+    assert packaged == source, "Run: uv run python tools/sync_reserved_words.py"
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_reserved_words_match_normative_source(dialect: Dialect) -> None:
+    source = json.loads((REPO_ROOT / "core/schemas/dialect-reserved-words.json").read_bytes())
+    assert dialect.reserved == frozenset(source[dialect.name])
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
@@ -62,6 +77,9 @@ def test_identifier_quoting(dialect: Dialect) -> None:
     assert dialect.quote("owner") == "owner"  # simple lowercase: unquoted
     assert dialect.quote("order") == '"order"'  # reserved: quoted
     assert dialect.quote("MixedCase") == '"MixedCase"'  # non-simple: quoted
+    assert dialect.quote("constraint") == '"constraint"'
+    assert dialect.quote("position") == "position"
+    assert dialect.qualified("t0", "constraint") == 't0."constraint"'
     assert dialect.qualified("t0", "id") == "t0.id"
     assert dialect.qualified("t0", "order") == 't0."order"'
 
