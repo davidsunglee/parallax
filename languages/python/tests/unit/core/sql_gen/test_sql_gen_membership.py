@@ -329,7 +329,7 @@ def test_a_text_compared_document_membership_binds_and_projects_comparison_texts
     statement = template.render(query=read(["2024-02-01", "2024-03-09"])).statement
     assert statement.binds[-1] == ArrayBind(STRING, ["2024-02-01", "2024-03-09"])
     last = len(statement.binds) - 1
-    assert all(last not in span.indexes() for span in statement.typed_bind_spans)
+    assert all(last not in span.indices() for span in statement.typed_bind_spans)
     assert statement.wire_binds()[-1] == ["2024-02-01", "2024-03-09"]
 
 

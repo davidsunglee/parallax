@@ -689,7 +689,7 @@ The compatibility oracle is `then.executionLifecycle` (`m-case-format`). It
 contains a `roots` list of normalized Root Executions, each with a positive
 first-observation index, kind, and ordered events. A portable event retains sequence, activity,
 parent, transition, outcome, stable code, database category, physical row
-counts, retry classification, and statement indexes. It omits UUIDs, monotonic
+counts, retry classification, and statement indices. It omits UUIDs, monotonic
 durations and the timing identities calls share, implementation type names,
 messages, stack traces, and native codes.
 
@@ -697,7 +697,7 @@ A Database Call transition names its statement by zero-based index into the
 case's flattened golden statement order. Two calls name none: every call on an
 `api-conformance` lane, which authors no golden SQL, and a resolving read a
 keyed write owes, which reaches the database and is counted while the case
-authors no golden for it (`m-case-format`). The indexes the remaining calls
+authors no golden for it (`m-case-format`). The indices the remaining calls
 name are that order exactly, in delivery order and once each, and each index is
 named by a call of the kind its own statement is: a query by a read, DML by a
 write. The adapter observation uses the identical shape and indexes its own

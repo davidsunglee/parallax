@@ -749,7 +749,7 @@ def _index_definitions(model: Metamodel, layout: TableLayout) -> Iterator[IndexD
     key itself, so a separate statement for it would be a second object over the
     same columns.
     """
-    for physical in layout.indexes:
+    for physical in layout.indices:
         if physical == layout.primary_key_index:
             continue
         yield IndexDefinition(

@@ -117,8 +117,8 @@ def test_mariadb_ddl_derives_from_descriptor() -> None:
 
 def test_postgres_checks_each_temporal_axis_inline_and_mariadb_checks_none() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/position.yaml")
-    _prerequisite, postgres, *_indexes = ddl_for(model, "postgres")
-    mariadb, *_indexes = ddl_for(model, "mariadb")
+    _prerequisite, postgres, *_indices = ddl_for(model, "postgres")
+    mariadb, *_indices = ddl_for(model, "mariadb")
     assert (
         "constraint pxc_valid_position_9c4697753a4cc41ed976ab6ee1f1f88b check (from_z < thru_z)"
         in postgres
@@ -145,7 +145,7 @@ def test_every_table_a_temporal_family_maps_carries_the_roots_checks() -> None:
 
 def test_postgres_names_the_temporal_key_and_excludes_overlap_and_mariadb_does_neither() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/position.yaml")
-    prerequisite, postgres, *_indexes = ddl_for(model, "postgres")
+    prerequisite, postgres, *_indices = ddl_for(model, "postgres")
     assert prerequisite == "create extension if not exists btree_gist"
     assert (
         "constraint pxc_pk_position_6033a9b256fa65fb6a06ae764dd7905d "
@@ -156,7 +156,7 @@ def test_postgres_names_the_temporal_key_and_excludes_overlap_and_mariadb_does_n
         "(pos_id with =, tstzrange(from_z, thru_z) with &&, tstzrange(in_z, out_z) with &&)"
         in postgres
     )
-    mariadb, *_indexes = ddl_for(model, "mariadb")
+    mariadb, *_indices = ddl_for(model, "mariadb")
     assert "exclude" not in mariadb and "constraint" not in mariadb
     assert not any("extension" in ddl for ddl in ddl_for(model, "mariadb"))
 

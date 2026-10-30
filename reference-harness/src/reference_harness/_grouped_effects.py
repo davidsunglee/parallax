@@ -143,8 +143,8 @@ def _marker(index: int) -> exp.Placeholder:
     return exp.Placeholder(this=f"{_LONE_PREFIX}{index}")
 
 
-def sourced_path_value_indexes(statement: str) -> frozenset[int]:
-    """The positional indexes of the arrays whose elements a PostgreSQL grouped
+def sourced_path_value_indices(statement: str) -> frozenset[int]:
+    """The positional indices of the arrays whose elements a PostgreSQL grouped
     effect assigns at a document path (``jsonb_set(…, ?, v.cN)``).
 
     Each element is one path's JSON value, ``null`` included: a path assignment
@@ -164,7 +164,7 @@ def sourced_path_value_indexes(statement: str) -> frozenset[int]:
     arguments = dict(
         zip((column.name for column in alias.columns), unnest.expressions, strict=False)
     )
-    indexes: set[int] = set()
+    indices: set[int] = set()
     for function in tree.find_all(exp.Anonymous):
         if function.name.lower() != "jsonb_set" or len(function.expressions) != 3:
             continue
@@ -173,5 +173,5 @@ def sourced_path_value_indexes(statement: str) -> frozenset[int]:
             argument = arguments.get(value.name)
             index = None if argument is None else bound_placeholder_index(argument)
             if index is not None:
-                indexes.add(index)
-    return frozenset(indexes)
+                indices.add(index)
+    return frozenset(indices)

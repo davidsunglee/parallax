@@ -50,7 +50,7 @@ class _TypedBindSpan:
     neutral_type: NeutralType
     form: _BindForm
 
-    def indexes(self) -> range:
+    def indices(self) -> range:
         return range(self.start, self.stop)
 
     def shifted(self, offset: int) -> _TypedBindSpan:
@@ -66,7 +66,7 @@ class _RepeatedTypedBindSpan:
     neutral_type: NeutralType
     form: _BindForm
 
-    def indexes(self) -> Iterator[int]:
+    def indices(self) -> Iterator[int]:
         return (
             self.start + repetition * self.stride + offset
             for repetition in range(self.repetitions)
@@ -119,7 +119,7 @@ class LoweredStatement:
         unprojected = object()
         projected: list[WireValue | object] = [unprojected] * len(self.binds)
         for span in self._typed_bind_spans:
-            for index in span.indexes():
+            for index in span.indices():
                 projected[index] = _typed_wire_bind(self.binds[index], span.neutral_type, span.form)
         for override in self._wire_bind_overrides:
             projected[override.index] = override.value
@@ -177,7 +177,7 @@ class LoweredStatement:
             if isinstance(span, _TypedBindSpan):
                 covered = marked[bisect_left(marked, span.start) : bisect_left(marked, span.stop)]
             else:
-                covered = [index for index in span.indexes() if index in members]
+                covered = [index for index in span.indices() if index in members]
                 repeated.update(covered)
             for index in covered:
                 slots[index] = (span.neutral_type, span.form)
@@ -872,7 +872,7 @@ class StatementBuilder[RowScope = object]:
                 )
             if not valid_shape:
                 raise SqlGenError("typed bind metadata has invalid dimensions or stride")
-            for index in span.indexes():
+            for index in span.indices():
                 if not 0 <= index < len(self._binds) or index in occupied:
                     raise SqlGenError("typed bind metadata is out of range or overlaps")
                 occupied.add(index)

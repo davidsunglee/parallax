@@ -37,7 +37,7 @@ from psycopg.types.json import Jsonb
 
 from reference_harness._case_execution import CaseExecution
 from reference_harness._declared_contributor import TEMPORAL_INFINITY
-from reference_harness._sql_placeholders import array_bind_indexes
+from reference_harness._sql_placeholders import array_bind_indices
 from reference_harness.case import Case, Model, discover_cases, load_model
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
@@ -232,7 +232,7 @@ def test_an_array_bind_is_found_bare_or_cast_to_an_array_type() -> None:
         "and t0.e in (?, ?)"
     )
 
-    assert array_bind_indexes(statement) == {1, 2, 3}
+    assert array_bind_indices(statement) == {1, 2, 3}
 
 
 def test_every_column_array_an_insert_reads_apart_is_an_array_bind() -> None:
@@ -241,8 +241,8 @@ def test_every_column_array_an_insert_reads_apart_is_an_array_bind() -> None:
         "unnest(cast(? as bigint[]), ?, cast(? as double precision[]))"
     )
 
-    assert array_bind_indexes(statement) == {0, 1, 2}
-    assert array_bind_indexes("insert into item(a, b) values (?, ?), (?, ?)") == frozenset()
+    assert array_bind_indices(statement) == {0, 1, 2}
+    assert array_bind_indices("insert into item(a, b) values (?, ?), (?, ?)") == frozenset()
 
 
 def test_a_column_array_is_an_array_bind_through_casts_and_parentheses() -> None:
@@ -250,7 +250,7 @@ def test_a_column_array_is_an_array_bind_through_casts_and_parentheses() -> None
         "insert into item(a, b, c) select * from unnest((cast(? as bigint[])), ?::text[], (?)) u"
     )
 
-    assert array_bind_indexes(statement) == {0, 1, 2}
+    assert array_bind_indices(statement) == {0, 1, 2}
 
 
 def test_each_key_column_array_of_a_collapsed_key_membership_is_an_array_bind() -> None:
@@ -259,13 +259,13 @@ def test_each_key_column_array_of_a_collapsed_key_membership_is_an_array_bind() 
         "(select * from unnest(cast(? as bigint[]), cast(? as int[]))) and kind = ?"
     )
 
-    assert array_bind_indexes(composite) == {0, 1}
+    assert array_bind_indices(composite) == {0, 1}
     assert postgres_statement_binds(composite, [[1, 1], [10, 20], "card"]) == (
         [1, 1],
         [10, 20],
         "card",
     )
-    assert array_bind_indexes(
+    assert array_bind_indices(
         "update wallet set balance = ? where id = any(cast(? as bigint[]))"
     ) == {1}
 

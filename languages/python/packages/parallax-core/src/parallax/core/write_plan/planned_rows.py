@@ -79,7 +79,7 @@ def planned_assignments(row: ManagedRow, *, without: int = 0) -> PlannedAssignme
 
 def entity_view(families: InheritanceFacet, entity: EntityMetadata) -> InheritanceEntityView:
     """``entity``'s compiled family-effective view — its applicable member
-    chain, the indexes a write row's names resolve through, and the family key.
+    chain, the indices a write row's names resolve through, and the family key.
 
     An inheritance participant declares only its own members while its
     writes name every inherited one, so the applicable chain, not the

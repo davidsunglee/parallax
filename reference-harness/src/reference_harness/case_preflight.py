@@ -13,7 +13,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from . import portable_literal
-from ._sql_placeholders import array_bind_indexes
+from ._sql_placeholders import array_bind_indices
 from ._statement_bind_inference import (
     CanonicalBindTarget,
     ColumnArrayShapeError,
@@ -671,7 +671,7 @@ def _statement_entry(
     dialect: str,
     where: str,
 ) -> None:
-    arrays = array_bind_indexes(statement) if dialect == "postgres" else frozenset()
+    arrays = array_bind_indices(statement) if dialect == "postgres" else frozenset()
     if dialect == "postgres":
         for mismatch in array_cast_mismatches(case, statement, binds):
             operand = (

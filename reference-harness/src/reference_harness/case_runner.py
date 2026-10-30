@@ -61,7 +61,7 @@ from sqlglot import exp
 from . import errors, serde
 from ._case_execution import CaseExecution
 from ._grouped_effects import GroupedEffectShapeError, ungrouped_effect
-from ._sql_placeholders import array_bind_indexes
+from ._sql_placeholders import array_bind_indices
 from .case import (
     Case,
     Entity,
@@ -1744,7 +1744,7 @@ def _array_elements(statement: str, binds: list[Any]) -> list[Any]:
     """*binds* with each array the PostgreSQL *statement* binds whole spread into
     its elements in place, so a key membership bound as one array reads as the
     same keys its expanded `in (?, …)` form binds one by one."""
-    arrays = array_bind_indexes(statement)
+    arrays = array_bind_indices(statement)
     spread: list[Any] = []
     for index, bind in enumerate(binds):
         if index in arrays and isinstance(bind, list):
@@ -2622,7 +2622,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     execution = CaseExecution(case, db)
     statements = case.golden_statements(dialect)
 
-    guards = set(_milestone_guard_indexes(case))
+    guards = set(_milestone_guard_indices(case))
 
     for index, statement in enumerate(statements):
         binds = case.statement_binds(index, dialect)
@@ -2637,7 +2637,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     assert_table_state(case, db, after="the write sequence")
 
 
-def _milestone_guard_indexes(case: Case) -> Iterator[int]:
+def _milestone_guard_indices(case: Case) -> Iterator[int]:
     index = 0
     for step in case.write_sequence:
         if _is_milestone_guard(case.model.entity(step["entity"]), step):

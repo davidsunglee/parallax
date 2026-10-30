@@ -1161,7 +1161,7 @@ def test_a_non_temporal_root_s_temporal_child_stands_on_its_own_edge_at_the_root
 
 
 # --------------------------------------------------------------------------- #
-# The Page boundary: edges and roots are exact in-range projection indexes.   #
+# The Page boundary: edges and roots are exact in-range projection indices.   #
 # --------------------------------------------------------------------------- #
 _ORDER_IDENTITY = EntityIdentity(_NAMESPACE, "SnapOrder")
 _ITEMS = RelationshipViewKey(RelationshipIdentity(_ORDER_IDENTITY, "items"))

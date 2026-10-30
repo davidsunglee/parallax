@@ -18,10 +18,10 @@ from psycopg.types.json import Jsonb
 
 from reference_harness._grouped_effects import (
     GroupedEffectShapeError,
-    sourced_path_value_indexes,
+    sourced_path_value_indices,
     ungrouped_effect,
 )
-from reference_harness._sql_placeholders import array_bind_indexes
+from reference_harness._sql_placeholders import array_bind_indices
 from reference_harness._statement_bind_inference import (
     array_cast_mismatches,
     infer_statement_bind_targets,
@@ -176,7 +176,7 @@ def test_a_shared_tag_guard_binds_once_for_every_row() -> None:
 )
 def test_any_other_statement_is_left_alone(statement: str) -> None:
     assert ungrouped_effect(statement, [1, 2]) is None
-    assert sourced_path_value_indexes(statement) == frozenset()
+    assert sourced_path_value_indices(statement) == frozenset()
 
 
 @pytest.mark.parametrize(
@@ -208,7 +208,7 @@ def test_a_malformed_grouped_effect_is_refused(
 def test_each_source_array_is_typed_by_the_column_or_path_it_reaches() -> None:
     case = _case("scalar-collection-lifecycle-layout-twin-document")
     targets = infer_statement_bind_targets(case, _DOCUMENT, _DOCUMENT_BINDS, "postgres")
-    assert sorted(array_bind_indexes(_DOCUMENT)) == [2, 3, 4, 5, 6]
+    assert sorted(array_bind_indices(_DOCUMENT)) == [2, 3, 4, 5, 6]
     assert {index: getattr(targets[index], "column", None) for index in (2, 3, 4)} == {
         2: "id",
         3: "version",
@@ -236,7 +236,7 @@ def test_a_source_array_cast_to_another_type_than_its_column_is_refused() -> Non
 
 
 def test_a_path_value_array_binds_every_element_as_json_null_included() -> None:
-    assert sourced_path_value_indexes(_DOCUMENT) == frozenset({5, 6})
+    assert sourced_path_value_indices(_DOCUMENT) == frozenset({5, 6})
     bound = postgres_statement_binds(_DOCUMENT, _DOCUMENT_BINDS)
     for index in (5, 6):
         elements = bound[index]

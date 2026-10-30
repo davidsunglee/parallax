@@ -708,7 +708,7 @@ def _unstored(obj: object, index: int) -> str:
     rather than carried on every descriptor for the case that never happens.
     """
     name = next(
-        (py_name for py_name, at in plan_of(type(obj)).indexes.items() if at == index),
+        (py_name for py_name, at in plan_of(type(obj)).indices.items() if at == index),
         "?",
     )
     return f"{type(obj).__name__!r} object has no attribute {name!r}"

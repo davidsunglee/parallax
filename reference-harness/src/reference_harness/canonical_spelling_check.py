@@ -46,7 +46,7 @@ _OPERAND_MEMBERS = ("operand", "where")
 class _Declarations:
     """The Entity identities one model declares, indexed for reference resolution.
 
-    Two questions, two indexes, exactly as `m-metamodel` states the reference
+    Two questions, two indices, exactly as `m-metamodel` states the reference
     rule: an exact canonical spelling names its Entity outright, and a bare local
     name names one only when the whole model declares it once.
     """

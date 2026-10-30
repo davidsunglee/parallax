@@ -104,7 +104,7 @@ class RelationshipFacet(Protocol):
 
 
 class _RelationshipFacet:
-    """The compiled facet over read-only indexes nothing else holds."""
+    """The compiled facet over read-only indices nothing else holds."""
 
     __slots__ = ("_by_entity", "_by_identity")
 

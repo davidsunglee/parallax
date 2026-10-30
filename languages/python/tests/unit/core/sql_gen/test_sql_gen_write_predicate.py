@@ -334,7 +334,7 @@ def test_propagated_root_terms_restrict_every_alternative_in_place() -> None:
     )
     assert predicate.lowered is not None
     assert tuple(
-        (tuple(span.indexes()), span.neutral_type, span.form)
+        (tuple(span.indices()), span.neutral_type, span.form)
         for span in predicate.lowered.typed_bind_spans
     ) == (((0, 1), amount.type, "MANAGED"), ((2, 3, 4, 5), TIMESTAMP, "MANAGED"))
 

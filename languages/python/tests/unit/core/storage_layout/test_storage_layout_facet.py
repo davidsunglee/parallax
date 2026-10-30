@@ -524,14 +524,14 @@ def test_physical_key_deduplicates_an_end_designated_by_two_dimensions(
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_the_primary_key_index_leads_the_indexes_over_the_physical_key(
+def test_the_primary_key_index_leads_the_indices_over_the_physical_key(
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
     model, table, root = _ranked_temporal_model(mapping, duplicate_end=False)
     layout = _require_layout(storage_layout.view(model), table)
     primary = layout.primary_key_index
     assert primary is not None
-    assert layout.indexes == (primary,)
+    assert layout.indices == (primary,)
     assert layout.unique_keys == (primary,)
     assert primary.declaration.identity.entity == root
     assert primary.declaration.unique
@@ -547,15 +547,15 @@ def test_the_primary_key_index_leads_the_indexes_over_the_physical_key(
 
 
 def _require_index(layout: storage_layout.TableLayout, name: str) -> storage_layout.PhysicalIndex:
-    (mapped,) = [index for index in layout.indexes if index.declaration.identity.name == name]
+    (mapped,) = [index for index in layout.indices if index.declaration.identity.name == name]
     return mapped
 
 
 def _index_names(layout: storage_layout.TableLayout) -> list[str]:
-    return [index.declaration.identity.name for index in layout.indexes]
+    return [index.declaration.identity.name for index in layout.indices]
 
 
-def test_indexes_map_each_declaration_onto_existing_slots_in_component_order() -> None:
+def test_indices_map_each_declaration_onto_existing_slots_in_component_order() -> None:
     model = formed(
         DescriptorMetamodel(
             entities=(
@@ -594,7 +594,7 @@ def test_indexes_map_each_declaration_onto_existing_slots_in_component_order() -
     assert composite.declaration == widget.index("widget_rank_label")
     assert unique.declaration == widget.index("widget_code_uq")
     assert [slot.column.name for slot in composite.columns] == ["rank", "label"]
-    for mapped in layout.indexes:
+    for mapped in layout.indices:
         assert all(
             slot is layout.contribution(component)
             for slot, component in zip(mapped.columns, mapped.declaration.attributes, strict=True)
@@ -606,7 +606,7 @@ def test_indexes_map_each_declaration_onto_existing_slots_in_component_order() -
     assert all(
         key_index is index
         for key_index, index in zip(
-            layout.unique_keys, (layout.indexes[0], layout.indexes[2]), strict=True
+            layout.unique_keys, (layout.indices[0], layout.indices[2]), strict=True
         )
     )
 
@@ -620,7 +620,7 @@ def test_a_tph_descendant_declared_index_maps_onto_the_shared_table() -> None:
     assert code.declaring_owner.name == "Leaf"
 
 
-def test_tpcs_indexes_map_onto_every_concrete_table_carrying_their_components() -> None:
+def test_tpcs_indices_map_onto_every_concrete_table_carrying_their_components() -> None:
     facet = storage_layout.view(tpcs_family_with_indices_at_every_level())
     invoice = _require_layout(facet, "invoice")
     memo = _require_layout(facet, "memo")
@@ -1513,10 +1513,10 @@ def test_layout_values_and_sequences_are_immutable() -> None:
     assert isinstance(facet.tables, tuple)
     assert isinstance(layout.columns, tuple)
     assert isinstance(layout.physical_primary_key, tuple)
-    assert isinstance(layout.indexes, tuple)
+    assert isinstance(layout.indices, tuple)
     assert isinstance(layout.unique_keys, tuple)
     with pytest.raises(FrozenInstanceError):
-        cast(Any, layout.indexes[0]).columns = ()
+        cast(Any, layout.indices[0]).columns = ()
     with pytest.raises(FrozenInstanceError):
         cast(Any, layout.columns[0]).effective_nullable = True
     with pytest.raises(FrozenInstanceError):

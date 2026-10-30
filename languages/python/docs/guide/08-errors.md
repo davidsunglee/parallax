@@ -482,7 +482,7 @@ of an `ExecutionFailure`:
   categories, how each database's codes map to them, and
   [the violated index name](../../../../core/spec/m-db-error.md#the-violated-physical-index-name).
   [Physical Index Names](../../../../core/spec/m-schema-delta.md#physical-index-names)
-  defines how Parallax names the indexes it creates, and the
+  defines how Parallax names the indices it creates, and the
   [database port](../../../../core/spec/m-db-port.md) defines connection acquisition.
 - The Python binding records the
   [failure boundaries](../../spec/execution.md#transactions-and-failure-boundaries),

@@ -293,7 +293,7 @@ class _InheritancePositionView:
 
 @dataclass(frozen=True, slots=True)
 class _InheritanceEntityView:
-    """One compiled Entity view over read-only indexes nothing else holds."""
+    """One compiled Entity view over read-only indices nothing else holds."""
 
     entity: EntityIdentity
     root: EntityIdentity

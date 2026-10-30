@@ -201,7 +201,7 @@ class ColumnSlot:
 
 @dataclass(frozen=True, slots=True)
 class TableLayout:
-    """The complete physical shape and immutable indexes of one Table."""
+    """The complete physical shape and immutable indices of one Table."""
 
     table: str
     columns: tuple[ColumnSlot, ...]
@@ -1205,7 +1205,7 @@ class StorageLayout:
     """The model's bounded immutable Table, Entity, and position layout graph.
 
     Deep-copying a graph yields the graph itself: the values are immutable, and
-    the read-only indexes behind the lookups are not copyable. A copy that may
+    the read-only indices behind the lookups are not copyable. A copy that may
     describe a different model must therefore compile its own graph rather than
     carry this one across.
     """

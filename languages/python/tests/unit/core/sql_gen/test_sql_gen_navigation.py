@@ -1089,7 +1089,7 @@ def test_a_hop_to_a_concrete_subtype_is_visible_on_its_family_root_s_axes(
     )
     binds = (*visible_binds, *guard_binds, "Rex", *visible_binds, *guard_binds, *visible_binds)
     assert statement.binds == binds
-    managed = {index for span in statement.typed_bind_spans for index in span.indexes()}
+    managed = {index for span in statement.typed_bind_spans for index in span.indices()}
     assert managed == {
         index
         for index, value in enumerate(binds)

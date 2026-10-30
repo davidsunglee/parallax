@@ -20,23 +20,23 @@ _ANY_ARRAY_PARAMETER = re.compile(
 _UNNEST = re.compile(r"\bunnest\s*\(", flags=re.IGNORECASE)
 
 
-def array_bind_indexes(statement: str) -> frozenset[int]:
-    """The positional indexes of the binds the PostgreSQL *statement* passes as one
+def array_bind_indices(statement: str) -> frozenset[int]:
+    """The positional indices of the binds the PostgreSQL *statement* passes as one
     array each: compared through ``any``, or read apart as an ``unnest`` argument
     that binds one placeholder through casts and parentheses alone, as the
     column-array INSERT recognizer reads it."""
-    indexes = {
+    indices = {
         statement[: match.start()].count("?") for match in _ANY_ARRAY_PARAMETER.finditer(statement)
     }
     tree = parse_indexed_statement(statement, "postgres") if _UNNEST.search(statement) else None
     if tree is not None:
-        indexes.update(
+        indices.update(
             index
             for unnest in tree.find_all(exp.Unnest)
             for argument in unnest.expressions
             if (index := bound_placeholder_index(argument)) is not None
         )
-    return frozenset(indexes)
+    return frozenset(indices)
 
 
 def bound_placeholder_index(expression: Expr) -> int | None:

@@ -798,7 +798,7 @@ family with one effective concrete — and either
 
 - the strict equalities of its correlation and its temporal perspective fix every
   Column of one of that table's unique keys (`m-storage-layout` *Physical
-  indexes*), an axis at **latest** fixing its end `to = ?` (infinity); or
+  indices*), an axis at **latest** fixing its end `to = ?` (infinity); or
 - its correlation fixes the target family's logical primary key and its temporal
   perspective selects one coordinate on every As-Of Axis the target declares:
   **latest**, or **at** one finite instant, lowered to the containment pair

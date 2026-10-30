@@ -106,7 +106,7 @@ class PublicationPlan:
     publication invents nothing for it and refuses nothing over it."""
     bits: Mapping[str, int]
     """Each declared member's presence bit."""
-    indexes: Mapping[str, int]
+    indices: Mapping[str, int]
     """Each declared member's absolute tuple index, handed to its descriptor."""
     py_names: tuple[str, ...]
     """Bit index to member name, in the model-fixed order a positional row is aligned
@@ -165,7 +165,7 @@ def install(
             "Pydantic fields name different sets, so no row of it addresses the class"
         )
     bits = {py_name: bit for bit, py_name in enumerate(members)}
-    indexes = {py_name: bit + 1 for py_name, bit in bits.items()}
+    indices = {py_name: bit + 1 for py_name, bit in bits.items()}
     row: list[object] = [0]
     for py_name in members:
         field = fields[py_name]
@@ -174,12 +174,12 @@ def install(
     plan = PublicationPlan(
         template=tuple(row),
         bits=MappingProxyType(bits),
-        indexes=MappingProxyType(indexes),
+        indices=MappingProxyType(indices),
         py_names=members,
         fields=tuple(fields),
-        field_values=_permutation(tuple(indexes[py_name] for py_name in fields)),
+        field_values=_permutation(tuple(indices[py_name] for py_name in fields)),
         occurrences=MappingProxyType(
-            {indexes[py_name]: vo_class for py_name, vo_class in occurrences.items()}
+            {indices[py_name]: vo_class for py_name, vo_class in occurrences.items()}
         ),
         relationships=MappingProxyType(
             {py_name: 1 + len(members) + position for position, py_name in enumerate(relationships)}
@@ -195,19 +195,19 @@ def plan_of(cls: type) -> PublicationPlan:
     return cast("PublicationPlan", getattr(cls, _PLAN_ATTRIBUTE))
 
 
-def _permutation(indexes: tuple[int, ...]) -> Callable[[tuple[object, ...]], tuple[object, ...]]:
-    """One C call that reads ``indexes`` out of a row, in that order.
+def _permutation(indices: tuple[int, ...]) -> Callable[[tuple[object, ...]], tuple[object, ...]]:
+    """One C call that reads ``indices`` out of a row, in that order.
 
     ``operator.itemgetter`` answers a bare value rather than a one-tuple for a
     single index and refuses to be built with none at all, so the two degenerate
     widths are spelled out instead of special-cased at every call site.
     """
-    if not indexes:
+    if not indices:
         return lambda _row: ()
-    if len(indexes) == 1:
-        only = indexes[0]
+    if len(indices) == 1:
+        only = indices[0]
         return lambda row: (row[only],)
-    return cast("Callable[[tuple[object, ...]], tuple[object, ...]]", operator.itemgetter(*indexes))
+    return cast("Callable[[tuple[object, ...]], tuple[object, ...]]", operator.itemgetter(*indices))
 
 
 def _declares_auxiliary_state(cls: type) -> bool:
@@ -340,7 +340,7 @@ class _PresentedState(dict[str, Any]):
         which is what reaches the tail a presented key set would miss.
         """
         plan = plan_of(type(self._value))
-        return key in plan.indexes or key in plan.relationships
+        return key in plan.indices or key in plan.relationships
 
     def _row_position(self, key: str) -> str:
         return (
@@ -618,7 +618,7 @@ def declared_values(value: BaseModel) -> Generator[object]:
     if row is not None:
         bitmap = cast("int", row[0])
         for bit, py_name in enumerate(plan.py_names):
-            yield row[plan.indexes[py_name]] if bitmap >> bit & 1 else ABSENT
+            yield row[plan.indices[py_name]] if bitmap >> bit & 1 else ABSENT
         return
     state = instance_state(value)
     presence = instance_presence(value)
@@ -687,7 +687,7 @@ def named_state_value(value: BaseModel, name: str, default: object = None) -> ob
     if relationship_index is not None:
         related = row[relationship_index]
         return default if related is UNLOADED else related
-    member_index = plan.indexes.get(name)
+    member_index = plan.indices.get(name)
     return default if member_index is None else row[member_index]
 
 

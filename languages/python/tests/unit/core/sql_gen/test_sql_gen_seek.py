@@ -277,7 +277,7 @@ def test_an_open_temporal_bound_carrier_reports_the_canonical_infinity_literal()
     assert statement.sql.endswith("order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?")
     assert statement.binds[:5] == (INFINITY,) * 5
     assert statement.wire_binds()[:5] == (INFINITY_LITERAL,) * 5
-    typed = {index for span in statement.typed_bind_spans for index in span.indexes()}
+    typed = {index for span in statement.typed_bind_spans for index in span.indices()}
     assert typed.isdisjoint(range(5))
 
 

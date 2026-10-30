@@ -853,7 +853,7 @@ def test_a_generated_key_milestone_insert_binds_managed_infinity_outside_typed_s
     assert statement.binds == (0, 1, 100, opened, OPEN_BOUND)
     assert statement.binds[-1] is OPEN_BOUND
     assert statement.wire_binds() == (0, 1, 100, "2024-01-01T00:00:00.000000Z", "infinity")
-    typed = {index for span in statement.typed_bind_spans for index in span.indexes()}
+    typed = {index for span in statement.typed_bind_spans for index in span.indices()}
     assert typed == {2, 3}
 
 

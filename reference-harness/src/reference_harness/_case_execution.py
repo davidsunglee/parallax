@@ -7,7 +7,7 @@ from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from ._declared_contributor import DeclaredContributor
-from ._sql_placeholders import array_bind_indexes
+from ._sql_placeholders import array_bind_indices
 from ._statement_bind_inference import infer_statement_bind_targets
 from .case import Case
 from .ddl_builder import declared_contributors
@@ -85,7 +85,7 @@ class CaseExecution:
     def _provider_binds(self, statement: str, binds: Sequence[Any]) -> tuple[Any, ...]:
         provider_binds = list(binds)
         targets = infer_statement_bind_targets(self._case, statement, binds, self._executor.dialect)
-        array_binds = array_bind_indexes(statement) if self._executor.dialect == "postgres" else ()
+        array_binds = array_bind_indices(statement) if self._executor.dialect == "postgres" else ()
         for index, target in targets.items():
             if not isinstance(target, ColumnSlot) or index >= len(provider_binds):
                 continue

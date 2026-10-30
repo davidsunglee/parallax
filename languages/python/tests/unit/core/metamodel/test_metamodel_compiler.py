@@ -412,9 +412,9 @@ def _mappings_within(value: object, seen: set[int]) -> Iterator[Mapping[object, 
 def test_every_index_backing_candidate_or_accepted_lookup_is_read_only() -> None:
     candidate = accepted(source(_model(), _peer()))
     for graph in (candidate, compile_metadata(candidate)):
-        indexes = list(_mappings_within(graph, set()))
-        assert indexes
-        assert not [index for index in indexes if isinstance(index, MutableMapping)]
+        indices = list(_mappings_within(graph, set()))
+        assert indices
+        assert not [index for index in indices if isinstance(index, MutableMapping)]
 
 
 def test_an_accepted_metamodel_snapshots_the_facet_mapping_it_was_given() -> None:

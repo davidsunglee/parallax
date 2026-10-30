@@ -95,7 +95,7 @@ sets, such as `version`. To change a value, `edit(...)` returns a modified copy;
 `primary_key=True` makes `id` the key, with values your application assigns. A primary
 key is always one attribute, of type `int`, `str` or `uuid.UUID`.
 
-`indices=` in the class header declares database indexes, each written
+`indices=` in the class header declares database indices, each written
 `index(name, *attributes)`, and `schema_delta` creates them with the tables. The index on
 `orders.customer_id` serves the join to customers. `index(..., unique=True)` declares a
 unique index instead, so the database refuses a second row with the same values.
