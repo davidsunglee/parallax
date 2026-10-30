@@ -4,11 +4,13 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 from parallax.core._execution._unit_work.retain import ReadEvidence
+from parallax.core.entity import UNLOADED, GraphConstructionError
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     MemberIdentity,
+    RelationshipIdentity,
     ValueObjectIdentity,
 )
 from parallax.core.read_delivery._page import (
@@ -162,6 +164,37 @@ class RootView:
     def view_layout(self, node: int) -> RootViewLayout:
         """``node``'s relationship view slots, in canonical order."""
         return self._view_layouts[node]
+
+    def relationship_values(self, node: int) -> tuple[object, ...]:
+        """``node``'s broad relationship values in its layout's relationship
+        order: ``UNLOADED`` where no fetched row loaded the direction, otherwise
+        the carried view value :meth:`view` answers.
+
+        A narrowed view presents a direction the broad view already carries, so
+        only broad slots reach a position here. A view schema may lay out a slot
+        for a direction this concrete does not declare — an unguarded level
+        attaches its slot to every concrete it can reach — so laying one out is
+        tolerated, and carrying a value in one is refused, since dropping it
+        would lose a view the read loaded.
+        """
+        layout = self._layouts[node]
+        width = len(layout.relationships)
+        view_layout = self._view_layouts[node]
+        broad = view_layout.broad_positions
+        if not broad:
+            return _unloaded(width)
+        carried = self._view_rows[node]
+        values: list[object] = [UNLOADED] * width
+        for slot, position in broad:
+            value = carried[slot]
+            if value is ABSENT:
+                continue
+            if position is None:
+                raise _undeclared_direction(
+                    layout.concrete, view_layout.slots[slot].relationship, node
+                )
+            values[position] = value
+        return tuple(values)
 
     def view(self, node: int, slot: int) -> object:
         """``node``'s value at ``slot``: ``ABSENT`` for a view no fetched row
@@ -493,6 +526,34 @@ class RootView:
 
     def _admitted(self, node: int | None, targets: frozenset[EntityIdentity]) -> int | None:
         return node if node is not None and self._layouts[node].concrete in targets else None
+
+
+_UNLOADED_ROWS: dict[int, tuple[object, ...]] = {}
+
+
+def _unloaded(width: int) -> tuple[object, ...]:
+    """The all-unloaded relationship row of ``width`` positions, built once."""
+    row = _UNLOADED_ROWS.get(width)
+    if row is None:
+        row = _UNLOADED_ROWS.setdefault(width, (UNLOADED,) * width)
+    return row
+
+
+def _undeclared_direction(
+    entity: EntityIdentity, relationship: RelationshipIdentity, node: int
+) -> GraphConstructionError:
+    """The refusal for a loaded view naming a direction ``entity`` does not declare,
+    in Entity Graph Construction's vocabulary because it is that graph's
+    relationship row being refused."""
+    return GraphConstructionError(
+        code="entity-graph-invalid-member",
+        message=(
+            f"{entity.canonical} declares no relationship {relationship!r}, "
+            "and a loaded view carries one"
+        ),
+        index=node,
+        identity=relationship,
+    )
 
 
 def _member_order(

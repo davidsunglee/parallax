@@ -335,7 +335,7 @@ admission stay outside the cache.
  TypedRootPublisher / WireRootPublisher, one per Page                   _typed / _wire
               ├ classify_root: a conforming root, or an InvalidData record
               ├ Read Evidence reaches the nodes of a conforming root only
-              ├ Typed: EntityGraphConstruction → frozen Entity instances
+              ├ Typed: EntityGraphConstruction.publish(Root View) → frozen Entity instances
               └ Wire:  WireWalk along the requested Include Paths
                         → frozen WireEntity mappings
               │
@@ -351,9 +351,9 @@ admission stay outside the cache.
 A Root View is one root's view over the Page, and the pass points its one Root View at
 each root in turn. Within a root, one logical row is one node, so a diamond of include
 paths shares a node and following a relationship never reads. Two roots never share a
-node object, even when they reached the same Entity State. An arm the root's carried
-views discard, such as an overwritten view, is still compared and judged but publishes
-nowhere, so its findings do not classify the root.
+node object, even when they reached the same Entity State. A relationship value the
+root's carried views discard, such as an overwritten view, is still compared and judged
+but publishes nowhere, so its findings do not classify the root.
 
 The eager path publishes nothing until every root is ready, which is the whole-result
 boundary; a stream publishes each root as soon as it is ready and keeps what it has

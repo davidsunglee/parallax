@@ -32,8 +32,6 @@ from parallax.core import LATEST, Attr, Bitemporal, Document, Entity, ValueObjec
 from parallax.core.base import PresentDocument
 from parallax.core.entity import (
     EntityDefinitionError,
-    EntityGraphWriter,
-    NodeHandle,
 )
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import lifecycle_state
@@ -70,10 +68,10 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
-from tests._support.model_capabilities import graph_construction_for
 from tests._support.root_ownership import own_root
 from tests.unit._authored_storage_support import answering_for_instance_state, stored_state
 from tests.unit._gc_reachability import reachable_objects
+from tests.unit._indexed_graph_support import published
 from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
@@ -595,14 +593,7 @@ def test_a_class_diverting_the_lifecycle_slot_is_refused_all_the_same() -> None:
     state = object()
     identity = _DivertedSlotNode.identity
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        node = writer.allocate(identity)
-        writer.populate(node, (7,), ())
-        return (node,)
-
-    (root,) = graph_construction_for(_DIVERTED_MODEL).construct(
-        build, state_factory=lambda _view, _handle: state
-    )
+    root = published(_DIVERTED_MODEL, (identity, (7,), ()), state=lambda _instance: state)
     assert lifecycle_state(cast("_DivertedSlotNode", root)) is state
     assert stored_state(cast("_DivertedSlotNode", root)).get(_DIVERTED_TO) is None
 

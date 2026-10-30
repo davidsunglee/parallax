@@ -30,7 +30,6 @@ from parallax.core._execution._unit_work.retain import KeyedWriteRefusalAdvice
 from parallax.core.base import PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import EntityGraphWriter, NodeHandle
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import WriteInstructionError
 from parallax.snapshot import TxnContext, WireEntity
@@ -40,7 +39,8 @@ from parallax.snapshot._inspection import insertion_of, snapshot_state_of
 from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
-from tests._support.model_capabilities import cataloged_for, graph_construction_for
+from tests._support.model_capabilities import cataloged_for
+from tests.unit._indexed_graph_support import published
 from tests.unit._transact_support import ACCOUNT, INFINITY_INSTANT, db_for, new_account
 from tests.unit._where_position_model import WHERE_POSITION_META, WherePosition
 
@@ -147,13 +147,10 @@ class _OtherLifecycleState:
 
 
 def _foreign_typed() -> mm.Account:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(mm.Account.identity)
-        writer.populate(handle, (1, "Ada", Decimal("100.00"), 1), ())
-        return (handle,)
-
-    (node,) = graph_construction_for(ACCOUNT).construct(
-        build, state_factory=lambda view, handle: _OtherLifecycleState()
+    node = published(
+        ACCOUNT,
+        (mm.Account.identity, (1, "Ada", Decimal("100.00"), 1), ()),
+        state=lambda _instance: _OtherLifecycleState(),
     )
     return cast("mm.Account", node)
 

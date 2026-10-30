@@ -9,8 +9,8 @@ through ``ReadRowConverter.record_row`` — rather than hand-assembling rows or 
 that no driver would produce.
 
 ``materialize`` then publishes it through the typed read's own publication, which
-is what makes these suites cover the real seam: Root View, allocate, populate, and
-per-node state factory, with no stand-in anywhere.
+is what makes these suites cover the real seam: Root View, allocate, fill, and
+lifecycle states, with no stand-in anywhere.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is

@@ -157,10 +157,10 @@ def _construction_ns(scenario: Scenario, arm: Arm) -> tuple[float, float]:
     Two builds of the same arm, differing only in how many nodes they are asked
     for, so the per-call cost is common to both and cancels in the difference
     (:func:`~instance_state_overhead.marginal`). Timing one call and calling it
-    the construction cost is what this replaces: an arm whose call also pays a
-    scope, a writer, root validation and factory buffering would be charged for
-    them against an arm that has none, and the difference would read as a
-    per-node regression that no node pays.
+    the construction cost is what this replaces: an arm whose call also pays
+    validation and lifecycle-state buffering would be charged for them against an
+    arm that has none, and the difference would read as a per-node regression
+    that no node pays.
     """
 
     def one() -> None:

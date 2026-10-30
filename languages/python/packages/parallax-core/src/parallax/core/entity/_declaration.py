@@ -195,8 +195,8 @@ _VALIDATION: Final = "__parallax_member_validation__"
 LIFECYCLE_STATE_SLOT: Final = "__parallax_lifecycle__"
 """The one per-instance slot a materialized node's lifecycle state occupies.
 
-Entity Graph Construction attaches whatever opaque value the constructing
-lifecycle's state factory returned and never interprets it, so a lifecycle
+Entity Graph Construction attaches whatever opaque value the publishing
+lifecycle answered for the node and never interprets it, so a lifecycle
 package's own state — the Snapshot slice's views, pin, and edge, or a future
 managed slice's entirely different record — travels under one name Entity
 exposes nowhere and interprets never. One slot rather than a per-fact family is

@@ -18,6 +18,7 @@ import pytest
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import NeutralType, PresentDocument
 from parallax.core.deep_fetch import IncludeTree
+from parallax.core.entity import UNLOADED
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import Page, page_rows, shared_entity_state
 from parallax.core.wire._codec import encode_managed_wire
@@ -631,7 +632,9 @@ def test_a_typed_publisher_failure_is_wrapped_once_with_its_cause(
         )
     else:
         monkeypatch.setattr(
-            TypedRootPublisher, "build", _failing_second_call(TypedRootPublisher.build)
+            TypedRootPublisher,
+            "_lifecycle_states",
+            _failing_second_call(vars(TypedRootPublisher)["_lifecycle_states"]),
         )
 
     received, failure = _publish_until_failure(fixture, roots, "typed", atomic=atomic)
@@ -676,19 +679,17 @@ def test_a_typed_publisher_clears_its_root_bookkeeping_however_a_root_ends(
     publisher = TypedRootPublisher(
         fixture.model, graph_construction_for(ENCODED_ORDERS), CONCURRENCY
     )
-    bookkeeping: list[tuple[int, int]] = []
+    held: list[RootView | None] = []
 
     def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
         published = publisher(root, ordinal)
-        bookkeeping.append(
-            (len(publisher._handles), publisher._pending)  # pyright: ignore[reportPrivateUsage]
-        )
+        held.append(publisher._root)  # pyright: ignore[reportPrivateUsage]
         return published
 
     (published,) = publish_roots(fixture.page(order), publish_root, fixture.model)
 
     assert (invalid_record(published).data is not None) is hydrates
-    assert bookkeeping == [(0, 0)]
+    assert held == [None]
 
 
 def test_a_typed_publisher_clears_its_root_bookkeeping_when_construction_fails(
@@ -704,17 +705,33 @@ def test_a_typed_publisher_clears_its_root_bookkeeping_when_construction_fails(
     def failing_state(*_args: object) -> object:
         raise _Boom
 
-    monkeypatch.setattr(TypedRootPublisher, "state", failing_state)
+    monkeypatch.setattr(TypedRootPublisher, "_lifecycle_states", failing_state)
     with pytest.raises(_Boom):
         list(publish_roots(fixture.page(order), publisher, fixture.model))
 
-    assert publisher._handles == []  # pyright: ignore[reportPrivateUsage]
-    assert publisher._pending == 0  # pyright: ignore[reportPrivateUsage]
+    assert publisher._root is None  # pyright: ignore[reportPrivateUsage]
 
 
 # --------------------------------------------------------------------------- #
 # A Root View is borrowed: only what a callback copies outlives the call.      #
 # --------------------------------------------------------------------------- #
+def test_a_root_view_answers_broad_relationship_values_as_node_indices() -> None:
+    # The graph Typed publication hands Entity Graph Construction: a loaded
+    # to-many is the tuple of this root's nodes in carried order, and a direction
+    # no fetched row loaded is the unloaded sentinel.
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    order = _order(fixture)
+    fixture.attach(order, _ITEMS, (_item(fixture, 11), _item(fixture, 12)))
+
+    answered = each_root(
+        fixture.page(order),
+        fixture.model,
+        lambda root, _ordinal: [root.relationship_values(node) for node in range(len(root))],
+    )
+
+    assert answered == [[((1, 2), UNLOADED), (UNLOADED,), (UNLOADED,)]]
+
+
 def test_a_retained_root_view_answers_for_the_last_root_while_copies_survive() -> None:
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     first = _order(fixture)

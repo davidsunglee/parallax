@@ -12,14 +12,16 @@ import functools
 import operator
 from dataclasses import dataclass
 from types import MappingProxyType, MemberDescriptorType
-from typing import TYPE_CHECKING, Any, Final, NoReturn, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from parallax.core.entity._construction_input import ABSENT, UNLOADED
 from parallax.core.entity._pydantic_storage import (
+    MODEL_EXTRA,
     MODEL_PRESENCE,
+    MODEL_PRIVATE,
     MODEL_STORAGE,
     instance_presence,
     instance_state,
@@ -34,8 +36,8 @@ __all__ = [
     "COMPACT_STATE_SLOT",
     "BackedModel",
     "PublicationPlan",
-    "RowShapeError",
     "allocate",
+    "attach_row",
     "carry_presence",
     "carry_slots_beside_state",
     "declared_values",
@@ -45,7 +47,6 @@ __all__ = [
     "named_state",
     "named_state_value",
     "plan_of",
-    "publish_positional",
     "relationship",
     "restated",
 ]
@@ -541,6 +542,11 @@ _PopulatedState: Final = cast("Any", BackedModel).__dict__["__pydantic_fields_se
 presence reaches the same answer Pydantic does without resolving the name through
 a class that may answer for it."""
 
+_SET_EXTRA: Final = MODEL_EXTRA.__set__
+_SET_PRIVATE: Final = MODEL_PRIVATE.__set__
+"""Pydantic's own extra-field and private-state slot writers, reached once, so
+allocating a shell names neither slot per value."""
+
 
 # The two Adapters, and the three questions that vary
 
@@ -712,7 +718,7 @@ def allocate(cls: type[Any]) -> Any:
 
     Neither the ordinary constructor nor ``model_construct`` is entered: a shell
     exists so a relationship can name it before it holds anything, and it holds
-    nothing until :func:`publish_positional` attaches its row. What it is given here is only
+    nothing until :func:`attach_row` attaches its row. What it is given here is only
     the Pydantic storage a shell cannot be missing — the extra slot every read of
     the value consults, and the private state an author's own ``PrivateAttr``
     declares, initialized to its declared defaults exactly as validation-free
@@ -721,8 +727,8 @@ def allocate(cls: type[Any]) -> Any:
     name-keyed presence state of any kind.
     """
     instance = cast("Any", cls).__new__(cls)
-    object.__setattr__(instance, "__pydantic_extra__", None)
-    object.__setattr__(instance, "__pydantic_private__", _private_state(cls))
+    _SET_EXTRA(instance, None)
+    _SET_PRIVATE(instance, _private_state(cls) if cls.__private_attributes__ else None)
     return instance
 
 
@@ -1009,89 +1015,17 @@ def relationship(value: BaseModel, py_name: str) -> object:
     return row[plan_of(type(value)).relationships[py_name]]
 
 
-class RowShapeError(ValueError):
-    """A member or relationship row that is not an exact built-in tuple of the
-    plan's own width.
+def attach_row(shell: BaseModel, row: tuple[object, ...]) -> None:
+    """Attach ``row`` as ``shell``'s whole declared state, in one write.
 
-    Raised before any resolver runs and before anything is attached, so the
-    caller that knows what the row was for attributes the refusal.
+    ``row`` is a complete copy of the class plan's template filled in place —
+    presence bitmap, every declared member, then the relationship tail — so
+    the value is published by this write and holds nothing before it. Only a
+    shell :func:`allocate` produced for the same publication is handed here,
+    which is what makes this its first and only attachment without a check
+    that would read the slot first.
     """
-
-    def __init__(self, *, tail: bool, width: int) -> None:
-        super().__init__(
-            f"a {'relationship' if tail else 'member'} row is an exact tuple of {width} positions"
-        )
-        self.tail = tail
-        self.width = width
-
-
-def _unresolved_relationship(
-    _context: object, _node: object, position: int, _arm: object
-) -> NoReturn:
-    raise ValueError(f"relationship position {position} is loaded and no resolver was given")
-
-
-def publish_positional[C, N](
-    plan: PublicationPlan,
-    instance: BaseModel,
-    members: tuple[object, ...],
-    relationships: tuple[object, ...],
-    *,
-    context: C,
-    node: N,
-    occurrence: Callable[[C, N, int, object], object],
-    relationship: Callable[[C, N, int, object], object] = _unresolved_relationship,
-    bitmaps: dict[int, int],
-) -> None:
-    """Fill one copy of ``plan.template`` from positional rows and attach it, once.
-
-    ``members`` is aligned to :attr:`PublicationPlan.py_names` and
-    ``relationships`` to the relationship tail. An ``ABSENT`` member keeps the
-    template's default with its presence bit clear. ``occurrence`` converts each
-    present Value Object position and ``relationship`` each loaded tail position;
-    both receive ``context`` and ``node`` unchanged, then the position and its
-    value. An unloaded position keeps the template's sentinel without a resolver
-    call, so a class laying out no tail needs no relationship resolver.
-
-    Attachment is the atomic act of populating the value: every refusal — a row
-    of the wrong kind or width, an already-published value, or a resolver's own —
-    happens before anything is written, so no partially published value exists
-    at any point.
-
-    ``bitmaps`` is one caller's own memo of the presence masks it has already
-    assembled, and its life is that caller's. CPython interns small integers, so
-    a mask through ``0b11111111`` is a shared singleton already and a wider one
-    allocates; every node of one class in one materialization comes from one
-    projection and so repeats one pattern, which the memo turns into one shared
-    integer per distinct pattern. Nothing process-wide holds it, so no mask
-    outlives the graph whose publication assembled it.
-    """
-    width = len(plan.py_names)
-    if type(members) is not tuple or len(members) != width:
-        raise RowShapeError(tail=False, width=width)
-    tail = len(plan.relationships)
-    if type(relationships) is not tuple or len(relationships) != tail:
-        raise RowShapeError(tail=True, width=tail)
-    if _compact(instance) is not None:
-        raise ValueError(
-            f"{type(instance).__name__} is already published, and a published value's "
-            "state is attached exactly once"
-        )
-    attributes = width - len(plan.occurrences)
-    row = list(plan.template)
-    bitmap = 0
-    for position, member in enumerate(members):
-        if member is ABSENT:
-            continue
-        row[position + 1] = (
-            member if position < attributes else occurrence(context, node, position, member)
-        )
-        bitmap |= 1 << position
-    for position, arm in enumerate(relationships):
-        if arm is not UNLOADED:
-            row[width + 1 + position] = relationship(context, node, position, arm)
-    row[0] = bitmaps.setdefault(bitmap, bitmap)
-    _CompactState.__set__(instance, tuple(row))
+    _CompactState.__set__(shell, row)
 
 
 def iterate(value: BaseModel) -> Generator[tuple[str, object]]:

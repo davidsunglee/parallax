@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any, Final, cast
 
 from parallax.conformance import case_format
-from parallax.conformance.another_source import AnotherSource
+from parallax.conformance.foreign_lifecycle_source import ForeignLifecycleSource
 from parallax.conformance.story_models import Account
 from parallax.core.entity import Entity
 from parallax.core.execution import KeyedWriteValueError
@@ -185,7 +185,7 @@ def declared_database_calls(case: case_format.Case) -> int:
 def value_of(
     provenance: str,
     tx: TxnContext,
-    another: AnotherSource,
+    foreign: ForeignLifecycleSource,
     invalid_root: Callable[[], Entity] | None = None,
 ) -> Entity:
     """A value of the stated provenance, arranged through the source that
@@ -194,9 +194,9 @@ def value_of(
     ``unmanaged`` is a plainly constructed instance — the one token no managed
     read produced. ``thisSource`` is read through ``tx`` itself, the very source
     the verb under test writes through. ``anotherSource`` is read through
-    ``another``, a second framework-managed source with its own materialization
+    ``foreign``, a second framework-managed source with its own materialization
     and its own lifecycle state
-    (:mod:`~parallax.conformance.another_source`), because the Snapshot runtime
+    (:mod:`~parallax.conformance.foreign_lifecycle_source`), because the Snapshot runtime
     is one source and no read of it produces a foreign value (ADR 0010).
     ``invalidRoot`` is supplied by the conformance adapter after it performs a
     checked read that exposes hydratable diagnostic data; the runner consumes the
@@ -209,7 +209,7 @@ def value_of(
     if provenance == "thisSource":
         return tx.find(Account.where(Account.id == TARGET_ID)).result()
     if provenance == "anotherSource":
-        (value,) = another.find(Account.where(Account.id == TARGET_ID))
+        (value,) = foreign.find(Account.where(Account.id == TARGET_ID))
         return value
     if provenance == "invalidRoot":
         if invalid_root is None:
@@ -221,7 +221,7 @@ def value_of(
 def grade_step(
     tx: TxnContext,
     step: WriteValueStep,
-    another: AnotherSource,
+    foreign: ForeignLifecycleSource,
     invalid_root: Callable[[], Entity] | None = None,
     outside: tuple[Entity, WireEntity] | None = None,
 ) -> str | None:
@@ -243,7 +243,7 @@ def grade_step(
         typed, wire = outside
         _graded(step, lambda: _apply(tx, step.action, typed))
         return _graded(step, lambda: tx.wire.amend(wire, {}))
-    value = value_of(step.provenance, tx, another, invalid_root)
+    value = value_of(step.provenance, tx, foreign, invalid_root)
     return _graded(step, lambda: _apply(tx, step.action, value))
 
 
@@ -279,7 +279,7 @@ def _apply(tx: TxnContext, action: str, value: Entity) -> None:
 def graded_outcomes(
     tx: TxnContext,
     steps: Sequence[WriteValueStep],
-    another: AnotherSource,
+    foreign: ForeignLifecycleSource,
     invalid_root: Callable[[], Entity] | None = None,
     outside: OutsideReads | None = None,
 ) -> list[str | None]:
@@ -288,6 +288,6 @@ def graded_outcomes(
     for the same steps before this transaction opened."""
     arranged = outside or {}
     return [
-        grade_step(tx, step, another, invalid_root, arranged.get(index))
+        grade_step(tx, step, foreign, invalid_root, arranged.get(index))
         for index, step in enumerate(steps)
     ]
