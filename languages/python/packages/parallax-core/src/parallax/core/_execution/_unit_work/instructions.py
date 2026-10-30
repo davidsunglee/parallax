@@ -1178,7 +1178,7 @@ def prepare_typed_keyed_write(
         stated_pairs = tuple(pairs)
         if target.inheritance is not None:
             _judge_subtype_shape(model, target, _named_pairs(entry, stated_pairs))
-        if mutation in AMEND_MUTATIONS:
+        if mutation in AMEND_MUTATIONS and entry.framework_owned:
             _refuse_owned_names(entry, target, stated_pairs, entry.framework_owned)
         row = _sparse_row(
             entry,
@@ -2130,7 +2130,7 @@ def _judge_row_members(
     sibling-branch or derived member first, then an authored framework-owned
     one, then an undeclared one."""
     _judge_subtype_shape(model, entity, row)
-    if authored_members is not None:
+    if authored_members is not None and entry.framework_owned:
         shape = entry.selection.members.shape
         stated = (
             (position, row.get(name))
@@ -2228,7 +2228,12 @@ def _prepare_keyed_payload(
     judged: list[ManagedRow] = []
     for row in instruction.rows:
         _judge_row_members(
-            model, entity, entry, row, row.keys() if mutation in AMEND_MUTATIONS else None, "keyed"
+            model,
+            entity,
+            entry,
+            row,
+            row.keys() if mutation in AMEND_MUTATIONS and authored_members is None else None,
+            "keyed",
         )
         if mutation in REPLACE_MUTATIONS:
             judged.append(
