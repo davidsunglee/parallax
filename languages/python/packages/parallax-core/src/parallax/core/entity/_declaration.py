@@ -1192,7 +1192,7 @@ def _build_value_object(
     )
     owner = shape_of(cls)
     for py_name in py_to_name:
-        setattr(cls, py_name, ElementAttr(py_name, plan.indexes[py_name], owner))
+        setattr(cls, py_name, ElementAttr(py_name, plan.indices[py_name], owner))
     return cls
 
 
@@ -1346,7 +1346,7 @@ def _build_entity(
             py_name,
             Attr(
                 AttributeRef(identity.canonical, canonical),
-                plan.indexes[py_name],
+                plan.indices[py_name],
                 members[canonical],
                 validation,
                 None if py_name not in vo_classes else shape_of(vo_classes[py_name]),
@@ -1554,7 +1554,7 @@ def _install_inherited_descriptors(cls: type, plan: PublicationPlan, *, own: set
     while the class is being built becomes that member's collected DEFAULT, which
     is the defect :class:`_InheritedMemberShadow` exists to prevent.
     """
-    for py_name, index in (*plan.indexes.items(), *plan.relationships.items()):
+    for py_name, index in (*plan.indices.items(), *plan.relationships.items()):
         if py_name in own:
             continue
         setattr(cls, py_name, _declaring_descriptor(cls, py_name).rebound(index))

@@ -377,7 +377,7 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
     member = "any(?)" if postgres_array else f"({EXPANDING_PLACEHOLDER})"
     statement = builder.finish(f"select ?, ?, {member}, ?, ?, {member}, {member}, ?, ?, ?, ?")
     template = _template(statement)
-    indexes = (2, 5, 6)
+    indices = (2, 5, 6)
     keys: list[ManagedValue] = [10, 20, 30]
     rendered = template.render(keys).statement
     array = ArrayBind(INT64, cast("list[object]", keys))
@@ -414,7 +414,7 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
         assert rendered.sql == statement.sql
         assert rendered.typed_bind_spans is statement.typed_bind_spans
         assert rendered.wire_bind_overrides is statement.wire_bind_overrides
-        assert all(cast("ArrayBind", rendered.binds[index]).values is keys for index in indexes)
+        assert all(cast("ArrayBind", rendered.binds[index]).values is keys for index in indices)
     else:
         assert rendered.sql == "select ?, ?, (?, ?, ?), ?, ?, (?, ?, ?), (?, ?, ?), ?, ?, ?, ?"
         assert rendered.typed_bind_spans == (
@@ -430,7 +430,7 @@ def test_multiple_key_occurrences_transform_surrounding_metadata_once(
         )
     assert keys == [10, 20, 30]
     (group,) = statement.execution_value_positions()
-    assert (group.source, group.form, group.indices) == (("keys",), keys_form, indexes)
+    assert (group.source, group.form, group.indices) == (("keys",), keys_form, indices)
     again = template.render([40]).statement
     assert again.typed_bind_spans is statement.typed_bind_spans
     assert again.wire_bind_overrides is statement.wire_bind_overrides
@@ -777,8 +777,8 @@ def test_repeated_typed_rows_leave_nullable_none_positions_unannotated() -> None
         (2, 1, 3, 2),
         (6, 3, 3, 2),
     ]
-    assert 1 not in {index for span in statement.typed_bind_spans for index in span.indexes()}
-    assert 4 not in {index for span in statement.typed_bind_spans for index in span.indexes()}
+    assert 1 not in {index for span in statement.typed_bind_spans for index in span.indices()}
+    assert 4 not in {index for span in statement.typed_bind_spans for index in span.indices()}
 
 
 def test_append_fragment_coalesces_touching_ordinary_spans_with_equal_type_and_form() -> None:

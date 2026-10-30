@@ -552,7 +552,7 @@ fetch.
 A case may author the `m-execution-lifecycle` oracle
 `then.executionLifecycle` (`m-case-format`). The adapter answers it with the
 same optional normalized `executionLifecycle` shape: ordered Root Executions
-whose UUIDs are replaced by positive first-observation indexes, each carrying
+whose UUIDs are replaced by positive first-observation indices, each carrying
 its kind and ordered correlated events. Mirroring the oracle lets a runner
 compare the two structurally without making portable assertions about UUIDs,
 durations or the timing identities calls share, runtime type names, or
@@ -569,7 +569,7 @@ Suite owns. A Database Call names its
 statement by index into this envelope's own `emissions` array, just as the oracle
 uses the case's flattened authored statements. A call the envelope emits no
 statement for — the resolving read a keyed write owes (`m-case-format`) — names
-no index, and the indexes the rest name are the emission order exactly, in
+no index, and the indices the rest name are the emission order exactly, in
 delivery order and once each. Every present index must be in range and be named
 by a call of the kind its own emission is — a query by a read, DML by a write;
 JSON Schema cannot express those cross-array relations, so the adapter and

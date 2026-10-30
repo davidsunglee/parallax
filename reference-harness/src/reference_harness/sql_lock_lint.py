@@ -65,7 +65,7 @@ class _ModelReads:
 
 
 class LockConsistency:
-    """Per-traversal metadata indexes for scenario/coherence read validation."""
+    """Per-traversal metadata indices for scenario/coherence read validation."""
 
     def __init__(self, compatibility_root: Path) -> None:
         self.root = compatibility_root

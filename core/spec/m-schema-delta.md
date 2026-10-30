@@ -248,7 +248,7 @@ canonical operation order, and reports a database-wide physical location naming
 the extension rather than a Table.
 
 A check is local to its Table, so its name enters no Physical Index Name census
-and no created-Index provenance; the indexes backing the primary key and the
+and no created-Index provenance; the indices backing the primary key and the
 exclusion share the schema's Index namespace and enter the census (see below).
 A Table the earlier edition already held gains no constraint and keeps its key's
 name: the delta states a known edition and cannot know whether stored rows
@@ -299,7 +299,7 @@ Because an altered Index's target definition differs from its earlier one in a
 fingerprinted fact, the two take distinct names — which is what lets the target
 be created and validated before the earlier Index is dropped.
 
-The indexes backing a temporal Table's primary key and exclusion share the same
+The indices backing a temporal Table's primary key and exclusion share the same
 namespace. They enter the census under the names their Table Layouts compiled
 (`m-storage-layout`), never under a name derived here, each identified by its
 Table, its kind, and its Columns in constraint order. No delta drops one, so one

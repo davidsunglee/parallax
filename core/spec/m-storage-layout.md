@@ -329,7 +329,7 @@ TableLayout
   columns: immutable sequence<ColumnSlot>
   physicalPrimaryKey: immutable sequence<ColumnSlot>
   primaryKeyIndex: PhysicalIndex | absent
-  indexes: immutable sequence<PhysicalIndex>
+  indices: immutable sequence<PhysicalIndex>
   uniqueKeys: immutable sequence<PhysicalIndex>
   temporalConstraints: TemporalHistoryConstraints | absent
   column(Column) -> ColumnSlot | absent
@@ -616,11 +616,11 @@ concrete table use the same root axis designations — and, under
 `table-per-concrete-subtype`, the same root-declared Index, whose components
 each concrete table resolves through its own contributor lookup.
 
-## Physical indexes
+## Physical indices
 
 Index Metadata remains the owner of each Index's identity, ordered components,
 and uniqueness. The compiler maps every accepted Index once onto each Table
-carrying all of its components, and `indexes` publishes the result: the derived
+carrying all of its components, and `indices` publishes the result: the derived
 primary-key Index first, then every other Index in the accepted model's
 canonical Entity order and, within one Entity, declaration order. Every other
 entry references its accepted declaration without copying it; the primary-key
@@ -631,7 +631,7 @@ slots for its components in component order, naming a slot once where two
 temporal dimensions designate one end Attribute. It copies no slot and creates
 no other layout-owned column sequence. `primaryKeyIndex` is
 that first entry, whose `columns` are exactly `physicalPrimaryKey`; `uniqueKeys`
-selects the unique entries of `indexes` in the same order.
+selects the unique entries of `indices` in the same order.
 
 An Index names only local Attributes of its declaring Entity, so it reaches
 exactly the Tables carrying that Entity's members: a standalone Entity's own
@@ -643,7 +643,7 @@ its own Table only; it is never a family-wide guarantee across concrete Tables.
 Each component slot keeps its own `effectiveNullable` answer. Consumers read
 these entries rather than resolving components themselves.
 
-A DDL consumer creates **every** entry of `indexes` except `primaryKeyIndex` —
+A DDL consumer creates **every** entry of `indices` except `primaryKeyIndex` —
 unique and non-unique alike — as a separately named statement of its own, never
 as an inline table constraint and never suppressed for spanning Columns another
 Index already spans. Only the derived primary-key Index is inline, as the
@@ -654,8 +654,8 @@ consumer can correlate with the Index it created; the naming rule is
 Under `Document`, an Index may name only direct-role Attributes, so every
 component still has a direct slot and the mapping above is unchanged. An Index
 naming a document-resident Attribute is rejected by the Rule Set below.
-Document-path indexes, expression indexes, generated columns, and
-provider-native document indexes are outside this contract; adding one requires
+Document-path indices, expression indices, generated columns, and
+provider-native document indices are outside this contract; adding one requires
 its own design rather than a looser index rule.
 
 ## Temporal history constraints
@@ -862,7 +862,7 @@ through the branch's own `layout.placement(...)`, which is total over every
 member applicable to that Table; enumerating leaves per position would grow the
 view without adding an answer the branch's Table Layout does not already give.
 
-Facet and view indexes are immutable and bounded by the accepted model. A
+Facet and view indices are immutable and bounded by the accepted model. A
 compiler may intern repeated applicability sets and store slot selections as
 ordinals, but public values preserve structural equality and immutable access.
 Arbitrary position views are statement-scoped and must not create an unbounded
@@ -1018,7 +1018,7 @@ their spellings equals a physical Column.
   Assignments to document-resident members compose against the one Structured
   Column slot their placements name, in canonical logical placement order.
 - DDL iterates `TableLayout.columns`, applies `effectiveNullable`, selects
-  `physicalPrimaryKey`, and renders every other entry of `indexes` over its
+  `physicalPrimaryKey`, and renders every other entry of `indices` over its
   selected slots; dialects only render the already-selected values. Every key
   or unique constraint it emits comes from an Index: the derived primary-key Index is
   rendered as the key constraint and each other unique Index as a unique

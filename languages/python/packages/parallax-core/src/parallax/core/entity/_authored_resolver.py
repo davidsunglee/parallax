@@ -105,7 +105,7 @@ def typed_interpretation(
     against the quantifier over its own collection. Prepared operations adopt
     their managed operands where the resolved member declares exactly the type
     they were prepared under. Unfinished paths resolve their Python member names
-    through the Entity Classes ``classes`` indexes and prepare their native
+    through the Entity Classes ``classes`` indices and prepare their native
     operands once under the resolved type; a model indexing no classes refuses
     them. Applicability and every other semantic rule are the shared portable
     judgment canonical input meets.

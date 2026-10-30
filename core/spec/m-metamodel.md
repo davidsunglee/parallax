@@ -55,14 +55,14 @@ This is the sole canonical accepted metadata object graph for one formation:
 - a hub MAY own lifecycle state, export context, and language-class bindings;
 - a hub MAY delegate the Metamodel interface to the accepted object;
 - a hub MUST NOT reconstruct accepted Metadata or compiled facets;
-- a hub MUST NOT create independent normalized accepted-metadata indexes;
+- a hub MUST NOT create independent normalized accepted-metadata indices;
 - language bindings MAY index canonical Entity Identity to native class, but
   that index is binding state, not model metadata; and
 - descriptor export MUST derive from the accepted Metamodel and MUST NOT retain
   a mirrored accepted descriptor graph.
 
 `CompiledMetadata` itself contains the immutable canonical Entity sequence and
-the immutable indexes used by all accepted local lookup. The Metamodel adds
+the immutable indices used by all accepted local lookup. The Metamodel adds
 facet retrieval only. This ownership rule applies equally to descriptor-backed
 and class-backed hubs.
 
@@ -737,7 +737,7 @@ contributor implementation; opaque facet keys and installed facet values do
 not give it formation-composition responsibility.
 
 The Metadata Compiler may expand an already validated acyclic Value Object
-occurrence graph and build immutable local indexes. It may not decide semantic
+occurrence graph and build immutable local indices. It may not decide semantic
 validity, pair relationships, invert cardinalities, derive inheritance,
 classify temporal behavior, or emit issues.
 

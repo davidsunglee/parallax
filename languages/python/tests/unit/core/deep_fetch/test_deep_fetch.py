@@ -1456,7 +1456,7 @@ def test_an_acquisition_read_selects_current_transaction_time_by_managed_infinit
     statement = compile_read(query, RATE, POSTGRES).statement
     assert statement.binds[-1] is INFINITY
     assert statement.wire_binds()[-1] == "infinity"
-    typed = {index for span in statement.typed_bind_spans for index in span.indexes()}
+    typed = {index for span in statement.typed_bind_spans for index in span.indices()}
     assert len(statement.binds) - 1 not in typed
 
 

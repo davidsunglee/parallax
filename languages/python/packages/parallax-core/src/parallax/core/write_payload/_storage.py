@@ -321,7 +321,7 @@ class EntityStorage:
 
     def assignment_placement(self, slots: int) -> AssignmentPlacement:
         """The placement of the cells a revising statement assigns at the
-        slots whose indexes the ``slots`` mask names."""
+        slots whose indices the ``slots`` mask names."""
         placement = self._assignments.get(slots)
         if placement is None:
             placement = AssignmentPlacement(self, slots)
@@ -380,17 +380,17 @@ def _packed(presence: int, position: int) -> int:
     return (presence & ((1 << position) - 1)).bit_count()
 
 
-def _gather(indexes: Sequence[int]) -> Callable[[tuple[object, ...]], tuple[object, ...]]:
-    """A gather answering a tuple of the cells at ``indexes``, whatever their
+def _gather(indices: Sequence[int]) -> Callable[[tuple[object, ...]], tuple[object, ...]]:
+    """A gather answering a tuple of the cells at ``indices``, whatever their
     number: ``itemgetter`` answers one cell bare and takes no empty index."""
-    match len(indexes):
+    match len(indices):
         case 0:
             return _nothing
         case 1:
-            (index,) = indexes
+            (index,) = indices
             return lambda cells: (cells[index],)
         case _:
-            return cast("Callable[[tuple[object, ...]], tuple[object, ...]]", itemgetter(*indexes))
+            return cast("Callable[[tuple[object, ...]], tuple[object, ...]]", itemgetter(*indices))
 
 
 def _nothing(_cells: tuple[object, ...]) -> tuple[object, ...]:

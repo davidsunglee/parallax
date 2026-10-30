@@ -9,7 +9,7 @@ not have happened. Two layers carry that:
   BOTH sides of the mirror;
 * :mod:`reference_harness.execution_validate` closes the relations no JSON
   Schema states, on BOTH sides too — correlation that describes a tree,
-  balanced Starteds and Finisheds, attribution one link deep, statement indexes
+  balanced Starteds and Finisheds, attribution one link deep, statement indices
   that name something, a call count agreeing with the record's own count
   oracle, each Flush's positional trigger claim, and the attempt history a
   terminal transaction stream admits.
@@ -992,7 +992,7 @@ def test_a_begin_failure_caused_by_an_acquisition_that_granted_is_flagged() -> N
     )
 
 
-# --- indexes that name something ---------------------------------------------
+# --- indices that name something ---------------------------------------------
 
 
 def test_a_call_naming_an_unauthored_golden_statement_is_flagged() -> None:

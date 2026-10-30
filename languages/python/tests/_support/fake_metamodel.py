@@ -3,7 +3,7 @@
 The class-free seam promises that behavior depends on the metamodel protocols
 and never on how a model was stored, so a second implementation that shares no
 code with the descriptor path is the proof. These classes hold plain dictionary
-indexes over the shared metamodel value types and construct no descriptor
+indices over the shared metamodel value types and construct no descriptor
 record; :data:`PARITY_DESCRIPTOR` is the same model written as descriptor text,
 so a suite can ask both implementations the same question and compare answers.
 
@@ -158,7 +158,7 @@ class FakeValueObject:
 
 
 class FakeEntity:
-    """One Entity's accepted local view over plain dictionary indexes."""
+    """One Entity's accepted local view over plain dictionary indices."""
 
     def __init__(
         self,

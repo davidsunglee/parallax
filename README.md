@@ -52,7 +52,7 @@ The snippets below leave out imports and the setup that gives you `db`.
 chapter of the guide lists the imports its examples use.
 
 Declare your entities as Pydantic classes. Annotations name each attribute and
-relationship, `indices` declares database indexes, and an attribute declared with
+relationship, `indices` declares database indices, and an attribute declared with
 `optimistic_locking=True`, here `version`, turns on optimistic locking.
 
 <!-- example: declare-customers-and-orders -->

@@ -222,7 +222,7 @@ class TableLayout(Protocol):
     @property
     def primary_key_index(self) -> PhysicalIndex | None: ...
     @property
-    def indexes(self) -> Sequence[PhysicalIndex]: ...
+    def indices(self) -> Sequence[PhysicalIndex]: ...
     @property
     def unique_keys(self) -> Sequence[PhysicalIndex]: ...
     @property
@@ -317,7 +317,7 @@ class _TableLayout:
     columns: tuple[ColumnSlot, ...]
     physical_primary_key: tuple[ColumnSlot, ...]
     primary_key_index: PhysicalIndex | None
-    indexes: tuple[PhysicalIndex, ...]
+    indices: tuple[PhysicalIndex, ...]
     temporal_constraints: TemporalHistoryConstraints | None
     unique_keys: tuple[PhysicalIndex, ...] = field(repr=False, compare=False)
     _placements: Mapping[MemberIdentity, MemberPlacement] = field(repr=False, compare=False)
@@ -356,7 +356,7 @@ def table_layout(
     table: Table,
     columns: Sequence[ColumnSlot],
     primary_key_index: PhysicalIndex | None,
-    secondary_indexes: Sequence[PhysicalIndex],
+    secondary_indices: Sequence[PhysicalIndex],
     placements: Mapping[MemberIdentity, MemberPlacement],
     temporal_constraints: TemporalHistoryConstraints | None,
 ) -> TableLayout:
@@ -365,24 +365,24 @@ def table_layout(
     This is the compiler-facing constructor. ``placements`` is the complete
     answer for every member applicable to ``table``, so the published lookup is
     total rather than computed per call. The physical primary key is the
-    primary-key Index's slot selection, and ``indexes`` leads with that Index.
+    primary-key Index's slot selection, and ``indices`` leads with that Index.
     ``temporal_constraints`` is absent exactly when the Table is not temporal.
     Public consumers receive the protocol and cannot mutate either index or
     ordered sequence.
     """
-    indexes = (
-        tuple(secondary_indexes)
+    indices = (
+        tuple(secondary_indices)
         if primary_key_index is None
-        else (primary_key_index, *secondary_indexes)
+        else (primary_key_index, *secondary_indices)
     )
     return _TableLayout(
         table,
         tuple(columns),
         () if primary_key_index is None else primary_key_index.columns,
         primary_key_index,
-        indexes,
+        indices,
         temporal_constraints,
-        tuple(index for index in indexes if index.declaration.unique),
+        tuple(index for index in indices if index.declaration.unique),
         MappingProxyType(dict(placements)),
     )
 

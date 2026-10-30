@@ -30,7 +30,7 @@ observation alike (`m-execution-lifecycle`):
 - **statement.** A Database Call names its statement by INDEX — into the case's
   flattened authored golden order on the asserted side, into the envelope's own
   ``emissions`` on the observed side. Every index must land on something that
-  exists, the indexes a record names are its whole space, in delivery order
+  exists, the indices a record names are its whole space, in delivery order
   and once each, and each index is owned by a call of the kind its own statement
   is — a query by a read, DML by a write — or a resolving read taking a write's
   index would cover the space while the write that ran it appears nowhere; the
@@ -976,7 +976,7 @@ def _check_statements(calls: list[_Call], space: _StatementSpace, problems: list
     database and is counted but which the case authors no statement for
     (`m-case-format` "Resolving reads a write owes").
 
-    What keeps that second omission honest is coverage: the indexes the calls do
+    What keeps that second omission honest is coverage: the indices the calls do
     name are the whole space, in delivery order, once each. A call omitting an
     index it should have named leaves an authored statement unnamed, and a call
     taking an index that belongs to a later one shifts every index after it, so
@@ -1005,10 +1005,10 @@ def _check_statements(calls: list[_Call], space: _StatementSpace, problems: list
                 f"a write call ran"
             )
     _check_statement_kinds(named, space, problems)
-    indexes = [call.statement for call in named]
-    if indexes != list(range(space.size)):
+    indices = [call.statement for call in named]
+    if indices != list(range(space.size)):
         problems.append(
-            f"the record's database calls name statements {indexes}, but {space.phrase()}; the "
+            f"the record's database calls name statements {indices}, but {space.phrase()}; the "
             f"space is named in delivery order and once each, so a call that skipped its own "
             f"index or took another's leaves the two orders disagreeing"
         )

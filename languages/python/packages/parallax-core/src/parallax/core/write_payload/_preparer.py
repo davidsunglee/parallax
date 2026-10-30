@@ -223,7 +223,7 @@ class _Comparison:
 def _assignment_cells(
     storage: EntityStorage, assignments: PlannedAssignments
 ) -> tuple[int, tuple[object, ...]]:
-    """The slots ``assignments`` writes, as a mask of their indexes, and the
+    """The slots ``assignments`` writes, as a mask of their indices, and the
     persisted value each stores there, in Table Layout slot order.
 
     A revising statement writes only what it assigns: the shared Structured

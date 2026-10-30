@@ -93,7 +93,7 @@ def test_the_field_order_is_pydantic_s_own_and_is_not_the_member_order() -> None
 
 def test_a_bit_is_one_less_than_its_tuple_index_and_relationships_carry_none() -> None:
     plan = plan_of(Cat)
-    assert dict(plan.indexes) == {py_name: bit + 1 for py_name, bit in plan.bits.items()}
+    assert dict(plan.indices) == {py_name: bit + 1 for py_name, bit in plan.bits.items()}
     assert dict(plan.relationships) == {"friends": 7, "owner": 8}
     assert plan.template == (0, None, None, None, None, None, None, UNLOADED, UNLOADED)
 
@@ -104,9 +104,9 @@ def test_an_attribute_keeps_its_position_in_a_descendant_and_an_occurrence_does_
     # sit after the exact class's own attribute count, which is a property of the
     # concrete rather than of the family. That is why a descendant installs its
     # own descriptor for every member it inherits.
-    assert plan_of(Animal).indexes["id"] == plan_of(Cat).indexes["id"]
-    assert plan_of(Animal).indexes["spot"] == 4
-    assert plan_of(Cat).indexes["spot"] == 5
+    assert plan_of(Animal).indices["id"] == plan_of(Cat).indices["id"]
+    assert plan_of(Animal).indices["spot"] == 4
+    assert plan_of(Cat).indices["spot"] == 5
     assert plan_of(Animal).relationships["owner"] == 6
     assert plan_of(Cat).relationships["owner"] == 8
 
@@ -116,7 +116,7 @@ def test_every_inherited_member_has_a_descriptor_of_the_descendant_s_own(py_name
     inherited = vars(Cat)[py_name]
     assert inherited is not vars(Animal)[py_name]
     plan = plan_of(Cat)
-    expected = plan.indexes.get(py_name, plan.relationships.get(py_name))
+    expected = plan.indices.get(py_name, plan.relationships.get(py_name))
     assert inherited._index == expected
 
 

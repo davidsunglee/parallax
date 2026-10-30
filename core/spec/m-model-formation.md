@@ -217,7 +217,7 @@ typed `view(model)` interface.
 Facets are immutable derived semantic views over the sole Compiled Metadata
 graph. They retain declaration identities/provenance, do not mutate local
 Metadata, and do not reproduce the accepted Entity/member graph. A facet MAY
-own indexes over its own derived values.
+own indices over its own derived values.
 
 ## Activation order
 

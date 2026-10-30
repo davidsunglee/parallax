@@ -390,15 +390,15 @@ class _Statement:
         element of the tag Column's array holds."""
         if len(columns) != len(arrays):
             return {}
-        indexes = {name: _bare_bind(array) for name, array in zip(columns, arrays, strict=True)}
+        indices = {name: _bare_bind(array) for name, array in zip(columns, arrays, strict=True)}
         elements = {
             name: cast("list[object]", value)
-            for name, index in indexes.items()
+            for name, index in indices.items()
             if index is not None and isinstance(value := self._bound(index), list)
         }
         rows = max((len(values) for values in elements.values()), default=0)
         positions: dict[int, BindPosition] = {}
-        for name, index in indexes.items():
+        for name, index in indices.items():
             slot = _slot_named(layout, name)
             if index is None or slot is None:
                 continue

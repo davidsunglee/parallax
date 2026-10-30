@@ -2382,7 +2382,7 @@ contains ordered events. Every event names its one-based `sequence`,
 
 The portable projection retains activity topology, stable outcomes and codes,
 database categories, physical row counts, retry classification, and statement
-indexes. A Database Call finishes with any `m-execution-lifecycle` outcome,
+indices. A Database Call finishes with any `m-execution-lifecycle` outcome,
 `notExecuted` and `unconfirmed` included, and an unconfirmed call states the
 category of the interruption that left it so. It omits UUIDs, durations and the
 timing identities calls share, implementation type names, messages, stack
@@ -2392,7 +2392,7 @@ Three calls name none: every call on the `api-conformance` lane, where a case
 authors no golden SQL at all, a **resolving read** a keyed write owes
 (*Resolving reads a write owes*), and a **coverage read** a flush makes, a read
 inside the Flush that issues it (`m-sql` *Requested ranges*); each reaches the
-database and is counted, but the case authors no golden for it. The indexes the remaining calls name ARE that order
+database and is counted, but the case authors no golden for it. The indices the remaining calls name ARE that order
 — in delivery order, once each — so a record naming a statement twice, or
 leaving one unnamed, contradicts its own goldens. Each index is named by a call
 of the KIND its own statement is — a query by a read, DML by a write — so a

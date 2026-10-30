@@ -412,9 +412,9 @@ _PINNED_WIRE = (_VALID_WIRE, _VALID_WIRE, _TX_WIRE, _TX_WIRE)
 def _spans(statement: LoweredStatement) -> list[tuple[range, object, str]]:
     """Each typed span as the bind positions it covers, its type, and its form."""
     return [
-        (range(min(indexes), max(indexes) + 1), span.neutral_type, span.form)
+        (range(min(indices), max(indices) + 1), span.neutral_type, span.form)
         for span in statement.typed_bind_spans
-        if (indexes := tuple(span.indexes()))
+        if (indices := tuple(span.indices()))
     ]
 
 
