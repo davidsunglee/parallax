@@ -117,6 +117,7 @@ def _index(name: str, column: PhysicalColumn = _CODE) -> IndexDefinition:
         table=_TABLE,
         index=IndexIdentity(_ENTITY, name),
         components=(AttributeIdentity(_ENTITY, column.column.name),),
+        column_attributes=(AttributeIdentity(_ENTITY, column.column.name),),
         columns=(column,),
         unique=False,
     )

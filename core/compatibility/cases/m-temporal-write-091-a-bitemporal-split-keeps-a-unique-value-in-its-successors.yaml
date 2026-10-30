@@ -1,0 +1,78 @@
+# Write sequence: a plain Bitemporal amend that keeps an authored unique value.
+# The close keeps `code` on the inactivated rectangle, and the head and tail
+# successors both carry it. The authored unique index ends with `thru_z, out_z`:
+# the closed row's `out_z` is finite and the two current successors end at
+# different Valid-Time instants, so all three rows differ on it and the
+# successor insert succeeds.
+model: models/temporal-authored-index.yaml
+tags: [m-temporal-write, m-sql, m-storage-layout, bitemporal, temporal, write-sequence, plain-update-split, unique-index, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Assignment
+      statements: 1
+      note: open the original Latest rectangle [valid inf, transaction inf)
+      rows:
+        - { id: 1, code: Y, label: a, rate: 100 }
+      validFrom: "2024-01-01T00:00:00.000000Z"
+      at: "2024-01-01T00:00:00.000000Z"
+    - mutation: amend
+      entity: parallax.compatibility.Assignment
+      statements: 2
+      note: inactivate the original, then chain head (old rate) + tail (new rate), both keeping the unique code
+      rows:
+        - { id: 1, rate: 200 }
+      validFrom: "2024-06-01T00:00:00.000000Z"
+      at: "2024-07-01T00:00:00.000000Z"
+then:
+  statements:
+    - sql:
+        postgres: insert into assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
+        mariadb: insert into assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
+      binds: [1, Y, a, 100, "2024-01-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
+    - sql:
+        postgres: update assignment set out_z = ? where id = ? and thru_z = ? and out_z = ? and in_z = ?
+        mariadb: update assignment set out_z = ? where id = ? and thru_z = ? and out_z = ? and in_z = ?
+      binds: ["2024-07-01T00:00:00.000000Z", 1, infinity, infinity, "2024-01-01T00:00:00.000000Z"]
+    - sql:
+        postgres: insert into assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) select * from unnest(cast(? as bigint[]), cast(? as text[]), cast(? as text[]), cast(? as bigint[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]), cast(? as timestamptz[]))
+        mariadb: insert into assignment(id, code, label, rate, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)
+      binds:
+        postgres:
+          - [1, 1]
+          - [Y, Y]
+          - [a, a]
+          - [100, 200]
+          - ["2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z"]
+          - ["2024-06-01T00:00:00.000000Z", infinity]
+          - ["2024-07-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z"]
+          - [infinity, infinity]
+        mariadb: [1, Y, a, 100, "2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity, 1, Y, a, 200, "2024-06-01T00:00:00.000000Z", infinity, "2024-07-01T00:00:00.000000Z", infinity]
+  tableState:
+    assignment:
+      - id: 1
+        code: Y
+        label: a
+        rate: 100
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00.000000Z"
+        out_z: "2024-07-01T00:00:00.000000Z"
+      - id: 1
+        code: Y
+        label: a
+        rate: 100
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2024-07-01T00:00:00.000000Z"
+        out_z: infinity
+      - id: 1
+        code: Y
+        label: a
+        rate: 200
+        from_z: "2024-06-01T00:00:00.000000Z"
+        thru_z: infinity
+        in_z: "2024-07-01T00:00:00.000000Z"
+        out_z: infinity
+  databaseCalls: 4

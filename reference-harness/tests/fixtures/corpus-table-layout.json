@@ -13906,6 +13906,155 @@
       ]
     }
   },
+  "models/temporal-authored-index.yaml": {
+    "assignment": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Assignment"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Assignment.id",
+          "declaringOwner": "parallax.compatibility.Assignment",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Assignment"
+          ],
+          "column": "code",
+          "contributor": "attribute:parallax.compatibility.Assignment.code",
+          "declaringOwner": "parallax.compatibility.Assignment",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Assignment"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Assignment.label",
+          "declaringOwner": "parallax.compatibility.Assignment",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Assignment"
+          ],
+          "column": "rate",
+          "contributor": "attribute:parallax.compatibility.Assignment.rate",
+          "declaringOwner": "parallax.compatibility.Assignment",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Assignment"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.Assignment.validStart",
+          "declaringOwner": "parallax.compatibility.Assignment",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Assignment"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.Assignment.validEnd",
+          "declaringOwner": "parallax.compatibility.Assignment",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Assignment"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.Assignment.txStart",
+          "declaringOwner": "parallax.compatibility.Assignment",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Assignment"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.Assignment.txEnd",
+          "declaringOwner": "parallax.compatibility.Assignment",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        5,
+        7
+      ]
+    },
+    "handle": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Handle"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Handle.id",
+          "declaringOwner": "parallax.compatibility.Handle",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Handle"
+          ],
+          "column": "code",
+          "contributor": "attribute:parallax.compatibility.Handle.code",
+          "declaringOwner": "parallax.compatibility.Handle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Handle"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Handle.label",
+          "declaringOwner": "parallax.compatibility.Handle",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Handle"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.Handle.txStart",
+          "declaringOwner": "parallax.compatibility.Handle",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Handle"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.Handle.txEnd",
+          "declaringOwner": "parallax.compatibility.Handle",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        4
+      ]
+    }
+  },
   "models/unchanged-milestone-layout-twin-columns.yaml": {
     "kept_log": {
       "columns": [

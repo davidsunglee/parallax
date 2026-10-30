@@ -152,15 +152,21 @@ def test_a_temporal_hop_correlated_by_its_logical_key_is_proven_at_any_perspecti
     assert _eligible(POLICY, hop, _seen(POLICY, "Coverage", valid=valid, tx=tx))
 
 
-@pytest.mark.parametrize("latest", [True, False], ids=["latest", "at"])
-def test_a_temporal_hop_off_its_logical_key_needs_a_unique_key_the_correlation_fixes(
-    latest: bool,
+@pytest.mark.parametrize(
+    ("valid", "tx"),
+    [(True, True), (False, True), (True, False), (False, False)],
+    ids=["latest-latest", "at-latest", "latest-at", "at-at"],
+)
+def test_a_temporal_hop_off_its_logical_key_is_proven_by_a_unique_key_only_at_latest(
+    valid: bool, tx: bool
 ) -> None:
+    # The authored unique key ends with every axis end, and only a Latest axis
+    # fixes its end; an instant on either axis leaves the key's end unfixed.
     for unique in (True, False):
         family = temporal_badge_model(unique=unique)
         hop = _to_one(family, "Holder", "Holder.badge")
-        visibility = _seen(family, "Badge", valid=latest, tx=latest)
-        assert _eligible(family, hop, visibility) is unique
+        visibility = _seen(family, "Badge", valid=valid, tx=tx)
+        assert _eligible(family, hop, visibility) is (unique and valid and tx)
 
 
 def test_several_physical_candidates_are_never_proven_unique() -> None:

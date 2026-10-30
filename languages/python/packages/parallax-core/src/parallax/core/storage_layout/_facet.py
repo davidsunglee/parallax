@@ -168,12 +168,27 @@ class PhysicalIndex:
     """One accepted Index as one Table carries it.
 
     ``columns`` selects the Table's existing slots for ``declaration``'s
-    components in component order, naming a slot once even where two temporal
-    axes designate one end Attribute.
+    components in component order, followed on a temporal Table of an authored
+    Index by the Table's axis ends, naming a slot once even where two temporal
+    axes designate one end Attribute. ``declaration`` keeps the authored
+    components alone.
     """
 
     declaration: IndexMetadata
     columns: tuple[ColumnSlot, ...]
+
+    @property
+    def column_attributes(self) -> tuple[AttributeIdentity, ...]:
+        """The Attribute behind each of ``columns``, position by position."""
+        attributes: list[AttributeIdentity] = []
+        for slot in self.columns:
+            contributor = slot.contributor
+            if not isinstance(contributor, AttributeIdentity):  # pragma: no cover - Attributes only
+                raise RuntimeError(
+                    f"Index {self.declaration.identity.name!r} selects a non-Attribute slot"
+                )
+            attributes.append(contributor)
+        return tuple(attributes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +223,12 @@ class TemporalHistoryConstraints:
     transaction_axis: PhysicalTemporalAxis
     valid_axis: PhysicalTemporalAxis | None
     exclusion_name: str
+
+    @property
+    def axis_ends(self) -> tuple[ColumnSlot, ...]:
+        """Valid-Time end, then Transaction-Time end; a slot both designate appears once."""
+        ranged = (self.valid_axis, self.transaction_axis)
+        return tuple(dict.fromkeys(axis.end for axis in ranged if axis is not None))
 
 
 class TableLayout(Protocol):

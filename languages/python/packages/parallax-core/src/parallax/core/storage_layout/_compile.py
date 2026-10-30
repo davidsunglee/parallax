@@ -314,8 +314,14 @@ def _physical_index(
     table: Table,
     declaration: IndexMetadata,
     by_contributor: Mapping[ColumnContributor, ColumnSlot],
+    axis_ends: Sequence[ColumnSlot] = (),
 ) -> PhysicalIndex | None:
-    """``declaration`` over ``table``'s slots, or absence where ``table`` carries none."""
+    """``declaration`` over ``table``'s slots, or absence where ``table`` carries none.
+
+    Whether ``table`` carries the Index is decided by its authored components
+    alone, before ``axis_ends`` follow them, because every Table of a temporal
+    family carries the root's ends.
+    """
     slots = [by_contributor.get(component) for component in declaration.attributes]
     present = [slot for slot in slots if slot is not None]
     if not present:
@@ -324,7 +330,7 @@ def _physical_index(
         raise RuntimeError(
             f"Table {table.name!r} carries Index {declaration.identity.name!r} only partially"
         )
-    return PhysicalIndex(declaration, tuple(dict.fromkeys(present)))
+    return PhysicalIndex(declaration, tuple(dict.fromkeys((*present, *axis_ends))))
 
 
 def _applicability(
@@ -482,7 +488,8 @@ def _layout(
     The family root declares both the key and the axes, so the Index it derives
     is the whole physical key of every Table the family maps — a shared
     table-per-hierarchy Table and each table-per-concrete-subtype concrete Table
-    alike — and its axes are every such Table's temporal constraints.
+    alike — and its axes are every such Table's temporal constraints. Every other
+    Index the Table carries ends with those constraints' axis ends.
     """
     attribute_applicability, value_object_applicability = _applicability(index, group.row_owners)
     row_owners = _interned(set(group.row_owners), applicability_intern)
@@ -566,12 +573,19 @@ def _layout(
             f"Table {group.table.name!r} retains a duplicate Column or contributor after validation"
         )
     by_contributor = {slot.contributor: slot for slot in columns}
-    secondary = (
-        _physical_index(group.table, declaration, by_contributor)
-        for declaration in index.family_indices.get(group.root, ())
-    )
     physical_key = (
         None if primary_key is None else _physical_index(group.table, primary_key, by_contributor)
+    )
+    constraints = temporal_history_constraints(
+        group.table,
+        _entity(index, group.root).declared_as_of_axes,
+        physical_key,
+        by_contributor,
+    )
+    axis_ends = () if constraints is None else constraints.axis_ends
+    secondary = (
+        _physical_index(group.table, declaration, by_contributor, axis_ends)
+        for declaration in index.family_indices.get(group.root, ())
     )
     return table_layout(
         group.table,
@@ -579,12 +593,7 @@ def _layout(
         physical_key,
         tuple(mapped for mapped in secondary if mapped is not None),
         _placements(group, roles, by_contributor),
-        temporal_history_constraints(
-            group.table,
-            _entity(index, group.root).declared_as_of_axes,
-            physical_key,
-            by_contributor,
-        ),
+        constraints,
     )
 
 

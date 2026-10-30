@@ -627,11 +627,26 @@ entry references its accepted declaration without copying it; the primary-key
 entry's declaration is instead derived from the declaring Entity's key and axes
 by `m-descriptor`'s rule, so it equals that Entity's derived Index without being
 looked up among its accepted Indices. Each entry selects the Table's existing
-slots for its components in component order, naming a slot once where two
-temporal dimensions designate one end Attribute. It copies no slot and creates
-no other layout-owned column sequence. `primaryKeyIndex` is
-that first entry, whose `columns` are exactly `physicalPrimaryKey`; `uniqueKeys`
-selects the unique entries of `indices` in the same order.
+slots for its components in component order. On a Table carrying
+`temporalConstraints`, every other entry — unique and non-unique alike — then
+selects the Table's axis end slots in canonical dimension order, Valid Time
+before Transaction Time, which are the ends the primary-key entry's own
+components already close with; every Index of a temporal Table therefore ends
+with the axis ends. An entry names a slot once where two temporal dimensions
+designate one end Attribute. It copies no slot and creates no other
+layout-owned column sequence. `primaryKeyIndex` is that first entry, whose
+`columns` are exactly `physicalPrimaryKey`; `uniqueKeys` selects the unique
+entries of `indices` in the same order.
+
+The appended ends are the layout's, not the author's: an authored Index's
+declaration keeps exactly its authored components, and the entry rather than
+the declaration describes the Columns a consumer emits, as
+`physicalPrimaryKey` does for a key. The family root's axes are resolved into
+each Table's own end slots, so an Index a descendant declares ends with the
+root's ends there too. Whether a Table carries an Index is decided by its
+authored components alone, before the ends follow them: every Table of a
+temporal family carries the ends, and that never brings a sibling's Index onto
+it.
 
 An Index names only local Attributes of its declaring Entity, so it reaches
 exactly the Tables carrying that Entity's members: a standalone Entity's own

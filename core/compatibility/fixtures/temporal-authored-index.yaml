@@ -1,0 +1,29 @@
+# Fixture rows for the temporal-authored-index model
+# (models/temporal-authored-index.yaml), read by the overlap-acceptance case.
+#
+# Two DISTINCT Assignments share the authored unique code Y, both current on
+# Transaction Time, over overlapping Valid Time with different Valid-Time ends:
+#
+#   id 1  valid [2024-01-01, 2024-06-01)  thru_z 2024-06-01  out_z infinity
+#   id 2  valid [2024-03-01, infinity)    thru_z infinity    out_z infinity
+#
+# The authored unique index is (code, thru_z, out_z), so the two rows differ on
+# it and both load: Bitemporal uniqueness is per milestone end, not an overlap
+# exclusion.
+parallax.compatibility.Assignment:
+  - id: 1
+    code: Y
+    label: first
+    rate: 100
+    validStart: "2024-01-01T00:00:00.000000Z"
+    validEnd: "2024-06-01T00:00:00.000000Z"
+    txStart: "2024-01-01T00:00:00.000000Z"
+    txEnd: infinity
+  - id: 2
+    code: Y
+    label: second
+    rate: 200
+    validStart: "2024-03-01T00:00:00.000000Z"
+    validEnd: infinity
+    txStart: "2024-03-01T00:00:00.000000Z"
+    txEnd: infinity

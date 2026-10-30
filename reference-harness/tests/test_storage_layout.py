@@ -429,6 +429,107 @@ def test_physical_key_temporal_ends_follow_dimension_rank(mapping: str) -> None:
     ]
 
 
+@pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
+def test_temporal_axes_and_authored_indices_resolve_onto_the_tables_own_slots(
+    mapping: str,
+) -> None:
+    definitions, table, root = _ranked_temporal_definitions(mapping)
+    definitions[0]["attributes"].insert(1, _attribute("code"))
+    definitions[0]["indices"] = [{"name": "ranked_code", "attributes": ["code"], "unique": True}]
+    layout = compile_storage_layout(definitions).table(table)
+    assert layout is not None
+    assert [
+        (axis.dimension, axis.start.column, axis.end.column) for axis in layout.temporal_axes
+    ] == [
+        ("valid-time", "from_z", "thru_z"),
+        ("transaction-time", "in_z", "out_z"),
+    ]
+    for axis in layout.temporal_axes:
+        assert layout.contribution(axis.start.contributor) is axis.start
+        assert layout.contribution(axis.end.contributor) is axis.end
+    assert layout.axis_ends == (layout.temporal_axes[0].end, layout.temporal_axes[1].end)
+
+    (authored,) = layout.secondary_indices
+    assert authored.declaration.attributes == (AttributeContributor(root, "code"),)
+    assert authored.declaration.unique
+    assert authored.column_attributes == (
+        AttributeContributor(root, "code"),
+        AttributeContributor(root, "validEnd"),
+        AttributeContributor(root, "txEnd"),
+    )
+    assert authored.columns == (
+        layout.contribution(AttributeContributor(root, "code")),
+        *layout.axis_ends,
+    )
+
+
+def test_a_non_temporal_table_has_no_axes_and_indices_over_their_components_alone() -> None:
+    model = load_model(_COMPATIBILITY_ROOT, "models/error-cases.yaml")
+    layout = model.storage_layout.table("tag")
+    assert layout is not None
+    assert layout.temporal_axes == ()
+    assert layout.axis_ends == ()
+    (unique,) = layout.secondary_indices
+    assert unique.column_attributes == unique.declaration.attributes
+    assert [slot.column for slot in unique.columns] == ["name"]
+
+
+def test_a_tph_descendant_index_ends_with_the_roots_ends_on_the_shared_table() -> None:
+    definitions = [_derived(definition) for definition in _tph_definitions()]
+    definitions[0]["temporality"] = "transaction-time"
+    definitions[0] = _derived(definitions[0])
+    definitions[1]["indices"] = [{"name": "alpha_value", "attributes": ["alphaValue"]}]
+    definitions[2]["indices"] = [
+        {"name": "beta_value_uq", "attributes": ["betaValue"], "unique": True}
+    ]
+    layout = compile_storage_layout(definitions).table("record")
+    assert layout is not None
+    assert [
+        (index.declaration.owner, [slot.column for slot in index.columns])
+        for index in layout.secondary_indices
+    ] == [
+        ("example.AlphaRecord", ["alpha_value", "out_z"]),
+        ("example.BetaRecord", ["beta_value", "out_z"]),
+    ]
+    assert layout.secondary_indices[0].column_attributes == (
+        AttributeContributor("example.AlphaRecord", "alphaValue"),
+        AttributeContributor("example.Record", "txEnd"),
+    )
+
+
+def test_tpcs_temporal_indices_reach_only_tables_carrying_their_components() -> None:
+    definitions = _tpcs_definitions()
+    definitions[0]["temporality"] = "transaction-time"
+    definitions[0] = _derived(definitions[0])
+    definitions[0]["indices"] = [{"name": "document_title", "attributes": ["title"]}]
+    definitions[1]["indices"] = [
+        {"name": "invoice_detail_uq", "attributes": ["invoiceDetail"], "unique": True}
+    ]
+    facet = compile_storage_layout(definitions)
+    invoice, memo = facet.table("invoice"), facet.table("memo")
+    assert invoice is not None and memo is not None
+    # Memo carries the root's ends but not Invoice's component.
+    assert [index.declaration.name for index in invoice.secondary_indices] == [
+        "document_title",
+        "invoice_detail_uq",
+    ]
+    assert [index.declaration.name for index in memo.secondary_indices] == ["document_title"]
+    (invoice_title, _detail) = invoice.secondary_indices
+    (memo_title,) = memo.secondary_indices
+    assert invoice_title.declaration == memo_title.declaration
+    assert (
+        invoice_title.column_attributes
+        == memo_title.column_attributes
+        == (
+            AttributeContributor("example.Document", "title"),
+            AttributeContributor("example.Document", "txEnd"),
+        )
+    )
+    assert invoice_title.columns != memo_title.columns
+    assert invoice_title.columns[1:] == invoice.axis_ends
+    assert memo_title.columns[1:] == memo.axis_ends
+
+
 def test_an_independently_constructed_equal_slot_matches_by_structure() -> None:
     layout = compile_storage_layout([_standalone_definition()]).tables[0]
     slot = layout.contribution(AttributeContributor("example.Record", "label"))

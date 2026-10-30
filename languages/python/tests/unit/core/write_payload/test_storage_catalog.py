@@ -3,6 +3,7 @@ once per presence and retained within a bound."""
 
 from __future__ import annotations
 
+import datetime as dt
 import gc
 import weakref
 from decimal import Decimal as PyDecimal
@@ -18,12 +19,19 @@ from parallax.core.storage_layout import InheritanceDiscriminator, RelationalDoc
 from parallax.core.write_payload._storage import ROW_SLOTS_PER_ENTITY, EffectShape, StorageCatalog
 from parallax.core.write_plan import WritePlanningError
 from parallax.core.write_plan.steps import (
+    INFINITY,
     MISSING_TARGET,
     NEW_LINEAGE,
+    STALE_WRITE,
+    SUPERSEDED,
+    UNGATED,
     UNVERSIONED,
     ExactCount,
     KeyTarget,
+    MilestoneTarget,
     PlannedAssignments,
+    PlannedClose,
+    PlannedTemporalRevision,
     PlannedUpdate,
     WriteRow,
 )
@@ -346,6 +354,52 @@ def test_only_a_non_primary_unique_key_member_makes_an_update_ungroupable() -> N
 
     assert storage.effect_shape(update("personId")) is None
     assert storage.effect_shape(update("number")) is not None
+
+
+@pytest.mark.parametrize(
+    ("name", "ends"),
+    [("Handle", ("txEnd",)), ("Assignment", ("validEnd", "txEnd"))],
+    ids=["transaction-time", "bitemporal"],
+)
+def test_a_temporal_unique_keys_axis_ends_never_make_a_milestone_effect_ungroupable(
+    name: str, ends: tuple[str, ...]
+) -> None:
+    storage = StorageCatalog(corpus_model("temporal-authored-index")).entity(
+        EntityIdentity("parallax.compatibility", name)
+    )
+    entity = storage.entity
+    end_attributes = tuple(AttributeIdentity(entity, end) for end in ends)
+    (code,) = storage.view.layout.unique_keys[1:]
+    assert code.column_attributes == (AttributeIdentity(entity, "code"), *end_attributes)
+    target = MilestoneTarget(
+        key_attributes=(AttributeIdentity(entity, "id"),),
+        key_values=(1,),
+        end_attributes=end_attributes,
+        end_values=(INFINITY,) * len(ends),
+    )
+    closed_at = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    close = PlannedClose(
+        entity=entity,
+        target=target,
+        assignments=PlannedAssignments({AttributeIdentity(entity, "txEnd"): closed_at}),
+        cause=SUPERSEDED,
+        concurrency=UNGATED,
+        affected_rows=ExactCount(1, STALE_WRITE),
+    )
+
+    def revision(member: str, value: str) -> PlannedTemporalRevision:
+        return PlannedTemporalRevision(
+            entity=entity,
+            target=target,
+            assignments=PlannedAssignments({AttributeIdentity(entity, member): value}),
+            concurrency=UNGATED,
+            affected_rows=ExactCount(1, STALE_WRITE),
+            predecessor_document_is_object=True,
+        )
+
+    assert storage.effect_shape(close) is not None
+    assert storage.effect_shape(revision("label", "b")) is not None
+    assert storage.effect_shape(revision("code", "Z")) is None
 
 
 def test_effect_slots_of_a_document_twin_skip_a_shared_document_no_path_of_which_is_assigned() -> (

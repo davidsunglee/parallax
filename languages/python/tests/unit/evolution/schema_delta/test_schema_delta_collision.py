@@ -38,7 +38,7 @@ from parallax.evolution.schema_delta._physical import (
     TemporalBackingIndex,
 )
 from parallax.evolution.schema_delta._plan import temporal_backing_indices
-from tests.unit._corpus_model_support import corpus_records, formed
+from tests.unit._corpus_model_support import corpus, corpus_records, formed
 from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
 _ENTITY = EntityIdentity(namespace="parallax.test", name="Widget")
@@ -52,6 +52,7 @@ def _definition(
         table=Table(name=table or entity.name.lower()),
         index=IndexIdentity(entity, index),
         components=(AttributeIdentity(entity, "code"),),
+        column_attributes=(AttributeIdentity(entity, "code"),),
         columns=(PhysicalColumn(Column(name="code"), STRING, 8, nullable=True),),
         unique=unique,
     )
@@ -220,6 +221,24 @@ def test_a_generated_delta_refuses_a_collision_rather_than_renaming(
         "widget_code_uq_dup",
     ]
     assert all(definition.presence is IndexPresence.LATER for definition in group.definitions)
+
+
+def test_a_temporal_collision_reports_the_authored_components_without_the_axis_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(naming, "_fingerprint", _one_fingerprint)
+    model = corpus()["temporal-authored-index"]
+    with pytest.raises(PhysicalIndexNameCollisionError) as raised:
+        schema_delta(evolve(ABSENT, model), POSTGRES)
+    reported = {
+        (definition.table.name, definition.index.name): definition.components
+        for group in raised.value.groups
+        for definition in group.definitions
+    }
+    assignment = EntityIdentity("parallax.compatibility", "Assignment")
+    handle = EntityIdentity("parallax.compatibility", "Handle")
+    assert reported[("assignment", "assignment_code")] == (AttributeIdentity(assignment, "code"),)
+    assert reported[("handle", "handle_label")] == (AttributeIdentity(handle, "label"),)
 
 
 def test_a_collision_with_an_index_the_delta_never_touches_is_refused(

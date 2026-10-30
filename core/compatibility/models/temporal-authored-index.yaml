@@ -1,0 +1,61 @@
+# Handle and Assignment: authored indices on temporal Entities.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Each
+# Entity declares one unique and one non-unique authored index, so the model
+# covers both index kinds on both temporal profiles:
+#
+#   Handle      transaction-time  unique (code), non-unique (label)
+#   Assignment  bitemporal        unique (code), non-unique (label)
+#
+# The authored components stay what is written here. Every authored index of a
+# temporal Table ends with that Table's axis ends (m-storage-layout), so the
+# physical shapes are `(code, out_z)` / `(label, out_z)` for Handle and
+# `(code, thru_z, out_z)` / `(label, thru_z, out_z)` for Assignment.
+#
+# Row data lives in the sibling fixtures/temporal-authored-index.yaml, which
+# holds two distinct Assignments sharing a code over overlapping Valid Time.
+# The write-sequence and error cases start from an empty schema and build their
+# own rows.
+entities:
+  - name: Handle
+    namespace: parallax.compatibility
+    table: handle
+    temporality: transaction-time
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: code
+        type: string
+        maxLength: 32
+      - name: label
+        type: string
+        maxLength: 64
+    indices:
+      - name: handle_code
+        attributes: [code]
+        unique: true
+      - name: handle_label
+        attributes: [label]
+  - name: Assignment
+    namespace: parallax.compatibility
+    table: assignment
+    temporality: bitemporal
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: code
+        type: string
+        maxLength: 32
+      - name: label
+        type: string
+        maxLength: 64
+      - name: rate
+        type: int64
+    indices:
+      - name: assignment_code
+        attributes: [code]
+        unique: true
+      - name: assignment_label
+        attributes: [label]

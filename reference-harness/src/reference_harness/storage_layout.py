@@ -200,12 +200,73 @@ class ColumnSlot:
 
 
 @dataclass(frozen=True, slots=True)
+class IndexDeclaration:
+    """One authored Index exactly as its declaring Entity states it.
+
+    The namespace and local name stay apart because a Physical Index Name hashes
+    the structured declaring identity while its readable prefix reads the
+    canonical spelling.
+    """
+
+    namespace: str
+    entity: str
+    name: str
+    attributes: tuple[AttributeContributor, ...]
+    unique: bool
+
+    @property
+    def owner(self) -> str:
+        """The declaring Entity's canonical identity."""
+        return f"{self.namespace}.{self.entity}" if self.namespace else self.entity
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalIndex:
+    """One authored Index as one Table carries it.
+
+    ``columns`` selects the Table's slots for the authored components in
+    component order, then, on a temporal Table, its axis ends.
+    """
+
+    declaration: IndexDeclaration
+    columns: tuple[ColumnSlot, ...]
+
+    @property
+    def column_attributes(self) -> tuple[AttributeContributor, ...]:
+        """The Attribute behind each of ``columns``, position by position."""
+        attributes: list[AttributeContributor] = []
+        for slot in self.columns:
+            if not isinstance(slot.contributor, AttributeContributor):
+                raise TypeError(
+                    f"Index {self.declaration.name!r} selects a non-Attribute slot {slot.column!r}"
+                )
+            attributes.append(slot.contributor)
+        return tuple(attributes)
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalTemporalAxis:
+    """One family-root As-Of Axis over one Table's own start and end slots."""
+
+    dimension: str
+    start: ColumnSlot
+    end: ColumnSlot
+
+
+@dataclass(frozen=True, slots=True)
 class TableLayout:
-    """The complete physical shape and immutable indices of one Table."""
+    """The complete physical shape and immutable indices of one Table.
+
+    ``temporal_axes`` follow canonical dimension order, and
+    ``secondary_indices`` holds every authored Index the Table carries in
+    canonical declaring-Entity order and then declaration order.
+    """
 
     table: str
     columns: tuple[ColumnSlot, ...]
     physical_primary_key: tuple[ColumnSlot, ...]
+    temporal_axes: tuple[PhysicalTemporalAxis, ...]
+    secondary_indices: tuple[PhysicalIndex, ...]
     placements: Mapping[MemberAddress, MemberPlacement] = field(repr=False, compare=False)
     _column_index: Mapping[str, ColumnSlot] = field(init=False, repr=False, compare=False)
     _contributor_index: Mapping[ColumnContributor, ColumnSlot] = field(
@@ -227,6 +288,11 @@ class TableLayout:
 
     def __deepcopy__(self, memo: dict[int, Any]) -> TableLayout:
         return self
+
+    @property
+    def axis_ends(self) -> tuple[ColumnSlot, ...]:
+        """Each axis's end slot in canonical dimension order, a shared slot once."""
+        return tuple(dict.fromkeys(axis.end for axis in self.temporal_axes))
 
     def column(self, column: str) -> ColumnSlot | None:
         """Return the slot claiming ``column``, or absent."""
@@ -1115,12 +1181,62 @@ def _compile_layout(
         slot = by_contributor[contributor]
         if slot not in physical_key:
             physical_key.append(slot)
+    axes = tuple(
+        PhysicalTemporalAxis(
+            axis.dimension,
+            by_contributor[AttributeContributor(group.root, axis.start.name)],
+            by_contributor[AttributeContributor(group.root, axis.end.name)],
+        )
+        for axis in temporal_axes(root)
+    )
+    axis_ends = tuple(dict.fromkeys(axis.end for axis in axes))
     return TableLayout(
         group.table,
         columns,
         tuple(physical_key),
+        axes,
+        _secondary_indices(group, by_contributor, axis_ends),
         _compile_placements(group, roles, by_contributor),
     )
+
+
+def _secondary_indices(
+    group: _Group,
+    by_contributor: Mapping[ColumnContributor, ColumnSlot],
+    axis_ends: Sequence[ColumnSlot],
+) -> tuple[PhysicalIndex, ...]:
+    """Every authored Index ``group``'s Table carries, each ending with ``axis_ends``.
+
+    An Index names only local Attributes of its declaring Entity, so it applies
+    exactly where the Table carries those components; that is decided before
+    the ends follow them, because every Table of a temporal family carries the
+    root's ends.
+    """
+    declarations = sorted(
+        group.declarations, key=lambda definition: _identity_sort_key(_identity(definition))
+    )
+    entries: list[PhysicalIndex] = []
+    for definition in declarations:
+        owner = _identity(definition)
+        for declared in definition.get("indices", []) or []:
+            components = tuple(AttributeContributor(owner, name) for name in declared["attributes"])
+            slots = [by_contributor.get(component) for component in components]
+            present = [slot for slot in slots if slot is not None]
+            if not present:
+                continue
+            if len(present) != len(slots):
+                raise KeyError(
+                    f"index {declared['name']!r} spans table {group.table!r} only partially"
+                )
+            declaration = IndexDeclaration(
+                namespace=definition.get("namespace") or "",
+                entity=definition["name"],
+                name=declared["name"],
+                attributes=components,
+                unique=bool(declared.get("unique", False)),
+            )
+            entries.append(PhysicalIndex(declaration, tuple(dict.fromkeys((*present, *axis_ends)))))
+    return tuple(entries)
 
 
 _EMPTY_DOCUMENT = EntityDocument("", ())
