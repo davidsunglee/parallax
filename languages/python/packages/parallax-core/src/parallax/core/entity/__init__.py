@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from parallax.core.entity._construction_input import UNLOADED, NodeHandle
+from parallax.core.entity._construction_input import UNLOADED
 from parallax.core.entity._entity import Bitemporal, Entity, TxTemporal
 from parallax.core.entity._errors import (
     EditError,
@@ -20,8 +20,7 @@ from parallax.core.entity._expressions import (
 )
 from parallax.core.entity._graph_construction import (
     EntityGraphConstruction,
-    EntityGraphWriter,
-    ResolutionView,
+    IndexedGraph,
     lifecycle_state_of,
     relationship_value_of,
 )
@@ -76,18 +75,16 @@ __all__ = [
     "Entity",
     "EntityDefinitionError",
     "EntityGraphConstruction",
-    "EntityGraphWriter",
     "Float32",
     "GraphConstructionError",
     "IncludePath",
+    "IndexedGraph",
     "Int32",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
-    "NodeHandle",
     "ObjectQuery",
     "Predicate",
     "Rel",
-    "ResolutionView",
     "Sequence",
     "SortKey",
     "TablePerHierarchy",

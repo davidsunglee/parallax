@@ -1,10 +1,10 @@
 """Building a compactly backed Entity or Value Object without a database, and
 reading what one physically holds.
 
-Publication drives this door itself, and reaching it needs a Domain Model, a
-graph, and a build callback. A suite grading what the second backing IS rather
-than how a read reaches it drives the instance-state Module's own door directly
-instead: the same shell, the same whole row, attached the same once.
+Publication drives this door itself, and reaching it needs a Domain Model and a
+graph. A suite grading what the second backing IS rather than how a read
+reaches it drives the instance-state Module's own door directly instead: the
+same shell, the same whole row, attached the same once.
 """
 
 from __future__ import annotations
@@ -13,12 +13,11 @@ import gc
 from types import MemberDescriptorType
 from typing import TYPE_CHECKING, Any, cast
 
-from parallax.core.entity._construction_input import ABSENT, UNLOADED
 from parallax.core.entity._instance_state import (
     COMPACT_STATE_SLOT,
     allocate,
+    attach_row,
     plan_of,
-    publish_positional,
 )
 from parallax.core.entity._pydantic_storage import instance_state
 
@@ -48,27 +47,19 @@ def published[M](
     """
     plan = plan_of(cls)
     loaded = relationships or {}
-    tail = sorted(plan.relationships, key=plan.relationships.__getitem__)
-    undeclared = (members.keys() - set(plan.py_names)) | (loaded.keys() - set(tail))
+    undeclared = (members.keys() - set(plan.py_names)) | (loaded.keys() - set(plan.relationships))
     if undeclared:
         raise ValueError(f"{cls.__name__} declares no {sorted(undeclared)}")
     instance = allocate(cast("type[Any]", cls))
-    publish_positional(
-        plan,
-        instance,
-        tuple(members.get(py_name, ABSENT) for py_name in plan.py_names),
-        tuple(loaded.get(py_name, UNLOADED) for py_name in tail),
-        context=None,
-        node=None,
-        occurrence=_as_given,
-        relationship=_as_given,
-        bitmaps={},
-    )
+    row = list(plan.template)
+    for bit, py_name in enumerate(plan.py_names):
+        if py_name in members:
+            row[0] = cast("int", row[0]) | 1 << bit
+            row[bit + 1] = members[py_name]
+    for py_name, value in loaded.items():
+        row[plan.relationships[py_name]] = value
+    attach_row(instance, tuple(row))
     return cast("M", instance)
-
-
-def _as_given(_context: None, _node: None, _position: int, value: object) -> object:
-    return value
 
 
 def raw_row(value: BaseModel) -> tuple[Any, ...] | None:

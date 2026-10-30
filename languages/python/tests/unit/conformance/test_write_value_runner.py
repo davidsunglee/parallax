@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from parallax.conformance import case_format, engine, models, vo_models, write_value_runner
-from parallax.conformance.another_source import AnotherSource
+from parallax.conformance.foreign_lifecycle_source import ForeignLifecycleSource
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
 from parallax.core.base import SQL_NULL, PresentDocument
@@ -67,7 +67,9 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
 ) -> None:
     steps = write_value_runner.write_value_steps(case)
     port = ScriptedAdapter(*_outside_reads(steps), _writing_transaction(steps))
-    another = AnotherSource(prepare_model(ACCOUNT_MODEL, edition=engine.case_edition(case)), port)
+    foreign = ForeignLifecycleSource(
+        prepare_model(ACCOUNT_MODEL, edition=engine.case_edition(case)), port
+    )
     domain_model = (
         vo_models.CUSTOMER_MODEL if Path(case.model).stem == "customer" else ACCOUNT_MODEL
     )
@@ -76,7 +78,7 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
 
     def fn(tx: TxnContext) -> list[str | None]:
         return write_value_runner.graded_outcomes(
-            tx, steps, another, lambda: invalid_customer_root(vo_models.CUSTOMER_MODEL), outside
+            tx, steps, foreign, lambda: invalid_customer_root(vo_models.CUSTOMER_MODEL), outside
         )
 
     outcomes = db.transact(fn)
@@ -150,10 +152,10 @@ def test_a_source_read_step_needs_its_outside_read_arranged() -> None:
         "amend", "thisSource", "write-evidence-unavailable", "standalone"
     )
     port = ScriptedAdapter(Transact())
-    another = AnotherSource(_ACCOUNT, port)
+    foreign = ForeignLifecycleSource(_ACCOUNT, port)
 
     def fn(tx: TxnContext) -> str | None:
-        return write_value_runner.grade_step(tx, step, another)
+        return write_value_runner.grade_step(tx, step, foreign)
 
     with raises_contextualized(ValueError, match="needs its outside read arranged"):
         _db(port).transact(fn)
@@ -163,7 +165,7 @@ def test_the_value_no_read_produced_is_arranged_without_touching_the_adapter() -
     # `unmanaged` is the one provenance no managed read produces, so arranging it
     # reaches no port at all. The other two are reads, each through the source
     # whose provenance the token names.
-    unreachable = AnotherSource(_ACCOUNT, RefusingAdapter())
+    unreachable = ForeignLifecycleSource(_ACCOUNT, RefusingAdapter())
 
     def fn(tx: TxnContext) -> Entity:
         return write_value_runner.value_of("unmanaged", tx, unreachable)
@@ -185,9 +187,9 @@ def test_the_second_source_materializes_from_a_read_and_recognizes_its_own() -> 
     # this one's, which is what makes recognition per-source rather than a test
     # for managed-ness in general.
     port = ScriptedAdapter(Read(rows=[_TARGET_ROW]))
-    another = AnotherSource(_ACCOUNT, port)
+    foreign = ForeignLifecycleSource(_ACCOUNT, port)
 
-    (value,) = another.find(Account.where(Account.id == write_value_runner.TARGET_ID))
+    (value,) = foreign.find(Account.where(Account.id == write_value_runner.TARGET_ID))
 
     assert [type(op) for op in port.calls] == [ReadCall]
     assert (value.id, value.owner, value.balance) == (
@@ -195,9 +197,9 @@ def test_the_second_source_materializes_from_a_read_and_recognizes_its_own() -> 
         "Linus",
         Decimal("250.00"),
     )
-    assert another.produced(value)
-    assert not AnotherSource(_ACCOUNT, port).produced(value)
-    assert not another.produced(Account(id=1, owner="Unmanaged", balance=Decimal("0.00")))
+    assert foreign.materialized(value)
+    assert not ForeignLifecycleSource(_ACCOUNT, port).materialized(value)
+    assert not foreign.materialized(Account(id=1, owner="Unmanaged", balance=Decimal("0.00")))
 
 
 def test_the_second_source_takes_only_a_class_backed_selection() -> None:
@@ -206,17 +208,19 @@ def test_the_second_source_takes_only_a_class_backed_selection() -> None:
     # refused where the source is built rather than at its first read.
     descriptor_backed = models.load_domain_model(models.default_models_dir() / "account.yaml")
     with pytest.raises(ValueError, match="class-backed Domain Model"):
-        AnotherSource(prepare_model(descriptor_backed, edition="account"), RefusingAdapter())
+        ForeignLifecycleSource(
+            prepare_model(descriptor_backed, edition="account"), RefusingAdapter()
+        )
 
 
 def test_the_second_source_refuses_a_deep_fetch_before_reading() -> None:
     # It populates no relationship view, so a query asking for one is refused at
     # the query rather than read and then answered without its levels — and the
     # raising port proves the refusal precedes the read.
-    another = AnotherSource(_ORDERS, RefusingAdapter())
+    foreign = ForeignLifecycleSource(_ORDERS, RefusingAdapter())
 
     with pytest.raises(ValueError, match="root-only Pages"):
-        another.find(Order.where(Order.id == 1).include(Order.items))
+        foreign.find(Order.where(Order.id == 1).include(Order.items))
 
 
 def test_a_case_mixing_a_keyed_write_step_with_another_step_is_loud() -> None:
@@ -263,10 +267,10 @@ def test_a_case_whose_total_disagrees_with_its_steps_is_loud() -> None:
 
 def test_an_unrecognized_provenance_token_is_loud() -> None:
     port = ScriptedAdapter(Transact())
-    another = AnotherSource(_ACCOUNT, port)
+    foreign = ForeignLifecycleSource(_ACCOUNT, port)
 
     def fn(tx: TxnContext) -> Entity:
-        return write_value_runner.value_of("invented", tx, another)
+        return write_value_runner.value_of("invented", tx, foreign)
 
     with raises_contextualized(ValueError, match="unrecognized value provenance"):
         _db(port).transact(fn)
@@ -274,10 +278,10 @@ def test_an_unrecognized_provenance_token_is_loud() -> None:
 
 def test_invalid_root_provenance_requires_its_adapter_arranger() -> None:
     port = ScriptedAdapter(Transact())
-    another = AnotherSource(_ACCOUNT, port)
+    foreign = ForeignLifecycleSource(_ACCOUNT, port)
 
     def fn(tx: TxnContext) -> Entity:
-        return write_value_runner.value_of("invalidRoot", tx, another)
+        return write_value_runner.value_of("invalidRoot", tx, foreign)
 
     with raises_contextualized(ValueError, match="diagnostic-data arranger"):
         _db(port).transact(fn)
@@ -301,10 +305,10 @@ def test_a_graded_mismatch_is_loud_in_either_direction(
     step: write_value_runner.WriteValueStep, message: str
 ) -> None:
     port = ScriptedAdapter(Transact(Read(rows=[_TARGET_ROW])))
-    another = AnotherSource(_ACCOUNT, port)
+    foreign = ForeignLifecycleSource(_ACCOUNT, port)
 
     def fn(tx: TxnContext) -> str | None:
-        return write_value_runner.grade_step(tx, step, another)
+        return write_value_runner.grade_step(tx, step, foreign)
 
     with raises_contextualized(AssertionError, match=message):
         _db(port).transact(fn)
@@ -336,11 +340,11 @@ def test_the_second_source_builds_its_own_value_objects_at_every_depth() -> None
             ]
         )
     )
-    another = AnotherSource(_CUSTOMER, port)
+    foreign = ForeignLifecycleSource(_CUSTOMER, port)
 
-    (value,) = another.find(vo_models.Customer.where(vo_models.Customer.id == 7))
+    (value,) = foreign.find(vo_models.Customer.where(vo_models.Customer.id == 7))
 
-    assert another.produced(value)
+    assert foreign.materialized(value)
     address = value.address
     assert address is not None
     assert (address.street, address.city) == ("1 Park Ave", "Oslo")
@@ -354,8 +358,8 @@ def test_the_second_source_leaves_an_unstored_occurrence_out_of_what_it_builds()
     # column the row holds no document in reads as absence, and absence is an
     # entry the writer never receives rather than a record holding nothing.
     port = ScriptedAdapter(Read(rows=[{"id": 8, "name": "Bo", "address": SQL_NULL}]))
-    another = AnotherSource(_CUSTOMER, port)
+    foreign = ForeignLifecycleSource(_CUSTOMER, port)
 
-    (value,) = another.find(vo_models.Customer.where(vo_models.Customer.id == 8))
+    (value,) = foreign.find(vo_models.Customer.where(vo_models.Customer.id == 8))
 
     assert value.address is None

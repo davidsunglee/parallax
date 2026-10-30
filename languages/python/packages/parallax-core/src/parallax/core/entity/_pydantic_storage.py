@@ -11,7 +11,9 @@ from typing import Any, Final, cast
 from pydantic import BaseModel
 
 __all__ = [
+    "MODEL_EXTRA",
     "MODEL_PRESENCE",
+    "MODEL_PRIVATE",
     "MODEL_STORAGE",
     "attach_instance_state",
     "instance_presence",
@@ -30,6 +32,12 @@ process, where the extra call the functions cost is measurable.
 
 MODEL_PRESENCE: Final = BaseModel.__dict__["__pydantic_fields_set__"]
 """Pydantic's own slot descriptor for the populated-member set beside it."""
+
+MODEL_EXTRA: Final = BaseModel.__dict__["__pydantic_extra__"]
+"""Pydantic's own slot descriptor for a model's extra-field mapping."""
+
+MODEL_PRIVATE: Final = BaseModel.__dict__["__pydantic_private__"]
+"""Pydantic's own slot descriptor for a model's private-attribute state."""
 
 
 def instance_state(value: BaseModel) -> dict[str, Any]:

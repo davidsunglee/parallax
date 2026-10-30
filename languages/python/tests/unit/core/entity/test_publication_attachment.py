@@ -26,6 +26,7 @@ from __future__ import annotations
 import gc
 import sys
 import weakref
+from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
@@ -38,8 +39,6 @@ from parallax.core.entity import (
     Attr,
     ConcreteSubtype,
     Entity,
-    EntityGraphWriter,
-    NodeHandle,
     Rel,
     TablePerHierarchy,
     ValueObject,
@@ -48,12 +47,11 @@ from parallax.core.entity import (
     rel,
     relationship_value_of,
 )
+from parallax.core.entity import _instance_state as instance_state
+from parallax.core.entity import _row_fill as row_fill
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._errors import GraphConstructionError
-from parallax.core.entity._graph_construction import (
-    EntityGraphConstruction,
-    _CallScope,  # pyright: ignore[reportPrivateUsage] - the scope the memo's life is a fact about
-)
+from parallax.core.entity._graph_construction import EntityGraphConstruction
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, plan_of
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import DomainModel, class_index, model_of
@@ -64,13 +62,10 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from tests._support.model_capabilities import graph_construction_for, preparation_for
+from tests.unit._indexed_graph_support import Node, published_nodes
 from tests.unit.core.entity._compact_support import carries_instance_storage, layout_slots, raw_row
 from tests.unit.core.entity._value_object_document_support import inserted_document
-from tests.unit.memory_instruments import (
-    in_a_child_interpreter,
-    serve_one_measurement,
-    tracked_objects,
-)
+from tests.unit.memory_instruments import serve_one_measurement
 
 _NS = "publication"
 
@@ -99,10 +94,7 @@ _PARCEL = Parcel.identity
 _TAG_ROW: tuple[object, ...] = ("red", 2)
 
 
-def _one_parcel(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-    handle = writer.allocate(_PARCEL)
-    writer.populate(handle, (1, "north", ABSENT, ABSENT, _TAG_ROW), (UNLOADED,))
-    return (handle,)
+_ONE_PARCEL: Node = (_PARCEL, (1, "north", ABSENT, ABSENT, _TAG_ROW), (UNLOADED,))
 
 
 class _Pin(ValueObject):
@@ -147,9 +139,8 @@ _ROUTE_ROW: tuple[object, ...] = (
 )
 
 
-def _published(build: Any = _one_parcel, *, state_factory: Any = None) -> Any:
-    (root,) = graph_construction_for(PARCELS).construct(build, state_factory=state_factory)
-    return root
+def _published(*nodes: Node, state: Callable[[object], object] | None = None) -> Any:
+    return published_nodes(PARCELS, *(nodes or (_ONE_PARCEL,)), state=state)[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -187,19 +178,14 @@ def test_publication_enters_neither_constructor(monkeypatch: pytest.MonkeyPatch)
 def test_publication_enters_neither_constructor_at_any_containment_depth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # `_build_record` recurses, so a patch that only observes the root and its one
+    # Value Object filling recurses, so a patch that only observes the root and its one
     # top-level occurrence proves less than this test's name claims. Every class
     # the recursion reaches is patched: the Entity shell, a top-level Value
     # Object, a nested One at depth two, an element of a Many, and the nested
     # occurrence inside that element.
     _refuse_both_constructors(monkeypatch, Shipment, _Route, _Leg, _Stop, _Pin)
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_SHIPMENT)
-        writer.populate(handle, (1, _ROUTE_ROW), ())
-        return (handle,)
-
-    (root,) = graph_construction_for(SHIPMENTS).construct(build)
+    (root,) = published_nodes(SHIPMENTS, (_SHIPMENT, (1, _ROUTE_ROW), ()))
     shipment = cast("Shipment", root)
     route = cast("_Route", shipment.route)
     assert route.leg is not None
@@ -225,43 +211,43 @@ def test_the_constructor_proof_would_fire_if_a_constructor_were_entered(
             cast("Any", cls).model_construct()
 
 
-def test_a_published_node_s_row_is_attached_exactly_once() -> None:
-    # A row is assembled in local state and attached at the end, so a populate
-    # this collaboration refuses leaves its shell exactly as allocation left it —
-    # unattached, and free to be populated again by a caller that corrects the
-    # row. Nothing half-written survives the refusal.
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_PARCEL)
-        with pytest.raises(GraphConstructionError) as refusal:
-            writer.populate(handle, (1, "north", ABSENT, ABSENT, _TAG_ROW), ("not an arm",))
-        assert refusal.value.code == "entity-graph-invalid-value"
-        writer.populate(handle, (2, "south", ABSENT, ABSENT, ABSENT), (UNLOADED,))
-        return (handle,)
+def _allocated(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """Every instance publication allocates from here on, as it allocates it."""
+    allocated: list[object] = []
+    allocate = instance_state.allocate
 
-    root = cast("Parcel", _published(build))
-    assert raw_row(root) == (0b00011, 2, "south", None, None, None, UNLOADED)
+    def recorded(cls: type[Any]) -> Any:
+        allocated.append(allocate(cls))
+        return allocated[-1]
+
+    monkeypatch.setattr(row_fill, "allocate", recorded)
+    return allocated
 
 
-def test_a_value_object_refused_mid_row_leaves_the_shell_unattached() -> None:
+def test_a_refused_relationship_value_leaves_the_shell_unattached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A row is assembled in local state and attached at the end, so a node whose
+    # relationship row is refused after its Value Object was built holds nothing.
+    allocated = _allocated(monkeypatch)
+    with pytest.raises(GraphConstructionError) as refusal:
+        _published((_PARCEL, (1, "north", ABSENT, ABSENT, _TAG_ROW), ("not a node",)))
+    assert refusal.value.code == "entity-graph-invalid-value"
+    shell, tag = allocated
+    assert not hasattr(shell, COMPACT_STATE_SLOT)
+    assert cast("Any", tag).label == "red"
+
+
+def test_a_value_object_refused_mid_row_leaves_the_shell_unattached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The occurrence converts after every Attribute position is read, and its
     # refusal still precedes the one attachment.
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_PARCEL)
-        with pytest.raises(GraphConstructionError) as refusal:
-            writer.populate(handle, (1, "north", ABSENT, ABSENT, ("red",)), (UNLOADED,))
-        assert refusal.value.code == "entity-graph-invalid-value"
-        assert not hasattr(_shell_of(writer, handle), COMPACT_STATE_SLOT)
-        writer.populate(handle, (2, "south", ABSENT, ABSENT, ABSENT), (UNLOADED,))
-        return (handle,)
-
-    assert cast("Parcel", _published(build)).id == 2
-
-
-def _shell_of(writer: EntityGraphWriter, handle: NodeHandle) -> object:
-    scope = writer._scope  # pyright: ignore[reportPrivateUsage] - the unattached shell is the claim
-    index = scope.index_of(handle)
-    assert index is not None
-    return scope.instances[index]
+    allocated = _allocated(monkeypatch)
+    with pytest.raises(GraphConstructionError) as refusal:
+        _published((_PARCEL, (1, "north", ABSENT, ABSENT, ("red",)), (UNLOADED,)))
+    assert refusal.value.code == "entity-graph-invalid-value"
+    assert [hasattr(shell, COMPACT_STATE_SLOT) for shell in allocated] == [False, False]
 
 
 class _WideParcel(Entity, table="wide_parcel", name="WideParcel", namespace=_NS):
@@ -278,16 +264,14 @@ class _WideParcel(Entity, table="wide_parcel", name="WideParcel", namespace=_NS)
     h: Attr[int | None]
 
 
-def test_nodes_of_one_presence_pattern_share_one_mask_within_one_construction() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handles = (writer.allocate(_WideParcel.identity), writer.allocate(_WideParcel.identity))
-        for key, handle in enumerate(handles):
-            writer.populate(handle, (key, *range(8)), ())
-        return handles
-
+def test_nodes_of_one_presence_pattern_share_one_mask_within_one_publication_only() -> None:
+    # The memo interning a pattern lives as long as one publication: two nodes
+    # of one pattern share one mask, and a later publication's node does not —
+    # so no mask is held by anything that outlives the graph that assembled it.
+    nodes = tuple((_WideParcel.identity, (key, *range(8)), ()) for key in range(2))
     construction = graph_construction_for(DomainModel(_WideParcel))
-    first, second = construction.construct(build)
-    (third, _) = construction.construct(build)
+    first, second = published_nodes(construction, *nodes)
+    third, _ = published_nodes(construction, *nodes)
     assert raw_row(cast("Any", first)) == (0b111111111, 0, *range(8))
     assert (
         cast("Any", raw_row(cast("Any", first)))[0] is cast("Any", raw_row(cast("Any", second)))[0]
@@ -296,21 +280,6 @@ def test_nodes_of_one_presence_pattern_share_one_mask_within_one_construction() 
         cast("Any", raw_row(cast("Any", third)))[0]
         is not cast("Any", raw_row(cast("Any", first)))[0]
     )
-
-
-def test_populating_a_node_twice_never_reaches_the_row_at_all() -> None:
-    # The writer's own refusal stands in front of the row: the second call is
-    # rejected on the node's populated state before any member is read, so
-    # "attached exactly once" does not rest on the attachment noticing.
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_PARCEL)
-        writer.populate(handle, (1, "north", ABSENT, ABSENT, ABSENT), (UNLOADED,))
-        with pytest.raises(GraphConstructionError) as refusal:
-            writer.populate(handle, (9, "z", ABSENT, ABSENT, ABSENT), (UNLOADED,))
-        assert refusal.value.code == "entity-graph-node-already-populated"
-        return (handle,)
-
-    assert cast("Parcel", _published(build)).id == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -368,11 +337,7 @@ def test_no_framework_read_of_a_published_graph_creates_its_storage() -> None:
     # without asking the value for a mapping, since asking is what would create
     # one.
     state = object()
-
-    def factory(_view: object, _handle: object) -> object:
-        return state
-
-    root = _published(state_factory=factory)
+    root = _published(state=lambda _instance: state)
     entry = preparation_for(PARCELS).entity(Parcel.identity)
     shape = entry.selection.members.shape
 
@@ -409,15 +374,10 @@ def test_class_metadata_count_is_independent_of_published_instance_count() -> No
     # node or a hundred are published against them.
     construction = graph_construction_for(PARCELS)
     facts = construction.facts_for(_PARCEL)
-
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handles = [writer.allocate(_PARCEL) for _ in range(100)]
-        for handle in handles:
-            writer.populate(handle, (1, "north", ABSENT, ABSENT, ABSENT), (UNLOADED,))
-        return tuple(handles)
-
-    roots = construction.construct(build)
-    assert len(roots) == 100
+    nodes = published_nodes(
+        construction, *[(_PARCEL, (1, "north", ABSENT, ABSENT, ABSENT), (UNLOADED,))] * 100
+    )
+    assert len(nodes) == 100
     assert construction.facts_for(_PARCEL) is facts
     assert plan_of(Parcel) is plan_of(Parcel)
 
@@ -426,31 +386,17 @@ def test_a_cyclic_published_graph_is_collected_whole() -> None:
     # Two nodes referring to each other through their rows, which is a reference
     # cycle the collector has to break: nothing outside the graph names either
     # node, and no cache, layout, or presence memo holds one after the roots go.
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        left = writer.allocate(_PARCEL)
-        right = writer.allocate(_PARCEL)
-        writer.populate(left, (1, "l", ABSENT, 2, ABSENT), (right,))
-        writer.populate(right, (2, "r", ABSENT, 1, ABSENT), (left,))
-        return (left, right)
-
-    roots = graph_construction_for(PARCELS).construct(build)
+    roots = published_nodes(
+        PARCELS,
+        (_PARCEL, (1, "l", ABSENT, 2, ABSENT), (1,)),
+        (_PARCEL, (2, "r", ABSENT, 1, ABSENT), (0,)),
+    )
     alive = [weakref.ref(cast("Any", node)) for node in roots]
     assert cast("Any", roots[0]).peer is roots[1]
 
     del roots
     gc.collect()
     assert [reference() for reference in alive] == [None, None]
-
-
-@in_a_child_interpreter
-def test_no_call_scope_outlives_the_construction_that_made_it() -> None:
-    # The presence-bitmap memo lives on the call scope, so what keeps it from
-    # being a process-wide cache is that the scope itself is unreachable once
-    # `construct` returns. Read off the heap rather than argued, because a memo
-    # promoted to module scope would still pass every behavioral assertion here.
-    _published()
-    gc.collect()
-    assert [held for held in tracked_objects() if type(held) is _CallScope] == []
 
 
 # --------------------------------------------------------------------------- #
@@ -606,12 +552,10 @@ def test_the_pair_that_agrees_is_not_refused() -> None:
     # than the check refusing everything. Read back through a published node,
     # since what the correspondence buys is that each of the model's row
     # positions lands on the member the class carries at it.
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_CORR)
-        writer.populate(handle, (1, "north", None, 2, 3, ("head", "tail")), (UNLOADED, UNLOADED))
-        return (handle,)
-
-    (published,) = graph_construction_for(DomainModel(_Composed, CorrPeer)).construct(build)
+    (published,) = published_nodes(
+        DomainModel(_Composed, CorrPeer),
+        (_CORR, (1, "north", None, 2, 3, ("head", "tail")), (UNLOADED, UNLOADED)),
+    )
     corr = cast("_Composed", published)
     assert (corr.id, corr.label, corr.note, corr.left_id, corr.right_id) == (1, "north", None, 2, 3)
     assert (cast("_Doc", corr.doc).first, cast("_Doc", corr.doc).second) == ("head", "tail")

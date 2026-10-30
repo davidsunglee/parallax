@@ -104,18 +104,17 @@ published Entity or Value Object — the per-class publication plan, the compact
 slot, the tuple and its presence bitmap, both Adapters, and the Pydantic root
 that answers for a value's instance state — and its grant row is what keeps that
 a deep module rather than a second declaration engine. Granted two siblings and
-nothing else, it can reach neither the engine that builds a class nor the writer
-that publishes one, so a publication plan has to ARRIVE as plain data the engine
+nothing else, it can reach neither the engine that builds a class nor the graph
+construction that publishes one, so a publication plan has to ARRIVE as plain data the engine
 computed rather than be derived here from a model the scope could import.
 `._construction_input` is the first sibling, and is granted `(none)`: the
-sentinels a positional construction input spells, and the opaque handle a
-relationship position names a node by, are read by the layout side, by a runtime
-that lays a stored row out against one, by the writer, by the descriptors that
-answer a member read, and by the backing above, which are scopes that
-deliberately cannot reach one another — so they are housed where every one of
-them may reach and nothing may be reached back, which is also what keeps a row's
-producer structurally unable to reach the writer, `construct`, or model
-formation. `._pydantic_storage` is the second, and is granted `(none)` for its own
+sentinels a positional construction input spells are read by the layout side, by
+a runtime that lays a stored row out against one, by graph construction, by the
+descriptors that answer a member read, and by the backing above, which are
+scopes that deliberately cannot reach one another — so they are housed where
+every one of them may reach and nothing may be reached back, which is also what
+keeps a row's producer structurally unable to reach graph construction, its
+`publish`, or model formation. `._pydantic_storage` is the second, and is granted `(none)` for its own
 reason: it reaches a value's attribute storage past every binding over it —
 including the framework's own presentation, which is layered directly on it —
 and what it reaches is Pydantic's own slot descriptors and nothing else, so a
@@ -223,8 +222,8 @@ side: one whose row is the whole of what it imports, inside the package holding
 it as well as outside it. A row can neither forbid what sits inside its own source
 package nor except it, so it refuses a neighbour only through the chain that
 leaves it — reaching one whose own closure escapes the row is reported at
-whatever it escapes to, which is what keeps the writer, `construct`, and model
-formation out of reach of the scopes below. A neighbour that reaches nothing the
+whatever it escapes to, which is what keeps graph construction, its `publish`,
+and model formation out of reach of the scopes below. A neighbour that reaches nothing the
 row does not already permit leaves no chain to report, so nothing rejects that
 import, and a narrow grant's completeness would rest on what the modules beside
 it happen to import. The same `tools/check_scope_ownership.py` walk closes that
@@ -611,7 +610,7 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   `parallax.core.entity._model.model_of` in its corpus-model loader, and — in its
   second-frontend fixture — `parallax.core._execution._publication.read_projection`
   and two exact imports of `parallax.core.entity._authored_resolver`.
-  `parallax.conformance.another_source` binds `object_query_node` to drive the
+  `parallax.conformance.foreign_lifecycle_source` binds `object_query_node` to drive the
   second frontend with a typed query's canonical export under its serving model;
   `parallax.conformance.workloads` binds the same name so a catalog entry can
   retain the typed query and compare its normalized node with a class-backed
@@ -628,10 +627,11 @@ which `tools/check_scope_ownership.py` demands (*Filesystem ownership*, below).
   with it, and the graph construction derived over both — exactly as the source
   under test holds them, rather than reading any half separately or deriving a
   second catalog beside the selection's. A second managed value lifecycle merges and constructs for
-  itself — that is what makes it second — but a node member row is neither: it
-  crosses `populate` as its Root View laid it out, against the same model-owned
-  member layout the writer reads it against, so the fixture hands a row over the
-  one way production hands one over and no rule is restated in a second place.
+  itself — that is what makes it second — but its node-indexed graph is neither:
+  its Root View crosses `publish` as production's does, read against the same
+  model-owned member layout Entity Graph Construction fills from, so the fixture
+  hands a graph over the one way production hands one over and no rule is
+  restated in a second place.
   The adapter engine's model-facts mechanism and the second-source fixture also
   import execution's private `resolve_read_query` operation so compile-only and
   alternate-source reads consume the same validated execution token as

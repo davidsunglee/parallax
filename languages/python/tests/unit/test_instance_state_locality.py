@@ -127,17 +127,16 @@ INSTANCE_STATE_SITES_REACHING_PRESENCE: dict[str, frozenset[str]] = {
 
 # What would have to learn the backing again if `_instance_state` were deleted.
 #
-# Seven sites, each taking exactly what it takes. `_declaration` builds every
+# Eight sites, each taking exactly what it takes. `_declaration` builds every
 # class's plan and hands each descriptor its ordinal; `_members` addresses the
 # row from those ordinals; both frontends extend the root that answers Pydantic
 # for a value's state, and the Entity frontend also answers a write the members
 # a value holds, in its class's order, and reads the provenance slot; `_edit`
-# partitions state and derives edited copies; `_graph_construction` allocates a shell,
-# attaches one whole row to it from positional rows, attributes a misshapen
-# row, reads a relationship position back, and checks the class's own plan
-# against the model's layout. Delete the
-# Module and the tuple, the bitmap, and the ordinal arithmetic reappear at all
-# seven.
+# partitions state and derives edited copies; `_graph_construction` reads a
+# relationship position back and checks the class's own plan against the
+# model's layout; `_row_fill` allocates shells and attaches one whole row to each
+# from positional rows. Delete the Module and the tuple, the bitmap,
+# and the ordinal arithmetic reappear at all eight.
 INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
     "parallax.core.entity._declaration": frozenset({"PublicationPlan", "install"}),
     "parallax.core.entity._edit": frozenset(
@@ -147,16 +146,10 @@ INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
         {"BackedModel", "declared_values", "named_state", "plan_of"}
     ),
     "parallax.core.entity._graph_construction": frozenset(
-        {
-            "PublicationPlan",
-            "RowShapeError",
-            "allocate",
-            "plan_of",
-            "publish_positional",
-            "relationship",
-        }
+        {"PublicationPlan", "plan_of", "relationship"}
     ),
     "parallax.core.entity._members": frozenset({"COMPACT_STATE_SLOT", "plan_of"}),
+    "parallax.core.entity._row_fill": frozenset({"PublicationPlan", "allocate", "attach_row"}),
     "parallax.core.entity._value_object": frozenset({"BackedModel", "is_present", "plan_of"}),
     "parallax.snapshot._publication._wire": frozenset(
         {
@@ -338,13 +331,13 @@ def test_that_inventory_names_a_second_function_reaching_the_same_state() -> Non
 # --------------------------------------------------------------------------- #
 
 
-def test_the_sites_backing_logic_would_return_to_are_exactly_these_seven() -> None:
+def test_the_sites_backing_logic_would_return_to_are_exactly_these_eight() -> None:
     # Read over every shipped distribution rather than over the package alone,
     # which is what makes this the Module's whole consumer set rather than the
     # part of it that happens to live nearby.
     consumers = _consumers(production_sources())
     assert consumers == {importer: names for importer, names in INSTANCE_STATE_CONSUMERS.items()}
-    assert len(consumers) == 7
+    assert len(consumers) == 8
     assert _naming_the_module_as_text(production_sources()) == []
 
 
@@ -354,7 +347,7 @@ def test_that_inventory_names_a_new_consumer_and_passes_a_resembling_import() ->
             {
                 f"{ENTITY_PACKAGE}._new_writer": (
                     "from parallax.core.entity._instance_state import (\n"
-                    "    allocate, publish_positional,\n"
+                    "    allocate, attach_row,\n"
                     ")\n"
                     "from parallax.core.entity._pydantic_storage import instance_state\n"
                 ),
@@ -364,12 +357,12 @@ def test_that_inventory_names_a_new_consumer_and_passes_a_resembling_import() ->
                 f"{ENTITY_PACKAGE}._new_bystander": (
                     "import parallax.core.entity._instance_state\n"
                     "from parallax.core.entity import Entity\n"
-                    "from parallax.core.entity_records._instance_state import publish_positional\n"
+                    "from parallax.core.entity_records._instance_state import attach_row\n"
                 ),
             }
         )
     ) == {
-        f"{ENTITY_PACKAGE}._new_writer": frozenset({"allocate", "publish_positional"}),
+        f"{ENTITY_PACKAGE}._new_writer": frozenset({"allocate", "attach_row"}),
         f"{ENTITY_PACKAGE}._new_package_reader": frozenset({"<the module itself>"}),
         f"{ENTITY_PACKAGE}._new_bystander": frozenset({"<the module itself>"}),
     }

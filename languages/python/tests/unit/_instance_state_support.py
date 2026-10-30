@@ -38,19 +38,18 @@ reproduced differently: ``vo_class.model_construct(present, **values)``, where
 
 **Why each arm also builds a graph of ``count`` nodes.** Construction is the one
 timing whose per-call scope differs between the arms: a compact node arrives from
-an ``EntityGraphConstruction.construct`` call that also pays a scope, a writer,
-root validation and factory buffering, where the other two arms build a node and
-nothing else. Timing a one-node build against an eleven-node one separates the
-two, so what the report prints as construction is the cost of one MORE node under
-each arm — the quantity the arms hold in common — with the per-call remainder
-printed beside it.
+an ``EntityGraphConstruction.publish`` call that also pays layout validation,
+one lifecycle-states call and the buffering and counting of its result, where
+the other two arms build a node and nothing else. Timing a one-node build against
+an eleven-node one separates the two, so what the report prints as construction
+is the cost of one MORE node under each arm — the quantity the arms hold in
+common — with the per-call remainder printed beside it.
 
 **Why the compact arm also reports what the two arms have in common.** That split
-cancels a call's FIXED cost and not its per-NODE one, and a ``construct`` call
+cancels a call's FIXED cost and not its per-NODE one, and a ``publish`` call
 does per-node work of its own around the node building it is asked for. The
-pre-flip path paid exactly that work through the same call; the legacy fixture
-reproduces the node building and its lifecycle state and pays none of the rest,
-so the two arms' ``node µs`` are still not the same scope.
+legacy fixture reproduces the node building and its lifecycle state and pays
+none of the rest, so the two arms' ``node µs`` are still not the same scope.
 :func:`compact_common_work_ns` measures the difference by timing, inside one
 call, each thing the fixture also does — which lets the report derive the
 correction rather than state it in prose. Only the compact arm carries one: an
@@ -62,7 +61,7 @@ closer estimate and not a bound, and the report grades the uncorrected one.
 
 **What a scenario carries.** One positional member row, ``ABSENT``-spelled and
 aligned to the exact Entity's ``EntityLayout`` — the same row a compiled read
-lays out and hands across ``populate``'s door, with nested tuples at every Value
+lays out and hands across ``publish``'s door, with nested tuples at every Value
 Object containment depth. Every leaf value is built once at import, outside every
 measurement window, so a reading counts the positions a node holds and not the
 payload it borrows.
@@ -78,7 +77,7 @@ declaration engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly, as
 ``tests/_support/snapshot_models.py`` does for the same reason.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cached_property
@@ -106,10 +105,9 @@ from parallax.core.entity import (
     UNLOADED,
     EntityGraphConstruction,
 )
-from parallax.core.entity._construction_input import ABSENT, NodeHandle
+from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._entity import attach_lifecycle_state
-from parallax.core.entity._graph_construction import EntityGraphWriter
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.entity._model import DomainModel as ModelType
@@ -473,31 +471,42 @@ def legacy_publication(scenario: Scenario, state: object | None) -> object:
     return _warmed(scenario, instance)
 
 
+@dataclass(frozen=True, slots=True)
+class _ScenarioGraph:
+    """``count`` unrelated nodes of one scenario, as the indexed graph publication
+    takes: every node the scenario's member row and unloaded relationships."""
+
+    scenario: Scenario
+    count: int
+
+    def __len__(self) -> int:
+        return self.count
+
+    def layout(self, node: int) -> EntityLayout:
+        del node
+        return self.scenario.layout
+
+    def member_values(self, node: int) -> tuple[object, ...]:
+        del node
+        return self.scenario.values
+
+    def relationship_values(self, node: int) -> tuple[object, ...]:
+        del node
+        return self.scenario.unloaded
+
+
 def compact_publication(scenario: Scenario, state: object | None) -> object:
     """``scenario``'s node built the way publication builds one today.
 
     The shipping path in full rather than a fixture of it: one Entity Graph
-    Construction call allocating one shell, populating it with the scenario's
-    positional member row and one unloaded position per navigable relationship,
-    and attaching one complete row exactly once. There is nothing here to keep in
-    step with production, because it IS production — which is the half of the
-    comparison the legacy arm cannot be.
+    Construction call publishing a one-node graph of the scenario's positional
+    member row and one unloaded position per navigable relationship, attaching
+    one complete row exactly once. There is nothing here to keep in step with
+    production, because it IS production — which is the half of the comparison
+    the legacy arm cannot be.
     """
-    construction = scenario.construction
-    entity = scenario.entity
-    members = scenario.values
-    relationships = scenario.unloaded
-
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(entity)
-        writer.populate(handle, members, relationships)
-        return (handle,)
-
-    roots = construction.construct(
-        build,
-        state_factory=None if state is None else lambda _view, _handle: state,
-    )
-    return _warmed(scenario, roots[0])
+    root = scenario.construction.publish(_ScenarioGraph(scenario, 1), lambda _instances: (state,))
+    return _warmed(scenario, root)
 
 
 def ordinary_publication(scenario: Scenario, state: object | None) -> object:
@@ -598,23 +607,20 @@ def _one_at_a_time(
 def compact_graph(scenario: Scenario, count: int) -> tuple[object, ...]:
     """``count`` of ``scenario``'s nodes from ONE Entity Graph Construction call.
 
-    Allocation before any populate, as the writer requires, and one lifecycle
-    state per node, so the only thing that varies with ``count`` is how many
-    nodes one call's scaffolding is spread over.
+    Every node is allocated before any is filled, as publication requires, and
+    each carries its own lifecycle state, so the only thing that varies with
+    ``count`` is how many nodes one call's scaffolding is spread over. The graph
+    answers only its root, so the nodes are taken from the lifecycle-states
+    call, which is handed every one.
     """
-    construction = scenario.construction
-    entity = scenario.entity
-    members = scenario.values
-    relationships = scenario.unloaded
+    published: list[object] = []
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handles = tuple(writer.allocate(entity) for _ in range(count))
-        for handle in handles:
-            writer.populate(handle, members, relationships)
-        return handles
+    def lifecycle_states(instances: Sequence[object]) -> list[object]:
+        published.extend(instances)
+        return [scenario.state() for _ in instances]
 
-    roots = construction.construct(build, state_factory=lambda _view, _handle: scenario.state())
-    return _published_graph(scenario, roots)
+    scenario.construction.publish(_ScenarioGraph(scenario, count), lifecycle_states)
+    return _published_graph(scenario, tuple(published))
 
 
 def _published_graph(scenario: Scenario, roots: tuple[object, ...]) -> tuple[object, ...]:
@@ -646,35 +652,24 @@ def compact_common_work_ns(scenario: Scenario, count: int) -> float:
     """Nanoseconds one :func:`compact_graph` call spends on work the legacy
     fixture also does, per call.
 
-    The same call, built the same way, with one timed span for each thing the
+    The same call, built the same way, timed in spans that cover each thing the
     fixture does. **That list is closed because the fixture is closed**: the
     legacy arm's per-node work is the statements of :func:`_one_at_a_time` and
-    :func:`legacy_publication` and nothing else, four between them, and each has
-    exactly one span here.
+    :func:`legacy_publication` and nothing else, four between them.
 
-    - ``scenario.state()`` — the state factory, timed from inside it.
-    - ``model_construct`` and one ``object.__setattr__`` per member — the build
-      callback, timed from inside it, where this arm spells the same node as
-      ``allocate`` and ``populate``.
-    - ``attach_lifecycle_state`` — repeated once per node inside the span, since
-      ``construct`` performs its own in a loop that is no callback and cannot be
-      entered.
+    - ``scenario.state()``, ``model_construct`` with one ``object.__setattr__``
+      per member, and ``attach_lifecycle_state`` — the lifecycle states, the
+      node building and the attach, which ``publish`` performs in loops that call
+      back only once. They are timed together as the whole ``publish`` call.
     - :func:`_warmed` into the tuple the graph answers — :func:`_released_graph`,
       built and released inside the span as this arm's own caller releases it.
 
-    What is left outside is the per-node work ``construct`` does and the fixture
-    reproduces none of: the populated check, root validation, the resolution view
-    each factory invocation gets, the factory buffering, and ``construct``'s own
-    root tuple. The pre-flip path paid all of it through the same call, which is
-    why the report adds it to the legacy side rather than removing it from this
-    one.
-
     **Every span prices its term high and none prices one low, which is the
-    direction this figure's error runs in and the whole of what it is worth.** The
-    repeated attach writes a slot that already holds a value and so releases the
-    state it displaces, where ``construct``'s own write finds that slot empty; each
-    span also carries the clock reads that bound it, and a call runs ``count``
-    state-factory spans, so one clock pair per node survives the marginal.
+    direction this figure's error runs in and the whole of what it is worth.**
+    The ``publish`` span also carries the per-node work the fixture never
+    reproduces — validating each node's layout and row shapes, and buffering
+    and counting the states — so this figure over-states the common work by
+    exactly that, and each span carries the clock reads that bound it.
 
     That is a bias, not a bound. The report subtracts this figure's own 1-node and
     11-node marginal from a construction marginal taken in a SEPARATE timing loop,
@@ -686,40 +681,23 @@ def compact_common_work_ns(scenario: Scenario, count: int) -> float:
     all.
 
     A SEPARATE call from the one :func:`compact_graph` answers, so no timer runs
-    inside the call the report's own construction figure is taken over: reading
-    the clock twelve times inside an eleven-node build would move the number this
-    correction is applied to. Nothing untimed here reaches the residue either —
-    the residue is this figure subtracted from a timing of :func:`compact_graph`,
-    so only what is counted INTO it can move the correction.
+    inside the call the report's own construction figure is taken over. Nothing
+    untimed here reaches the residue either — the residue is this figure
+    subtracted from a timing of :func:`compact_graph`, so only what is counted
+    INTO it can move the correction.
     """
-    construction = scenario.construction
-    entity = scenario.entity
-    members = scenario.values
-    relationships = scenario.unloaded
-    inside = 0.0
+    published: list[object] = []
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        nonlocal inside
-        start = perf_counter()
-        handles = tuple(writer.allocate(entity) for _ in range(count))
-        for handle in handles:
-            writer.populate(handle, members, relationships)
-        inside += perf_counter() - start
-        return handles
+    def lifecycle_states(instances: Sequence[object]) -> list[object]:
+        published.extend(instances)
+        return [scenario.state() for _ in instances]
 
-    def state_factory(_view: object, _handle: NodeHandle) -> object:
-        nonlocal inside
-        start = perf_counter()
-        state = scenario.state()
-        inside += perf_counter() - start
-        return state
-
-    roots = construction.construct(build, state_factory=state_factory)
-    reattached = scenario.state()
+    graph = _ScenarioGraph(scenario, count)
     start = perf_counter()
-    _released_graph(scenario, roots)
-    for root in roots:
-        attach_lifecycle_state(cast("BaseModel", root), reattached)
+    scenario.construction.publish(graph, lifecycle_states)
+    inside = perf_counter() - start
+    start = perf_counter()
+    _released_graph(scenario, tuple(published))
     inside += perf_counter() - start
     return inside * 1e9
 

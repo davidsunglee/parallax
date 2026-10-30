@@ -40,7 +40,7 @@ Entity Graph Construction built one before publication became compact: a
 zero-argument ``model_construct`` filled one member at a time. It reproduced the
 real path exactly while that path existed, and every scenario's fixture was
 compared against it before any reading was taken. The compact arm needs no
-fixture: it is ``EntityGraphConstruction.construct`` itself. The ordinary arm is
+fixture: it is ``EntityGraphConstruction.publish`` itself. The ordinary arm is
 the validating constructor, which needs none either.
 
 **What is measured, per scenario and per arm.** Bytes reachable at the seam's
@@ -58,22 +58,22 @@ high-water mark one construction reaches, from which what it allocated and freed
 again is the difference.
 
 **Construction is timed per node, and its ratio is printed twice.** A compact
-node arrives from an ``EntityGraphConstruction.construct`` call that also pays a
-call scope, a writer, root validation and factory buffering, where the two
-other arms build a node and nothing else — so a per-CALL construction figure compares
-two different amounts of work. Each arm is therefore timed building one node and
-building :data:`MARGINAL_NODES`, and :func:`marginal` splits the two into the cost
-of one more node and the per-call remainder, printed beside it.
+node arrives from an ``EntityGraphConstruction.publish`` call that also pays
+layout validation, one lifecycle-states call, and buffering and counting its
+states, where the two other arms build a node and nothing else — so a per-CALL
+construction figure compares two different amounts of work. Each arm is
+therefore timed building one node and building :data:`MARGINAL_NODES`, and
+:func:`marginal` splits the two into the cost of one more node and the per-call
+remainder, printed beside it.
 
 That split removes the FIXED per-call cost and not the per-NODE one. A
-``construct`` call's populated check, root validation, resolution views and
-buffered attachment all scale with node count, so they stay inside the compact
-arm's ``node µs``; the pre-flip path paid the same per-node work through the same
-call, and the legacy FIXTURE reproduces only the node building and its lifecycle
-state. So the compact arm's call is measured a second time with each thing that
-fixture also does timed from inside it — a closed list, because the fixture is
-four statements — and the remainder, ``outside µs``, is the per-node work the
-fixture does not reproduce.
+``publish`` call's layout and row-shape validation and its state buffering both
+scale with node count, so they stay inside the compact arm's ``node µs``, and the
+legacy FIXTURE reproduces only the node building and its lifecycle state. So the
+compact arm's call is measured a second time in spans covering each thing that
+fixture also does — a closed list, because the fixture is four statements — and
+the remainder, ``outside µs``, is the per-node work the fixture does not
+reproduce.
 
 **Construction is printed as two ratios, and the rule is stated over the one that
 needs no correction.** Dividing the two ``node µs`` columns gives ``arm against
@@ -981,7 +981,7 @@ def _scope() -> list[str]:
         "what the arms are, and what is compared with what",
         "  ordinary  the validating constructor: what a caller builds for themselves.",
         "  legacy    the node-building the publication flip replaced, as a fixture.",
-        "  compact   the shipping publication path, EntityGraphConstruction.construct.",
+        "  compact   the shipping publication path, EntityGraphConstruction.publish.",
         "",
         "  The aggregates and the regression rule divide LEGACY into compact: that pair is",
         "  the representation change this measurement was taken for. The ordinary arm is in",
@@ -991,24 +991,22 @@ def _scope() -> list[str]:
         "  `node us` is what one MORE node of that arm costs, measured by timing a 1-node",
         "  build against an 11-node one, and `call us` is what one call costs besides its",
         "  nodes. That split is what makes construction comparable at all: a compact node",
-        "  arrives from a construct call that also pays a scope, a writer, root validation",
-        "  and factory buffering, where the other two arms build a node and nothing else.",
+        "  arrives from a publish call that also pays layout validation and buffering its",
+        "  lifecycle states, where the other two arms build a node and nothing else.",
         "",
         "  `outside us` is what is LEFT of `node us` once everything the legacy fixture also",
         "  does has been timed out of it, in a separate call. That list is closed because the",
-        "  fixture is: it does four things per node, and each has one span. Its state factory",
-        "  is timed; its node building is timed as the build callback; its lifecycle attach is",
-        "  timed by repeating the same write, since construct performs its own in a loop no",
-        "  callback can enter; and the result tuple its graph returns is timed as this arm's,",
-        "  built and released inside the span as this arm's caller releases it. No clock runs",
-        "  inside the call `node us` is taken over. What is left is the populated check, root",
-        "  validation, a resolution view per node, factory buffering and construct's own root",
-        "  tuple; the pre-flip path paid all of it through the same call. It is exactly zero",
-        "  for the ordinary and legacy arms, whose call IS a loop over their node builder.",
+        "  fixture is: it does four things per node. Its lifecycle states, node building and",
+        "  attach are timed together as the whole publish call, since publish performs them",
+        "  in loops that call back only once; and the result tuple its graph returns is timed",
+        "  as this arm's, built and released inside the span as this arm's caller releases",
+        "  it. No clock runs inside the call `node us` is taken over. What is left is only",
+        "  this arm's collecting of the instances publish hands its callback. It is exactly",
+        "  zero for the ordinary and legacy arms, whose call IS a loop over their node builder.",
         "",
-        "  Every one of those spans prices its term HIGH and none prices one low: the repeated",
-        "  attach releases the state it displaces where construct's own write finds the slot",
-        "  empty, and each span carries the clock reads bounding it. So `outside us` EXPECTS",
+        "  Every one of those spans prices its term HIGH and none prices one low: the publish",
+        "  span also carries the validation and buffering the fixture never did, and each",
+        "  span carries the clock reads bounding it. So `outside us` EXPECTS",
         "  to under-state the work the fixture never did. It is still a remainder of two",
         "  independently sampled marginal timings, about 0.2 us against a 0.00-1.71 spread,",
         "  so a single reading of it can be too large as easily as too small.",
@@ -1029,7 +1027,7 @@ def _scope() -> list[str]:
         "  estimated, which is what shows which operation needed a correction at all.",
         "",
         "  The ordinary construction ratio needs no such correction and gets none: a caller",
-        "  building an ordinary instance pays no construct call at all, so both sides of it",
+        "  building an ordinary instance pays no publish call at all, so both sides of it",
         "  are the same quantity — the marginal cost of one additional node, with each arm's",
         "  `call us` outside it.",
     ]

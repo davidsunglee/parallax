@@ -523,22 +523,26 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     # The second-frontend fixture drives production's eager delivery over a Page
     # it publishes itself, through the Root View and refusal Snapshot publication
     # uses, so the stored-data judgement it grades is the production one.
-    ("parallax.conformance.another_source", "parallax.core.read_delivery._delivery"): frozenset(
-        {"find"}
-    ),
-    ("parallax.conformance.another_source", "parallax.core.read_delivery._page"): frozenset(
-        {"Page"}
-    ),
     (
-        "parallax.conformance.another_source",
+        "parallax.conformance.foreign_lifecycle_source",
+        "parallax.core.read_delivery._delivery",
+    ): frozenset({"find"}),
+    (
+        "parallax.conformance.foreign_lifecycle_source",
+        "parallax.core.read_delivery._page",
+    ): frozenset({"Page"}),
+    (
+        "parallax.conformance.foreign_lifecycle_source",
         "parallax.snapshot._publication._root_publication",
     ): frozenset({"publish_roots", "require_publishable"}),
-    ("parallax.conformance.another_source", "parallax.snapshot._publication._root"): frozenset(
-        {"RootView"}
-    ),
-    ("parallax.conformance.another_source", "parallax.core._execution._read_query"): frozenset(
-        {"resolve_read_query"}
-    ),
+    (
+        "parallax.conformance.foreign_lifecycle_source",
+        "parallax.snapshot._publication._root",
+    ): frozenset({"RootView"}),
+    (
+        "parallax.conformance.foreign_lifecycle_source",
+        "parallax.core._execution._read_query",
+    ): frozenset({"resolve_read_query"}),
     (
         "parallax.conformance._mechanism.model_facts",
         "parallax.core._execution._read_query",
@@ -615,12 +619,14 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
             "TargetReadRequest",
         }
     ),
-    ("parallax.conformance.another_source", "parallax.core._execution._publication"): frozenset(
-        {"read_projection"}
-    ),
-    ("parallax.conformance.another_source", "parallax.core.entity._authored_resolver"): frozenset(
-        {"object_query_node"}
-    ),
+    (
+        "parallax.conformance.foreign_lifecycle_source",
+        "parallax.core._execution._publication",
+    ): frozenset({"read_projection"}),
+    (
+        "parallax.conformance.foreign_lifecycle_source",
+        "parallax.core.entity._authored_resolver",
+    ): frozenset({"object_query_node"}),
     # A measurement consumer may retain class-backed publication types only after
     # this catalog proves both their complete accepted model and their canonical
     # Object Query equal the fixture-owned descriptor forms. The Typed export

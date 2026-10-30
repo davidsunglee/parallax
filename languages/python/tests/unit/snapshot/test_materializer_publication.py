@@ -1,7 +1,7 @@
 """Root View judgment and Entity graph construction over a sealed Snapshot Page.
 
-Drives the production materializer end to end — judge, allocate, populate, and
-the per-node state factory — over Pages built exactly as a read driver
+Drives the production materializer end to end — judge, allocate, fill, and
+the lifecycle states — over Pages built exactly as a read driver
 builds them: diamond collapse onto one instance, cycle closure by object
 identity, narrowed views across every authoring route, loaded-null versus
 loaded-empty versus unloaded, polymorphic concrete-class resolution, Value Object

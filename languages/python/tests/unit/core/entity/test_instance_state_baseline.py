@@ -35,12 +35,13 @@ from __future__ import annotations
 import pathlib
 import tomllib
 from time import perf_counter
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
 
 import instance_state_overhead as report
+from parallax.core.entity import _row_fill as row_fill
 from parallax.core.entity import lifecycle_state_of
 from tests.unit import _instance_state_support as support
 from tests.unit._instance_state_support import (
@@ -310,29 +311,29 @@ def test_the_compact_arm_prices_every_attach_the_legacy_fixture_also_pays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The residue is added to the LEGACY side, so common work left inside it
-    lands there twice and flatters the compact arm. The lifecycle attach is the
-    case no callback can reach — ``construct`` performs it in its own loop — so
-    the arm repeats it once per node inside its timed span, which is what keeps
-    it out."""
+    lands there twice and flatters the compact arm. ``publish`` performs the
+    lifecycle attach in its own loop, which calls nothing back, so the span
+    timing that call is what keeps the attach out of the residue: every attach
+    the fixture pays is paid inside it."""
     scenario = SCENARIOS[0]
-    attached = _counted_attaches(monkeypatch)
+    attached = _counted_attaches(monkeypatch, row_fill)
     compact_common_work_ns(scenario, report.MARGINAL_NODES)
     assert len(attached) == report.MARGINAL_NODES
-    attached.clear()
+    legacy = _counted_attaches(monkeypatch, support)
     LEGACY.graph(scenario, report.MARGINAL_NODES)
-    assert len(attached) == report.MARGINAL_NODES
+    assert len(legacy) == report.MARGINAL_NODES
 
 
-def _counted_attaches(monkeypatch: pytest.MonkeyPatch) -> list[object]:
-    """Every lifecycle attach the support module makes itself, as it makes it."""
+def _counted_attaches(monkeypatch: pytest.MonkeyPatch, module: object) -> list[object]:
+    """Every lifecycle attach ``module`` makes, as it makes it."""
     attached: list[object] = []
-    attach = support.attach_lifecycle_state
+    attach = cast("Any", module).attach_lifecycle_state
 
     def counted(value: BaseModel, state: object) -> None:
         attached.append(value)
         attach(value, state)
 
-    monkeypatch.setattr(support, "attach_lifecycle_state", counted)
+    monkeypatch.setattr(module, "attach_lifecycle_state", counted)
     return attached
 
 
