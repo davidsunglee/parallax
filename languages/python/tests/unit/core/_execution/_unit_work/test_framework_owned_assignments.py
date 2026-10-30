@@ -344,7 +344,7 @@ def test_typed_replacement_projection_omits_carried_version_state() -> None:
 @pytest.fixture
 def ownership_scans(monkeypatch: pytest.MonkeyPatch) -> list[None]:
     scans: list[None] = []
-    original = wi._refuse_owned_names
+    original = cast("Callable[..., None]", vars(wi)["_refuse_owned_names"])
 
     def counted(*args: Any, **kwargs: Any) -> None:
         scans.append(None)
@@ -395,3 +395,43 @@ def test_optimized_typed_ownership_is_scanned_once_only_when_needed(
     )
 
     assert len(ownership_scans) == (1 if entity == _VERSIONED else 0)
+
+
+@_LANES
+@pytest.mark.parametrize("authorship", ["authored", "members"])
+@pytest.mark.parametrize(
+    ("entity", "member", "mutation"),
+    [
+        (_VERSIONED, "revisionCounter", "amend"),
+        *(
+            (_TEMPORAL, member, mutation)
+            for member in _OWNED
+            for mutation in ("amend", "amendUntil")
+        ),
+    ],
+)
+def test_authored_ownership_refusal_precedes_undeclared_members(
+    prepare: _Prepare,
+    authorship: str,
+    entity: EntityIdentity,
+    member: str,
+    mutation: wi.KeyedMutation,
+) -> None:
+    assignments = {"undeclared": 7, member: 2}
+    row = {"id": 1, **assignments}
+    instruction = wi.KeyedWriteInstruction(
+        mutation,
+        entity.canonical,
+        (row,),
+        valid_from=_START if entity == _TEMPORAL else None,
+        until=_END if mutation == "amendUntil" else None,
+    )
+    with pytest.raises(wi.InstructionRejectedError) as refused:
+        prepare(
+            instruction,
+            _PREPARATION,
+            authored_members=row.keys() if authorship == "authored" else None,
+            members=(lambda: assignments) if authorship == "members" else None,
+        )
+
+    assert refused.value.rule == _RULE
