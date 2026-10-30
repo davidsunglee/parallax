@@ -44,11 +44,14 @@ something different:
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Mapping
 from typing import Any
 
 from .case import Entity
 from .inheritance import tag_of
+from .portable_literal import decode_timestamp
+from .temporality import temporal_axes
 from .value_object_resolve import RejectionError
 from .write_validate import framework_owned_names, undeclared_members
 
@@ -140,8 +143,49 @@ def validate_keyed_assignment_members(
             )
 
 
+class KeyedWriteApplicabilityError(ValueError):
+    """A keyed operation or window does not fit its target."""
+
+
+def _keyed_bound(instruction: Mapping[str, Any], name: str) -> dt.datetime:
+    value = instruction[name]
+    instant = decode_timestamp(value) if isinstance(value, str) else None
+    if instant is None:
+        raise KeyedWriteApplicabilityError(f"{name} must state a finite timestamp")
+    return instant
+
+
+def _validate_keyed_window(entity: Entity, instruction: Mapping[str, Any]) -> None:
+    mutation = str(instruction.get("mutation"))
+    bounded = mutation.endswith("Until")
+    bitemporal = any(axis.dimension == "valid-time" for axis in temporal_axes(entity.runtime_facts))
+    has_start = "validFrom" in instruction
+    has_end = "until" in instruction
+    if not bitemporal and (bounded or has_start or has_end):
+        raise KeyedWriteApplicabilityError(f"{entity.name}: this target takes no Valid-Time window")
+    if bitemporal and (not has_start or has_end != bounded):
+        raise KeyedWriteApplicabilityError(
+            f"{entity.name}: {mutation!r} requires validFrom and "
+            + ("until" if bounded else "no until")
+        )
+    if has_start:
+        start = _keyed_bound(instruction, "validFrom")
+        if has_end:
+            end = _keyed_bound(instruction, "until")
+            if start >= end:
+                raise KeyedWriteApplicabilityError(f"{entity.name}: validFrom must precede until")
+
+
 def validate_keyed_write_shape(entity: Entity, instruction: Mapping[str, Any]) -> None:
-    """Reject the instruction's temporal row count before payload judgments."""
+    """Judge operation, window, and temporal row count before payload judgments."""
+    mutation = instruction.get("mutation")
+    if mutation == "delete" and entity.is_temporal:
+        raise KeyedWriteApplicabilityError(f"{entity.name}: a temporal target takes no delete")
+    if mutation in {"terminate", "terminateUntil"} and not entity.is_temporal:
+        raise KeyedWriteApplicabilityError(
+            f"{entity.name}: a non-temporal target takes no termination"
+        )
+    _validate_keyed_window(entity, instruction)
     rows = instruction.get("rows")
     if not isinstance(rows, list) or not entity.is_temporal or len(rows) <= 1:
         return

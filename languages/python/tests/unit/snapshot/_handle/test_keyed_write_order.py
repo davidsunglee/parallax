@@ -40,7 +40,11 @@ from parallax.core.execution import (
     KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
 )
-from parallax.core.unit_work import WriteEvidenceError, WriteInstructionError
+from parallax.core.unit_work import (
+    InstructionRejectedError,
+    WriteEvidenceError,
+    WriteInstructionError,
+)
 from parallax.snapshot import TxnContext
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ScriptedAdapter, Transact, Write
@@ -824,7 +828,11 @@ def test_malformed_wire_input_earns_a_static_refusal(
     scenario: KeyedWriteScenario, expected: str
 ) -> None:
     refused = answer(scenario, "wire")
-    assert refused.error is WriteInstructionError
+    if expected == "framework-owned fields may not be assigned":
+        assert refused.error is InstructionRejectedError
+        assert refused.code == "framework-owned-member-assigned"
+    else:
+        assert refused.error is WriteInstructionError
     assert refused.phase == "verb"
     assert refused.message is not None
     assert expected in refused.message

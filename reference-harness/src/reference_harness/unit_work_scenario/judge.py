@@ -19,7 +19,7 @@ from ..case import Case, Entity
 from ..case_assertions import CaseFailure, write_value_equal
 from ..ddl_builder import quote_identifier
 from ..inheritance import STRATEGY_TPCS, Family, query_position
-from ..keyed_write_validate import validate_keyed_write
+from ..keyed_write_validate import KeyedWriteApplicabilityError, validate_keyed_write
 from ..sql_normalize import normalize
 from ..temporality import temporal_axes
 from ..value_object_resolve import RejectionError
@@ -748,8 +748,8 @@ def _sole_settled_row(
     """
     try:
         validate_keyed_write(entity, entry, allow_framework_markers=True)
-    except RejectionError as exc:
-        raise CaseFailure(f"{case.path.name}: scenario[{index}]: {exc.detail}") from exc
+    except (RejectionError, KeyedWriteApplicabilityError) as exc:
+        raise CaseFailure(f"{case.path.name}: scenario[{index}]: {exc}") from exc
     rows = entry.get("rows")
     if not isinstance(rows, list) or len(rows) != 1:
         raise CaseFailure(
