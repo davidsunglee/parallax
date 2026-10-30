@@ -65,7 +65,7 @@ type _PendingObservation = int | _ReadEvidenceFetchedRow
 class RecordedFetchedRows:
     """What one Page read records for the write side while its rows are still live.
 
-    Projection references paired with their row provenance, recorded through
+    Fetched-row references paired with their row provenance, recorded through
     :meth:`observe_fetched_row`: each receives its members only from the judged,
     Page-owned Entity State, and :func:`defer_read_evidence` is the only
     consumer. A fetched row whose state turns out not to hydrate is recorded like

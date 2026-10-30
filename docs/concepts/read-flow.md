@@ -24,7 +24,7 @@ it and a specification seem to disagree, the specification is right.
  planning and SQL              one statement per non-empty relationship level;
       │                        storage layout, inheritance and locks resolved here
       ▼
- judged Page                   rows become identity claims and Entity States;
+ judged Page                   rows are recorded by row key and judged as Entity States;
       │                        stored data that contradicts the model is diagnosed
       ▼
  publication and delivery      each result root becomes Typed or Wire values,
@@ -90,9 +90,11 @@ owns one read-plan cache that every read through its scopes plans through
 ### Judged Page
 
 The statements' rows land in a [Page](../../core/spec/m-read-delivery.md#entity-state-and-the-page).
-Each row makes an identity claim: its concrete Entity and its logical key, which is the
-family, the primary key and the as-of coordinate on each axis. The rest of the row is
-judged at most once per logical state, when publication first needs it. Stored data
+Each fetched row first records its row identity: its concrete Entity and its row key,
+which is the family, the primary key and the as-of coordinate on each axis. The rest of
+the row is judged at most once per logical state: as the row is recorded where no other
+fetched row on the Page can share its row key, otherwise when publication first needs
+it. Stored data
 that contradicts the model, such as a missing required member or an unknown subtype
 tag, becomes a finding in one closed
 [vocabulary](../../core/spec/m-read-delivery.md#invalid-stored-data); it is never
