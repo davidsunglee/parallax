@@ -16,6 +16,7 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     Column,
     ConcreteSubtype,
+    EntityIdentity,
     ExactEntityReference,
     Table,
     TablePerHierarchy,
@@ -25,6 +26,7 @@ from parallax.core.write_plan.managed_row import named_members
 from tests._support.write_preparation import write_preparation_of
 from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
+_PLAIN = identity("Plain")
 _VERSIONED = identity("Counted")
 _TEMPORAL = identity("Recorded")
 _ROOT = identity("Root")
@@ -36,6 +38,11 @@ _RULE: Final = "framework-owned-member-assigned"
 
 _MODEL = form_metamodel(
     source(
+        Declaration(
+            identity=_PLAIN,
+            container=Table("plain"),
+            attributes=(key(_PLAIN), attribute(_PLAIN, "label", type=STRING)),
+        ),
         Declaration(
             identity=_VERSIONED,
             container=Table("counted"),
@@ -332,3 +339,59 @@ def test_typed_replacement_projection_omits_carried_version_state() -> None:
         until=None,
     )
     assert named_members(prepared.rows[0]) == {"id": 1, "label": "accepted"}
+
+
+@pytest.fixture
+def ownership_scans(monkeypatch: pytest.MonkeyPatch) -> list[None]:
+    scans: list[None] = []
+    original = wi._refuse_owned_names
+
+    def counted(*args: Any, **kwargs: Any) -> None:
+        scans.append(None)
+        original(*args, **kwargs)
+
+    monkeypatch.setattr(wi, "_refuse_owned_names", counted)
+    return scans
+
+
+@_LANES
+@pytest.mark.parametrize("entity", [_PLAIN, _VERSIONED])
+@pytest.mark.parametrize("authorship", ["neutral", "authored", "members"])
+def test_keyed_amendment_ownership_is_scanned_once_only_when_needed(
+    ownership_scans: list[None], prepare: _Prepare, entity: EntityIdentity, authorship: str
+) -> None:
+    row = {"id": 1, "label": "accepted"}
+    instruction = wi.KeyedWriteInstruction("amend", entity.canonical, (row,))
+    if authorship == "members":
+        prepare(instruction, _PREPARATION, members=lambda: {"label": "accepted"})
+    else:
+        prepare(
+            instruction,
+            _PREPARATION,
+            authored_members=row.keys() if authorship == "authored" else None,
+        )
+
+    assert len(ownership_scans) == (1 if entity == _VERSIONED else 0)
+
+
+@pytest.mark.parametrize("entity", [_PLAIN, _VERSIONED])
+@pytest.mark.parametrize("explicit_members", [False, True])
+def test_optimized_typed_ownership_is_scanned_once_only_when_needed(
+    ownership_scans: list[None], entity: EntityIdentity, explicit_members: bool
+) -> None:
+    target = _MODEL.entity(entity)
+    assert target is not None
+    entry = _PREPARATION.entity(entity)
+    label = entry.selection.members.shape.position("label")
+    assert label is not None
+    wi.prepare_typed_keyed_write(
+        _PREPARATION,
+        "amend",
+        target,
+        pairs=((entry.key, 1),) if explicit_members else ((entry.key, 1), (label, "accepted")),
+        members=(lambda: {"label": "accepted"}) if explicit_members else None,
+        valid_from=None,
+        until=None,
+    )
+
+    assert len(ownership_scans) == (1 if entity == _VERSIONED else 0)
