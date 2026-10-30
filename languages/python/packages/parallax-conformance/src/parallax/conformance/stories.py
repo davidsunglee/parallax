@@ -334,25 +334,25 @@ def locking_target_deletion_reads_its_row_under_the_shared_lock(db: ScopedDataba
 
 
 def wallet_predicate_delete_is_readless(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: TxnContext) -> list[Entity]:
+    def fn(tx: TxnContext) -> None:
         deleted = tx.delete_where(Wallet.where(Wallet.balance < Decimal("200.00")))
         assert deleted == 2
-        return list(tx.find(Wallet.where(Wallet.balance < Decimal("200.00"))).results())
 
-    return db.transact(fn)
+    db.transact(fn)
+    return list(db.find(Wallet.where(Wallet.balance < Decimal("200.00"))).results())
 
 
 def wallet_predicate_amend_is_readless(db: ScopedDatabase) -> list[Entity]:
-    def fn(tx: TxnContext) -> list[Entity]:
+    def fn(tx: TxnContext) -> None:
         amended = tx.amend_where(
             Wallet.where(Wallet.balance < Decimal("200.00")),
             Wallet.balance.set(Decimal("150.00")),
             Wallet.owner.set("Updated"),
         )
         assert amended == 2
-        return list(tx.find(Wallet.where(Wallet.owner == "Updated")).results())
 
-    return db.transact(fn)
+    db.transact(fn)
+    return list(db.find(Wallet.where(Wallet.owner == "Updated")).results())
 
 
 def bitemporal_insert_until_opens_one_bounded_rectangle(db: ScopedDatabase) -> None:
