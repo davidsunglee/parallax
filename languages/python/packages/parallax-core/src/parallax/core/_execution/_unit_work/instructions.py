@@ -1335,6 +1335,7 @@ def _assigned_row(
     pairs: Sequence[tuple[int, object]],
     *,
     lane: int,
+    owned_names_judged: bool = False,
 ) -> ManagedRow:
     """The row assigning one existing object the members ``pairs`` positions,
     each beside the key judged as an assignment in that order, the key
@@ -1345,7 +1346,7 @@ def _assigned_row(
     """
     shape = entry.selection.members.shape
     try:
-        if entry.framework_owned:
+        if not owned_names_judged and entry.framework_owned:
             _refuse_owned_names(entry, entity, pairs, entry.framework_owned)
         prepared = entry.plan.partial_row(
             pairs,
@@ -2232,7 +2233,7 @@ def _prepare_keyed_payload(
             entity,
             entry,
             row,
-            row.keys() if mutation in AMEND_MUTATIONS and authored_members is None else None,
+            row.keys() if mutation in AMEND_MUTATIONS else None,
             "keyed",
         )
         if mutation in REPLACE_MUTATIONS:
@@ -2242,7 +2243,16 @@ def _prepare_keyed_payload(
                 )
             )
         elif authored_members is not None:
-            judged.append(_assignment_payload(model, entry, entity, row, lane=lane))
+            judged.append(
+                _assigned_row(
+                    model,
+                    entry,
+                    entity,
+                    _positioned(entry, row),
+                    lane=lane,
+                    owned_names_judged=mutation in AMEND_MUTATIONS,
+                )
+            )
         else:
             judged.append(
                 _sparse_row(entry, entity, _positioned(entry, row), lane=lane, context=context)
