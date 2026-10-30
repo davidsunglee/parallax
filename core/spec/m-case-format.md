@@ -2660,6 +2660,15 @@ against any row's contents):
   family-wide and root-owned, so a write at any position of a ReadOnly family,
   abstract positions included, is this rule rather than `abstract-write-target`.
 
+- `framework-owned-member-assigned` — a keyed amendment or replacement names an
+  optimistic-lock version or As-Of Axis endpoint as a caller assignment.
+  Preparation refuses the member name before its value, using the derived
+  framework-owned designation ([`m-metamodel`](m-metamodel.md)); assignment
+  admissibility belongs to [`m-unit-work`](m-unit-work.md), version ownership to
+  [`m-opt-lock`](m-opt-lock.md#version-values-are-framework-owned), and interval
+  construction to [`m-temporal-write`](m-temporal-write.md). Internal framework
+  markers and carried state are not caller assignments.
+
 - `temporal-keyed-write-multi-row` — a keyed instruction on a **temporal** target
   carries more than one row. Each row of a milestone chain closes its own current
   milestone, settles against its own Temporal Observation, and opens its own

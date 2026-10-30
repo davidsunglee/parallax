@@ -6,7 +6,6 @@ from typing import Final
 
 from parallax.core._execution._unit_work.clock import TransactionInstant
 from parallax.core._execution._unit_work.instructions import (
-    ASSIGNMENT_MUTATIONS,
     PreparedKeyedInstruction,
 )
 from parallax.core._execution._unit_work.non_temporal_settlement import (
@@ -659,11 +658,8 @@ class WritePlanCompiler:
         """The version an addressed write against a versioned row advances
         from, or ``None`` for an unversioned target.
 
-        A row-carried version value is refused BEFORE the observation is even
-        required: the version is framework-owned end to end, so it is never an
-        alternative source, observed or not. The observation itself is
-        required in both concurrency modes, because the framework never
-        issues a resolving read on behalf of a keyed write.
+        The observation is required in both concurrency modes, because the
+        framework never issues a resolving read on behalf of a keyed write.
 
         A returned version therefore came off an observed write, which
         wraps exactly one row — so the Key Target the caller builds from
@@ -683,12 +679,6 @@ class WritePlanCompiler:
         if version_attr is None:
             _require_unobserved(entity, instruction.mutation, observation)
             return None
-        row = instruction.rows[0]
-        if (
-            instruction.mutation in ASSIGNMENT_MUTATIONS
-            and row.cell(version_attr) is not row.selection.absent
-        ):
-            self._concurrency.reject_authored_version(entity.identity, version_attr)
         return self._concurrency.require_version(entity.identity, observation)
 
 

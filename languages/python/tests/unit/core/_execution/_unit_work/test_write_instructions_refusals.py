@@ -516,13 +516,6 @@ def test_the_write_admits_collection_elements_inside_their_value_spaces() -> Non
     )
 
 
-# --------------------------------------------------------------------------- #
-# Temporal axis attributes: the milestone interval                            #
-# bounds a temporal write never authors — excluded from the required/type     #
-# walk regardless of mutation kind, since they are Clock-supplied / axis-     #
-# explicit instruction-level context, never a neutral write-row member        #
-# (`m-unit-work` "the instant surface is axis-explicit"; ADR 0010).           #
-# --------------------------------------------------------------------------- #
 _GAUGE = identity("Gauge")
 _GAUGE_MODEL = form_metamodel(
     source(
@@ -548,16 +541,10 @@ _GAUGE_MODEL = form_metamodel(
 
 
 def test_temporal_axis_attributes_are_never_required_on_a_full_document_insert() -> None:
-    # A full-document (insert) row omitting `txStart` / `txEnd`
-    # entirely is still valid: the milestone bounds are Clock-supplied /
-    # instruction-level, never authored on the neutral write row.
     _prepare(_GAUGE_MODEL, "Gauge", {"id": 1, "reading": Decimal("20.00")})
 
 
-def test_temporal_axis_attributes_are_never_type_checked_even_when_present() -> None:
-    # A stray, wrongly-typed axis value is silently ignored (excluded before the
-    # type walk ever sees it) — the lowering seam is what would reject an
-    # actually-authored one, not this pre-SQL structural validator.
+def test_neutral_insert_projects_away_carried_axis_values() -> None:
     _prepare(_GAUGE_MODEL, "Gauge", {"id": 1, "reading": Decimal("20.00"), "txStart": 12345})
 
 

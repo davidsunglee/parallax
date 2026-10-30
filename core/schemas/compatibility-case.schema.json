@@ -1733,6 +1733,7 @@
             "write-required-value-object-missing",
             "write-value-type-mismatch",
             "temporal-keyed-write-multi-row",
+            "framework-owned-member-assigned",
             "subtype-write-sibling-attribute",
             "subtype-write-metadata-field",
             "abstract-write-target",

@@ -30,6 +30,7 @@ from jsonschema import Draft202012Validator
 
 from reference_harness.case import (
     Case,
+    Entity,
     Model,
     dialect_executed_cases,
     discover_cases,
@@ -56,6 +57,7 @@ from reference_harness.inheritance import (
     validate_family,
 )
 from reference_harness.keyed_write_validate import (
+    FRAMEWORK_OWNED_MEMBER_ASSIGNED,
     TEMPORAL_KEYED_WRITE_MULTI_ROW,
     validate_keyed_write,
 )
@@ -738,6 +740,102 @@ def test_keyed_write_accepts_a_single_row_on_a_temporal_target() -> None:
     validate_keyed_write(_lease_model().entity("Lease"), instruction)
 
 
+@pytest.mark.parametrize(
+    ("model", "member", "mutation"),
+    [
+        (model, member, mutation)
+        for model, member in [
+            ("account", "version"),
+            ("position", "txStart"),
+            ("position", "txEnd"),
+            ("position", "validStart"),
+            ("position", "validEnd"),
+        ]
+        for mutation in ["amend", "amendUntil", "replace", "replaceUntil"]
+        if model == "position" or not mutation.endswith("Until")
+    ],
+)
+def test_keyed_assignment_refuses_each_framework_owned_role(
+    model: str, member: str, mutation: str
+) -> None:
+    entity = load_model(_COMPATIBILITY_ROOT, f"models/{model}.yaml").root_entity
+    instruction: dict[str, Any] = {
+        "mutation": mutation,
+        "rows": [{"id": 1, member: {"invalid": "value"}}],
+    }
+    if model == "position":
+        instruction["validFrom"] = "2024-03-01T00:00:00.000000Z"
+        if mutation.endswith("Until"):
+            instruction["until"] = "2024-04-01T00:00:00.000000Z"
+    with pytest.raises(RejectionError) as caught:
+        validate_keyed_write(entity, instruction)
+    assert caught.value.rule == FRAMEWORK_OWNED_MEMBER_ASSIGNED
+    assert member in caught.value.detail
+
+
+def test_keyed_assignment_detects_the_version_by_role() -> None:
+    entity = Entity(
+        definition={
+            "name": "Ledger",
+            "attributes": [
+                {"name": "id", "type": "int64", "primaryKey": True},
+                {"name": "version", "type": "int32"},
+                {"name": "revisionToken", "type": "int32", "optimisticLocking": True},
+            ],
+        }
+    )
+    validate_keyed_write(entity, {"mutation": "amend", "rows": [{"id": 1, "version": 7}]})
+    with pytest.raises(RejectionError) as caught:
+        validate_keyed_write(entity, {"mutation": "amend", "rows": [{"id": 1, "revisionToken": 7}]})
+    assert caught.value.rule == FRAMEWORK_OWNED_MEMBER_ASSIGNED
+
+
+@pytest.mark.parametrize("marker", [{"computed": "initialVersion"}, {"increment": 1}])
+def test_keyed_framework_bookkeeping_markers_remain_admissible(marker: dict[str, Any]) -> None:
+    entity = load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
+    instruction = {"mutation": "amend", "rows": [{"id": 1, "version": marker}]}
+    validate_keyed_write(entity, instruction, allow_framework_markers=True)
+    with pytest.raises(RejectionError) as caught:
+        validate_keyed_write(entity, instruction)
+    assert caught.value.rule == FRAMEWORK_OWNED_MEMBER_ASSIGNED
+
+
+def test_keyed_insert_preserves_framework_owned_carried_state() -> None:
+    entity = load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
+    validate_keyed_write(entity, {"mutation": "insert", "rows": [{"id": 1, "version": 7}]})
+
+
+def test_keyed_assignment_judges_every_non_temporal_row() -> None:
+    entity = load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
+    with pytest.raises(RejectionError) as caught:
+        validate_keyed_write(
+            entity,
+            {"mutation": "amend", "rows": [{"id": 1, "owner": "Ada"}, {"id": 2, "version": 7}]},
+        )
+    assert caught.value.rule == FRAMEWORK_OWNED_MEMBER_ASSIGNED
+
+
+def test_rejected_keyed_assignment_refuses_earlier_owned_name_before_later_unknown_name() -> None:
+    case = Case(
+        path=Path("m-opt-lock-999-row-order.yaml"),
+        raw={
+            "model": "models/account.yaml",
+            "tags": ["m-opt-lock"],
+            "shape": "rejected",
+            "when": {
+                "write": {
+                    "mutation": "amend",
+                    "entity": "parallax.compatibility.Account",
+                    "rows": [{"id": 1, "version": 7}, {"id": 2, "unknown": 9}],
+                }
+            },
+            "then": {"rejectedRule": FRAMEWORK_OWNED_MEMBER_ASSIGNED},
+        },
+        model=load_model(_COMPATIBILITY_ROOT, "models/account.yaml"),
+    )
+    run_case(case, None)
+
+
 def test_runner_fails_when_a_keyed_instruction_is_accepted() -> None:
     # A single-row temporal instruction authored as rejected: the validator accepts
     # it, so the expected pre-SQL rejection never happens.
@@ -761,13 +859,7 @@ def test_runner_fails_when_a_keyed_instruction_names_an_undeclared_entity() -> N
         run_case(case, None)
 
 
-def test_runner_fails_a_keyed_instruction_naming_an_undeclared_member() -> None:
-    # Payload honesty precedes the instruction's shape, so a plural instruction whose
-    # rows also name nothing real fails as an authoring defect instead of being
-    # classified with the singleton rule it never reached. That is the precedence the
-    # canonical `validate_instruction` applies (undeclared members refuse before the
-    # temporal singleton); without it the two implementations answer the SAME
-    # schema-valid input with different verdicts.
+def test_keyed_instruction_applicability_precedes_undeclared_members() -> None:
     case = _rejected_keyed_doc(
         {
             "mutation": "amend",
@@ -776,8 +868,7 @@ def test_runner_fails_a_keyed_instruction_naming_an_undeclared_member() -> None:
         },
         TEMPORAL_KEYED_WRITE_MULTI_ROW,
     )
-    with pytest.raises(CaseFailure, match="are not attributes or value objects"):
-        run_case(case, None)
+    run_case(case, None)
 
 
 @pytest.mark.parametrize("case", _rejected_cases(), ids=[c.path.stem for c in _rejected_cases()])

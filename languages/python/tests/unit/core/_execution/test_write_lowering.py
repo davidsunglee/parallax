@@ -60,6 +60,7 @@ from parallax.core import (
 from parallax.core import predicate as oa
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.instructions import (
+    InstructionRejectedError,
     WriteInstruction,
     WriteInstructionError,
     prepare_typed_write,
@@ -508,13 +509,15 @@ def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
     update = KeyedWriteInstruction(
         "amend", "Account", ({"id": 1, "balance": Decimal("175.00"), "version": 2},)
     )
-    with pytest.raises(opt_lock.CallerAuthoredVersionError, match="framework-owned"):
+    with pytest.raises(InstructionRejectedError, match="framework-owned") as refused:
         _lower(
             update,
             ACCOUNT,
             observation=VersionObservation(observed_version=1),
             concurrency="optimistic",
         )
+
+    assert refused.value.rule == "framework-owned-member-assigned"
 
 
 def test_versioned_delete_gates_on_the_observed_version_optimistic_mode() -> None:

@@ -418,7 +418,7 @@ def _valid_keyed_entry_entity(
         errors.append(f"{entry_label}: {condition}")
         return None
     try:
-        validate_keyed_write(entity, instruction)
+        validate_keyed_write(entity, instruction, allow_framework_markers=True)
     except RejectionError as exc:
         errors.append(f"{entry_label}: {exc.detail}")
         return None

@@ -1,0 +1,11 @@
+model: models/account.yaml
+tags: [m-opt-lock, m-unit-work, write, rejected, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    mutation: amend
+    entity: parallax.compatibility.Account
+    rows:
+      - { id: 1, version: 2 }
+then:
+  rejectedRule: framework-owned-member-assigned
