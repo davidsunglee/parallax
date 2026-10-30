@@ -1,9 +1,6 @@
-# Removing the AS-OF AXIS from an Entity that declares a unique and a non-unique
-# authored index (m-model-evolution): coordinated for BOTH reasons on every
-# operation, exactly as the axis alone is. The authored indices are unchanged,
-# so no Index operation and no UniquenessEnforcementChanged appear even though
-# each index's physical columns lose the axis end. A coordinated evolution
-# carries no schema delta.
+# Removing the AS-OF AXIS under unchanged authored indices (m-model-evolution):
+# their physical columns lose the axis end, yet no Index operation or
+# UniquenessEnforcementChanged appears.
 tags: [m-model-evolution, evolution, temporal, index, slice-snapshot-1]
 shape: evolution
 when:

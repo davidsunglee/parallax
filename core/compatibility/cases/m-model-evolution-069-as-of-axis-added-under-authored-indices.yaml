@@ -1,8 +1,6 @@
-# Adding an AS-OF AXIS to an Entity that stores rows and declares a unique and a
-# non-unique authored index (m-model-evolution): coordinated, exactly as the
-# axis alone is. The authored indices are unchanged, so no Index operation and
-# no UniquenessEnforcementChanged appear even though each index's physical
-# columns gain the axis end. A coordinated evolution carries no schema delta.
+# Adding an AS-OF AXIS under unchanged authored indices (m-model-evolution):
+# their physical columns gain the axis end, yet no Index operation or
+# UniquenessEnforcementChanged appears.
 tags: [m-model-evolution, evolution, temporal, index, slice-snapshot-1]
 shape: evolution
 when:
