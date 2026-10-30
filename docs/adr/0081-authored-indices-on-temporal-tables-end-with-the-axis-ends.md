@@ -22,11 +22,11 @@ successor carrying them, so an amend that kept an authored unique value was
 refused by the database on both PostgreSQL and MariaDB.
 
 On a Transaction-Time-only table, `unique (code, out_z)` admits one current row
-per value and separates closed versions by their ends. Because Parallax stamps
-the Transaction-Time start with the writing instant, rows sharing a value whose
-Transaction-Time ranges overlap must have been current together, which the
-index refuses; it therefore gives exact uniqueness at every Transaction-Time
-instant under the normal forward-moving write protocol.
+per value and separates closed versions by their ends. It is not uniqueness at
+every Transaction-Time instant: an attempt's instant may be captured before
+another transaction closes a row holding the value (`m-unit-work` *The
+Transaction Instant*), and a row that attempt then opens starts inside the
+closed row's range while sharing neither its end nor a current row with it.
 
 On a Bitemporal table, `unique (code, thru_z, out_z)` is uniqueness per
 milestone end. An amend's head and tail slices may share the value because
