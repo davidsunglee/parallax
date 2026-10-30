@@ -626,8 +626,8 @@ _LEDGER_MODEL = form_metamodel(
             attributes=(
                 key(_LEDGER),
                 attribute(_LEDGER, "amount", type=_MONEY),
-                attribute(_LEDGER, "txStart", type=TIMESTAMP, column="tx_from"),
-                attribute(_LEDGER, "txEnd", type=TIMESTAMP, column="tx_to"),
+                attribute(_LEDGER, "txStart", type=TIMESTAMP, column="in_z"),
+                attribute(_LEDGER, "txEnd", type=TIMESTAMP, column="out_z"),
             ),
             as_of_axes=(
                 AsOfAxisMetadata(

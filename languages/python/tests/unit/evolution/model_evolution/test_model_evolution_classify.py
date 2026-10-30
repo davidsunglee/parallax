@@ -20,7 +20,7 @@ import dataclasses
 import pytest
 
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INT32, STRING, TIMESTAMP
+from parallax.core.base import INT32, STRING
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -66,7 +66,7 @@ from parallax.evolution.model_evolution import (
     ValueObjectAttributeAltered,
     evolve,
 )
-from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
+from tests.unit._metamodel_support import Declaration, attribute, identity, instant, key, source
 
 _AUTHORING = CoordinationReason.AUTHORING_SURFACE_CHANGE_REQUIRED
 _MIGRATION = CoordinationReason.DATABASE_MIGRATION_REQUIRED
@@ -859,35 +859,23 @@ _WIDGET_ONLY = Declaration(
 )
 
 
-def _timestamped(name: str) -> AttributeMetadata:
-    return attribute(_READING, name, type=TIMESTAMP)
-
-
-def _reading(
-    *, axis: tuple[str, str] | None, endpoints: tuple[str, ...] = ("openedAt", "closedAt")
-) -> Declaration:
-    """A `Reading` Entity declaring ``endpoints`` as Timestamps, carrying a
-    Transaction-Time axis over ``axis`` when one is named.
-
-    None of the candidate endpoint names is a conventional temporal one: a
-    declared axis reserves those for its own endpoints, so an Entity that could
-    move its axis between two pairs may bear neither.
-    """
+def _reading(*, temporal: bool) -> Declaration:
     return Declaration(
         identity=_READING,
         container=Table("reading"),
-        attributes=(key(_READING), *(_timestamped(name) for name in endpoints)),
-        as_of_axes=(
-            ()
-            if axis is None
-            else (
-                AsOfAxisMetadata(
-                    TemporalDimension.TRANSACTION_TIME,
-                    AttributeIdentity(_READING, axis[0]),
-                    AttributeIdentity(_READING, axis[1]),
-                ),
-            )
+        attributes=(
+            key(_READING),
+            *((instant(_READING, "txStart"), instant(_READING, "txEnd")) if temporal else ()),
         ),
+        as_of_axes=(
+            AsOfAxisMetadata(
+                TemporalDimension.TRANSACTION_TIME,
+                AttributeIdentity(_READING, "txStart"),
+                AttributeIdentity(_READING, "txEnd"),
+            ),
+        )
+        if temporal
+        else (),
     )
 
 
@@ -902,29 +890,18 @@ def test_an_axis_on_an_existing_entity_needs_the_surface_and_the_database() -> N
     # that leaves a Column behind: the key the Entity keeps is NARROWER than the
     # one its stored history was written under, so that history collides beneath
     # the later identity and the direction is symmetric after all.
-    without = _beside_widget(_reading(axis=None))
-    with_axis = _beside_widget(_reading(axis=("openedAt", "closedAt")))
+    without = _beside_widget(_reading(temporal=False))
+    with_axis = _beside_widget(_reading(temporal=True))
     added = evolve(without, with_axis)
     assert _verdict_on(added, _axis_operation(added)) == _Verdict(_BOTH, False)
     removed = evolve(with_axis, without)
     assert _verdict_on(removed, _axis_operation(removed)) == _Verdict(_BOTH, False)
 
 
-def test_an_axis_alteration_needs_the_surface_and_the_database() -> None:
-    # Endpoint Attributes reach a descriptor framework-fixed, so a surviving axis
-    # naming different ones is reachable only through the `m-metamodel` seam.
-    pair = ("openedAt", "closedAt", "seenAt", "goneAt")
-    moved = evolve(
-        _beside_widget(_reading(axis=("openedAt", "closedAt"), endpoints=pair)),
-        _beside_widget(_reading(axis=("seenAt", "goneAt"), endpoints=pair)),
-    )
-    assert _verdict_on(moved, _axis_operation(moved)) == _Verdict(_BOTH, False)
-
-
 def test_an_axis_on_a_wholly_new_entity_is_carried_by_its_parent_addition() -> None:
     # A new Entity creates a complete empty Table, so its axis needs neither a
     # surface change nor a migration and is not described on its own at all.
-    arriving = evolve(_beside_widget(), _beside_widget(_reading(axis=("openedAt", "closedAt"))))
+    arriving = evolve(_beside_widget(), _beside_widget(_reading(temporal=True)))
     assert [type(operation) for operation in arriving.operations] == [EntityAdded]
     assert isinstance(arriving, UnilateralEvolution)
 

@@ -37,12 +37,17 @@ from parallax.core.metamodel._states import (
     UnresolvedEntityDeclaration,
     UnresolvedMetamodel,
 )
-from parallax.core.metamodel._temporal_structure import CONVENTIONAL_TEMPORAL_NAMES
+from parallax.core.metamodel._temporal_structure import (
+    CONVENTIONAL_TEMPORAL_NAMES,
+    TEMPORAL_MEMBERS,
+    TemporalEndpoint,
+)
 from parallax.core.metamodel._values import (
     AbstractRoot,
     AbstractSubtype,
     AsOfAxisMetadata,
     AttributeMetadata,
+    Column,
     ConcreteSubtype,
     DefiningRelationshipDeclaration,
     IndexMetadata,
@@ -158,6 +163,8 @@ before existence, so a foreign endpoint never reports as missing."""
 AS_OF_ATTRIBUTE_TYPE: Final[IssueCode] = "metamodel-as-of-attribute-type"
 """An axis endpoint exists and is local but is not a Timestamp."""
 
+AS_OF_ATTRIBUTE_NONCANONICAL: Final[IssueCode] = "metamodel-as-of-attribute-noncanonical"
+
 AS_OF_ATTRIBUTE_DUPLICATE: Final[IssueCode] = "metamodel-as-of-attribute-duplicate"
 """One axis names the same Attribute as both its start and its end. Two axes
 sharing an endpoint is not this code; each axis is judged alone."""
@@ -183,6 +190,7 @@ RESOLVER_ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
         AS_OF_ATTRIBUTE_OWNER,
         AS_OF_ATTRIBUTE_TYPE,
         AS_OF_ATTRIBUTE_DUPLICATE,
+        AS_OF_ATTRIBUTE_NONCANONICAL,
     }
 )
 """The resolver's complete owned Issue Code set, as the Formation Manifest
@@ -642,10 +650,16 @@ def _axis_issues(declaration: UnresolvedEntityDeclaration) -> list[MetamodelIssu
                     message="an axis start and end identify the same Attribute",
                 )
             )
-        for endpoint in dict.fromkeys((axis.start_attribute, axis.end_attribute)):
-            declared.extend(_axis_endpoint_issues(declaration.identity, location, endpoint, local))
+        for endpoint, canonical in zip(
+            (axis.start_attribute, axis.end_attribute),
+            TEMPORAL_MEMBERS[axis.dimension],
+            strict=True,
+        ):
+            declared.extend(
+                _axis_endpoint_issues(declaration.identity, location, endpoint, local, canonical)
+            )
         position = reached.setdefault(axis.dimension, set())
-        issues.extend(issue for issue in declared if issue not in position)
+        issues.extend(issue for issue in dict.fromkeys(declared) if issue not in position)
         position.update(declared)
     return issues
 
@@ -655,6 +669,7 @@ def _axis_endpoint_issues(
     location: AsOfAxisLocation,
     endpoint: AttributeIdentity,
     local: Mapping[str, AttributeMetadata],
+    canonical: TemporalEndpoint,
 ) -> list[MetamodelIssue]:
     related = (AttributeLocation(endpoint),)
     if endpoint.entity != entity:
@@ -683,6 +698,20 @@ def _axis_endpoint_issues(
                 location,
                 related,
                 message=f"axis Attribute {endpoint.name!r} is not a single Timestamp",
+            )
+        ]
+    if (
+        endpoint.name != canonical.name
+        or attribute.storage != Column(canonical.column)
+        or attribute.nullable
+        or attribute.read_only
+    ):
+        return [
+            MetamodelIssue(
+                AS_OF_ATTRIBUTE_NONCANONICAL,
+                location,
+                related,
+                message="an axis Attribute does not have its canonical name, Column, or flags",
             )
         ]
     return []

@@ -562,8 +562,12 @@ def _standalone_document(*, column: str = "payload", **members: Any) -> Declarat
 
 def _temporal_document(*, dimension: TemporalDimension) -> tuple[Declaration, ...]:
     """A standalone document layout carrying one temporal axis of ``dimension``."""
-    start = instant(_SIBLING, "start")
-    end = instant(_SIBLING, "end")
+    names = (
+        ("txStart", "txEnd")
+        if dimension is TemporalDimension.TRANSACTION_TIME
+        else ("validStart", "validEnd")
+    )
+    start, end = (instant(_SIBLING, name) for name in names)
     return (
         _standalone_document(
             attributes=(key(_SIBLING), start, end),

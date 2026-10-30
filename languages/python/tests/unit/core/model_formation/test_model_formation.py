@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final, TypeGuard, cast
 
@@ -17,7 +17,12 @@ from parallax.core.metamodel import (
     METADATA_COMPILER,
     METAMODEL_MODULE,
     RESOLVER_ISSUE_CODES,
+    AsOfAxisLocation,
+    AsOfAxisMetadata,
+    AttributeIdentity,
+    AttributeLocation,
     CandidateMetamodel,
+    Column,
     CompiledMetadata,
     EntityIdentity,
     EntityLocation,
@@ -26,6 +31,8 @@ from parallax.core.metamodel import (
     MetamodelIssue,
     Rejected,
     Resolved,
+    Table,
+    TemporalDimension,
     UnresolvedEntityDeclaration,
     UnresolvedMetamodel,
     resolve,
@@ -63,7 +70,7 @@ from parallax.core.model_formation._errors import (
     FormationContractError,
 )
 from parallax.core.model_formation._manifest import CompilerRequirement, RequiredRuleSet
-from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
+from tests.unit._metamodel_support import Declaration, attribute, identity, instant, key, source
 
 _ORDER = identity("Order")
 _ITEM = identity("Item")
@@ -1383,3 +1390,42 @@ def test_rule_sets_run_in_manifest_order_regardless_of_profile_order() -> None:
     )
     form(source(*_valid_model()), manifest, profile)
     assert calls == [_INHERITANCE, _RELATIONSHIP]
+
+
+@pytest.mark.parametrize(
+    "defect", ["name", "column", "nullable", "read_only", "swapped", "dimension"]
+)
+def test_production_formation_refuses_noncanonical_endpoints(defect: str) -> None:
+    start = instant(_ORDER, "txStart")
+    end = instant(_ORDER, "txEnd")
+    if defect == "name":
+        start = replace(start, identity=AttributeIdentity(_ORDER, "openedAt"))
+    elif defect == "column":
+        start = replace(start, storage=Column("tx_start"))
+    elif defect == "nullable":
+        start = replace(start, nullable=True)
+    elif defect == "read_only":
+        start = replace(start, read_only=True)
+    elif defect == "swapped":
+        start, end = end, start
+    elif defect == "dimension":
+        start, end = instant(_ORDER, "validStart"), instant(_ORDER, "validEnd")
+    declaration = Declaration(
+        identity=_ORDER,
+        container=Table("orders"),
+        attributes=(key(_ORDER), start, end),
+        as_of_axes=(
+            AsOfAxisMetadata(TemporalDimension.TRANSACTION_TIME, start.identity, end.identity),
+        ),
+    )
+    with pytest.raises(MetamodelValidationError) as caught:
+        form_metamodel(source(declaration))
+    offending = (start, end) if defect in {"swapped", "dimension"} else (start,)
+    assert caught.value.issues == tuple(
+        MetamodelIssue(
+            resolver.AS_OF_ATTRIBUTE_NONCANONICAL,
+            AsOfAxisLocation(_ORDER, TemporalDimension.TRANSACTION_TIME),
+            (AttributeLocation(attribute.identity),),
+        )
+        for attribute in sorted(offending, key=lambda attribute: attribute.identity.name)
+    )

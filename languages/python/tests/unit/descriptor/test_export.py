@@ -18,7 +18,8 @@ from typing import cast
 import pytest
 
 from parallax.conformance import case_format, models
-from parallax.core.base import STRING, TIMESTAMP
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import STRING
 from parallax.core.metamodel import (
     AbstractSubtype,
     AsOfAxisMetadata,
@@ -39,6 +40,7 @@ from parallax.core.metamodel import (
 from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._export import DescriptorExportError, export_document
 from tests._support import fake_metamodel
+from tests.unit._metamodel_support import Declaration, instant, key, source
 
 
 def _corpus_paths() -> list[Path]:
@@ -341,39 +343,42 @@ def test_export_spells_read_only_cross_namespace_parent_and_a_many_value_object(
     assert value_objects[0]["multiplicity"] == "many"
 
 
-def test_export_drops_the_endpoints_the_axes_point_at_not_the_conventional_names() -> None:
-    # The `m-metamodel` seam accepts an As-Of Axis over any distinct pair of local
-    # Timestamp Attributes, so an axis can run over endpoints the convention table
-    # does not name. The Temporality Profile is the axis's whole wire form, so
-    # those endpoints leave the document with it: emitting them would produce a
-    # `transaction-time` Entity whose re-import derives `txStart`/`txEnd` beside
-    # them. What the round trip does not preserve is the endpoints' own names and
-    # Columns, which come back canonical.
+@pytest.mark.parametrize("bitemporal", [False, True])
+def test_accepted_seam_endpoints_survive_export_import(bitemporal: bool) -> None:
     identity = EntityIdentity(None, "Session")
-    entity = fake_metamodel.FakeEntity(
-        identity,
-        declared_container=Table("session"),
-        declared_attributes=(
-            AttributeMetadata(AttributeIdentity(identity, "label"), STRING, Column("label")),
-            AttributeMetadata(AttributeIdentity(identity, "openedAt"), TIMESTAMP, Column("in_z")),
-            AttributeMetadata(AttributeIdentity(identity, "closedAt"), TIMESTAMP, Column("out_z")),
+    dimensions = [(TemporalDimension.TRANSACTION_TIME, "txStart", "txEnd")]
+    if bitemporal:
+        dimensions.insert(0, (TemporalDimension.VALID_TIME, "validStart", "validEnd"))
+    declaration = Declaration(
+        identity=identity,
+        container=Table("session"),
+        attributes=(
+            key(identity),
+            *(instant(identity, name) for _, start, end in dimensions for name in (start, end)),
         ),
-        declared_as_of_axes=(
+        as_of_axes=tuple(
             AsOfAxisMetadata(
-                dimension=TemporalDimension.TRANSACTION_TIME,
-                start_attribute=AttributeIdentity(identity, "openedAt"),
-                end_attribute=AttributeIdentity(identity, "closedAt"),
-            ),
+                dimension, AttributeIdentity(identity, start), AttributeIdentity(identity, end)
+            )
+            for dimension, start, end in dimensions
         ),
     )
-    exported = cast(
-        "dict[str, object]", export_document(fake_metamodel.FakeMetamodel((entity,)))["entity"]
+    model = form_metamodel(source(declaration))
+    exported = export_document(model)
+    restored = models.accepted_model(exported)
+    original = model.entity(identity)
+    imported = restored.entity(identity)
+    assert original is not None and imported is not None
+    expected = tuple(
+        attribute for attribute in original.declared_attributes if attribute.framework_owned
     )
-    assert exported["temporality"] == "transaction-time"
-    names = [
-        attribute["name"] for attribute in cast("list[dict[str, object]]", exported["attributes"])
-    ]
-    assert names == ["label"]
+    actual = tuple(
+        attribute for attribute in imported.declared_attributes if attribute.framework_owned
+    )
+    assert len(expected) == (4 if bitemporal else 2)
+    assert actual == expected
+    assert all(not attribute.nullable and not attribute.read_only for attribute in actual)
+    assert original.declared_as_of_axes == imported.declared_as_of_axes
 
 
 def test_export_is_deterministic_and_a_canonical_fixpoint() -> None:
