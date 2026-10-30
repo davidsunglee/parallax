@@ -407,6 +407,58 @@ def test_a_postgres_locking_continuation_joins_the_inheritance_physical_identity
     assert statement.binds == (1, 1, "card", 2, "card", 2, 2)
 
 
+@pytest.mark.parametrize("target", ["Vehicle", "Car"])
+def test_a_postgres_locking_single_concrete_continuation_keeps_its_result_contract(
+    target: str,
+) -> None:
+    entity = entity_of(TRAVERSAL, target)
+    car = entity_of(TRAVERSAL, "Car").identity
+    query = object_query(
+        entity.identity,
+        TrueNode(),
+        narrow_to=(car.canonical,) if target == "Vehicle" else None,
+        order_by=(OrderKey(attr="parallax.compatibility.Vehicle.dealerId"),),
+    )
+    node = continuation.plan(validate_object_query(entity, query, TRAVERSAL), TRAVERSAL).after(
+        ContinuationCoordinate((3, 1)), limit=2
+    )
+    planned = deep_fetch.plan(node, TRAVERSAL, projection=_PROJECTION).root
+    compiled = compile_entity_query(planned, TRAVERSAL, POSTGRES, lock="locking")
+    unlocked = compile_entity_query(planned, TRAVERSAL, POSTGRES)
+    statement = compiled.statement
+    arm = (
+        "select t0.id, t0.maker, t0.dealer_id, t0.seats, "
+        "t0.dealer_id parallax_seek_0, t0.id parallax_seek_1 from traversal_car t0 where "
+    )
+    assert statement.sql == (
+        "select u.id, u.maker, u.dealer_id, u.seats, u.parallax_seek_0, u.parallax_seek_1 "
+        f"from (({arm}t0.dealer_id >= ? and (t0.dealer_id > ? or t0.dealer_id is null "
+        "or (t0.dealer_id = ? and (t0.id > ? or t0.id is null))) "
+        "order by t0.dealer_id asc, t0.id asc limit ?) union all ("
+        f"{arm}t0.dealer_id is null order by t0.dealer_id asc, t0.id asc limit ?)) "
+        "u join traversal_car t0 on u.id = t0.id "
+        "order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ? for share of t0"
+    )
+    assert statement.sql.count("for share") == 1
+    assert statement.binds == (3, 3, 3, 1, 2, 2, 2)
+    assert compiled.result_contract == unlocked.result_contract
+    assert compiled.resolved_position == (car,)
+    assert compiled.result_contract.coordinate_ordinals == (4, 5)
+    cells = {
+        "id": 7,
+        "maker": "Ada",
+        "dealer_id": None,
+        "seats": 4,
+        "parallax_seek_0": None,
+        "parallax_seek_1": 7,
+    }
+    (delivered,) = deliver(TRAVERSAL, compiled, [cells])
+    assert delivered.members == {"id": 7, "maker": "Ada", "dealerId": None, "seats": 4}
+    assert row_coordinates(compiled.result_contract, (result_row(compiled, cells),)) == (
+        ContinuationCoordinate((None, 7)),
+    )
+
+
 def test_a_postgres_locking_history_joins_every_temporal_identity_column() -> None:
     # A history stream's physical row identity is wider than its logical key:
     # both temporal upper edges participate in the primary key, so the outer join
