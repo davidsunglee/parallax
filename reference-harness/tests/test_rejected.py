@@ -105,6 +105,7 @@ from reference_harness.value_object_resolve import (
 from reference_harness.write_validate import (
     READ_ONLY_WRITE_TARGET,
     framework_owned_names,
+    validate_keyed_row_values,
     validate_subtype_write,
     validate_write,
     validate_write_persistence,
@@ -2377,6 +2378,16 @@ def test_keyed_operation_and_window_precede_framework_owned_assignments(
     [
         ("amend", {"id": 1, "owner": 7}, "neutral-literal-type-mismatch"),
         ("replace", {"id": 1}, "write-required-attribute-missing"),
+        (
+            "amend",
+            {"id": {"computed": "maxPlusOne"}, "owner": "Ada"},
+            "neutral-literal-type-mismatch",
+        ),
+        (
+            "replace",
+            {"id": {"computed": "maxPlusOne"}, "owner": "Ada", "balance": "100.00"},
+            "neutral-literal-type-mismatch",
+        ),
     ],
 )
 def test_rejected_keyed_rows_finish_values_before_a_later_owned_assignment(
@@ -2425,3 +2436,12 @@ def test_rejected_keyed_window_cannot_pass_as_an_assignment_refusal() -> None:
     )
     with pytest.raises(CaseFailure, match="takes no Valid-Time window"):
         run_case(case, None)
+
+
+def test_keyed_insert_values_preserve_framework_key_allocation_markers() -> None:
+    entity = load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
+    validate_keyed_row_values(
+        entity,
+        "insert",
+        {"id": {"computed": "maxPlusOne"}, "owner": "Ada", "balance": "100.00"},
+    )

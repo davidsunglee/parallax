@@ -333,7 +333,12 @@ def validate_keyed_row_values(entity: Entity, mutation: str, row: dict[str, Any]
         replacing = mutation in {"replace", "replaceUntil"}
         for name, attribute in attributes.items():
             if name not in owned and not (replacing and attribute.get("readOnly")):
-                _validate_attribute(row, attribute, path=f"{entity.name}.{name}")
+                _validate_attribute(
+                    row,
+                    attribute,
+                    path=f"{entity.name}.{name}",
+                    marker_exempt=not replacing or not attribute.get("primaryKey", False),
+                )
         for name, occurrence in occurrences.items():
             _validate_occurrence(row, occurrence, path=f"{entity.name}.{name}")
         return
@@ -343,7 +348,12 @@ def validate_keyed_row_values(entity: Entity, mutation: str, row: dict[str, Any]
     ]
     for name in ordered:
         if name in attributes and name not in owned:
-            _validate_attribute(row, attributes[name], path=f"{entity.name}.{name}")
+            _validate_attribute(
+                row,
+                attributes[name],
+                path=f"{entity.name}.{name}",
+                marker_exempt=name not in key_names,
+            )
         elif name in occurrences:
             _validate_occurrence(row, occurrences[name], path=f"{entity.name}.{name}")
 
