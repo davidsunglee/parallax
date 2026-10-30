@@ -1,0 +1,17 @@
+# Permit (v1): the NON-TEMPORAL end of the As-Of Axis scenario over authored
+# indices.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# Entity already stores rows and declares one unique and one non-unique authored
+# index, which stay exactly as written at both endpoints.
+entity:
+  name: Permit
+  namespace: parallax.compatibility
+  table: evolution_permit
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: serial, type: string, maxLength: 32 }
+    - { name: holder, type: string, maxLength: 64 }
+  indices:
+    - { name: permit_serial, attributes: [serial], unique: true }
+    - { name: permit_holder, attributes: [holder] }

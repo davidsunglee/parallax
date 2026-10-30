@@ -586,6 +586,81 @@ def test_equal_endpoints_produce_an_empty_delta() -> None:
     assert schema_delta(evolution, POSTGRES) == SchemaDelta(statements=(), created_indices=())
 
 
+@pytest.mark.parametrize("stem", ["temporal-authored-index", "evolution-temporality-index-v2"])
+def test_equal_temporal_editions_produce_an_empty_delta(stem: str) -> None:
+    # Both editions are compiled under the current derivation, so equal models ask
+    # for nothing even though a table an earlier release provisioned may hold its
+    # authored indices without the axis ends: that adoption is a manual migration.
+    evolution = evolve(_MODELS[stem], _MODELS[stem])
+    assert isinstance(evolution, UnilateralEvolution)
+    assert schema_delta(evolution, POSTGRES) == SchemaDelta(statements=(), created_indices=())
+
+
+def _index_statements(model: AcceptedMetamodel) -> list[str]:
+    return [statement for statement in _statements(model) if " index " in statement]
+
+
+def test_gaining_a_temporal_profile_is_compared_through_fresh_provisioning() -> None:
+    # The profile change is coordinated, so no delta between the two editions
+    # exists to compare. Each edition's fresh provisioning answers instead: the
+    # non-temporal names hash the authored components alone, and the
+    # Transaction-Time edition's columns and names both carry the axis end.
+    earlier = _MODELS["evolution-temporality-index-v1"]
+    later = _MODELS["evolution-temporality-index-v2"]
+    assert isinstance(evolve(earlier, later), CoordinatedEvolution)
+    assert _index_statements(earlier) == [
+        "create index pxi_evolution_permit_parallax_1ab67ebbc572f820f39b577291e6d6ff "
+        "on evolution_permit (holder)",
+        "create unique index pxi_evolution_permit_parallax_fbc1252e35f802b190be2f1bb52d5c4d "
+        "on evolution_permit (serial)",
+    ]
+    assert _index_statements(later) == [
+        "create index pxi_evolution_permit_parallax_8a8ee15abcae9cb0ec132d95dbc0e7a9 "
+        "on evolution_permit (holder, out_z)",
+        "create unique index pxi_evolution_permit_parallax_cbac874d569a83df2664ead818b52a73 "
+        "on evolution_permit (serial, out_z)",
+    ]
+
+
+def _bitemporal_permit(*, unique: bool) -> AcceptedMetamodel:
+    return formed(
+        ingest_document(
+            {
+                "entity": {
+                    "name": "Permit",
+                    "table": "permit",
+                    "temporality": "bitemporal",
+                    "attributes": [
+                        {"name": "id", "type": "int64", "primaryKey": True},
+                        {"name": "serial", "type": "string", "maxLength": 32},
+                    ],
+                    "indices": [
+                        {"name": "permit_serial", "attributes": ["serial"], "unique": unique}
+                    ],
+                }
+            }
+        )
+    )
+
+
+def test_a_temporal_index_alteration_creates_its_end_keyed_target_before_dropping() -> None:
+    # Under an unchanged temporal profile an authored Index alteration stays
+    # unilateral: the target, ending with both axis ends, is created under a new
+    # name before the earlier definition fresh provisioning created is dropped.
+    earlier, later = _bitemporal_permit(unique=False), _bitemporal_permit(unique=True)
+    evolution = evolve(earlier, later)
+    assert isinstance(evolution, UnilateralEvolution)
+    (held,) = _delta(earlier).created_indices
+    delta = schema_delta(evolution, POSTGRES)
+    (created,) = delta.created_indices
+    assert created.physical_index_name != held.physical_index_name
+    assert delta.statements == (
+        f"create unique index {created.physical_index_name.value} on permit "
+        "(serial, thru_z, out_z)",
+        f"drop index {held.physical_index_name.value}",
+    )
+
+
 def test_a_domain_is_restated_downward_only_where_no_shape_stores_the_column() -> None:
     # The restatement arm's second legality shape and the reason it is safe, as
     # one pair. `Draft` composes no concrete subtype, so `caption` narrowing is

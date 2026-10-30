@@ -7979,6 +7979,105 @@
       ]
     }
   },
+  "models/evolution-temporality-index-v1.yaml": {
+    "evolution_permit": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Permit"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Permit.id",
+          "declaringOwner": "parallax.compatibility.Permit",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Permit"
+          ],
+          "column": "serial",
+          "contributor": "attribute:parallax.compatibility.Permit.serial",
+          "declaringOwner": "parallax.compatibility.Permit",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Permit"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Permit.holder",
+          "declaringOwner": "parallax.compatibility.Permit",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/evolution-temporality-index-v2.yaml": {
+    "evolution_permit": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Permit"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Permit.id",
+          "declaringOwner": "parallax.compatibility.Permit",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Permit"
+          ],
+          "column": "serial",
+          "contributor": "attribute:parallax.compatibility.Permit.serial",
+          "declaringOwner": "parallax.compatibility.Permit",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Permit"
+          ],
+          "column": "holder",
+          "contributor": "attribute:parallax.compatibility.Permit.holder",
+          "declaringOwner": "parallax.compatibility.Permit",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Permit"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.Permit.txStart",
+          "declaringOwner": "parallax.compatibility.Permit",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Permit"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.Permit.txEnd",
+          "declaringOwner": "parallax.compatibility.Permit",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        4
+      ]
+    }
+  },
   "models/evolution-temporality-v1.yaml": {
     "evolution_meter": {
       "columns": [

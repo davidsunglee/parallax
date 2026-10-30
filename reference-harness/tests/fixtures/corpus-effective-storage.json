@@ -2963,6 +2963,30 @@
       "valueObject": {}
     }
   },
+  "models/evolution-temporality-index-v1.yaml": {
+    "parallax.compatibility.Permit": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id",
+        "serial": "serial"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-temporality-index-v2.yaml": {
+    "parallax.compatibility.Permit": {
+      "attribute": {
+        "holder": "holder",
+        "id": "id",
+        "serial": "serial",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/evolution-temporality-v1.yaml": {
     "parallax.compatibility.Meter": {
       "attribute": {

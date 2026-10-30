@@ -820,6 +820,83 @@ PostgreSQL refuses `NOT VALID` on one, so adding it scans and indexes every row 
 `ACCESS EXCLUSIVE`. Plan that lock's duration on a large table, and add the exclusion
 only after the queries above find nothing, or it fails with `23P01` and adds nothing.
 
+## Authored indices on temporal tables
+
+Every index you declare on a temporal Entity, unique or not, is created over its
+declared columns followed by the table's axis ends: `out_z` on a
+Transaction-Time-only table, `thru_z, out_z` on a Bitemporal one. A unique
+`code` index on a Transaction-Time-only `handle` table is therefore
+`unique (code, out_z)`, so an amend that keeps `code` can close the current row
+and insert its successor. What each shape does and does not guarantee is
+`core/spec/m-descriptor.md`'s, under *`index`*.
+
+### Adopting the indices on an existing table
+
+A release before this rule created those indices over the declared columns alone,
+under names derived from those columns. A later delta changes neither: both model
+editions it compares are compiled under the current rule, so equal editions give
+an empty delta, and it never reads the catalog. Until you migrate, an amend that
+keeps a unique index's value fails with `uniqueViolation` on that index, and a
+non-unique index keeps working but a Latest lookup matches only its declared
+columns. Migrate each such index yourself; nothing in Parallax guesses the names
+your table carries now.
+
+Take the target name from a fresh provisioning of the same model. The
+`created_indices` of the delta from `ABSENT` lists every authored index it
+creates, with its `physical_index_name`, `physical_table`,
+`logical_index_identity`, and `unique` flag, and its statements give the columns:
+
+```python
+from parallax.core.dialect import POSTGRES
+from parallax.evolution import schema_delta
+from parallax.evolution.model_evolution import ABSENT, evolve
+```
+
+```text
+rollout = schema_delta(evolve(ABSENT, model), POSTGRES)
+rollout.created_indices    # the target names
+rollout.statements         # the target columns
+```
+
+Then find the index the table holds now, which carries the declared columns
+without the axis ends:
+
+```sql
+select indexname, indexdef from pg_indexes
+where tablename = 'handle' and left(indexname, 4) = 'pxi_' order by indexname;
+```
+
+Create the target first, then drop the held index:
+
+```sql
+create unique index <target_name> on handle (code, out_z);
+drop index <held_name>;
+```
+
+On a Bitemporal table the columns are `(code, thru_z, out_z)`; for a non-unique
+index leave out `unique`. A table-per-concrete-subtype family holds the index on
+every concrete table carrying its columns, each under its own name, so repeat the
+pair on each. Creating first keeps the old index enforcing until its replacement
+exists. Every stored row that satisfies `unique (code)` also satisfies
+`unique (code, out_z)`, so the replacement cannot fail on existing data and there
+is nothing to check first.
+
+`create index` builds the index while holding a `SHARE` lock, which lets reads
+continue and blocks every write to the table until the build finishes; plan for
+its duration on a large table. `drop index` takes an `ACCESS EXCLUSIVE` lock,
+which blocks reads and writes as well, but only for as long as the drop takes;
+it waits for queries already using the table, and queries arriving meanwhile
+queue behind it.
+Run as one transaction, the pair either completes or leaves the old index in
+place, and holds both locks until it commits. `create index concurrently` and
+`drop index concurrently` avoid blocking writes, but cannot run inside a
+transaction block and take longer, and a concurrent build that fails leaves an
+invalid index you must drop before trying again.
+
+This adopts the indices of a table that is already temporal and stays so. Giving
+an Entity a temporal profile or removing one is a coordinated model change with a
+migration of its own, and no delta is generated for it.
+
 ## What gets logged, and by whom
 
 Three reporting paths with three different disclosure policies. They are not
