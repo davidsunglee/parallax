@@ -59,6 +59,7 @@ from reference_harness.inheritance import (
 from reference_harness.keyed_write_validate import (
     FRAMEWORK_OWNED_MEMBER_ASSIGNED,
     TEMPORAL_KEYED_WRITE_MULTI_ROW,
+    KeyedWriteApplicabilityError,
     validate_keyed_write,
 )
 from reference_harness.metamodel import (
@@ -2335,3 +2336,92 @@ def test_schema_rejects_the_retired_narrow_entity_field() -> None:
     assert not _predicate_valid(
         {"narrow": {"entity": "Customer", "to": ["Customer"], "operand": {"true": {}}}}
     )
+
+
+@pytest.mark.parametrize(
+    ("model", "mutation", "window"),
+    [
+        (
+            "account",
+            "amendUntil",
+            {"validFrom": "2024-01-01T00:00:00Z", "until": "2024-02-01T00:00:00Z"},
+        ),
+        ("account", "terminate", {}),
+        ("position", "delete", {"validFrom": "2024-01-01T00:00:00Z"}),
+        ("position", "amend", {}),
+        (
+            "position",
+            "amend",
+            {"validFrom": "2024-01-01T00:00:00Z", "until": "2024-02-01T00:00:00Z"},
+        ),
+        (
+            "position",
+            "amendUntil",
+            {"validFrom": "2024-02-01T00:00:00Z", "until": "2024-01-01T00:00:00Z"},
+        ),
+    ],
+)
+def test_keyed_operation_and_window_precede_framework_owned_assignments(
+    model: str, mutation: str, window: dict[str, Any]
+) -> None:
+    entity = load_model(_COMPATIBILITY_ROOT, f"models/{model}.yaml").root_entity
+    member = "version" if model == "account" else "txStart"
+    with pytest.raises(KeyedWriteApplicabilityError):
+        validate_keyed_write(
+            entity, {"mutation": mutation, "rows": [{"id": 1, member: 7}], **window}
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "first_row", "earlier_rule"),
+    [
+        ("amend", {"id": 1, "owner": 7}, "neutral-literal-type-mismatch"),
+        ("replace", {"id": 1}, "write-required-attribute-missing"),
+    ],
+)
+def test_rejected_keyed_rows_finish_values_before_a_later_owned_assignment(
+    mutation: str, first_row: dict[str, Any], earlier_rule: str
+) -> None:
+    case = Case(
+        path=Path("m-opt-lock-999-earlier-row-values.yaml"),
+        raw={
+            "model": "models/account.yaml",
+            "tags": ["m-opt-lock"],
+            "shape": "rejected",
+            "when": {
+                "write": {
+                    "mutation": mutation,
+                    "entity": "parallax.compatibility.Account",
+                    "rows": [first_row, {"id": 2, "version": 7}],
+                }
+            },
+            "then": {"rejectedRule": FRAMEWORK_OWNED_MEMBER_ASSIGNED},
+        },
+        model=load_model(_COMPATIBILITY_ROOT, "models/account.yaml"),
+    )
+    with pytest.raises(CaseFailure, match=earlier_rule):
+        run_case(case, None)
+
+
+def test_rejected_keyed_window_cannot_pass_as_an_assignment_refusal() -> None:
+    case = Case(
+        path=Path("m-opt-lock-999-inapplicable-window.yaml"),
+        raw={
+            "model": "models/account.yaml",
+            "tags": ["m-opt-lock"],
+            "shape": "rejected",
+            "when": {
+                "write": {
+                    "mutation": "amendUntil",
+                    "entity": "parallax.compatibility.Account",
+                    "rows": [{"id": 1, "version": 7}],
+                    "validFrom": "2024-01-01T00:00:00Z",
+                    "until": "2024-02-01T00:00:00Z",
+                }
+            },
+            "then": {"rejectedRule": FRAMEWORK_OWNED_MEMBER_ASSIGNED},
+        },
+        model=load_model(_COMPATIBILITY_ROOT, "models/account.yaml"),
+    )
+    with pytest.raises(CaseFailure, match="takes no Valid-Time window"):
+        run_case(case, None)

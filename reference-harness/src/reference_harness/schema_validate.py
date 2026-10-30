@@ -53,9 +53,11 @@ from .inheritance import (
     validate_family_defs,
 )
 from .keyed_write_validate import (
+    KeyedWriteApplicabilityError,
     states_framework_marker,
     undeclared_row_members,
     validate_keyed_write,
+    validate_keyed_write_shape,
 )
 from .metamodel import validate_index_identities, validate_temporal_member_names
 from .predicate_write_validate import PredicateWriteValidationError, validate_predicate_write
@@ -327,9 +329,7 @@ def _validate_buffered_write(
     * **member honesty** — each keyed row's keys MUST name declared attributes / value
       objects of its entity, so a buffered write cannot silently name a non-member
       (:func:`~reference_harness.keyed_write_validate.undeclared_row_members`). Asked
-      FIRST, and the entry stops there when it fails: a row naming nothing real has no
-      payload for an instruction rule to be about, which is the same precedence every
-      other lane applies.
+      after instruction applicability, before the row's values.
     * **the temporal singleton** — an entry on a temporal entity carries exactly ONE
       row (`m-unit-work` "A temporal keyed instruction carries exactly one row"),
       since each row closes its own milestone, settles against its own observation, and
@@ -401,6 +401,12 @@ def _valid_keyed_entry_entity(
     if entity is None:
         errors.append(f"{entry_label}: keyed write entity {entity_name!r} is not declared")
         return None
+    try:
+        validate_keyed_write_shape(entity, instruction)
+    except (RejectionError, KeyedWriteApplicabilityError) as exc:
+        surface = "target write" if "row" in instruction else "keyed write"
+        errors.append(f"{entry_label}: {surface}: {exc}")
+        return None
     row = instruction.get("row")
     unknown = (
         sorted(undeclared_members(entity, row))
@@ -419,8 +425,8 @@ def _valid_keyed_entry_entity(
         return None
     try:
         validate_keyed_write(entity, instruction, allow_framework_markers=True)
-    except RejectionError as exc:
-        errors.append(f"{entry_label}: {exc.detail}")
+    except (RejectionError, KeyedWriteApplicabilityError) as exc:
+        errors.append(f"{entry_label}: {exc}")
         return None
     return entity
 

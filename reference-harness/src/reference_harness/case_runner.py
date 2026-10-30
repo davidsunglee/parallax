@@ -94,6 +94,7 @@ from .inheritance import (
 )
 from .keyed_write_validate import (
     KEYED_WRITE_REJECTED_RULES,
+    KeyedWriteApplicabilityError,
     undeclared_row_members,
     validate_keyed_assignment_members,
     validate_keyed_write,
@@ -148,6 +149,7 @@ from .write_validate import (
     WRITE_PERSISTENCE_REJECTED_RULES,
     target_write_violation,
     undeclared_members,
+    validate_keyed_row_values,
     validate_subtype_write,
     validate_write,
     validate_write_persistence,
@@ -903,7 +905,10 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
             f"case's model does not declare"
         ) from exc
     validate_write_persistence(entity)
-    validate_keyed_write_shape(entity, write)
+    try:
+        validate_keyed_write_shape(entity, write)
+    except KeyedWriteApplicabilityError as exc:
+        raise CaseFailure(f"{case.path.name}: {exc}") from exc
     rows = write.get("rows")
     for row in rows if isinstance(rows, list) else ():
         if isinstance(row, dict):
@@ -915,6 +920,7 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
                     f"{case.path.name}: keyed instruction's row(s) name {unknown}, which are not "
                     f"attributes or value objects of {entity.name}"
                 )
+            validate_keyed_row_values(entity, str(write.get("mutation")), row)
 
 
 def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
@@ -1306,9 +1312,9 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         try:
             instruction = {**authored, "rows": [authored["row"]]} if "row" in authored else authored
             validate_keyed_write(entity, instruction, allow_framework_markers=True)
-        except RejectionError as exc:
+        except (RejectionError, KeyedWriteApplicabilityError) as exc:
             raise CaseFailure(
-                f"{case.path.name}: writeSequence step on {step['entity']}: {exc.detail}"
+                f"{case.path.name}: writeSequence step on {step['entity']}: {exc}"
             ) from exc
         step_statements, step_binds = _ungrouped_effects(
             case,

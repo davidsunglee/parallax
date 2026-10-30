@@ -324,6 +324,30 @@ def validate_write(entity: Entity, row: dict[str, Any]) -> None:
         _validate_occurrence(row, value_object, path=f"{entity.name}.{value_object['name']}")
 
 
+def validate_keyed_row_values(entity: Entity, mutation: str, row: dict[str, Any]) -> None:
+    """Judge an admitted keyed row's values without changing bare-row grading."""
+    owned = framework_owned_names(entity)
+    attributes = {attribute["name"]: attribute for attribute in entity.attributes}
+    occurrences = {occurrence["name"]: occurrence for occurrence in entity.value_objects}
+    if mutation in {"insert", "insertUntil", "replace", "replaceUntil"}:
+        replacing = mutation in {"replace", "replaceUntil"}
+        for name, attribute in attributes.items():
+            if name not in owned and not (replacing and attribute.get("readOnly")):
+                _validate_attribute(row, attribute, path=f"{entity.name}.{name}")
+        for name, occurrence in occurrences.items():
+            _validate_occurrence(row, occurrence, path=f"{entity.name}.{name}")
+        return
+    key_names = {name for name, attribute in attributes.items() if attribute.get("primaryKey")}
+    ordered = [name for name in row if name not in key_names] + [
+        name for name in row if name in key_names
+    ]
+    for name in ordered:
+        if name in attributes and name not in owned:
+            _validate_attribute(row, attributes[name], path=f"{entity.name}.{name}")
+        elif name in occurrences:
+            _validate_occurrence(row, occurrences[name], path=f"{entity.name}.{name}")
+
+
 def _is_many(value_object: dict[str, Any]) -> bool:
     return value_object.get("multiplicity", "one") == "many"
 
