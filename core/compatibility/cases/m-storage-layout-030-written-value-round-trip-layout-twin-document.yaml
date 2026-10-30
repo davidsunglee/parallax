@@ -111,8 +111,8 @@ when:
       note: read the four written rows back — each one publishes exactly the value its own write composed
       statements:
         - sql:
-            postgres: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id > ? order by t0.id asc for share of t0
-            mariadb: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id > ? order by t0.id asc lock in share mode
+            postgres: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id > ? order by t0.id asc
+            mariadb: select t0.id, not t0.payload is null, t0.payload from write_twin t0 where t0.id > ? order by t0.id asc
           binds: [9]
       expectRows:
         - id: 10

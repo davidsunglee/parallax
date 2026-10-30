@@ -42,8 +42,8 @@ when:
       note: the restated occurrence is what item 2 holds when the second edit arrives
       statements:
         - sql:
-            postgres: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ? for share of t0
-            mariadb: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ? lock in share mode
+            postgres: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ?
+            mariadb: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ?
           binds: [2]
       expectRows:
         - id: 2
@@ -87,8 +87,8 @@ when:
       note: only the second edit's own value survives, and `label` and `marks` are untouched throughout
       statements:
         - sql:
-            postgres: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ? for share of t0
-            mariadb: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ? lock in share mode
+            postgres: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ?
+            mariadb: select t0.id, t0.label, not t0.spec is null, t0.spec, not t0.marks is null, t0.marks from write_twin t0 where t0.id = ?
           binds: [2]
       expectRows:
         - id: 2

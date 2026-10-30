@@ -1,0 +1,4 @@
+parallax.compatibility.Order:
+  - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05, version: 1 }
+parallax.compatibility.OrderItem:
+  - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null, version: 1 }

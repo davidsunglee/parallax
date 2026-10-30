@@ -10231,6 +10231,162 @@
       ]
     }
   },
+  "models/orders-versioned.yaml": {
+    "order_item": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.OrderItem"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.OrderItem.id",
+          "declaringOwner": "parallax.compatibility.OrderItem",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.OrderItem"
+          ],
+          "column": "order_id",
+          "contributor": "attribute:parallax.compatibility.OrderItem.orderId",
+          "declaringOwner": "parallax.compatibility.OrderItem",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.OrderItem"
+          ],
+          "column": "sku",
+          "contributor": "attribute:parallax.compatibility.OrderItem.sku",
+          "declaringOwner": "parallax.compatibility.OrderItem",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.OrderItem"
+          ],
+          "column": "quantity",
+          "contributor": "attribute:parallax.compatibility.OrderItem.quantity",
+          "declaringOwner": "parallax.compatibility.OrderItem",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.OrderItem"
+          ],
+          "column": "shipped_on",
+          "contributor": "attribute:parallax.compatibility.OrderItem.shippedOn",
+          "declaringOwner": "parallax.compatibility.OrderItem",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.OrderItem"
+          ],
+          "column": "version",
+          "contributor": "attribute:parallax.compatibility.OrderItem.version",
+          "declaringOwner": "parallax.compatibility.OrderItem",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "orders": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Order"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Order.id",
+          "declaringOwner": "parallax.compatibility.Order",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Order"
+          ],
+          "column": "name",
+          "contributor": "attribute:parallax.compatibility.Order.name",
+          "declaringOwner": "parallax.compatibility.Order",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Order"
+          ],
+          "column": "sku",
+          "contributor": "attribute:parallax.compatibility.Order.sku",
+          "declaringOwner": "parallax.compatibility.Order",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Order"
+          ],
+          "column": "qty",
+          "contributor": "attribute:parallax.compatibility.Order.qty",
+          "declaringOwner": "parallax.compatibility.Order",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Order"
+          ],
+          "column": "price",
+          "contributor": "attribute:parallax.compatibility.Order.price",
+          "declaringOwner": "parallax.compatibility.Order",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Order"
+          ],
+          "column": "active",
+          "contributor": "attribute:parallax.compatibility.Order.active",
+          "declaringOwner": "parallax.compatibility.Order",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Order"
+          ],
+          "column": "ordered_on",
+          "contributor": "attribute:parallax.compatibility.Order.orderedOn",
+          "declaringOwner": "parallax.compatibility.Order",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Order"
+          ],
+          "column": "version",
+          "contributor": "attribute:parallax.compatibility.Order.version",
+          "declaringOwner": "parallax.compatibility.Order",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/orders.yaml": {
     "order_item": {
       "columns": [

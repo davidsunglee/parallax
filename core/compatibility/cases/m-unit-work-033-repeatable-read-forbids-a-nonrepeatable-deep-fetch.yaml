@@ -1,9 +1,4 @@
-# Repeatable Read forbids a nonrepeatable read on a DEEP FETCH's own child level
-# (m-unit-work / m-deep-fetch / m-db-port): a unit of work opened at
-# `when.uow.isolation: repeatable-read` fans out to an included relationship twice
-# and materializes the same graph both times, across a peer transaction that
-# committed a change to the included row in between.
-model: models/orders.yaml
+model: models/orders-versioned.yaml
 tags: [m-unit-work, m-deep-fetch, isolation, repeatable-read, nonrepeatable-read, relationship, scenario, slice-managed-1]
 shape: scenario
 compileEligibility:
@@ -28,12 +23,12 @@ when:
       note: the reading unit of work materializes item 11 with its owning order (name Ada)
       statements:
         - sql:
-            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
-            mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.version from order_item t0 where t0.id = ?
+            mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.version from order_item t0 where t0.id = ?
           binds: [11]
         - sql:
-            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(cast(? as bigint[]))
-            mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.version from orders t0 where t0.id = any(cast(? as bigint[]))
+            mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.version from orders t0 where t0.id in (?)
           binds: { postgres: [[1]], mariadb: [1] }
       expectGraph:
         OrderItem:
@@ -42,7 +37,23 @@ when:
             sku: A-100
             quantity: 2
             shippedOn: null
-            order: { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05 }
+            version: 1
+            order: { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05, version: 1 }
+    - uow: writer
+      objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            path: parallax.compatibility.Order.id
+            value: 1
+      databaseCalls: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.version from orders t0 where t0.id = ?
+            mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.version from orders t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05, version: 1 }
     - uow: writer
       write:
         - mutation: amend
@@ -50,12 +61,12 @@ when:
           rows:
             - { id: 1, name: Rewritten }
       databaseCalls: 1
-      note: an ungated update of the INCLUDED row — Order is unversioned, so the mandatory Locking fallback emits no gate; the group COMMITS after this, its last step
+      note: the peer advances its observed version and commits the included row before the reader repeats its deep fetch
       statements:
         - sql:
-            postgres: update orders set name = ? where id = ?
-            mariadb: update orders set name = ? where id = ?
-          binds: [Rewritten, 1]
+            postgres: update orders set name = ?, version = ? where id = ? and version = ?
+            mariadb: update orders set name = ?, version = ? where id = ? and version = ?
+          binds: [Rewritten, 2, 1, 1]
     - uow: reader
       objectQuery:
         target: parallax.compatibility.OrderItem
@@ -70,12 +81,12 @@ when:
       note: the SAME deep fetch again MUST materialize the same graph — the included order's name is still Ada; the group COMMITS after this, its last step
       statements:
         - sql:
-            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
-            mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.version from order_item t0 where t0.id = ?
+            mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on, t0.version from order_item t0 where t0.id = ?
           binds: [11]
         - sql:
-            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(cast(? as bigint[]))
-            mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.version from orders t0 where t0.id = any(cast(? as bigint[]))
+            mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.version from orders t0 where t0.id in (?)
           binds: { postgres: [[1]], mariadb: [1] }
       expectGraph:
         OrderItem:
@@ -84,7 +95,8 @@ when:
             sku: A-100
             quantity: 2
             shippedOn: null
-            order: { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05 }
+            version: 1
+            order: { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05, version: 1 }
     - objectQuery:
         target: parallax.compatibility.Order
         predicate:
@@ -95,10 +107,10 @@ when:
       note: UNGROUPED, after both groups resolved — the peer's write is durable, order 1 reads Rewritten
       statements:
         - sql:
-            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
-            mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.version from orders t0 where t0.id = ?
+            mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.version from orders t0 where t0.id = ?
           binds: [1]
       expectRows:
-        - { id: 1, name: Rewritten, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05 }
+        - { id: 1, name: Rewritten, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05, version: 2 }
 then:
-  databaseCalls: 6
+  databaseCalls: 7

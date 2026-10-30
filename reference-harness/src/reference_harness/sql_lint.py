@@ -30,6 +30,7 @@ import sqlglot
 import yaml
 
 from .sql_canonical import sqlglot_dialect
+from .sql_lock_lint import LockConsistency, ReadLocks
 from .sql_normalize import normalize
 
 
@@ -71,6 +72,7 @@ def _lint_benchmarks(compatibility_root: Path, errors: list[str]) -> None:
 def lint_tree(compatibility_root: Path) -> list[str]:
     compatibility_root = compatibility_root.resolve()
     errors: list[str] = []
+    locks = LockConsistency(compatibility_root)
     cases_dir = compatibility_root / "cases"
     _lint_benchmarks(compatibility_root, errors)
 
@@ -94,7 +96,7 @@ def lint_tree(compatibility_root: Path) -> list[str]:
         # canonical, but each must parse — and its ? count must match its binds.
         _lint_golden(given.get("apply"), "given.apply", name, errors)
 
-        _lint_step_sequences(when, name, errors)
+        _lint_step_sequences(when, name, errors, locks, case)
         _lint_concurrency_rounds(when, name, errors)
 
         _lint_reference_sql(
@@ -104,7 +106,13 @@ def lint_tree(compatibility_root: Path) -> list[str]:
     return errors
 
 
-def _lint_step_sequences(when: dict[str, Any], name: str, errors: list[str]) -> None:
+def _lint_step_sequences(
+    when: dict[str, Any],
+    name: str,
+    errors: list[str],
+    locks: LockConsistency,
+    case: dict[str, Any],
+) -> None:
     """The per-step golden SQL of a scenario / coherence / conflict-retry case,
     and each scenario read's own naive oracle."""
     for step_key in ("scenario", "coherence", "attempts"):
@@ -115,7 +123,11 @@ def _lint_step_sequences(when: dict[str, Any], name: str, errors: list[str]) -> 
             if not isinstance(step, dict):
                 continue
             _lint_golden(
-                step.get("statements"), f"when.{step_key}[{index}].statements", name, errors
+                step.get("statements"),
+                f"when.{step_key}[{index}].statements",
+                name,
+                errors,
+                read_locks=locks.read(case, step, step_key),
             )
             if step_key == "scenario":
                 _lint_reference_sql(
@@ -182,7 +194,14 @@ def _lint_reference_sql(
                 errors.append(f"case {name}: {where}.{dialect} does not parse: {exc}")
 
 
-def _lint_golden(entries: Any, where: str, name: str, errors: list[str]) -> None:
+def _lint_golden(
+    entries: Any,
+    where: str,
+    name: str,
+    errors: list[str],
+    *,
+    read_locks: ReadLocks | None = None,
+) -> None:
     """Parse + canonical-check + bind-count-check every statement entry in *entries*.
 
     *entries* is a list of ``{sql, binds}`` statement entries — a case's
@@ -211,6 +230,7 @@ def _lint_golden(entries: Any, where: str, name: str, errors: list[str]) -> None
                 canonical_required=canonical_required,
                 bind_count=_bind_count(binds, dialect),
                 errors=errors,
+                read_locks=read_locks,
             )
 
 
@@ -248,14 +268,19 @@ def _lint_statement(
     canonical_required: bool,
     bind_count: int,
     errors: list[str],
+    read_locks: ReadLocks | None = None,
 ) -> None:
     """One statement text parses, is canonical where required, and carries one
     ``?`` placeholder per bind."""
     try:
-        sqlglot.parse_one(text, read=sqlglot_dialect(dialect))
+        tree = sqlglot.parse_one(text, read=sqlglot_dialect(dialect))
     except Exception as exc:  # noqa: BLE001 - report parse errors as lint
         errors.append(f"{subject} does not parse: {exc}")
         return
+    if read_locks is not None:
+        failure = read_locks.check(tree, text, dialect)
+        if failure:
+            errors.append(f"{subject} {failure}")
     if canonical_required:
         try:
             canonical = normalize(text, dialect)

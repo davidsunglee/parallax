@@ -1416,9 +1416,19 @@ def _load_yaml(path: Path) -> Any:
 # a process; nothing in the suite writes to a corpus it has already read, and a
 # test that builds a throwaway corpus gets a distinct ``tmp_path`` root and so a
 # distinct key.
+_METADATA_CACHE: dict[Path, Model] = {}
 _MODEL_CACHE: dict[tuple[Path, str], Model] = {}
 _CASE_CACHE: dict[tuple[Path, Path], Case] = {}
 _TEMPLATE_CACHE: dict[Path, tuple[Case, ...]] = {}
+
+
+def load_model_metadata(compatibility_root: Path, model_rel: str) -> Model:
+    """Load canonical model metadata without reading fixture rows, cached by path."""
+    model_path = (compatibility_root / model_rel).resolve()
+    if model_path not in _METADATA_CACHE:
+        descriptor = frozen_view(derive_temporal_structure(_load_yaml(model_path)))
+        _METADATA_CACHE[model_path] = Model(path=model_path, descriptor=descriptor)
+    return _METADATA_CACHE[model_path]
 
 
 def load_model(compatibility_root: Path, model_rel: str) -> Model:
@@ -1435,7 +1445,7 @@ def load_model(compatibility_root: Path, model_rel: str) -> Model:
         return cached
 
     model_path = (root / model_rel).resolve()
-    descriptor = frozen_view(derive_temporal_structure(_load_yaml(model_path)))
+    descriptor = load_model_metadata(root, model_rel).descriptor
 
     fixtures_path = root / "fixtures" / f"{model_path.stem}.yaml"
     fixtures: dict[str, list[dict[str, Any]]] = FrozenDict()
