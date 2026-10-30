@@ -146,9 +146,9 @@ def test_public_broad_tpcs_children_report_same_root_witness_conflict(
             db.find(query).results()
     conflict = failure.value.__cause__
     assert isinstance(conflict, SnapshotConsistencyError)
-    assert conflict.code == "snapshot-projection-conflict"
+    assert conflict.code == "snapshot-fetched-row-conflict"
     assert conflict.coordinates == ()
-    assert conflict.occurrences == ((1, 0), (1, 1))
+    assert conflict.fetched_rows == ((1, 0), (1, 1))
     assert observation.database_calls == 2
 
 

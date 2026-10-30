@@ -33,9 +33,12 @@ from parallax.core.sql_gen._inheritance import (
 )
 
 __all__ = [
+    "fixed_entity",
     "member_classifiers",
+    "require_arity",
     "row_coordinates",
     "row_identity",
+    "row_variants",
 ]
 
 type MemberClassifier = Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]
@@ -46,7 +49,7 @@ def row_identity(
 ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
     """The Entity ``row`` names, its `familyVariant` spelling, the stored tag no
     composed concrete claimed, and the row's shared document."""
-    _require_arity(contract, row)
+    require_arity(contract, row)
     source = contract.row_identity
     shared = contract.shared_document_ordinal
     # An isinstance chain rather than a class-pattern match: this runs per row,
@@ -67,6 +70,30 @@ def row_identity(
     if shared is None:
         return entity, variant, unknown, None
     return entity, variant, unknown, unwrap_document_read(_document_read(row[shared]))
+
+
+def fixed_entity(contract: ReadResultContract) -> EntityIdentity | None:
+    """The one Entity every row of ``contract`` names without consulting the row,
+    or ``None`` where a row's own cells name it or carry a shared document."""
+    source = contract.row_identity
+    if isinstance(source, FixedRowIdentity) and contract.shared_document_ordinal is None:
+        return source.entity
+    return None
+
+
+def row_variants(
+    contract: ReadResultContract,
+) -> tuple[tuple[EntityIdentity, str | None], ...]:
+    """Every Entity and `familyVariant` spelling pair a row of ``contract`` can
+    resolve to, an unrecognized tag's family root included."""
+    source = contract.row_identity
+    if isinstance(source, FixedRowIdentity):
+        return ((source.entity, None),)
+    if isinstance(source, TaggedRowIdentity):
+        answers = (*source.by_tag.values(), (source.root, None, None))
+    else:
+        answers = tuple(source.by_spelling.values())
+    return tuple(dict.fromkeys((entity, variant) for entity, variant, _unknown in answers))
 
 
 def member_classifiers(
@@ -162,11 +189,12 @@ def row_coordinates(
 def _coordinate(
     contract: ReadResultContract, row: Row, ordinals: tuple[int, ...]
 ) -> ContinuationCoordinate:
-    _require_arity(contract, row)
+    require_arity(contract, row)
     return ContinuationCoordinate(tuple(inert_scalar(row[ordinal]) for ordinal in ordinals))
 
 
-def _require_arity(contract: ReadResultContract, row: Row) -> None:
+def require_arity(contract: ReadResultContract, row: Row) -> None:
+    """Refuse a provider row whose cell count is not the read's."""
     if len(row) != len(contract.slots):
         raise ValueError(
             f"result cell count {len(contract.slots)} does not match row arity {len(row)}"

@@ -24,7 +24,7 @@ graph.
 A snapshot read runs through `m-execution` and is delivered, whole or streamed,
 by `m-read-delivery`; Snapshot is the Publication that delivery invokes. It
 builds Typed and Wire values from a Page's judged Entity States — choosing each
-root's reachable projections through its Root View, checking them for
+root's reachable fetched rows through its Root View, checking them for
 consistency, classifying the root, recording each value's publication
 provenance, and attaching Read Evidence to the eligible values a writable
 transaction attempt's read publishes (`m-unit-work` *Write value provenance*) —
@@ -71,7 +71,7 @@ what is stated here rather than an independent rule.
 Each value is built from a judged Entity State (`m-read-delivery` *Entity State
 and the Page*). A published Typed or Wire value retains only the member state
 and private write-origin state its lifecycle requires; it retains no Page, Root
-View, raw provider row, unused witness, or other root's relationship view.
+View, raw provider row, unused stored values, or other root's relationship view.
 
 For a **conforming** member, a materialized Value Object occurrence carries what
 the stored document held: a member the document omits is absent from the
@@ -130,23 +130,25 @@ A **Root View** is one root's
 borrowed reachability and relationship-view union over a Page; it owns no payload
 copy and does not outlive publication of that root.
 
-Within a Root View, unequal witnesses are refused rather than chosen between:
+Within a Root View, unequal stored values of one logical row are refused rather
+than chosen between:
 
-- Unequal witnesses reached by the same root are a **Snapshot Projection Conflict**.
-  Unequal witnesses reached only by separate roots coexist in the Page
-  (`m-read-delivery`) and neither root conflicts. A conflicting Root View refuses
-  with the logical Object Key and lowered coordinates, the member identities at
-  every differing witness position, and the two occurrence positions (level and
-  ordinal) where those witnesses physically occurred, but with no raw stored
-  value. The selected witness pair, Object Key Entity, and differing-member
-  sequence are canonical, so reversing row arrival or Include Path order cannot
-  change those facts. The physical occurrence positions may change when provider
-  rows are reordered.
-- A concrete-Entity disagreement is a witness disagreement even where all
+- Fetched rows of one logical row with unequal stored values reached by the same
+  root are a **Snapshot Fetched Row Conflict**. Unequal stored values reached
+  only by separate roots coexist in the Page (`m-read-delivery`) and neither root
+  conflicts. A conflicting Root View refuses with the logical Object Key and
+  lowered coordinates, the member identities at every differing stored-value
+  position, and the two fetched row positions (level and ordinal) where those
+  rows were physically fetched, but with no raw stored value. The selected
+  fetched row pair, Object Key Entity, and differing-member sequence are
+  canonical, so reversing row arrival or Include Path order cannot change those
+  facts. The physical fetched row positions may change when provider rows are
+  reordered.
+- A concrete-Entity disagreement is a stored-values disagreement even where all
   member cells compare equal. It is reported with the same conflict family and
   an empty differing-member sequence where no shared member position names it.
 
-Within **one Root View**, one logical key is **one node**:
+Within **one Root View**, one row key is **one node**:
 
 - Two include paths that reach the same row — the diamond — materialize a
   **single** node referenced from both positions, never two equal copies. The

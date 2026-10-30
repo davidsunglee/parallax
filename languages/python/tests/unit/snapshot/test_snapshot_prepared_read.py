@@ -2,7 +2,7 @@
 
 The production seam a read lane crosses: a compiled read and a cataloged model
 bind into a prepared read, and every row of that statement is converted through
-``ReadRowConverter.convert_row`` and observed through it. What a row carries into
+``ReadRowConverter.record_row`` and observed through it. What a row carries into
 conversion — the concrete it resolved, the findings the transform raised, the
 members it already classified — is the compiled read's own provenance, so
 normally compiled payload cases drive a real ``compile_read``. Encoded UUID
@@ -39,6 +39,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from types import MappingProxyType
 from typing import Any, Final, Literal, cast
+from uuid import UUID
 
 import pytest
 
@@ -76,9 +77,9 @@ from parallax.core.read_delivery._page import (
     PageBuilder,
     StoredDataIssueInput,
     ViewSchema,
+    entity_state,
     page_rows,
     release_page_rows,
-    state_for,
 )
 from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.read_delivery._row_decoding import row_identity
@@ -144,6 +145,7 @@ from tests.unit.snapshot._encoded_identity_read import (
     ENCODED_IDENTITY,
     KEY,
     KEY_TEXT,
+    OTHER_KEY_TEXT,
     encoded_identity_read,
 )
 from tests.unit.snapshot._snapshot_page_support import (
@@ -300,11 +302,14 @@ class _Converted:
     issues: tuple[StoredDataIssueInput, ...]
 
 
-def _converted(prepared: _Prepared, stored: Mapping[str, object]) -> _Converted:
-    """One stored row through the whole prepared seam: convert and seal."""
-    builder = PageBuilder(ViewSchema.of())
-    converter, row = prepared(stored)
-    index, _resolved, _document, _variant = converter.convert_row(row, builder, source=ROOT_LEVEL)
+def _converted(
+    prepared: _Prepared, stored: Mapping[str, object], *, proved: bool = False
+) -> _Converted:
+    """One stored row through the whole prepared seam: record and seal, on a
+    ``proved`` level where its level records each row key at most once."""
+    builder = PageBuilder(ViewSchema.of(repeating_levels=frozenset() if proved else None))
+    converter, row = prepared(stored, singleton=proved)
+    index, _resolved, _document, _variant = converter.record_row(row, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     layout = rows.layouts[index]
@@ -324,7 +329,7 @@ def _observed(prepared: _Prepared, stored: Mapping[str, object]) -> dict[str, ob
     """One stored row's shared Entity State viewed under physical storage keys."""
     builder = PageBuilder(ViewSchema.of())
     converter, row = prepared(stored)
-    index, _resolved, _document, _variant = converter.convert_row(row, builder, source=ROOT_LEVEL)
+    index, _resolved, _document, _variant = converter.record_row(row, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     (root,) = observed_roots(page, _model_of(prepared))
@@ -411,25 +416,30 @@ def test_a_sibling_outside_the_narrowed_position_converts_under_its_own_concrete
     assert boar.issues == ()
 
 
-def test_an_unrecognized_family_tag_converts_under_the_family_root() -> None:
+_PROVED: Final = pytest.mark.parametrize("proved", [False, True], ids=["deferred", "proved"])
+
+
+@_PROVED
+def test_an_unrecognized_family_tag_converts_under_the_family_root(proved: bool) -> None:
     # A model may compose a family's concretes partially, so a row tagged for one
     # it never declared resolves to the family ROOT — an Entity no position holds,
     # since the root is abstract and only concretes are projected. Its level is
     # bound anyway, and the row converts into the root's own members beside the
     # issue the unknown tag publishes.
     prepared = _prepared(BEAST, "Beast")
-    unknown = _converted(prepared, {"id": 2, "kind": "bear", "howl": None})
+    unknown = _converted(prepared, {"id": 2, "kind": "bear", "howl": None}, proved=proved)
     assert unknown.concrete.name == "Beast"
     assert unknown.members == {"id": 2}
     assert [issue.code for issue in unknown.issues] == ["stored-data-family-tag-unknown"]
 
 
-def test_an_unknown_tag_is_host_checked_but_its_native_key_is_trusted() -> None:
+@_PROVED
+def test_an_unknown_tag_is_host_checked_but_its_native_key_is_trusted(proved: bool) -> None:
     # The unconstrained family discriminator remains host-checked. The direct key
     # Column does not: its SQL type and primary-key constraint establish the value
     # space, so materialization trusts what the provider normalized there.
     prepared = _prepared(BEAST, "Beast")
-    node = _converted(prepared, {"id": None, "kind": "bear", "howl": None})
+    node = _converted(prepared, {"id": None, "kind": "bear", "howl": None}, proved=proved)
     assert [issue.code for issue in node.issues] == ["stored-data-family-tag-unknown"]
 
 
@@ -540,7 +550,7 @@ def test_encoded_identity_is_decoded_before_logical_key_formation(
     raw: object, key: object, issue: str | None
 ) -> None:
     builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, _variant = encoded_identity_read().convert_row(
+    index, _resolved, _document, _variant = encoded_identity_read().record_row(
         (raw, None, SQL_NULL), builder, source=ROOT_LEVEL
     )
     claimed = builder.finish((index,), Pin())
@@ -572,6 +582,56 @@ def test_identity_routing_skips_an_absent_non_identity_cell() -> None:
     assert builder.member_value(index, token) is ABSENT
     (root,) = observed_roots(builder.finish((index,), Pin()), ENCODED_IDENTITY)
     assert root.issues[0] == ()
+
+
+@_PROVED
+def test_a_rejected_correlation_cell_routes_nothing_and_is_diagnosed_once(proved: bool) -> None:
+    # Its verdict is formed for routing and reused by the payload judgment,
+    # whether that judgment follows when the row is recorded or when its state
+    # is first needed.
+    token = _encoded_member("token")
+    builder = PageBuilder(ViewSchema.of(repeating_levels=frozenset() if proved else None))
+    with recorded_conversion_dependencies() as calls:
+        index = convert_cells(
+            CatalogedModel(ENCODED_IDENTITY),
+            compiled_read(ENCODED_IDENTITY, "EncodedIdentity"),
+            {"id": KEY, "token_hex": "zz", "address": None},
+            builder,
+            source=ROOT_LEVEL,
+            correlation_members=(token,),
+            singleton=proved,
+        )
+        assert builder.member_value(index, token) is ABSENT
+        (root,) = observed_roots(builder.finish((index,), Pin()), ENCODED_IDENTITY)
+
+    assert calls.decoded == ["zz"]
+    assert [(issue.code, issue.member) for issue in root.issues[0]] == [
+        ("stored-data-leaf-undecodable", token)
+    ]
+
+
+def test_a_rejected_correlation_verdict_is_released_with_its_fetched_row() -> None:
+    # Two fetched rows share one logical row, so an atomic publication releases
+    # each at its last use while a later root's verdict is still pending.
+    token = _encoded_member("token")
+    builder = PageBuilder(ViewSchema.of())
+    cataloged = CatalogedModel(ENCODED_IDENTITY)
+    compiled = compiled_read(ENCODED_IDENTITY, "EncodedIdentity")
+    fetched = tuple(
+        convert_cells(
+            cataloged,
+            compiled,
+            {"id": key, "token_hex": "zz", "address": None},
+            builder,
+            source=ROOT_LEVEL,
+            correlation_members=(token,),
+        )
+        for key in (KEY, KEY, UUID(OTHER_KEY_TEXT))
+    )
+
+    roots = observed_roots(builder.finish(fetched, Pin()), ENCODED_IDENTITY, atomic=True)
+
+    assert [[issue.member for issue in root.issues[0]] for root in roots] == [[token]] * 3
 
 
 def test_identity_routing_keeps_native_non_identity_cells_unchanged() -> None:
@@ -685,7 +745,7 @@ def test_a_document_row_is_observed_with_its_members_under_their_own_columns() -
 def test_a_row_publisher_views_a_projected_occurrence_in_place() -> None:
     prepared, row = _prepared(REGISTER, "Register")({"id": 1, "payload": _stored_document(_ADA)})
     builder = PageBuilder(ViewSchema.of())
-    index, _resolved, _document, variant = prepared.convert_row(row, builder, source=ROOT_LEVEL)
+    index, _resolved, _document, variant = prepared.record_row(row, builder, source=ROOT_LEVEL)
     (root,) = observed_roots(builder.finish((index,), Pin()), REGISTER)
 
     published = prepared.row_publisher().publish(root.concretes[0], root.member_values[0], variant)
@@ -877,7 +937,7 @@ def _delivered(
         CatalogedModel(model), uncarried(compiled_read(model, entity), *uncarrying), cells
     )
     builder = PageBuilder(ViewSchema.of())
-    index, resolved, _document, variant = prepared.convert_row(row, builder, source=ROOT_LEVEL)
+    index, resolved, _document, variant = prepared.record_row(row, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     key = page_rows(page).keys[index]
     (root,) = observed_roots(page, model)
@@ -1114,14 +1174,25 @@ def test_a_bitemporal_row_keys_by_its_axis_starts_and_admits_its_open_ends() -> 
         pytest.param("out_z", None, "txEnd", "stored-data-attribute-null", id="null"),
     ],
 )
+@_PROVED
 def test_a_rejected_temporal_end_is_diagnosed_once_its_state_is_judged(
-    column: str, stored: object, member: str, code: str
+    column: str, stored: object, member: str, code: str, proved: bool
 ) -> None:
-    builder = PageBuilder(ViewSchema.of())
-    index, *_ = bound_read(POSITION, "Position").convert_row(
-        result_row(_POSITION_READ, _position(**{column: stored})), builder, source=ROOT_LEVEL
+    # A proved level judges the end as it records the row; any other judges it
+    # when a Root View first needs the state. Either way it is judged once.
+    builder = PageBuilder(ViewSchema.of(repeating_levels=frozenset() if proved else None))
+    converter, row = bound_cells(
+        CatalogedModel(POSITION),
+        _POSITION_READ,
+        _position(**{column: stored}),
+        singleton=proved,
     )
-    page = builder.finish((index,), Pin())
+    with recorded_conversion_dependencies() as calls:
+        index, *_ = converter.record_row(row, builder, source=ROOT_LEVEL)
+        recorded = list(calls.admitted)
+        page = builder.finish((index,), Pin())
+        observed_roots(page, POSITION)
+    assert recorded == (calls.admitted if proved else [])
     assert page_rows(page).keys[index] == (
         target(POSITION, "Position").identity,
         1,
@@ -1139,7 +1210,7 @@ def test_rows_share_a_logical_node_only_where_key_and_axis_starts_agree() -> Non
     prepared = bound_read(POSITION, "Position")
     builder = PageBuilder(ViewSchema.of())
     refs = tuple(
-        prepared.convert_row(result_row(_POSITION_READ, cells), builder, source=ROOT_LEVEL)[0]
+        prepared.record_row(result_row(_POSITION_READ, cells), builder, source=ROOT_LEVEL)[0]
         for cells in (
             _position(),
             _position(),
@@ -1148,7 +1219,7 @@ def test_rows_share_a_logical_node_only_where_key_and_axis_starts_agree() -> Non
         )
     )
     rows = page_rows(builder.finish(refs, Pin()))
-    assert list(rows.logical_ids) == [0, 0, 1, 2]
+    assert list(rows.logical_rows) == [0, 0, 1, 2]
 
 
 # --------------------------------------------------------------------------- #
@@ -1198,7 +1269,7 @@ class _JudgedRow:
 
 def _milestone_page(entity: str, row: Mapping[str, object]) -> tuple[Page, int, Bitemporal]:
     builder = PageBuilder(ViewSchema.of())
-    index, *_ = bound_read(_MILESTONES, entity).convert_row(
+    index, *_ = bound_read(_MILESTONES, entity).record_row(
         result_row(compiled_read(_MILESTONES, entity), row),
         builder,
         source=ROOT_LEVEL,
@@ -1217,7 +1288,7 @@ def test_a_milestone_covers_its_stored_valid_time_cells_on_the_page_and_its_stat
 
     rows = page_rows(page)
     on_page = valid_time_coverage(shape, rows, index)
-    state = state_for(rows, index)
+    state = entity_state(rows, index)
     on_state = valid_time_coverage(shape, _JudgedRow(rows.layouts[index], state.member_row), None)
 
     assert state.findings == ()
@@ -1240,7 +1311,7 @@ def test_a_rejected_valid_time_end_has_no_coverage_on_either_carrier(
 
     with pytest.raises(TemporalReadError, match=r"\.validEnd: .*interval endpoint"):
         valid_time_coverage(shape, rows, index)
-    judged = _JudgedRow(rows.layouts[index], state_for(rows, index).member_row)
+    judged = _JudgedRow(rows.layouts[index], entity_state(rows, index).member_row)
     with pytest.raises(TemporalReadError, match=r"\.validEnd: .*interval endpoint"):
         valid_time_coverage(shape, judged, None)
 
@@ -1466,7 +1537,7 @@ def test_a_keyless_holding_keeps_its_payload_finding_for_every_holder_reaching_i
     holder_read = bound_read(HOLDINGS, "CorrelatedHolder")
     holder = compiled_read(HOLDINGS, "CorrelatedHolder")
     roots = tuple(
-        holder_read.convert_row(result_row(holder, {"id": key}), builder, source=ROOT_LEVEL)[0]
+        holder_read.record_row(result_row(holder, {"id": key}), builder, source=ROOT_LEVEL)[0]
         for key in holders
     )
     for root in roots:

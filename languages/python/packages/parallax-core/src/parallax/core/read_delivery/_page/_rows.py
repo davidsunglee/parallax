@@ -27,17 +27,17 @@ __all__ = [
     "ABSENT",
     "EntityState",
     "InvalidRootInput",
-    "LogicalKey",
     "Page",
     "PageBuilder",
     "PageRows",
     "PageSchedule",
+    "RowKey",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
     "attribute_state",
     "dedupe_issues",
+    "entity_state",
     "exact_stored_equal",
-    "judged_state",
     "layout_order_key",
     "page_edges",
     "page_rows",
@@ -46,13 +46,14 @@ __all__ = [
     "reach_into",
     "release_finished_rows",
     "release_page_rows",
-    "same_witness",
-    "state_for",
+    "same_stored_values",
+    "shared_entity_state",
     "stored_order_key",
+    "with_identity_findings",
 ]
 
 _NO_VIEWS: Final[tuple[()]] = ()
-_ATOMIC_WITNESS_TYPES: Final = (
+_ATOMIC_STORED_TYPES: Final = (
     type(None),
     bool,
     int,
@@ -88,9 +89,10 @@ class StoredDataIssueInput:
     ``path`` keeps declared member names distinct from integer array positions.
     ``stored_value`` is the already-frozen evidence of what was rejected, frozen
     where conversion translated the finding: nothing downstream re-reads or
-    re-freezes it. Exact equal witnesses share the Page-owned Entity State and
-    its issue record; witness-distinct states under one logical key remain
-    separate. The retained record is what every seam above shares by reference.
+    re-freezes it. Fetched rows of one logical row with exactly equal stored
+    values share the Page-owned Entity State and its issue record; states with
+    distinct stored values under one row key remain separate. The retained
+    record is what every seam above shares by reference.
     """
 
     code: StoredDataIssueCode
@@ -102,7 +104,7 @@ class StoredDataIssueInput:
 
 @dataclass(frozen=True, slots=True)
 class InvalidRootInput:
-    """One non-hydrating result root with no constructible projection behind it."""
+    """One non-hydrating result root with no constructible fetched row behind it."""
 
     ordinal: int
     issues: tuple[StoredDataIssueInput, ...]
@@ -114,8 +116,8 @@ class InvalidRootInput:
             raise ValueError("an invalid root carries at least one stored-data issue")
 
 
-class LogicalKey(NamedTuple):
-    """The page-wide identity of one logical Entity state."""
+class RowKey(NamedTuple):
+    """The Page-wide identity of one logical row."""
 
     family: EntityIdentity
     primary_key: object
@@ -130,15 +132,15 @@ class EntityState(NamedTuple):
 
 
 class PayloadDecoder(Protocol):
-    """Judges a reduced claim's deferred payload from the inputs its Page retains:
-    the raw ``witness``, the ``routed_values`` its claim registered, the
+    """Judges a deferred fetched row's payload from the inputs its Page retains:
+    its ``stored_values``, the ``routed_values`` recording registered, the
     ``classifiable`` member mask (``None`` where the row carried every member),
-    the findings its correlations raised when claimed, and its unrecognized
-    family tag. One decoder serves every claim of its level."""
+    the findings its correlations raised when recorded, and its unrecognized
+    family tag. One decoder serves every fetched row of its level."""
 
     def decode_payload(
         self,
-        witness: tuple[object, ...],
+        stored_values: tuple[object, ...],
         routed_values: tuple[object, ...],
         classifiable: int | None,
         correlation_findings: tuple[StoredDataIssueInput, ...],
@@ -158,11 +160,11 @@ class SparseIssues:
     def __len__(self) -> int:
         return self._count
 
-    def __getitem__(self, projection: int) -> tuple[StoredDataIssueInput, ...]:
-        return self._values.get(projection, ())
+    def __getitem__(self, fetched_row: int) -> tuple[StoredDataIssueInput, ...]:
+        return self._values.get(fetched_row, ())
 
-    def release(self, projection: int) -> None:
-        self._values.pop(projection, None)
+    def release(self, fetched_row: int) -> None:
+        self._values.pop(fetched_row, None)
 
     def clear(self) -> None:
         self._values.clear()
@@ -179,11 +181,11 @@ class SparseEdges:
     def __len__(self) -> int:
         return self._count
 
-    def __getitem__(self, projection: int) -> Sequence[object]:
-        return self._values.get(projection, _NO_VIEWS)
+    def __getitem__(self, fetched_row: int) -> Sequence[object]:
+        return self._values.get(fetched_row, _NO_VIEWS)
 
-    def release(self, projection: int) -> None:
-        self._values.pop(projection, None)
+    def release(self, fetched_row: int) -> None:
+        self._values.pop(fetched_row, None)
 
     def clear(self) -> None:
         self._values.clear()
@@ -191,15 +193,17 @@ class SparseEdges:
 
 
 class DecoderRows:
-    """Each projection's payload judgment.
+    """Each deferred fetched row's payload judgment.
 
-    A claim registered with its member row answers its own witness. A reduced
-    claim is judged by its level's shared decoder from the witness and routed
-    member row the Page holds for it, plus the sparse inputs registered beside
-    them, each ``None`` where no claim registered one. A judgment is
-    :meth:`pending` until :meth:`settle` or :meth:`release` drops its decoder
-    and inputs. A keyless claim's is never settled, since every root reaching it
-    judges it again, so the Page keeps its witness and routed row until release.
+    A fetched row registered with its member row answers its own stored values.
+    A deferred one is judged by its level's shared decoder from the stored
+    values and routed member row the Page holds for it, plus the sparse inputs
+    registered beside them, each ``None`` where no fetched row registered one.
+    A judgment is :meth:`pending` until :meth:`settle` or :meth:`release` drops
+    its decoder and inputs. A keyless fetched row's is never settled, since
+    every root reaching it judges it again, so the Page keeps its stored values
+    and routed row until release. A fetched row judged when it was recorded has
+    no judgment here at all.
     """
 
     __slots__ = (
@@ -207,16 +211,16 @@ class DecoderRows:
         "_correlation_findings",
         "_count",
         "_member_rows",
+        "_stored_values",
         "_unknown_family_tags",
         "_values",
-        "_witnesses",
     )
 
     def __init__(
         self,
         count: int,
         values: dict[int, PayloadDecoder | None],
-        witnesses: Sequence[object],
+        stored_values: Sequence[object],
         member_rows: Sequence[tuple[object, ...]],
         classifiable: dict[int, int] | None,
         correlation_findings: dict[int, tuple[StoredDataIssueInput, ...]] | None,
@@ -224,7 +228,7 @@ class DecoderRows:
     ) -> None:
         self._count = count
         self._values = values
-        self._witnesses = witnesses
+        self._stored_values = stored_values
         self._member_rows = member_rows
         self._classifiable = classifiable
         self._correlation_findings = correlation_findings
@@ -233,76 +237,93 @@ class DecoderRows:
     def __len__(self) -> int:
         return self._count
 
-    def pending(self, projection: int) -> bool:
-        """Whether ``projection`` still has a deferred payload to judge."""
-        return self._values.get(projection) is not None
+    def pending(self, fetched_row: int) -> bool:
+        """Whether ``fetched_row`` still has a deferred payload to judge."""
+        return self._values.get(fetched_row) is not None
 
     def decode(
-        self, projection: int, *, occurrences: bool = True
+        self, fetched_row: int, *, occurrences: bool = True
     ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
-        """``projection``'s member row and payload findings, its Value Object
+        """``fetched_row``'s member row and payload findings, its Value Object
         occurrences left pending without ``occurrences``."""
-        if projection in self._values:
-            decoder = self._values[projection]
+        if fetched_row in self._values:
+            decoder = self._values[fetched_row]
         else:
-            witness = self._witnesses[projection]
-            decoder = cast("tuple[object, ...]", witness) if isinstance(witness, tuple) else None
-        if decoder is None:  # pragma: no cover - a judged keyed projection is read from its state
-            raise ValueError("a released projection decoder has no unjudged state")
+            stored = self._stored_values[fetched_row]
+            decoder = cast("tuple[object, ...]", stored) if isinstance(stored, tuple) else None
+        if decoder is None:  # pragma: no cover - a judged keyed fetched row is read from its state
+            raise ValueError("a released fetched row decoder has no unjudged state")
         if isinstance(decoder, tuple):
             return decoder, ()
         masks = self._classifiable
         findings = self._correlation_findings
         tags = self._unknown_family_tags
         return decoder.decode_payload(
-            cast("tuple[object, ...]", self._witnesses[projection]),
-            self._member_rows[projection],
-            None if masks is None else masks.get(projection),
-            () if findings is None else findings.get(projection, ()),
-            None if tags is None else tags.get(projection),
+            cast("tuple[object, ...]", self._stored_values[fetched_row]),
+            self._member_rows[fetched_row],
+            None if masks is None else masks.get(fetched_row),
+            () if findings is None else findings.get(fetched_row, ()),
+            None if tags is None else tags.get(fetched_row),
             occurrences=occurrences,
         )
 
-    def settle(self, projection: int) -> None:
-        """Retire ``projection``'s judgment once its state no longer needs one."""
-        self._values[projection] = None
+    def settle(self, fetched_row: int) -> None:
+        """Retire ``fetched_row``'s judgment once its state no longer needs one."""
+        self._values[fetched_row] = None
         if self._classifiable:
-            self._classifiable.pop(projection, None)
+            self._classifiable.pop(fetched_row, None)
         if self._correlation_findings:
-            self._correlation_findings.pop(projection, None)
+            self._correlation_findings.pop(fetched_row, None)
         if self._unknown_family_tags:
-            self._unknown_family_tags.pop(projection, None)
+            self._unknown_family_tags.pop(fetched_row, None)
 
-    def release(self, projection: int) -> None:
-        self._values.pop(projection, None)
+    def release(self, fetched_row: int) -> None:
+        self._values.pop(fetched_row, None)
         if self._classifiable:
-            self._classifiable.pop(projection, None)
+            self._classifiable.pop(fetched_row, None)
         if self._correlation_findings:
-            self._correlation_findings.pop(projection, None)
+            self._correlation_findings.pop(fetched_row, None)
         if self._unknown_family_tags:
-            self._unknown_family_tags.pop(projection, None)
+            self._unknown_family_tags.pop(fetched_row, None)
 
     def clear(self) -> None:
         self._values.clear()
         self._classifiable = None
         self._correlation_findings = None
         self._unknown_family_tags = None
-        self._witnesses = ()
+        self._stored_values = ()
         self._member_rows = ()
         self._count = 0
 
 
 class JudgedStates:
-    """Dense logical-node-indexed judged Entity States: one for a singleton
-    claim, and one per witness-distinct state for a grouped claim."""
+    """Dense logical-row-indexed judged Entity States: one for a logical row of
+    one fetched row, and one per distinct stored values for a logical row of
+    several.
 
-    __slots__ = ("_claims", "_groups")
+    A logical row recorded already judged holds its state from the moment it
+    was recorded; any other gains one when it is first judged."""
 
-    def __init__(self, claims: Sequence[int | tuple[int, ...]]) -> None:
-        self._claims = claims if isinstance(claims, list) else list(claims)
-        self._groups: list[EntityState | list[tuple[int, EntityState]] | None] = [None] * len(
-            self._claims
+    __slots__ = ("_fetched_rows_by_logical_row", "_groups")
+
+    def __init__(
+        self,
+        fetched_rows_by_logical_row: Sequence[int | tuple[int, ...]],
+        states: list[EntityState | list[tuple[int, EntityState]] | None],
+    ) -> None:
+        self._fetched_rows_by_logical_row = (
+            fetched_rows_by_logical_row
+            if isinstance(fetched_rows_by_logical_row, list)
+            else list(fetched_rows_by_logical_row)
         )
+        self._groups = states
+
+    @property
+    def by_logical_row(self) -> Sequence[EntityState | list[tuple[int, EntityState]] | None]:
+        """Each logical row's held judgment, read in place: an
+        :class:`EntityState` exactly where a logical row of one fetched row
+        holds one."""
+        return self._groups
 
     def singleton(self, logical: int) -> EntityState | None:
         group = self._groups[logical]
@@ -316,38 +337,46 @@ class JudgedStates:
         if group is None:
             group = []
             self._groups[logical] = group
-        if isinstance(group, EntityState):  # pragma: no cover - claim shape is fixed
-            raise ValueError("a singleton judged state has no witness-distinct group")
+        if isinstance(group, EntityState):  # pragma: no cover - logical row shape is fixed
+            raise ValueError("a singleton judged state has no group of distinct stored values")
         return group
 
     def release(self) -> None:
         self._groups.clear()
-        self._claims.clear()
+        self._fetched_rows_by_logical_row.clear()
 
     def release_logical(self, logical: int) -> None:
         self._groups[logical] = None
-        self._claims[logical] = 0
+        self._fetched_rows_by_logical_row[logical] = 0
 
 
 @dataclass(frozen=True, slots=True)
 class PageRows:
-    """One sealed Page's arrays, all indexed by projection.
+    """One sealed Page's arrays, all indexed by fetched row.
 
-    ``view_rows`` are positional against ``schema``: projection ``i``'s row is
+    ``view_rows`` are positional against ``schema``: fetched row ``i``'s row is
     laid out by the source layout its own ``sources[i]`` and layout resolve to,
     so a reader translating one into a Root View row asks the schema for the
     translation rather than carrying a key beside every value. The schema also
     says what each slot holds: a back-reference slot holds ``None``, a logical
-    claim, or a tuple of coordinate-distinct claims, and every other slot holds
-    projections. A back-reference is never followed for reachability or
+    row, or a tuple of coordinate-distinct logical rows, and every other slot
+    holds fetched rows. A back-reference is never followed for reachability or
     lifetime.
-    ``overwritten_edges`` keeps earlier arms from overlapping positions beside
-    the parent projection; they are traversed for root-local continuation merging
-    but never replace the last value retained in ``view_rows``.
+    ``overwritten_edges`` keeps earlier relationship values from overlapping
+    positions beside the parent fetched row; they are traversed for root-local
+    continuation merging but never replace the last value retained in
+    ``view_rows``.
 
-    ``sources`` and ``source_ordinals`` retain each projection's physical
-    provider position. Canonical witness selection may reorder projections for
-    comparison, but it never rewrites the provenance a conflict reports.
+    ``logical_rows`` maps each fetched row to its logical row, and
+    ``fetched_rows_by_logical_row`` maps back: one fetched row, or every
+    fetched row with that row key in level and ordinal order. ``stored_values``
+    holds what a logical row of several fetched rows compares; a fetched row
+    recorded already judged holds none.
+
+    ``sources`` and ``source_ordinals`` retain each fetched row's physical
+    provider position. Canonical selection among stored values may reorder
+    fetched rows for comparison, but it never rewrites the provenance a
+    conflict reports.
 
     Reached only through :func:`page_rows`, which is what makes
     :class:`Page` opaque to the result holders that carry one.
@@ -356,8 +385,8 @@ class PageRows:
     layouts: Sequence[EntityLayout]
     member_rows: Sequence[tuple[object, ...]]
     issues: SparseIssues
-    logical_ids: Sequence[int]
-    keys: Sequence[LogicalKey | None]
+    logical_rows: Sequence[int]
+    keys: Sequence[RowKey | None]
     sources: Sequence[SourceLevel]
     view_rows: Sequence[Sequence[object]]
     overwritten_edges: SparseEdges
@@ -367,27 +396,27 @@ class PageRows:
     judged_states: JudgedStates
     decoders: DecoderRows
     observer: object | None = None
-    witnesses: Sequence[object] = ()
+    stored_values: Sequence[object] = ()
     source_ordinals: Sequence[int] = ()
-    claims: Sequence[int | tuple[int, ...]] = ()
+    fetched_rows_by_logical_row: Sequence[int | tuple[int, ...]] = ()
 
-    def axis_start(self, projection: int, attribute: AttributeIdentity, /) -> object:
-        """``projection``'s stored value at one As-Of Axis start, read from its
-        logical key's coordinates, which align with its layout's
+    def axis_start(self, fetched_row: int, attribute: AttributeIdentity, /) -> object:
+        """``fetched_row``'s stored value at one As-Of Axis start, read from its
+        row key's coordinates, which align with its layout's
         ``temporal_starts``."""
-        layout = self.layouts[projection]
-        coordinates = cast("LogicalKey", self.keys[projection]).coordinates
+        layout = self.layouts[fetched_row]
+        coordinates = cast("RowKey", self.keys[fetched_row]).coordinates
         return coordinates[layout.temporal_starts.index(layout.index_of[attribute])]
 
-    def axis_end(self, projection: int, attribute: AttributeIdentity, /) -> object:
-        """``projection``'s stored value at one As-Of Axis end, read at that
-        Attribute's position in its raw member row."""
-        return self.member_rows[projection][self.layouts[projection].index_of[attribute]]
+    def axis_end(self, fetched_row: int, attribute: AttributeIdentity, /) -> object:
+        """``fetched_row``'s stored value at one As-Of Axis end, read at that
+        Attribute's position in its member row."""
+        return self.member_rows[fetched_row][self.layouts[fetched_row].index_of[attribute]]
 
 
 class Page:
-    """One materialization's Page: every occurrence, the roots in result order,
-    and the Page pin every occurrence was read at.
+    """One materialization's Page: every fetched row, the roots in result order,
+    and the Page pin every fetched row was read at.
 
     Opaque, and opaque publicly rather than only by convention: a result holder
     carrying one can read no row, layout, edge, identity, or issue off it, and
@@ -402,7 +431,7 @@ class Page:
 
     A root whose primary key is null or undecodable is an
     :class:`InvalidRootInput` in ``roots``, retaining its result ordinal without
-    claiming a constructible projection.
+    a row key behind it.
     """
 
     __slots__ = ("_rows",)
@@ -431,93 +460,104 @@ def page_rows(page: object) -> PageRows:
     return page._rows  # pyright: ignore[reportPrivateUsage] - the one seam this scope reads a finished page through
 
 
-def same_witness(rows: PageRows, left: int, right: int) -> bool:
-    """Whether two projections carry one Payload Witness: the same resolved
-    concrete and member layout, and exactly equal stored values."""
+def same_stored_values(rows: PageRows, left: int, right: int) -> bool:
+    """Whether two fetched rows carry the same stored values: the same resolved
+    concrete and member layout, and exactly equal provider-normalized values."""
     left_layout = rows.layouts[left]
     right_layout = rows.layouts[right]
+    stored = rows.stored_values
     return (
         left_layout.concrete == right_layout.concrete
         and left_layout.members == right_layout.members
-        and (
-            rows.witnesses[left] is rows.witnesses[right]
-            or exact_stored_equal(rows.witnesses[left], rows.witnesses[right])
-        )
+        and (stored[left] is stored[right] or exact_stored_equal(stored[left], stored[right]))
     )
 
 
-def judged_state(rows: PageRows, projection: int) -> EntityState | None:
-    """The Entity State already judged for ``projection``, if any.
+def shared_entity_state(rows: PageRows, fetched_row: int) -> EntityState | None:
+    """The Entity State already judged for ``fetched_row``, if any.
 
-    A singleton claim holds at most one. A grouped claim holds one per
-    witness-distinct state, and ``projection`` shares only the one whose
-    witness is :func:`same_witness` as its own.
+    A logical row of one fetched row holds at most one. A logical row of
+    several holds one per distinct stored values, and ``fetched_row`` shares
+    only the one whose stored values are :func:`same_stored_values` as its own.
     """
-    logical = rows.logical_ids[projection]
-    if isinstance(rows.claims[logical], int):
+    logical = rows.logical_rows[fetched_row]
+    if isinstance(rows.fetched_rows_by_logical_row[logical], int):
         return rows.judged_states.singleton(logical)
     return next(
         (
             state
             for stored, state in rows.judged_states.group(logical)
-            if same_witness(rows, projection, stored)
+            if same_stored_values(rows, fetched_row, stored)
         ),
         None,
     )
 
 
-def state_for(rows: PageRows, projection: int) -> EntityState:
-    """``projection``'s Page-owned Entity State, judging its payload on first need.
+def entity_state(rows: PageRows, fetched_row: int) -> EntityState:
+    """``fetched_row``'s Page-owned Entity State, judging its payload on first need.
 
-    A keyed projection shares the state already judged for its logical node: the
-    one state of a singleton claim, or the witness-equal state of a grouped one.
-    A keyless projection shares nothing, so every request judges it again. The
-    identity findings conversion recorded join the payload findings once.
+    A fetched row recorded already judged answers the state it was recorded
+    with. Otherwise a keyed fetched row shares the state already judged for its
+    logical row: the one state of a logical row of one fetched row, or the
+    state with equal stored values among several. A keyless fetched row shares
+    nothing, so every request judges it again. The identity findings recording
+    registered join the payload findings once.
     """
-    if rows.keys[projection] is None:
-        return _decoded(rows, projection)
-    held = judged_state(rows, projection)
+    if rows.keys[fetched_row] is None:
+        recorded = rows.judged_states.by_logical_row[rows.logical_rows[fetched_row]]
+        if type(recorded) is EntityState:
+            return recorded
+        return _judge_entity_state(rows, fetched_row)
+    held = shared_entity_state(rows, fetched_row)
     if held is not None:
         _notify(rows.observer, "states_shared")
         return held
-    state = _decoded(rows, projection)
-    logical = rows.logical_ids[projection]
-    if isinstance(rows.claims[logical], int):
+    state = _judge_entity_state(rows, fetched_row)
+    logical = rows.logical_rows[fetched_row]
+    if isinstance(rows.fetched_rows_by_logical_row[logical], int):
         rows.judged_states.set_singleton(logical, state)
-        if isinstance(rows.witnesses, list):
-            rows.witnesses[projection] = None
+        if isinstance(rows.stored_values, list):
+            rows.stored_values[fetched_row] = None
     else:
-        rows.judged_states.group(logical).append((projection, state))
+        rows.judged_states.group(logical).append((fetched_row, state))
     return state
 
 
-def attribute_state(rows: PageRows, projection: int) -> EntityState:
-    """``projection``'s Attributes judged as its Entity State would judge them,
+def attribute_state(rows: PageRows, fetched_row: int) -> EntityState:
+    """``fetched_row``'s Attributes judged as its Entity State would judge them,
     each Value Object occurrence the row carried left pending.
 
     Such a partial state is shared with nothing and cached nowhere: no other
     reader of the Page can observe it."""
-    member_row, findings = rows.decoders.decode(projection, occurrences=False)
-    return EntityState(member_row, _with_identity_findings(rows, projection, findings))
+    member_row, findings = rows.decoders.decode(fetched_row, occurrences=False)
+    return EntityState(member_row, _with_identity_findings(rows, fetched_row, findings))
 
 
-def _decoded(rows: PageRows, projection: int) -> EntityState:
-    member_row, findings = rows.decoders.decode(projection)
-    if rows.keys[projection] is not None:
-        rows.decoders.settle(projection)
+def _judge_entity_state(rows: PageRows, fetched_row: int) -> EntityState:
+    member_row, findings = rows.decoders.decode(fetched_row)
+    if rows.keys[fetched_row] is not None:
+        rows.decoders.settle(fetched_row)
     _notify(rows.observer, "states_decoded")
-    return EntityState(member_row, _with_identity_findings(rows, projection, findings))
+    return EntityState(member_row, _with_identity_findings(rows, fetched_row, findings))
 
 
 def _with_identity_findings(
-    rows: PageRows, projection: int, findings: tuple[StoredDataIssueInput, ...]
+    rows: PageRows, fetched_row: int, findings: tuple[StoredDataIssueInput, ...]
 ) -> tuple[StoredDataIssueInput, ...]:
-    identity_findings = rows.issues[projection]
-    if not findings:
+    return with_identity_findings(findings, rows.issues[fetched_row])
+
+
+def with_identity_findings(
+    payload_findings: tuple[StoredDataIssueInput, ...],
+    identity_findings: tuple[StoredDataIssueInput, ...],
+) -> tuple[StoredDataIssueInput, ...]:
+    """One judgment's findings: its payload findings, then the identity findings
+    recording registered, each kept once."""
+    if not payload_findings:
         return identity_findings
     if identity_findings:
-        return dedupe_issues((*findings, *identity_findings))
-    return findings
+        return dedupe_issues((*payload_findings, *identity_findings))
+    return payload_findings
 
 
 def _notify(observer: object | None, name: str) -> None:
@@ -526,17 +566,17 @@ def _notify(observer: object | None, name: str) -> None:
 
 
 def release_page_rows(page: Page) -> None:
-    """Release projection-sized Page storage after atomic roots detach from it."""
+    """Release fetched-row-sized Page storage after atomic roots detach from it."""
     rows = page_rows(page)
     for values in (
         rows.layouts,
         rows.member_rows,
         rows.issues,
-        rows.logical_ids,
+        rows.logical_rows,
         rows.keys,
         rows.sources,
         rows.view_rows,
-        rows.witnesses,
+        rows.stored_values,
     ):
         if isinstance(values, list):
             values.clear()
@@ -550,11 +590,11 @@ class PageSchedule(NamedTuple):
     """How one publication over a Page judges its roots' states and releases
     its rows.
 
-    ``last_uses`` is each projection's and each logical state's last reaching
+    ``last_uses`` is each fetched row's and each logical row's last reaching
     root position, present exactly when release at last use applies.
-    ``defers_states`` judges each root's states only after that root's claims
-    compare. ``PageSchedule(None, False)`` releases only the raw member rows a
-    root reached.
+    ``defers_states`` judges each root's states only after that root's fetched
+    rows of one logical row compare. ``PageSchedule(None, False)`` releases only
+    the member rows a root reached.
     """
 
     last_uses: tuple[array[int], array[int]] | None
@@ -572,42 +612,44 @@ def page_schedule(
     A non-atomic publication drops its Page whole, so it neither defers states
     nor releases at last use. An atomic one defers states exactly when every
     root's family carries write evidence, which holds vacuously for no roots,
-    and releases at last use when it defers or the Page holds a grouped claim.
-    Scheduling judges no state.
+    and releases at last use when it defers or the Page holds a logical row of
+    several fetched rows. Scheduling judges no state.
     """
     if not atomic:
         return _RAW_ROWS
     rows = page_rows(page)
     layouts = rows.layouts
     defers_states = all(carries_write_evidence(layouts[root].concrete) for root in rows.roots)
-    if defers_states or any(not isinstance(claim, int) for claim in rows.claims):
+    if defers_states or any(
+        not isinstance(fetched, int) for fetched in rows.fetched_rows_by_logical_row
+    ):
         return PageSchedule(_last_uses(rows), defers_states)
     return PageSchedule(None, defers_states)
 
 
 def _last_uses(rows: PageRows) -> tuple[array[int], array[int]]:
     typecode = "h" if len(rows.roots) <= 32_768 else "i"
-    projection_last = array(typecode, [-1]) * len(rows.layouts)
-    logical_last = array(typecode, [-1]) * len(rows.claims)
-    logical_ids = rows.logical_ids
-    claims = rows.claims
+    fetched_row_last = array(typecode, [-1]) * len(rows.layouts)
+    logical_last = array(typecode, [-1]) * len(rows.fetched_rows_by_logical_row)
+    logical_rows = rows.logical_rows
+    fetched_rows_by_logical_row = rows.fetched_rows_by_logical_row
     reached: list[int] = []
     for position, root in enumerate(rows.roots):
         reach_into(rows, root, reached)
-        for projection in reached:
-            projection_last[projection] = position
-            logical = logical_ids[projection]
+        for fetched_row in reached:
+            fetched_row_last[fetched_row] = position
+            logical = logical_rows[fetched_row]
             logical_last[logical] = position
-            claim = claims[logical]
-            if not isinstance(claim, int):
-                for claimant in claim:
-                    projection_last[claimant] = position
-    return projection_last, logical_last
+            fetched = fetched_rows_by_logical_row[logical]
+            if not isinstance(fetched, int):
+                for sibling in fetched:
+                    fetched_row_last[sibling] = position
+    return fetched_row_last, logical_last
 
 
 def reach_into(rows: PageRows, root: int, reached: list[int]) -> None:
-    """Refill ``reached`` with ``root``'s reach in projection preorder, each
-    projection once, following :func:`push_edges`. A root with no view row and
+    """Refill ``reached`` with ``root``'s reach in fetched-row preorder, each
+    fetched row once, following :func:`push_edges`. A root with no view row and
     no overwritten edge reaches only itself, with no walk."""
     reached.clear()
     if not rows.view_rows[root] and not rows.overwritten_edges[root]:
@@ -616,75 +658,76 @@ def reach_into(rows: PageRows, root: int, reached: list[int]) -> None:
     seen: set[int] = set()
     pending = [root]
     while pending:
-        projection = pending.pop()
-        if projection in seen:
+        fetched_row = pending.pop()
+        if fetched_row in seen:
             continue
-        seen.add(projection)
-        reached.append(projection)
-        push_edges(rows, projection, pending)
+        seen.add(fetched_row)
+        reached.append(fetched_row)
+        push_edges(rows, fetched_row, pending)
 
 
 def release_finished_rows(
     page: Page, schedule: PageSchedule, position: int, reached: Sequence[int]
 ) -> None:
     """Release the Page storage the root at ``position`` has finished with
-    among the projections it ``reached``.
+    among the fetched rows it ``reached``.
 
-    Every reached raw member row goes, except a keyless claim's still-pending
-    one, whose payload a later root judges again. With last uses, a projection
-    no later root reaches releases all its storage, and a logical state goes
-    once the last root sharing it has been judged. Releasing again changes
+    Every reached member row goes, except a keyless fetched row's still-pending
+    one, whose payload a later root judges again. With last uses, a fetched row
+    no later root reaches releases all its storage, and a logical row's state
+    goes once the last root sharing it has been judged. Releasing again changes
     nothing.
     """
     rows = page_rows(page)
     member_rows = rows.member_rows
     if not isinstance(member_rows, list):  # pragma: no cover - a sealed Page holds lists
         return
-    keys = cast("list[LogicalKey | None]", rows.keys)
+    keys = cast("list[RowKey | None]", rows.keys)
     decoders = rows.decoders
     last_uses = schedule.last_uses
     if last_uses is None:
-        for projection in reached:
-            if keys[projection] is not None or not decoders.pending(projection):
-                member_rows[projection] = ()
+        for fetched_row in reached:
+            if keys[fetched_row] is not None or not decoders.pending(fetched_row):
+                member_rows[fetched_row] = ()
         return
-    projection_last, logical_last = last_uses
+    fetched_row_last, logical_last = last_uses
     view_rows = cast("list[Sequence[object]]", rows.view_rows)
-    witnesses = cast("list[object]", rows.witnesses)
-    logical_ids = cast("list[int]", rows.logical_ids)
-    for projection in reached:
-        if projection_last[projection] != position:
-            if keys[projection] is not None or not decoders.pending(projection):
-                member_rows[projection] = ()
+    stored_values = cast("list[object]", rows.stored_values)
+    logical_rows = cast("list[int]", rows.logical_rows)
+    for fetched_row in reached:
+        if fetched_row_last[fetched_row] != position:
+            if keys[fetched_row] is not None or not decoders.pending(fetched_row):
+                member_rows[fetched_row] = ()
             continue
-        member_rows[projection] = ()
-        logical = logical_ids[projection]
-        rows.issues.release(projection)
-        keys[projection] = None
-        view_rows[projection] = ()
-        rows.overwritten_edges.release(projection)
-        witnesses[projection] = None
-        decoders.release(projection)
-        logical_ids[projection] = 0
+        member_rows[fetched_row] = ()
+        logical = logical_rows[fetched_row]
+        rows.issues.release(fetched_row)
+        keys[fetched_row] = None
+        view_rows[fetched_row] = ()
+        rows.overwritten_edges.release(fetched_row)
+        stored_values[fetched_row] = None
+        decoders.release(fetched_row)
+        logical_rows[fetched_row] = 0
         if logical_last[logical] == position:
             rows.judged_states.release_logical(logical)
             logical_last[logical] = -1
 
 
-def push_edges(rows: PageRows, projection: int, pending: list[int]) -> None:
-    """Push the projections ``projection``'s view row and overwritten edges reach,
-    so that they pop in slot order and then in overwrite order. A back-reference
-    slot is never followed: it names claims other projections already reach."""
-    for value in reversed(rows.overwritten_edges[projection]):
+def push_edges(rows: PageRows, fetched_row: int, pending: list[int]) -> None:
+    """Push the fetched rows ``fetched_row``'s view row and overwritten edges
+    reach, so that they pop in slot order and then in overwrite order. A
+    back-reference slot is never followed: it names logical rows other fetched
+    rows already reach."""
+    for value in reversed(rows.overwritten_edges[fetched_row]):
         if isinstance(value, tuple):
             pending.extend(reversed(cast("tuple[int, ...]", value)))
         elif value is not None:
             pending.append(cast("int", value))
-    row = rows.view_rows[projection]
+    row = rows.view_rows[fetched_row]
     if not row:
         return
-    view_layout = rows.schema.root_view_layout(rows.layouts[projection])
-    targets = view_layout.targets[rows.sources[projection]]
+    view_layout = rows.schema.root_view_layout(rows.layouts[fetched_row])
+    targets = view_layout.targets[rows.sources[fetched_row]]
     for slot in reversed(range(len(row))):
         if targets[slot] is not None:
             continue
@@ -728,8 +771,8 @@ class PageBuilder:
     """One materialization's accumulation arrays and Page-local identity scope.
 
     Two roles, and the second is a deliberate concession rather than an
-    accumulating surface. It **accumulates**: an identity-first occurrence is
-    appended with :meth:`add_claim`, a level's fan-back is recorded with
+    accumulating surface. It **accumulates**: a fetched row is appended with
+    :meth:`add_fetched_row`, a level's fan-back is recorded with
     :meth:`write_view`, and :meth:`finish` publishes the lot. It also
     **answers** two questions about rows it already holds —
     :meth:`member_value` and :meth:`concrete_of` — because a read level gathers
@@ -737,11 +780,13 @@ class PageBuilder:
     finishing nothing else holds them. Nothing beyond that fan-out may reach for
     the two.
 
-    Page-local identity groups claims within one builder and never beyond it,
-    so the builder is the unit a caller chooses: eager and milestone-set reads
-    each give their whole flat result one Page. A back-reference, recorded with
-    :meth:`write_reference`, retains logical claim IDs, not a page-global
-    projection winner.
+    Page-local identity merges fetched rows into logical rows within one
+    builder and never beyond it, so the builder is the unit a caller chooses:
+    eager and milestone-set reads each give their whole flat result one Page.
+    Only a level ``schema`` says may repeat rows merges; every fetched row of
+    any other level is its own logical row. A back-reference, recorded with
+    :meth:`write_reference`, retains logical rows, not a page-global fetched
+    row winner.
 
     Relationship views accumulate beside the rows rather than inside them,
     because a parent's views are only known once its child level lands and the
@@ -752,19 +797,19 @@ class PageBuilder:
     """
 
     __slots__ = (
-        "_claims",
         "_classifiable",
         "_correlation_findings",
         "_decoders",
-        "_first",
+        "_fetched_rows_by_logical_row",
         "_identity",
         "_issues",
         "_keys",
         "_last_layout",
+        "_last_repeats",
         "_last_slots",
         "_last_source",
         "_layouts",
-        "_logical_ids",
+        "_logical_rows",
         "_member_rows",
         "_observer",
         "_overwritten_edges",
@@ -772,9 +817,10 @@ class PageBuilder:
         "_sealed",
         "_slots",
         "_sources",
+        "_states",
+        "_stored_values",
         "_unknown_family_tags",
         "_views",
-        "_witnesses",
     )
 
     def __init__(self, schema: ViewSchema, observer: object | None = None) -> None:
@@ -783,153 +829,181 @@ class PageBuilder:
         self._layouts: list[EntityLayout] = []
         self._member_rows: list[tuple[object, ...]] = []
         self._issues: dict[int, tuple[StoredDataIssueInput, ...]] = {}
-        self._logical_ids: list[int] = []
-        self._keys: list[LogicalKey | None] = []
+        self._logical_rows: list[int] = []
+        self._keys: list[RowKey | None] = []
         self._last_layout: EntityLayout | None = None
         self._last_slots: SourceViewLayout | None = None
         self._last_source: SourceLevel | None = None
+        self._last_repeats = False
         self._sources: list[SourceLevel] = []
         self._slots: list[SourceViewLayout] = []
         self._views: list[list[object] | tuple[()]] = []
         self._overwritten_edges: dict[int, list[object]] = {}
         self._identity: dict[EntityIdentity, dict[object, int | tuple[int, ...]]] = {}
-        self._first: list[int] = []
-        self._claims: list[int | list[int]] = []
+        self._fetched_rows_by_logical_row: list[int | list[int]] = []
+        self._states: list[EntityState | list[tuple[int, EntityState]] | None] = []
         self._decoders: dict[int, PayloadDecoder | None] = {}
         self._classifiable: dict[int, int] = {}
         self._correlation_findings: dict[int, tuple[StoredDataIssueInput, ...]] = {}
         self._unknown_family_tags: dict[int, UnknownFamilyTag] = {}
-        self._witnesses: list[object] = []
+        self._stored_values: list[object] = []
         self._sealed = False
 
-    def add_claim(
+    # Runs once per fetched row, so its branches stay inline rather than behind
+    # per-row calls.
+    def add_fetched_row(  # noqa: C901
         self,
         source: SourceLevel,
         layout: EntityLayout,
-        key: LogicalKey | None,
-        witness: object,
-        raw_member_values: tuple[object, ...],
+        key: RowKey | None,
+        stored_values: object,
+        member_row: tuple[object, ...],
         identity_issues: tuple[StoredDataIssueInput, ...],
-        payload: PayloadDecoder | tuple[object, ...],
+        judgment: PayloadDecoder | EntityState | None,
     ) -> int:
-        """Append an identity claim without judging its payload, and answer its
-        projection index.
+        """Append one fetched row and answer its index.
 
-        Claims under one ``key`` share a logical node; a claim with no key keeps
-        its own, so it shares with nothing — not even a second claim of the
-        identical unreadable row. A Root View compares every claim's
-        ``witness`` for a logical node before judging its payload, then shares one
-        Page-owned Entity State among equal witnesses. ``payload`` is either the
-        member row itself or the decoder that judges it from ``witness``,
-        ``raw_member_values`` and any :meth:`add_payload_inputs`.
+        A keyed fetched row of a level the schema says may repeat rows joins
+        the logical row its ``key`` names; every other fetched row is a new
+        logical row, so it shares with nothing — not even a second fetched row
+        of the identical unreadable row. A Root View compares the
+        ``stored_values`` of every fetched row of one logical row before judging
+        its payload, then shares one Page-owned Entity State among equal ones.
+
+        ``judgment`` is how the payload is judged: ``None`` where ``member_row``
+        already is it, the decoder that judges it later from ``stored_values``,
+        ``member_row`` and any :meth:`add_payload_inputs`, or the
+        :class:`EntityState` recording already judged, held by the new logical
+        row it alone can be. Raises :class:`ValueError` for a judged fetched row
+        of a level that may repeat rows, whose comparison must precede its
+        judgment.
         """
-        self._require_open()
+        if self._sealed:
+            self._require_open()
         if source == self._last_source and layout is self._last_layout:
             slots = cast("SourceViewLayout", self._last_slots)
+            repeats = self._last_repeats
         else:
             slots = self._schema.source(source, layout)
+            repeats = self._schema.may_repeat_rows(source)
             self._last_source = source
             self._last_layout = layout
             self._last_slots = slots
-        projection = len(self._layouts)
-        logical = self._fresh(projection) if key is None else self._keyed(key, projection)
-        first = self._first[logical]
-        if first != projection:
-            key = self._keys[first]
-            claims = self._claims[logical]
-            if isinstance(claims, int):
-                self._claims[logical] = [claims, projection]
+            self._last_repeats = repeats
+        fetched_row = len(self._layouts)
+        if repeats and key is not None:
+            logical = self._merged_logical_row(key, fetched_row)
+            fetched = self._fetched_rows_by_logical_row[logical]
+            if fetched != fetched_row:
+                if isinstance(fetched, int):
+                    key = self._keys[fetched]
+                    self._fetched_rows_by_logical_row[logical] = [fetched, fetched_row]
+                else:
+                    key = self._keys[fetched[0]]
+                    fetched.append(fetched_row)
+        else:
+            logical = self._new_logical_row(fetched_row)
+        if judgment is not None:
+            if type(judgment) is EntityState:
+                if repeats:
+                    raise ValueError(
+                        "a fetched row of a level that may repeat rows is compared before "
+                        "it is judged"
+                    )
+                self._states[logical] = judgment
+                if self._observer is not None:
+                    _notify(self._observer, "states_decoded")
             else:
-                claims.append(projection)
+                self._decoders[fetched_row] = cast("PayloadDecoder", judgment)
         self._layouts.append(layout)
-        self._member_rows.append(raw_member_values)
+        self._member_rows.append(member_row)
         if identity_issues:
-            self._issues[projection] = identity_issues
-        if not isinstance(payload, tuple):
-            self._decoders[projection] = payload
+            self._issues[fetched_row] = identity_issues
         self._sources.append(source)
         self._slots.append(slots)
         self._views.append(
             cast("list[object]", [ABSENT] * len(slots.slots)) if slots.slots else _NO_VIEWS
         )
-        self._logical_ids.append(logical)
+        self._logical_rows.append(logical)
         self._keys.append(key)
-        self._witnesses.append(witness)
-        return projection
+        self._stored_values.append(stored_values)
+        return fetched_row
 
     def add_payload_inputs(
         self,
-        projection: int,
+        fetched_row: int,
         classifiable: int | None,
         correlation_findings: tuple[StoredDataIssueInput, ...],
         unknown_family_tag: UnknownFamilyTag | None,
     ) -> None:
-        """Retain what a deferred payload judgment needs beyond the claim's witness
-        and routed row, each only where set: the members the row carried for
-        classification where it did not carry them all, the findings its
-        correlations raised when claimed, and its unrecognized family tag."""
+        """Retain what a deferred payload judgment needs beyond the fetched
+        row's stored values and routed row, each only where set: the members
+        the row carried for classification where it did not carry them all, the
+        findings its correlations raised when recorded, and its unrecognized
+        family tag."""
         self._require_open()
         if classifiable is not None:
-            self._classifiable[projection] = classifiable
+            self._classifiable[fetched_row] = classifiable
         if correlation_findings:
-            self._correlation_findings[projection] = correlation_findings
+            self._correlation_findings[fetched_row] = correlation_findings
         if unknown_family_tag is not None:
-            self._unknown_family_tags[projection] = unknown_family_tag
+            self._unknown_family_tags[fetched_row] = unknown_family_tag
 
-    def write_view(self, projection: int, view: RelationshipViewKey, value: object) -> None:
-        """Record one relationship view on an already-added projection.
+    def write_view(self, fetched_row: int, view: RelationshipViewKey, value: object) -> None:
+        """Record one relationship view on an already-added fetched row.
 
-        ``value`` is ``None`` for loaded-null, a projection index for a loaded
+        ``value`` is ``None`` for loaded-null, a fetched row index for a loaded
         to-one, or a tuple of them — empty included — for a loaded to-many.
         A slot never written stays :data:`ABSENT`, which is unloaded — what a
         path-root guard leaves behind when it excludes a parent from a level.
 
         Named by view rather than by position, so a fan-back never learns about
-        slots: the projection's own source layout resolves one. Two levels may
+        slots: the fetched row's own source layout resolves one. Two levels may
         legitimately write one view — a guarded path and its broad sibling are
         distinct hops with the same view key. Delivery keeps the last write, as
         the fetch plan ordered it, while earlier edges remain reachable so their
-        continuations can merge into the same root-local logical node.
+        continuations can merge into the same root-local logical row.
 
-        Raises :class:`ValueError` for a view no level below this projection's
+        Raises :class:`ValueError` for a view no level below this fetched row's
         own source attaches, which is a fan-back writing against a plan the
         schema was not built from.
         """
         self._require_open()
         _require_edge(value, len(self._layouts))
-        slot = self._slot(projection, view)
-        row = cast("list[object]", self._views[projection])
+        slot = self._slot(fetched_row, view)
+        row = cast("list[object]", self._views[fetched_row])
         existing = row[slot]
         if existing is not ABSENT:
-            self._overwritten_edges.setdefault(projection, []).append(existing)
+            self._overwritten_edges.setdefault(fetched_row, []).append(existing)
         row[slot] = value
 
     def write_reference(
         self,
-        projection: int,
+        fetched_row: int,
         view: RelationshipViewKey,
         family: EntityIdentity,
         member: MemberIdentity,
     ) -> None:
-        """Record the logical claims ``projection``'s ``member`` names in
+        """Record the logical rows ``fetched_row``'s ``member`` names in
         ``family`` on a back-reference slot, for the Root View to resolve among
         its own reached nodes.
 
         A null or unloaded ``member`` names nothing and records loaded-null.
-        Raises :class:`ValueError` when ``member`` names no claim this Page
-        holds — a back-reference revisits an ancestor already converted — or
-        when ``view``'s slot holds projections rather than claims.
+        Raises :class:`ValueError` when ``member`` names no logical row this
+        Page merged — a back-reference revisits an ancestor already recorded,
+        at a level whose rows the schema merges — or when ``view``'s slot holds
+        fetched rows rather than logical rows.
         """
         self._require_open()
-        slot = self._slot(projection, view)
-        row = cast("list[object]", self._views[projection])
-        layout = self._layouts[projection]
-        if self._schema.root_view_layout(layout).targets[self._sources[projection]][slot] is None:
+        slot = self._slot(fetched_row, view)
+        row = cast("list[object]", self._views[fetched_row])
+        layout = self._layouts[fetched_row]
+        if self._schema.root_view_layout(layout).targets[self._sources[fetched_row]][slot] is None:
             raise ValueError(
                 f"{view.narrowed_view or view.relationship.name!r} on "
-                f"{layout.concrete.canonical} holds projections, not back-reference claims"
+                f"{layout.concrete.canonical} holds fetched rows, not back-reference logical rows"
             )
-        key = self.member_value(projection, member)
+        key = self.member_value(fetched_row, member)
         if key is None or key is ABSENT:
             row[slot] = None
             return
@@ -937,20 +1011,20 @@ class PageBuilder:
         entry = None if by_key is None else by_key.get(key)
         if entry is None:
             raise ValueError(
-                f"back-reference {view.relationship.name!r}: no already-converted "
-                f"{family.canonical} claim for key {key!r} on this Page"
+                f"back-reference {view.relationship.name!r}: no already-recorded "
+                f"{family.canonical} logical row for key {key!r} on this Page"
             )
         row[slot] = entry
 
-    def _slot(self, projection: int, view: RelationshipViewKey) -> int:
-        slot = self._slots[projection].index_of.get(view)
+    def _slot(self, fetched_row: int, view: RelationshipViewKey) -> int:
+        slot = self._slots[fetched_row].index_of.get(view)
         if slot is None:
             raise ValueError(
-                f"no level below source {self._sources[projection]} attaches "
+                f"no level below source {self._sources[fetched_row]} attaches "
                 f"{view.narrowed_view or view.relationship.name!r} to "
-                f"{self._layouts[projection].concrete.canonical}"
+                f"{self._layouts[fetched_row].concrete.canonical}"
             )
-        row = self._views[projection]
+        row = self._views[fetched_row]
         if isinstance(row, tuple):  # pragma: no cover - a resolved slot implies a nonempty row
             raise ValueError("a view slot cannot belong to an empty source layout")
         return slot
@@ -967,32 +1041,32 @@ class PageBuilder:
 
         A root whose own key did not decode remains at its result ordinal; the
         Root View later publishes the corresponding :class:`InvalidRootInput`,
-        which is how a position survives a projection nothing can construct from.
+        which is how a position survives a fetched row nothing can construct from.
         """
         self._require_open()
         count = len(self._layouts)
         for root in roots:
             _require_index(root, count, "a root")
-        source_ordinals = _physical_occurrence_ordinals(self._sources)
-        sealed_claims = [
-            claim
-            if isinstance(claim, int)
+        source_ordinals = _physical_fetched_row_ordinals(self._sources)
+        fetched_rows_by_logical_row = [
+            fetched
+            if isinstance(fetched, int)
             else tuple(
                 sorted(
-                    claim,
-                    key=lambda projection: (
-                        self._sources[projection],
-                        source_ordinals[projection],
+                    fetched,
+                    key=lambda fetched_row: (
+                        self._sources[fetched_row],
+                        source_ordinals[fetched_row],
                     ),
                 )
             )
-            for claim in self._claims
+            for fetched in self._fetched_rows_by_logical_row
         ]
         rows = PageRows(
             layouts=self._layouts,
             member_rows=self._member_rows,
             issues=SparseIssues(count, self._issues),
-            logical_ids=self._logical_ids,
+            logical_rows=self._logical_rows,
             keys=self._keys,
             sources=self._sources,
             view_rows=self._views,
@@ -1000,15 +1074,15 @@ class PageBuilder:
             schema=self._schema,
             roots=roots,
             pin=pin,
-            judged_states=JudgedStates(sealed_claims),
+            judged_states=JudgedStates(fetched_rows_by_logical_row, self._states),
             observer=self._observer,
-            witnesses=self._witnesses,
+            stored_values=self._stored_values,
             source_ordinals=source_ordinals,
-            claims=sealed_claims,
+            fetched_rows_by_logical_row=fetched_rows_by_logical_row,
             decoders=DecoderRows(
                 count,
                 self._decoders,
-                self._witnesses,
+                self._stored_values,
                 self._member_rows,
                 self._classifiable or None,
                 self._correlation_findings or None,
@@ -1019,92 +1093,97 @@ class PageBuilder:
         self._layouts = []
         self._member_rows = []
         self._issues = {}
-        self._logical_ids = []
+        self._logical_rows = []
         self._keys = []
         self._sources = []
         self._slots = []
         self._views = []
         self._overwritten_edges = {}
         self._identity = {}
-        self._first = []
         self._last_layout = None
         self._last_slots = None
         self._last_source = None
-        self._claims = []
+        self._last_repeats = False
+        self._fetched_rows_by_logical_row = []
+        self._states = []
         self._decoders = {}
         self._classifiable = {}
         self._correlation_findings = {}
         self._unknown_family_tags = {}
-        self._witnesses = []
+        self._stored_values = []
         return Page(rows)
 
-    def member_value(self, projection: int, member: MemberIdentity) -> object:
-        """``projection``'s value at ``member``, by position.
+    def member_value(self, fetched_row: int, member: MemberIdentity) -> object:
+        """``fetched_row``'s value at ``member``, by position.
 
-        Answers :data:`ABSENT` for a member this projection's read did not carry
-        and for one its Entity does not lay out at all, which is what
+        Answers :data:`ABSENT` for a member this fetched row's read did not
+        carry and for one its Entity does not lay out at all, which is what
         distinguishes an unloaded correlation member from one stored null — a
         gathered key skips both, but they are no longer the same answer.
         """
         self._require_open()
-        position = self._layouts[projection].index_of.get(member)
-        return ABSENT if position is None else self._member_rows[projection][position]
+        position = self._layouts[fetched_row].index_of.get(member)
+        return ABSENT if position is None else self._member_rows[fetched_row][position]
 
-    def concrete_of(self, projection: int) -> EntityIdentity:
-        """The exact Entity ``projection``'s own compiled read resolved it to."""
+    def concrete_of(self, fetched_row: int) -> EntityIdentity:
+        """The exact Entity ``fetched_row``'s own compiled read resolved it to."""
         self._require_open()
-        return self._layouts[projection].concrete
+        return self._layouts[fetched_row].concrete
 
     def write_to_one(
-        self, projection: int, view: RelationshipViewKey, candidates: Sequence[int]
+        self, fetched_row: int, view: RelationshipViewKey, candidates: Sequence[int]
     ) -> None:
-        """Carry every witness of the selected logical target into root-local
-        conflict judgment without changing selection among distinct targets."""
+        """Carry the stored values of every fetched row of the selected logical
+        target into root-local conflict judgment without changing selection
+        among distinct targets."""
         if not candidates:
-            self.write_view(projection, view, None)
+            self.write_view(fetched_row, view, None)
             return
         first = candidates[0]
-        logical = self._logical_ids[first]
+        logical = self._logical_rows[first]
         for candidate in reversed(candidates[1:]):
-            if self._logical_ids[candidate] == logical:
-                self.write_view(projection, view, candidate)
-        self.write_view(projection, view, first)
+            if self._logical_rows[candidate] == logical:
+                self.write_view(fetched_row, view, candidate)
+        self.write_view(fetched_row, view, first)
 
-    def _fresh(self, projection: int) -> int:
-        logical = len(self._first)
-        self._first.append(projection)
-        self._claims.append(projection)
+    def _new_logical_row(self, fetched_row: int) -> int:
+        logical = len(self._fetched_rows_by_logical_row)
+        self._fetched_rows_by_logical_row.append(fetched_row)
+        self._states.append(None)
         return logical
 
-    def _keyed(self, key: LogicalKey, projection: int) -> int:
-        """The logical ``key`` joins, else a fresh one for ``projection``.
+    def _merged_logical_row(self, key: RowKey, fetched_row: int) -> int:
+        """The logical row ``key`` names, else a new one for ``fetched_row``.
 
         A primary key's entry is the value :meth:`write_reference` shares, so a
-        coordinate-distinct claim replaces it with a longer tuple rather than
-        changing what an earlier back-reference already recorded.
+        coordinate-distinct logical row replaces it with a longer tuple rather
+        than changing what an earlier back-reference already recorded.
         """
         by_key = self._identity.get(key.family)
         if by_key is None:
             by_key = self._identity[key.family] = {}
         entry = by_key.get(key.primary_key)
         if entry is None:
-            logical = by_key[key.primary_key] = self._fresh(projection)
+            logical = by_key[key.primary_key] = self._new_logical_row(fetched_row)
             return logical
-        keys = cast("list[LogicalKey]", self._keys)
-        first = self._first
         coordinates = key.coordinates
         if isinstance(entry, int):
-            if keys[first[entry]].coordinates == coordinates:
+            if self._coordinates_of(entry) == coordinates:
                 return entry
-            logical = self._fresh(projection)
+            logical = self._new_logical_row(fetched_row)
             by_key[key.primary_key] = (entry, logical)
             return logical
-        for claimed in entry:
-            if keys[first[claimed]].coordinates == coordinates:
-                return claimed
-        logical = self._fresh(projection)
+        for merged in entry:
+            if self._coordinates_of(merged) == coordinates:
+                return merged
+        logical = self._new_logical_row(fetched_row)
         by_key[key.primary_key] = (*entry, logical)
         return logical
+
+    def _coordinates_of(self, logical: int) -> tuple[object, ...]:
+        fetched = self._fetched_rows_by_logical_row[logical]
+        first = fetched if isinstance(fetched, int) else fetched[0]
+        return cast("RowKey", self._keys[first]).coordinates
 
     def _require_open(self) -> None:
         if self._sealed:
@@ -1125,15 +1204,15 @@ def _require_edge(value: object, count: int) -> None:
 def _require_index(value: object, count: int, holder: str) -> None:
     if type(value) is not int:
         raise ValueError(
-            f"{holder} names a projection by an exact built-in int, and {value!r} is not one"
+            f"{holder} names a fetched row by an exact built-in int, and {value!r} is not one"
         )
     if not 0 <= value < count:
         raise ValueError(
-            f"{holder} names projection {value}, outside this Page's {count} projections"
+            f"{holder} names fetched row {value}, outside this Page's {count} fetched rows"
         )
 
 
-def _physical_occurrence_ordinals(sources: Sequence[SourceLevel]) -> array[int]:
+def _physical_fetched_row_ordinals(sources: Sequence[SourceLevel]) -> array[int]:
     ordinals: dict[SourceLevel, int] = {}
     positions = array("I")
     for source in sources:
@@ -1146,7 +1225,7 @@ def _physical_occurrence_ordinals(sources: Sequence[SourceLevel]) -> array[int]:
 def layout_order_key(
     layout: EntityLayout,
 ) -> tuple[tuple[str, str], tuple[str, ...]]:
-    """The concrete and exact member layout that interpret a Payload Witness."""
+    """The concrete and exact member layout that interpret stored values."""
     return layout.concrete.sort_key, tuple(stored_order_key(member) for member in layout.members)
 
 
@@ -1179,8 +1258,8 @@ def _packed(parts: Sequence[str]) -> str:
     return "".join(f"{len(part)}:{part}" for part in parts)
 
 
-# One arm per stored value kind. It runs per witness comparison and again per nested
-# value, so the arms stay inline rather than behind a per-kind call.
+# One branch per stored value kind. It runs per stored-values comparison and again per nested
+# value, so the branches stay inline rather than behind a per-kind call.
 def exact_stored_equal(left: object, right: object) -> bool:  # noqa: C901
     """Type-sensitive structural equality for provider-normalized stored values."""
     if type(left) is not type(right):
@@ -1195,7 +1274,7 @@ def exact_stored_equal(left: object, right: object) -> bool:  # noqa: C901
         for one, two in zip(left_tuple, other_tuple, strict=True):
             if type(one) is not type(two):
                 return False
-            if type(one) in _ATOMIC_WITNESS_TYPES:
+            if type(one) in _ATOMIC_STORED_TYPES:
                 continue
             if (
                 is_dataclass(one)

@@ -6,9 +6,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from parallax.core._execution._retention import (
-    ReadEvidenceByProjection,
+    ReadEvidenceByFetchedRow,
     ReadEvidenceContext,
-    RecordedProjections,
+    RecordedFetchedRows,
     defer_read_evidence,
 )
 from parallax.core.entity._construction_input import ABSENT
@@ -44,15 +44,15 @@ def retained_sources(
     *,
     evidence_context: ReadEvidenceContext,
     document: object | None = None,
-) -> ReadEvidenceByProjection:
+) -> ReadEvidenceByFetchedRow:
     """The sources a writable attempt's graph-form read retains for one
     projection per judged row, each admitted with its positional state;
     ``document`` is the raw Structured Column every projection carries."""
     layout, member_rows = judged.layout, judged.member_rows
     entity = layout.concrete
-    observations = RecordedProjections()
+    observations = RecordedFetchedRows()
     for node in range(len(member_rows)):
-        observations.observe_projection(node, entity, document)
+        observations.observe_fetched_row(node, entity, document)
     return defer_read_evidence(
         model,
         observations,
@@ -70,7 +70,7 @@ def judged_evidence(
     *rows: Mapping[str, object],
     evidence_context: ReadEvidenceContext,
     document: object | None = None,
-) -> ReadEvidenceByProjection:
+) -> ReadEvidenceByFetchedRow:
     """The sources a graph-form read retains for one projection per ``rows``
     entry, as :func:`judged_rows` lays them out and :func:`retained_sources`
     admits them."""

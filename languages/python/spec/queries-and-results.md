@@ -141,10 +141,11 @@ Inspection first requires a published Snapshot node; a plain Entity value raises
 Failure during graph construction becomes
 `SnapshotMaterializationError(snapshot-materialization-failed)` once, preserving
 its cause and withholding the graph. Other read failures keep their owner's
-classification. Inconsistent projections use
-`SnapshotConsistencyError(snapshot-projection-conflict)` without raw payload
-evidence. Its whole eager result is withheld; a stream preserves earlier roots
-and withholds the conflicting root. These read failures remain subject to the
+classification. Fetched rows of one logical row with unequal stored values use
+`SnapshotConsistencyError(snapshot-fetched-row-conflict)`, whose `fetched_rows`
+name the two fetched row positions, without raw payload evidence. Its whole
+eager result is withheld; a stream preserves earlier roots and withholds the
+conflicting root. These read failures remain subject to the
 [execution failure boundary](execution.md#transactions-and-failure-boundaries).
 
 ## Wire results and projection

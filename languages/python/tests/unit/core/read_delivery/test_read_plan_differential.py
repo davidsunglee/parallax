@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 
 import pytest
 
-from parallax.core import deep_fetch
+from parallax.core import deep_fetch, inheritance
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
+from parallax.core.metamodel import EntityIdentity, Metamodel, TablePerConcreteSubtype
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.read_delivery._read_plan import EmptyRead, ReadPlan, ReadPlanCache
 from parallax.core.sql_gen._compile import CompiledRead
@@ -116,3 +118,82 @@ def test_a_read_rendered_from_a_template_seeded_by_other_values_is_its_cold_plan
         ((golden_sql, golden_binds),) = read_golden_statements(read.case)
         assert root.statement.sql == golden_sql
         assert_wire_binds(read.meta, golden_sql, golden_binds, list(root.statement.wire_binds()))
+
+
+def _levels_from_the_include_tree(plan: ReadPlan) -> list[tuple[EntityIdentity, ...]]:
+    """Each source level's statement targets as the include tree positions them:
+    none for a level that executes no statement."""
+    includes = plan.include_tree()
+    root = plan.root_read()
+    levels = [() if isinstance(root, EmptyRead) else includes.position(includes.root).target]
+    for index in range(plan.fetch_count):
+        executes = isinstance(plan.prepared_fetch(index), tuple)
+        step = plan.fetch_step(index)
+        levels.append(includes.position(step.position).target if executes else ())
+    return levels
+
+
+def _expected_repeating(plan: ReadPlan, meta: Metamodel) -> frozenset[int]:
+    facet = inheritance.view(meta)
+
+    def view(entity: EntityIdentity) -> inheritance.InheritanceEntityView:
+        found = facet.entity(entity)
+        assert found is not None
+        return found
+
+    levels = _levels_from_the_include_tree(plan)
+    fetched = Counter(family for level in levels for family in {view(e).root for e in level})
+    named = {
+        step.family
+        for index in range(plan.fetch_count)
+        if isinstance(step := plan.fetch_step(index), deep_fetch.BackReferenceFetchStep)
+        and plan.prepared_fetch(index) is None
+    }
+    return frozenset(
+        level
+        for level, targets in enumerate(levels)
+        if any(fetched[view(e).root] > 1 or view(e).root in named for e in targets)
+        or (
+            len(targets) > 1
+            and any(isinstance(view(e).strategy, TablePerConcreteSubtype) for e in targets)
+        )
+    )
+
+
+@pytest.mark.parametrize("read", _CORPUS_READS, ids=[read.case.case_id for read in _CORPUS_READS])
+def test_every_corpus_read_proves_exactly_the_levels_no_row_key_can_recur_at(
+    read: CorpusRead,
+) -> None:
+    # The proof is read off the compiled statements; this derives it again from
+    # the include tree's targets, so the two descriptions of a level must agree.
+    plan = _plan(ReadPlanCache(0), CatalogedModel(read.meta), read, read.query, POSTGRES)
+    schema = plan._schema
+
+    repeating = frozenset(
+        level for level in range(plan.fetch_count + 1) if schema.may_repeat_rows(level)
+    )
+
+    assert repeating == _expected_repeating(plan, read.meta)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "repeating"),
+    [
+        pytest.param("m-snapshot-read-001", {1, 2}, id="diamond"),
+        pytest.param("m-snapshot-read-006", set[int](), id="shared-prefix"),
+        pytest.param("m-snapshot-read-011", {0}, id="back-reference"),
+        pytest.param("m-snapshot-read-012", {1, 2}, id="broad-and-narrowed"),
+        pytest.param("m-inheritance-073", set[int](), id="equivalent-guards"),
+        pytest.param("m-inheritance-077", {1, 2}, id="overlapping-guards"),
+        pytest.param("m-inheritance-050", {0}, id="tpcs-union"),
+    ],
+)
+def test_corpus_reads_that_merge_rows_prove_no_level_that_shares_a_row_key(
+    case_id: str, repeating: set[int]
+) -> None:
+    (read,) = (read for read in _CORPUS_READS if read.case.case_id == case_id)
+    plan = _plan(ReadPlanCache(0), CatalogedModel(read.meta), read, read.query, POSTGRES)
+
+    assert {
+        level for level in range(plan.fetch_count + 1) if plan._schema.may_repeat_rows(level)
+    } == repeating

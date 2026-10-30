@@ -128,7 +128,7 @@ def test_a_shared_document_member_keeps_its_carriers_raw_state(
     compiled = _read(DOCUMENT, "Person")
     builder = PageBuilder(ViewSchema.of())
     converter = bind(CatalogedModel(DOCUMENT), compiled.result_contract, compiled.projection)
-    index, *_ = converter.convert_row(
+    index, *_ = converter.record_row(
         result_row(compiled, {"id": 1, "payload": payload}), builder, source=ROOT_LEVEL
     )
     person = entity(DOCUMENT, "Person").identity

@@ -168,7 +168,7 @@ def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() ->
     )
     converter = bind(CatalogedModel(holder_model), compiled.result_contract, compiled.projection)
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        converter.convert_row(
+        converter.record_row(
             (1, {"profile": {"label": "x"}}), PageBuilder(ViewSchema.of()), source=ROOT_LEVEL
         )
 
@@ -206,5 +206,5 @@ def test_binding_prepares_each_occurrence_selection_once_rather_than_per_row(
 
     builder = PageBuilder(ViewSchema.of())
     for _ in range(3):
-        converter.convert_row(row, builder, source=ROOT_LEVEL)
+        converter.record_row(row, builder, source=ROOT_LEVEL)
     assert len(checked) == len(occurrences)

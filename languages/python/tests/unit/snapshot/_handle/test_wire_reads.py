@@ -1234,7 +1234,7 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
     }
     builder = PageBuilder(ViewSchema.of())
     prepared, row = bound_cells(CatalogedModel(_VARIANT_MODEL), compiled, stored)
-    ref, resolved, _document, _variant = prepared.convert_row(row, builder, source=ROOT_LEVEL)
+    ref, resolved, _document, _variant = prepared.record_row(row, builder, source=ROOT_LEVEL)
     (root,) = _published_directly(
         builder.finish((ref,), Pin()), _VARIANT_MODEL, _root_includes(resolved)
     )

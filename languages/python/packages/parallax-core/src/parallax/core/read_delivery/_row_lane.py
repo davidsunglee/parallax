@@ -24,6 +24,7 @@ from parallax.core.read_delivery._page import (
     VersionAttributes,
     attribute_state,
     diagnosis,
+    entity_state,
     observed_edge,
     observed_object_key,
     observed_version,
@@ -33,7 +34,6 @@ from parallax.core.read_delivery._page import (
     reach_into,
     release_finished_rows,
     release_page_rows,
-    state_for,
     stored_data_refusal,
 )
 from parallax.core.read_delivery._page_reader import (
@@ -149,8 +149,8 @@ def _published_rows(
     reached: list[int] = []
     for position, root in enumerate(rows.roots):
         if _keyless(rows, root):
-            observer.occurrences_reached(0)
-            state = state_for(rows, root)
+            observer.fetched_rows_reached(0)
+            state = entity_state(rows, root)
             published.append(
                 cast(
                     "InvalidData[Mapping[str, object]]",
@@ -166,11 +166,11 @@ def _published_rows(
             )
             continue
         if schedule.defers_states:
-            observer.occurrences_reached(1)
-            state = state_for(rows, root)
+            observer.fetched_rows_reached(1)
+            state = entity_state(rows, root)
         else:
-            state = state_for(rows, root)
-            observer.occurrences_reached(1)
+            state = entity_state(rows, root)
+            observer.fetched_rows_reached(1)
         layout = rows.layouts[root]
         reach_into(rows, root, reached)
         release_finished_rows(page, schedule, position, reached)
@@ -205,7 +205,7 @@ def publishable_member_rows(page: Page) -> Generator[tuple[object, ...]]:
     rows = page_rows(page)
     raw_rows = PageSchedule(None, False)
     for position, root in enumerate(rows.roots):
-        state = state_for(rows, root)
+        state = entity_state(rows, root)
         if state.findings:
             raise stored_data_refusal(state.findings[0])
         release_finished_rows(page, raw_rows, position, (root,))

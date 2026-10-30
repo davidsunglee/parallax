@@ -32,7 +32,7 @@ representation its read reports (`m-execution-lifecycle` *Read, flush, and
 database-call events*) and the
 Model Edition the read adopted, publishes one root's values on request, and
 composes an eager result from a whole Page by publishing its roots. Origins an
-execution retains for a Page's projections travel to the Publication by
+execution retains for a Page's fetched rows travel to the Publication by
 reference; delivery neither interprets nor rebuilds them. Only a writable
 transaction attempt's read retains any: a standalone delivery and a read-only
 transaction's delivery, eager or streamed, retain no write evidence, and their
@@ -135,13 +135,14 @@ decoding. No cursor judges an unrequested sibling or descendant. Layout parity
 fixes *where* the same requested logical member is judged without turning
 classification into whole-subtree validation.
 
-Judgment is once per requested logical structured value, not once per projection
-that happened to carry it. A Publication first establishes the logical Entity
-State claims a root reaches in one Page and compares every claim for one logical
-key (`m-snapshot-read` *Root View*); only then is the selected Payload Witness
-judged and decoded. Equal witnesses share that one judgment and its frozen
-evidence. Value construction and Wire publication trust the resulting judged
-Entity State and never invoke a second codec or scalar-admission pass over it.
+Judgment is once per requested logical structured value, not once per fetched
+row that happened to carry it. A Publication first establishes the logical rows
+a root reaches in one Page and compares the stored values of every fetched row
+of one logical row (`m-snapshot-read` *Root View*); only then are the selected
+stored values judged and decoded. Equal stored values share that one judgment
+and its frozen evidence. Value construction and Wire publication trust the
+resulting judged Entity State and never invoke a second codec or
+scalar-admission pass over it.
 
 A write's acquisition can read a row whole while deferring its occurrences
 (`m-unit-work` *Retained starting rows*). It judges the row's Attributes as a
@@ -235,41 +236,50 @@ state in one Page reads that same Entity State by reference. Relationship
 loadedness is not Entity State: it belongs to whatever publishes a root, because
 two roots may have reached the same row through different requested paths. A
 published value retains only the member state and private write-origin state its
-lifecycle requires; it retains no Page, raw provider row, unused witness, or
-other root's relationship view.
+lifecycle requires; it retains no Page, raw provider row, unused stored values,
+or other root's relationship view.
 
-Each database row occurrence first makes an **identity claim** consisting of its
-resolved concrete Entity, its family-normalized logical key, and the level and
-row ordinal where it occurred. The logical key is **(entity family, primary key,
-lowered as-of coordinate per declared axis)**, degrading to (family, primary
-key) for a non-temporal entity. An unreadable host-checked primary key makes the
-occurrence keyless: it shares with nothing and is classified at its own result
-position. A native primary-key Column is trusted as provider-normalized identity
-after the database type and constraint boundary.
+Each **fetched row** — one database row as one statement returned it, at one
+level — first records its **row identity**: its resolved concrete Entity, its
+family-normalized row key, and the level and row ordinal where it was fetched.
+The **row key** is **(entity family, primary key, lowered as-of coordinate per
+declared axis)**, degrading to (family, primary key) for a non-temporal entity.
+Every fetched row on a Page with one row key forms one **logical row**. An
+unreadable host-checked primary key makes the fetched row keyless: it shares
+with nothing and is classified at its own result position. A native
+primary-key Column is trusted as provider-normalized identity after the
+database type and constraint boundary.
 
-The remainder of the occurrence is its exact **Payload Witness**: the resolved
+The remainder of the fetched row is its exact **stored values**: the resolved
 concrete Entity plus the provider-normalized values selected for the Entity's
-positional member row. Witness equality is exact positional structural equality,
-including stored-document structure and presence. It is independent of arrival
-order and Include Path order.
+positional member row, before judgment. Stored-values equality is exact
+positional structural equality, including stored-document structure and
+presence. It is independent of arrival order and Include Path order.
 
-A Publication judging one root compares only the claims that root reaches
-(`m-snapshot-read` *Root View*). The Page keeps exact witnesses beside each key, so an already-judged,
-exactly equal state may be borrowed by another root without extending either
-root's reachability: one root-local witness establishes one Entity State and is
-decoded and judged once; equal witnesses establish the same Entity State and
-reuse that one decode and its findings, and a later root with the same witness
-may borrow it. Unequal witnesses reached only by separate roots coexist in the
+A Publication judging one root compares only the fetched rows that root
+reaches (`m-snapshot-read` *Root View*). The Page keeps exact stored values
+beside each row key, so an already-judged, exactly equal state may be borrowed
+by another root without extending either root's reachability: one root-local
+set of stored values establishes one Entity State and is decoded and judged
+once; equal stored values establish the same Entity State and reuse that one
+decode and its findings, and a later root with the same stored values may
+borrow it. Unequal stored values reached only by separate roots coexist in the
 Page.
 
-A **Page** is the bounded, page-owned occurrence table produced by one eager read
-or one streamed batch: occurrence headers and raw witnesses, root ordinals,
+A logical row whose Page can hold only one fetched row has no comparison to
+precede its judgment, so its stored values may be judged as the row is
+recorded. Its findings still classify only the roots that reach it, and it is
+judged once however many roots read its Entity State.
+
+A **Page** is the bounded, page-owned fetched-row table produced by one eager
+read or one streamed batch: row identities and stored values, root ordinals,
 root-local relationship rows, the paging verdict, and the Entity States judged
 so far. Eager delivery uses one Page for its whole database-ordered result. A
 stream drops each Page before it reads the next. Payload judgement is
-demand-driven: identity and correlation are judged as a row is converted, and a
+demand-driven: identity and correlation are judged as a row is recorded, and a
 member's payload is judged when a Publication first asks for the state that
-holds it.
+holds it, or as the row is recorded where its logical row can hold no other
+fetched row.
 
 ## Whole-result delivery
 
@@ -277,7 +287,7 @@ An eager read has one whole-result publication boundary. It reads and prepares
 every result root before any published value, classified root, or
 `root_published` observation crosses that boundary. A failure while judging or
 publishing any later root — including a Publication's own refusal, such as a
-Snapshot Projection Conflict (`m-snapshot-read`), or a lifecycle-state
+Snapshot Fetched Row Conflict (`m-snapshot-read`), or a lifecycle-state
 construction failure — therefore publishes no root and emits no
 root-publication event for the read. Successfully classified `InvalidData` is a
 result root rather than such a failure: a checked eager result contains every
@@ -301,7 +311,7 @@ Each root has one atomic publication boundary. Its whole root-local graph and
 classification are prepared before any value for that root reaches the consumer;
 failure while preparing it publishes none of that root. Publication of one root does
 not wait for a later root, however, so every failure preserves exactly the maximal
-prefix already published. This applies whether the failure is a projection conflict,
+prefix already published. This applies whether the failure is a fetched row conflict,
 a provider or continuation failure on a later page, invalid-data refusal in the
 default view, or a lifecycle failure during publication. The checked view differs
 only by publishing classified invalid data in band; both views judge the same root
@@ -603,7 +613,7 @@ Three layers, each separately bounded and each released at a stated point:
 
 | Layer | Holds | Bound | Released |
 |---|---|---|---|
-| the page's converted result | every projection for one page's roots and their relationship fan-out | `O(P_B)` | after that page's last root is published |
+| the page's converted result | every fetched row for one page's roots and their relationship fan-out | `O(P_B)` | after that page's last root is published |
 | the current root's publication judgment and classification | the nodes and issues reachable from that root | `O(G_max)` | when that root is published |
 | the current root's materialized value | that root's published graph and its cycle and aliasing closure | `O(G_max)` | when the delivery advances |
 

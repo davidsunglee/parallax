@@ -32,7 +32,7 @@ class _NoOrigins:
 
     __slots__ = ()
 
-    def observe_projection(
+    def observe_fetched_row(
         self, node: int, entity: EntityIdentity, document: object | None
     ) -> None:
         del node, entity, document

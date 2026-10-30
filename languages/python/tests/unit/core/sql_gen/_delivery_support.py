@@ -3,7 +3,7 @@
 A suite authors the cells a statement's rows hold by the names its SQL selects
 them under. The structural port fake folds them into positional driver rows by
 that SQL and its document-read ordinals, and the rows then cross the production
-boundary every read crosses: ``bind``, ``ReadRowConverter.convert_row``, the
+boundary every read crosses: ``bind``, ``ReadRowConverter.record_row``, the
 Page-owned stored-value judgment, and the converter's flat-row publisher. No
 step reads the compiled result contract's keys, so an expectation authored from
 a model's declarations stays independent of them.
@@ -26,8 +26,8 @@ from parallax.core.read_delivery._page import (
     ROOT_LEVEL,
     PageBuilder,
     ViewSchema,
+    entity_state,
     page_rows,
-    state_for,
 )
 from parallax.core.read_delivery._row_converter import bind
 from parallax.core.sql_gen._compile import CompiledRead
@@ -77,17 +77,19 @@ def deliver(
     for row in rows:
         unknown = [key for key in row if re.search(rf"\b{re.escape(key)}\b", sql) is None]
         assert not unknown, f"{unknown} are not spelled by {sql!r}"
-    converter = bind(CatalogedModel(model), compiled.result_contract, compiled.projection)
+    converter = bind(
+        CatalogedModel(model), compiled.result_contract, compiled.projection, row_operations=True
+    )
     builder = PageBuilder(ViewSchema.of())
     converted = [
-        converter.convert_row(row, builder, source=ROOT_LEVEL)
+        converter.record_row(row, builder, source=ROOT_LEVEL)
         for row in fold_mapping_rows(rows, compiled.document_reads, sql)
     ]
     page = page_rows(builder.finish(tuple(ref for ref, *_rest in converted), Pin()))
     publisher = converter.row_publisher()
     delivered: list[DeliveredRow] = []
     for root, (_ref, resolved, document, variant) in zip(page.roots, converted, strict=True):
-        state = state_for(page, root)
+        state = entity_state(page, root)
         layout = page.layouts[root]
         assert layout.concrete == resolved
         published = publisher.publish(resolved, state.member_row, variant)

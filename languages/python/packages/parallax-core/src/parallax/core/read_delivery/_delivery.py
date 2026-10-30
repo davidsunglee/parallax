@@ -59,7 +59,7 @@ def find[Origin](
     included Entity in the same transaction takes the shared lock. Omitting it
     is how a non-transactional read locks nothing at all.
 
-    ``origin_collector`` observes every converted projection and answers the sealed
+    ``origin_collector`` observes every recorded fetched row and answers the sealed
     Page's origins, which the result carries by reference.
 
     ``calls`` is the scope this read brackets its Database Calls against: the

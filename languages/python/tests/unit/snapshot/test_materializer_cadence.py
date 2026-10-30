@@ -42,7 +42,7 @@ from tests.unit.snapshot._snapshot_page_support import PageFixture, RecordingObs
 
 
 def test_the_inert_observer_accepts_a_witness_comparison_total() -> None:
-    INERT_OBSERVER.witnesses_compared(1)
+    INERT_OBSERVER.stored_values_compared(1)
 
 
 def _row(order_id: int) -> dict[str, object]:
@@ -63,7 +63,7 @@ def _page(observer: MaterializationObserver, *order_ids: int) -> Page:
     prepared = bound_read(model, "Order")
     compiled = compiled_read(model, "Order")
     roots = tuple(
-        prepared.convert_row(result_row(compiled, _row(order_id)), builder, source=ROOT_LEVEL)[0]
+        prepared.record_row(result_row(compiled, _row(order_id)), builder, source=ROOT_LEVEL)[0]
         for order_id in order_ids
     )
     return builder.finish(roots, Pin())
@@ -106,7 +106,9 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
                 stage,
                 meta,
                 CONCURRENCY,
-                bind(model, compiled.result_contract, compiled.projection).row_publisher(),
+                bind(
+                    model, compiled.result_contract, compiled.projection, row_operations=True
+                ).row_publisher(),
             )
         )
         == 2
@@ -116,9 +118,11 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
         ("statement_rendered", ROOT_LEVEL),
         ("statement_executed", 2),
         ("states_decoded", 1),
-        ("occurrences_reached", 1),
+        ("states_decoded", 1),
         ("states_shared", 1),
-        ("occurrences_reached", 1),
+        ("fetched_rows_reached", 1),
+        ("states_shared", 1),
+        ("fetched_rows_reached", 1),
         ("root_published", 0),
         ("root_published", 1),
     ]
@@ -134,21 +138,23 @@ def test_eager_row_publication_withholds_events_when_a_later_root_fails(
     stage = PageReader(observer).read_page(FlatPageRequest(model, compiled, lambda: rows, Pin()))
 
     judged: list[int] = []
-    state_for = vars(_row_lane)["state_for"]
+    entity_state = vars(_row_lane)["entity_state"]
 
     def fail_on_second_root(rows: PageRows, projection: int) -> EntityState:
         judged.append(projection)
         if len(judged) == 2:
             raise RuntimeError("later row failed")
-        return state_for(rows, projection)
+        return entity_state(rows, projection)
 
-    monkeypatch.setattr(_row_lane, "state_for", fail_on_second_root)
+    monkeypatch.setattr(_row_lane, "entity_state", fail_on_second_root)
     with pytest.raises(RuntimeError, match="later row failed"):
         _published_rows(
             stage,
             meta,
             CONCURRENCY,
-            bind(model, compiled.result_contract, compiled.projection).row_publisher(),
+            bind(
+                model, compiled.result_contract, compiled.projection, row_operations=True
+            ).row_publisher(),
         )
 
     assert [event for event in observer.events if event[0] == "root_published"] == []
@@ -176,7 +182,7 @@ def test_eager_and_streamed_pages_report_the_same_publication_totals() -> None:
         assert list(publish_roots(page, _publish, _ORDERS, ordinal_offset=ordinal)) == [ordinal]
         ordinal += page.root_count
 
-    totals = {"occurrences_reached": 2, "states_decoded": 2}
+    totals = {"fetched_rows_reached": 2, "states_decoded": 2}
     for event, expected in totals.items():
         assert sum(value for name, value in eager.events if name == event) == expected
         assert sum(value for name, value in streamed.events if name == event) == expected
@@ -186,7 +192,7 @@ def test_eager_and_streamed_pages_report_the_same_publication_totals() -> None:
 
 _DECODED: Final = ("states_decoded", 1)
 _SHARED: Final = ("states_shared", 1)
-_REACHED: Final = ("occurrences_reached", 1)
+_REACHED: Final = ("fetched_rows_reached", 1)
 
 
 @pytest.mark.parametrize(

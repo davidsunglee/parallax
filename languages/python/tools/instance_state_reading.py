@@ -40,7 +40,7 @@ from typing import Any, Final, cast
 
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.deep_fetch._include_tree import build_include_tree
-from parallax.core.read_delivery._page import ROOT_LEVEL, LogicalKey, PageBuilder, ViewSchema
+from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, RowKey, ViewSchema
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Snapshot
 from parallax.snapshot._publication._root_publication import publish_roots
@@ -278,10 +278,10 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
     layout = scenario.layout
     values = scenario.values
     builder = PageBuilder(ViewSchema.of())
-    root = builder.add_claim(
+    root = builder.add_fetched_row(
         ROOT_LEVEL,
         layout,
-        LogicalKey(
+        RowKey(
             layout.family,
             values[layout.primary_key[0]],
             tuple(values[position] for position in layout.temporal_starts),
@@ -289,7 +289,7 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
         values,
         values,
         (),
-        values,
+        None,
     )
     page = builder.finish((root,), Pin())
 

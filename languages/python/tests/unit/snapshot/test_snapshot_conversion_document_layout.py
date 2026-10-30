@@ -47,6 +47,7 @@ from parallax.core.read_delivery._page import (
 )
 from parallax.core.read_delivery._row_converter import bind
 from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from tests._support.document_reads import folded_names
 from tests._support.sql import compile_read
@@ -70,12 +71,25 @@ class _Converted:
 
 def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Converted:
     """One stored row, spelled by the names its read selects, through the
-    production read sequence, database aside."""
+    production read sequence, database aside: judged when its state is first
+    needed, which a row judged as a proved level records it must equal."""
     compiled = compile_read(
         oa.TrueNode(), model, POSTGRES, entity(model, name), result_form="instance"
     )
-    builder = PageBuilder(ViewSchema.of())
-    index = convert_cells(CatalogedModel(model), compiled, stored, builder, source=ROOT_LEVEL)
+    deferred, proved = (
+        _published(model, compiled, stored, proved=proved) for proved in (False, True)
+    )
+    assert proved == deferred
+    return deferred
+
+
+def _published(
+    model: Metamodel, compiled: CompiledRead, stored: Mapping[str, object], *, proved: bool
+) -> _Converted:
+    builder = PageBuilder(ViewSchema.of(repeating_levels=frozenset() if proved else None))
+    index = convert_cells(
+        CatalogedModel(model), compiled, stored, builder, source=ROOT_LEVEL, singleton=proved
+    )
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     (root,) = observed_roots(page, model)
@@ -284,7 +298,7 @@ def test_an_occurrence_column_requires_a_folded_document_read() -> None:
     prepared = bind(CatalogedModel(_TWIN_COLUMNS), compiled.result_contract, compiled.projection)
     builder = PageBuilder(ViewSchema.of())
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        index, *_ = prepared.convert_row(tuple(folded), builder, source=ROOT_LEVEL)
+        index, *_ = prepared.record_row(tuple(folded), builder, source=ROOT_LEVEL)
         observed_roots(builder.finish((index,), Pin()), _TWIN_COLUMNS)
 
 

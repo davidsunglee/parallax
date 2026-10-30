@@ -1,175 +1,212 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import Protocol, cast
 
-from parallax.core.base import (
-    SQL_NULL,
-    DocumentValue,
-    ManagedValue,
-    NeutralType,
-)
+from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.db_port import Row
 from parallax.core.deep_fetch import ResolvedReadProjection
-from parallax.core.document_codec import locate_raw_entity_member
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     OccurrenceDefinition,
 )
-from parallax.core.read_delivery._convert import EntityReadMapping, register_reduced_row
-from parallax.core.read_delivery._page import ABSENT, LogicalKey, PageBuilder, SourceLevel
-from parallax.core.read_delivery._row_decoding import member_classifiers, row_identity
+from parallax.core.read_delivery._convert import EntityReadMapping
+from parallax.core.read_delivery._page import ABSENT, PageBuilder, SourceLevel
+from parallax.core.read_delivery._row_decoding import (
+    fixed_entity,
+    member_classifiers,
+    require_arity,
+    row_identity,
+    row_variants,
+)
+from parallax.core.read_delivery._row_recording import (
+    RecordRow,
+    located_stored_values,
+    record_deferred,
+    record_judged,
+    record_trusted,
+    record_trusted_singleton,
+)
 from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.wire import encode_wire
 from parallax.core.write_plan.observe import occurrence_value
 
-__all__ = ["ReadRowConverter", "RowPublisher", "bind"]
+__all__ = ["FetchedRowObserver", "ReadRowConverter", "RowPublisher", "bind"]
+
+
+class FetchedRowObserver(Protocol):
+    """What recording reports about each fetched row it registers."""
+
+    def observe_fetched_row(
+        self, fetched_row: int, entity: EntityIdentity, document: object | None, /
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
 class ReadRowConverter:
     """One compiled read's result contract together with the entity mappings its
-    rows convert under.
+    rows record under, and how each is recorded.
 
-    The whole of what a read lane needs to turn driver rows into projections:
-    convert a raw provider row and observe it, with no mapping, contract,
+    The whole of what a read lane needs to turn driver rows into fetched rows:
+    record a raw provider row and observe it, with no mapping, contract,
     classified-member set, or finding crossing the call. A lane that named any
     of those would be coordinating a shape it does not own, and would be the
     second place the pairing of a row with its own mapping could go wrong.
 
     Everything it is built from is private for that reason: the mapping table
-    is reachable only through conversion, so nothing outside can read a mapping,
+    is reachable only through recording, so nothing outside can read a mapping,
     replace one, or hold the contract apart from the mappings bound with it.
+    ``_record_trusted`` records a row nothing host-checks or classifies and
+    ``_record_reduced`` every other row, both chosen when the read was bound;
+    ``_fixed`` is the mapping of a read whose every row names one Entity with
+    no shared document, which skips identity resolution per row.
     """
 
     _contract: ReadResultContract
     _mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping]
+    _record_trusted: RecordRow
+    _record_reduced: RecordRow
+    _fixed: EntityReadMapping | None
+    _operations: Mapping[tuple[EntityIdentity, str | None], _RowOperation] | None
 
-    def convert_row(
+    def record_row(
         self,
         row: Row,
         builder: PageBuilder,
         *,
         source: SourceLevel,
     ) -> tuple[int, EntityIdentity, object | None, str | None]:
-        """Register one provider row in ``builder``, answering its projection
+        """Record one provider row in ``builder``, answering its fetched row
         index, the Entity it resolved to, its shared document, and its
-        `familyVariant` spelling.
-
-        A row whose mapping needs no state reduction registers its witness as its
-        member row. Any other row is claimed now, with its identity and
-        correlation values judged for page assembly, and the rest of its
-        payload judged when its Page-owned state is first needed.
-        """
-        resolved, variant, unknown, document = row_identity(self._contract, row)
-        mapping = self._mappings_by_entity[resolved]
-        if mapping.direct_row is not None:
-            selected = mapping.direct_row(row)
-            witness = (
+        `familyVariant` spelling."""
+        fixed = self._fixed
+        if fixed is not None:
+            require_arity(self._contract, row)
+            resolved, variant, unknown, document = fixed.concrete_entity, None, None, None
+            mapping = fixed
+        else:
+            resolved, variant, unknown, document = row_identity(self._contract, row)
+            mapping = self._mappings_by_entity[resolved]
+        direct = mapping.direct_row
+        if direct is not None:
+            selected = direct(row)
+            stored_values = (
                 cast("tuple[object, ...]", selected)
                 if len(mapping.result_ordinals) != 1
                 else (selected,)
             )
             classifiable = mapping.every_member_present
         else:
-            classifiable = 0
-            layout = mapping.layout
-            ordinals = mapping.result_ordinals
-            document_members = mapping.document_member_names
-            witness_values: list[object] = [ABSENT] * len(layout.members)
-            for position in range(layout.attribute_count):
-                document_member = document_members[position]
-                if document_member is not None:
-                    witness_values[position] = (
-                        SQL_NULL
-                        if document is None
-                        else locate_raw_entity_member(
-                            cast("DocumentValue", document), document_member
-                        )
-                    )
-                elif (ordinal := ordinals[position]) is not None:
-                    witness_values[position] = row[ordinal]
-                else:
-                    continue
-                classifiable |= 1 << position
-            for position, projected in enumerate(
-                mapping.projected_by_position, start=layout.attribute_count
-            ):
-                if not projected:
-                    continue
-                document_member = document_members[position]
-                if document_member is not None:
-                    witness_values[position] = (
-                        SQL_NULL
-                        if document is None
-                        else locate_raw_entity_member(
-                            cast("DocumentValue", document), document_member
-                        )
-                    )
-                elif (ordinal := ordinals[position]) is not None:
-                    witness_values[position] = row[ordinal]
-                else:
-                    # A requested occurrence this row's Entity carries no
-                    # source for reads as stored SQL NULL.
-                    witness_values[position] = None
-                    continue
-                classifiable |= 1 << position
-            witness = tuple(witness_values)
-        if not mapping.requires_state_reduction and unknown is None:
-            layout = mapping.layout
-            primary_key = witness[layout.primary_key[0]]
-            key = (
-                None
-                if primary_key is ABSENT
-                else LogicalKey(layout.family, primary_key, mapping.temporal_start_values(witness))
-            )
-            ref = builder.add_claim(source, layout, key, witness, witness, (), witness)
-        else:
-            ref = register_reduced_row(
-                witness,
-                mapping,
-                builder,
-                source=source,
-                classifiable=classifiable,
-                unknown_family_tag=unknown,
-            )
-        return ref, resolved, document, variant
+            stored_values, classifiable = located_stored_values(mapping, row, document)
+        record = (
+            self._record_trusted
+            if not mapping.requires_state_reduction and unknown is None
+            else self._record_reduced
+        )
+        return (
+            record(mapping, stored_values, classifiable, unknown, builder, source),
+            resolved,
+            document,
+            variant,
+        )
+
+    def record_rows(
+        self,
+        rows: Iterable[Row],
+        builder: PageBuilder,
+        source: SourceLevel,
+        observer: FetchedRowObserver | None,
+    ) -> tuple[int, ...]:
+        """Record ``rows`` into ``builder`` at ``source``, reporting each to
+        ``observer`` while its row is still live, and answer their fetched row
+        indices in row order.
+
+        Each row is reported under its OWN resolved concrete Entity, together
+        with its raw shared document. ``observer`` is ``None`` for a read that
+        records nothing about its rows, which then makes no call per row.
+        """
+        fixed = self._fixed
+        if fixed is None:
+            refs: list[int] = []
+            for row in rows:
+                ref, resolved, document, _variant = self.record_row(row, builder, source=source)
+                refs.append(ref)
+                if observer is not None:
+                    observer.observe_fetched_row(ref, resolved, document)
+            return tuple(refs)
+        return self._record_fixed(fixed, rows, builder, source, observer)
+
+    def _record_fixed(
+        self,
+        mapping: EntityReadMapping,
+        rows: Iterable[Row],
+        builder: PageBuilder,
+        source: SourceLevel,
+        observer: FetchedRowObserver | None,
+    ) -> tuple[int, ...]:
+        """Record a fixed-identity read's rows, each under ``mapping`` with its
+        arity still checked."""
+        contract = self._contract
+        width = len(contract.slots)
+        record = self._record_reduced if mapping.requires_state_reduction else self._record_trusted
+        direct = mapping.direct_row
+        single = len(mapping.result_ordinals) == 1
+        every_member = mapping.every_member_present
+        concrete = mapping.concrete_entity
+        refs: list[int] = []
+        append = refs.append
+        for row in rows:
+            if len(row) != width:
+                require_arity(contract, row)
+            if direct is None:
+                stored_values, classifiable = located_stored_values(mapping, row, None)
+                ref = record(mapping, stored_values, classifiable, None, builder, source)
+            elif single:
+                ref = record(mapping, (direct(row),), every_member, None, builder, source)
+            else:
+                ref = record(
+                    mapping,
+                    cast("tuple[object, ...]", direct(row)),
+                    every_member,
+                    None,
+                    builder,
+                    source,
+                )
+            append(ref)
+            if observer is not None:
+                observer.observe_fetched_row(ref, concrete, None)
+        return tuple(refs)
 
     def row_publisher(self) -> RowPublisher:
-        """Open one Page's flat-row publisher; what it derives dies with it."""
-        return RowPublisher(self._contract, self._mappings_by_entity)
+        """The flat-row publisher of a read bound with its row operations.
+
+        Raises :class:`ValueError` for a read bound without them."""
+        operations = self._operations
+        if operations is None:
+            raise ValueError("this read was bound without row operations")
+        return RowPublisher(operations)
 
 
 class RowPublisher:
-    """Publishes one Page's flat rows, deriving one operation per concrete
-    Entity and `familyVariant` pair on first sight of that pair."""
+    """Publishes flat rows through the operations its read bound, one per
+    concrete Entity and `familyVariant` pair."""
 
-    __slots__ = ("_contract", "_mappings_by_entity", "_operations")
+    __slots__ = ("_operations",)
 
     def __init__(
-        self,
-        contract: ReadResultContract,
-        mappings_by_entity: Mapping[EntityIdentity, EntityReadMapping],
+        self, operations: Mapping[tuple[EntityIdentity, str | None], _RowOperation]
     ) -> None:
-        self._contract = contract
-        self._mappings_by_entity = mappings_by_entity
-        self._operations: dict[tuple[EntityIdentity, str | None], _RowOperation] = {}
+        self._operations = operations
 
     def publish(
         self, concrete: EntityIdentity, row: tuple[object, ...], variant: str | None
     ) -> dict[str, object]:
         """One positional member row of ``concrete`` as its result-keyed flat row."""
-        pair = (concrete, variant)
-        operation = self._operations.get(pair)
-        if operation is None:
-            operation = self._operations[pair] = _row_operation(
-                self._contract, self._mappings_by_entity[concrete], variant
-            )
-        return operation(row)
+        return self._operations[concrete, variant](row)
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,9 +294,13 @@ def bind(
     projection: ResolvedReadProjection,
     *,
     correlation_members: tuple[AttributeIdentity, ...] = (),
+    singleton: bool = False,
+    acquisition: bool = False,
+    row_operations: bool = False,
 ) -> ReadRowConverter:
     """Bind one compiled read's ``contract`` and resolved ``projection`` to
-    ``model``: one mapping per Entity its rows can resolve to.
+    ``model``: one mapping per Entity its rows can resolve to, and how each row
+    is recorded.
 
     Paid once per compiled read, which is where the state belongs — the member
     layouts are the model's and the projected occurrences and member sources
@@ -270,17 +311,38 @@ def bind(
     identity, including for an Entity outside the read's position.
     ``correlation_members`` are the members this read's rows route by; a read
     routed by a different selection is bound separately.
+
+    A ``singleton`` read is one whose level records each row key at most once
+    on its Page, so a row needs no comparison before it is judged: unless the
+    read is a write's ``acquisition``, whose occurrences stay unjudged by
+    contract, every row is judged as it is recorded. Every other row's payload
+    judgment is deferred. ``row_operations`` prepares the flat-row publication
+    of each Entity and `familyVariant` pair the contract can resolve a row to.
     """
+    mappings = MappingProxyType(
+        {
+            identity: _entity_read_mapping(
+                model, identity, contract, projection, correlation_members
+            )
+            for identity in contract.resolvable
+        }
+    )
+    fixed = fixed_entity(contract)
     return ReadRowConverter(
         contract,
+        mappings,
+        record_trusted_singleton if singleton else record_trusted,
+        record_judged if singleton and not acquisition else record_deferred,
+        None if fixed is None else mappings[fixed],
         MappingProxyType(
             {
-                identity: _entity_read_mapping(
-                    model, identity, contract, projection, correlation_members
-                )
-                for identity in contract.resolvable
+                pair: _row_operation(contract, mappings[pair[0]], pair[1])
+                for pair in row_variants(contract)
+                if pair[0] in mappings
             }
-        ),
+        )
+        if row_operations
+        else None,
     )
 
 

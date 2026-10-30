@@ -39,8 +39,8 @@ class ChildSlot:
     the ``(source level, concrete)`` pair rather than of an individual row.
 
     ``targets`` is set exactly on a back-reference slot, as the concretes it may
-    resolve to. Such a slot holds the logical claims its parent's correlation
-    member names rather than projections, and Root View allocation resolves them
+    resolve to. Such a slot holds the logical rows its parent's correlation
+    member names rather than fetched rows, and Root View allocation resolves them
     to this root's reached nodes of those concretes.
     """
 
@@ -51,7 +51,7 @@ class ChildSlot:
 
 @dataclass(frozen=True, slots=True)
 class SourceViewLayout:
-    """The view row one source level's projections of one concrete Entity carry.
+    """The view row one source level's fetched rows of one concrete Entity carry.
 
     ``slots`` is what that level's child levels attach, minus whatever a guard
     excluded this concrete from, in the member layout's own canonical order.
@@ -76,7 +76,7 @@ class RootViewLayout:
     ordered by the member layout's own rule, so a walk that visits slots by index
     visits them in declaration order without sorting anything. Taking the union
     over the whole plan rather than over the levels one node happened to be
-    projected at is what fixes the width before the first projection of that node
+    projected at is what fixes the width before the first fetched row of that node
     is walked: a node reached again from a second level widens nothing.
     ``index_of`` is how a caller holding a view key finds the slot to read.
 
@@ -87,14 +87,14 @@ class RootViewLayout:
     holding ``ABSENT``. Both are unloaded; only the second occupies a position.
 
     ``to_root_view`` translates a source row into this one, indexed by source level
-    and then by that level's own slot: a projection's view row is positional
+    and then by that level's own slot: a fetched row's view row is positional
     against its :class:`SourceViewLayout`, and Root View assembly carries each written
     position across once, where the Root View row is built, rather than at each
     read.
 
     ``targets`` is indexed like ``to_root_view`` and says what each source slot
-    holds: ``None`` for projections, or a back-reference's target concretes for
-    logical claims. It is kept per source level rather than per view key,
+    holds: ``None`` for fetched rows, or a back-reference's target concretes for
+    logical rows. It is kept per source level rather than per view key,
     because one view key can be a back-reference at one level and a forward hop
     at another.
 
@@ -116,36 +116,53 @@ class RootViewLayout:
 
 
 class ViewSchema:
-    """One execution's view slots, by source level and resolved concrete Entity.
+    """One execution's view slots, by source level and resolved concrete Entity,
+    and which of those levels may record one row key more than once.
 
     Two constructors, because guards exist on root-parented levels only.
     :meth:`of` states one unguarded source level directly, which is what lets a
     Root View be exercised with no plan, no executor, and no database; the
     initializer takes the whole slot table a guarded plan derives, indexed by
     source level.
+
+    ``repeating_levels`` is the proof a read's plan and model supply: every
+    level outside it records each row key at most once on the Page. A schema
+    given no proof proves no level, so each of its levels may repeat rows.
     """
 
-    __slots__ = ("_frozen", "_interned", "_levels", "_root_views", "_source")
+    __slots__ = ("_frozen", "_interned", "_levels", "_repeating", "_root_views", "_source")
 
-    def __init__(self, levels: Sequence[tuple[ChildSlot, ...]]) -> None:
+    def __init__(
+        self,
+        levels: Sequence[tuple[ChildSlot, ...]],
+        *,
+        repeating_levels: frozenset[SourceLevel] | None = None,
+    ) -> None:
         self._levels: tuple[tuple[ChildSlot, ...], ...] = tuple(levels)
+        self._repeating = repeating_levels
         self._interned: dict[tuple[RelationshipViewKey, ...], SourceViewLayout] = {}
         self._source: dict[tuple[SourceLevel, EntityIdentity], SourceViewLayout] = {}
         self._root_views: dict[EntityIdentity, RootViewLayout] = {}
         self._frozen = False
 
     @classmethod
-    def of(cls, *views: RelationshipViewKey) -> ViewSchema:
+    def of(
+        cls,
+        *views: RelationshipViewKey,
+        repeating_levels: frozenset[SourceLevel] | None = None,
+    ) -> ViewSchema:
         """A schema of one unguarded source level carrying ``views``."""
-        return cls((tuple(ChildSlot(view) for view in views),))
+        return cls((tuple(ChildSlot(view) for view in views),), repeating_levels=repeating_levels)
 
     @classmethod
     def prepared(
         cls,
         levels: Sequence[tuple[ChildSlot, ...]],
         layouts: Iterable[EntityLayout],
+        *,
+        repeating_levels: frozenset[SourceLevel] | None = None,
     ) -> ViewSchema:
-        schema = cls(levels)
+        schema = cls(levels, repeating_levels=repeating_levels)
         held = tuple(layouts)
         shared: dict[tuple[object, ...], tuple[object, ...]] = {}
         for layout in held:
@@ -158,8 +175,19 @@ class ViewSchema:
         schema._frozen = True
         return schema
 
+    @property
+    def level_count(self) -> int:
+        """The source levels this schema lays rows out for."""
+        return len(self._levels)
+
+    def may_repeat_rows(self, level: SourceLevel) -> bool:
+        """Whether ``level`` may record one row key more than once on a Page,
+        which is what obliges its fetched rows to merge into logical rows."""
+        repeating = self._repeating
+        return repeating is None or level in repeating
+
     def source(self, level: SourceLevel, layout: EntityLayout) -> SourceViewLayout:
-        """The view row a projection of ``layout``'s Entity produced by ``level``
+        """The view row a fetched row of ``layout``'s Entity produced by ``level``
         carries.
 
         Derived on the pair's first reach and answered from what that reach
@@ -179,7 +207,7 @@ class ViewSchema:
         if not 0 <= level < len(self._levels):
             raise ValueError(
                 f"this view schema carries {len(self._levels)} source levels, "
-                f"so it lays out no row for a projection of level {level}"
+                f"so it lays out no row for a fetched row of level {level}"
             )
         built = self._interned_layout(
             layout.ordered(

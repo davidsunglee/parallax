@@ -82,9 +82,9 @@ def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...],
 
     A level contributes one slot to whichever source level its own PARENT rows
     came from, carrying that level's path-root guard as the concretes it admits
-    and, for a back-reference, the target concretes its logical claims may
+    and, for a back-reference, the target concretes its logical rows may
     resolve to. The table is dense over every source level the plan can produce
-    a projection at — a level attaching nothing still owns an empty entry, and a
+    a fetched row at — a level attaching nothing still owns an empty entry, and a
     back-reference level, which converts no row of its own, is simply never
     named as a parent.
 
@@ -167,8 +167,8 @@ def attach_back_reference(
 
     A back-reference issues no SQL: m-case-format's "Back-reference cycles"
     guarantees the ancestor is already converted, so the parent's own correlation
-    member names logical claims this builder has already registered. The Root
-    View selects only its own reachable canonical claim among the targets the
+    member names logical rows this builder has already merged. The Root
+    View selects only its own reachable canonical logical row among the targets the
     view schema records for the slot.
     """
     position = tree.position(step.position)
@@ -278,7 +278,7 @@ def gather_keys(
     either would widen the child query by a key nothing joins on.
 
     A gathered key is always a declared PRIMARY-KEY (or unique FK) attribute's
-    own managed value, even though a projection's values are typed as plain
+    own managed value, even though a fetched row's values are typed as plain
     ``object``; the cast reflects that runtime invariant.
     """
     keys: list[ManagedValue] = []

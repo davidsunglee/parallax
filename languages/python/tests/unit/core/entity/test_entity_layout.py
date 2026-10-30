@@ -570,7 +570,7 @@ def _claimed(builder: PageBuilder, model: Metamodel, identity: EntityIdentity, s
             folded_names(compiled.statement.sql, compiled.document_reads)
         )
     )
-    ref, _resolved, _document, _variant = bound_read(model, identity).convert_row(
+    ref, _resolved, _document, _variant = bound_read(model, identity).record_row(
         row, builder, source=ROOT_LEVEL
     )
     return ref
@@ -590,7 +590,7 @@ def test_every_corpus_entitys_family_and_key_agree_with_the_merge_identity_rule(
         again = _claimed(builder, model, identity, 100)
         apart = _claimed(builder, model, identity, 101)
         rows = page_rows(builder.finish((first, again, apart), Pin()))
-        assert list(rows.logical_ids) == [0, 0, 1], where
+        assert list(rows.logical_rows) == [0, 0, 1], where
         first_key, apart_key = rows.keys[first], rows.keys[apart]
         assert first_key is not None and apart_key is not None, where
         assert first_key.family == apart_key.family == layout.family, where

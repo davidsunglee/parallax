@@ -1,12 +1,15 @@
-"""The read-delivery view schema: interning, guard splitting, and translation.
+"""The read-delivery view schema: interning, guard splitting, translation, and
+which levels may repeat rows.
 
-Three claims. **Interning** is what keeps the schema's cost a function of the
+Four claims. **Interning** is what keeps the schema's cost a function of the
 plan rather than of the Page: two concretes no guard splits are answered one
 layout object, and a guard is the only thing that gives them different ones.
 **The union** is what a root-local logical node's row is laid out by — every source
 layout its concrete has, in the member layout's own canonical order, fixed before
-the node's first projection is walked. **The translation** is how a projection's
-own row reaches that union, once, where the Root View row is built.
+the node's first fetched row is walked. **The translation** is how a fetched row's
+own row reaches that union, once, where the Root View row is built. **The
+proof** is what a read hands a schema about the levels that record each row key
+at most once; a schema handed none claims no such level.
 
 The schema is stated over the animal corpus model throughout, because it is the
 one that carries a polymorphic family a guard can actually split.
@@ -225,3 +228,34 @@ def test_a_root_view_layout_is_answered_identically_on_a_second_reach() -> None:
     # Root View's per-node layout a reference rather than a derivation.
     schema = ViewSchema.of(_OWNER)
     assert schema.root_view_layout(_layout("Dog")) is schema.root_view_layout(_layout("Dog"))
+
+
+# --------------------------------------------------------------------------- #
+# Which levels may repeat rows.                                               #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "schema",
+    [
+        pytest.param(ViewSchema.of(_OWNER), id="of"),
+        pytest.param(ViewSchema(((ChildSlot(_PETS),), (ChildSlot(_ANIMALS),))), id="manual"),
+        pytest.param(
+            ViewSchema.prepared(((ChildSlot(_OWNER),), ()), (_layout("Dog"),)), id="prepared"
+        ),
+    ],
+)
+def test_a_schema_handed_no_proof_lets_every_level_repeat_rows(schema: ViewSchema) -> None:
+    assert [schema.may_repeat_rows(level) for level in range(schema.level_count)] == [
+        True
+    ] * schema.level_count
+
+
+def test_a_proved_schema_repeats_rows_only_at_its_repeating_levels() -> None:
+    schema = ViewSchema.prepared(
+        ((ChildSlot(_OWNER),), (), ()), (_layout("Dog"),), repeating_levels=frozenset({1})
+    )
+
+    assert [schema.may_repeat_rows(level) for level in range(schema.level_count)] == [
+        False,
+        True,
+        False,
+    ]

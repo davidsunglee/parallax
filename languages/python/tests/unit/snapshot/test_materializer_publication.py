@@ -49,6 +49,7 @@ from parallax.core.db_port import Row
 from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import GraphConstructionError, IncludePath
 from parallax.core.entity._expressions import IncludeTraversal
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -63,6 +64,7 @@ from parallax.core.read_delivery import InvalidData, StoredDataDecodingError
 from parallax.core.read_delivery._page import (
     ABSENT,
     ROOT_LEVEL,
+    ChildSlot,
     InvalidRootInput,
     Page,
     PageBuilder,
@@ -98,6 +100,7 @@ from parallax.snapshot._publication._root_publication import publication_issue, 
 from parallax.snapshot._publication._wire import EntityReader
 from tests._support import snapshot_models as sm
 from tests._support.model_capabilities import graph_construction_for
+from tests.unit._prepared_read_support import compiled_read, convert_cells
 from tests.unit._root_publication_support import RootObservation, each_root, observed_roots
 from tests.unit.snapshot._encoded_identity_read import (
     ENCODED_IDENTITY,
@@ -109,6 +112,7 @@ from tests.unit.snapshot._encoded_identity_read import (
 from tests.unit.snapshot._encoded_page_models import ENCODED_ORDERS, EncodedOrder
 from tests.unit.snapshot._snapshot_page_support import (
     PageFixture,
+    identity_of,
     invalid_record,
     recorded_conversion_dependencies,
 )
@@ -379,7 +383,7 @@ def test_one_converter_publishes_each_page_it_converts_as_a_fresh_converter_woul
 
 def _published_page(converter: ReadRowConverter, rows: tuple[Row, ...]) -> list[tuple[str, object]]:
     builder = PageBuilder(ViewSchema.of())
-    roots = tuple(converter.convert_row(row, builder, source=ROOT_LEVEL)[0] for row in rows)
+    roots = tuple(converter.record_row(row, builder, source=ROOT_LEVEL)[0] for row in rows)
     stage = FlatPageResult((None,) * len(rows), (None,) * len(rows), builder.finish(roots, Pin()))
     published: list[tuple[str, object]] = []
     for row in _published_rows(stage, ENCODED_IDENTITY, CONCURRENCY, converter.row_publisher()):
@@ -510,6 +514,59 @@ def test_each_to_many_view_keeps_its_own_order_through_the_root_view() -> None:
     assert root.items[1] is root.items_by_ship_date[0]
 
 
+def _mixed_page(item_code: str) -> tuple[Page, int]:
+    """A proved EncodedOrder root level whose one item two merging levels fetch,
+    the second time with ``item_code``."""
+    meta = model_of(ENCODED_ORDERS)
+    items, by_code = (
+        RelationshipViewKey(RelationshipIdentity(identity_of(meta, "EncodedOrder"), name))
+        for name in ("items", "itemsByCode")
+    )
+    builder = PageBuilder(
+        ViewSchema(
+            ((ChildSlot(items), ChildSlot(by_code)), (), ()), repeating_levels=frozenset({1, 2})
+        )
+    )
+    cataloged = CatalogedModel(meta)
+    order = convert_cells(
+        cataloged,
+        compiled_read(meta, "EncodedOrder"),
+        {**_ENCODED_ORDER_ROW, "badge_hex": "0f"},
+        builder,
+        source=ROOT_LEVEL,
+        singleton=True,
+    )
+    fetched = tuple(
+        convert_cells(
+            cataloged,
+            compiled_read(meta, "EncodedOrderItem"),
+            {**_ENCODED_ITEM_ROW, "code_hex": code},
+            builder,
+            source=level,
+        )
+        for level, code in ((1, "0c"), (2, item_code))
+    )
+    builder.write_view(order, items, fetched[:1])
+    builder.write_view(order, by_code, fetched[1:])
+    return builder.finish((order,), Pin()), order
+
+
+def test_a_mixed_root_reads_its_proved_state_and_compares_its_merged_rows_first() -> None:
+    meta = model_of(ENCODED_ORDERS)
+    with recorded_conversion_dependencies() as calls:
+        page, _order = _mixed_page("0c")
+        assert calls.decoded == ["0f"]
+        (root,) = observed_roots(page, meta)
+        assert calls.decoded == ["0f", "0c"]
+        conflicting, _order = _mixed_page("0d")
+        with pytest.raises(SnapshotConsistencyError):
+            observed_roots(conflicting, meta)
+        assert calls.decoded == ["0f", "0c", "0f"]
+
+    assert root.names == ["EncodedOrder", "EncodedOrderItem"]
+    assert root.member_values[0][2] == b"\x0f"
+
+
 def test_unequal_scalar_witnesses_refuse_before_any_payload_decode() -> None:
     # Each item's native key is trusted when claimed, while its encoded
     # `code` is payload: judging it waits for the Root View, which refuses the
@@ -534,10 +591,10 @@ def test_unequal_scalar_witnesses_refuse_before_any_payload_decode() -> None:
 
     forward = conflict(items, by_code)
     reverse = conflict(by_code, items)
-    assert forward.code == reverse.code == "snapshot-projection-conflict"
+    assert forward.code == reverse.code == "snapshot-fetched-row-conflict"
     assert forward.object_key == reverse.object_key
     assert forward.coordinates == reverse.coordinates
-    assert forward.occurrences == reverse.occurrences == ((0, 1), (0, 2))
+    assert forward.fetched_rows == reverse.fetched_rows == ((0, 1), (0, 2))
     assert forward.members == reverse.members == (AttributeIdentity(_ENCODED_ITEM, "code"),)
 
 
@@ -560,7 +617,7 @@ def test_three_unequal_occurrences_report_one_canonical_conflict() -> None:
         fixture.attach(order, items, children)
         with pytest.raises(SnapshotConsistencyError) as raised:
             fixture.observed_roots(order)
-        assert raised.value.occurrences == tuple(
+        assert raised.value.fetched_rows == tuple(
             sorted(
                 (
                     (0, ordered.index(rows[0]) + 1),
@@ -580,9 +637,9 @@ def test_three_unequal_occurrences_report_one_canonical_conflict() -> None:
         == (first.object_key, first.coordinates, first.members)
         for conflict in rest
     )
-    assert len({conflict.occurrences for conflict in conflicts}) > 1
+    assert len({conflict.fetched_rows for conflict in conflicts}) > 1
     assert str(first) == (
-        "parallax.compatibility.OrderItem: projections disagree (snapshot-projection-conflict)"
+        "parallax.compatibility.OrderItem: fetched rows disagree (snapshot-fetched-row-conflict)"
     )
 
 
@@ -636,7 +693,7 @@ def test_three_concrete_disagreements_select_one_canonical_pair() -> None:
         fixture.attach(owner, relationship, children)
         with pytest.raises(SnapshotConsistencyError) as raised:
             fixture.observed_roots(owner)
-        assert raised.value.occurrences == tuple(
+        assert raised.value.fetched_rows == tuple(
             sorted(
                 (
                     (0, ordered.index(occurrences[0]) + 1),
@@ -656,7 +713,7 @@ def test_three_concrete_disagreements_select_one_canonical_pair() -> None:
         == (first.object_key, first.coordinates, first.members)
         for conflict in rest
     )
-    assert len({conflict.occurrences for conflict in conflicts}) > 1
+    assert len({conflict.fetched_rows for conflict in conflicts}) > 1
     assert first.object_key.entity.name == "ConflictAlpha"
 
 
@@ -694,7 +751,7 @@ def test_a_duplicate_projection_with_different_rejected_state_conflicts() -> Non
 
     with pytest.raises(SnapshotConsistencyError) as raised:
         fixture.observed_roots(order)
-    assert raised.value.code == "snapshot-projection-conflict"
+    assert raised.value.code == "snapshot-fetched-row-conflict"
 
 
 def test_exact_witness_comparison_distinguishes_bool_from_int() -> None:
@@ -1197,13 +1254,13 @@ def test_an_edge_that_is_not_an_exact_int_is_refused_where_it_is_written(value: 
 )
 def test_an_out_of_range_edge_is_refused_where_it_is_written(value: int) -> None:
     builder, order = _one_projection()
-    with pytest.raises(ValueError, match="outside this Page's 1 projections"):
+    with pytest.raises(ValueError, match="outside this Page's 1 fetched rows"):
         builder.write_view(order, _ITEMS, value)
 
 
 def test_a_to_many_edge_is_refused_element_by_element() -> None:
     builder, order = _one_projection()
-    with pytest.raises(ValueError, match="a to-many relationship view names projection 4"):
+    with pytest.raises(ValueError, match="a to-many relationship view names fetched row 4"):
         builder.write_view(order, _ITEMS, (0, 4))
 
 
@@ -1257,7 +1314,7 @@ def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refu
 
 def test_a_root_outside_the_page_is_refused_at_sealing() -> None:
     builder, _ = _one_projection()
-    with pytest.raises(ValueError, match="a root names projection 3"):
+    with pytest.raises(ValueError, match="a root names fetched row 3"):
         builder.finish((3,), Pin())
 
 
@@ -1266,7 +1323,9 @@ def test_a_sealed_builder_refuses_every_further_use() -> None:
     order = fixture.node("SnapOrder", _ORDER_ROW)
     builder = fixture.builder
     builder.finish((order,), Pin())
+    layout = fixture.layout_for("SnapOrder")
     for use in (
+        lambda: builder.add_fetched_row(ROOT_LEVEL, layout, None, (), (), (), None),
         lambda: builder.write_view(order, _ITEMS, None),
         lambda: builder.concrete_of(order),
         lambda: builder.finish((order,), Pin()),
@@ -1315,9 +1374,9 @@ def test_every_root_view_accessor_answers_the_identical_object_on_a_second_call(
     first = fixture.node("EncodedOrderItem", _ENCODED_ITEM_ROW)
     second = fixture.node("EncodedOrderItem", {**_ENCODED_ITEM_ROW, "id": 12})
     duplicate = fixture.node("EncodedOrder", _ENCODED_ORDER_ROW)
-    keyless = encoded_identity_read().convert_row(
-        (None, None, SQL_NULL), fixture.builder, source=0
-    )[0]
+    keyless = encoded_identity_read().record_row((None, None, SQL_NULL), fixture.builder, source=0)[
+        0
+    ]
     fixture.attach(order, _ENCODED_ITEMS, (first, second))
 
     def answers_identically(root: RootView, _ordinal: int) -> tuple[object, ...]:
@@ -1437,7 +1496,7 @@ def test_a_published_roots_raw_row_release_is_idempotent() -> None:
 
     rows = page_rows(page)
     assert rows.member_rows[order] == ()
-    judged = rows.judged_states.singleton(rows.logical_ids[order])
+    judged = rows.judged_states.singleton(rows.logical_rows[order])
     assert judged is not None
     assert root.member_values[0] is judged.member_row
 
@@ -1470,5 +1529,5 @@ def _judged_state_count(page: Page) -> int:
         judged.singleton(logical) is not None
         if isinstance(claim, int)
         else len(judged.group(logical))
-        for logical, claim in enumerate(rows.claims)
+        for logical, claim in enumerate(rows.fetched_rows_by_logical_row)
     )
