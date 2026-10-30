@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from dataclasses import replace
 
 import pytest
 
@@ -55,6 +56,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel._resolve import (
     AS_OF_ATTRIBUTE_DUPLICATE,
     AS_OF_ATTRIBUTE_MISSING,
+    AS_OF_ATTRIBUTE_NONCANONICAL,
     AS_OF_ATTRIBUTE_OWNER,
     AS_OF_ATTRIBUTE_TYPE,
     AS_OF_DIMENSION_DUPLICATE,
@@ -608,8 +610,6 @@ _NAME_DIMENSIONS = {
     "txStart": TemporalDimension.TRANSACTION_TIME,
     "txEnd": TemporalDimension.TRANSACTION_TIME,
 }
-# Each profile's axes run over endpoints the convention does not name, so every
-# reserved name is free for a business member to claim.
 _PROFILE_ENDPOINTS: dict[str, tuple[tuple[TemporalDimension, str, str], ...]] = {
     "non-temporal": (),
     "transaction-time": ((TemporalDimension.TRANSACTION_TIME, "openedAt", "closedAt"),),
@@ -629,8 +629,18 @@ def _ledger(
     relationships: tuple[UnresolvedDefiningRelationshipDeclaration, ...] = (),
     value_objects: tuple[ValueObjectOccurrenceDeclaration, ...] = (),
     inheritance: AbstractRoot | None = None,
+    noncanonical: bool = False,
 ) -> Declaration:
     endpoints = _PROFILE_ENDPOINTS[profile]
+    if not noncanonical:
+        endpoints = tuple(
+            (
+                dimension,
+                "validStart" if dimension is TemporalDimension.VALID_TIME else "txStart",
+                "validEnd" if dimension is TemporalDimension.VALID_TIME else "txEnd",
+            )
+            for dimension, _, _ in endpoints
+        )
     return Declaration(
         identity=_LEDGER,
         container=Table("ledger"),
@@ -690,8 +700,12 @@ def _related_axis(profile: str, name: str) -> tuple[AsOfAxisLocation, ...]:
 def test_every_profile_reserves_every_endpoint_name_from_a_business_attribute(
     profile: str, name: str
 ) -> None:
-    declaration = _ledger(profile, attributes=(instant(_LEDGER, name),))
-    assert rejection(source(declaration)) == (
+    declaration = _ledger(profile, attributes=(instant(_LEDGER, name),), noncanonical=True)
+    assert tuple(
+        issue
+        for issue in rejection(source(declaration))
+        if issue.code != AS_OF_ATTRIBUTE_NONCANONICAL
+    ) == (
         MetamodelIssue(
             TEMPORAL_MEMBER_RESERVED,
             AttributeLocation(AttributeIdentity(_LEDGER, name)),
@@ -705,8 +719,12 @@ def test_every_profile_reserves_every_endpoint_name_from_a_business_attribute(
 def test_every_profile_reserves_every_endpoint_name_from_a_relationship(
     profile: str, name: str
 ) -> None:
-    declaration = _ledger(profile, relationships=(_to_lines(name),))
-    assert rejection(source(declaration, _line())) == (
+    declaration = _ledger(profile, relationships=(_to_lines(name),), noncanonical=True)
+    assert tuple(
+        issue
+        for issue in rejection(source(declaration, _line()))
+        if issue.code != AS_OF_ATTRIBUTE_NONCANONICAL
+    ) == (
         MetamodelIssue(
             TEMPORAL_MEMBER_RESERVED,
             RelationshipLocation(RelationshipIdentity(_LEDGER, name)),
@@ -720,8 +738,12 @@ def test_every_profile_reserves_every_endpoint_name_from_a_relationship(
 def test_every_profile_reserves_every_endpoint_name_from_a_top_level_value_object(
     profile: str, name: str
 ) -> None:
-    declaration = _ledger(profile, value_objects=(_occurrence(name),))
-    assert rejection(source(declaration)) == (
+    declaration = _ledger(profile, value_objects=(_occurrence(name),), noncanonical=True)
+    assert tuple(
+        issue
+        for issue in rejection(source(declaration))
+        if issue.code != AS_OF_ATTRIBUTE_NONCANONICAL
+    ) == (
         MetamodelIssue(
             TEMPORAL_MEMBER_RESERVED,
             ValueObjectLocation(ValueObjectIdentity(_LEDGER, (name,))),
@@ -733,12 +755,17 @@ def test_every_profile_reserves_every_endpoint_name_from_a_top_level_value_objec
 def test_every_member_kind_is_reported_at_its_own_position() -> None:
     declaration = _ledger(
         "transaction-time",
+        noncanonical=True,
         attributes=(attribute(_LEDGER, "txStart", type=base.STRING),),
         relationships=(_to_lines("validEnd"),),
         value_objects=(_occurrence("txEnd"),),
     )
     transaction = (AsOfAxisLocation(_LEDGER, TemporalDimension.TRANSACTION_TIME),)
-    assert rejection(source(declaration, _line())) == (
+    assert tuple(
+        issue
+        for issue in rejection(source(declaration, _line()))
+        if issue.code != AS_OF_ATTRIBUTE_NONCANONICAL
+    ) == (
         MetamodelIssue(
             TEMPORAL_MEMBER_RESERVED,
             AttributeLocation(AttributeIdentity(_LEDGER, "txStart")),
@@ -801,14 +828,17 @@ def test_nested_value_object_members_may_bear_an_endpoint_name() -> None:
 
 
 @pytest.mark.parametrize("profile", ["transaction-time", "bitemporal"])
-def test_nonconventional_axis_endpoints_need_no_reserved_name(profile: str) -> None:
-    accepted_entity = accepted(source(_ledger(profile))).entity(_LEDGER)
-    assert accepted_entity is not None
-    assert {
-        name
-        for axis in accepted_entity.as_of_axes
-        for name in (axis.start_attribute.name, axis.end_attribute.name)
-    } == {name for _, start, end in _PROFILE_ENDPOINTS[profile] for name in (start, end)}
+def test_nonconventional_axis_endpoints_are_rejected(profile: str) -> None:
+    issues = rejection(source(_ledger(profile, noncanonical=True)))
+    assert issues == tuple(
+        MetamodelIssue(
+            AS_OF_ATTRIBUTE_NONCANONICAL,
+            AsOfAxisLocation(_LEDGER, dimension),
+            (AttributeLocation(AttributeIdentity(_LEDGER, name)),),
+        )
+        for dimension, start, end in _PROFILE_ENDPOINTS[profile]
+        for name in sorted((start, end))
+    )
 
 
 def test_conventional_axis_attributes_are_exempt_by_identity() -> None:
@@ -838,8 +868,7 @@ def test_conventional_axis_attributes_are_exempt_by_identity() -> None:
     assert accepted(source(declaration)).entity(entity) is not None
 
 
-def test_an_endpoint_name_on_another_dimensions_axis_is_still_exempt_by_identity() -> None:
-    """The exemption is the axis's own Attribute, not a name-to-dimension match."""
+def test_an_endpoint_name_on_another_dimensions_axis_is_noncanonical() -> None:
     entity = identity("Balance")
     declaration = Declaration(
         identity=entity,
@@ -852,7 +881,14 @@ def test_an_endpoint_name_on_another_dimensions_axis_is_still_exempt_by_identity
             ),
         ),
     )
-    assert accepted(source(declaration)).entity(entity) is not None
+    assert rejection(source(declaration)) == tuple(
+        MetamodelIssue(
+            AS_OF_ATTRIBUTE_NONCANONICAL,
+            AsOfAxisLocation(entity, TemporalDimension.TRANSACTION_TIME),
+            (AttributeLocation(AttributeIdentity(entity, name)),),
+        )
+        for name in ("validEnd", "validStart")
+    )
 
 
 def test_a_standalone_entity_declares_exactly_one_primary_key() -> None:
@@ -981,6 +1017,7 @@ def test_as_of_axes_are_distinct_typed_and_locally_owned() -> None:
     assert set(reported) == {
         AS_OF_ATTRIBUTE_TYPE,
         AS_OF_ATTRIBUTE_DUPLICATE,
+        AS_OF_ATTRIBUTE_NONCANONICAL,
         AS_OF_DIMENSION_DUPLICATE,
         AS_OF_ATTRIBUTE_OWNER,
         AS_OF_ATTRIBUTE_MISSING,
@@ -1008,7 +1045,7 @@ def test_the_issue_sequence_is_stable_under_frontend_permutation() -> None:
 
 
 def test_the_resolver_owns_exactly_the_manifest_issue_code_set() -> None:
-    assert len(RESOLVER_ISSUE_CODES) == 19
+    assert len(RESOLVER_ISSUE_CODES) == 20
     assert all(code.startswith("metamodel-") for code in RESOLVER_ISSUE_CODES)
 
 
@@ -1024,3 +1061,72 @@ def test_value_object_occurrences_reach_the_candidate_unchanged() -> None:
     resolved = candidate.entity(_ORDER)
     assert resolved is not None
     assert resolved.value_objects == (occurrence,)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("storage", Column("tx_start")),
+        ("nullable", True),
+        ("read_only", True),
+    ],
+)
+@pytest.mark.parametrize("name", ["txStart", "txEnd"])
+def test_axis_canonical_flags_and_columns(field: str, value: object, name: str) -> None:
+    declaration = _ledger("transaction-time")
+    declaration = replace(
+        declaration,
+        attributes=tuple(
+            replace(attribute, **{field: value}) if attribute.identity.name == name else attribute
+            for attribute in declaration.attributes
+        ),
+    )
+    assert rejection(source(declaration)) == (
+        MetamodelIssue(
+            AS_OF_ATTRIBUTE_NONCANONICAL,
+            AsOfAxisLocation(_LEDGER, TemporalDimension.TRANSACTION_TIME),
+            (AttributeLocation(AttributeIdentity(_LEDGER, name)),),
+        ),
+    )
+
+
+def test_multiple_endpoint_mismatches_and_duplicate_axes_report_once() -> None:
+    declaration = _ledger("transaction-time")
+    declaration = replace(
+        declaration,
+        attributes=tuple(
+            replace(attribute, storage=Column("wrong"), nullable=True, read_only=True)
+            if attribute.identity.name == "txStart"
+            else attribute
+            for attribute in declaration.attributes
+        ),
+        as_of_axes=declaration.as_of_axes * 2,
+    )
+    issues = rejection(source(declaration))
+    assert tuple(issue for issue in issues if issue.code == AS_OF_ATTRIBUTE_NONCANONICAL) == (
+        MetamodelIssue(
+            AS_OF_ATTRIBUTE_NONCANONICAL,
+            AsOfAxisLocation(_LEDGER, TemporalDimension.TRANSACTION_TIME),
+            (AttributeLocation(AttributeIdentity(_LEDGER, "txStart")),),
+        ),
+    )
+    assert codes(source(declaration)).count(AS_OF_DIMENSION_DUPLICATE) == 1
+
+
+def test_swapped_endpoint_roles_are_noncanonical() -> None:
+    declaration = _ledger("transaction-time")
+    axis = declaration.as_of_axes[0]
+    declaration = replace(
+        declaration,
+        as_of_axes=(
+            replace(axis, start_attribute=axis.end_attribute, end_attribute=axis.start_attribute),
+        ),
+    )
+    assert rejection(source(declaration)) == tuple(
+        MetamodelIssue(
+            AS_OF_ATTRIBUTE_NONCANONICAL,
+            AsOfAxisLocation(_LEDGER, TemporalDimension.TRANSACTION_TIME),
+            (AttributeLocation(AttributeIdentity(_LEDGER, name)),),
+        )
+        for name in ("txEnd", "txStart")
+    )

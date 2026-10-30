@@ -632,9 +632,13 @@ AsOfAxisMetadata
 
 The dimension identifies the axis. There is no separate axis name, identity,
 kind, or query-default member. Both attributes belong to the containing Entity,
-are single-valued with Timestamp Neutral Type, are distinct, and form `[start, end)`. Valid Time
-conventionally maps `validStart`/`validEnd` to `from_z`/`thru_z`; Transaction
-Time maps `txStart`/`txEnd` to `in_z`/`out_z`. Both endpoint Attributes carry
+are single-valued with Timestamp Neutral Type, are distinct, and form `[start, end)`.
+Valid Time requires `validStart`/`validEnd` over `from_z`/`thru_z`; Transaction
+Time requires `txStart`/`txEnd` over `in_z`/`out_z`. Each endpoint must have its
+dimension and role’s canonical name and Column, with `nullable=False` and `read_only=False`. Open intervals
+use infinity rather than null. The framework may update endpoints when closing
+a milestone; `read_only=False` does not permit caller assignment. Both endpoint
+Attributes carry
 the derived `framework_owned` designation, which is where that membership is
 observable to a surface holding one Attribute and no axis.
 
@@ -644,11 +648,17 @@ namespace, whatever Temporal Dimensions the Entity declares, including none. An
 Attribute, Relationship, or top-level Value Object occurrence bearing one is
 refused as `metamodel-temporal-member-reserved` unless it is the start or end
 Attribute of one of the Entity's own As-Of Axes. The exemption is by
-`AttributeIdentity`, not by name, so an axis may still run over endpoints bearing
-any other names. The issue relates the `AsOfAxisLocation` of the reserved name's
-dimension only when the Entity declares that dimension. Value Object scalar and
+`AttributeIdentity`, not by name. The issue relates the `AsOfAxisLocation` of
+the reserved name's dimension only when the Entity declares that dimension. Value Object scalar and
 nested member names are outside the reservation. Every declaration, inheritance
 participants included, is judged over its own local members.
+
+Noncanonical endpoint structure produces one
+`metamodel-as-of-attribute-noncanonical` issue per offending endpoint at its
+`AsOfAxisLocation`, with the endpoint’s `AttributeLocation` related. Multiple
+canonical-shape mismatches on one endpoint produce no duplicate issue. Missing,
+foreign-owner, and invalid-type endpoints retain their prerequisite diagnostics
+instead.
 
 ## Issues and locations
 
@@ -708,6 +718,7 @@ in [`m-model-formation`](m-model-formation.md). No other module may emit a
 | `metamodel-as-of-attribute-missing` | An axis start or end Attribute does not exist. |
 | `metamodel-as-of-attribute-owner` | An axis start or end Attribute belongs to another Entity. |
 | `metamodel-as-of-attribute-type` | An axis start or end Attribute is not a single Timestamp. |
+| `metamodel-as-of-attribute-noncanonical` | An axis endpoint has a noncanonical dimension/role name or Column, or has nullable or read-only enabled. |
 | `metamodel-as-of-attribute-duplicate` | Axis start and end identify the same Attribute. |
 
 An unresolved relationship or inheritance parent uses the relevant

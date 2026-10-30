@@ -291,7 +291,7 @@ def _tpcs_model() -> tuple[Any, EntityIdentity, EntityIdentity, EntityIdentity]:
 
 
 def _ranked_temporal_model(
-    mapping: Literal["standalone", "tph", "tpcs"], *, duplicate_end: bool, indexed: bool = False
+    mapping: Literal["standalone", "tph", "tpcs"], *, indexed: bool = False
 ) -> tuple[Any, str, EntityIdentity]:
     """A Bitemporal family declaring its Transaction-Time axis first.
 
@@ -302,7 +302,7 @@ def _ranked_temporal_model(
     valid_start = instant(root, "validStart")
     valid_end = instant(root, "validEnd")
     tx_start = instant(root, "txStart")
-    tx_end = valid_end if duplicate_end else instant(root, "txEnd")
+    tx_end = instant(root, "txEnd")
     code = attribute(root, "code")
     domain = (code,) if indexed else ()
     attributes = tuple(
@@ -441,8 +441,8 @@ def test_empty_audit_tier_is_compiled_end_to_end_with_table_wide_tier_order() ->
         "revised_by",
         "alpha_domain",
         "beta_domain",
-        "tx_start",
-        "tx_end",
+        "in_z",
+        "out_z",
         "payload",
     ]
     assert _tier_values(layout) == [
@@ -516,7 +516,7 @@ def test_physical_key_selects_existing_model_key_then_temporal_end_slots() -> No
 def test_physical_key_temporal_ends_follow_dimension_rank_not_authored_axis_order(
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
-    model, table, root = _ranked_temporal_model(mapping, duplicate_end=False)
+    model, table, root = _ranked_temporal_model(mapping)
     layout = _require_layout(storage_layout.view(model), table)
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeIdentity(root, "id"),
@@ -526,26 +526,10 @@ def test_physical_key_temporal_ends_follow_dimension_rank_not_authored_axis_orde
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_physical_key_deduplicates_an_end_designated_by_two_dimensions(
-    mapping: Literal["standalone", "tph", "tpcs"],
-) -> None:
-    model, table, root = _ranked_temporal_model(mapping, duplicate_end=True)
-    layout = _require_layout(storage_layout.view(model), table)
-    assert [slot.contributor for slot in layout.physical_primary_key] == [
-        AttributeIdentity(root, "id"),
-        AttributeIdentity(root, "validEnd"),
-    ]
-    primary = layout.primary_key_index
-    assert primary is not None
-    assert len(primary.declaration.attributes) == 3
-    assert primary.columns == tuple(layout.physical_primary_key)
-
-
-@pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
 def test_the_primary_key_index_leads_the_indices_over_the_physical_key(
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
-    model, table, root = _ranked_temporal_model(mapping, duplicate_end=False)
+    model, table, root = _ranked_temporal_model(mapping)
     layout = _require_layout(storage_layout.view(model), table)
     primary = layout.primary_key_index
     assert primary is not None
@@ -664,17 +648,14 @@ def test_tpcs_indices_map_onto_every_concrete_table_carrying_their_components() 
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-@pytest.mark.parametrize("duplicate_end", [False, True], ids=["two-ends", "shared-end"])
 def test_an_authored_index_ends_with_the_tables_axis_ends_in_dimension_rank(
-    mapping: Literal["standalone", "tph", "tpcs"], duplicate_end: bool
+    mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
-    model, table, root = _ranked_temporal_model(mapping, duplicate_end=duplicate_end, indexed=True)
+    model, table, root = _ranked_temporal_model(mapping, indexed=True)
     layout = _require_layout(storage_layout.view(model), table)
     constraints = layout.temporal_constraints
     assert constraints is not None
-    ends = [AttributeIdentity(root, "validEnd")]
-    if not duplicate_end:
-        ends.append(AttributeIdentity(root, "txEnd"))
+    ends = [AttributeIdentity(root, "validEnd"), AttributeIdentity(root, "txEnd")]
     assert [slot.contributor for slot in constraints.axis_ends] == ends
     assert all(slot is layout.contribution(slot.contributor) for slot in constraints.axis_ends)
 
@@ -1380,8 +1361,8 @@ def test_entity_views_reference_table_slots_and_assign_concrete_discriminators()
         "root_domain",
         "revised_by",
         "alpha_domain",
-        "tx_start",
-        "tx_end",
+        "in_z",
+        "out_z",
         "payload",
     ]
     assert alpha_view.discriminator is not None

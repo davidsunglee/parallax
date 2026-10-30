@@ -31,7 +31,7 @@ _VERSIONED = identity("Counted")
 _TEMPORAL = identity("Recorded")
 _ROOT = identity("Root")
 _CHILD = identity("Child")
-_OWNED: Final = ("entered", "departed", "effective", "expired")
+_OWNED: Final = ("txStart", "txEnd", "validStart", "validEnd")
 _START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _END: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 _RULE: Final = "framework-owned-member-assigned"
@@ -64,20 +64,22 @@ _MODEL = form_metamodel(
                 key(_TEMPORAL),
                 attribute(_TEMPORAL, "label", type=STRING),
                 *(
-                    attribute(_TEMPORAL, name, type=TIMESTAMP, column=f"bound_{i}")
-                    for i, name in enumerate(_OWNED)
+                    attribute(_TEMPORAL, name, type=TIMESTAMP, column=column)
+                    for name, column in zip(
+                        _OWNED, ("in_z", "out_z", "from_z", "thru_z"), strict=True
+                    )
                 ),
             ),
             as_of_axes=(
                 AsOfAxisMetadata(
                     dimension=TemporalDimension.TRANSACTION_TIME,
-                    start_attribute=AttributeIdentity(_TEMPORAL, "entered"),
-                    end_attribute=AttributeIdentity(_TEMPORAL, "departed"),
+                    start_attribute=AttributeIdentity(_TEMPORAL, "txStart"),
+                    end_attribute=AttributeIdentity(_TEMPORAL, "txEnd"),
                 ),
                 AsOfAxisMetadata(
                     dimension=TemporalDimension.VALID_TIME,
-                    start_attribute=AttributeIdentity(_TEMPORAL, "effective"),
-                    end_attribute=AttributeIdentity(_TEMPORAL, "expired"),
+                    start_attribute=AttributeIdentity(_TEMPORAL, "validStart"),
+                    end_attribute=AttributeIdentity(_TEMPORAL, "validEnd"),
                 ),
             ),
         ),

@@ -113,7 +113,8 @@ def key(
 
 def instant(entity: EntityIdentity, name: str) -> AttributeMetadata:
     """A Timestamp Attribute of ``entity``, suitable as an axis endpoint."""
-    return attribute(entity, name, type=TIMESTAMP)
+    columns = {"validStart": "from_z", "validEnd": "thru_z", "txStart": "in_z", "txEnd": "out_z"}
+    return attribute(entity, name, type=TIMESTAMP, column=columns.get(name))
 
 
 def source(*declarations: UnresolvedEntityDeclaration) -> Source:

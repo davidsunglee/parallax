@@ -163,14 +163,6 @@ def _authored_attributes(entity: EntityMetadata) -> tuple[AttributeMetadata, ...
     Identity rather than by canonical name, which is what keeps a profile from
     ever being exported beside the very Attributes it derives.
 
-    Identity matching removes the extra members, not every difference. The
-    document language denotes an axis only through its profile, so an endpoint
-    bearing a nonconventional name, or a conventional name over a nonconventional
-    Column, re-imports under the canonical name over the framework-fixed Column.
-    Reaching either shape takes a Metamodel built directly against the
-    ``m-metamodel`` seam, which accepts an axis over any distinct pair of local
-    Timestamp Attributes; every Entity a descriptor document produces carries the
-    canonical pair, so export inverts ingestion exactly over that set.
     """
     derived = {
         endpoint

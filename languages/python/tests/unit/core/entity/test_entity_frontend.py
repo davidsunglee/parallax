@@ -621,6 +621,11 @@ def test_instance_access_returns_the_member_value_and_relationships_stay_closed_
 
 
 def test_a_temporal_shape_owner_receives_the_framework_members_and_axes() -> None:
+    DomainModel(Reading, Episode)
+    for entity in (Reading, Episode):
+        endpoints = [member for member in entity.attributes if member.framework_owned]
+        assert endpoints
+        assert all(not member.nullable and not member.read_only for member in endpoints)
     names = [member.identity.name for member in Reading.attributes]
     assert names == ["id", "celsius", "txStart", "txEnd"]
     assert [member.storage.name for member in Reading.attributes[2:]] == ["in_z", "out_z"]
