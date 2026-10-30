@@ -9,7 +9,7 @@ that contradicts its declared type), scalar provenance, Page identity claims
 
 Every row is spelled by the names a real compiled read selects and laid out
 positionally for that read, bound as a find binds it and converted through
-``ReadRowConverter.convert_row``. A converted row is
+``ReadRowConverter.record_row``. A converted row is
 POSITIONAL: every applicable member occupies its declared position and ``ABSENT``
 stands where the read carried nothing, so what the suite asserts of a member is
 what the row holds at that member's own position.
@@ -69,8 +69,8 @@ from parallax.core.read_delivery._page import (
     ABSENT,
     ROOT_LEVEL,
     ChildSlot,
-    LogicalKey,
     PageBuilder,
+    RowKey,
     StoredDataIssueInput,
     ViewSchema,
     page_rows,
@@ -132,7 +132,7 @@ class _Projection:
     layout: EntityLayout
     values: tuple[object, ...]
     issues: tuple[StoredDataIssueInput, ...]
-    key: LogicalKey | None
+    key: RowKey | None
 
     @property
     def concrete_entity(self) -> EntityIdentity:
@@ -177,9 +177,27 @@ def _converted(
 def _converted_by(
     model: Metamodel, compiled: CompiledRead, row: Mapping[str, object]
 ) -> _Projection:
-    builder = PageBuilder(ViewSchema.of())
-    prepared, cells = bound_cells(CatalogedModel(model), compiled, driver_row(compiled, row))
-    index, _resolved, _document, _variant = prepared.convert_row(cells, builder, source=ROOT_LEVEL)
+    """``row`` judged when its state is first needed, which the same row judged
+    as a proved level records it must equal wherever it publishes a value."""
+    deferred, proved = (_recorded(model, compiled, row, proved=proved) for proved in (False, True))
+    assert (proved.layout, proved.issues, proved.key) == (
+        deferred.layout,
+        deferred.issues,
+        deferred.key,
+    )
+    if deferred.key is not None:
+        assert proved.values == deferred.values
+    return deferred
+
+
+def _recorded(
+    model: Metamodel, compiled: CompiledRead, row: Mapping[str, object], *, proved: bool
+) -> _Projection:
+    builder = PageBuilder(ViewSchema.of(repeating_levels=frozenset() if proved else None))
+    prepared, cells = bound_cells(
+        CatalogedModel(model), compiled, driver_row(compiled, row), singleton=proved
+    )
+    index, _resolved, _document, _variant = prepared.record_row(cells, builder, source=ROOT_LEVEL)
     page = builder.finish((index,), Pin())
     rows = page_rows(page)
     (root,) = observed_roots(page, model)
@@ -757,16 +775,16 @@ _ITEM_ORDER_ID = AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "ord
 def test_a_back_reference_names_the_logical_claim_not_a_projection_winner() -> None:
     builder, items, item_order = _back_referenced_orders()
     orders, order_row = _bound(ORDERS, "Order", _ORDER)
-    first, *_ = orders.convert_row(order_row, builder, source=ROOT_LEVEL)
-    second, *_ = orders.convert_row(order_row, builder, source=ROOT_LEVEL)
+    first, *_ = orders.record_row(order_row, builder, source=ROOT_LEVEL)
+    second, *_ = orders.record_row(order_row, builder, source=ROOT_LEVEL)
     order_items, item_row = _bound(ORDERS, "OrderItem", {**_ITEM, "id": 11, "order_id": 1})
-    item, *_ = order_items.convert_row(item_row, builder, source=ROOT_LEVEL)
+    item, *_ = order_items.record_row(item_row, builder, source=ROOT_LEVEL)
     assert first != second
     for order in (first, second):
         builder.write_view(order, items, (item,))
     builder.write_reference(item, item_order, EntityIdentity(_NAMESPACE, "Order"), _ITEM_ORDER_ID)
     page = builder.finish((first, second), Pin())
-    assert page_rows(page).logical_ids[first] == page_rows(page).logical_ids[second]
+    assert page_rows(page).logical_rows[first] == page_rows(page).logical_rows[second]
     for root in observed_roots(page, ORDERS):
         assert root.view(1, root.view_layouts[1].index_of[item_order]) == 0
 
@@ -774,8 +792,8 @@ def test_a_back_reference_names_the_logical_claim_not_a_projection_winner() -> N
 def test_a_back_reference_to_a_key_the_builder_never_registered_is_refused() -> None:
     builder, _items, item_order = _back_referenced_orders()
     order_items, item_row = _bound(ORDERS, "OrderItem", {**_ITEM, "id": 11, "order_id": 999})
-    item, *_ = order_items.convert_row(item_row, builder, source=ROOT_LEVEL)
-    with pytest.raises(ValueError, match="no already-converted"):
+    item, *_ = order_items.record_row(item_row, builder, source=ROOT_LEVEL)
+    with pytest.raises(ValueError, match="no already-recorded"):
         builder.write_reference(
             item, item_order, EntityIdentity(_NAMESPACE, "Order"), _ITEM_ORDER_ID
         )
@@ -859,7 +877,7 @@ def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
     customers, customer = _bound(
         CUSTOMER, "Customer", {"id": key, "name": "Ada", "address": SQL_NULL}
     )
-    ref, *_ = customers.convert_row(customer, builder, source=ROOT_LEVEL)
+    ref, *_ = customers.record_row(customer, builder, source=ROOT_LEVEL)
     page = builder.finish((ref,), Pin())
     assert page_rows(page).roots == (ref,)
     publisher = TypedRootPublisher(

@@ -178,16 +178,17 @@ An eager graph read, from the lane's entry point to the sealed Page:
    ▼
  driver rows
    ▼
- ReadRowConverter.convert_row → PageBuilder                             _row_converter
+ ReadRowConverter.record_rows → PageBuilder                             _row_converter
    row_identity: the concrete Entity from the identity cell, the shared document
-   from its cell; each member read at its own cell or at its name in that document;
-   register the identity claim; leave payload judgement until it is needed;
-   the origin collector observes each projection
+   from its cell, skipped where every row names one Entity; each member read at its
+   own cell or at its name in that document; record the row identity; judge the
+   payload now on a level that records each row key once, else when it is needed;
+   the origin collector observes each fetched row
    ▼
  each round of ready fetch steps (ReadPlan.ready_fetches):
    guarded_parents → gather_keys → CompiledTemplate.render(keys, query=query)
    one statement: execute_read; several: DatabaseConnection.execute_pipeline
-   convert rows → attach_children / attach_back_reference / attach_empty
+   record rows → attach_children / attach_back_reference / attach_empty
    ▼
  PageBuilder.finish(root refs, query pin)
    ▼
@@ -290,7 +291,7 @@ admission stay outside the cache.
 - `parallax.core.sql_gen._inheritance:DriverRowSlot`
 - `parallax.core.read_delivery._row_converter:bind`
 - `parallax.core.read_delivery._row_converter:ReadRowConverter`
-- `parallax.core.read_delivery._row_converter:ReadRowConverter.convert_row`
+- `parallax.core.read_delivery._row_converter:ReadRowConverter.record_rows`
 - `parallax.core.read_delivery._row_decoding:row_identity`
 - `parallax.core.read_delivery._read_plan:ReadPlan`
 - `parallax.core.read_delivery._read_plan:ReadPlan.ready_fetches`
@@ -322,7 +323,7 @@ admission stay outside the cache.
               ▼
  publish_roots: one pass per Page                                       _root_publication
               │   page_schedule and page_edges once; one RootView for the pass
-              │   each root: resolve claims, states, carried views and, for a
+              │   each root: resolve logical rows, states, carried views and, for a
               │              root publishing no finding, its origins
               │              → release the Page rows it finished with
               │              → publish_root(root view, result ordinal)

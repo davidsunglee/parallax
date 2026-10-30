@@ -627,7 +627,7 @@ def test_every_observed_writable_page_takes_a_fresh_evidence_collector() -> None
 
 def test_the_empty_collector_records_nothing_and_answers_no_origin() -> None:
     page = cast("Page", object())
-    EMPTY_PAGE_ORIGIN_COLLECTOR.observe_projection(
+    EMPTY_PAGE_ORIGIN_COLLECTOR.observe_fetched_row(
         0, EntityIdentity("parallax.compatibility", "Account"), {}
     )
 

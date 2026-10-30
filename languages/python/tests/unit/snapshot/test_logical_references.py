@@ -73,9 +73,9 @@ def test_forward_fanback_preserves_same_logical_concrete_witnesses(
     attach_children(fixture.builder, meta, plan.includes, step, (root,), children)
     with pytest.raises(SnapshotConsistencyError) as conflict:
         fixture.observed_roots(root)
-    assert conflict.value.code == "snapshot-projection-conflict"
+    assert conflict.value.code == "snapshot-fetched-row-conflict"
     assert conflict.value.coordinates == ()
-    assert conflict.value.occurrences == ((0, 1), (0, 2))
+    assert conflict.value.fetched_rows == ((0, 1), (0, 2))
 
 
 def _every_family_versioned(_entity: EntityIdentity) -> bool:
@@ -148,7 +148,8 @@ def test_an_inverse_neither_reaches_an_unrelated_root_nor_extends_its_lifetime()
             all(not row for row in rows.member_rows),
             not rows.view_rows[beta] and not rows.view_rows[link],
             all(
-                rows.judged_states.singleton(logical) is None for logical in range(len(rows.claims))
+                rows.judged_states.singleton(logical) is None
+                for logical in range(len(rows.fetched_rows_by_logical_row))
             ),
         )
 
@@ -170,7 +171,7 @@ def test_a_later_root_resolves_an_inverse_to_a_released_claim_to_null() -> None:
     fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
     page = fixture.page(released, other)
     rows = page_rows(page)
-    logical = rows.logical_ids[released]
+    logical = rows.logical_rows[released]
     slot = rows.schema.root_view_layout(fixture.layout_for("InverseLink")).index_of[
         fixture.view_key("InverseLink.parent")
     ]
@@ -178,7 +179,7 @@ def test_a_later_root_resolves_an_inverse_to_a_released_claim_to_null() -> None:
     def after_release(root: RootView, ordinal: int) -> tuple[object, ...]:
         names = [root.layout(node).concrete.name for node in range(len(root))]
         if ordinal == 0:
-            return (root.view(1, slot), rows.claims[logical])
+            return (root.view(1, slot), rows.fetched_rows_by_logical_row[logical])
         return (names, root.view(1, slot))
 
     assert each_root(page, fixture.model, after_release, atomic=True) == [
@@ -253,7 +254,7 @@ def test_an_inverse_whose_key_is_null_is_loaded_null() -> None:
 def test_an_inverse_naming_no_claim_on_the_page_is_refused() -> None:
     fixture = PageFixture(INVERSE_MODEL, references=_BOTH_PARENTS)
     link = fixture.node("InverseLink", LINK_ROW)
-    with pytest.raises(ValueError, match="no already-converted"):
+    with pytest.raises(ValueError, match="no already-recorded"):
         fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
 
 
@@ -261,7 +262,7 @@ def test_an_inverse_is_refused_on_a_slot_holding_projections() -> None:
     fixture = PageFixture(INVERSE_MODEL, "InverseLink.parent")
     fixture.node("InverseAlpha", _concrete(PARENT_ROWS[0]))
     link = fixture.node("InverseLink", LINK_ROW)
-    with pytest.raises(ValueError, match="holds projections"):
+    with pytest.raises(ValueError, match="holds fetched rows"):
         fixture.attach_reference(link, "InverseLink.parent", "InverseParent", _PARENT_KEY)
 
 
@@ -349,7 +350,7 @@ def _resolved_parents(fixture: PageFixture, *roots: int) -> list[object]:
 def test_inverse_lookup_keeps_coordinate_distinct_claims_until_root_local_resolution() -> None:
     fixture, roots, _link = _coordinate_distinct_parents()
     page = fixture.page(*roots, pin=_TEMPORAL_PIN)
-    assert page_rows(page).logical_ids[roots[0]] != page_rows(page).logical_ids[roots[1]]
+    assert page_rows(page).logical_rows[roots[0]] != page_rows(page).logical_rows[roots[1]]
     assert _resolved_parents(fixture, *roots) == [0, 0]
 
 
@@ -362,9 +363,9 @@ def test_every_coordinate_distinct_claim_of_one_key_resolves_its_own_inverse() -
     roots = (*distinct, repeated)
     _reference(fixture, _temporal_link(fixture, *roots))
     page = fixture.page(*roots, pin=_TEMPORAL_PIN)
-    logical_ids = page_rows(page).logical_ids
-    assert len({logical_ids[parent] for parent in distinct}) == len(distinct)
-    assert logical_ids[repeated] == logical_ids[distinct[1]]
+    logical_rows = page_rows(page).logical_rows
+    assert len({logical_rows[parent] for parent in distinct}) == len(distinct)
+    assert logical_rows[repeated] == logical_rows[distinct[1]]
     assert _resolved_parents(fixture, *roots) == [0] * len(roots)
 
 

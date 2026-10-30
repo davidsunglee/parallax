@@ -19,7 +19,7 @@ from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import NeutralType, PresentDocument
 from parallax.core.deep_fetch import IncludeTree
 from parallax.core.read_delivery import InvalidData
-from parallax.core.read_delivery._page import Page, judged_state, page_rows
+from parallax.core.read_delivery._page import Page, page_rows, shared_entity_state
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot import (
     SnapshotConsistencyError,
@@ -175,7 +175,7 @@ def test_a_projection_conflict_in_a_discarded_arm_still_refuses(form: _Form, ato
     with pytest.raises(SnapshotConsistencyError) as conflict:
         _published(fixture, form, order, atomic=atomic)
 
-    assert conflict.value.code == "snapshot-projection-conflict"
+    assert conflict.value.code == "snapshot-fetched-row-conflict"
     assert type(conflict.value) is SnapshotConsistencyError
 
 
@@ -303,7 +303,9 @@ class _RecordedOrigins(Mapping[int, object]):
             raise RuntimeError("origin resolution failed")
         rows = page_rows(self.page)
         assert rows.keys[projection] is not None, f"projection {projection} was released"
-        assert judged_state(rows, projection) is not None, f"projection {projection} is unjudged"
+        assert shared_entity_state(rows, projection) is not None, (
+            f"projection {projection} is unjudged"
+        )
         self.lookups.append(projection)
         return ("evidence", projection)
 
@@ -650,7 +652,9 @@ def test_a_pass_side_or_wire_failure_propagates_unwrapped(
 ) -> None:
     fixture, roots = _two_orders()
     if seam == "decoding":
-        monkeypatch.setattr(_root, "state_for", _failing_second_call(vars(_root)["state_for"]))
+        monkeypatch.setattr(
+            _root, "entity_state", _failing_second_call(vars(_root)["entity_state"])
+        )
     else:
         monkeypatch.setattr(
             _wire, "classify_root", _failing_second_call(vars(_wire)["classify_root"])

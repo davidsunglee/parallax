@@ -33,19 +33,19 @@ from parallax.core.write_plan import (
 )
 
 __all__ = [
-    "ReadEvidenceByProjection",
+    "ReadEvidenceByFetchedRow",
     "ReadEvidenceContext",
-    "RecordedProjections",
+    "RecordedFetchedRows",
     "defer_read_evidence",
 ]
 
 
 @dataclass(frozen=True, slots=True)
-class _ReadEvidenceProjection:
-    """One Page projection's observation provenance, pending its judged state.
+class _ReadEvidenceFetchedRow:
+    """One Page fetched row's observation provenance, pending its judged state.
 
-    ``node`` is the Page projection this row converted into, which is how
-    the evidence built from it reaches the value that projection becomes.
+    ``node`` is the Page fetched row this row was recorded as, which is how
+    the evidence built from it reaches the value that fetched row becomes.
     ``entity`` is the row's own resolved concrete Entity. ``document`` is the
     raw Structured Column under Relational Document Layout, held as the dialect
     transferred it and read only (:class:`PredecessorRow` owns that contract).
@@ -59,16 +59,16 @@ class _ReadEvidenceProjection:
     document: object | None
 
 
-type _PendingObservation = int | _ReadEvidenceProjection
+type _PendingObservation = int | _ReadEvidenceFetchedRow
 
 
-class RecordedProjections:
+class RecordedFetchedRows:
     """What one Page read records for the write side while its rows are still live.
 
     Projection references paired with their row provenance, recorded through
-    :meth:`observe_projection`: each receives its members only from the judged,
+    :meth:`observe_fetched_row`: each receives its members only from the judged,
     Page-owned Entity State, and :func:`defer_read_evidence` is the only
-    consumer. A projection whose state turns out not to hydrate is recorded like
+    consumer. A fetched row whose state turns out not to hydrate is recorded like
     any other and simply resolves to no origin.
     """
 
@@ -77,24 +77,24 @@ class RecordedProjections:
     def __init__(self) -> None:
         self._rows: list[_PendingObservation] = []
 
-    def observe_projection(
+    def observe_fetched_row(
         self,
         node: int,
         entity: EntityIdentity,
         document: object | None,
     ) -> None:
-        """Record a projection whose columns will come from its judged Entity State."""
+        """Record a fetched row whose columns will come from its judged Entity State."""
         self._rows.append(
-            node if document is None else _ReadEvidenceProjection(node, entity, document)
+            node if document is None else _ReadEvidenceFetchedRow(node, entity, document)
         )
 
 
-type ReadEvidenceByProjection = Mapping[int, ReadEvidence]
-"""The Read Evidence each observed projection's value carries, keyed by that
-projection's own index in the read's sealed Page.
+type ReadEvidenceByFetchedRow = Mapping[int, ReadEvidence]
+"""The Read Evidence each observed fetched row's value carries, keyed by that
+fetched row's own index in the read's sealed Page.
 
 Only the read can build this pairing: it alone holds the row and the
-projection it converted into at the same time, and by the time a lifecycle
+fetched row it was recorded as at the same time, and by the time a lifecycle
 publishes the value the row is gone."""
 
 
@@ -140,7 +140,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
     family's evidence is read through.
 
     The evidence context's freshness is captured when the pass is built — while the read
-    that acquired its rows runs — so evidence a projection builds later is
+    that acquired its rows runs — so evidence a fetched row builds later is
     judged against the state those rows had, not against whatever this
     transaction wrote in between.
     """
@@ -165,7 +165,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
     def __init__(
         self,
         meta: Metamodel,
-        observations: RecordedProjections,
+        observations: RecordedFetchedRows,
         admitted: Callable[[int], tuple[EntityLayout, tuple[object, ...]] | None],
         entity: Callable[[int], EntityIdentity],
         primary_key: Callable[[int], object | None],
@@ -178,7 +178,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         self._temporal = temporal_read.view(meta)
         retained: list[_PendingObservation] = [
             pending
-            if not isinstance(pending, _ReadEvidenceProjection)
+            if not isinstance(pending, _ReadEvidenceFetchedRow)
             or isinstance(self._keys.key(pending.entity), TransactionTimeDerived)
             else pending.node
             for pending in observations._rows  # pyright: ignore[reportPrivateUsage] - same-module transfer
@@ -191,7 +191,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
         self._participation = evidence_context.participation
         self._read_at = evidence_context.freshness
         # One observed state, one retained observation within this pass, so two
-        # projections of one row answer one claim exactly as graph aliases do.
+        # fetched rows of one row answer one claim exactly as graph aliases do.
         self._pass_states: dict[ObjectStateKey, RetainedObservation] = {}
         self._pin = pin
         self._resolved: list[ReadEvidence | None] = [None] * len(retained)
@@ -218,7 +218,7 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
     def _resolve_evidence(self, key: int) -> None:
         try:
             pending = self._observations[key]
-        except IndexError:  # pragma: no cover - publication requests Page projection indices only
+        except IndexError:  # pragma: no cover - publication requests Page fetched row indices only
             raise KeyError(key) from None
         entity = self._entity(key) if isinstance(pending, int) else pending.entity
         self._observations[key] = key
@@ -298,20 +298,20 @@ class _DeferredReadEvidenceMap(Mapping[int, ReadEvidence]):
 
 def defer_read_evidence(
     meta: Metamodel,
-    observations: RecordedProjections,
+    observations: RecordedFetchedRows,
     admitted: Callable[[int], tuple[EntityLayout, tuple[object, ...]] | None],
     entity: Callable[[int], EntityIdentity],
     primary_key: Callable[[int], object | None],
     *,
     evidence_context: ReadEvidenceContext,
     pin: Pin,
-) -> ReadEvidenceByProjection:
+) -> ReadEvidenceByFetchedRow:
     """A mapping that retains evidence as valid judged states become reachable
     (`m-opt-lock`; ADR 0013; `m-unit-work` "Observation lifetime").
 
-    Each projection's Read Evidence resolves when first read. Versioned and
+    Each fetched row's Read Evidence resolves when first read. Versioned and
     temporal evidence comes from the Entity State the Page judged for that
-    projection (``admitted``), viewed by declared member name, and is retained
+    fetched row (``admitted``), viewed by declared member name, and is retained
     only once that state is reachable and valid.
 
     Evidence is addressed by the exact state it is about

@@ -40,9 +40,6 @@ from parallax.core.metamodel import (
 from parallax.core.read_delivery._evidence import freeze_evidence
 from parallax.core.read_delivery._page import (
     ABSENT,
-    LogicalKey,
-    PageBuilder,
-    SourceLevel,
     StoredDataIssueCode,
     StoredDataIssueInput,
 )
@@ -53,7 +50,7 @@ __all__ = [
     "build_positional_many",
     "build_positional_object",
     "complete_occurrences",
-    "register_reduced_row",
+    "judge_positions",
 ]
 
 
@@ -75,13 +72,16 @@ class EntityReadMapping:
 
     The judgment selections are fixed here, once per bound read. A reduced row's
     host-checked identity positions, then its host-checked non-identity
-    correlation positions, are judged when the row is claimed, so its logical
-    key and routing values are ready for page assembly. ``payload_positions``
-    are processed only when a Root View needs the row's state; the correlations
-    among them reuse the verdict formed at the claim rather than being judged
-    again. Correlations and payload positions are both in attribute order, which
-    is what places each captured correlation finding at its own payload position
-    without a lookup.
+    correlation positions, are judged when the row is recorded, so its row key
+    and routing values are ready for page assembly. ``payload_positions`` are
+    processed when the row is recorded on a level that records each row key at
+    most once, and otherwise only when a Root View needs the row's state; the
+    correlations among them reuse the verdict formed for routing rather than
+    being judged again. Correlations and payload positions are both in attribute
+    order, which is what places each captured correlation finding at its own
+    payload position without a lookup. ``judges_scalars_only`` marks a mapping
+    whose payload is host-checked scalars alone, with no document member to
+    classify and no requested occurrence.
     """
 
     layout: EntityLayout
@@ -101,6 +101,7 @@ class EntityReadMapping:
     eager_correlation_positions: tuple[int, ...] = field(init=False)
     payload_positions: tuple[int, ...] = field(init=False)
     requires_state_reduction: bool = field(init=False)
+    judges_scalars_only: bool = field(init=False)
 
     def __post_init__(
         self,
@@ -171,10 +172,13 @@ class EntityReadMapping:
             "requires_state_reduction",
             classifies or bool(payload) or bool(eager_identity) or any(projected_by_position),
         )
+        object.__setattr__(
+            self, "judges_scalars_only", not classifies and not any(projected_by_position)
+        )
 
     def decode_payload(
         self,
-        witness: tuple[object, ...],
+        stored_values: tuple[object, ...],
         routed_values: tuple[object, ...],
         classifiable: int | None,
         correlation_findings: tuple[StoredDataIssueInput, ...],
@@ -182,15 +186,15 @@ class EntityReadMapping:
         *,
         occurrences: bool = True,
     ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
-        """Judge the payload of one reduced row claimed under this mapping, from the
-        inputs its Page retained for it, answering its member row and findings.
+        """Judge the payload of one reduced row recorded under this mapping, from
+        the inputs its Page retained for it, answering its member row and findings.
 
         Without ``occurrences`` only the row's Attributes are judged: each Value
         Object occurrence the row carried keeps the input its classification
         takes, which :func:`complete_occurrences` judges later."""
         carried = self.every_member_present if classifiable is None else classifiable
         values, findings, classified = _classify_payload(
-            witness, self, carried if occurrences else carried & self._attribute_positions
+            stored_values, self, carried if occurrences else carried & self._attribute_positions
         )
         members, issues = _decode_payload(
             values,
@@ -211,68 +215,6 @@ class EntityReadMapping:
         return (1 << self.layout.attribute_count) - 1
 
 
-def register_reduced_row(
-    witness: tuple[object, ...],
-    mapping: EntityReadMapping,
-    builder: PageBuilder,
-    *,
-    source: SourceLevel,
-    classifiable: int,
-    unknown_family_tag: UnknownFamilyTag | None,
-) -> int:
-    """Claim one reduced row's identity now, register it in ``builder`` with its
-    payload deferred to the Root View that needs it, and answer the projection
-    index the builder assigned.
-
-    ``witness`` is positional, laid out by ``mapping.layout``, with ``ABSENT``
-    wherever the read carried no value. ``classifiable`` marks, one bit per
-    position, the members the row carried for document classification.
-
-    The claim keeps the raw witness for comparing claimants and classifying the
-    payload, beside the routed values page assembly reads: the witness with
-    each judged identity and correlation cell decoded, or ``ABSENT`` where
-    rejected. Identity findings join the Page's identity issues; correlation
-    findings wait for the payload judgment, which places them at their own
-    positions.
-    """
-    routed, identity_findings = _judge(
-        mapping.eager_identity_positions, witness, mapping, None, None
-    )
-    routed, correlation_findings = _judge(
-        mapping.eager_correlation_positions, witness, mapping, routed, None
-    )
-    routed_values = witness if routed is None else tuple(routed)
-    layout = mapping.layout
-    key = (
-        None
-        if unknown_family_tag is not None
-        or any(routed_values[position] is ABSENT for position in layout.primary_key)
-        else LogicalKey(
-            layout.family,
-            routed_values[layout.primary_key[0]],
-            mapping.temporal_start_values(routed_values),
-        )
-    )
-    projection = builder.add_claim(
-        source,
-        layout,
-        key,
-        witness,
-        routed_values,
-        () if identity_findings is None else tuple(identity_findings),
-        mapping,
-    )
-    partial = None if classifiable == mapping.every_member_present else classifiable
-    if partial is not None or correlation_findings or unknown_family_tag is not None:
-        builder.add_payload_inputs(
-            projection,
-            partial,
-            () if correlation_findings is None else tuple(correlation_findings),
-            unknown_family_tag,
-        )
-    return projection
-
-
 def _tuple_getter(
     positions: tuple[int, ...],
 ) -> Callable[[tuple[object, ...]], tuple[object, ...]]:
@@ -290,21 +232,21 @@ def _no_values(_values: tuple[object, ...]) -> tuple[object, ...]:
 
 
 def _classify_payload(
-    witness: tuple[object, ...],
+    stored_values: tuple[object, ...],
     mapping: EntityReadMapping,
     classifiable: int,
 ) -> tuple[tuple[object, ...], tuple[DocumentFinding, ...], int]:
     """Classify each document member the row carried, answering the classified
     values, the codec's findings, and the classified positions, one bit each."""
     if not mapping.classifies:
-        return witness, (), 0
-    values = list(witness)
+        return stored_values, (), 0
+    values = list(stored_values)
     findings: list[DocumentFinding] = []
     classified = 0
     for position, optional_classifier in enumerate(mapping.classifiers):
         if optional_classifier is None:
             continue
-        raw = witness[position]
+        raw = stored_values[position]
         if raw is ABSENT or not classifiable & (1 << position):
             continue
         value, member_findings = optional_classifier(raw)
@@ -344,7 +286,7 @@ def _decode_payload(
             if members is None:
                 members = list(values)
             members[position] = routed_values[position]
-    members, issues = _judge(
+    members, issues = judge_positions(
         mapping.payload_positions,
         values,
         mapping,
@@ -394,7 +336,7 @@ def _decode_occurrences(
 
 # One branch per verdict source. It runs per selected cell per row, so the branches
 # stay inline rather than behind a per-cell call.
-def _judge(  # noqa: C901
+def judge_positions(  # noqa: C901
     selection: tuple[int, ...],
     values: tuple[object, ...],
     mapping: EntityReadMapping,
@@ -410,7 +352,7 @@ def _judge(  # noqa: C901
     replacement, and ``issues`` with each new finding appended.
 
     Given ``routed_values``, the mapping's eager correlation positions reuse the
-    value their claim routed and the finding it ``captured``, in attribute order;
+    value their recording routed and the finding it ``captured``, in attribute order;
     a ``classified`` position takes its document codec's verdict; every other
     position is a host-checked stored scalar, decoded and admitted here.
     """

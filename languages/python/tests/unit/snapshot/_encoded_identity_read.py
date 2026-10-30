@@ -73,11 +73,16 @@ def encoded_identity_read() -> ReadRowConverter:
         oa.TrueNode(), ENCODED_IDENTITY, _WIRE_UUID, entity, result_form="instance"
     )
     assert compiled.statement.sql.startswith("select cast(t0.id as text) id_wire, ")
-    return bind(CatalogedModel(ENCODED_IDENTITY), compiled.result_contract, compiled.projection)
+    return bind(
+        CatalogedModel(ENCODED_IDENTITY),
+        compiled.result_contract,
+        compiled.projection,
+        row_operations=True,
+    )
 
 
 def encoded_identity_page(*rows: Row) -> Page:
     builder = PageBuilder(ViewSchema.of())
     prepared = encoded_identity_read()
-    roots = tuple(prepared.convert_row(row, builder, source=ROOT_LEVEL)[0] for row in rows)
+    roots = tuple(prepared.record_row(row, builder, source=ROOT_LEVEL)[0] for row in rows)
     return builder.finish(roots, Pin())

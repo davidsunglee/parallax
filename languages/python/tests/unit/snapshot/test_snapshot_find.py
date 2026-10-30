@@ -338,7 +338,10 @@ def _states_decoded(observer: RecordingObserver) -> int:
     return sum(value for name, value in observer.events if name == "states_decoded")
 
 
-def test_a_later_root_document_is_not_classified_before_its_root_view() -> None:
+def test_a_proved_level_classifies_every_document_as_it_is_recorded() -> None:
+    # A root level that records each row key at most once has nothing to compare
+    # a row with, so each row is judged while it is recorded and publication
+    # reads the judged state rather than judging again.
     meta = model_of(_PROFILE_OWNER_MODEL)
     observer = RecordingObserver()
     result = find(
@@ -360,13 +363,13 @@ def test_a_later_root_document_is_not_classified_before_its_root_view() -> None:
         observer=observer,
     )
 
-    assert _states_decoded(observer) == 0
+    assert _states_decoded(observer) == 2
 
     def judged_so_far(root: RootView, _ordinal: int) -> tuple[int, list[str]]:
         return _states_decoded(observer), [issue.code for issue in root.issues(0)]
 
     assert each_root(result.page, meta, judged_so_far) == [
-        (1, []),
+        (2, []),
         (2, ["stored-data-leaf-undecodable"]),
     ]
 
@@ -1361,9 +1364,11 @@ def _animal(ordinal: int, kind: str) -> MappingRow:
     return {**_ANIMAL_ROW, "id": ordinal, "kind": kind}
 
 
-def test_row_form_derives_one_publication_per_concrete_and_variant(
+def test_row_form_binds_one_publication_per_concrete_and_variant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Every pair a row can resolve to is bound with the read, the unrecognized
+    # tag's family root included, whichever pairs the rows then name.
     derived = _counting_publication_preparation(monkeypatch)
 
     published = _row_form(
@@ -1376,10 +1381,10 @@ def test_row_form_derives_one_publication_per_concrete_and_variant(
     )
 
     assert len(published) == 6
-    assert derived == [("Dog", "Dog"), ("Cat", "Cat"), ("Animal", None)]
+    assert derived == [("Cat", "Cat"), ("Dog", "Dog"), ("WildBoar", "WildBoar"), ("Animal", None)]
 
 
-def test_a_row_form_page_derives_afresh_without_a_post_bind_layout_lookup(
+def test_a_row_form_page_reuses_its_bound_publications_without_a_layout_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cataloged, planner = _cataloged(ANIMAL), ReadPlanCache()
@@ -1396,7 +1401,7 @@ def test_a_row_form_page_derives_afresh_without_a_post_bind_layout_lookup(
     second = _row_form(ANIMAL, "Animal", stored, cataloged=cataloged, planner=planner)
 
     assert second == first
-    assert derived == [("Dog", "Dog"), ("Cat", "Cat")]
+    assert derived == []
 
 
 def _forbid_row_publication(patched: pytest.MonkeyPatch) -> None:

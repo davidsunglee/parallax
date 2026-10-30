@@ -39,8 +39,13 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
 )
 from parallax.core.read_delivery._paging import At, PagingPlan, TieFound, page_decision
-from parallax.core.read_delivery._read_plan import EmptyRead, ReadPlan, ReadPlanner
-from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
+from parallax.core.read_delivery._read_plan import (
+    EmptyRead,
+    ReadPlan,
+    ReadPlanner,
+    repeating_levels,
+)
+from parallax.core.read_delivery._row_converter import FetchedRowObserver, ReadRowConverter, bind
 from parallax.core.read_delivery._row_decoding import row_coordinates
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
@@ -51,32 +56,23 @@ __all__ = [
     "EagerPageRequest",
     "EagerPageResult",
     "EmptyPageOriginCollector",
+    "FetchedRowObserver",
     "FlatPageRequest",
     "FlatPageResult",
     "HistoryPageResult",
     "PageOriginCollector",
-    "PageProjectionObserver",
     "PageReader",
     "PlannedFlatPageRequest",
     "StreamPageRequest",
     "StreamPageResult",
-    "convert_rows",
 ]
 
 
-class PageProjectionObserver(Protocol):
-    """What Page conversion reports about each projection it registers."""
-
-    def observe_projection(
-        self, node: int, entity: EntityIdentity, document: object | None
-    ) -> None: ...
-
-
-class PageOriginCollector[Origin](PageProjectionObserver, Protocol):
-    """A projection observer that also answers the origins of a sealed Page.
+class PageOriginCollector[Origin](FetchedRowObserver, Protocol):
+    """A fetched row observer that also answers the origins of a sealed Page.
 
     :meth:`origins_for` is asked once, after the Page it observed is sealed, and
-    its mapping travels with the Page by reference, keyed by projection index.
+    its mapping travels with the Page by reference, keyed by fetched row index.
     """
 
     def origins_for(self, page: Page, /) -> Mapping[int, Origin]: ...
@@ -90,10 +86,10 @@ class EmptyPageOriginCollector:
 
     __slots__ = ()
 
-    def observe_projection(
-        self, node: int, entity: EntityIdentity, document: object | None
+    def observe_fetched_row(
+        self, fetched_row: int, entity: EntityIdentity, document: object | None
     ) -> None:
-        del node, entity, document
+        del fetched_row, entity, document
 
     def origins_for(self, page: Page, /) -> Mapping[int, Never]:
         del page
@@ -128,8 +124,8 @@ class EagerPageResult[Origin]:
     any level loaded onto a node, so a back-reference would revisit its target
     forever. The reader knows the plan, so it hands the tree on.
 
-    ``origins`` is the origin each observed projection's value will carry,
-    keyed by that projection's own index in the Page, exactly as the request's
+    ``origins`` is the origin each observed fetched row's value will carry,
+    keyed by that fetched row's own index in the Page, exactly as the request's
     origin capability answered it.
     """
 
@@ -280,46 +276,33 @@ def _page_observer(observer: MaterializationObserver) -> MaterializationObserver
     return None if observer is INERT_OBSERVER else observer
 
 
-def convert_rows(
+def _recorded_rows(
     builder: PageBuilder,
     source: SourceLevel,
     converter: ReadRowConverter,
     rows: Iterable[Row],
-    observer: PageProjectionObserver,
+    origin_collector: PageOriginCollector[Any],
 ) -> tuple[int, ...]:
-    """Convert ``rows`` into ``builder``, reporting each one while it is still live.
+    """Record ``rows`` into ``builder`` at ``source`` under ``converter``, the
+    read those provider rows were bound under, reporting each fetched row to
+    ``origin_collector`` unless it records nothing.
 
-    ``converter`` is the read those provider rows convert and are observed
-    under: the layout, projected occurrences, and attribute contracts a row needs
-    were derived when that read was bound, so nothing here re-derives what the
-    statement projected.
-
-    ``source`` is where in the plan these rows land, which is what sizes each
-    projection's view row: the levels attaching BELOW this one are what its rows
-    can receive.
-
-    The report pairs the SAME row's raw document with the projection conversion
-    produced. Once that projection's Page-owned Entity State is judged, a
-    consumer reads it by projection index; no second member row is decoded or
-    reconstructed.
-
-    Each row is reported under its OWN resolved concrete Entity — the mapping
-    the conversion resolved for it — rather than under the level-wide position
-    the query addressed. The root and every level run through here, so that one
-    rule reaches an abstract-target root's concrete, a polymorphic level's
-    concrete, and an included child alike.
+    The report pairs the SAME row's raw document with the fetched row
+    recording produced. Once that fetched row's Page-owned Entity State is
+    judged, a consumer reads it by fetched row index; no second member row is
+    decoded or reconstructed.
     """
-    refs: list[int] = []
-    for row in rows:
-        ref, resolved, document, _variant = converter.convert_row(row, builder, source=source)
-        refs.append(ref)
-        observer.observe_projection(ref, resolved, document)
-    return tuple(refs)
+    return converter.record_rows(
+        rows,
+        builder,
+        source,
+        None if origin_collector is EMPTY_PAGE_ORIGIN_COLLECTOR else origin_collector,
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class PageReader:
-    """Plans, executes, converts, and seals one Page per request."""
+    """Plans, executes, records, and seals one Page per request."""
 
     observer: MaterializationObserver = INERT_OBSERVER
 
@@ -361,47 +344,65 @@ class PageReader:
                 calls=request.calls,
             )
         if isinstance(request, PlannedFlatPageRequest):
-            root = request.plan.root_read()
+            plan = request.plan
+            root = plan.root_read()
             if isinstance(root, EmptyRead):
                 self.observer.prepared(1)
-                builder = PageBuilder(ViewSchema.of(), _page_observer(self.observer))
+                builder = plan.page_builder(_page_observer(self.observer))
                 return FlatPageResult((), (), builder.finish((), request.pin))
             compiled, converter = root
             port, calls = request.port, request.calls
             return self._read_flat(
-                request.model,
-                compiled,
                 lambda: execute_read(port, compiled, calls),
                 request.pin,
                 converter,
+                plan.page_builder(_page_observer(self.observer)),
             )
         if isinstance(request, FlatPageRequest):
-            return self._read_flat(
-                request.model, request.compiled, request.read, request.pin, request.converter
-            )
+            return self._read_acquisition(request)
 
         return self._read_stream_page(request)
 
+    def _read_acquisition(self, request: FlatPageRequest) -> FlatPageResult:
+        """Read one statement a write acquires its rows by into a root-only Page.
+
+        Its rows record each row key at most once unless its read can return two
+        concretes whose keys collide; either way their payload judgment stays
+        deferred, as acquisition's contract requires."""
+        model = request.model
+        compiled = request.compiled
+        repeating = repeating_levels(model, (compiled.result_contract.resolvable,), ())
+        converter = request.converter or bind(
+            model,
+            compiled.result_contract,
+            compiled.projection,
+            singleton=not repeating,
+            acquisition=True,
+        )
+        return self._read_flat(
+            request.read,
+            request.pin,
+            converter,
+            PageBuilder(ViewSchema.of(repeating_levels=repeating), _page_observer(self.observer)),
+        )
+
     def _read_flat(
         self,
-        model: CatalogedModel,
-        compiled: CompiledRead,
         read: Callable[[], Sequence[Row]],
         pin: Pin,
-        converter: ReadRowConverter | None,
+        converter: ReadRowConverter,
+        builder: PageBuilder,
     ) -> FlatPageResult:
-        """Execute one statement and convert its rows into a root-only Page."""
+        """Execute one statement and record its rows into a root-only Page."""
         self.observer.prepared(1)
         self.observer.statement_rendered(ROOT_LEVEL)
         rows = read()
         self.observer.statement_executed(ROOT_LEVEL, len(rows))
-        converter = converter or bind(model, compiled.result_contract, compiled.projection)
-        builder = PageBuilder(ViewSchema.of(), _page_observer(self.observer))
-        converted = tuple(converter.convert_row(row, builder, source=ROOT_LEVEL) for row in rows)
+        recorded = tuple(converter.record_row(row, builder, source=ROOT_LEVEL) for row in rows)
         return FlatPageResult(
-            tuple(item[3] for item in converted),
-            tuple(item[2] for item in converted),
-            builder.finish(tuple(item[0] for item in converted), pin),
+            tuple(item[3] for item in recorded),
+            tuple(item[2] for item in recorded),
+            builder.finish(tuple(item[0] for item in recorded), pin),
         )
 
     def _plan(
@@ -433,7 +434,7 @@ class PageReader:
         origin_collector: PageOriginCollector[Origin],
     ) -> EagerPageResult[Origin]:
         """Seal the zero-root Page of a structurally empty root, without
-        executing or converting anything."""
+        executing or recording anything."""
         page = plan.page_builder(_page_observer(self.observer)).finish(
             (), resolved_query_pin(query.temporal)
         )
@@ -479,13 +480,13 @@ class PageReader:
         origin_collector: PageOriginCollector[Origin],
         calls: DatabaseCallScope,
     ) -> EagerPageResult[Origin]:
-        """Convert roots and execute every reachable fetch step into one Page."""
+        """Record roots and execute every reachable fetch step into one Page."""
         meta = model.meta
         plan = root_read.plan
         includes = plan.include_tree()
         builder = plan.page_builder(_page_observer(root_read.observer))
         root_rows = root_read.take_rows()
-        root_refs = convert_rows(
+        root_refs = _recorded_rows(
             builder, ROOT_LEVEL, root_read.converter, _drain_rows(root_rows), origin_collector
         )
         del root_rows
@@ -541,7 +542,7 @@ class PageReader:
                 batches = _pipelined_rows(pending, port, calls)
             for fetch, rows in zip(pending, batches, strict=True):
                 root_read.observer.statement_executed(fetch.index + 1, len(rows))
-                child_refs = convert_rows(
+                child_refs = _recorded_rows(
                     builder, fetch.index + 1, fetch.converter, rows, origin_collector
                 )
                 attach_children(builder, meta, includes, fetch.step, fetch.parents, child_refs)

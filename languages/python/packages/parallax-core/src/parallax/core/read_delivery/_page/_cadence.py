@@ -17,9 +17,9 @@ class MaterializationObserver(Protocol):
 
     def statement_executed(self, level: int, rows: int) -> None: ...
 
-    def occurrences_reached(self, count: int) -> None: ...
+    def fetched_rows_reached(self, count: int) -> None: ...
 
-    def witnesses_compared(self, count: int) -> None: ...
+    def stored_values_compared(self, count: int) -> None: ...
 
     def states_decoded(self) -> None: ...
 
@@ -39,10 +39,10 @@ class _InertObserver:
     def statement_executed(self, level: int, rows: int) -> None:
         del level, rows
 
-    def occurrences_reached(self, count: int) -> None:
+    def fetched_rows_reached(self, count: int) -> None:
         del count
 
-    def witnesses_compared(self, count: int) -> None:
+    def stored_values_compared(self, count: int) -> None:
         del count
 
     def states_decoded(self) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Final, Literal, NamedTuple, Protocol, assert_never
@@ -10,7 +11,7 @@ from parallax.core import deep_fetch, inheritance
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.metamodel import AttributeIdentity
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, TablePerConcreteSubtype
 from parallax.core.object_query._resolved import (
     ResolvedAsOfSelection,
     ResolvedHistorySelection,
@@ -41,7 +42,7 @@ from parallax.core.predicate._resolved import (
     SubjectPosition,
 )
 from parallax.core.read_delivery._fetch import correlation_table, entity_read_lock, slot_table
-from parallax.core.read_delivery._page import PageBuilder, ViewSchema
+from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, SourceLevel, ViewSchema
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
 from parallax.core.sql_gen._compile import (
     CompiledRead,
@@ -62,6 +63,7 @@ __all__ = [
     "ReadPlanCache",
     "ReadPlanner",
     "check_read_plan_cache_capacity",
+    "repeating_levels",
 ]
 
 type ResultForm = Literal["row", "instance"]
@@ -419,6 +421,50 @@ def _temporal_key(selection: ResolvedTemporalSelection) -> object:
             assert_never(selection)
 
 
+def repeating_levels(
+    model: CatalogedModel,
+    resolvable: Sequence[Sequence[EntityIdentity]],
+    referenced: Iterable[EntityIdentity],
+) -> frozenset[SourceLevel]:
+    """The source levels of a read that may record one row key more than once on
+    its Page, from the Entities each level's statement can resolve a row to
+    (none for a level that executes nothing) and the families ``referenced`` by
+    a back-reference.
+
+    One statement returns each row key at most once, except where it unions the
+    tables of several concretes of one table-per-concrete-subtype family, whose
+    keys may collide. Beyond that, a row key recurs on a Page only through a
+    family a second level also fetches or a back-reference names, which then
+    needs every fetched row of that family merged by key.
+    """
+    facet = inheritance.view(model.meta)
+    families_by_level: list[frozenset[EntityIdentity]] = []
+    repeating: set[SourceLevel] = set()
+    for level, entities in enumerate(resolvable):
+        views = tuple(_entity_view(facet, entity) for entity in entities)
+        families_by_level.append(frozenset(view.root for view in views))
+        if len(views) > 1 and any(
+            isinstance(view.strategy, TablePerConcreteSubtype) for view in views
+        ):
+            repeating.add(level)
+    shared = set(referenced)
+    seen: set[EntityIdentity] = set()
+    for families in families_by_level:
+        shared.update(families & seen)
+        seen.update(families)
+    repeating.update(level for level, families in enumerate(families_by_level) if families & shared)
+    return frozenset(repeating)
+
+
+def _entity_view(
+    facet: inheritance.InheritanceFacet, entity: EntityIdentity
+) -> inheritance.InheritanceEntityView:
+    view = facet.entity(entity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        raise ValueError(f"{entity.canonical}: no inheritance view")
+    return view
+
+
 def _plan_uncached(
     *,
     model: CatalogedModel,
@@ -470,12 +516,30 @@ def _plan_uncached(
             model.meta,
             (index for index, work in enumerate(fetches) if not isinstance(work, EmptyRead)),
         )
+        repeating = repeating_levels(
+            model,
+            (
+                () if isinstance(root, EmptyRead) else root.result_contract.resolvable,
+                *(
+                    work.compiled.result_contract.resolvable
+                    if isinstance(work, CompiledTemplate)
+                    else ()
+                    for work in fetches
+                ),
+            ),
+            (
+                step.family
+                for step, work in zip(planned.fetch_steps, fetches, strict=True)
+                if isinstance(step, deep_fetch.BackReferenceFetchStep) and work is None
+            ),
+        )
         fetch_rows = tuple(
             bind(
                 model,
                 work.compiled.result_contract,
                 work.compiled.projection,
                 correlation_members=correlations[index + 1],
+                singleton=index + 1 not in repeating,
             )
             if isinstance(work, CompiledTemplate)
             else None
@@ -485,9 +549,10 @@ def _plan_uncached(
             ViewSchema.prepared(
                 slot_table(planned),
                 (model.layouts.entity(entity.identity) for entity in model.meta.entities),
+                repeating_levels=repeating,
             )
             if result_form == "instance" and not scans_resolved_axis(query.temporal)
-            else ViewSchema.of()
+            else ViewSchema.of(repeating_levels=repeating)
         )
     else:
         fetches, correlations, fetch_rows, schema = (
@@ -506,6 +571,8 @@ def _plan_uncached(
             root.result_contract,
             root.projection,
             correlation_members=correlations[0],
+            singleton=not schema.may_repeat_rows(ROOT_LEVEL),
+            row_operations=result_form == "row",
         ),
         schema,
         correlations,
