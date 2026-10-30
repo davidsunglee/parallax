@@ -435,6 +435,7 @@ def _compile_read(
             null_tail,
             select_list,
             query,
+            read_shape,
             terms,
             model,
             facet,
@@ -461,6 +462,7 @@ def _union_null_tail(
     null_tail: LoweredStatement,
     select_list: _SelectListBuilder,
     query: PlannedEntityQuery,
+    read_shape: _SingleTableReadPlan | _TpcsUnionReadPlan,
     terms: tuple[_LoweredTerm, ...],
     model: Metamodel,
     facet: InheritanceFacet,
@@ -472,7 +474,7 @@ def _union_null_tail(
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
     """The ordered, capped `union all` of a continuing page's ordinary and
     NULL-tail arms, selected through the cells both arms emit; a ``locking``
-    union joins back to the target's base Table and locks that row instead."""
+    union joins back to the planned physical Table and locks that row instead."""
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
     statement_ctx.append_fragment(ordinary)
     statement_ctx.append_fragment(null_tail)
@@ -492,7 +494,9 @@ def _union_null_tail(
         base_join, lock_suffix = _locking_base_join(
             statement_ctx,
             select_list,
-            _table_layout(storage, facet, query.entity.identity),
+            read_shape.layout.branches[0].layout
+            if isinstance(read_shape, _SingleTableReadPlan)
+            else _table_layout(storage, facet, query.entity.identity),
             dialect,
             outer_alias,
         )
