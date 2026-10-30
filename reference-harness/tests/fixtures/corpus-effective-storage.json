@@ -3806,6 +3806,34 @@
       }
     }
   },
+  "models/orders-versioned.yaml": {
+    "parallax.compatibility.Order": {
+      "attribute": {
+        "active": "active",
+        "id": "id",
+        "name": "name",
+        "orderedOn": "ordered_on",
+        "price": "price",
+        "qty": "qty",
+        "sku": "sku",
+        "version": "version"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.OrderItem": {
+      "attribute": {
+        "id": "id",
+        "orderId": "order_id",
+        "quantity": "quantity",
+        "shippedOn": "shipped_on",
+        "sku": "sku",
+        "version": "version"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/orders.yaml": {
     "parallax.compatibility.Order": {
       "attribute": {

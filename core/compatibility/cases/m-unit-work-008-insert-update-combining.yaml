@@ -33,7 +33,7 @@ when:
       note: a dependent find observes the combined insert's final values (read-your-own-writes)
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [8]
       expectRows:
         - { id: 8, owner: Turing, balance: "99.00", version: 1 }

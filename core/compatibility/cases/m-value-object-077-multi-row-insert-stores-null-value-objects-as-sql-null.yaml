@@ -45,8 +45,8 @@ when:
       databaseCalls: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = any(cast(? as bigint[])) for share of t0
-            mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id in (?, ?, ?) lock in share mode
+            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = any(cast(? as bigint[]))
+            mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id in (?, ?, ?)
           binds: { postgres: [[301, 302, 303]], mariadb: [301, 302, 303] }
       referenceSql:
         postgres: >-

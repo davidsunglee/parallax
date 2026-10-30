@@ -41,9 +41,9 @@ when:
       databaseCalls: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = ? for share of t0
-            mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = ? lock in share mode
-          binds: { postgres: [304], mariadb: [304] }
+            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = ?
+            mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = ?
+          binds: [304]
       referenceSql: select id, name, address from customer where id = 304 and address is null
       expectRows:
         - { id: 304, name: Eir, address: null }

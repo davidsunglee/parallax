@@ -27,7 +27,7 @@ when:
       databaseCalls: 1
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.balance < ? for share of t0
+            postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.balance < ?
           binds: ["200.00"]
       referenceSql: select id, owner, balance from wallet where balance < 200.00
       expectRows:

@@ -1,0 +1,32 @@
+entities:
+  - name: Order
+    namespace: parallax.compatibility
+    table: orders
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: name, type: string, maxLength: 255 }
+      - { name: sku, type: string, maxLength: 32, nullable: true }
+      - { name: qty, type: int32 }
+      - { name: price, type: "decimal(18,2)" }
+      - { name: active, type: boolean }
+      - { name: orderedOn, type: date }
+      - { name: version, type: int32, optimisticLocking: true }
+    relationships:
+      - name: items
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.OrderItem, attribute: orderId }
+  - name: OrderItem
+    namespace: parallax.compatibility
+    table: order_item
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: orderId, type: int64 }
+      - { name: sku, type: string, maxLength: 32 }
+      - { name: quantity, type: int32 }
+      - { name: shippedOn, type: date, nullable: true }
+      - { name: version, type: int32, optimisticLocking: true }
+    relationships:
+      - name: order
+        reverseOf: parallax.compatibility.Order.items
