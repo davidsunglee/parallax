@@ -1,0 +1,19 @@
+# Permit (v2): the TRANSACTION-TIME end of the As-Of Axis scenario over
+# authored indices.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-temporality-index-v1.yaml with the Transaction-Time profile.
+# The authored indices are unchanged; only their physical columns gain the axis
+# end, which the Storage Layout derives rather than the author writing it.
+entity:
+  name: Permit
+  namespace: parallax.compatibility
+  table: evolution_permit
+  temporality: transaction-time
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: serial, type: string, maxLength: 32 }
+    - { name: holder, type: string, maxLength: 64 }
+  indices:
+    - { name: permit_serial, attributes: [serial], unique: true }
+    - { name: permit_holder, attributes: [holder] }

@@ -10,11 +10,20 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import pytest
+
 from parallax.core.base import INT32, STRING
 from parallax.core.dialect import POSTGRES, PhysicalIndexName
 from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.descriptor._records import Attribute, Entity, Index, Inheritance, Metamodel
+from parallax.descriptor._records import (
+    AsOfAxisMetadata,
+    Attribute,
+    Entity,
+    Index,
+    Inheritance,
+    Metamodel,
+)
 from parallax.evolution.model_evolution import ABSENT, EntityAdded, UnilateralEvolution, evolve
 from parallax.evolution.schema_delta._order import order, order_key
 from parallax.evolution.schema_delta._physical import (
@@ -214,19 +223,31 @@ def test_a_prerequisite_the_plan_does_not_contain_is_no_violation() -> None:
     assert _dependency_violations([_create_index("c"), _drop_index("gone")]) == ()
 
 
-def _tpcs_family_altering_a_root_declared_index(*, unique: bool) -> AcceptedMetamodel:
+def _tpcs_family_altering_a_root_declared_index(
+    *, unique: bool, temporal: bool = False
+) -> AcceptedMetamodel:
     """Two concrete Tables repeating one root-declared Index, whose uniqueness varies.
 
     One logical Index Identity with a physical projection per concrete Table is
-    what makes a prerequisite keyed by the Identity alone ambiguous.
+    what makes a prerequisite keyed by the Identity alone ambiguous. A temporal
+    root gives every projection the root's Transaction-Time end as well.
     """
+    endpoints = (
+        Attribute(name="txStart", type="timestamp", column="in_z"),
+        Attribute(name="txEnd", type="timestamp", column="out_z"),
+    )
+    axis = AsOfAxisMetadata(
+        dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
+    )
     root = Entity(
         name="Root",
         inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
         attributes=(
             Attribute(name="id", type="int64", column="id", primary_key=True),
             Attribute(name="code", type="string", column="code", max_length=8),
+            *(endpoints if temporal else ()),
         ),
+        as_of_axes=(axis,) if temporal else (),
         indices=(Index(name="root_code_ix", attributes=("code",), unique=unique),),
     )
     return formed(
@@ -250,14 +271,23 @@ def _tpcs_family_altering_a_root_declared_index(*, unique: bool) -> AcceptedMeta
     )
 
 
-def test_one_logical_index_replaced_on_every_concrete_table_breaks_no_rule() -> None:
+@pytest.mark.parametrize(
+    ("temporal", "columns"),
+    [(False, ["code"]), (True, ["code", "out_z"])],
+    ids=["non-temporal", "transaction-time"],
+)
+def test_one_logical_index_replaced_on_every_concrete_table_breaks_no_rule(
+    temporal: bool, columns: list[str]
+) -> None:
     # Each concrete Table holds its own create/drop pair for the same root-declared
     # Index Identity, and each drop's prerequisite is its OWN Table's create. A
     # rule keyed by the Identity alone would compare `alpha`'s drop against
-    # `zeta`'s create and report an order that is in fact correct.
+    # `zeta`'s create and report an order that is in fact correct. Under an
+    # unchanged temporal profile the target still ends with the root's axis end
+    # and is still created before the earlier Index is dropped.
     evolution = evolve(
-        _tpcs_family_altering_a_root_declared_index(unique=False),
-        _tpcs_family_altering_a_root_declared_index(unique=True),
+        _tpcs_family_altering_a_root_declared_index(unique=False, temporal=temporal),
+        _tpcs_family_altering_a_root_declared_index(unique=True, temporal=temporal),
     )
     assert isinstance(evolution, UnilateralEvolution)
     ordered = order(plan(evolution, POSTGRES).operations)
@@ -271,6 +301,11 @@ def test_one_logical_index_replaced_on_every_concrete_table_breaks_no_rule() -> 
         ("CreateIndex", "zeta"),
         ("DropIndex", "zeta"),
     ]
+    assert {
+        tuple(column.column.name for column in operation.definition.columns)
+        for operation in ordered
+        if isinstance(operation, CreateIndex | DropIndex)
+    } == {tuple(columns)}
     assert _dependency_violations(ordered) == ()
 
 

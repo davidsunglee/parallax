@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import dataclasses
 
+import pytest
+
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
 from parallax.core.metamodel import (
@@ -43,6 +45,7 @@ from parallax.evolution.model_evolution import (
     WRITES_DISABLED,
     AsOfAxisAdded,
     AsOfAxisAltered,
+    AsOfAxisRemoved,
     AttributeAdded,
     AttributeAltered,
     AttributeRemoved,
@@ -50,6 +53,7 @@ from parallax.evolution.model_evolution import (
     BehavioralImpact,
     ConcreteSubtypeAdded,
     ConcurrencyControlChanged,
+    CoordinatedEvolution,
     EndAttributeChanged,
     EntityAltered,
     EntitySelectionFacts,
@@ -425,10 +429,11 @@ def test_an_axis_moving_its_endpoints_moves_what_a_caller_may_supply() -> None:
 
 
 def _keyed_index(*, temporal: bool) -> Metamodel:
-    """One Entity carrying an authored unique Index, temporal or not.
+    """One Entity carrying an authored unique and non-unique Index, temporal or not.
 
     Its derived primary-key Index gains the axis end Attribute when the profile
-    does, which is the change this scenario is here to prove is NOT described.
+    does, and so does every authored Index's physical column list, which are the
+    changes this scenario is here to prove are NOT described.
     """
     axis = AsOfAxisMetadata(
         TemporalDimension.TRANSACTION_TIME,
@@ -436,6 +441,7 @@ def _keyed_index(*, temporal: bool) -> Metamodel:
         AttributeIdentity(_ARRIVAL, "txEnd"),
     )
     serial = attribute(_ARRIVAL, "serial", type=STRING)
+    holder = attribute(_ARRIVAL, "holder", type=STRING)
     return form_metamodel(
         source(
             Declaration(
@@ -444,6 +450,7 @@ def _keyed_index(*, temporal: bool) -> Metamodel:
                 attributes=(
                     key(_ARRIVAL),
                     serial,
+                    holder,
                     *(
                         (instant(_ARRIVAL, "txStart"), instant(_ARRIVAL, "txEnd"))
                         if temporal
@@ -455,18 +462,31 @@ def _keyed_index(*, temporal: bool) -> Metamodel:
                     IndexMetadata(
                         IndexIdentity(_ARRIVAL, "arrival_serial"), (serial.identity,), unique=True
                     ),
+                    IndexMetadata(IndexIdentity(_ARRIVAL, "arrival_holder"), (holder.identity,)),
                 ),
             )
         )
     )
 
 
-def test_the_derived_primary_key_index_is_neither_an_operation_nor_a_uniqueness_rule() -> None:
-    # The derived Index is not independently authored: its components change with
-    # the temporal profile, and that change is described by the causal As-Of Axis
-    # operation rather than by an Index operation or a uniqueness impact. The
-    # authored unique Index beside it is unchanged, so no rule moved either.
-    evolution = evolve(_keyed_index(temporal=False), _keyed_index(temporal=True))
+@pytest.mark.parametrize("gains_the_axis", [True, False], ids=["gained", "lost"])
+def test_derived_index_columns_are_neither_an_operation_nor_a_uniqueness_rule(
+    gains_the_axis: bool,
+) -> None:
+    # Neither the derived primary-key Index nor an authored Index's physical
+    # column list is independently authored: both follow the temporal profile,
+    # and that change is described by the causal As-Of Axis operation rather
+    # than by an Index operation or a uniqueness impact. The authored Indices
+    # are unchanged in either direction, so no rule moved either.
+    evolution = evolve(
+        _keyed_index(temporal=not gains_the_axis), _keyed_index(temporal=gains_the_axis)
+    )
+    assert isinstance(evolution, CoordinatedEvolution)
+    assert [
+        type(operation)
+        for operation in evolution.operations
+        if isinstance(operation, AsOfAxisAdded | AsOfAxisRemoved)
+    ] == [AsOfAxisAdded if gains_the_axis else AsOfAxisRemoved]
     assert not [
         operation
         for operation in evolution.operations

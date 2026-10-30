@@ -1,0 +1,88 @@
+# Removing the AS-OF AXIS from an Entity that declares a unique and a non-unique
+# authored index (m-model-evolution): coordinated for BOTH reasons on every
+# operation, exactly as the axis alone is. The authored indices are unchanged,
+# so no Index operation and no UniquenessEnforcementChanged appear even though
+# each index's physical columns lose the axis end. A coordinated evolution
+# carries no schema delta.
+tags: [m-model-evolution, evolution, temporal, index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-temporality-index-v2.yaml
+    later: models/evolution-temporality-index-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeRemoved
+        attribute: parallax.compatibility.Permit.txEnd
+      - kind: AttributeRemoved
+        attribute: parallax.compatibility.Permit.txStart
+      - kind: AsOfAxisRemoved
+        entity: parallax.compatibility.Permit
+        dimension: transaction-time
+    behavioralImpacts:
+      - kind: ConcurrencyControlChanged
+        scope:
+          entity: parallax.compatibility.Permit
+        earlier:
+          gate: TransactionTimeGated
+          startAttribute: parallax.compatibility.Permit.txStart
+        later:
+          gate: LockingFallback
+        causedBy:
+          - kind: AsOfAxisRemoved
+            entity: parallax.compatibility.Permit
+            dimension: transaction-time
+      - kind: QueryResultMembershipChanged
+        scope:
+          entity: parallax.compatibility.Permit
+        earlier:
+          concreteEntities:
+            - parallax.compatibility.Permit
+          axes:
+            - dimension: transaction-time
+              startAttribute: parallax.compatibility.Permit.txStart
+              endAttribute: parallax.compatibility.Permit.txEnd
+        later:
+          concreteEntities:
+            - parallax.compatibility.Permit
+          axes: []
+        causedBy:
+          - kind: AsOfAxisRemoved
+            entity: parallax.compatibility.Permit
+            dimension: transaction-time
+      - kind: WriteCapabilityChanged
+        scope:
+          entity: parallax.compatibility.Permit
+        earlier:
+          writes: Enabled
+          shape: TransactionTimeOnly
+        later:
+          writes: Enabled
+          shape: NonTemporal
+        causedBy:
+          - kind: AsOfAxisRemoved
+            entity: parallax.compatibility.Permit
+            dimension: transaction-time
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeRemoved
+          attribute: parallax.compatibility.Permit.txEnd
+        reasons:
+          - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired
+      - operation:
+          kind: AttributeRemoved
+          attribute: parallax.compatibility.Permit.txStart
+        reasons:
+          - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired
+      - operation:
+          kind: AsOfAxisRemoved
+          entity: parallax.compatibility.Permit
+          dimension: transaction-time
+        reasons:
+          - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired

@@ -4,12 +4,16 @@ Provisioning goes through the shipped Schema Delta, and writes go through the
 public verbs. Every authored index of a temporal table ends with the table's
 axis ends, so an amend that keeps an authored unique value chains its successor,
 while a genuine duplicate is still refused under the name the rollout recorded.
+The adoption tests run the manual create-then-drop the PostgreSQL lifecycle
+guide documents, from a table whose authored index an earlier release created
+over its authored components alone.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any, Final
 
 import pytest
@@ -171,3 +175,140 @@ def test_a_duplicate_at_one_milestone_end_names_the_authored_index_the_rollout_c
     assert (error.category, error.native_code) == ("uniqueViolation", "23505")
     assert error.violated_index is not None
     assert error.violated_index.value == _created(rollout, "tai_tenancy_code")[1]
+
+
+# --------------------------------------------------------------------------- #
+# Adopting the end-keyed indices on a table an earlier release provisioned     #
+# --------------------------------------------------------------------------- #
+_FORMS: Final = {
+    "tai_ledger_code": (
+        True,
+        "code",
+        "out_z",
+        "pxi_tai_ledger_temporal_author_2e049b5cac007d9557a744abf4f25cc2",
+    ),
+    "tai_ledger_label": (
+        False,
+        "label",
+        "out_z",
+        "pxi_tai_ledger_temporal_author_81deea835c59b701eb64bf6b51e897b0",
+    ),
+    "tai_tenancy_code": (
+        True,
+        "code",
+        "thru_z, out_z",
+        "pxi_tai_tenancy_temporal_autho_3dd287f95af5b6801656585213c4a94f",
+    ),
+    "tai_tenancy_label": (
+        False,
+        "label",
+        "thru_z, out_z",
+        "pxi_tai_tenancy_temporal_autho_4b4256e4c1b39ee4c1cb73f11b8eea03",
+    ),
+}
+"""Each index's uniqueness, authored column, the table's axis ends, and the name
+a release hashing only the authored components gave it."""
+
+_HELD_INDICES: Final = (
+    "select indexname, indexdef from pg_indexes "
+    "where tablename = %s and left(indexname, 4) = 'pxi_' order by indexname"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _Adoption:
+    table: str
+    target: str
+    legacy: str
+    unique: bool
+    authored: str
+    ends: str
+    provisioned: tuple[object, ...]
+
+    def create(self) -> str:
+        kind = "unique index" if self.unique else "index"
+        return f"create {kind} {self.target} on {self.table} ({self.authored}, {self.ends})"
+
+    def drop(self) -> str:
+        return f"drop index {self.legacy}"
+
+
+def _legacy(profile_run: Any, name: str) -> _Adoption:
+    """Fresh provisioning with ``name`` rebuilt as an earlier release created it:
+    over its authored component alone, under that release's name. The temporal
+    constraints and every other index are left as provisioned."""
+    unique, authored, ends, legacy = _FORMS[name]
+    table, target = _created(_provision(profile_run), name)
+    (provisioned,) = _rows(profile_run, _INDEX_COLUMNS, [table, target])
+    kind = "unique index" if unique else "index"
+    profile_run.port.execute_write(f"drop index {target}", [])
+    profile_run.port.execute_write(f"create {kind} {legacy} on {table} ({authored})", [])
+    return _Adoption(table, target, legacy, unique, authored, ends, provisioned)
+
+
+def _held(profile_run: Any, table: str) -> dict[str, str]:
+    return {
+        str(name): str(definition)
+        for name, definition in _rows(profile_run, _HELD_INDICES, [table])
+    }
+
+
+@pytest.mark.parametrize("name", sorted(_FORMS))
+def test_the_documented_adoption_reaches_the_freshly_provisioned_index(
+    profile_run: Any, name: str
+) -> None:
+    adoption = _legacy(profile_run, name)
+    held = _held(profile_run, adoption.table)
+    assert adoption.legacy in held
+    assert held[adoption.legacy].endswith(f"({adoption.authored})")
+    assert adoption.target not in held
+    profile_run.port.execute_write(adoption.create(), [])
+    assert {adoption.legacy, adoption.target} <= set(_held(profile_run, adoption.table))
+    profile_run.port.execute_write(adoption.drop(), [])
+    assert adoption.legacy not in _held(profile_run, adoption.table)
+    assert _rows(profile_run, _INDEX_COLUMNS, [adoption.table, adoption.target]) == [
+        adoption.provisioned
+    ]
+
+
+def _amend_ledger(tx: TxnContext) -> None:
+    tx.amend(tx.find(Ledger.where(Ledger.id == 1)).result().edit(label="b"))
+
+
+def _amend_tenancy(tx: TxnContext) -> None:
+    tx.amend(tx.find(Tenancy.where(Tenancy.id == 1).as_of(valid_time=_JUN)).result().edit(rent=200))
+
+
+_UNIQUE_WRITES: Final[dict[str, tuple[Callable[[TxnContext], None], ...]]] = {
+    "tai_ledger_code": (
+        lambda tx: tx.insert(Ledger(id=1, code="X", label="a")),
+        _amend_ledger,
+        lambda tx: tx.insert(Ledger(id=2, code="X", label="c")),
+    ),
+    "tai_tenancy_code": (
+        lambda tx: tx.insert(Tenancy(id=1, code="Y", label="a", rent=100), valid_from=_JAN),
+        _amend_tenancy,
+        lambda tx: tx.insert(Tenancy(id=2, code="Y", label="c", rent=300), valid_from=_MAR),
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_UNIQUE_WRITES))
+def test_adopting_a_unique_index_unblocks_the_amend_and_keeps_refusing_duplicates(
+    profile_run: Any, name: str
+) -> None:
+    seed, amend, duplicate = _UNIQUE_WRITES[name]
+    adoption = _legacy(profile_run, name)
+    db = _db(profile_run, [_JAN, _MAR, _JUN, _JUL])
+    db.transact(seed)
+    blocked = _refused(db, amend)
+    assert (blocked.category, blocked.native_code) == ("uniqueViolation", "23505")
+    assert blocked.violated_index is not None
+    assert blocked.violated_index.value == adoption.legacy
+    profile_run.port.execute_write(adoption.create(), [])
+    profile_run.port.execute_write(adoption.drop(), [])
+    db.transact(amend)
+    refused = _refused(db, duplicate)
+    assert (refused.category, refused.native_code) == ("uniqueViolation", "23505")
+    assert refused.violated_index is not None
+    assert refused.violated_index.value == adoption.target

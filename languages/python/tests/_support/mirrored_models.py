@@ -801,6 +801,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "evolution-string-bound-v2": _EVOLUTION_ENDPOINT,
         "evolution-temporal-v1": _EVOLUTION_ENDPOINT,
         "evolution-temporal-v2": _EVOLUTION_ENDPOINT,
+        "evolution-temporality-index-v1": _EVOLUTION_ENDPOINT,
+        "evolution-temporality-index-v2": _EVOLUTION_ENDPOINT,
         "evolution-temporality-v1": _EVOLUTION_ENDPOINT,
         "evolution-temporality-v2": _EVOLUTION_ENDPOINT,
         "evolution-unbounded-index-v1": _EVOLUTION_ENDPOINT,
