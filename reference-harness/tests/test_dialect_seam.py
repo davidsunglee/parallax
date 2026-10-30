@@ -11,6 +11,7 @@ suite (``-k dialect``); these tests cover the seam logic that needs no database.
 from __future__ import annotations
 
 import datetime as dt
+import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from reference_harness._case_execution import CaseExecution
 from reference_harness._declared_contributor import TEMPORAL_INFINITY
 from reference_harness.case import Case, Model, load_model
 from reference_harness.ddl_builder import (
+    _RESERVED_WORDS,
     _column_type,
     ddl_for,
     interval_check_name,
@@ -192,6 +194,16 @@ def test_interval_check_names_shorten_only_their_readable_prefix() -> None:
 
 
 # --- identifier quoting (the divergent quote character) ----------------------
+
+
+def test_reserved_words_match_normative_source() -> None:
+    source = json.loads((_REPO_ROOT / "core/schemas/dialect-reserved-words.json").read_bytes())
+    assert _RESERVED_WORDS == {
+        dialect: frozenset(source[dialect]) for dialect in ("postgres", "mariadb")
+    }
+    assert quote_identifier("constraint", "postgres") == '"constraint"'
+    assert quote_identifier("position", "postgres") == "position"
+    assert quote_identifier("position", "mariadb") == "`position`"
 
 
 def test_quote_identifier_leaves_simple_names_unquoted() -> None:

@@ -76,7 +76,7 @@ def build_wheelhouse(directory: Path) -> Wheelhouse:
                             "build",
                             "--package",
                             package,
-                            "--wheel",
+                            *([] if package == "parallax-core" else ["--wheel"]),
                             "--python",
                             sys.executable,
                             "--out-dir",

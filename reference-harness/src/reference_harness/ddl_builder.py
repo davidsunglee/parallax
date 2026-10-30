@@ -19,11 +19,14 @@ m-storage-layout's rule, re-derived here on the same terms.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 from ._declared_contributor import DeclaredContributor
 from .case import Model
+from .paths import schemas_dir
 from .storage_layout import (
     AttributeContributor,
     ColumnContributor,
@@ -86,80 +89,11 @@ _DECIMAL_RE = re.compile(r"^decimal\((\d+),(\d+)\)$")
 # name with uppercase / special characters / a leading digit) MUST be quoted.
 _SIMPLE_IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
 
-# Reserved words that, although lexically simple, MUST be quoted when used as a
-# column/table identifier. The set is **per-dialect** (m-dialect: identifier
-# quoting): a keyword list differs from database to database, so the quoting
-# DECISION — not merely the quote character — diverges. The curated base below is
-# the words shared by both dialects (enough to cover identifiers a model might
-# realistically use, e.g. `order`); a non-simple name (uppercase / special) is
-# caught by the regex regardless. It is a non-normative harness fix bringing the
-# harness into line with the already-normative per-dialect rule (m-dialect), and
-# introduces no new normative surface.
-_RESERVED_WORDS_BASE = frozenset(
-    {
-        "all",
-        "and",
-        "as",
-        "asc",
-        "between",
-        "by",
-        "case",
-        "check",
-        "column",
-        "constraint",
-        "create",
-        "default",
-        "delete",
-        "desc",
-        "distinct",
-        "drop",
-        "else",
-        "end",
-        "exists",
-        "foreign",
-        "from",
-        "group",
-        "having",
-        "in",
-        "index",
-        "insert",
-        "into",
-        "is",
-        "join",
-        "key",
-        "like",
-        "limit",
-        "not",
-        "null",
-        "on",
-        "or",
-        "order",
-        "primary",
-        "references",
-        "select",
-        "set",
-        "table",
-        "then",
-        "to",
-        "union",
-        "unique",
-        "update",
-        "user",
-        "using",
-        "values",
-        "when",
-        "where",
-    }
-)
-
-# `position` is a MariaDB-only addition: `POSITION()` is a reserved SQL function
-# name on MariaDB (so an unquoted `Position` table emits an unparseable
-# `insert into position(...)` there) but NOT on Postgres, where `position` stays
-# unquoted — byte-identical to the existing bare-Postgres `position` goldens. This
-# is exactly the divergence the single-set shape could not express.
 _RESERVED_WORDS = {
-    "postgres": _RESERVED_WORDS_BASE,
-    "mariadb": _RESERVED_WORDS_BASE | {"position"},
+    dialect: frozenset(words)
+    for dialect, words in json.loads(
+        (schemas_dir(Path(__file__)) / "dialect-reserved-words.json").read_text("utf-8")
+    ).items()
 }
 
 _QUOTE_CHAR = {"postgres": '"', "mariadb": "`"}
@@ -176,7 +110,7 @@ def quote_identifier(name: str, dialect: str) -> str:
     MariaDB — with any embedded quote doubled. The hand-authored golden SQL quotes
     the same identifiers; the m-sql normalizer preserves that quoting.
     """
-    reserved = _RESERVED_WORDS.get(dialect, _RESERVED_WORDS_BASE)
+    reserved = _RESERVED_WORDS.get(dialect, _RESERVED_WORDS["postgres"])
     if _SIMPLE_IDENTIFIER.match(name) and name not in reserved:
         return name
     char = _QUOTE_CHAR.get(dialect, '"')

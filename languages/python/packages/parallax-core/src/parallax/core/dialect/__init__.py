@@ -4,6 +4,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from importlib.resources import files
 from typing import Final, Literal
 
 from parallax.core.base import (
@@ -257,9 +258,6 @@ class Dialect:
     """One database's pure SQL strings and parse rules (m-dialect)."""
 
     name: str
-    # Names that are reserved words for this dialect and must be quoted even
-    # though they are otherwise "simple". The concrete list is per-dialect
-    # (m-dialect); a shared normative artifact is a deferred follow-on.
     reserved: frozenset[str]
     quote_char: str
     # SQLSTATE / native code -> neutral m-db-error category.
@@ -795,15 +793,13 @@ _ARRAY_ELEMENT_TYPES: Final[Mapping[type, str]] = {
     Json: "jsonb",
 }
 
-# Postgres reserved words that appear as declared columns in the corpus and so
-# must be quoted (m-descriptor-001 witnesses the shared-reserved `order`).
-_PG_RESERVED: Final[frozenset[str]] = frozenset(
-    {"order", "user", "select", "from", "where", "table", "group", "default", "primary"}
+_RESERVED_WORDS: Final[dict[str, list[str]]] = json.loads(
+    files(__package__).joinpath("dialect-reserved-words.json").read_text("utf-8")
 )
 
 POSTGRES: Final[Dialect] = Dialect(
     name="postgres",
-    reserved=_PG_RESERVED,
+    reserved=frozenset(_RESERVED_WORDS["postgres"]),
     quote_char='"',
     error_codes={
         "23505": "uniqueViolation",
