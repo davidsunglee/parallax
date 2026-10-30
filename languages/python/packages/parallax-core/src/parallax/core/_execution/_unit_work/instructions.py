@@ -200,6 +200,8 @@ SET_BASED_WRITE_TARGET_UNSUPPORTED: Final[str] = "set-based-write-target-unsuppo
 # effective Persistence Mode is ReadOnly (`m-unit-work`).
 READ_ONLY_WRITE_TARGET: Final[str] = "read-only-write-target"
 
+FRAMEWORK_OWNED_MEMBER_ASSIGNED: Final[str] = "framework-owned-member-assigned"
+
 
 class WriteInstructionError(ValueError):
     """A write-instruction document is not a well-formed canonical instruction."""
@@ -1176,6 +1178,8 @@ def prepare_typed_keyed_write(
         stated_pairs = tuple(pairs)
         if target.inheritance is not None:
             _judge_subtype_shape(model, target, _named_pairs(entry, stated_pairs))
+        if mutation in AMEND_MUTATIONS:
+            _refuse_owned_names(entry, target, stated_pairs, entry.framework_owned)
         row = _sparse_row(
             entry,
             target,
@@ -1235,9 +1239,7 @@ def prepare_wire_insert(
     """
     _refuse_observation_keys(payload.keys())
     entry, position, window = _judged_opening(preparation, mutation, target, valid_from, until)
-    _judge_row_members(
-        preparation.meta, target, position.member_selection, payload, payload.keys(), "keyed"
-    )
+    _judge_row_members(preparation.meta, target, entry, payload, payload.keys(), "keyed")
     row = _opened_row(entry, target, entry.plan.authored_values(payload), lane=WIRE_LANE)
     return _prepared_keyed_instruction(
         mutation, _assigns_beside_key((row,), position), target, (row,), window
@@ -1344,7 +1346,7 @@ def _assigned_row(
     shape = entry.selection.members.shape
     try:
         if entry.framework_owned:
-            _refuse_owned_names(entry, pairs, entry.framework_owned)
+            _refuse_owned_names(entry, entity, pairs, entry.framework_owned)
         prepared = entry.plan.partial_row(
             pairs,
             lane=lane,
@@ -1389,7 +1391,7 @@ def _replacement_row(
             raws = tuple(raws)
             absent = entry.selection.absent
             stated = ((position, raw) for position, raw in enumerate(raws) if raw is not absent)
-            _refuse_owned_names(entry, stated, owned)
+            _refuse_owned_names(entry, entity, stated, owned)
         prepared = entry.plan.complete_row(
             raws,
             lane=lane,
@@ -1410,14 +1412,22 @@ def _replacement_row(
 
 
 def _refuse_owned_names(
-    entry: EntityPreparation, pairs: Iterable[tuple[int, object]], owned: int
+    entry: EntityPreparation,
+    entity: EntityMetadata,
+    pairs: Iterable[tuple[int, object]],
+    owned: int,
 ) -> None:
     """Refuse the first member of ``owned``, framework-owned ones, that
     ``pairs`` states, by its assignment rule and before any value is judged:
     its name alone refuses it."""
     for position, raw in pairs:
         if owned >> position & 1:
-            entry.assignment_rules(position, raw)
+            try:
+                entry.assignment_rules(position, raw)
+            except WriteAssignmentError as error:
+                raise InstructionRejectedError(
+                    FRAMEWORK_OWNED_MEMBER_ASSIGNED, f"{entity.identity.canonical}.{error}"
+                ) from error
 
 
 def _row_refusal(
@@ -2072,7 +2082,7 @@ def _prepare_target_payload(
     """
     row = instruction.row
     key = position.primary_key.identity.name
-    _judge_row_members(model, entity, position.member_selection, row, authored_members, "target")
+    _judge_row_members(model, entity, entry, row, authored_members, "target")
     if key not in row:
         raise WriteInstructionError(
             f"{entity.identity.name}: a target write names the object it writes by its primary "
@@ -2111,7 +2121,7 @@ def _assignment_payload(
 def _judge_row_members(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
-    selection: inheritance.EntityMemberSelection,
+    entry: EntityPreparation,
     row: Mapping[str, object],
     authored_members: Set[str] | None,
     described: str,
@@ -2121,8 +2131,14 @@ def _judge_row_members(
     one, then an undeclared one."""
     _judge_subtype_shape(model, entity, row)
     if authored_members is not None:
-        _refuse_framework_owned(entity, selection, authored_members)
-    members = selection.shape.by_name
+        shape = entry.selection.members.shape
+        stated = (
+            (position, row.get(name))
+            for name in authored_members
+            if (position := shape.position(name)) is not None
+        )
+        _refuse_owned_names(entry, entity, stated, entry.framework_owned)
+    members = entry.selection.members.shape.by_name
     unknown = sorted(name for name in row if name not in members)
     if unknown:
         raise WriteInstructionError(
@@ -2187,18 +2203,18 @@ def _prepare_keyed_payload(
     values, so the first refused row is the one reported. An explicit Wire
     insert payload may name an application-assigned primary key but never a
     framework-owned member: the interval bounds are stamped from the Clock
-    Strategy and the version is derived. A neutral instruction row states
+    Strategy and the version is derived. A neutral opening row states
     content rather than authorship, so a framework-owned cell it carries is
-    read as unstated rather than refused. An explicit amendment judges each
+    read as unstated rather than refused. An amendment refuses framework-owned
+    member names before values. An explicit amendment judges each
     assigned member as an assignment, and a replacement completes and judges
     the object's whole writable state exactly as a caller-conditioned one does.
     """
-    selection = position.member_selection
     mutation = instruction.mutation
     if mutation in INSERT_MUTATIONS:
         opened: list[ManagedRow] = []
         for row in instruction.rows:
-            _judge_row_members(model, entity, selection, row, authored_members, "keyed")
+            _judge_row_members(model, entity, entry, row, authored_members, "keyed")
             opened.append(_opened_row(entry, entity, entry.plan.authored_values(row), lane=lane))
         rows = tuple(opened)
         return _prepared_keyed_instruction(
@@ -2211,7 +2227,9 @@ def _prepare_keyed_payload(
     context = None if mutation in DESTRUCTIVE_MUTATIONS else _assignment_context(model, entity)
     judged: list[ManagedRow] = []
     for row in instruction.rows:
-        _judge_row_members(model, entity, selection, row, None, "keyed")
+        _judge_row_members(
+            model, entity, entry, row, row.keys() if mutation in AMEND_MUTATIONS else None, "keyed"
+        )
         if mutation in REPLACE_MUTATIONS:
             judged.append(
                 _replacement_row(
@@ -2228,21 +2246,6 @@ def _prepare_keyed_payload(
     return _prepared_keyed_instruction(
         mutation, _assigns(entry, rows), entity, rows, valid_time_window
     )
-
-
-def _refuse_framework_owned(
-    entity: EntityMetadata,
-    selection: inheritance.EntityMemberSelection,
-    authored_members: Set[str],
-) -> None:
-    for name in authored_members:
-        attribute = selection.attribute(name)
-        if attribute is not None and attribute.framework_owned:
-            raise WriteInstructionError(
-                f"{entity.identity.canonical}.{name}: framework-owned fields may not be "
-                "assigned — the interval bounds are stamped from the Clock Strategy and the "
-                "optimistic-lock version is derived"
-            )
 
 
 def _prepare_predicate_payload(
@@ -2289,7 +2292,7 @@ def _prepare_predicate_payload(
         assigned = _row_from_assignments(model, entity, position, instruction.assignments)
         managed = _assignment_payload(model, entry, entity, assigned, lane=lane)
     else:
-        _judge_row_members(model, entity, position.member_selection, row, None, "predicate")
+        _judge_row_members(model, entity, entry, row, None, "predicate")
         managed = _replacement_row(
             model, entry, entity, entry.plan.authored_values(row), lane=lane, omitted=0
         )

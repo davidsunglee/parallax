@@ -1,0 +1,12 @@
+model: models/position.yaml
+tags: [m-temporal-write, m-unit-work, write, rejected, temporal, bitemporal, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    mutation: amend
+    entity: parallax.compatibility.Position
+    rows:
+      - { id: 1, validStart: "2024-03-01T00:00:00.000000Z" }
+    validFrom: "2024-03-01T00:00:00.000000Z"
+then:
+  rejectedRule: framework-owned-member-assigned

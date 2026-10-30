@@ -47,8 +47,5 @@ class _ConcurrencyAdapter:
     def require_version(self, entity: EntityIdentity, observation: StateObservation | None) -> int:
         return opt_lock.require_observed(entity.name, observation)
 
-    def reject_authored_version(self, entity: EntityIdentity, attribute: AttributeIdentity) -> None:
-        opt_lock.reject_caller_authored_version(entity.name, attribute.name)
-
 
 CONCURRENCY: Final[_ConcurrencyAdapter] = _ConcurrencyAdapter()

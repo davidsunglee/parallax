@@ -122,3 +122,23 @@ def test_reachable_rejected_population_spans_every_write_form() -> None:
         if isinstance(write, dict):
             forms.add(_write_form(cast("dict[str, Any]", write)))
     assert forms == {"predicate", "keyed", "target", "bare"}, forms
+
+
+def test_framework_owned_assignment_witnesses_are_in_the_rejected_population() -> None:
+    suffixes = {
+        "rejected-version-assignment",
+        "rejected-tx-start-assignment",
+        "rejected-tx-end-assignment",
+        "rejected-valid-start-assignment",
+        "rejected-valid-end-assignment",
+    }
+    witnesses = [
+        case
+        for case in _REACHABLE_REJECTED
+        if case_document(case)["then"]["rejectedRule"] == "framework-owned-member-assigned"
+    ]
+
+    assert {
+        suffix for suffix in suffixes if any(case.path.stem.endswith(suffix) for case in witnesses)
+    } == suffixes
+    assert all(_write_form(case_document(case)["when"]["write"]) == "keyed" for case in witnesses)

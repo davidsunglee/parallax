@@ -95,7 +95,9 @@ from .inheritance import (
 from .keyed_write_validate import (
     KEYED_WRITE_REJECTED_RULES,
     undeclared_row_members,
+    validate_keyed_assignment_members,
     validate_keyed_write,
+    validate_keyed_write_shape,
 )
 from .metamodel import (
     MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
@@ -884,23 +886,13 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
     write root; an undeclared handle is a case-authoring failure rather than a
     silent resolution against some other entity.
 
-    The PAYLOAD is judged before the instruction's shape
-    (:func:`~reference_harness.keyed_write_validate.undeclared_row_members`),
-    which is what `m-case-format` means by checking the payload against the entity
-    the instruction authored: a row naming no declared member fails the case
-    outright rather than being classified with an instruction rule it never
-    reached.
-
     Persistence admission precedes all of it (`m-unit-work` "Writes to a ReadOnly
     family"): a read-only family is refused whatever the instruction carries.
 
-    Ahead of BOTH runs the concrete-subtype payload-shape protocol, once per row,
-    exactly as the bare-row lane runs it ahead of its own member-honesty refusal
-    (:func:`_assert_bare_row_members_declared`). Those rules own the family-specific
-    names a row may not carry, so a keyed update of `CardPayment` carrying a
-    sibling branch's own attribute is `subtype-write-sibling-attribute` and not an
-    authoring defect — one neutral write row is judged one way whichever form
-    carries it.
+    Instruction applicability precedes the payload. Rows then run in order:
+    concrete-subtype shape, framework-owned assignment names, and undeclared
+    names. A sibling branch's attribute or hierarchy metadata keeps its specific
+    subtype classification rather than becoming a generic assignment refusal.
     """
     entity_name = write.get("entity")
     try:
@@ -911,17 +903,18 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
             f"case's model does not declare"
         ) from exc
     validate_write_persistence(entity)
+    validate_keyed_write_shape(entity, write)
     rows = write.get("rows")
     for row in rows if isinstance(rows, list) else ():
         if isinstance(row, dict):
             validate_subtype_write(entity, case.model.entity_defs, row)
-    unknown = undeclared_row_members(entity, write)
-    if unknown:
-        raise CaseFailure(
-            f"{case.path.name}: keyed instruction's row(s) name {unknown}, which are not "
-            f"attributes or value objects of {entity.name}"
-        )
-    validate_keyed_write(entity, write)
+            validate_keyed_assignment_members(entity, str(write.get("mutation")), row)
+            unknown = undeclared_row_members(entity, {"rows": [row]})
+            if unknown:
+                raise CaseFailure(
+                    f"{case.path.name}: keyed instruction's row(s) name {unknown}, which are not "
+                    f"attributes or value objects of {entity.name}"
+                )
 
 
 def _validate_rejected_target_write(case: Case, write: dict[str, Any]) -> None:
@@ -1277,7 +1270,7 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
     """
     statements = case.golden_statements(dialect)
     stmt_index = 0
-    for step in case.write_sequence:
+    for step, authored in zip(case.write_sequence, case.when.get("writeSequence", []), strict=True):
         count = step.get("statements", 1)
         rows = step.get("rows")
         entity = case.model.entity(step["entity"])
@@ -1311,7 +1304,8 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # temporal cross-checks below read the first row alone — so a plural
         # authoring would leave a later row graded against nothing.
         try:
-            validate_keyed_write(entity, step)
+            instruction = {**authored, "rows": [authored["row"]]} if "row" in authored else authored
+            validate_keyed_write(entity, instruction, allow_framework_markers=True)
         except RejectionError as exc:
             raise CaseFailure(
                 f"{case.path.name}: writeSequence step on {step['entity']}: {exc.detail}"

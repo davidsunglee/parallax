@@ -82,8 +82,7 @@ def require_observed(entity: str, observation: StateObservation | None) -> int:
     Raises :class:`UnobservedVersionError` when the write reached settlement
     carrying no Version Observation (`m-opt-lock` "Version values are
     framework-owned"). A row that itself carries an explicit version value is
-    refused earlier, by :func:`reject_caller_authored_version` — this function's
-    own row is always the framework-derived one, never a caller-authored version.
+    refused during instruction preparation.
     """
     if not isinstance(observation, VersionObservation):
         raise UnobservedVersionError(

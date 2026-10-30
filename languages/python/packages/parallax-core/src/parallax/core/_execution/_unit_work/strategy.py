@@ -155,9 +155,8 @@ class ConcurrencyStrategy(Protocol):
     answer itself, because the module DAG runs `m-opt-lock --> m-unit-work`:
     which Attribute (if any) carries an entity's optimistic version, whether the
     write's own Entity gates at all, the arithmetic every version value derives
-    from, whether a required version was actually observed, and whether a row
-    still authors an explicit version value. Each raises the policy's own error
-    on refusal; the planner never inspects or re-raises a specific type.
+    from, and whether a required version was actually observed. Each raises the
+    policy's own error on refusal; the planner never inspects or re-raises a specific type.
 
     ``gates`` takes the write's own Entity beside the preference because a gate
     is settled per Entity, not per transaction: the preference combines with
@@ -178,10 +177,6 @@ class ConcurrencyStrategy(Protocol):
     def require_version(
         self, entity: EntityIdentity, observation: StateObservation | None
     ) -> int: ...
-
-    def reject_authored_version(
-        self, entity: EntityIdentity, attribute: AttributeIdentity
-    ) -> None: ...
 
 
 class WriteEvidencePolicy(Protocol):

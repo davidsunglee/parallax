@@ -279,7 +279,14 @@ completed and judged as every replacement is (*Source-authorized replacement*).
 A keyed instruction's rows are judged one row at a time, so an instruction
 carrying several is refused at its first refused row. Within a row its member
 names — its subtype shape, then an authored framework-owned or an undeclared
-member — are judged before any of its values. A complete row — an opening's
+member — are judged before any of its values. A keyed amendment's named
+members are assignments, including in its `amendUntil` form. Assigning a
+[framework-owned member](m-metamodel.md#attributes-and-primary-keys) — the optimistic-lock
+version or an As-Of Axis endpoint — **MUST** be refused during preparation as
+`framework-owned-member-assigned`, regardless of its value. This does not
+refuse framework-computed values carried by internal Planned Rows or treat
+`validFrom`, `until`, or target revision arguments as row assignments.
+A complete row — an opening's
 (`insert`, `insertUntil`) or a replacement's, keyed, target, or
 predicate-selected — then has its values judged in declaration order, a missing
 required member and an inadmissible value found in one pass and the first one

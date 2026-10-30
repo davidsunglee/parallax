@@ -1,9 +1,9 @@
-"""Model-aware KEYED-INSTRUCTION validation (m-unit-work).
+"""Model-aware keyed instruction validation (m-unit-work).
 
 The two other write validators judge a *payload*: `write_validate` walks a
 neutral write row's value-object documents, `predicate_write_validate` judges a
 predicate-selected instruction's target and assignments. This one judges the
-**shape of a keyed instruction itself** — the members `mutation` / `entity` /
+**shape and assignment names of a keyed instruction** — the members `mutation` / `entity` /
 `rows` carry *together* — against what its target's temporal profile admits:
 
 * ``temporal-keyed-write-multi-row`` — a keyed instruction on a **temporal**
@@ -15,6 +15,9 @@ predicate-selected instruction's target and assignments. This one judges the
   discarding the rest is what the rule forbids, which is why refusing is the only
   conforming answer even when the discarded rows would each have lowered to
   well-formed SQL of their own.
+* ``framework-owned-member-assigned`` — an amendment or replacement names a
+  framework-owned member as a caller assignment. Choreography callers may admit
+  internal scalar framework markers separately from caller-authored input.
 
 It also answers one PROVENANCE question about those same members — whether the
 instruction states a DB-computed write marker, the framework's own bookkeeping
@@ -45,24 +48,23 @@ from collections.abc import Mapping
 from typing import Any
 
 from .case import Entity
+from .inheritance import tag_of
 from .value_object_resolve import RejectionError
-from .write_validate import undeclared_members
+from .write_validate import framework_owned_names, undeclared_members
 
 TEMPORAL_KEYED_WRITE_MULTI_ROW = "temporal-keyed-write-multi-row"
+FRAMEWORK_OWNED_MEMBER_ASSIGNED = "framework-owned-member-assigned"
 
-KEYED_WRITE_REJECTED_RULES: frozenset[str] = frozenset({TEMPORAL_KEYED_WRITE_MULTI_ROW})
+KEYED_WRITE_REJECTED_RULES: frozenset[str] = frozenset(
+    {TEMPORAL_KEYED_WRITE_MULTI_ROW, FRAMEWORK_OWNED_MEMBER_ASSIGNED}
+)
 
 
 def undeclared_row_members(entity: Entity, instruction: Mapping[str, Any]) -> list[str]:
     """The row keys *instruction* names that *entity* does not declare, sorted.
 
-    Member honesty is a payload judgement, not an instruction-shape rule, and it
-    is asked before the SHAPE wherever both are asked: a row naming nothing real is
-    a case-authoring defect rather than a violated normative MUST, so classifying
-    such an input as a rejection rule would report a rule the case does not
-    exercise. That is the precedence the developer-facing validator applies too
-    (`instructions.validate_instruction` refuses undeclared members before the
-    temporal singleton), so one instruction cannot be judged two ways.
+    Member honesty is a payload judgment, after instruction applicability: a row
+    naming nothing real is a case-authoring defect rather than a portable rule.
 
     It is asked AFTER the concrete-subtype payload-shape rules, which own every
     name the FAMILY declares (`m-inheritance`): a sibling branch's attribute is not
@@ -112,21 +114,36 @@ def states_framework_marker(entity: Entity, instruction: Mapping[str, Any]) -> b
     )
 
 
-def validate_keyed_write(entity: Entity, instruction: Mapping[str, Any]) -> None:
-    """Reject *instruction* pre-SQL if its shape is inadmissible for *entity*.
+def validate_keyed_assignment_members(
+    entity: Entity,
+    mutation: str,
+    row: Mapping[str, Any],
+    *,
+    allow_framework_markers: bool = False,
+) -> None:
+    """Refuse caller assignments to framework-owned members before row values.
 
-    *entity* is the effective definition of the instruction's own ``entity``
-    handle, so a concrete subtype inherits the root's temporality unchanged
-    (`m-inheritance`). Raises :class:`RejectionError` naming the violated rule.
-
-    This judges the instruction's SHAPE alone. A caller that also judges the
-    payload asks :func:`undeclared_row_members` first, for the precedence stated
-    there.
+    Concrete-subtype metadata names are judged by the caller first. Only a
+    choreography caller may admit scalar framework markers as bookkeeping.
     """
-    rows = instruction.get("rows")
-    if not isinstance(rows, list) or len(rows) <= 1:
+    if mutation not in {"amend", "amendUntil", "replace", "replaceUntil"}:
         return
-    if not entity.is_temporal:
+    owned = framework_owned_names(entity)
+    tag = tag_of(entity.runtime_facts)
+    if tag is not None:
+        owned -= {tag[0]}
+    for name, value in row.items():
+        if name in owned and not (allow_framework_markers and is_framework_marker(value)):
+            raise RejectionError(
+                FRAMEWORK_OWNED_MEMBER_ASSIGNED,
+                f"{entity.canonical_name}.{name}: framework-owned members may not be assigned",
+            )
+
+
+def validate_keyed_write_shape(entity: Entity, instruction: Mapping[str, Any]) -> None:
+    """Reject the instruction's temporal row count before payload judgments."""
+    rows = instruction.get("rows")
+    if not isinstance(rows, list) or not entity.is_temporal or len(rows) <= 1:
         return
     mutation = instruction.get("mutation")
     raise RejectionError(
@@ -136,3 +153,30 @@ def validate_keyed_write(entity: Entity, instruction: Mapping[str, Any]) -> None
         f"closes its own milestone, settles against its own observation, and chains its own "
         f"successors; author one instruction per row",
     )
+
+
+def validate_keyed_write(
+    entity: Entity,
+    instruction: Mapping[str, Any],
+    *,
+    allow_framework_markers: bool = False,
+) -> None:
+    """Reject *instruction* pre-SQL if inadmissible for *entity*.
+
+    *entity* is the effective definition of the instruction's own ``entity``
+    handle, so a concrete subtype inherits the root's temporality unchanged
+    (`m-inheritance`). Raises :class:`RejectionError` naming the violated rule.
+
+    This judges instruction shape and framework-owned assignment names. A caller
+    also judging subtype shape and membership applies those judgments per row.
+    """
+    validate_keyed_write_shape(entity, instruction)
+    rows = instruction.get("rows")
+    if not isinstance(rows, list):
+        return
+    mutation = instruction.get("mutation")
+    for row in rows:
+        if isinstance(row, Mapping):
+            validate_keyed_assignment_members(
+                entity, str(mutation), row, allow_framework_markers=allow_framework_markers
+            )
