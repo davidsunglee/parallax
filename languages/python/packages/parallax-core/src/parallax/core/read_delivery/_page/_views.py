@@ -20,12 +20,12 @@ __all__ = [
 
 
 type SourceLevel = int
-"""Which level of a fetch plan produced a projection: the root is 0, plan level
+"""Which level of a fetch plan produced a fetched row: the root is 0, plan level
 ``i`` is ``i + 1``."""
 
 ROOT_LEVEL: Final[SourceLevel] = 0
-"""The source level of a root projection, and the only one a Page built from a
-plan carrying no levels has."""
+"""The source level of a result root's fetched row, and the only one a Page
+built from a plan carrying no levels has."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,20 +70,20 @@ class SourceViewLayout:
 
 @dataclass(frozen=True, slots=True)
 class RootViewLayout:
-    """One root-local logical node's relationship view slots, in canonical order.
+    """One Root View node's relationship view slots, in canonical order.
 
     ``slots`` is the union of every source layout the node's concrete Entity has,
     ordered by the member layout's own rule, so a walk that visits slots by index
     visits them in declaration order without sorting anything. Taking the union
     over the whole plan rather than over the levels one node happened to be
-    projected at is what fixes the width before the first fetched row of that node
+    fetched at is what fixes the width before the first fetched row of that node
     is walked: a node reached again from a second level widens nothing.
     ``index_of`` is how a caller holding a view key finds the slot to read.
 
     So a view is absent here in two distinguishable ways, and a reader must not
     read one as the other. A view this concrete carries at NO source level has no
     slot at all — a path-root guard excluded it everywhere the view is attached.
-    A view it carries at some level the node was never projected at has a slot
+    A view it carries at some level the node was never fetched at has a slot
     holding ``ABSENT``. Both are unloaded; only the second occupies a position.
 
     ``to_root_view`` translates a source row into this one, indexed by source level
@@ -222,7 +222,7 @@ class ViewSchema:
         return built
 
     def root_view_layout(self, layout: EntityLayout) -> RootViewLayout:
-        """The Root View row a logical node resolving to ``layout``'s Entity
+        """The Root View row a node resolving to ``layout``'s Entity
         carries, with the translation of every source level's row into it."""
         cached = self._root_views.get(layout.concrete)
         if cached is not None:

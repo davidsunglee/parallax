@@ -593,8 +593,9 @@ class PageSchedule(NamedTuple):
     ``last_uses`` is each fetched row's and each logical row's last reaching
     root position, present exactly when release at last use applies.
     ``defers_states`` judges each root's states only after that root's fetched
-    rows of one logical row compare. ``PageSchedule(None, False)`` releases only
-    the member rows a root reached.
+    rows of one logical row compare, except the states of proved levels, which
+    were judged as their rows were recorded. ``PageSchedule(None, False)``
+    releases only the member rows a root reached.
     """
 
     last_uses: tuple[array[int], array[int]] | None
@@ -610,10 +611,10 @@ def page_schedule(
     """``page``'s schedule for one publication of its roots.
 
     A non-atomic publication drops its Page whole, so it neither defers states
-    nor releases at last use. An atomic one defers states exactly when every
-    root's family carries write evidence, which holds vacuously for no roots,
-    and releases at last use when it defers or the Page holds a logical row of
-    several fetched rows. Scheduling judges no state.
+    nor releases at last use. An atomic one defers the states recording left
+    unjudged exactly when every root's family carries write evidence, which
+    holds vacuously for no roots, and releases at last use when it defers or the
+    Page holds a logical row of several fetched rows. Scheduling judges no state.
     """
     if not atomic:
         return _RAW_ROWS

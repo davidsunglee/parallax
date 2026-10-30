@@ -77,8 +77,10 @@ def publish_roots[T](
     storage it finished with is released, and only then published. A root of a
     ``milestones`` read stands at its own milestone's edge. An ``atomic``
     publication publishes nothing until every root has been, and defers judging
-    a root's states past its claim comparison when every root's family carries
-    write evidence, which ``model``'s Optimistic Lock Facet answers.
+    a root's states past its stored-values comparison when every root's family
+    carries write evidence, which ``model``'s Optimistic Lock Facet answers; a
+    proved level's states were judged as its rows were recorded and are not
+    deferred.
     """
     rows = page_rows(page)
     observer = page_cadence(page)
