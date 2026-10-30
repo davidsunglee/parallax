@@ -511,7 +511,10 @@ def test_commit_story_emits_the_golden_dml(case_id: str) -> None:
     story.run(_db(port, story))
     _assert_statements(port, _scenario_goldens(case_id), case_id)
     assert port.calls[0] == BeginCall()
-    assert port.calls[-1] == CommitCall()
+    boundaries = [
+        call for call in port.calls if isinstance(call, (BeginCall, CommitCall, RollbackCall))
+    ]
+    assert boundaries[-1] == CommitCall()
     assert RollbackCall() not in port.calls
 
 

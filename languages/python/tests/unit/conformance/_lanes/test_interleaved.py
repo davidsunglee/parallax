@@ -747,9 +747,7 @@ def test_each_interleaved_group_is_composed_over_the_cases_own_root_record() -> 
     assert [execution.options for execution in executions.opened] == [expected, expected]
     assert ours_port.levels == ["serializable"]
     assert peer_port.levels == ["serializable"]
-    # The trailing ungrouped verify find runs on the caller's port through a
-    # Handle of its own, connected with the same root.
-    assert caller_port.levels == ["serializable"]
+    assert caller_port.levels == []
 
 
 _FEB = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)

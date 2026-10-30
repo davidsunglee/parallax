@@ -29,7 +29,6 @@ when:
             path: parallax.compatibility.OrderItem.id
             value: 21
       databaseCalls: 1
-      note: item 21 is gone, and the read locks it because an unversioned target resolves to Locking
       statements:
         - sql:
             postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?

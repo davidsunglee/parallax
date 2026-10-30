@@ -879,6 +879,10 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "materialization cost suite, while the descriptor twin gate proves its logical "
             "equivalence to the Columns arm"
         ),
+        "orders-versioned": (
+            "no mirror authored; it composes the mirrored `orders`' relationship declarations "
+            "with the mirrored `account`'s optimistic-lock version, adding no declaration construct"
+        ),
         "pk-audit": (
             "no mirror authored; it composes the `sequence` generation `pk-sequence` proves with "
             "the transaction-time-only axis `balance` proves"
