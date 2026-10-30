@@ -21,8 +21,6 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any
 
 from ._declared_contributor import DeclaredContributor
 from .case import Model
@@ -31,13 +29,12 @@ from .storage_layout import (
     ColumnContributor,
     ColumnSlot,
     InheritanceDiscriminator,
+    PhysicalIndex,
     RelationalDocument,
     TableLayout,
     ValueObjectContributor,
-    derived_primary_key_index,
     is_scalar_collection,
 )
-from .temporality import TEMPORAL_DIMENSION_RANK, Axis, temporal_axes
 
 # m-core neutral type -> Postgres column type.
 _POSTGRES_BASE_TYPES = {
@@ -316,51 +313,35 @@ def _fingerprint(fields: Sequence[str]) -> str:
     return digest.hexdigest()[:_FINGERPRINT_HEX]
 
 
-@dataclass(frozen=True)
-class _AuthoredIndex:
-    """One authored Index beside the declaring Entity Identity its name is derived
-    from.
-
-    The namespace and the local name are kept apart from the canonical spelling
-    because the fingerprint hashes the structured identity while the readable
-    prefix reads the canonical one.
-    """
-
-    namespace: str
-    entity: str
-    definition: dict[str, Any]
-
-    @property
-    def owner(self) -> str:
-        """The declaring Entity's canonical name."""
-        return self.entity if not self.namespace else f"{self.namespace}.{self.entity}"
-
-
-def physical_index_name(index: _AuthoredIndex, table: str, dialect: str) -> str:
+def physical_index_name(index: PhysicalIndex, table: str, dialect: str) -> str:
     """``index``'s derived Physical Index Name on ``table`` for ``dialect``.
 
-    Only the readable prefix is shortened, to whatever the dialect's identifier
-    budget leaves once the namespace, the two joining underscores, and the
+    The fingerprint hashes the Attribute behind each physical column — the
+    authored components, then a temporal table's axis ends — so a non-temporal
+    Index's name is a function of its authored components alone. Only the
+    readable prefix is shortened, to whatever the dialect's identifier budget
+    leaves once the namespace, the two joining underscores, and the
     never-truncated fingerprint are spent; the trim and the empty-input fallback
     are re-applied afterwards, so a cut landing inside a separator run cannot
     leave a doubled underscore behind. Generated names are ASCII, so a character
     budget and a byte budget are one budget.
     """
-    components = [f"{index.owner}.{name}" for name in index.definition["attributes"]]
-    marker = _UNIQUE_MARKER[bool(index.definition.get("unique", False))]
+    declaration = index.declaration
+    attributes = [f"{attribute.owner}.{attribute.name}" for attribute in index.column_attributes]
+    marker = _UNIQUE_MARKER[declaration.unique]
     fingerprint = _fingerprint(
         [
             _FINGERPRINT_VERSION,
             table,
-            index.namespace,
-            index.entity,
-            index.definition["name"],
-            str(len(components)),
-            *components,
+            declaration.namespace,
+            declaration.entity,
+            declaration.name,
+            str(len(attributes)),
+            *attributes,
             marker,
         ]
     )
-    prefix = _readable_prefix([table, index.owner, index.definition["name"], marker])
+    prefix = _readable_prefix([table, declaration.owner, declaration.name, marker])
     budget = max(_MAX_IDENTIFIER_BYTES[dialect] - len(_NAME_NAMESPACE) - len(fingerprint) - 2, 0)
     kept = prefix[:budget].strip("_") or _EMPTY_PREFIX
     return f"{_NAME_NAMESPACE}_{kept}_{fingerprint}"
@@ -400,25 +381,17 @@ def interval_check_name(table: str, kind: str, start: str, end: str) -> str:
     return temporal_constraint_name(table, kind, [("lt", [start, end])])
 
 
-@dataclass(frozen=True)
-class _Declarations:
-    """The authored facts DDL still resolves outside the physical layout.
+def declared_contributors(model: Model) -> Mapping[ColumnContributor, DeclaredContributor]:
+    """Each layout contributor's declared scalar facts.
 
-    A layout slot names its contributor and physical answer; the neutral type and
-    the ordered logical components of an Index remain declaration facts.
+    A layout slot names its contributor and its physical answer but never a type,
+    so every consumer that must spell one — a ``CREATE TABLE`` column, a read's
+    typed ``NULL`` placeholder — resolves it here. A top-level value object binds
+    into one structured document column whatever its inner members declare. The
+    framework-owned discriminator has no declaration and so no entry, and a scalar
+    collection binds into one structured document column of its elements.
     """
-
-    contributors: Mapping[ColumnContributor, DeclaredContributor]
-    primary_key_indices: tuple[tuple[str, dict[str, Any]], ...]
-    authored_indices: tuple[_AuthoredIndex, ...]
-    temporal_axes: tuple[tuple[str, tuple[Axis, ...]], ...]
-
-
-def _declarations(model: Model) -> _Declarations:
     contributors: dict[ColumnContributor, DeclaredContributor] = {}
-    primary_key_indices: list[tuple[str, dict[str, Any]]] = []
-    authored_indices: list[_AuthoredIndex] = []
-    axes: list[tuple[str, tuple[Axis, ...]]] = []
     for entity in model.entities:
         owner = entity.canonical_name
         definition = entity.definition
@@ -435,39 +408,7 @@ def _declarations(model: Model) -> _Declarations:
             contributors[ValueObjectContributor(owner, value_object["name"])] = DeclaredContributor(
                 _DOCUMENT_TYPE
             )
-        derived = derived_primary_key_index(definition)
-        if derived is not None:
-            primary_key_indices.append((owner, derived))
-        declared_axes = temporal_axes(definition)
-        if declared_axes:
-            axes.append((owner, declared_axes))
-        authored_indices.extend(
-            _AuthoredIndex(
-                namespace=definition.get("namespace") or "",
-                entity=definition["name"],
-                definition=index,
-            )
-            for index in definition.get("indices", []) or []
-        )
-    return _Declarations(
-        contributors=contributors,
-        primary_key_indices=tuple(primary_key_indices),
-        authored_indices=tuple(authored_indices),
-        temporal_axes=tuple(axes),
-    )
-
-
-def declared_contributors(model: Model) -> Mapping[ColumnContributor, DeclaredContributor]:
-    """Each layout contributor's declared scalar facts.
-
-    A layout slot names its contributor and its physical answer but never a type,
-    so every consumer that must spell one — a ``CREATE TABLE`` column, a read's
-    typed ``NULL`` placeholder — resolves it here. A top-level value object binds
-    into one structured document column whatever its inner members declare. The
-    framework-owned discriminator has no declaration and so no entry, and a scalar
-    collection binds into one structured document column of its elements.
-    """
-    return _declarations(model).contributors
+    return contributors
 
 
 def slot_neutral_type(
@@ -493,8 +434,10 @@ def _slot_declaration(
     return declared.neutral_type, declared.max_length
 
 
-def _slot_ddl(slot: ColumnSlot, declarations: _Declarations, dialect: str) -> str:
-    neutral_type, max_length = _slot_declaration(slot, declarations.contributors)
+def _slot_ddl(
+    slot: ColumnSlot, declarations: Mapping[ColumnContributor, DeclaredContributor], dialect: str
+) -> str:
+    neutral_type, max_length = _slot_declaration(slot, declarations)
     parts = [
         quote_identifier(slot.column, dialect),
         _column_type(neutral_type, max_length, dialect),
@@ -504,47 +447,16 @@ def _slot_ddl(slot: ColumnSlot, declarations: _Declarations, dialect: str) -> st
     return " ".join(parts)
 
 
-def _index_columns(layout: TableLayout, owner: str, index: Mapping[str, Any]) -> list[str] | None:
-    """One declared Index's physical columns, or absent when it names another table.
-
-    An Index stays an ordered declaration of logical Attribute names local to its
-    declaring Entity (m-storage-layout), so each component resolves through the
-    layout's contributor lookup rather than a second column derivation.
-    """
-    slots = [layout.contribution(AttributeContributor(owner, name)) for name in index["attributes"]]
-    if all(slot is None for slot in slots):
-        return None
-    if any(slot is None for slot in slots):
-        raise KeyError(f"index {index['name']!r} spans table {layout.table!r} only partially")
-    return [slot.column for slot in slots if slot is not None]
+def _columns(slots: Sequence[ColumnSlot], dialect: str) -> str:
+    return ", ".join(quote_identifier(slot.column, dialect) for slot in slots)
 
 
-def _axis_columns(layout: TableLayout, declarations: _Declarations) -> list[tuple[str, str, str]]:
-    """Each As-Of Axis ``layout`` carries, as its dimension and its start and end
-    columns, in canonical axis order.
-
-    The family root declares the axes, and each endpoint resolves through the
-    layout's contributor lookup, which reaches a root-declared Attribute from
-    every table the family maps.
-    """
-    resolved = []
-    for owner, axes in declarations.temporal_axes:
-        for axis in axes:
-            start = layout.contribution(AttributeContributor(owner, axis.start.name))
-            end = layout.contribution(AttributeContributor(owner, axis.end.name))
-            if start is None or end is None:
-                continue
-            resolved.append((axis.dimension, start.column, end.column))
-    return sorted(resolved, key=lambda axis: TEMPORAL_DIMENSION_RANK[axis[0]])
-
-
-def _interval_checks(
-    layout: TableLayout, axes: Sequence[tuple[str, str, str]], dialect: str
-) -> list[str]:
-    """The PostgreSQL interval check of each of ``axes``."""
+def _interval_checks(layout: TableLayout, dialect: str) -> list[str]:
+    """The PostgreSQL interval check of each of ``layout``'s As-Of Axes."""
     clauses = []
-    for dimension, start, end in axes:
-        name = interval_check_name(layout.table, _INTERVAL_CHECK_KIND[dimension], start, end)
+    for axis in layout.temporal_axes:
+        start, end = axis.start.column, axis.end.column
+        name = interval_check_name(layout.table, _INTERVAL_CHECK_KIND[axis.dimension], start, end)
         clauses.append(
             f"constraint {quote_identifier(name, dialect)} check "
             f"({quote_identifier(start, dialect)} < {quote_identifier(end, dialect)})"
@@ -552,69 +464,65 @@ def _interval_checks(
     return clauses
 
 
-def _exclusion(
-    layout: TableLayout, key: Sequence[str], axes: Sequence[tuple[str, str, str]], dialect: str
-) -> str:
+def _exclusion(layout: TableLayout, dialect: str) -> str:
     """The PostgreSQL non-overlap exclusion over ``layout``'s logical key.
 
     The logical key is the primary key without the axis ends it derives from
     them — the root's key Attributes, never the table-per-hierarchy tag — and
     each axis contributes one half-open range in canonical axis order.
     """
-    ends = {end for _, _, end in axes}
-    logical = [column for column in key if column not in ends]
+    ends = set(layout.axis_ends)
+    logical = [slot.column for slot in layout.physical_primary_key if slot not in ends]
+    ranges = [(axis.start.column, axis.end.column) for axis in layout.temporal_axes]
     name = temporal_constraint_name(
         layout.table,
         "excl",
-        [("eq", logical), *(("overlap", [start, end]) for _, start, end in axes)],
+        [("eq", logical), *(("overlap", [start, end]) for start, end in ranges)],
     )
     operands = [f"{quote_identifier(column, dialect)} with =" for column in logical]
     operands.extend(
         f"tstzrange({quote_identifier(start, dialect)}, {quote_identifier(end, dialect)}) with &&"
-        for _, start, end in axes
+        for start, end in ranges
     )
     return (
         f"constraint {quote_identifier(name, dialect)} exclude using gist ({', '.join(operands)})"
     )
 
 
-def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str) -> str:
+def _create_table(
+    layout: TableLayout, declarations: Mapping[ColumnContributor, DeclaredContributor], dialect: str
+) -> str:
     """One physical table's ``create table``, keyed inline.
 
-    The derived primary-key Index becomes `primary key (...)` here; every
-    authored Index is a separate statement instead, so a unique one is a named
-    object a violation can report rather than an anonymous table constraint. The
-    layout owns the complete slot sequence and effective physical nullability
-    (m-storage-layout); this only renders selected values per dialect. Only
-    PostgreSQL names a temporal table's primary key and carries its interval
-    checks and non-overlap exclusion: MariaDB's generated tables enforce no
-    temporal constraint natively.
+    The physical primary key becomes `primary key (...)` here; every authored
+    Index is a separate statement instead, so a unique one is a named object a
+    violation can report rather than an anonymous table constraint. The layout
+    owns the complete slot sequence, the key, the axes, and effective physical
+    nullability (m-storage-layout); this only renders selected values per
+    dialect. Only PostgreSQL names a temporal table's primary key and carries its
+    interval checks and non-overlap exclusion: MariaDB's generated tables enforce
+    no temporal constraint natively.
     """
     columns = [_slot_ddl(slot, declarations, dialect) for slot in layout.columns]
-    axes = _axis_columns(layout, declarations)
-    constrained = dialect == "postgres" and bool(axes)
-
-    key: list[str] = []
-    for owner, index in declarations.primary_key_indices:
-        index_columns = _index_columns(layout, owner, index)
-        if index_columns is None:
-            continue
-        key = index_columns
-        quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)
+    constrained = dialect == "postgres" and bool(layout.temporal_axes)
+    key = layout.physical_primary_key
+    if key:
         named = ""
         if constrained:
-            name = temporal_constraint_name(layout.table, "pk", [("unique", index_columns)])
+            name = temporal_constraint_name(
+                layout.table, "pk", [("unique", [slot.column for slot in key])]
+            )
             named = f"constraint {quote_identifier(name, dialect)} "
-        columns.append(f"{named}primary key ({quoted})")
+        columns.append(f"{named}primary key ({_columns(key, dialect)})")
     if constrained:
-        columns.extend(_interval_checks(layout, axes, dialect))
-        columns.append(_exclusion(layout, key, axes, dialect))
+        columns.extend(_interval_checks(layout, dialect))
+        columns.append(_exclusion(layout, dialect))
 
     column_clause = ",\n  ".join(columns)
     return f"create table {quote_identifier(layout.table, dialect)} (\n  {column_clause}\n)"
 
 
-def _create_indices(layout: TableLayout, declarations: _Declarations, dialect: str) -> list[str]:
+def _create_indices(layout: TableLayout, dialect: str) -> list[str]:
     """Every authored Index this table holds, each under its derived name.
 
     An Index declared on an ancestor of several table-per-concrete-subtype
@@ -623,15 +531,11 @@ def _create_indices(layout: TableLayout, declarations: _Declarations, dialect: s
     objects rather than a clash.
     """
     statements = []
-    for index in declarations.authored_indices:
-        index_columns = _index_columns(layout, index.owner, index.definition)
-        if index_columns is None:
-            continue
-        keyword = "create unique index" if index.definition.get("unique", False) else "create index"
+    table = quote_identifier(layout.table, dialect)
+    for index in layout.secondary_indices:
+        keyword = "create unique index" if index.declaration.unique else "create index"
         name = quote_identifier(physical_index_name(index, layout.table, dialect), dialect)
-        quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)
-        table = quote_identifier(layout.table, dialect)
-        statements.append(f"{keyword} {name} on {table} ({quoted})")
+        statements.append(f"{keyword} {name} on {table} ({_columns(index.columns, dialect)})")
     return statements
 
 
@@ -649,20 +553,16 @@ def ddl_for(model: Model, dialect: str) -> list[str]:
     derivation), and leaving FK constraints out keeps fixture-load order
     unconstrained.
     """
-    declarations = _declarations(model)
+    declarations = declared_contributors(model)
     tables = model.storage_layout.tables
     created = [_create_table(layout, declarations, dialect) for layout in tables]
     prerequisite = (
         [_EXCLUSION_PREREQUISITE]
-        if dialect == "postgres" and any(_axis_columns(layout, declarations) for layout in tables)
+        if dialect == "postgres" and any(layout.temporal_axes for layout in tables)
         else []
     )
     return (
         prerequisite
         + created
-        + [
-            statement
-            for layout in tables
-            for statement in _create_indices(layout, declarations, dialect)
-        ]
+        + [statement for layout in tables for statement in _create_indices(layout, dialect)]
     )

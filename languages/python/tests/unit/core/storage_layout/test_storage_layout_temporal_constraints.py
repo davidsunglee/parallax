@@ -72,6 +72,22 @@ def test_a_bitemporal_table_carries_both_interval_checks() -> None:
     _selects_own_slots(layout, constraints.transaction_axis)
 
 
+@pytest.mark.parametrize(
+    ("stem", "table", "ends"),
+    [("balance", "balance", ("out_z",)), ("position", "position", ("thru_z", "out_z"))],
+)
+def test_the_axis_ends_are_the_tables_own_end_slots_valid_time_first(
+    stem: str, table: str, ends: tuple[str, ...]
+) -> None:
+    layout = _layout(corpus()[stem], table)
+    constraints = layout.temporal_constraints
+    assert constraints is not None
+    assert tuple(slot.column.name for slot in constraints.axis_ends) == ends
+    assert constraints.axis_ends == tuple(
+        slot for slot in constraints.primary_key.columns if slot not in constraints.logical_key
+    )
+
+
 def test_a_non_temporal_table_has_no_temporal_constraints() -> None:
     assert _layout(corpus()["payment"], "payment").temporal_constraints is None
 

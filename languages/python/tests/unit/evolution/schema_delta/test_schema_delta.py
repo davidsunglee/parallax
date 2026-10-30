@@ -34,6 +34,7 @@ from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, I
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.storage_layout import ColumnSlot
+from parallax.descriptor._ingest import ingest_document
 from parallax.evolution.model_evolution import (
     ABSENT,
     CoordinatedEvolution,
@@ -448,6 +449,50 @@ def test_provisioning_tph_surfaces_a_descendant_declared_value_object_and_index(
     assert created.physical_table.name == "root_tbl"
 
 
+def test_a_temporal_descendant_index_is_named_over_the_roots_axis_end_attributes() -> None:
+    # The Leaf-declared component is followed by the ends the Root's axes own, and
+    # the name hashes that whole sequence of Attribute Identities.
+    model = formed(
+        ingest_document(
+            {
+                "entities": [
+                    {
+                        "name": "Root",
+                        "table": "root_tbl",
+                        "temporality": "bitemporal",
+                        "inheritance": {
+                            "role": "root",
+                            "strategy": "table-per-hierarchy",
+                            "tag": {"column": "kind"},
+                        },
+                        "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                    },
+                    {
+                        "name": "Leaf",
+                        "inheritance": {
+                            "role": "concrete-subtype",
+                            "parent": "Root",
+                            "tagValue": "leaf",
+                        },
+                        "attributes": [{"name": "code", "type": "int64"}],
+                        "indices": [
+                            {"name": "leaf_code_uq", "attributes": ["code"], "unique": True}
+                        ],
+                    },
+                ]
+            }
+        )
+    )
+    delta = _delta(model)
+    (created,) = delta.created_indices
+    assert created.physical_index_name.value == (
+        "pxi_root_tbl_leaf_leaf_code_uq_81dcabcdf97f6ddb8fe4864a7f38b96d"
+    )
+    assert delta.statements[-1] == (
+        f"create unique index {created.physical_index_name.value} on root_tbl (code, thru_z, out_z)"
+    )
+
+
 def test_provisioning_tpcs_surfaces_a_root_declared_unique_index() -> None:
     # `code` is declared only on the ROOT, and the index that constrains it is
     # ALSO declared only on the root — invisible from the concrete descriptor
@@ -654,6 +699,7 @@ _INDEX = IndexDefinition(
     table=_TABLE,
     index=IndexIdentity(EntityIdentity(namespace="parallax.test", name="Widget"), "widget_label"),
     components=(AttributeIdentity(EntityIdentity("parallax.test", "Widget"), "label"),),
+    column_attributes=(AttributeIdentity(EntityIdentity("parallax.test", "Widget"), "label"),),
     columns=(_LABEL,),
     unique=True,
 )

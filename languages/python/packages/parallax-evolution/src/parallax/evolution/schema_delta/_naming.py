@@ -86,8 +86,11 @@ def _fingerprint(definition: IndexDefinition) -> str:
         entity.namespace or "",
         entity.name,
         definition.index.name,
-        str(len(definition.components)),
-        *(f"{component.entity.canonical}.{component.name}" for component in definition.components),
+        str(len(definition.column_attributes)),
+        *(
+            f"{attribute.entity.canonical}.{attribute.name}"
+            for attribute in definition.column_attributes
+        ),
         _UNIQUE_MARKER[definition.unique],
     )
     digest = hashlib.sha256()
@@ -193,7 +196,7 @@ def _identity(definition: IndexDefinition | TemporalBackingIndex) -> _Identity:
     """The facts a Physical Index Name is derived over, as a comparable key."""
     if isinstance(definition, TemporalBackingIndex):
         return (definition.table, definition.kind, definition.columns)
-    return (definition.table, definition.index, definition.components, definition.unique)
+    return (definition.table, definition.index, definition.column_attributes, definition.unique)
 
 
 def collision_groups(

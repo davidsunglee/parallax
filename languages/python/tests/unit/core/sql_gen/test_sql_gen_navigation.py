@@ -1125,6 +1125,48 @@ def test_a_temporal_target_correlated_off_its_logical_key_needs_a_unique_key(
 
 
 @pytest.mark.parametrize(
+    ("valid_time", "transaction_time"),
+    [("latest", "latest"), (_MARCH, "latest"), ("latest", _MARCH), (_MARCH, _MARCH)],
+    ids=["latest-latest", "at-latest", "latest-at", "at-at"],
+)
+def test_a_unique_key_off_the_logical_key_proves_a_temporal_target_only_at_latest(
+    valid_time: str, transaction_time: str
+) -> None:
+    # The authored unique key ends with both axis ends, which only Latest fixes;
+    # at any instant the hop falls back to the correlated subquery.
+    family = _document_model(
+        _entity(
+            "Holder",
+            temporality="bitemporal",
+            relationships=[_rel("badge", "id", "Badge", "holderId", "one-to-one")],
+        ),
+        _entity(
+            "Badge",
+            "holderId",
+            temporality="bitemporal",
+            members=[{"name": "code", "type": "string", "maxLength": 8}],
+            indices=[{"name": "badge_holder", "attributes": ["holderId"], "unique": True}],
+        ),
+    )
+    op = oa.Comparison(op="eq", subject=oa.FieldSubject("Holder.badge.code"), value="B")
+    compiled = compile_read(
+        op,
+        family,
+        POSTGRES,
+        target(family, "Holder"),
+        temporal={"valid-time": AsOf(valid_time), "transaction-time": AsOf(transaction_time)},
+    )
+    shared = "from holder t0 left join badge t1 on t1.holder_id = t0.id and " in (
+        compiled.statement.sql
+    )
+    correlated = "where (select t1.code from badge t1 where t1.holder_id = t0.id and " in (
+        compiled.statement.sql
+    )
+    latest = valid_time == "latest" and transaction_time == "latest"
+    assert (shared, correlated) == (latest, not latest)
+
+
+@pytest.mark.parametrize(
     ("unique", "expected"),
     [
         (True, "left join badge t1 on t1.holder_id = t0.id where t1.code = ?"),

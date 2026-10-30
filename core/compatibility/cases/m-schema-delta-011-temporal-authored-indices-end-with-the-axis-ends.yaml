@@ -1,0 +1,75 @@
+# Fresh provisioning of a Transaction-Time-only and a Bitemporal Entity, each
+# with one unique and one non-unique authored index. Every authored index ends
+# with its table's axis ends — `out_z` on `handle`, `thru_z, out_z` on
+# `assignment` — on both dialects, and each Physical Index Name hashes the
+# Attribute behind every one of those columns, so the authored components alone
+# would derive a different name.
+tags: [m-model-evolution, m-schema-delta, m-storage-layout, evolution, provisioning, index, temporal, bitemporal, unique-index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: null
+    later: models/temporal-authored-index.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: EntityAdded, entity: parallax.compatibility.Assignment }
+      - { kind: EntityAdded, entity: parallax.compatibility.Handle }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create extension if not exists btree_gist
+          - create table assignment (id bigint not null, code varchar(32) not null, label varchar(64) not null, rate bigint not null, from_z timestamptz not null, thru_z timestamptz not null, in_z timestamptz not null, out_z timestamptz not null, constraint pxc_pk_assignment_606dc070a5fc7428074fc80eaec07965 primary key (id, thru_z, out_z), constraint pxc_valid_assignment_cacf045efdc2ebf59d65c3c763a35506 check (from_z < thru_z), constraint pxc_tx_assignment_3ed18abdbf93bd9a435e7940a2c8b038 check (in_z < out_z), constraint pxc_excl_assignment_168d7742e39fcf5bc10c65841c3b7b1b exclude using gist (id with =, tstzrange(from_z, thru_z) with &&, tstzrange(in_z, out_z) with &&))
+          - create index pxi_assignment_parallax_compat_23bf850a95f200ead5f31c1dbdd216a9 on assignment (label, thru_z, out_z)
+          - create unique index pxi_assignment_parallax_compat_63f39cbbbd84a275a919154ccc0c2271 on assignment (code, thru_z, out_z)
+          - create table handle (id bigint not null, code varchar(32) not null, label varchar(64) not null, in_z timestamptz not null, out_z timestamptz not null, constraint pxc_pk_handle_7a967d7f73cd2d6b1bbee9e23f1cf322 primary key (id, out_z), constraint pxc_tx_handle_07f656064abe6946ab5554b0cc0e30ae check (in_z < out_z), constraint pxc_excl_handle_b194b170815bec658081075611f51cfd exclude using gist (id with =, tstzrange(in_z, out_z) with &&))
+          - create index pxi_handle_parallax_compatibil_0c01e918513c9e066994b6854486dfc1 on handle (label, out_z)
+          - create unique index pxi_handle_parallax_compatibil_3050a88db822d2ebdbc06f00a9a2ee51 on handle (code, out_z)
+        createdIndices:
+          - physicalIndexName: pxi_assignment_parallax_compat_23bf850a95f200ead5f31c1dbdd216a9
+            physicalTable: assignment
+            logicalIndexIdentity: parallax.compatibility.Assignment.assignment_label
+            unique: false
+          - physicalIndexName: pxi_assignment_parallax_compat_63f39cbbbd84a275a919154ccc0c2271
+            physicalTable: assignment
+            logicalIndexIdentity: parallax.compatibility.Assignment.assignment_code
+            unique: true
+          - physicalIndexName: pxi_handle_parallax_compatibil_0c01e918513c9e066994b6854486dfc1
+            physicalTable: handle
+            logicalIndexIdentity: parallax.compatibility.Handle.handle_label
+            unique: false
+          - physicalIndexName: pxi_handle_parallax_compatibil_3050a88db822d2ebdbc06f00a9a2ee51
+            physicalTable: handle
+            logicalIndexIdentity: parallax.compatibility.Handle.handle_code
+            unique: true
+    mariadb:
+      delta:
+        statements:
+          - create table assignment (id bigint not null, code varchar(32) not null, label varchar(64) not null, rate bigint not null, from_z datetime(6) not null, thru_z datetime(6) not null, in_z datetime(6) not null, out_z datetime(6) not null, primary key (id, thru_z, out_z))
+          - create index pxi_assignment_parallax_compati_23bf850a95f200ead5f31c1dbdd216a9 on assignment (label, thru_z, out_z)
+          - create unique index pxi_assignment_parallax_compati_63f39cbbbd84a275a919154ccc0c2271 on assignment (code, thru_z, out_z)
+          - create table handle (id bigint not null, code varchar(32) not null, label varchar(64) not null, in_z datetime(6) not null, out_z datetime(6) not null, primary key (id, out_z))
+          - create index pxi_handle_parallax_compatibili_0c01e918513c9e066994b6854486dfc1 on handle (label, out_z)
+          - create unique index pxi_handle_parallax_compatibili_3050a88db822d2ebdbc06f00a9a2ee51 on handle (code, out_z)
+        createdIndices:
+          - physicalIndexName: pxi_assignment_parallax_compati_23bf850a95f200ead5f31c1dbdd216a9
+            physicalTable: assignment
+            logicalIndexIdentity: parallax.compatibility.Assignment.assignment_label
+            unique: false
+          - physicalIndexName: pxi_assignment_parallax_compati_63f39cbbbd84a275a919154ccc0c2271
+            physicalTable: assignment
+            logicalIndexIdentity: parallax.compatibility.Assignment.assignment_code
+            unique: true
+          - physicalIndexName: pxi_handle_parallax_compatibili_0c01e918513c9e066994b6854486dfc1
+            physicalTable: handle
+            logicalIndexIdentity: parallax.compatibility.Handle.handle_label
+            unique: false
+          - physicalIndexName: pxi_handle_parallax_compatibili_3050a88db822d2ebdbc06f00a9a2ee51
+            physicalTable: handle
+            logicalIndexIdentity: parallax.compatibility.Handle.handle_code
+            unique: true

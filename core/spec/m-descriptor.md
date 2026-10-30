@@ -369,6 +369,22 @@ Indices are metadata: they declare the storage indices an implementation
 authored index is a secondary index — a genuine business key or a lookup path.
 The primary-key index is not authored.
 
+An authored index's `attributes` are what the author wrote, on every profile.
+On a temporal Entity the stored index also ends with each axis's end Attribute,
+which `m-storage-layout` *Physical indices* appends, so `unique` means:
+
+| Profile | A unique authored index refuses |
+|---|---|
+| `nontemporal` | two rows sharing every component |
+| `transaction-time` | two current rows sharing every component, and two closed milestones sharing every component and their Transaction-Time end: because each milestone's Transaction-Time start is its writing instant, no two objects share the value at one Transaction-Time instant |
+| `bitemporal` | two milestones sharing every component and both axis ends: uniqueness per milestone end |
+
+Bitemporal uniqueness is not an overlap guarantee. Two distinct objects may
+share the value over overlapping Valid Time whose ends differ, so a unique
+authored index does not prove at most one row at a finite Valid-Time instant.
+Ordinary unique-index semantics are otherwise unchanged; in particular, a null
+component never equals another.
+
 ### The derived primary-key index
 
 Every Entity that declares a primary key derives one unique index, placed before
@@ -655,9 +671,10 @@ rather than a second one, because the override has no declaration of its own to
 sit on.
 
 `index-temporal-attribute` fires once per offending component, at that
-component's own document path. The physical key over the axis endpoints is
-derived, so an authored index naming one either restates it in an author-chosen
-position or contradicts it; neither is a shape the contract admits.
+component's own document path. Every index of a temporal Entity already ends
+with the derived axis ends, so an authored component naming an end restates a
+derived component in an author-chosen position, and one naming a start
+substitutes for the end-keyed shape; neither is a shape the contract admits.
 
 The vocabulary grows only with a rejection named in this specification. A
 conforming adapter evaluates the whole document, and violation equality,

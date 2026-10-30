@@ -1,0 +1,42 @@
+# Write sequence: a Transaction-Time-only amend that keeps an authored unique
+# value. The close keeps `code` on the closed row and the successor carries the
+# same `code`; the authored unique index ends with `out_z`, so the closed and the
+# current milestone differ on it and the successor insert succeeds.
+model: models/temporal-authored-index.yaml
+tags: [m-temporal-write, m-sql, m-storage-layout, write-sequence, update, audit-only, unique-index, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: parallax.compatibility.Handle
+      statements: 1
+      note: open the original current milestone [2024-01-01, infinity)
+      rows:
+        - { id: 1, code: X, label: a }
+      at: "2024-01-01T00:00:00.000000Z"
+    - mutation: amend
+      entity: parallax.compatibility.Handle
+      statements: 2
+      note: close the current row, then chain a successor that keeps the unique code
+      rows:
+        - { id: 1, code: X, label: b }
+      at: "2024-06-01T00:00:00.000000Z"
+then:
+  statements:
+    - sql:
+        postgres: insert into handle(id, code, label, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into handle(id, code, label, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, X, a, "2024-01-01T00:00:00.000000Z", infinity]
+    - sql:
+        postgres: update handle set out_z = ? where id = ? and out_z = ? and in_z = ?
+        mariadb: update handle set out_z = ? where id = ? and out_z = ? and in_z = ?
+      binds: ["2024-06-01T00:00:00.000000Z", 1, infinity, "2024-01-01T00:00:00.000000Z"]
+    - sql:
+        postgres: insert into handle(id, code, label, in_z, out_z) values (?, ?, ?, ?, ?)
+        mariadb: insert into handle(id, code, label, in_z, out_z) values (?, ?, ?, ?, ?)
+      binds: [1, X, b, "2024-06-01T00:00:00.000000Z", infinity]
+  tableState:
+    handle:
+      - { id: 1, code: X, label: a, in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
+      - { id: 1, code: X, label: b, in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
+  databaseCalls: 4

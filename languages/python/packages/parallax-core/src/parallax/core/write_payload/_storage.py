@@ -234,7 +234,7 @@ class EntityStorage:
         self._rows: dict[int, RowSlots] = {}
         self._assignments: dict[int, AssignmentPlacement] = {}
         self._effects: dict[EffectShape, EffectSlots] = {}
-        self._unique = _unique_members(view)
+        self._unique = _secondary_unique_members(view)
         constraints = view.layout.temporal_constraints
         self._open_end: object = (
             None if constraints is None else constraints.transaction_axis.end.contributor
@@ -573,23 +573,21 @@ class RowSlots:
         return apply_prepared_patches(document, prepare_managed_patches(residents.shape, patches))
 
 
-def _unique_members(view: EntityLayoutView) -> frozenset[AttributeIdentity]:
+def _secondary_unique_members(view: EntityLayoutView) -> frozenset[AttributeIdentity]:
     """The Attributes of every unique key of ``view``'s Table but its primary
     key, other than an As-Of Axis end."""
     layout = view.layout
     primary = layout.primary_key_index
-    ends: set[object] = set()
     constraints = layout.temporal_constraints
-    if constraints is not None:
-        ends.add(constraints.transaction_axis.end.contributor)
-        if constraints.valid_axis is not None:
-            ends.add(constraints.valid_axis.end.contributor)
+    ends = frozenset(
+        () if constraints is None else (slot.contributor for slot in constraints.axis_ends)
+    )
     return frozenset(
-        slot.contributor
+        attribute
         for key in layout.unique_keys
         if key is not primary
-        for slot in key.columns
-        if isinstance(slot.contributor, AttributeIdentity) and slot.contributor not in ends
+        for attribute in key.column_attributes
+        if attribute not in ends
     )
 
 

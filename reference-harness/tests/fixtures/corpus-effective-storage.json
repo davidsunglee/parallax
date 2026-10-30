@@ -4844,6 +4844,33 @@
       "valueObject": {}
     }
   },
+  "models/temporal-authored-index.yaml": {
+    "parallax.compatibility.Assignment": {
+      "attribute": {
+        "code": "code",
+        "id": "id",
+        "label": "label",
+        "rate": "rate",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Handle": {
+      "attribute": {
+        "code": "code",
+        "id": "id",
+        "label": "label",
+        "txEnd": "out_z",
+        "txStart": "in_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/unchanged-milestone-layout-twin-columns.yaml": {
     "parallax.compatibility.KeptLog": {
       "attribute": {

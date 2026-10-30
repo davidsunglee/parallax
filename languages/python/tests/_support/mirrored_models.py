@@ -958,6 +958,11 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "cross-layout Value Object write proof, and the twin-layout gate compares its "
             "logical model directly with the Columns arm"
         ),
+        "temporal-authored-index": (
+            "behavioral-only model: it exists to observe authored indices on temporal tables, "
+            "and it composes the mirrored `balance` and `position` axes with the "
+            "non-primary-key unique index the mirrored `person` family already carries"
+        ),
         "subscriber": (
             "no mirror authored; it composes the nested Value Object tree the mirrored `customer` "
             "and `supplier` prove with the optimistic-lock version `account` proves"

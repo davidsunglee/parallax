@@ -279,8 +279,13 @@ one underscore, surrounding underscores are trimmed, and an empty result becomes
 
 The **fingerprint** is the first 128 bits of SHA-256 over a versioned sequence of
 length-prefixed UTF-8 fields — the physical Table, the structured declaring
-Entity Identity, the authored Index name, the ordered structured Attribute
-Identities, and uniqueness — rendered as 32 lowercase hexadecimal characters.
+Entity Identity, the authored Index name, the structured Attribute Identity
+behind each Column of the Table Layout's entry in Column order, and uniqueness —
+rendered as 32 lowercase hexadecimal characters. Those Attributes are the
+authored components followed, on a temporal Table, by the axis end Attributes
+the entry appends (`m-storage-layout` *Physical indices*), each under the
+Identity of the Entity that declares it; a non-temporal Index's are exactly its
+authored components.
 Length-prefixing is what makes the digest a function of the structure rather than
 of a joined string, and the version field makes a later change to what is hashed
 produce different names by construction.
@@ -298,6 +303,13 @@ no existing name.
 Because an altered Index's target definition differs from its earlier one in a
 fingerprinted fact, the two take distinct names — which is what lets the target
 be created and validated before the earlier Index is dropped.
+
+Both editions a delta compares are compiled under the current derivation rules,
+and the delta never reads the catalog. A change to how the layout derives an
+entry's Columns therefore reaches a Table an earlier release provisioned only
+by a manual migration — create the target Index under the name fresh
+provisioning reports, then drop the Index the catalog holds — never by a delta
+between equal model editions, which stays empty.
 
 The indices backing a temporal Table's primary key and exclusion share the same
 namespace. They enter the census under the names their Table Layouts compiled

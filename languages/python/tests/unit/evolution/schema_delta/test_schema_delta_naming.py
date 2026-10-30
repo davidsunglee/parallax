@@ -27,14 +27,19 @@ def _definition(
     table: str = "widget",
     index: str = "widget_code",
     components: tuple[str, ...] = ("code",),
+    axis_ends: tuple[str, ...] = (),
     unique: bool = False,
 ) -> IndexDefinition:
     return IndexDefinition(
         table=Table(name=table),
         index=IndexIdentity(_ENTITY, index),
         components=tuple(AttributeIdentity(_ENTITY, name) for name in components),
+        column_attributes=tuple(
+            AttributeIdentity(_ENTITY, name) for name in (*components, *axis_ends)
+        ),
         columns=tuple(
-            PhysicalColumn(Column(name=name), STRING, 8, nullable=True) for name in components
+            PhysicalColumn(Column(name=name), STRING, 8, nullable=True)
+            for name in (*components, *axis_ends)
         ),
         unique=unique,
     )
@@ -94,6 +99,19 @@ def test_every_structural_fact_moves_the_fingerprint() -> None:
     assert forward != reversed_components
 
 
+def test_a_nontemporal_name_hashes_exactly_its_authored_components() -> None:
+    assert physical_index_name(_definition(), POSTGRES).value == (
+        "pxi_widget_parallax_test_widge_10482a0f4cf5aba11b1b6c63940ba154"
+    )
+
+
+def test_the_axis_ends_reach_the_fingerprint_while_the_authored_components_stay() -> None:
+    end_keyed = _definition(axis_ends=("txEnd",))
+    assert end_keyed.components == _definition().components
+    assert _fingerprint_of(end_keyed) == "3012ce3efad047733c9aabe75f9531f8"
+    assert _fingerprint_of(end_keyed) != _fingerprint_of(_definition())
+
+
 def test_the_declaring_entity_reaches_the_fingerprint_through_its_whole_identity() -> None:
     other_namespace = dataclasses.replace(
         _definition(),
@@ -114,6 +132,7 @@ def _short() -> IndexDefinition:
         _definition(table="t"),
         index=IndexIdentity(entity, "i"),
         components=(AttributeIdentity(entity, "code"),),
+        column_attributes=(AttributeIdentity(entity, "code"),),
     )
 
 

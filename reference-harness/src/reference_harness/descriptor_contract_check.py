@@ -168,9 +168,10 @@ def _temporal_attribute_violations(entity: Any, prefix: tuple[str | int, ...]) -
 def _index_temporal_violations(entity: Any, prefix: tuple[str | int, ...]) -> set[Violation]:
     """Every authored Index component of *entity* naming an as-of axis endpoint.
 
-    The physical key over the axis endpoints is derived, so an authored Index
-    naming one either restates it in an author-chosen position or contradicts
-    it. Each offending component is one violation at its own document path."""
+    Every Index of a temporal Entity already ends with the derived axis ends, so
+    an authored component naming an end restates one in an author-chosen
+    position and one naming a start substitutes for the end-keyed shape. Each
+    offending component is one violation at its own document path."""
     indices = entity.get("indices")
     if not isinstance(indices, list):
         return set()

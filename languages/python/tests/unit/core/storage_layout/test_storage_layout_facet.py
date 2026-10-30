@@ -29,6 +29,8 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     ExactEntityReference,
+    IndexIdentity,
+    IndexMetadata,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
     RelationshipIdentity,
@@ -289,15 +291,28 @@ def _tpcs_model() -> tuple[Any, EntityIdentity, EntityIdentity, EntityIdentity]:
 
 
 def _ranked_temporal_model(
-    mapping: Literal["standalone", "tph", "tpcs"], *, duplicate_end: bool
+    mapping: Literal["standalone", "tph", "tpcs"], *, duplicate_end: bool, indexed: bool = False
 ) -> tuple[Any, str, EntityIdentity]:
+    """A Bitemporal family declaring its Transaction-Time axis first.
+
+    ``indexed`` adds a root-declared unique Index over a domain ``code``.
+    """
     root = identity(f"{mapping.title()}Temporal")
     concrete = identity(f"{mapping.title()}TemporalRow")
     valid_start = instant(root, "validStart")
     valid_end = instant(root, "validEnd")
     tx_start = instant(root, "txStart")
     tx_end = valid_end if duplicate_end else instant(root, "txEnd")
-    attributes = tuple(dict.fromkeys((key(root), valid_start, valid_end, tx_start, tx_end)))
+    code = attribute(root, "code")
+    domain = (code,) if indexed else ()
+    attributes = tuple(
+        dict.fromkeys((key(root), *domain, valid_start, valid_end, tx_start, tx_end))
+    )
+    indices = (
+        (IndexMetadata(IndexIdentity(root, "ranked_code"), (code.identity,), unique=True),)
+        if indexed
+        else ()
+    )
     axes = (
         AsOfAxisMetadata(
             TemporalDimension.TRANSACTION_TIME,
@@ -318,6 +333,7 @@ def _ranked_temporal_model(
                 container=Table(table),
                 attributes=attributes,
                 as_of_axes=axes,
+                indices=indices,
             ),
         )
     elif mapping == "tph":
@@ -328,6 +344,7 @@ def _ranked_temporal_model(
                 container=Table(table),
                 attributes=attributes,
                 as_of_axes=axes,
+                indices=indices,
                 inheritance=AbstractRoot(TablePerHierarchy("kind")),
             ),
             Declaration(
@@ -342,6 +359,7 @@ def _ranked_temporal_model(
                 identity=root,
                 attributes=attributes,
                 as_of_axes=axes,
+                indices=indices,
                 inheritance=AbstractRoot(TablePerConcreteSubtype()),
             ),
             Declaration(
@@ -643,6 +661,148 @@ def test_tpcs_indices_map_onto_every_concrete_table_carrying_their_components() 
     assert invoice_code.columns != memo_code.columns
     assert invoice_code.columns[0] is invoice.contribution(invoice_code.declaration.attributes[0])
     assert memo_code.columns[0] is memo.contribution(memo_code.declaration.attributes[0])
+
+
+@pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
+@pytest.mark.parametrize("duplicate_end", [False, True], ids=["two-ends", "shared-end"])
+def test_an_authored_index_ends_with_the_tables_axis_ends_in_dimension_rank(
+    mapping: Literal["standalone", "tph", "tpcs"], duplicate_end: bool
+) -> None:
+    model, table, root = _ranked_temporal_model(mapping, duplicate_end=duplicate_end, indexed=True)
+    layout = _require_layout(storage_layout.view(model), table)
+    constraints = layout.temporal_constraints
+    assert constraints is not None
+    ends = [AttributeIdentity(root, "validEnd")]
+    if not duplicate_end:
+        ends.append(AttributeIdentity(root, "txEnd"))
+    assert [slot.contributor for slot in constraints.axis_ends] == ends
+    assert all(slot is layout.contribution(slot.contributor) for slot in constraints.axis_ends)
+
+    authored = _require_index(layout, "ranked_code")
+    assert authored.declaration.attributes == (AttributeIdentity(root, "code"),)
+    assert authored.column_attributes == (AttributeIdentity(root, "code"), *ends)
+    assert authored.columns == (
+        _require_slot(layout, AttributeIdentity(root, "code")),
+        *constraints.axis_ends,
+    )
+    assert layout.unique_keys == (layout.primary_key_index, authored)
+
+
+def test_a_non_temporal_index_carries_exactly_its_authored_components() -> None:
+    facet = storage_layout.view(tpcs_family_with_indices_at_every_level())
+    invoice = _require_layout(facet, "invoice")
+    for mapped in invoice.indices[1:]:
+        assert mapped.column_attributes == mapped.declaration.attributes
+
+
+def _temporal_layout_model(*entities: dict[str, object]) -> Any:
+    from parallax.descriptor._ingest import ingest_document
+
+    return formed(ingest_document({"entities": list(entities)}))
+
+
+def _end_keyed(layout: storage_layout.TableLayout, name: str) -> list[str]:
+    return [slot.column.name for slot in _require_index(layout, name).columns]
+
+
+def test_unique_and_non_unique_indices_end_with_each_profiles_axis_ends() -> None:
+    facet = storage_layout.view(corpus()["temporal-authored-index"])
+    handle = _require_layout(facet, "handle")
+    assignment = _require_layout(facet, "assignment")
+    assert _end_keyed(handle, "handle_code") == ["code", "out_z"]
+    assert _end_keyed(handle, "handle_label") == ["label", "out_z"]
+    assert _end_keyed(assignment, "assignment_code") == ["code", "thru_z", "out_z"]
+    assert _end_keyed(assignment, "assignment_label") == ["label", "thru_z", "out_z"]
+    assert [index.declaration.identity.name for index in assignment.unique_keys] == [
+        "assignment_pk",
+        "assignment_code",
+    ]
+    for layout in (handle, assignment):
+        for mapped in layout.indices[1:]:
+            assert len(mapped.declaration.attributes) == 1
+
+
+def test_a_tph_descendant_index_ends_with_the_roots_axis_ends_on_the_shared_table() -> None:
+    model = _temporal_layout_model(
+        {
+            "name": "Root",
+            "table": "root_tbl",
+            "temporality": "bitemporal",
+            "inheritance": {
+                "role": "root",
+                "strategy": "table-per-hierarchy",
+                "tag": {"column": "kind"},
+            },
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+        },
+        {
+            "name": "Leaf",
+            "inheritance": {"role": "concrete-subtype", "parent": "Root", "tagValue": "leaf"},
+            "attributes": [{"name": "code", "type": "int64"}],
+            "indices": [{"name": "leaf_code_uq", "attributes": ["code"], "unique": True}],
+        },
+    )
+    root, leaf = EntityIdentity(None, "Root"), EntityIdentity(None, "Leaf")
+    layout = _require_layout(storage_layout.view(model), "root_tbl")
+    leaf_code = _require_index(layout, "leaf_code_uq")
+    assert leaf_code.declaration.attributes == (AttributeIdentity(leaf, "code"),)
+    assert leaf_code.column_attributes == (
+        AttributeIdentity(leaf, "code"),
+        AttributeIdentity(root, "validEnd"),
+        AttributeIdentity(root, "txEnd"),
+    )
+
+
+def test_tpcs_temporal_indices_reach_only_the_tables_carrying_their_components() -> None:
+    model = _temporal_layout_model(
+        {
+            "name": "Doc",
+            "temporality": "transaction-time",
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "attributes": [
+                {"name": "id", "type": "int64", "primaryKey": True},
+                {"name": "code", "type": "int64"},
+            ],
+            "indices": [{"name": "doc_code_uq", "attributes": ["code"], "unique": True}],
+        },
+        {
+            "name": "Invoice",
+            "table": "invoice",
+            "inheritance": {"role": "concrete-subtype", "parent": "Doc"},
+            "attributes": [{"name": "number", "type": "int64"}],
+            "indices": [{"name": "invoice_number", "attributes": ["number"]}],
+        },
+        {
+            "name": "Memo",
+            "table": "memo",
+            "inheritance": {"role": "concrete-subtype", "parent": "Doc"},
+            "attributes": [{"name": "topic", "type": "int64"}],
+        },
+    )
+    root = EntityIdentity(None, "Doc")
+    facet = storage_layout.view(model)
+    invoice = _require_layout(facet, "invoice")
+    memo = _require_layout(facet, "memo")
+    # The sibling carries the root's ends but not the descendant's component.
+    assert _index_names(invoice) == ["doc_pk", "doc_code_uq", "invoice_number"]
+    assert _index_names(memo) == ["doc_pk", "doc_code_uq"]
+    assert _end_keyed(invoice, "invoice_number") == ["number", "out_z"]
+    invoice_code = _require_index(invoice, "doc_code_uq")
+    memo_code = _require_index(memo, "doc_code_uq")
+    assert invoice_code.declaration == memo_code.declaration
+    assert (
+        invoice_code.column_attributes
+        == memo_code.column_attributes
+        == (
+            AttributeIdentity(root, "code"),
+            AttributeIdentity(root, "txEnd"),
+        )
+    )
+    assert invoice_code.columns != memo_code.columns
+    for layout, mapped in ((invoice, invoice_code), (memo, memo_code)):
+        constraints = layout.temporal_constraints
+        assert constraints is not None
+        assert mapped.columns[1:] == constraints.axis_ends
 
 
 def test_a_document_layout_index_maps_onto_its_direct_role_slot() -> None:

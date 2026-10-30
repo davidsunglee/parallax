@@ -48,14 +48,16 @@ class PhysicalColumn:
 class IndexDefinition:
     """One authored Index as one physical Table holds it.
 
-    ``components`` retains the logical Attribute Identities in authored order
-    beside the physical ``columns`` they resolved to, because the Physical Index
-    Name is derived from the logical facts and a collision report names them.
+    ``components`` retains the authored Attribute Identities, which a collision
+    report names. ``column_attributes`` is the Attribute behind each of
+    ``columns`` — the authored components, then a temporal Table's axis ends —
+    from which the Physical Index Name is derived.
     """
 
     table: Table
     index: IndexIdentity
     components: tuple[AttributeIdentity, ...]
+    column_attributes: tuple[AttributeIdentity, ...]
     columns: tuple[PhysicalColumn, ...]
     unique: bool
 

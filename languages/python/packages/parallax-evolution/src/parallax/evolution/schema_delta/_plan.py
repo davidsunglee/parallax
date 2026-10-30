@@ -756,6 +756,7 @@ def _index_definitions(model: Metamodel, layout: TableLayout) -> Iterator[IndexD
             table=layout.table,
             index=physical.declaration.identity,
             components=physical.declaration.attributes,
+            column_attributes=physical.column_attributes,
             columns=tuple(_physical_column(model, slot) for slot in physical.columns),
             unique=physical.declaration.unique,
         )

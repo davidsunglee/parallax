@@ -32,7 +32,7 @@ _VALUE_OBJECT_MATERIALIZATION_READS: Final[frozenset[str]] = frozenset(
     {"m-value-object-023", "m-value-object-024"}
 )
 _TEMPORAL_READ_ROW_FORM: Final[frozenset[str]] = frozenset(
-    f"m-temporal-read-{n:03d}" for n in (*range(1, 9), 13, 14, 15, 16, 17)
+    f"m-temporal-read-{n:03d}" for n in (*range(1, 9), 13, 14, 15, 16, 17, 22)
 )
 _TEMPORAL_VALUE_OBJECT_READS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in (28, 29, 30, 31)
@@ -296,6 +296,8 @@ _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-temporal-write-069",
         "m-temporal-write-084",
         "m-temporal-write-085",
+        "m-temporal-write-090",
+        "m-temporal-write-091",
     }
 )
 _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
