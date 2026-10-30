@@ -376,12 +376,16 @@ which `m-storage-layout` *Physical indices* appends, so `unique` means:
 | Profile | A unique authored index refuses |
 |---|---|
 | `nontemporal` | two rows sharing every component |
-| `transaction-time` | two current rows sharing every component, and two closed milestones sharing every component and their Transaction-Time end: because each milestone's Transaction-Time start is its writing instant, no two objects share the value at one Transaction-Time instant |
+| `transaction-time` | two current rows sharing every component, and two closed milestones sharing every component and their Transaction-Time end: uniqueness per current row and milestone end |
 | `bitemporal` | two milestones sharing every component and both axis ends: uniqueness per milestone end |
 
-Bitemporal uniqueness is not an overlap guarantee. Two distinct objects may
-share the value over overlapping Valid Time whose ends differ, so a unique
-authored index does not prove at most one row at a finite Valid-Time instant.
+Neither temporal profile's uniqueness is an overlap guarantee. Two distinct
+Bitemporal objects may share the value over overlapping Valid Time whose ends
+differ. On either temporal profile, an attempt whose Transaction Instant was
+captured before another transaction closed a row holding the value
+(`m-unit-work` *The Transaction Instant*) opens its own row at that earlier
+instant, inside the closed row's Transaction-Time range. A unique authored index
+therefore does not prove at most one row at a finite instant on either axis.
 Ordinary unique-index semantics are otherwise unchanged; in particular, a null
 component never equals another.
 
