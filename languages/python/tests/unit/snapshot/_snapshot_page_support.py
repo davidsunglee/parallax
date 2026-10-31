@@ -66,7 +66,7 @@ from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.snapshot._handle._read import typed_publication, wire_publication
-from tests._support.model_capabilities import graph_construction_for
+from tests._support.model_capabilities import graph_construction_for, wire_facts_for
 from tests.unit._prepared_read_support import compiled_read, result_row, uncarried
 from tests.unit._root_publication_support import RootObservation, observed_roots
 
@@ -463,7 +463,10 @@ class PageFixture:
         """:meth:`materialize`'s roots as the publication hands them over."""
         page = self.page(*roots, pin=pin)
         publication = typed_publication(
-            self._cataloged, graph_construction_for(self._domain), "fixture"
+            self._cataloged,
+            graph_construction_for(self._domain),
+            wire_facts_for(self._cataloged),
+            "fixture",
         )
         queried = self._model.entities[0].identity
         includes = build_include_tree(queried=queried, root=(queried,), positions=())
@@ -532,7 +535,7 @@ class PageFixture:
         if includes is None:
             queried = self._model.entities[0].identity
             includes = build_include_tree(queried=queried, root=(queried,), positions=())
-        publication = wire_publication(self._cataloged, "fixture")
+        publication = wire_publication(self._cataloged, wire_facts_for(self._cataloged), "fixture")
         try:
             yield from publication.roots_of(
                 page, includes, atomic=atomic, origins=cast("Mapping[int, Any]", origins)

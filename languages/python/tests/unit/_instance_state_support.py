@@ -117,8 +117,9 @@ from parallax.core.metamodel import (
     Multiplicity,
     OccurrenceMetadata,
 )
+from parallax.core.wire._facts import WireModelFacts
 from parallax.snapshot._inspection import NodeProvenance, RootConformance, SnapshotNodeState
-from tests._support.model_capabilities import graph_construction_for
+from tests._support.model_capabilities import graph_construction_for, wire_facts_for
 
 __all__ = [
     "ARMS",
@@ -396,6 +397,12 @@ class Scenario:
         """The Entity Graph Construction preparation composes for this scenario's
         model, derived on first reach."""
         return graph_construction_for(self.model)
+
+    @cached_property
+    def wire(self) -> WireModelFacts:
+        """The Wire facts preparation derives for this scenario's model, derived
+        on first reach."""
+        return wire_facts_for(self.construction.cataloged)
 
     @cached_property
     def layout(self) -> EntityLayout:

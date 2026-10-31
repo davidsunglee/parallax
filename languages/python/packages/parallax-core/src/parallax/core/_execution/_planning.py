@@ -11,14 +11,28 @@ from parallax.core._execution._unit_work.preparation import WritePreparation
 from parallax.core._execution._unit_work.strategy import NO_AUDIT
 from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.entity import DomainModel, EntityGraphConstruction
-from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import class_index, model_of
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import (
+    EntityIdentity,
+    EntityMetadata,
+    MemberShape,
+    Metamodel,
+    Multiplicity,
+    ScalarDefinition,
+)
 from parallax.core.read_delivery._page import ABSENT
+from parallax.core.wire._facts import (
+    OCCURRENCE,
+    WireEntityFacts,
+    WireModelFacts,
+    WireOccurrenceFacts,
+    scalar_encoding,
+)
 from parallax.core.write_payload import LayoutPayloadPreparer
 from parallax.core.write_plan.managed_row import ManagedRow
 
-__all__ = ["build_write_planner", "build_write_preparation", "prepare_model"]
+__all__ = ["build_write_planner", "build_write_preparation", "prepare_model", "wire_model_facts"]
 
 
 def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
@@ -43,10 +57,80 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         catalog=catalog,
         classes=classes,
         construction=construction,
+        wire=wire_model_facts(catalog),
         preparation=build_write_preparation(catalog.meta, positional=positional),
         planner=build_write_planner(catalog.meta),
         evidence_policy_for=opt_lock.view(catalog.meta).required_key,
     )
+
+
+def wire_model_facts(catalog: CatalogedModel) -> WireModelFacts:
+    """How every Entity ``catalog`` lays out renders as Wire, class-backed or
+    not: the facts each Wire reader of the prepared model renders through.
+
+    A Value Object shape several occurrences share is prepared once."""
+    shared: dict[tuple[int, bool], WireOccurrenceFacts] = {}
+    return WireModelFacts(
+        {
+            entity.identity: _wire_entity_facts(catalog.layouts.entity(entity.identity), shared)
+            for entity in catalog.meta.entities
+        }
+    )
+
+
+def _wire_entity_facts(
+    layout: EntityLayout, shared: dict[tuple[int, bool], WireOccurrenceFacts]
+) -> WireEntityFacts:
+    attributes = layout.attributes
+    return WireEntityFacts(
+        attribute_keys=tuple(attribute.identity.name for attribute in attributes),
+        attribute_encodings=tuple(
+            scalar_encoding(attribute.type, many=attribute.multiplicity is Multiplicity.MANY)
+            for attribute in attributes
+        ),
+        attribute_types=tuple(attribute.type for attribute in attributes),
+        family_variant=layout.family_variant,
+        occurrences=tuple(
+            (
+                occurrence.identity.path[-1],
+                _wire_occurrence_facts(
+                    occurrence.document_shape,
+                    occurrence.multiplicity is Multiplicity.MANY,
+                    shared,
+                ),
+            )
+            for occurrence in layout.occurrences
+        ),
+    )
+
+
+def _wire_occurrence_facts(
+    shape: MemberShape, many: bool, shared: dict[tuple[int, bool], WireOccurrenceFacts]
+) -> WireOccurrenceFacts:
+    held = shared.get((id(shape), many))
+    if held is not None:
+        return held
+    members = shape.members
+    facts = WireOccurrenceFacts(
+        many=many,
+        keys=tuple(member.name for member in members),
+        encodings=tuple(
+            scalar_encoding(member.type, many=member.multiplicity is Multiplicity.MANY)
+            if isinstance(member, ScalarDefinition)
+            else OCCURRENCE
+            for member in members
+        ),
+        details=tuple(
+            member.type
+            if isinstance(member, ScalarDefinition)
+            else _wire_occurrence_facts(
+                member.shape, member.multiplicity is Multiplicity.MANY, shared
+            )
+            for member in members
+        ),
+    )
+    shared[id(shape), many] = facts
+    return facts
 
 
 def _proven_classes(

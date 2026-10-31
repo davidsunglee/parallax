@@ -362,17 +362,19 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     held = cast("Any", result)
     construction = held._construction
     includes = held._includes
+    wire = held._wire
     root.close()
     del root, scope
     gc.collect()
     gc.collect()
 
-    assert construction is not None and includes is not None
+    assert construction is not None and includes is not None and wire is not None
     direct = gc.get_referents(result)
     assert any(value is construction for value in direct)
     assert any(value is includes for value in direct)
+    assert any(value is wire for value in direct)
 
-    reached = reachable_objects(result, boundaries=(construction, includes))
+    reached = reachable_objects(result, boundaries=(construction, includes, wire))
     kinds: tuple[tuple[type, str], ...] = (
         (Snapshot, "snapshot"),
         (Entity, "entity"),
@@ -399,6 +401,8 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
             return "construction"
         if value is includes:
             return "includes"
+        if value is wire:
+            return "wire-facts"
         if value is UNLOADED:
             return "unloaded"
         for kind, name in kinds:
@@ -418,6 +422,7 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
         "snapshot": 1,
         "construction": 1,
         "includes": 1,
+        "wire-facts": 1,
         "entity": 97,
         "node-state": 35,
         "provenance": 4,

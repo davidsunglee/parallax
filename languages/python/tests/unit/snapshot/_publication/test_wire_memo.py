@@ -11,8 +11,8 @@ import pytest
 from parallax.snapshot import WireEntity
 from parallax.snapshot._publication import _wire_memo
 from parallax.snapshot._publication._wire_memo import (
-    IndexMemo,
-    StrongIdentityMemo,
+    InstanceIdentityMemo,
+    NodeIndexMemo,
     WeakIdentityMemo,
 )
 
@@ -39,7 +39,7 @@ def test_strong_memo_keys_actual_identity_not_equality() -> None:
     first: list[object] = []
     equal_but_distinct: list[object] = []
     output = cast("WireEntity", {"id": 1})
-    memo = StrongIdentityMemo[list[object]]()
+    memo = InstanceIdentityMemo[list[object]]()
 
     memo.put(first, -1, output)
 
@@ -51,7 +51,7 @@ def test_strong_memo_separates_render_tokens_and_releases_owners() -> None:
     node = object()
     leaf = cast("WireEntity", {"id": 1})
     continued = cast("WireEntity", {"id": 1, "children": []})
-    memo = StrongIdentityMemo[object]()
+    memo = InstanceIdentityMemo[object]()
 
     memo.put(node, -1, leaf)
     memo.put(node, 3, continued)
@@ -64,7 +64,7 @@ def test_strong_memo_separates_render_tokens_and_releases_owners() -> None:
 
 def test_index_memo_releases_completed_outputs() -> None:
     output = cast("WireEntity", {"id": 1})
-    memo = IndexMemo()
+    memo = NodeIndexMemo()
     memo.put(3, -1, output)
 
     memo.clear()

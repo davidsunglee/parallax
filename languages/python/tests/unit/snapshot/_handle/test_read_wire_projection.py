@@ -63,6 +63,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication import _wire as wire_materialize
+from parallax.snapshot._publication import _wire_render
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support.db_port import Read, ScriptedAdapter
 
@@ -262,7 +263,7 @@ def test_projection_does_not_serialize_or_reclassify(
     monkeypatch.setattr(vo.Customer, "model_dump", forbidden)
     monkeypatch.setattr(deep_fetch_module, "plan", forbidden)
     monkeypatch.setattr(read_query_module, "resolve_read_query", forbidden)
-    monkeypatch.setattr(wire_materialize, "classify_root", forbidden)
+    monkeypatch.setattr(_wire_render, "classify_root", forbidden)
 
     assert typed.wire().result()["name"] == "Ada"
     assert named_state_reads > 0
@@ -640,11 +641,11 @@ def test_failed_projection_releases_successful_inputs(
     root, db = _database(Read(rows=[_customer_row(), second]))
     snapshot = db.find(vo.Customer.where(vo.Customer.all))
     first_ref = weakref.ref(snapshot.results()[0])
-    original = wire_materialize.WireWalk[object].position
+    original = _wire_render.WireRenderer[object].render_at
     calls = 0
 
     def fail_second(
-        walk: wire_materialize.WireWalk[object],
+        renderer: _wire_render.WireRenderer[object],
         node: object,
         position: int,
     ) -> WireEntity:
@@ -652,9 +653,9 @@ def test_failed_projection_releases_successful_inputs(
         calls += 1
         if calls == 2:
             raise RuntimeError("second projection failed")
-        return original(walk, node, position)
+        return original(renderer, node, position)
 
-    monkeypatch.setattr(wire_materialize.WireWalk, "position", fail_second)
+    monkeypatch.setattr(_wire_render.WireRenderer, "render_at", fail_second)
     with pytest.raises(RuntimeError, match="second projection failed") as failure:
         snapshot.wire()
 

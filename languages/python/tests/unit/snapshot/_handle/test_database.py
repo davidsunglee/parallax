@@ -17,6 +17,7 @@ from typing import Final
 import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
+from parallax.core._execution import _planning as planning_module
 from parallax.core._execution._unit_work import preparation as preparation_module
 from parallax.core.entity import DomainModel
 from parallax.core.entity import _graph_construction as graph_construction_module
@@ -53,6 +54,7 @@ def _refuse_every_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(layout_module.LayoutCatalog, "_build", refuse)
     monkeypatch.setattr(preparation_module, "_entity_preparation", refuse)
     monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse)
+    monkeypatch.setattr(planning_module, "_wire_entity_facts", refuse)
 
 
 def test_nothing_fallible_remains_after_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -66,6 +68,18 @@ def test_nothing_fallible_remains_after_preparation(monkeypatch: pytest.MonkeyPa
         tx.insert(new_account())
 
     db.transact(insert)
+
+
+def test_a_wire_read_and_a_typed_projection_derive_nothing_after_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]), Read(rows=[NEW_ROW]))
+    db = own_root(connect(port, _ACCOUNT, clock=FixedClock(FIXED))).using_database_login()
+    _refuse_every_derivation(monkeypatch)
+    query = mm.Account.where(mm.Account.id == 7)
+
+    assert db.wire.find(query).result()["owner"] == "Newton"
+    assert db.find(query).wire().result()["owner"] == "Newton"
 
 
 def test_a_descriptor_backed_connection_still_refuses_a_typed_read_before_io() -> None:

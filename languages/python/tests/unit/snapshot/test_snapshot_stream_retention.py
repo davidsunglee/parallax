@@ -99,7 +99,7 @@ from parallax.core.read_delivery._page import Page, PageRows
 from parallax.snapshot import Database, ScopedDatabase, SnapshotStream, TxnContext
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._typed import TypedRootPublisher
-from parallax.snapshot._publication._wire import WireRootPublisher
+from parallax.snapshot._publication._wire_render import WireRootPublisher
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests.unit.memory_instruments import (
     Seam,

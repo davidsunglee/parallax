@@ -624,18 +624,18 @@ def test_typed_projection_is_available_only_while_paused_at_a_delivered_root() -
         stream.wire(order)
 
 
-def test_projection_reuses_one_entity_reader_per_page(
+def test_projection_reuses_one_instance_reader_per_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     readers: list[object] = []
-    entity_reader = cast("Any", stream_module).EntityReader
+    instance_reader = cast("Any", stream_module).InstanceReader
 
     def recording_reader(*args: Any, **kwargs: Any) -> Any:
-        reader = entity_reader(*args, **kwargs)
+        reader = instance_reader(*args, **kwargs)
         readers.append(reader)
         return reader
 
-    monkeypatch.setattr(stream_module, "EntityReader", recording_reader)
+    monkeypatch.setattr(stream_module, "InstanceReader", recording_reader)
     port = ScriptedAdapter(Read(rows=[_order_row(1), _order_row(2)]))
     with _orders(port).stream(_all_orders(), batch_size=2) as stream:
         roots = iter(stream)
@@ -670,7 +670,7 @@ def test_projection_refusals_commit_no_page_working_state() -> None:
 
         projection = cast("Any", stream)._projection_state
         assert projection._reader is None
-        assert projection._walk is None
+        assert projection._renderer is None
         assert projection._encoder is None
         assert stream.wire(order)["id"] == 1
         assert projection._reader is not None
@@ -746,7 +746,7 @@ def test_unused_typed_delivery_constructs_no_projection_working_state(
         del args, kwargs
         raise AssertionError("unused Typed delivery constructed projection state")
 
-    monkeypatch.setattr(wire_materialize, "EntityReader", forbidden)
+    monkeypatch.setattr(wire_materialize, "InstanceReader", forbidden)
     monkeypatch.setattr(wire_materialize, "shared_wire_encoder", forbidden)
     monkeypatch.setattr(stream_module, "WeakIdentityMemo", forbidden)
 

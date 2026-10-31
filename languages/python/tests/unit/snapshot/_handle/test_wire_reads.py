@@ -85,7 +85,6 @@ from parallax.snapshot._publication import (
 )
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._wire import (
-    WireRootPublisher,
     _SharedWireEncoder,  # pyright: ignore[reportPrivateUsage] - the cache lifetime is under test
     _wire_scalar,  # pyright: ignore[reportPrivateUsage] - the scalar branch is under test
     read_evidence_of,
@@ -93,6 +92,7 @@ from parallax.snapshot._publication._wire import (
     stored_entity_of,
     wire_pin_of,
 )
+from parallax.snapshot._publication._wire_render import WireRootPublisher
 from tests._support.db_port import (
     ConnectsAsItself,
     RefusingAdapter,
@@ -102,6 +102,7 @@ from tests._support.db_port import (
     body_outcome,
 )
 from tests._support.document_reads import fold_mapping_rows
+from tests._support.model_capabilities import wire_facts_for
 from tests._support.root_ownership import own_root
 from tests._support.sql import compile_read
 from tests.unit._metamodel_support import Declaration, key, source
@@ -131,7 +132,10 @@ def _root_includes(identity: EntityIdentity) -> IncludeTree:
 
 def _published_directly(page: Page, model: Metamodel, includes: IncludeTree) -> tuple[object, ...]:
     """``page``'s roots published straight through the Wire root publisher."""
-    return tuple(publish_roots(page, WireRootPublisher(model, CONCURRENCY, includes), model))
+    publisher = WireRootPublisher(
+        model, wire_facts_for(CatalogedModel(model)), CONCURRENCY, includes
+    )
+    return tuple(publish_roots(page, publisher, model))
 
 
 CUSTOMER_META = model_of(CUSTOMER)
@@ -311,7 +315,8 @@ def test_an_eager_wire_publication_releases_its_encoder(
 
 
 def test_a_released_wire_publication_is_idempotent_and_cannot_publish() -> None:
-    publication = wire_publication(CatalogedModel(CUSTOMER_META), "edition")
+    cataloged = CatalogedModel(CUSTOMER_META)
+    publication = wire_publication(cataloged, wire_facts_for(cataloged), "edition")
     publication.release()
     publication.release()
     empty = PageBuilder(ViewSchema.of()).finish((), Pin())
@@ -516,7 +521,7 @@ def _absent_free(value: object) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# The include tree, not the identity graph, bounds the walk.                   #
+# The include tree, not the identity graph, bounds the rendering.              #
 # --------------------------------------------------------------------------- #
 
 
@@ -576,7 +581,7 @@ def test_a_back_reference_unwinds_finitely_instead_of_stubbing() -> None:
     root = _entity(snapshot.result())
     items = _sequence(root["items"])
     back = _mapping(_mapping(items[0])["order"])
-    # The whole Order renders — not a primary-key stub — and the walk stops
+    # The whole Order renders — not a primary-key stub — and rendering stops
     # because the include tree has no child under `items.order`, not because a
     # cycle detector fired.
     assert back["name"] == "Ada"

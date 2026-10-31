@@ -216,7 +216,9 @@ def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() ->
 ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.core._execution._transaction._attempt", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core._execution._page_origins", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.core._execution._planning", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.core._execution._planning", "_layout"): frozenset(
+        {"CatalogedModel", "EntityLayout"}
+    ),
     ("parallax.core._execution._planning", "_model"): frozenset({"class_index", "model_of"}),
     ("parallax.core._execution._publication", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core._execution._publication", "_model"): frozenset({"ClassIndex"}),
@@ -260,9 +262,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ),
     ("parallax.snapshot._handle._typed_writes", "_declaration"): frozenset({"declaration_of"}),
     ("parallax.snapshot._publication._root", "_layout"): frozenset({"EntityLayout"}),
-    ("parallax.snapshot._publication._wire", "_layout"): frozenset(
-        {"CatalogedModel", "EntityLayout"}
-    ),
+    ("parallax.snapshot._publication._wire", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot._publication._wire", "_declaration"): frozenset({"wire_names_of"}),
     ("parallax.snapshot._publication._wire", "_entity"): frozenset(
         {"CHANGE_RECORD_SLOT", "ChangeRecord"}

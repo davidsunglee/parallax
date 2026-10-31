@@ -1,21 +1,22 @@
 """What the memoizing `IncludeTree` a result retains keeps reachable.
 
 ADR 0012 and the *Projection capability and retained shape* rule bound what a
-Typed result holds by the includes clause and the model. The tree answers the
-Wire walk's per-node questions from a memo it fills as the walk asks them, which
-is inside that bound only while its key domain is closed over the plan's
-positions and the model's concretes. A walk of ten times the roots asks the same
-questions of the same tree many more times; if any answer were keyed by anything
-a root carries, the tree would be larger after the larger walk.
+Typed result holds by the includes clause and the model. The tree keeps the Wire
+renderer's plans and the continuation answers they are built from in a memo it
+fills on first use, which is inside that bound only while its key domain is
+closed over the plan's positions and the model's concretes. Rendering ten times
+the roots reaches the same plans of the same tree many more times; if any answer
+were keyed by anything a root carries, the tree would be larger after the larger
+rendering.
 
 The proof is a closure rather than a survivor sample or a byte delta, because
 the claim is about one structure's own total state. It reads that structure off
 the result through the private field the retention proofs read, since only a
 Typed result retains a tree at all, and fills the memo through `wire()`, which
-runs the same walk over the same three methods as direct publication. Root count
-comes from the port: the read-plan key carries a non-paged query's limit, so two
-handles compile their own tree from one identical query and the two closures can
-differ only by what their walks filled.
+renders through the same plans as direct publication. Root count comes from the
+port: the read-plan key carries a non-paged query's limit, so two handles compile
+their own tree from one identical query and the two closures can differ only by
+what their renderings filled.
 """
 
 from __future__ import annotations
