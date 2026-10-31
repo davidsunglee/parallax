@@ -296,20 +296,26 @@ class DecoderRows:
         self._count = 0
 
 
+type RecordedState = EntityState | tuple[object, ...]
+"""A judgment recording made: its Entity State, or the member row alone where
+the judgment found nothing — a row with no findings is its own state, so the
+Page holds no second object for it."""
+
+
 class JudgedStates:
     """Dense logical-row-indexed judged Entity States: one for a logical row of
     one fetched row, and one per distinct stored values for a logical row of
     several.
 
-    A logical row recorded already judged holds its state from the moment it
-    was recorded; any other gains one when it is first judged."""
+    A logical row recorded already judged holds its :data:`RecordedState` from
+    the moment it was recorded; any other gains one when it is first judged."""
 
     __slots__ = ("_fetched_rows_by_logical_row", "_groups")
 
     def __init__(
         self,
         fetched_rows_by_logical_row: Sequence[int | tuple[int, ...]],
-        states: list[EntityState | list[tuple[int, EntityState]] | None],
+        states: list[RecordedState | list[tuple[int, EntityState]] | None],
     ) -> None:
         self._fetched_rows_by_logical_row = (
             fetched_rows_by_logical_row
@@ -319,14 +325,16 @@ class JudgedStates:
         self._groups = states
 
     @property
-    def by_logical_row(self) -> Sequence[EntityState | list[tuple[int, EntityState]] | None]:
+    def by_logical_row(self) -> Sequence[RecordedState | list[tuple[int, EntityState]] | None]:
         """Each logical row's held judgment, read in place: an
-        :class:`EntityState` exactly where a logical row of one fetched row
-        holds one."""
+        :class:`EntityState` or a bare member row exactly where a logical row
+        of one fetched row holds one."""
         return self._groups
 
     def singleton(self, logical: int) -> EntityState | None:
         group = self._groups[logical]
+        if type(group) is tuple:
+            return EntityState(group, ())
         return group if isinstance(group, EntityState) else None
 
     def set_singleton(self, logical: int, state: EntityState) -> None:
@@ -337,7 +345,7 @@ class JudgedStates:
         if group is None:
             group = []
             self._groups[logical] = group
-        if isinstance(group, EntityState):  # pragma: no cover - logical row shape is fixed
+        if not isinstance(group, list):  # pragma: no cover - logical row shape is fixed
             raise ValueError("a singleton judged state has no group of distinct stored values")
         return group
 
@@ -507,6 +515,8 @@ def entity_state(rows: PageRows, fetched_row: int) -> EntityState:
         recorded = rows.judged_states.by_logical_row[rows.logical_rows[fetched_row]]
         if type(recorded) is EntityState:
             return recorded
+        if type(recorded) is tuple:
+            return EntityState(recorded, ())
         return _judge_entity_state(rows, fetched_row)
     held = shared_entity_state(rows, fetched_row)
     if held is not None:
@@ -842,7 +852,7 @@ class PageBuilder:
         self._overwritten_edges: dict[int, list[object]] = {}
         self._identity: dict[EntityIdentity, dict[object, int | tuple[int, ...]]] = {}
         self._fetched_rows_by_logical_row: list[int | list[int]] = []
-        self._states: list[EntityState | list[tuple[int, EntityState]] | None] = []
+        self._states: list[RecordedState | list[tuple[int, EntityState]] | None] = []
         self._decoders: dict[int, PayloadDecoder | None] = {}
         self._classifiable: dict[int, int] = {}
         self._correlation_findings: dict[int, tuple[StoredDataIssueInput, ...]] = {}
@@ -860,7 +870,7 @@ class PageBuilder:
         stored_values: object,
         member_row: tuple[object, ...],
         identity_issues: tuple[StoredDataIssueInput, ...],
-        judgment: PayloadDecoder | EntityState | None,
+        judgment: PayloadDecoder | RecordedState | None,
     ) -> int:
         """Append one fetched row and answer its index.
 
@@ -874,7 +884,7 @@ class PageBuilder:
         ``judgment`` is how the payload is judged: ``None`` where ``member_row``
         already is it, the decoder that judges it later from ``stored_values``,
         ``member_row`` and any :meth:`add_payload_inputs`, or the
-        :class:`EntityState` recording already judged, held by the new logical
+        :data:`RecordedState` recording already judged, held by the new logical
         row it alone can be. Raises :class:`ValueError` for a judged fetched row
         of a level that may repeat rows, whose comparison must precede its
         judgment.
@@ -905,7 +915,7 @@ class PageBuilder:
         else:
             logical = self._new_logical_row(fetched_row)
         if judgment is not None:
-            if type(judgment) is EntityState:
+            if type(judgment) is EntityState or type(judgment) is tuple:
                 if repeats:
                     raise ValueError(
                         "a fetched row of a level that may repeat rows is compared before "
