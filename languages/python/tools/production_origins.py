@@ -14,11 +14,14 @@ compiled extensions, every module is a ``.py`` source its source loader read;
 inside it, a module is that or an extension built for this interpreter's ABI.
 
 :func:`require_source_origins` reads only ``sys.modules``, so a measurement
-process asserts it before its first window and after its last without loading
-anything its reading would not. :func:`resolved_origins` resolves the
-read-construction inventory, importing those modules' parent packages, and is
-therefore for the unmeasured identity probe alone; :func:`loaded_origins`
-answers the same record without importing anything.
+process asserts it before its first window without loading anything its reading
+would not. After its last window it records :func:`loaded_origins`, which
+refuses the same way and names which read-construction modules it ran; a child
+reports that record under :data:`ORIGINS_FIELD`, and the member launching it
+merges its children's records with :func:`merged_origins` into the record a
+runtime's identity carries. :func:`resolved_origins` resolves that inventory
+instead, importing those modules' parent packages, and is therefore for the
+unmeasured identity probe alone.
 
 Never imported by production code.
 """
@@ -29,13 +32,14 @@ import importlib.machinery
 import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 ROOT_PACKAGE: Final = "parallax"
 COMPILED_PACKAGE: Final = "parallax.postgres"
 COMPILED_DISTRIBUTION: Final = "parallax-postgres"
 NOT_LOADED: Final = "not-loaded"
+ORIGINS_FIELD: Final = "productionOrigins"
 
 MEASURED_MODULES: Final = (
     "parallax.core.read_delivery._row_recording",
@@ -110,15 +114,18 @@ def origin_findings(
     return findings
 
 
+def _refusal(findings: list[str]) -> RuntimeError:
+    return RuntimeError(
+        "this process did not load the checkout's production sources:\n- " + "\n- ".join(findings)
+    )
+
+
 def require_source_origins() -> None:
     """Refuse a process any of whose loaded ``parallax`` modules is not this
     checkout's production code, naming every one."""
     findings = origin_findings()
     if findings:
-        raise RuntimeError(
-            "this process did not load the checkout's production sources:\n- "
-            + "\n- ".join(findings)
-        )
+        raise _refusal(findings)
 
 
 def _relative(origin: str, workspace: Path) -> str:
@@ -134,12 +141,41 @@ def loaded_origins(
     loaded = dict(sys.modules if modules is None else modules)
     findings = origin_findings(loaded, workspace)
     if findings:
-        raise RuntimeError("; ".join(findings))
+        raise _refusal(findings)
     record: dict[str, str] = {}
     for name in MEASURED_MODULES:
         origin = getattr(getattr(loaded.get(name), "__spec__", None), "origin", None)
         record[name] = NOT_LOADED if origin is None else _relative(str(origin), workspace)
     return record
+
+
+def reported_origins(value: object) -> dict[str, str]:
+    """The record :func:`loaded_origins` answered, as a child reported it;
+    ``ValueError`` unless it names each of :data:`MEASURED_MODULES` once."""
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{ORIGINS_FIELD} {value!r} is not an object")
+    record = cast("Mapping[object, object]", value)
+    if set(record) != set(MEASURED_MODULES) or not all(
+        isinstance(origin, str) and origin for origin in record.values()
+    ):
+        raise ValueError(f"{ORIGINS_FIELD} {dict(record)!r} does not record each measured module")
+    return {name: cast("str", record[name]) for name in MEASURED_MODULES}
+
+
+def merged_origins(records: Iterable[Mapping[str, str]]) -> dict[str, str]:
+    """Each of :data:`MEASURED_MODULES` by the origin every record that loaded
+    it names, or :data:`NOT_LOADED` where none did; ``ValueError`` where two
+    records name different origins."""
+    merged: dict[str, str] = dict.fromkeys(MEASURED_MODULES, NOT_LOADED)
+    for record in records:
+        for name in MEASURED_MODULES:
+            origin = record.get(name, NOT_LOADED)
+            if origin == NOT_LOADED:
+                continue
+            if merged[name] not in (NOT_LOADED, origin):
+                raise ValueError(f"{name} was loaded from both {merged[name]} and {origin}")
+            merged[name] = origin
+    return merged
 
 
 def resolved_origins(workspace: Path = WORKSPACE) -> dict[str, str]:

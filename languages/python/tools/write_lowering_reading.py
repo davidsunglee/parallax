@@ -76,7 +76,7 @@ from parallax.core.document_codec._document import (
 from parallax.core.entity import DomainModel
 from parallax.core.execution import prepare_model
 from parallax.snapshot import ScopedDatabase
-from production_origins import require_source_origins
+from production_origins import ORIGINS_FIELD, loaded_origins, require_source_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
@@ -675,8 +675,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         reading = measure(args.case, warmups=args.warmups, measured=args.measured)
     except ValueError as error:
         parser.error(str(error))
-    require_source_origins()
-    print(json.dumps(reading, sort_keys=True))
+    print(json.dumps(reading | {ORIGINS_FIELD: loaded_origins()}, sort_keys=True))
     return 0
 
 

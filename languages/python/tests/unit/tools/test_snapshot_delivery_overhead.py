@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
@@ -19,6 +20,7 @@ from parallax.conformance.cost_envelope import validate as validate_envelope
 from parallax.conformance.provision import Provisioner
 from parallax.core.db_port import Password
 from parallax.core.metamodel import Metamodel
+from production_origins import ORIGINS_FIELD
 from snapshot_delivery_overhead import (
     CONTROL_GROUP,
     GEOMETRY_GROUP,
@@ -50,7 +52,7 @@ from snapshot_delivery_overhead import (
     workload_selection,
 )
 from tests.unit import _delivery_control_support as control_support
-from tests.unit.tools._provenance_support import pin_dirty_tree
+from tests.unit.tools._provenance_support import CHILD_ORIGINS, pin_dirty_tree
 
 
 def test_child_command_carries_the_contract_sampling_counts_and_its_runtime() -> None:
@@ -551,6 +553,27 @@ def test_an_unwritable_sidecar_changes_neither_the_envelope_nor_the_exit_status(
     ]
 
 
+@pytest.mark.parametrize(
+    ("origins", "decodes"), [(CHILD_ORIGINS, True), (None, False), ({}, False)]
+)
+def test_a_child_reading_carries_the_origin_record_it_reported(
+    monkeypatch: pytest.MonkeyPatch, origins: Mapping[str, str] | None, decodes: bool
+) -> None:
+    line: dict[str, object] = {"value": 1.0, "unit": "KiB", "samples": [1.0]}
+    if origins is not None:
+        line[ORIGINS_FIELD] = origins
+
+    def completed(command: Sequence[str], **_options: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, json.dumps(line), "")
+
+    monkeypatch.setattr(report.subprocess, "run", completed)
+    result = report.run_child(ChildRequest("read-depth-4", "document.peakKiB", 1, 0, 1))
+    if decodes:
+        assert result == ChildReading(1.0, "KiB", (1.0,), CHILD_ORIGINS)
+    else:
+        assert isinstance(result, Diagnostic) and result.code == "cell-child-invalid"
+
+
 def test_the_entrypoint_measures_a_slice_with_identities_probed_before_any_reading(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -566,7 +589,7 @@ def test_the_entrypoint_measures_a_slice_with_identities_probed_before_any_readi
     def child(request: ChildRequest) -> ChildReading:
         events.append("child")
         samples = () if is_memory_cell(request.cell) else (1.0,) * request.measured
-        return ChildReading(1.0, unit(request.cell), samples)
+        return ChildReading(1.0, unit(request.cell), samples, CHILD_ORIGINS)
 
     monkeypatch.setattr(report, "run_probe", probe)
     monkeypatch.setattr(report, "run_child", child)
@@ -600,6 +623,7 @@ def test_the_entrypoint_measures_a_slice_with_identities_probed_before_any_readi
     assert set(statuses) == set(report.supported_minors())
     assert statuses[CURRENT_MINOR] == "available"
     assert recorded["runtimes"][CURRENT_MINOR]["version"] == "3.99.1"
+    assert recorded["runtimes"][CURRENT_MINOR][ORIGINS_FIELD] == CHILD_ORIGINS
     other = next(minor for minor in report.supported_minors() if minor != CURRENT_MINOR)
     assert recorded["runtimes"][other] == {
         "status": "unavailable",

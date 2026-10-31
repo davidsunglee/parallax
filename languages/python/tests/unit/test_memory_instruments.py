@@ -56,3 +56,19 @@ def test_a_child_serving_its_measurement_passes(tmp_path: Path) -> None:
 def test_a_child_that_serves_nothing_fails_its_test(tmp_path: Path) -> None:
     with pytest.raises(AssertionError, match="exited without serving it"):
         _boundary_probe(tmp_path, _BOUNDARY_PROBE)()
+
+
+_FOREIGN_PROBE = (
+    "import sys, types\n\n"
+    "from tests.unit.memory_instruments import in_a_child_interpreter, serve_one_measurement\n\n\n"
+    "@in_a_child_interpreter\n"
+    "def boundary_probe() -> None:\n"
+    "    stale = types.ModuleType('parallax.stale')\n"
+    "    stale.__spec__ = types.SimpleNamespace(origin='/elsewhere/stale.py', loader=None)\n"
+    "    sys.modules['parallax.stale'] = stale\n"
+)
+
+
+def test_a_child_that_measured_foreign_production_code_fails_its_test(tmp_path: Path) -> None:
+    with pytest.raises(AssertionError, match=r"parallax\.stale was loaded from /elsewhere"):
+        _boundary_probe(tmp_path, _FOREIGN_PROBE + _SERVER_ENTRY_POINT)()

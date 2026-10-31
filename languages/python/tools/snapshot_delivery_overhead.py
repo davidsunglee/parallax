@@ -53,6 +53,7 @@ from interpreter_matrix import (
     authority_minor,
     child_command,
     child_environment,
+    measured_identities,
     probe_runtime,
     run_probe,
     supported_minors,
@@ -78,6 +79,7 @@ from parallax.conformance.workloads import (
     scalar_type_runtimes,
     workload_digest,
 )
+from production_origins import ORIGINS_FIELD, reported_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "snapshot_delivery_reading.py"
@@ -174,6 +176,7 @@ class ChildReading:
     value: float
     unit: str
     samples: tuple[float, ...]
+    origins: Mapping[str, str] = field(default_factory=dict[str, str])
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,7 +342,8 @@ def run_child(request: ChildRequest) -> ChildResult:
     try:
         document = cast("Mapping[str, Any]", json.loads(lines[-1]))
         samples = tuple(_number(value) for value in cast("Sequence[object]", document["samples"]))
-        return ChildReading(_number(document["value"]), str(document["unit"]), samples)
+        origins = reported_origins(document[ORIGINS_FIELD])
+        return ChildReading(_number(document["value"]), str(document["unit"]), samples, origins)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         return Diagnostic("cell-child-invalid", f"{label} returned an invalid reading: {error}")
 
@@ -962,10 +966,18 @@ def _measured(
     authority_preflight: bool = False,
 ) -> CostReportEnvelope:
     spans = Spans()
+    reported: dict[str, list[Mapping[str, str]]] = {}
+
+    def reporting_child(request: ChildRequest) -> ChildResult:
+        result = run_child(request)
+        if isinstance(result, ChildReading):
+            reported.setdefault(request.runtime, []).append(result.origins)
+        return result
+
     try:
-        if metadata is not None:
-            identities = runtime_identities(supported_minors(), spans, run_probe)
-            write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, identities))
+        probed = (
+            {} if metadata is None else runtime_identities(supported_minors(), spans, run_probe)
+        )
         with spans.span("setup", "provisioner", member=SUBJECT):
             provisioner = Provisioner()
         try:
@@ -978,10 +990,16 @@ def _measured(
                         f"authority requires {expected!r}. Change the contract's authority "
                         "block first, or run --diagnostic."
                     )
-            return measure(contract, provisioner, run_child, spans=spans, selected=selected)
+            envelope = measure(
+                contract, provisioner, reporting_child, spans=spans, selected=selected
+            )
         finally:
             with spans.span("setup", "close", member=SUBJECT):
                 provisioner.close()
+        if metadata is not None:
+            measured = measured_identities(probed, reported)
+            write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, measured))
+        return envelope
     finally:
         if durations is not None:
             write_sidecar(durations, spans.write)

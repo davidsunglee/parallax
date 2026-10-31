@@ -140,6 +140,7 @@ from interpreter_matrix import (
     OWN_INTERPRETER_VARIABLE,
     ProbeRunner,
     RuntimeStatus,
+    measured_identities,
     probe_identity,
     run_probe,
     write_metadata,
@@ -154,6 +155,7 @@ from parallax.conformance.cost_envelope import (
 )
 from parallax.conformance.cost_envelope import Reading as EnvelopeReading
 from parallax.conformance.workloads import workload_digest
+from production_origins import ORIGINS_FIELD, reported_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 """The Python workspace root — where a child interpreter of another minor is
@@ -347,6 +349,9 @@ class Reading(NamedTuple):
     compact: MeasurementVariantReading
     projection: ProjectionReading | None = None
     """Typed-envelope projection for canonical scenarios; absent for ``warmed``."""
+    origins: tuple[tuple[str, str], ...] = ()
+    """What the child reported of :mod:`production_origins`' inventory once its
+    last window closed."""
 
     @property
     def reduction(self) -> float:
@@ -571,6 +576,7 @@ def _decoded(output: str) -> Cell:
                 if decoded.get("projection") is None
                 else ProjectionReading(**cast("dict[str, Any]", decoded["projection"]))
             ),
+            origins=tuple(reported_origins(decoded[ORIGINS_FIELD]).items()),
         )
     except (ValueError, KeyError, TypeError) as error:
         return f"the child's reading did not decode: {error}"
@@ -582,13 +588,16 @@ def payload(reading: Reading) -> str:
     The encoding half of the child protocol, spelled here beside its decoder so
     the two cannot drift, and imported by the script the child runs.
     """
+    fields = reading._asdict()
+    del fields["origins"]
     return json.dumps(
-        reading._asdict()
+        fields
         | {
             "ordinary": reading.ordinary._asdict(),
             "legacy": reading.legacy._asdict(),
             "compact": reading.compact._asdict(),
             "projection": (None if reading.projection is None else reading.projection._asdict()),
+            ORIGINS_FIELD: dict(reading.origins),
         }
     )
 
@@ -1412,12 +1421,21 @@ def timed_matrix(runtimes: Sequence[str], scenarios: Sequence[Scenario], spans: 
     return matrix
 
 
+def _reported_origins(matrix: Matrix) -> dict[str, list[Mapping[str, str]]]:
+    """What each child that answered a reading reported loading, by runtime."""
+    return {
+        runtime: [dict(cell.origins) for cell in cells.values() if isinstance(cell, Reading)]
+        for runtime, cells in matrix.items()
+    }
+
+
 def _measured(spans: Spans, metadata: Path | None) -> int:
     runtimes = supported_minors()
-    if metadata is not None:
-        identities = runtime_identities(runtimes, spans, run_probe)
-        write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, identities))
+    probed = {} if metadata is None else runtime_identities(runtimes, spans, run_probe)
     matrix = timed_matrix(runtimes, REPORTED, spans)
+    if metadata is not None:
+        measured = measured_identities(probed, _reported_origins(matrix))
+        write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, measured))
     absent = missing_cells(matrix, runtimes, REPORTED)
     if absent:
         print(

@@ -25,7 +25,7 @@ import math
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
 from statistics import median
@@ -39,6 +39,7 @@ from interpreter_matrix import (
     RuntimeStatus,
     child_command,
     child_environment,
+    measured_identities,
     probe_runtime,
     run_probe,
     supported_minors,
@@ -53,6 +54,7 @@ from parallax.conformance.cost_envelope import (
     validate,
 )
 from parallax.conformance.workloads import scalar_type_runtimes
+from production_origins import ORIGINS_FIELD, reported_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "write_lowering_reading.py"
@@ -309,6 +311,7 @@ class ChildReading:
     warmups: int
     measured: int
     retained_warmups: int
+    origins: Mapping[str, str] = field(default_factory=dict[str, str])
 
 
 type Cell = ChildReading | str
@@ -391,6 +394,7 @@ def _decoded(output: str, case: str) -> Cell:
             "warmups",
             "measured",
             "retainedWarmups",
+            ORIGINS_FIELD,
         }
         if set(document) != expected_fields:
             raise ValueError(
@@ -433,6 +437,7 @@ def _decoded(output: str, case: str) -> Cell:
             warmups=warmups,
             measured=measured,
             retained_warmups=_positive_integer(document["retainedWarmups"], "retainedWarmups"),
+            origins=reported_origins(document[ORIGINS_FIELD]),
         )
         if any(count < 0 for count in reading.calls.values()):
             raise ValueError("call counts must be non-negative")
@@ -729,12 +734,21 @@ def runtime_identities(
     return identities
 
 
+def _reported_origins(matrix: Matrix) -> dict[str, list[Mapping[str, str]]]:
+    """What each child that answered a reading reported loading, by runtime."""
+    return {
+        runtime: [cell.origins for cell in cells.values() if isinstance(cell, ChildReading)]
+        for runtime, cells in matrix.items()
+    }
+
+
 def _measured(spans: Spans, metadata: Path | None) -> int:
     runtimes = supported_minors()
-    if metadata is not None:
-        identities = runtime_identities(runtimes, spans, run_probe)
-        write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, identities))
+    probed = {} if metadata is None else runtime_identities(runtimes, spans, run_probe)
     matrix = timed_matrix(runtimes, CASE_NAMES, spans)
+    if metadata is not None:
+        measured = measured_identities(probed, _reported_origins(matrix))
+        write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, measured))
     absent = missing_cells(matrix, runtimes, CASE_NAMES)
     if absent:
         print(

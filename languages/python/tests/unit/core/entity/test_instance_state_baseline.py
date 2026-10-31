@@ -32,6 +32,7 @@ one of the things graded here.
 
 from __future__ import annotations
 
+import json
 import pathlib
 import tomllib
 from time import perf_counter
@@ -43,6 +44,7 @@ from pydantic import BaseModel
 import instance_state_overhead as report
 from parallax.core.entity import _row_fill as row_fill
 from parallax.core.entity import lifecycle_state_of
+from production_origins import ORIGINS_FIELD
 from tests.unit import _instance_state_support as support
 from tests.unit._instance_state_support import (
     COMPACT,
@@ -55,6 +57,7 @@ from tests.unit._instance_state_support import (
     Scenario,
     compact_common_work_ns,
 )
+from tests.unit.tools._provenance_support import CHILD_ORIGINS
 
 
 def test_the_canonical_mix_is_the_six_scenarios_the_measurement_contract_names() -> None:
@@ -610,10 +613,16 @@ def test_the_escalation_block_reaches_what_the_report_prints() -> None:
 def test_a_child_answers_one_scenario_as_a_line_the_matrix_decodes(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    line = report.payload(_reading("shallow"))
+    reading = _reading("shallow")._replace(origins=tuple(CHILD_ORIGINS.items()))
+    line = report.payload(reading)
     print(line)
     decoded = report._decoded(capsys.readouterr().out)  # pyright: ignore[reportPrivateUsage] - the child protocol
-    assert decoded == _reading("shallow")
+    assert decoded == reading
+    unreported = {name: value for name, value in json.loads(line).items() if name != ORIGINS_FIELD}
+    assert "did not decode" in cast(
+        "str",
+        report._decoded(json.dumps(unreported)),  # pyright: ignore[reportPrivateUsage] - the child protocol
+    )
 
 
 def test_a_child_that_answers_nothing_usable_is_a_reason_rather_than_a_crash() -> None:

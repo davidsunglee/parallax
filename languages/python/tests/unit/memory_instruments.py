@@ -64,9 +64,11 @@ rather than passing against a shared heap.
 
 The ``tests/unit`` cost suites read these, which is what puts them here beside
 them; ``tools/snapshot_delivery_reading.py`` reads them too, and names this
-directory to do it. Nothing here imports anything but the standard library, so
-the subject of a measurement stays the caller's to supply. Never imported by
-production code.
+directory to do it. Nothing here imports anything but the standard library
+before a reading, so the subject of a measurement stays the caller's to supply;
+only once a child's measurement has returned does it load
+``tools/production_origins.py`` to hold what the child ran to that module's rule.
+Never imported by production code.
 
 A name another module imports carries no leading underscore, because importing
 an underscored name across modules is a `reportPrivateUsage` error under pyright
@@ -564,7 +566,16 @@ def serve_one_measurement(name: str) -> None:
     wrapper, so the child takes the reading instead of starting a child of its
     own. What it served is recorded only once the measurement has returned, so
     the record is outside every window the measurement reads.
+
+    A child any of whose loaded ``parallax`` modules is not this checkout's own
+    source serves nothing. That is judged after the measurement, which leaves
+    every module it loaded in view and moves no reading it took.
     """
     _MEASUREMENTS[name]()
+    # Imported here rather than at module level, which would load it, and what it
+    # imports, into the child before its first reading.
+    from production_origins import require_source_origins
+
+    require_source_origins()
     with open(os.environ[_SERVED_RECORD_VARIABLE], "w") as record:
         record.write(name)

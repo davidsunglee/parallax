@@ -46,7 +46,7 @@ from parallax.snapshot import Snapshot
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._wire import shared_wire_encoder
 from parallax.snapshot._publication._wire_render import WireRootPublisher
-from production_origins import require_source_origins
+from production_origins import loaded_origins, require_source_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
@@ -390,8 +390,8 @@ def main(argv: list[str]) -> int:
     scenario = scenario_named(argv[0])
     require_source_origins()
     reading = measure(scenario)
-    require_source_origins()
-    print(payload(reading))
+    origins = loaded_origins()
+    print(payload(reading._replace(origins=tuple(origins.items()))))
     return 0
 
 

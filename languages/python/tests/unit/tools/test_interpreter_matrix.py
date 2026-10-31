@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import interpreter_matrix as matrix
-from production_origins import NOT_LOADED, resolved_origins
+from production_origins import MEASURED_MODULES, NOT_LOADED, resolved_origins
 
 
 def test_supported_minors_close_the_declared_floor_from_below() -> None:
@@ -95,6 +95,32 @@ def test_the_probe_answers_where_the_read_construction_modules_resolve() -> None
         refused = matrix.probe_runtime("9.99", "probe", run)
         assert isinstance(refused, matrix.RuntimeUnavailable)
         assert "productionOrigins" in refused.reason
+
+
+def test_a_measured_identity_records_what_its_children_loaded_rather_than_resolution() -> None:
+    row_recording, wire_render = (
+        "parallax.core.read_delivery._row_recording",
+        "parallax.snapshot._publication._wire_render",
+    )
+    probed = matrix.RuntimeIdentity("CPython", "9.99.1", "/p", ((row_recording, "packages/p.py"),))
+    absent = matrix.RuntimeUnavailable("absent")
+    identities = {"9.97": absent, "9.98": probed, "9.99": probed}
+    reported = {"9.99": [{row_recording: "packages/r.py"}, {wire_render: "packages/w.py"}]}
+    measured = matrix.measured_identities(identities, reported)
+    loaded = {row_recording: "packages/r.py", wire_render: "packages/w.py"}
+    assert measured == {
+        "9.97": absent,
+        "9.98": replace(probed, production_origins=()),
+        "9.99": replace(
+            probed,
+            production_origins=tuple(
+                sorted((dict.fromkeys(MEASURED_MODULES, NOT_LOADED) | loaded).items())
+            ),
+        ),
+    }
+    disagreeing = {"9.99": [{row_recording: "packages/r.py"}, {row_recording: "packages/s.py"}]}
+    with pytest.raises(ValueError, match=row_recording):
+        matrix.measured_identities(identities, disagreeing)
 
 
 def test_a_probe_resolving_foreign_production_code_answers_no_identity(tmp_path: Path) -> None:

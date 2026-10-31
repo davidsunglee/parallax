@@ -22,6 +22,7 @@ from parallax.core.document_codec import (
 )
 from parallax.core.metamodel import Multiplicity
 from parallax.core.write_payload import _storage as payload_storage
+from production_origins import ORIGINS_FIELD, reported_origins
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.memory_instruments import (
     OWN_INTERPRETER_VARIABLE,
@@ -217,7 +218,9 @@ def _assert_reading(name: str, *, units: int) -> None:
         "warmups",
         "measured",
         "retainedWarmups",
+        ORIGINS_FIELD,
     }
+    assert reported_origins(reading[ORIGINS_FIELD])
     assert reading["case"] == name
     assert reading["window"] == window
     assert reading["units"] == units

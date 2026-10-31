@@ -95,6 +95,7 @@ from pathlib import Path
 from typing import Any, Final, Literal, cast
 
 from interpreter_matrix import CURRENT_MINOR, HASH_SEED, child_command, child_environment
+from production_origins import require_source_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 REPOSITORY: Final = WORKSPACE.parents[1]
@@ -1058,7 +1059,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "read":
+            require_source_origins()
             document = reading_document(args.cell, warmups=args.warmups, measured=args.measured)
+            require_source_origins()
             print(json.dumps(document, sort_keys=True))
             return 0
         if args.command == "capture":
