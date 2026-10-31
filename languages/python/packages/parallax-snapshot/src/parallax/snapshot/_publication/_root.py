@@ -62,7 +62,7 @@ class SnapshotConsistencyError(RuntimeError):
 
 class RootView:
     """One result root's borrowed reach over a sealed Page: its nodes, their
-    Page-owned states, their carried relationship views, and their origins.
+    Page-owned states, their carried relationship views, and their Read Evidence.
 
     A publication pass forms one and re-points it at each root in turn, so it is
     valid only inside the ``publish_root`` call that received it: kept beyond
@@ -82,11 +82,11 @@ class RootView:
         "_has_issues",
         "_invalid_root",
         "_layouts",
-        "_origin_values",
-        "_origins",
         "_pin",
         "_proved_levels",
         "_reached",
+        "_read_evidence",
+        "_read_evidence_values",
         "_resolved",
         "_rows",
         "_states",
@@ -100,7 +100,7 @@ class RootView:
         rows: PageRows,
         schedule: PageSchedule,
         *,
-        origins: Mapping[int, ReadEvidence],
+        read_evidence: Mapping[int, ReadEvidence],
     ) -> None:
         self._rows = rows
         self._defers_states = schedule.defers_states
@@ -109,7 +109,7 @@ class RootView:
             not schema.may_repeat_rows(level) for level in range(schema.level_count)
         )
         self._every_level_proved = all(self._proved_levels)
-        self._origins = origins
+        self._read_evidence = read_evidence
         self._pin = rows.pin
         self._winner: list[int] = []
         self._resolved: dict[int, int] = {}
@@ -118,7 +118,7 @@ class RootView:
         self._view_layouts: list[RootViewLayout] = []
         self._view_rows: list[list[object] | tuple[()]] = []
         self._reached: list[int] = []
-        self._origin_values: Sequence[ReadEvidence | None] = ()
+        self._read_evidence_values: Sequence[ReadEvidence | None] = ()
         self._invalid_root: InvalidRootInput | None = None
         self._has_issues = False
 
@@ -209,10 +209,10 @@ class RootView:
         """
         return self._view_rows[node][slot]
 
-    def origin(self, node: int) -> ReadEvidence | None:
+    def read_evidence(self, node: int) -> ReadEvidence | None:
         """The Read Evidence ``node``'s canonical fetched row carries, captured
         only for a root publishing no finding."""
-        values = self._origin_values
+        values = self._read_evidence_values
         return values[node] if values else None
 
     def _resolve_root(self, position: int, pin: Pin) -> None:
@@ -221,7 +221,7 @@ class RootView:
         The stored values of every fetched row of one logical row the root
         reaches are compared before any of its deferred states is judged, so a
         fetched row conflict raises first, including one in a relationship value
-        its carried views discard. Origins are read while the Page rows are
+        its carried views discard. Read Evidence is read while the Page rows are
         still live, and only when the finalized segment publishes no finding.
         """
         rows = self._rows
@@ -233,7 +233,7 @@ class RootView:
         self._states.clear()
         self._view_layouts.clear()
         self._view_rows.clear()
-        self._origin_values = ()
+        self._read_evidence_values = ()
         self._invalid_root = None
         reached = self._reached
         if rows.keys[root] is None and any(
@@ -268,8 +268,8 @@ class RootView:
         else:
             self._has_issues = False
         if not self._has_issues:
-            origins = self._origins
-            self._origin_values = [origins.get(winner) for winner in self._winner]
+            evidence = self._read_evidence
+            self._read_evidence_values = [evidence.get(winner) for winner in self._winner]
 
     def _state(self, rows: PageRows, fetched_row: int) -> EntityState:
         """``fetched_row``'s Entity State: the one recording judged on a proved

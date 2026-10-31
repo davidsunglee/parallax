@@ -611,7 +611,7 @@ def test_typed_projection_is_available_only_while_paused_at_a_delivered_root() -
             "active": True,
             "orderedOn": "2024-01-05",
         }
-        assert read_evidence_of(projected) is state.read_evidence
+        assert read_evidence_of(projected) is state.provenance.read_evidence
         assert stream.wire(order) is projected
         assert len(port.calls) == calls
 
@@ -1094,6 +1094,31 @@ def test_a_later_page_seeks_past_the_last_root_of_the_page_before_it() -> None:
     assert second.binds[1:3] == (2, 2)
 
 
+@pytest.mark.parametrize("namespace", ["typed", "wire"])
+def test_shared_provenance_lasts_one_page_and_no_longer(namespace: str) -> None:
+    # Each page's publisher shares provenance among the nodes stating the same
+    # facts and is released with its page, so a later page states equal facts
+    # through a provenance of its own.
+    port = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
+    db = _orders(port)
+    if namespace == "typed":
+        with db.stream(_all_orders(), batch_size=2) as roots:
+            provenance = [_typed_provenance(root) for root in roots]
+    else:
+        with db.wire.stream(_all_orders(), batch_size=2) as rows:
+            provenance = [cast("Any", _entity(row))._provenance for row in rows]
+    first, second, third = provenance
+    assert first is second
+    assert third == first
+    assert third is not first
+
+
+def _typed_provenance(node: object) -> object:
+    state = snapshot_state_of(node)
+    assert state is not None
+    return state.provenance
+
+
 # --------------------------------------------------------------------------- #
 # `batch_size` is a dial alone over storage the model describes.               #
 # --------------------------------------------------------------------------- #
@@ -1372,7 +1397,7 @@ def test_a_streamed_milestone_set_delivers_what_the_whole_result_read_does() -> 
 def _retained(node: object) -> object:
     """One Typed node's own retained Read Evidence, or ``None`` where it kept none."""
     state = snapshot_state_of(node)
-    return None if state is None else state.read_evidence
+    return None if state is None else state.provenance.read_evidence
 
 
 def test_a_wire_streamed_milestone_root_retains_no_more_than_its_typed_peer() -> None:

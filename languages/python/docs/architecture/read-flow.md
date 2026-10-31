@@ -324,7 +324,7 @@ admission stay outside the cache.
  publish_roots: one pass per Page                                       _root_publication
               │   page_schedule and page_edges once; one RootView for the pass
               │   each root: resolve logical rows, states, carried views and, for a
-              │              root publishing no finding, its origins
+              │              root publishing no finding, its Read Evidence
               │              → release the Page rows it finished with
               │              → publish_root(root view, result ordinal)
               ├ eager (atomic): hold every root's values, release the Page,
@@ -335,6 +335,8 @@ admission stay outside the cache.
  TypedRootPublisher / WireRootPublisher, one per Page                   _typed / _wire
               ├ classify_root: a conforming root, or an InvalidData record
               ├ Read Evidence reaches the nodes of a conforming root only
+              ├ NodeProvenance: one per entity, conformance and pin per Page;
+              │                 a node carrying Read Evidence owns its own
               ├ Typed: EntityGraphConstruction.publish(Root View) → frozen Entity instances
               └ Wire:  WireWalk along the requested Include Paths
                         → frozen WireEntity mappings
@@ -467,7 +469,8 @@ value's pin is checked at the same verb: a value read at a finite Transaction-Ti
 instant is refused by `validate_source_pin` with `TransactionTimePinReadOnlyError`,
 even when a writable attempt read it. Publication provenance — the concrete Entity,
 the Pin, and whether the root conformed — is recorded on every published value, with
-or without evidence. A standalone or read-only value therefore stays a stored value
+or without evidence, as one `NodeProvenance` that a Typed node's state and a Wire node
+share for the same facts. A standalone or read-only value therefore stays a stored value
 whose revision a target write can state, though it cannot license a source write.
 [Write flow](write-flow.md#what-licenses-each-admitted-write) follows the write from
 admission onward.

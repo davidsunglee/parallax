@@ -86,10 +86,11 @@ def resolve_keyed_write_source(
             advice=WIRE_KEYED_WRITE_ADVICE,
         )
     state = snapshot_state_of(source)
+    provenance = None if state is None else state.provenance
     return ResolvedKeyedWriteSource(
         entity=entity,
-        pin=None if state is None else state.pin,
-        read_evidence=None if state is None else state.read_evidence,
+        pin=None if provenance is None else provenance.pin,
+        read_evidence=None if provenance is None else provenance.read_evidence,
         provenance=_typed_provenance(source, state),
         advice=TYPED_KEYED_WRITE_ADVICE,
         authoring=insertion_of(source),
@@ -114,7 +115,7 @@ def resolve_keyed_insert(
         state = snapshot_state_of(value)
         return ResolvedKeyedInsert(
             entity=entity,
-            pin=None if state is None else state.pin,
+            pin=None if state is None else state.provenance.pin,
             provenance=_typed_provenance(value, state),
             advice=TYPED_KEYED_WRITE_ADVICE,
         )
@@ -142,7 +143,8 @@ def _typed_provenance(value: EntityBase, state: SnapshotNodeState | None) -> Pro
     produced, and an admitted insertion's authority is no read.
     """
     if state is not None:
-        return "this" if state.root_conformance is RootConformance.CONFORMING else "none"
+        conformance = state.provenance.root_conformance
+        return "this" if conformance is RootConformance.CONFORMING else "none"
     if lifecycle_state_of(value) is None or insertion_of(value) is not None:
         return "none"
     return "foreign"

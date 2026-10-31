@@ -625,7 +625,7 @@ def typed_publication(
             atomic=atomic,
             ordinal_offset=ordinal_offset,
             milestones=milestones,
-            origins=origins,
+            read_evidence=origins,
         )
 
     return SnapshotPublication("typed", roots_of, edition, _release_nothing, construction)
@@ -675,7 +675,7 @@ def wire_publication(model: CatalogedModel, edition: str) -> SnapshotPublication
             atomic=atomic,
             ordinal_offset=ordinal_offset,
             milestones=milestones,
-            origins=origins,
+            read_evidence=origins,
         )
 
     return SnapshotPublication("wire", roots_of, edition, release)

@@ -105,7 +105,7 @@ def _conforming(form: _Form, value: object) -> bool:
     if form == "typed":
         state = snapshot_state_of(value)
         assert state is not None
-        return state.root_conformance is RootConformance.CONFORMING
+        return state.provenance.root_conformance is RootConformance.CONFORMING
     return stored_entity_of(cast("Any", value)) is not None
 
 
@@ -113,7 +113,7 @@ def _evidence(form: _Form, value: object) -> object:
     if form == "typed":
         state = snapshot_state_of(value)
         assert state is not None
-        return state.read_evidence
+        return state.provenance.read_evidence
     return read_evidence_of(cast("Any", value))
 
 
@@ -401,6 +401,106 @@ def test_an_origin_resolution_failure_propagates_unwrapped(form: _Form, atomic: 
         _published(fixture, form, order, atomic=atomic, origins=origins)
 
     assert type(failure.value) is RuntimeError
+
+
+# --------------------------------------------------------------------------- #
+# Provenance: shared by nodes of one Page stating the same facts, owned by a   #
+# node carrying Read Evidence.                                                 #
+# --------------------------------------------------------------------------- #
+def _provenance(form: _Form, value: object) -> Any:
+    if form == "typed":
+        state = snapshot_state_of(value)
+        assert state is not None
+        return state.provenance
+    return cast("Any", value)._provenance
+
+
+@_DELIVERY
+@_FORM
+def test_nodes_stating_the_same_facts_share_one_provenance_within_one_page_only(
+    form: _Form, atomic: bool
+) -> None:
+    def two_orders() -> tuple[object, ...]:
+        fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+        orders = (_order(fixture), _order(fixture, 2))
+        for order, item in zip(orders, (11, 12), strict=True):
+            fixture.attach(order, _ITEMS, (_item(fixture, item, order_id=order),))
+        return _published(fixture, form, *orders, atomic=atomic)
+
+    first, second = two_orders()
+    again, _ = two_orders()
+
+    (first_item,) = _field(form, first, "items")
+    (second_item,) = _field(form, second, "items")
+    assert _provenance(form, first) is _provenance(form, second)
+    assert _provenance(form, first_item) is _provenance(form, second_item)
+    assert _provenance(form, first) is not _provenance(form, first_item)
+    assert _provenance(form, again) == _provenance(form, first)
+    assert _provenance(form, again) is not _provenance(form, first)
+
+
+@_DELIVERY
+@_FORM
+def test_a_valid_and_an_invalid_root_reaching_one_page_state_never_share_provenance(
+    form: _Form, atomic: bool
+) -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    valid = _order(fixture)
+    invalid = _order(fixture, 2, address=_WRONG_KIND)
+    shared = _item(fixture, 11)
+    fixture.attach(valid, _ITEMS, (shared,))
+    fixture.attach(invalid, _ITEMS, (shared,))
+
+    conforming, record = _published(fixture, form, valid, invalid, atomic=atomic)
+
+    hydrated = invalid_record(record).data
+    (item,) = _field(form, conforming, "items")
+    (diagnostic,) = _field(form, hydrated, "items")
+    assert _provenance(form, item).root_conformance is RootConformance.CONFORMING
+    assert _provenance(form, diagnostic).root_conformance is RootConformance.NONCONFORMING
+    assert _provenance(form, conforming).root_conformance is RootConformance.CONFORMING
+    assert _provenance(form, hydrated).root_conformance is RootConformance.NONCONFORMING
+    if form == "typed":
+        assert snapshot_state_of(item) is not snapshot_state_of(diagnostic)
+
+
+class _EqualEvidence(Mapping[int, object]):
+    """Read Evidence that is equal for every fetched row yet a distinct,
+    unhashable object each time, so interning it by equality would merge
+    evidence with independent lifetimes, or fail to hash it."""
+
+    def __init__(self) -> None:
+        self.given: dict[int, object] = {}
+
+    def __getitem__(self, fetched_row: int) -> object:
+        evidence = self.given[fetched_row] = ["evidence"]
+        return evidence
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+
+@_DELIVERY
+@_FORM
+def test_equal_read_evidence_is_never_shared_between_nodes(form: _Form, atomic: bool) -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    order = _order(fixture)
+    items = (_item(fixture, 11), _item(fixture, 12))
+    fixture.attach(order, _ITEMS, items)
+    evidence = _EqualEvidence()
+
+    (published,) = _published(fixture, form, order, atomic=atomic, origins=evidence)
+
+    first, second = _field(form, published, "items")
+    assert _evidence(form, first) is evidence.given[items[0]]
+    assert _evidence(form, second) is evidence.given[items[1]]
+    assert _evidence(form, first) == _evidence(form, second)
+    assert _provenance(form, first) is not _provenance(form, second)
+    if form == "typed":
+        assert snapshot_state_of(first) is not snapshot_state_of(second)
 
 
 # --------------------------------------------------------------------------- #

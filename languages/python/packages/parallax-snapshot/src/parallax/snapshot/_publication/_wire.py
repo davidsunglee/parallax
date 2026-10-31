@@ -49,8 +49,11 @@ from parallax.core.temporal_read import Edge, Pin, TemporalFacet
 from parallax.core.wire import decode_canonical_wire
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot._inspection import (
+    NodeProvenance,
+    PageProvenance,
     RootConformance,
     SnapshotInspectionError,
+    SnapshotNodeState,
     pin_for_shape,
     snapshot_state_of,
 )
@@ -270,29 +273,24 @@ class _WireEntityNode(_FrozenMapping, WireEntity):
     as an Entity. It is also the only node that carries provenance, and its
     slots are why: a nested Value Object mapping has none to put it in.
 
-    A read-published node carries its own concrete Entity, the pin it was read
-    at where its family declares an As-Of Axis, and its result root's
-    conformance — the same facts a Typed node's Snapshot state holds — beside
-    the Read Evidence a writable attempt's read retained for it.
-    ``_root_conformance`` is absent only on the node an insert answered.
+    Its :class:`~parallax.snapshot._inspection.NodeProvenance` is the one a
+    Typed node's Snapshot state holds for the same facts, and its root
+    conformance is absent only on the node an insert answered.
 
-    These ride slots rather than mapping entries, so they are not keys, not
+    Provenance rides a slot rather than a mapping entry, so it is not a key, not
     iterated, not compared, not serialized, and not carried by ``dict(value)`` —
     a plain conversion of a Wire node is ordinary domain data with no keyed-source
     status, which is exactly what it is.
     """
 
-    __slots__ = ("_entity", "_pin", "_read_evidence", "_root_conformance")
+    __slots__ = ("_provenance",)
 
-    _entity: EntityIdentity
-    _pin: Pin | None
-    _read_evidence: ReadEvidence | None
-    _root_conformance: RootConformance | None
+    _provenance: NodeProvenance
 
 
 class _WireAuthoringNode(_WireEntityNode):
-    """The node a Wire insert answers: no read published it, so its pin, Read
-    Evidence, and conformance slots stay empty, and the authority the
+    """The node a Wire insert answers: no read published it, so its provenance
+    states no pin, Read Evidence, or conformance, and the authority the
     insertion's admission granted rides a slot of its own.
 
     The authority is private exactly as Read Evidence is — not a key, not
@@ -342,7 +340,8 @@ def read_evidence_of(entity: WireEntity) -> ReadEvidence | None:
     the exact state its read observed and nothing about what may be written —
     so this answers a fact and the write side draws the conclusion.
     """
-    return getattr(entity, "_read_evidence", None)
+    provenance: NodeProvenance | None = getattr(entity, "_provenance", None)
+    return None if provenance is None else provenance.read_evidence
 
 
 def stored_entity_of(entity: WireEntity) -> EntityIdentity | None:
@@ -353,15 +352,17 @@ def stored_entity_of(entity: WireEntity) -> EntityIdentity | None:
 
     A fact about provenance alone, with or without Read Evidence beside it.
     """
-    if getattr(entity, "_root_conformance", None) is not RootConformance.CONFORMING:
+    provenance: NodeProvenance | None = getattr(entity, "_provenance", None)
+    if provenance is None or provenance.root_conformance is not RootConformance.CONFORMING:
         return None
-    return getattr(entity, "_entity", None)
+    return provenance.entity
 
 
 def wire_pin_of(entity: WireEntity) -> Pin | None:
     """The as-of coordinates a read-published node was read at, or ``None``
     where its family declares no As-Of Axis or no read published it."""
-    return getattr(entity, "_pin", None)
+    provenance: NodeProvenance | None = getattr(entity, "_provenance", None)
+    return None if provenance is None else provenance.pin
 
 
 _TX_START: Final = TEMPORAL_MEMBERS[TemporalDimension.TRANSACTION_TIME][0].name
@@ -379,10 +380,11 @@ def wire_edge_of(node: object) -> Edge:
     its top-level members, so a published ``validStart`` is the Valid-Time
     start and only a Bitemporal node publishes one.
     """
-    if type(node) is not _WireEntityNode or getattr(node, "_root_conformance", None) is None:
+    if type(node) is not _WireEntityNode:
         raise _not_read_published(node)
-    if getattr(node, "_pin", None) is None:
-        entity = cast("EntityIdentity", getattr(node, "_entity", None))
+    provenance = node._provenance  # pyright: ignore[reportPrivateUsage] - the carrier's own slot
+    if provenance.pin is None:
+        entity = provenance.entity
         raise SnapshotInspectionError(
             code="snapshot-edge-unavailable",
             message=f"{entity.canonical} is not temporal, so it stands on no milestone",
@@ -399,7 +401,10 @@ def wire_edge_of(node: object) -> Edge:
 
 
 def _not_read_published(node: object) -> SnapshotInspectionError:
-    entity: EntityIdentity | None = getattr(node, "_entity", None)
+    provenance: NodeProvenance | None = (
+        getattr(node, "_provenance", None) if isinstance(node, _WireEntityNode) else None
+    )
+    entity = None if provenance is None else provenance.entity
     held = (
         f"{type(node).__name__} carries no read publication"
         if entity is None or getattr(node, "_authoring", None) is None
@@ -412,10 +417,6 @@ def _not_read_published(node: object) -> SnapshotInspectionError:
         entity=entity,
     )
 
-
-type _Provenance = tuple[Pin | None, RootConformance, ReadEvidence | None]
-"""What one published node states about where it came from: the pin it was
-read at, its result root's conformance, and the Read Evidence it carries."""
 
 type _WireRoot = WireEntity | InvalidData[WireEntity]
 """One published Wire result position: the Entity node, or the record a root
@@ -435,8 +436,10 @@ class WireRootPublisher:
     value, and a non-hydrating one as its record carrying nothing. One reader
     and one walk serve the Page, bound to the pass's Root View at the first
     root; the walk's memo is cleared as each root's call ends, so two roots
-    never share a rendered node. ``versions`` names the explicit version
-    Attribute a record publishes. ``encode`` is the delivery's scalar encoder.
+    never share a rendered node, while the reader's provenance is shared across
+    the Page's roots and released with the publisher. ``versions`` names the
+    explicit version Attribute a record publishes. ``encode`` is the delivery's
+    scalar encoder.
     """
 
     __slots__ = ("_encode", "_includes", "_model", "_reader", "_temporal", "_versions", "_walk")
@@ -463,12 +466,12 @@ class WireRootPublisher:
         if reader is None or walk is None:
             reader = self._reader = RootViewReader(root, self._temporal)
             walk = self._walk = WireWalk(reader, self._includes, self._encode)
-        reader.conformance = RootConformance.CONFORMING
+        reader.begin_root(RootConformance.CONFORMING)
         try:
             verdict = classify_root(root, self._model, self._versions, ordinal=ordinal)
             if isinstance(verdict, ConformingRoot):
                 return (walk.position(0, self._includes.root),)
-            reader.conformance = RootConformance.NONCONFORMING
+            reader.begin_root(RootConformance.NONCONFORMING)
             if verdict.node is None:
                 return (cast("InvalidData[WireEntity]", verdict.published(None)),)
             rendered = walk.position(0, self._includes.root)
@@ -483,12 +486,11 @@ class NodeReader[Node](Protocol):
     The walk is generic over the native reference a representation addresses a
     node by — a node of a Root View — and asks a reader four
     things of one: the layout its state is read against, its positional member
-    values, one requested relationship view's raw arm, and its provenance — the
-    pin it was read at, its root's conformance, and the Read Evidence it
-    carries. Everything about what those answers BECOME — declared-name keys,
-    canonical leaves, the variant the layout fixed, occurrence rendering, finite
-    descent, aliasing — belongs to the walk, so a reader exposes storage and
-    renders nothing.
+    values, one requested relationship view's raw arm, and its provenance, which
+    the walk installs on the node as it stands. Everything about what those
+    answers BECOME — declared-name keys, canonical leaves, the variant the layout
+    fixed, occurrence rendering, finite descent, aliasing — belongs to the walk,
+    so a reader exposes storage and renders nothing.
 
     ``member_values`` is consumed once, in layout order, and is never sliced or
     copied by the walk, so a Root View answers its Page-owned tuple by reference.
@@ -508,7 +510,7 @@ class NodeReader[Node](Protocol):
 
     def relationship(self, node: Node, view: RelationshipViewKey) -> object: ...
 
-    def provenance(self, node: Node) -> _Provenance: ...
+    def provenance(self, node: Node) -> NodeProvenance: ...
 
     def occurrence_carrier(self) -> OccurrenceCarrier: ...
 
@@ -520,18 +522,27 @@ class RootViewReader:
     a Root View node, and every answer borrows the Root View's own state for
     the root it currently names.
 
-    ``conformance`` is that root's verdict, which every node it publishes
+    :meth:`begin_root` sets the verdict every node of the root being published
     carries, and ``temporal`` answers which nodes stand at the Root View's pin.
     A node's Read Evidence is what the Root View captured for it, which is none
-    for a root publishing a finding.
+    for a root publishing a finding; a node carrying none shares its Page's
+    provenance for its concrete, conformance and pin.
     """
 
-    __slots__ = ("_root", "_temporal", "conformance")
+    __slots__ = ("_by_concrete", "_conformance", "_page", "_root", "_temporal")
 
     def __init__(self, root: RootView, temporal: TemporalFacet) -> None:
         self._root = root
         self._temporal = temporal
-        self.conformance = RootConformance.CONFORMING
+        self._conformance = RootConformance.CONFORMING
+        self._page = PageProvenance()
+        self._by_concrete: dict[EntityIdentity, NodeProvenance] = {}
+
+    def begin_root(self, conformance: RootConformance) -> None:
+        """Answer every later node with ``conformance`` at the Root View's
+        current pin."""
+        self._conformance = conformance
+        self._by_concrete.clear()
 
     def layout(self, node: int) -> EntityLayout:
         return self._root.layout(node)
@@ -552,13 +563,25 @@ class RootViewReader:
         slot = self._root.view_layout(node).index_of.get(view)
         return ABSENT if slot is None else self._root.view(node, slot)
 
-    def provenance(self, node: int) -> _Provenance:
+    def provenance(self, node: int) -> NodeProvenance:
         root = self._root
-        return (
-            pin_for_shape(self._temporal.shape(root.layout(node).concrete), root.pin),
-            self.conformance,
-            root.origin(node),
-        )
+        concrete = root.layout(node).concrete
+        read_evidence = root.read_evidence(node)
+        if read_evidence is not None:
+            return NodeProvenance(
+                concrete,
+                self._conformance,
+                pin_for_shape(self._temporal.shape(concrete), root.pin),
+                read_evidence,
+            )
+        held = self._by_concrete.get(concrete)
+        if held is None:
+            held = self._by_concrete[concrete] = self._page.provenance_for(
+                concrete,
+                self._conformance,
+                pin_for_shape(self._temporal.shape(concrete), root.pin),
+            )
+        return held
 
     def occurrence_carrier(self) -> OccurrenceCarrier:
         return _STORED
@@ -591,13 +614,13 @@ class EntityReader:
         self._checked: set[tuple[type, EntityIdentity]] = set()
 
     def layout(self, node: object) -> EntityLayout:
-        state = self._required(node)
+        entity = self._required(node).provenance.entity
         cls = type(node)
-        pair = (cls, state.entity)
+        pair = (cls, entity)
         try:
-            layout = self.model.layouts.entity(state.entity)
+            layout = self.model.layouts.entity(entity)
             if pair not in self._checked:
-                if not self._construction.proves(cls, state.entity):
+                if not self._construction.proves(cls, entity):
                     require_correspondence(layout, wire_names_of(cls), plan_of(cls))
                 self._checked.add(pair)
         except Exception as error:
@@ -605,10 +628,10 @@ class EntityReader:
                 code="snapshot-wire-input-incompatible",
                 message=(
                     f"{type(node).__name__} does not correspond to retained layout "
-                    f"{state.entity.canonical}: {error}"
+                    f"{entity.canonical}: {error}"
                 ),
                 operation=self._operation,
-                entity=state.entity,
+                entity=entity,
             ) from error
         return layout
 
@@ -629,14 +652,13 @@ class EntityReader:
                     f"{view.relationship}"
                 ),
                 operation=self._operation,
-                entity=state.entity,
+                entity=state.provenance.entity,
             )
         value = relationship_state(cast("Any", node), py_name)
         return ABSENT if value is UNLOADED else value
 
-    def provenance(self, node: object) -> _Provenance:
-        state = self._required(node)
-        return state.pin, state.root_conformance, state.read_evidence
+    def provenance(self, node: object) -> NodeProvenance:
+        return self._required(node).provenance
 
     def occurrence_carrier(self) -> OccurrenceCarrier:
         return _LIVE
@@ -654,7 +676,7 @@ class EntityReader:
             entity=concrete,
         )
 
-    def _required(self, node: object):
+    def _required(self, node: object) -> SnapshotNodeState:
         projection_entity(node, operation=self._operation)
         state = snapshot_state_of(node)
         assert state is not None
@@ -671,7 +693,7 @@ def projection_entity(node: object, *, operation: str = "Snapshot.wire") -> Enti
             code="snapshot-wire-input-edited",
             message="an edited Entity cannot be projected as read Wire state",
             operation=operation,
-            entity=None if state is None else state.entity,
+            entity=None if state is None else state.provenance.entity,
         )
     published = is_published(node)
     state = snapshot_state_of(node)
@@ -680,9 +702,9 @@ def projection_entity(node: object, *, operation: str = "Snapshot.wire") -> Enti
             code="snapshot-node-required",
             message="Wire projection requires a published Snapshot node",
             operation=operation,
-            entity=None if state is None else state.entity,
+            entity=None if state is None else state.provenance.entity,
         )
-    return state.entity
+    return state.provenance.entity
 
 
 class WireWalk[Node]:
@@ -724,11 +746,7 @@ class WireWalk[Node]:
         if cached is not None:
             return cast("_WireEntityNode", cached)
         entity = self._build(node, token, layout)
-        pin, conformance, read_evidence = self._reader.provenance(node)
-        object.__setattr__(entity, "_entity", layout.concrete)
-        object.__setattr__(entity, "_pin", pin)
-        object.__setattr__(entity, "_root_conformance", conformance)
-        object.__setattr__(entity, "_read_evidence", read_evidence)
+        object.__setattr__(entity, "_provenance", self._reader.provenance(node))
         self._memo.put(node, token, entity)
         return entity
 
@@ -1016,9 +1034,6 @@ def opened_wire_entity(
     if layout.family_variant is not None:
         _put(rendered, FAMILY_VARIANT_KEY, layout.family_variant)
     node = _frozen_mapping(_WireAuthoringNode, rendered)
-    object.__setattr__(node, "_entity", entity)
-    object.__setattr__(node, "_pin", None)
-    object.__setattr__(node, "_root_conformance", None)
-    object.__setattr__(node, "_read_evidence", None)
+    object.__setattr__(node, "_provenance", NodeProvenance(entity, None))
     object.__setattr__(node, "_authoring", authority)
     return node
