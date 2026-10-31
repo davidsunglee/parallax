@@ -163,8 +163,11 @@ class SparseIssues:
     def __getitem__(self, fetched_row: int) -> tuple[StoredDataIssueInput, ...]:
         return self._values.get(fetched_row, ())
 
-    def release(self, fetched_row: int) -> None:
-        self._values.pop(fetched_row, None)
+    def release(self, fetched_rows: Sequence[int]) -> None:
+        values = self._values
+        if values:
+            for fetched_row in fetched_rows:
+                values.pop(fetched_row, None)
 
     def clear(self) -> None:
         self._values.clear()
@@ -184,8 +187,11 @@ class SparseEdges:
     def __getitem__(self, fetched_row: int) -> Sequence[object]:
         return self._values.get(fetched_row, _NO_VIEWS)
 
-    def release(self, fetched_row: int) -> None:
-        self._values.pop(fetched_row, None)
+    def release(self, fetched_rows: Sequence[int]) -> None:
+        values = self._values
+        if values:
+            for fetched_row in fetched_rows:
+                values.pop(fetched_row, None)
 
     def clear(self) -> None:
         self._values.clear()
@@ -277,14 +283,16 @@ class DecoderRows:
         if self._unknown_family_tags:
             self._unknown_family_tags.pop(fetched_row, None)
 
-    def release(self, fetched_row: int) -> None:
-        self._values.pop(fetched_row, None)
-        if self._classifiable:
-            self._classifiable.pop(fetched_row, None)
-        if self._correlation_findings:
-            self._correlation_findings.pop(fetched_row, None)
-        if self._unknown_family_tags:
-            self._unknown_family_tags.pop(fetched_row, None)
+    def release(self, fetched_rows: Sequence[int]) -> None:
+        for held in (
+            self._values,
+            self._classifiable,
+            self._correlation_findings,
+            self._unknown_family_tags,
+        ):
+            if held:
+                for fetched_row in fetched_rows:
+                    held.pop(fetched_row, None)
 
     def clear(self) -> None:
         self._values.clear()
@@ -353,9 +361,12 @@ class JudgedStates:
         self._groups.clear()
         self._fetched_rows_by_logical_row.clear()
 
-    def release_logical(self, logical: int) -> None:
-        self._groups[logical] = None
-        self._fetched_rows_by_logical_row[logical] = 0
+    def release_logical(self, logical_rows: Sequence[int]) -> None:
+        groups = self._groups
+        fetched_rows_by_logical_row = self._fetched_rows_by_logical_row
+        for logical in logical_rows:
+            groups[logical] = None
+            fetched_rows_by_logical_row[logical] = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -660,10 +671,13 @@ def _last_uses(rows: PageRows) -> tuple[array[int], array[int]]:
 
 def reach_into(rows: PageRows, root: int, reached: list[int]) -> None:
     """Refill ``reached`` with ``root``'s reach in fetched-row preorder, each
-    fetched row once, following :func:`push_edges`. A root with no view row and
-    no overwritten edge reaches only itself, with no walk."""
+    fetched row once, following :func:`push_edges`. A fetched row with no view
+    row has no edge to push: an overwritten edge was written into one of its
+    slots, and release clears both together. So a root without one reaches only
+    itself, with no walk."""
     reached.clear()
-    if not rows.view_rows[root] and not rows.overwritten_edges[root]:
+    view_rows = rows.view_rows
+    if not view_rows[root]:
         reached.append(root)
         return
     seen: set[int] = set()
@@ -674,7 +688,8 @@ def reach_into(rows: PageRows, root: int, reached: list[int]) -> None:
             continue
         seen.add(fetched_row)
         reached.append(fetched_row)
-        push_edges(rows, fetched_row, pending)
+        if view_rows[fetched_row]:
+            push_edges(rows, fetched_row, pending)
 
 
 def release_finished_rows(
@@ -705,6 +720,8 @@ def release_finished_rows(
     view_rows = cast("list[Sequence[object]]", rows.view_rows)
     stored_values = cast("list[object]", rows.stored_values)
     logical_rows = cast("list[int]", rows.logical_rows)
+    finished: list[int] = []
+    finished_logical: list[int] = []
     for fetched_row in reached:
         if fetched_row_last[fetched_row] != position:
             if keys[fetched_row] is not None or not decoders.pending(fetched_row):
@@ -712,16 +729,18 @@ def release_finished_rows(
             continue
         member_rows[fetched_row] = ()
         logical = logical_rows[fetched_row]
-        rows.issues.release(fetched_row)
         keys[fetched_row] = None
         view_rows[fetched_row] = ()
-        rows.overwritten_edges.release(fetched_row)
         stored_values[fetched_row] = None
-        decoders.release(fetched_row)
         logical_rows[fetched_row] = 0
+        finished.append(fetched_row)
         if logical_last[logical] == position:
-            rows.judged_states.release_logical(logical)
+            finished_logical.append(logical)
             logical_last[logical] = -1
+    rows.issues.release(finished)
+    rows.overwritten_edges.release(finished)
+    decoders.release(finished)
+    rows.judged_states.release_logical(finished_logical)
 
 
 def push_edges(rows: PageRows, fetched_row: int, pending: list[int]) -> None:
@@ -816,6 +835,9 @@ class PageBuilder:
         "_issues",
         "_keys",
         "_last_layout",
+        "_last_member",
+        "_last_member_layout",
+        "_last_member_position",
         "_last_repeats",
         "_last_slots",
         "_last_source",
@@ -846,6 +868,9 @@ class PageBuilder:
         self._last_slots: SourceViewLayout | None = None
         self._last_source: SourceLevel | None = None
         self._last_repeats = False
+        self._last_member_layout: EntityLayout | None = None
+        self._last_member: MemberIdentity | None = None
+        self._last_member_position: int | None = None
         self._sources: list[SourceLevel] = []
         self._slots: list[SourceViewLayout] = []
         self._views: list[list[object] | tuple[()]] = []
@@ -1115,6 +1140,9 @@ class PageBuilder:
         self._last_slots = None
         self._last_source = None
         self._last_repeats = False
+        self._last_member_layout = None
+        self._last_member = None
+        self._last_member_position = None
         self._fetched_rows_by_logical_row = []
         self._states = []
         self._decoders = {}
@@ -1132,8 +1160,18 @@ class PageBuilder:
         distinguishes an unloaded correlation member from one stored null — a
         gathered key skips both, but they are no longer the same answer.
         """
-        self._require_open()
-        position = self._layouts[fetched_row].index_of.get(member)
+        if self._sealed:
+            self._require_open()
+        layout = self._layouts[fetched_row]
+        # A fan-back asks one member of rows of one layout in turn, so the last
+        # position is reused rather than hashing the member identity per row.
+        if layout is self._last_member_layout and member is self._last_member:
+            position = self._last_member_position
+        else:
+            position = layout.index_of.get(member)
+            self._last_member_layout = layout
+            self._last_member = member
+            self._last_member_position = position
         return ABSENT if position is None else self._member_rows[fetched_row][position]
 
     def concrete_of(self, fetched_row: int) -> EntityIdentity:
@@ -1207,7 +1245,8 @@ def _require_edge(value: object, count: int) -> None:
         return
     if isinstance(value, tuple):
         for element in cast("tuple[object, ...]", value):
-            _require_index(element, count, "a to-many relationship view")
+            if type(element) is not int or not 0 <= element < count:
+                _require_index(element, count, "a to-many relationship view")
         return
     _require_index(value, count, "a to-one relationship view")
 

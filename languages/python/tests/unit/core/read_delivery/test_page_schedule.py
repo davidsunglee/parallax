@@ -30,11 +30,13 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
 )
 from parallax.core.read_delivery._page import (
+    ABSENT,
     ROOT_LEVEL,
     ChildSlot,
     Page,
     PageBuilder,
     PageSchedule,
+    StoredDataIssueInput,
     ViewSchema,
     _rows,
     entity_state,
@@ -331,6 +333,25 @@ def test_last_use_release_frees_a_projection_and_its_state_once_no_later_root_re
     assert rows.judged_states.singleton(logical) is None
     assert rows.fetched_rows_by_logical_row[logical] == 0
     assert (list(rows.member_rows), list(rows.keys), list(rows.logical_rows)) == released
+
+
+def test_last_use_release_frees_a_finished_fetched_rows_identity_issues() -> None:
+    journal = _identity(_META, "Journal")
+    layout = _CATALOGED.layouts.entity(journal)
+    values = tuple(ABSENT for _ in layout.members)
+    issue = StoredDataIssueInput(
+        "stored-data-primary-key-null", journal, AttributeIdentity(journal, "id"), stored_value=None
+    )
+    builder = PageBuilder(ViewSchema.of())
+    root = builder.add_fetched_row(ROOT_LEVEL, layout, None, values, values, (issue,), None)
+    page = builder.finish((root,), Pin())
+    rows = page_rows(page)
+    assert rows.issues[root]
+    schedule = page_schedule(page, _WRITE_EVIDENCE, atomic=True)
+
+    release_finished_rows(page, schedule, 0, _reached(page, root))
+
+    assert rows.issues[root] == ()
 
 
 def _shared_keyless_animal(owners: Sequence[int]) -> tuple[Page, int]:

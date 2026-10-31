@@ -82,6 +82,8 @@ class RootView:
         "_findings",
         "_has_issues",
         "_invalid_root",
+        "_last_layout",
+        "_last_view_layout",
         "_layouts",
         "_member_rows",
         "_pin",
@@ -123,6 +125,8 @@ class RootView:
         self._read_evidence_values: Sequence[ReadEvidence | None] = ()
         self._invalid_root: InvalidRootInput | None = None
         self._has_issues = False
+        self._last_layout: EntityLayout | None = None
+        self._last_view_layout: RootViewLayout | None = None
 
     def __len__(self) -> int:
         """The nodes in this root's segment: none for an invalid root."""
@@ -390,7 +394,11 @@ class RootView:
     def _allocated(self, rows: PageRows, winner: int) -> None:
         layout = rows.layouts[winner]
         self._layouts.append(layout)
-        view_layout = rows.schema.root_view_layout(layout)
+        view_layout = self._last_view_layout
+        if layout is not self._last_layout or view_layout is None:
+            view_layout = rows.schema.root_view_layout(layout)
+            self._last_layout = layout
+            self._last_view_layout = view_layout
         self._view_layouts.append(view_layout)
         self._view_rows.append(
             cast("list[object]", [ABSENT] * len(view_layout.slots)) if view_layout.slots else ()

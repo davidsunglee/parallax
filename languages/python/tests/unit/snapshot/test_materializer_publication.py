@@ -1328,6 +1328,7 @@ def test_a_sealed_builder_refuses_every_further_use() -> None:
         lambda: builder.add_fetched_row(ROOT_LEVEL, layout, None, (), (), (), None),
         lambda: builder.write_view(order, _ITEMS, None),
         lambda: builder.concrete_of(order),
+        lambda: builder.member_value(order, layout.members[0]),
         lambda: builder.finish((order,), Pin()),
     ):
         with pytest.raises(ValueError, match="finished its arrays"):
