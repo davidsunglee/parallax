@@ -44,8 +44,8 @@ grades Parallax's own working set alone.
 
 **The exclusions are what make the retention readings mean anything.** A bound
 that excluded nothing would be a claim about the caller's program rather than
-about Parallax, so the price of one root comes from the retaining arm — what one
-root of THIS shape costs on THIS interpreter — and the streamed arm has to come
+about Parallax, so the price of one root comes from the retaining variant — what one
+root of THIS shape costs on THIS interpreter — and the streamed variant has to come
 in under one of them across nine times as many roots.
 
 **The census counts kinds, and that is what sees a constant.** Every byte
@@ -59,7 +59,7 @@ the grid.
 **The census is read three ways, which is what sees a small term.** The byte
 readings are graded against the price of one root, so a delivery keeping one
 small object per page stays under that price across every page these results
-span. The census grades the same two independence arms exactly instead. A Page
+span. The census grades the same two independence variants exactly instead. A Page
 or a root is a kind Parallax defines and is counted; a built-in `list` the
 delivery banks one item into per PAGE is not, and past the first page it adds no
 survivor of any kind. So the census is also taken over every survivor whatever
@@ -116,7 +116,7 @@ _SMALL: Final = 20
 """Roots in the small reading — enough for several pages at the page size below."""
 
 _MID: Final = 40
-"""Twice the small reading. What the retaining arm's linearity is read from: two
+"""Twice the small reading. What the retaining variant's linearity is read from: two
 differences over the same baseline, whose ratio is the ratio of their own root
 counts if and only if the growth is proportional to the result."""
 
@@ -137,7 +137,7 @@ than bare roots and `P_B` is measured over something with depth."""
 _PAGE_SIZES: Final = tuple(
     dict.fromkeys((1, *(2**power for power in range(1, _WORKLOAD.fanout - 1)), 32, 128))
 )
-"""A logarithmic probe grid including the delivery contract's 1/32/128 arms."""
+"""A logarithmic probe grid including the delivery contract's 1/32/128 page sizes."""
 
 _FANOUTS: Final = tuple(range(1, _FANOUT + 2))
 """A centered grid derived from the fixture-owned fanout, so the page and root
@@ -527,7 +527,7 @@ def _writing(total: int, *, batch_size: int, at: int, writes: bool) -> Seam:
     """A participating delivery of ``total`` roots whose loop writes every root,
     sampled at position ``at`` with that page's writes still buffered.
 
-    The read-only arm beside it is the same loop with the write removed, so what
+    The read-only variant beside it is the same loop with the write removed, so what
     the pair reports is the buffer's own price rather than the transaction's.
     """
 
@@ -621,15 +621,15 @@ def _first_child(root: object) -> object:
 @in_a_child_interpreter
 def test_pages_do_not_accumulate_with_the_result() -> None:
     # The headline claim, in arithmetic, in both namespaces. The per-root price
-    # comes from the retaining arm rather than from a constant, so the comparison
+    # comes from the retaining variant rather than from a constant, so the comparison
     # is against what one root of THIS shape actually costs on THIS interpreter —
-    # and the streamed arm has to come in under one of them across nine times as
+    # and the streamed variant has to come in under one of them across nine times as
     # many roots.
     #
     # Read three ways, because each sees what the others cannot. A bigger RESULT
     # at one position of the delivery is what a per-result cost would move. A
     # LATER position of one delivery is what a per-root one would move, and the
-    # result size cannot see it because the position is the same in both arms. And
+    # result size cannot see it because the position is the same in both variants. And
     # a DRAINED delivery is where anything the delivery banked past its own pages
     # would still be — the one reading whose subject outlives the paging
     # generator, whose frame is dropped the moment it returns.
@@ -696,7 +696,7 @@ def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -
     # adds no Parallax-owned survivor and adds no survivor of any kind past the
     # first, and the references those survivors hold are what see it. Nor is one
     # small object per page visible to the first measurement, which grades its
-    # byte differences against the price of a whole root. Here each arm is exact,
+    # byte differences against the price of a whole root. Here each variant is exact,
     # and growth in the number of pages is growth in `N`.
     for namespace in _NAMESPACES:
         near = _census(_paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_AT))
@@ -897,11 +897,11 @@ def test_a_writing_loops_buffer_grows_with_the_page_and_not_with_the_result() ->
             assert abs(held - retained(large)) <= 1024, batch_size
             buffered[batch_size] = held - retained(unwritten)
         # Affine in the page size, which is the bound stated rather than merely
-        # ordered: fixed transaction bookkeeping cancels between adjacent arms,
+        # ordered: fixed transaction bookkeeping cancels between adjacent variants,
         # leaving the same marginal cost for each additional buffered write. A
         # page of one write flushes it alone, while every larger page flushes
         # as one grouped effect whose slots the model then keeps once, so the
-        # affine reading starts where every arm keeps them.
+        # affine reading starts where every variant keeps them.
         marginal = [
             (later_price - earlier_price) / (later_size - earlier_size)
             for (earlier_size, earlier_price), (later_size, later_price) in pairwise(

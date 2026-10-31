@@ -107,7 +107,7 @@ class Revision:
 type NonTemporalEmission = Deletion | Revision
 """Which non-temporal step one settled mutation emits, and what it assigns.
 
-Decided once per mutation, from the authored verb, by whichever arm settled it
+Decided once per mutation, from the authored verb, by whichever case settled it
 — which is what leaves the verb behind at settlement: no emitter re-reads it,
 and a delete carrying assignments or an update missing them is unconstructable
 rather than merely asserted against.
@@ -128,7 +128,7 @@ def non_temporal_step(
     """The rows ``key_rows`` addresses as the step ``emission`` settled.
 
     Pure in its settled values: everything it reads was decided by the facts
-    Write Settlement settles a mutation through and by the arm that settled
+    Write Settlement settles a mutation through and by the case that settled
     the authored verb, so this reaches no clock, strategy, model, or facet, and
     re-reads no verb.
 

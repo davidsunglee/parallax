@@ -268,7 +268,7 @@ class _Key(int):
 
 
 def test_the_observer_sees_a_judgment_a_verb_makes() -> None:
-    # A Typed value outside the fast arms, an `int` subclass for an Int, is
+    # A Typed value outside the fast cases, an `int` subclass for an Int, is
     # converted through the general rule, which the observer reports.
     instance = Shelf.model_construct(None, id=_Key(1), price=PyDecimal("2.50"), name="N")
     observation, _call = _write(Shelf, lambda tx: tx.insert(instance))

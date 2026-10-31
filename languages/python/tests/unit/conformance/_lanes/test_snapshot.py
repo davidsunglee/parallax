@@ -281,7 +281,7 @@ def test_edited_copy_carries_the_decoded_value_a_member_would_hold() -> None:
     assert isinstance(copy.roots[0]["price"], decimal.Decimal)
 
 
-def test_an_edit_chain_carries_the_sources_relationship_arm_at_every_hop() -> None:
+def test_an_edit_chain_carries_the_sources_relationship_value_at_every_hop() -> None:
     # What `m-snapshot-read-022`'s access cannot ask on this lane, because it
     # names the read: EVERY copy the chain derives answers the SAME materialized
     # children — not equal ones, and not none at all. An implementation that
@@ -809,7 +809,7 @@ def test_run_scenario_case_access_step_graph_rejects_an_on_naming_no_view() -> N
 
 def test_run_scenario_case_access_step_graph_refuses_an_on_naming_a_derived_copy() -> None:
     # An accepted `mutate` publishes a copy so a LATER EDIT can name it, and a
-    # copy does carry its source's loaded arms — but it materialized nothing, and
+    # copy does carry its source's loaded relationship values — but it materialized nothing, and
     # `m-case-format` has an access stating contents name the read that did. The
     # reference harness holds no copy at all and refuses this shape, so accepting
     # it here would make one authored `expectGraph` grade in one lane and be
@@ -855,7 +855,7 @@ def test_run_scenario_case_access_step_graph_needs_a_navigated_path() -> None:
 
 def test_run_scenario_case_access_step_graph_refuses_an_unincluded_relationship() -> None:
     # `items` is a real relationship the find never included, so the view carries
-    # no loaded arm for it — the unloaded state itself, which an access asserting
+    # no loaded relationship value for it — the unloaded state itself, which an access asserting
     # contents cannot be authored over.
     case = _orders_access_scenario(
         {"action": "access", "on": 0, "path": "items", "expectGraph": {"OrderItem": []}},
@@ -874,8 +874,8 @@ def test_run_scenario_case_access_step_graph_refuses_an_undeclared_relationship(
         _run(case, _include_scenario_port())
 
 
-def test_run_scenario_case_access_step_graph_walks_a_to_one_arm() -> None:
-    # The to-one arm: the loaded view carries a single nested node rather than a
+def test_run_scenario_case_access_step_graph_walks_a_to_one_relationship_value() -> None:
+    # The to-one relationship value: the loaded view carries a single nested node rather than a
     # sequence, so the traversal appends instead of extending.
     query = {
         "target": "OrderItem",

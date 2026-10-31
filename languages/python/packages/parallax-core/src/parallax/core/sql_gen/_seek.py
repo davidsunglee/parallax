@@ -104,7 +104,7 @@ def _category(carrier: object) -> ContinuationCategory:
 
 
 def emits_null_tail(seek: ResolvedSeek, dialect: Dialect, *, leading_resident: bool) -> bool:
-    """Whether this continuing page needs a second arm for the leading NULL tail."""
+    """Whether this continuing page needs a second branch for the leading NULL tail."""
     return (
         bool(seek.terms)
         and bool(seek.coordinate.carriers)
@@ -154,7 +154,7 @@ def lower_seek[RowScope](
     Ahead of the branches, :func:`_hoists_a_leading_range` may add a redundant
     non-strict range for the planner. Where that range excludes a NULL region
     ordered after the coordinate, the statement assembler emits the disjoint
-    NULL-tail arm described by :func:`emits_null_tail`.
+    NULL-tail branch described by :func:`emits_null_tail`.
     ``leading_resident`` is the caller's Member Placement answer for the leading
     term, which that decision needs and no resolution here may ask for: resolving
     a subject binds an extraction's path segments, so a probe would push binds no
@@ -284,12 +284,12 @@ def _hoists_a_leading_range(
     seek on. It is useful for one or many terms and for nullable and non-nullable
     declarations alike, so only a non-null carrier and direct placement guard it.
     When it excludes NULLs ordered after the coordinate, the compiler preserves
-    completeness with a separate NULL-tail arm instead of widening this range.
+    completeness with a separate NULL-tail branch instead of widening this range.
 
     A DOCUMENT-RESIDENT term takes the opposite answer: its extraction goes NULL
     for ordinary invalid stored data, while a range over an extraction offers no
     index range to buy. The branch tree's own placement answer therefore admits
-    those roots without a hoist or a second arm.
+    those roots without a hoist or a second branch.
     """
     return bool(terms) and not resident and carriers[0] is not None
 
@@ -306,7 +306,7 @@ def _after[RowScope](
 
     Measured in the term's OWN ordering: a descending term reverses the
     comparison, and where the emitted clause placed nulls first, a null carrier
-    is followed by every non-null. The ``or is null`` arm follows the emitted
+    is followed by every non-null. The ``or is null`` branch follows the emitted
     placement alone, so a term whose NULLs the clause put after this coordinate
     admits them here whether or not the model says it can hold one — which is
     what a delivery over non-conforming storage needs, since a `NOT NULL`

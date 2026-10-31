@@ -197,7 +197,7 @@ def _lower(
     A Table the earlier edition did not have is created whole; one it had is
     carried forward Column by Column and Index by Index. No Table and no Column
     is ever taken away: nothing that destroys a stored shape is unilateral, so
-    the algebra has no arm for it.
+    the algebra has no case for it.
     """
     defined = tuple(_index_definitions(later.model, layout))
     before = None if earlier is None else earlier.table(layout.table)

@@ -183,7 +183,7 @@ def variants_for(entry: Classification, selection: Selection) -> tuple[str, ...]
 # --------------------------------------------------------------------------- #
 
 
-def encode_bind(value: object) -> dict[str, object]:  # noqa: C901 - one arm per carrier
+def encode_bind(value: object) -> dict[str, object]:  # noqa: C901 - one case per carrier
     match value:
         case None:
             return {"t": "null"}
@@ -212,7 +212,7 @@ def encode_bind(value: object) -> dict[str, object]:  # noqa: C901 - one arm per
             raise EvidenceError(f"a bind of {type(value).__name__} has no lossless spelling")
 
 
-def decode_bind(document: Mapping[str, object]) -> object:  # noqa: C901 - one arm per carrier
+def decode_bind(document: Mapping[str, object]) -> object:  # noqa: C901 - one case per carrier
     tag, raw = document.get("t"), document.get("v")
     match tag:
         case "null":

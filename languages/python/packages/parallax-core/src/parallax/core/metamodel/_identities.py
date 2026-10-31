@@ -134,7 +134,7 @@ type MemberIdentity = AttributeIdentity | ValueObjectIdentity | ValueObjectAttri
 
 A member is a top-level Attribute, a Value Object occurrence at any containment
 depth, or a scalar field inside one. Relationships, Indices, and Temporal
-Dimensions are not members in this sense and are not arms.
+Dimensions are not members in this sense and are not cases.
 
 The union names no new identity and adds no lookup: it is the addressing
 vocabulary a consumer uses to denote a member without caring where that member

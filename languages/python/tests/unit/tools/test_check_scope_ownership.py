@@ -18,7 +18,7 @@ non-zero exit, because a gate that runs but cannot block buys nothing:
   derives — an interface with no exemption, an interface with no file at all,
   and an exemption for an unowned file that is no interface.
 
-plus the coupling that makes the overlap arm load-bearing: a nested scope
+plus the coupling that makes the overlap case load-bearing: a nested scope
 present in ``PYTHON_FIRST_PARTY_GRANTS`` but missing from ``CHILD_SCOPES`` is
 exactly the state in which ``check_dag_sync`` would emit it into its own
 parent's forbidden row, where import-linter silently skips it.

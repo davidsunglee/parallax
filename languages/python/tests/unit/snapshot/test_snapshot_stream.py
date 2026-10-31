@@ -17,7 +17,7 @@ And invalid stored data inside the Continuation Order itself ends no checked
 delivery: a delivery advances on the coordinate the database evaluated, so a root
 whose sort key contradicts the model is published and the delivery continues past
 it, from whatever position and page size it lands in. A direct leading Column's
-NULL tail is retained by a second continuing-page arm, which is what keeps
+NULL tail is retained by a second continuing-page branch, which is what keeps
 ``batch_size`` a performance dial even when storage lost a constraint.
 """
 

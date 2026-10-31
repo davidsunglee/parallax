@@ -146,7 +146,7 @@ def test_no_compiled_read_retains_the_select_list_it_was_built_from(
 # Construction refuses a select list that disagrees with what its read planned. #
 # --------------------------------------------------------------------------- #
 def _continuing(limit: int = 2) -> CompiledRead:
-    """A continuing page of `Order` by key: an ordinary arm and a NULL-tail arm."""
+    """A continuing page of `Order` by key: an ordinary branch and a NULL-tail branch."""
     entity = target(ORDERS, "Order")
     plan = continuation.plan(
         validate_object_query(entity, object_query(entity.identity, oa.TrueNode()), ORDERS),
@@ -163,7 +163,7 @@ def _continuing(limit: int = 2) -> CompiledRead:
     )
 
 
-def test_a_continuing_page_compiles_its_two_arms_through_one_select_list() -> None:
+def test_a_continuing_page_compiles_its_two_branches_through_one_select_list() -> None:
     assert ") union all (select " in _continuing().statement.sql
 
 
@@ -206,10 +206,10 @@ def test_union_branches_naming_one_contributor_differently_are_refused(
         compile_read(oa.TrueNode(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
 
 
-def test_a_null_tail_arm_selecting_other_cells_than_the_ordinary_arm_is_refused(
+def test_a_null_tail_branch_selecting_other_cells_than_the_ordinary_branch_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    real = vars(sql_compile)["_render_read_arm"]
+    real = vars(sql_compile)["_render_read_branch"]
 
     def widened_tail(*args: Any, **kwargs: Any) -> Any:
         statement, select_list = real(*args, **kwargs)
@@ -217,7 +217,7 @@ def test_a_null_tail_arm_selecting_other_cells_than_the_ordinary_arm_is_refused(
             select_list.emit_variant("Order")
         return statement, select_list
 
-    monkeypatch.setattr(sql_compile, "_render_read_arm", widened_tail)
+    monkeypatch.setattr(sql_compile, "_render_read_branch", widened_tail)
     with pytest.raises(SqlGenError, match="disagree on their cells"):
         _continuing()
 

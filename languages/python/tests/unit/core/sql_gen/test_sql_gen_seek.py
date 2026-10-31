@@ -321,9 +321,9 @@ def test_a_non_nullable_terms_branch_follows_the_emitted_placement_not_the_decla
     assert "t0.active < ?" in descending.sql
 
 
-def test_the_hoisted_leading_range_keeps_its_null_tail_in_a_second_arm() -> None:
-    # The range arm stays seekable without omitting a NULL the emitted order put
-    # after the coordinate: the disjoint second arm admits the whole NULL tail,
+def test_the_hoisted_leading_range_keeps_its_null_tail_in_a_second_branch() -> None:
+    # The range branch stays seekable without omitting a NULL the emitted order put
+    # after the coordinate: the disjoint second branch admits the whole NULL tail,
     # and the outer order and cap merge the two into one continuing page.
     statement = _lowered(
         ORDERS,
@@ -351,7 +351,7 @@ def test_a_single_term_continuation_order_hoists_its_direct_range() -> None:
 
 def test_a_null_tail_wrapper_preserves_structured_document_presence() -> None:
     # Compatibility case: a continuing Document-layout read wraps two NULL-tail
-    # arms; the outer projection must reproduce the presence boolean immediately
+    # branches; the outer projection must reproduce the presence boolean immediately
     # before the document so adapter folding observes the first page's ordinals
     # and payload, rather than mistaking the document itself for its presence flag.
     plan = _planned(DOCUMENT_LAYOUT, "Charter")
@@ -375,7 +375,7 @@ def test_a_null_tail_wrapper_preserves_structured_document_presence() -> None:
 
 def test_a_postgres_locking_continuation_joins_the_ordinary_physical_identity() -> None:
     # A participating ordinary stream that reaches page two keeps one SQL statement
-    # and one pessimistic authority boundary: neither union arm carries an illegal
+    # and one pessimistic authority boundary: neither union branch carries an illegal
     # lock, while the outer query joins the complete one-column physical identity
     # back to the base row, orders and caps the derived payload, then locks that row.
     statement = _lowered(
@@ -393,7 +393,7 @@ def test_a_postgres_locking_continuation_joins_the_ordinary_physical_identity() 
 
 def test_a_postgres_locking_continuation_joins_the_inheritance_physical_identity() -> None:
     # A concrete TPH stream repeats its tag bind inside each disjoint continuation
-    # arm, then joins the shared table by its family-owned physical key before the
+    # branch, then joins the shared table by its family-owned physical key before the
     # outer cap and lock; this distinguishes inheritance predicate binds from both
     # seek binds and the cap while preserving their textual order.
     statement = _lowered(
@@ -426,16 +426,16 @@ def test_a_postgres_locking_single_concrete_continuation_keeps_its_result_contra
     compiled = compile_entity_query(planned, TRAVERSAL, POSTGRES, lock="locking")
     unlocked = compile_entity_query(planned, TRAVERSAL, POSTGRES)
     statement = compiled.statement
-    arm = (
+    branch = (
         "select t0.id, t0.maker, t0.dealer_id, t0.seats, "
         "t0.dealer_id parallax_seek_0, t0.id parallax_seek_1 from traversal_car t0 where "
     )
     assert statement.sql == (
         "select u.id, u.maker, u.dealer_id, u.seats, u.parallax_seek_0, u.parallax_seek_1 "
-        f"from (({arm}t0.dealer_id >= ? and (t0.dealer_id > ? or t0.dealer_id is null "
+        f"from (({branch}t0.dealer_id >= ? and (t0.dealer_id > ? or t0.dealer_id is null "
         "or (t0.dealer_id = ? and (t0.id > ? or t0.id is null))) "
         "order by t0.dealer_id asc, t0.id asc limit ?) union all ("
-        f"{arm}t0.dealer_id is null order by t0.dealer_id asc, t0.id asc limit ?)) "
+        f"{branch}t0.dealer_id is null order by t0.dealer_id asc, t0.id asc limit ?)) "
         "u join traversal_car t0 on u.id = t0.id "
         "order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ? for share of t0"
     )
@@ -463,7 +463,7 @@ def test_a_postgres_locking_history_joins_every_temporal_identity_column() -> No
     # A history stream's physical row identity is wider than its logical key:
     # both temporal upper edges participate in the primary key, so the outer join
     # names all three components and cannot multiply milestones or lock a sibling
-    # milestone while the arm and outer cap binds retain their established order.
+    # milestone while the branch and outer cap binds retain their established order.
     statement = _lowered(
         POSITIONS,
         _planned(POSITIONS, "Position", OrderKey(attr=_POSITION_VALID_END)).after(
@@ -503,8 +503,8 @@ def test_a_postgres_locking_history_joins_every_temporal_identity_column() -> No
 
 _MATRIX_ROOT = projection_support.matrix_entity("tph", "columns", "Root")
 _MATRIX_HOLDER = "read.projection.matrix.tph.columns.Root.holderId"
-# Spelled by the wrapper's own select list; each arm's capture cells repeat the
-# ordering members, which the structural fake reads through the first arm.
+# Spelled by the wrapper's own select list; each branch's capture cells repeat the
+# ordering members, which the structural fake reads through the first branch.
 _NULL_TAIL_ROWS: tuple[dict[str, object], ...] = (
     {
         "id": 2,
@@ -593,8 +593,8 @@ def _null_tail_delivery(instance: bool) -> list[tuple[object, ...]]:
 def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock(
     lock: LockMode | None, instance: bool
 ) -> None:
-    # The NULL-tail wrapper reselects each arm's cells through `u`, re-expanding
-    # document pairs at the ordinary arm's ordinals; the PostgreSQL locking form
+    # The NULL-tail wrapper reselects each branch's cells through `u`, re-expanding
+    # document pairs at the ordinary branch's ordinals; the PostgreSQL locking form
     # adds only a join back to the base row. Either way the rows deliver their
     # encoded Bytes cell, own-Column collection and occurrences, an unclaimed
     # tag, and no capture cell.
@@ -650,7 +650,7 @@ def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock
     ] == _null_tail_delivery(instance)
 
 
-def test_a_nullable_direct_leading_term_uses_the_same_seekable_two_arm_shape() -> None:
+def test_a_nullable_direct_leading_term_uses_the_same_seekable_two_branch_shape() -> None:
     statement = _lowered(
         ORDERS,
         _planned(ORDERS, "Order", OrderKey(attr=_ORDER_SKU, nulls="last")).after(
@@ -787,10 +787,10 @@ def test_a_direct_column_carrier_outside_its_declared_type_has_no_reported_form(
         statement.wire_binds()
 
 
-def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock(
+def test_each_continuing_branch_joins_its_own_shared_sources_beneath_the_root_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Both arms of a nullable leading term's continuing page select from their own
+    # Both branches of a nullable leading term's continuing page select from their own
     # statement, so each joins the shared order itself, binds the predicate where
     # its own text puts it, and leaves the shared lock to the reattached base row.
     # They render the read's one physical and statement plans, each through its
@@ -835,13 +835,13 @@ def test_each_continuing_arm_joins_its_own_shared_sources_beneath_the_root_lock(
     assert not reaches_compilation_state(compiled)
 
 
-def test_both_continuing_arms_of_a_family_page_keep_the_tag_guard_after_the_grouped_seek(
+def test_both_continuing_branches_of_a_family_page_keep_the_tag_guard_after_the_grouped_seek(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A concrete table-per-hierarchy page renders each arm through the one
+    # A concrete table-per-hierarchy page renders each branch through the one
     # single-table renderer: the caller's disjunction stays grouped, the seek
     # (or the NULL tail) follows it, and the framework tag guard binds last
-    # before each arm's own cap; the outer union caps once more.
+    # before each branch's own cap; the outer union caps once more.
     entity = entity_of(PAYMENT, "CardPayment")
     query = object_query(
         entity.identity,
@@ -857,12 +857,14 @@ def test_both_continuing_arms_of_a_family_page_keep_the_tag_guard_after_the_grou
     )
     reuse = record_plan_reuse(monkeypatch)
     statement = _lowered(PAYMENT, node)
-    arm = "select t0.id, t0.amount, t0.card_network, t0.id parallax_seek_0 from payment t0 where "
+    branch = (
+        "select t0.id, t0.amount, t0.card_network, t0.id parallax_seek_0 from payment t0 where "
+    )
     assert statement.sql == (
         "select u.id, u.amount, u.card_network, u.parallax_seek_0 from (("
-        f"{arm}(t0.id = ? or t0.id = ?) and t0.id >= ? and (t0.id > ? or t0.id is null) "
+        f"{branch}(t0.id = ? or t0.id = ?) and t0.id >= ? and (t0.id > ? or t0.id is null) "
         "and t0.kind = ? order by t0.id asc limit ?) union all ("
-        f"{arm}(t0.id = ? or t0.id = ?) and t0.id is null and t0.kind = ? "
+        f"{branch}(t0.id = ? or t0.id = ?) and t0.id is null and t0.kind = ? "
         "order by t0.id asc limit ?)) u order by u.parallax_seek_0 asc limit ?"
     )
     assert statement.binds == (3, 5, 1, 1, "card", 2, 3, 5, "card", 2, 2)
@@ -872,13 +874,14 @@ def test_both_continuing_arms_of_a_family_page_keep_the_tag_guard_after_the_grou
     assert ordinary.row.ctx is not null_tail.row.ctx
 
 
-def test_both_continuing_arms_of_a_union_render_its_branch_roots_through_fresh_builders(
+def test_both_continuing_branches_of_a_union_render_its_branch_roots_through_fresh_builders(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A table-per-concrete-subtype page over a nullable direct leading term
-    # renders each arm as its own union, and every branch of either arm
-    # restarts its aliases at `t0`, joins the shared dealer itself, and binds
-    # only its own branch root's sources; the two arms finish one read.
+    # renders each of its two seek branches as its own union, and every union
+    # branch of either restarts its aliases at `t0`, joins the shared dealer
+    # itself, and binds only its own branch root's sources; the two seek branches
+    # finish one read.
     entity = entity_of(TRAVERSAL, "Vehicle")
     query = object_query(
         entity.identity,
@@ -955,7 +958,7 @@ def _template_pages() -> list[object]:
             *after(_planned(ORDERS, "Order", OrderKey(attr=_ORDER_ACTIVE)), (True, 1), (False, 7)),
             ORDERS,
             None,
-            id="null-tail-arms",
+            id="null-tail-branches",
         ),
         pytest.param(
             *after(nullable, (None, february, 1), (None, march, 4)),
@@ -1025,7 +1028,7 @@ def _template_pages() -> list[object]:
             ),
             ORDERS,
             "locking",
-            id="shared-source-arms",
+            id="shared-source-branches",
         ),
     ]
 

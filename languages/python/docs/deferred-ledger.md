@@ -53,9 +53,9 @@ branch — which is a new statement-count contract — or refusing the fallback 
 with cross-language reach, so neither belongs in an incidental fix.
 
 **The PostgreSQL NULL-tail path bypasses the refusal.** A continuing page that needs
-a NULL-tail arm under `locking` on PostgreSQL plans both arms without the lock and
+a NULL-tail branch under `locking` on PostgreSQL plans both branches without the lock and
 locks once through `_compile._union_null_tail`'s outer join back to the target's
-Table. For an unnarrowed union the arms never reach `_plan_tpcs_union_read`'s
+Table. For an unnarrowed union the branches never reach `_plan_tpcs_union_read`'s
 check, and the abstract target has no Table to join, so the caller sees the
 internal "no Table Layout" `SqlGenError` instead of this refusal. Whichever repair
 closes this entry must cover that path too. The same join's narrowed
@@ -137,7 +137,7 @@ root with an unversioned relationship target, so the derivation is witnessed
 only by this target's own model twin
 (`_mixed_strategy_model.py`, read through `test_transaction_reads.py` and
 written through `test_transaction_writes.py`). `m-opt-lock-023` proves the
-one-preference-one-Entity arm alone.
+one-preference-one-Entity case alone.
 
 **Why it is deferred rather than fixed.** The shape is perfectly authorable, so
 this is corpus work rather than a limit: a descriptor pairing the two Entities,
@@ -304,8 +304,8 @@ of 1000 distinct published instances of one all-optional-member declared class �
 **Retained memory is O(1) and measured flat**, which is what distinguishes this
 memo from the per-node cache `_DeclaredState` forbids. `tracemalloc` after a full
 run with the output freed and `gc.collect()` called reads 656 / 592 / 512 B total
-at 1k / 5k / 20k nodes today and 624 / 544 / 480 B for the memo arm, and
-`gc.get_referents(node)` names zero `dict` referents on every node in every arm.
+at 1k / 5k / 20k nodes today and 624 / 544 / 480 B for the memo variant, and
+`gc.get_referents(node)` names zero `dict` referents on every node in every variant.
 The memo holds one `(instance, mapping)` pair in one module-level slot, never a
 node's own storage, so no node acquires an instance dictionary. A pass taking it
 must also reword the prohibition: `_DeclaredState`'s docstring forbids
@@ -408,11 +408,11 @@ the slot descriptor's own __get__ plus a subscript   28.4 ns
 object.__getattribute__(value, slot) plus a subscript 30.4 ns
 ```
 
-Over the whole canonical mix, and against the *ordinary* arm this entry's subject
+Over the whole canonical mix, and against the *ordinary* variant this entry's subject
 is — a published node's member read divided by an ordinary node's — the report
 reads 3.22x on CPython 3.14 and 3.34x on 3.13. The same operation against the
 *legacy* publication fixture, which is the pair the regression rule is stated
-over, reads 3.21x and 3.33x. All four are taken with one shared harness on every arm.
+over, reads 3.21x and 3.33x. All four are taken with one shared harness on every variant.
 
 **The floor is the frame, and it is not reachable from Python.** Roughly a third
 of the 77 ns is entering a Python-level `__get__` at all — the third line above is
@@ -628,7 +628,7 @@ stability has not been established. Retaining those observations does not
 settle ADR 0060's reproducible timing baseline.
 
 **Why it is deferred rather than fixed.** Three consecutive runs on the machine
-available disagreed by 40% at p50 on the unobserved arm, against a method whose
+available disagreed by 40% at p50 on the unobserved variant, against a method whose
 own rule is a few percent between runs of the same code. A table recorded there
 would publish that machine rather than this change, and republishing a number
 under conditions the method rejects is worse than publishing none. Nothing was
@@ -663,7 +663,7 @@ relationship name". The Wire surface has neither, so a consumer holding wire
 nodes and a metamodel can reach neither module. The conformance engine is that
 consumer: it runs class-free against every corpus model, and `class_models.py`
 hand-authors class families for 17 of 168. It therefore derives its own edited
-copy (`_edited_copy`) and walks its own loaded arms
+copy (`_edited_copy`) and walks its own loaded relationship values
 (`_navigate_step_view`) — about 90 lines restating rules production states
 elsewhere, with unit tests mirroring `tests/unit/core/entity/test_edit.py` case for case
 (unknown field, relationship field, change-free edit, preserved

@@ -2751,8 +2751,8 @@ def test_a_conflict_attempt_declaring_a_version_its_read_did_not_observe_is_refu
 
 def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> None:
     # `when.mutation: delete` reaches `tx.wire.delete`, keyed off the node the
-    # source read published — the destructive arm of the same one ingress the
-    # update arm takes.
+    # source read published — the destructive case of the same one ingress the
+    # update case takes.
     case = _synthetic_write(
         "conflict",
         {

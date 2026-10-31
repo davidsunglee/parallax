@@ -127,7 +127,7 @@ def test_a_range_inside_a_quantifier_binds_one_element() -> None:
 
 
 def test_range_and_negated_membership_lower_inside_a_quantifier() -> None:
-    # The element scope reaches the same two arms through the ONE dispatcher: the
+    # The element scope reaches the same two cases through the ONE dispatcher: the
     # element-relative path resolves against the unnested alias, and both new nodes
     # join the equality conjunct on that same alias (same-element).
     op = oa.Quantifier(

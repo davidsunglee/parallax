@@ -16,7 +16,7 @@ from parallax.core.sql_gen._compile import compile_read
 from tests.unit._corpus_model_support import model, target
 
 
-@pytest.mark.parametrize("locked_id", [5, 7], ids=["ordinary-arm", "null-tail-arm"])
+@pytest.mark.parametrize("locked_id", [5, 7], ids=["ordinary-branch", "null-tail-branch"])
 def test_a_narrowed_abstract_continuation_locks_its_concrete_rows(
     profile_run: ProvisionedRun, locked_id: int
 ) -> None:

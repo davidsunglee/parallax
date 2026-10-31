@@ -229,7 +229,7 @@ def test_assigning_a_many_occurrence_replaces_its_array_whole() -> None:
 
 
 def test_one_and_many_assignments_render_the_identical_statement_shape() -> None:
-    # The whole collapse in one assertion: cardinality selects no arm, so the two
+    # The whole collapse in one assertion: cardinality selects no case, so the two
     # occurrence kinds emit the same expression over their own paths and differ only
     # in the document each binds.
     (one,) = _lower(

@@ -15,7 +15,7 @@ way out. The reading here is a DIFFERENCE between two evidence sizes, so
 everything the publication costs that does not grow with the rejected value
 cancels, and what is left is the number of copies of it that survive.
 
-**The reference is the freezer's own product.** One arm publishes an invalid root
+**The reference is the freezer's own product.** One variant publishes an invalid root
 whose rejected value has ``width`` members; the other freezes that same value and
 holds nothing else. Growing ``width`` moves both by whatever one frozen copy of
 the growth costs on this interpreter, so requiring the two steps to be EQUAL says
@@ -112,7 +112,7 @@ def _frozen(width: int, copies: int) -> Seam:
 def _step(seam: Callable[[int], Seam]) -> int:
     """What widening the rejected value costs ``seam``.
 
-    A difference rather than a total, so every byte the arm spends on something
+    A difference rather than a total, so every byte the variant spends on something
     other than the rejected value — a record, a hydrated root, a frozenset, an
     interpreter's own container floor — is on both sides of it and cancels.
     """

@@ -2523,7 +2523,7 @@ def _conflict_attempt_affected(
     An EXCESS is invariant: whatever a shortfall would have classified as, more
     rows than the target addresses is always Cardinality Corruption, so the
     direction the raised error itself reports — not the declared mode — selects
-    that arm.
+    that case.
     """
     try:
         return transact(database, body, **requests)

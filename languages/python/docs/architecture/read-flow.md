@@ -204,7 +204,7 @@ A `CompiledRead` carries its statement, the resolved concrete position, the
 together. The `SelectListBuilder` that renders a select list builds the contract from
 the cells it emitted, so where each value sits in a driver row is recorded once, when
 the statement is rendered. It refuses a select list that does not carry what its plan
-requires, union branches or NULL-tail arms whose cells disagree, and two cells one
+requires, union branches or NULL-tail branches whose cells disagree, and two cells one
 Entity would publish under one key. `bind` builds the converter from that same contract
 and projection. Binding, conversion, row identity, Continuation Order coordinates and
 flat-row publication all index the folded row by ordinal, so no column alias is

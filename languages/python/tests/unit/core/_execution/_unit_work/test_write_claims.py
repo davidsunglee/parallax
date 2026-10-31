@@ -281,7 +281,7 @@ def test_a_temporal_objects_observed_writes_compose_unless_they_resurrect_or_hal
 
 
 # --------------------------------------------------------------------------- #
-# The claim-scope derivation and the object-locked arm.                       #
+# The claim-scope derivation and the object-locked case.                       #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     ("key", "mutation", "expected"),
@@ -299,9 +299,9 @@ def test_a_temporal_objects_observed_writes_compose_unless_they_resurrect_or_hal
 def test_the_claim_scope_derivation_is_total_over_the_write_kind(
     key: opt_lock.OptimisticKey, mutation: str, expected: object
 ) -> None:
-    # Two declared facts decide every arm — the target's Optimistic Key and the
+    # Two declared facts decide every case — the target's Optimistic Key and the
     # mutation — and each of the three Optimistic Key variants names its own, so
-    # no arm is reached because something was absent or because the tests above
+    # no case is reached because something was absent or because the tests above
     # it did not match.
     assert (
         opt_lock.settled_evidence(
@@ -332,7 +332,7 @@ def test_a_settled_evidence_claims_the_scope_it_names(evidence: object, scope: o
 
 
 def test_a_state_keyed_target_handed_no_observation_claims_nothing() -> None:
-    # The state arm answers what its source retained, and a producer that retained
+    # The state case answers what its source retained, and a producer that retained
     # none settles against nothing here — the required-observation rule refuses it
     # where every buffered write is settled, rather than an object claim standing
     # in for evidence a gate needs.

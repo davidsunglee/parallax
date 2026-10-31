@@ -207,7 +207,7 @@ class SelectListBuilder:
     def require_agreement(self, other: SelectListBuilder) -> None:
         """Refuse ``other`` unless it yields the same cells as this list.
 
-        Two branches of one union, or the ordinary and NULL-tail arms of one
+        Two branches of one union, or the ordinary and NULL-tail branches of one
         read, must name, carry, and encode every cell alike; a typed `NULL`
         placeholder answers for its contributor exactly as an owner does.
         """

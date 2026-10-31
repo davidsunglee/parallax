@@ -361,9 +361,9 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 # and the two Repeatable Read proofs
 # `m-unit-work-032` (a plain object find) and `m-unit-work-034` (a streamed
 # delivery) — two units of work reading and writing one row, whose second read is
-# graded against the first. The isolation arms are what make the level reach a HELD
+# graded against the first. The isolation cases are what make the level reach a HELD
 # group through the shipped `db.transact` at all, so their `expectRows` is this
-# lane's only grading of `scenario.CaseContext.isolation`. A streamed arm belongs
+# lane's only grading of `scenario.CaseContext.isolation`. A streamed case belongs
 # here because the turnstile hands off per authored STEP and a step's delivery is
 # drained WHOLE before it does: the peer's commit lands between the two deliveries,
 # exactly where the case authors it.
@@ -424,7 +424,7 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # a Transaction-Time terminate, and a bitemporal bounded rectangle split — and
 # each closes with a read-back whose rows state what the database holds after the
 # write, so running them grades the access and the re-read against each other.
-# `-022`/`-023`/`-024` are the composite arms: a CHAIN of edits whose second hop
+# `-022`/`-023`/`-024` are the composite cases: a CHAIN of edits whose second hop
 # names the copy the first derived, a write rewriting the whole Value Object
 # document a loaded view carries, and a graph materialized over rows the scenario
 # itself inserted. `-026` carries no write at all — it states the fanned-out
@@ -938,7 +938,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     `m-inheritance-105`) the losing close's emission is well-formed whether or
     not the race happened, so its fate and the table it leaves — the winner's
     successor current, the loser's close changing nothing — are what show the
-    stale gate met the database. For the Repeatable Read arms
+    stale gate met the database. For the Repeatable Read cases
     `m-unit-work-032` and `-034` the emissions
     and the fates are identical whatever level the groups opened at, and the
     reader's SECOND read is the ONLY thing that differs: at the connection's own

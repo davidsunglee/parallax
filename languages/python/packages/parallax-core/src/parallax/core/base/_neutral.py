@@ -692,8 +692,8 @@ def _canonical_uuid_input(value: str) -> object:
 
 
 def _host_float_at_width(value: float, declared: Float32 | Float64) -> float | None:
-    # One coercion arm serves both widths and dispatches here, as
-    # `nearest_float_at_width` does: a separate Float32 arm would add a class
+    # One coercion case serves both widths and dispatches here, as
+    # `nearest_float_at_width` does: a separate Float32 case would add a class
     # pattern to the coercion of every type matched after it.
     if isinstance(declared, Float64):
         return _nearest_binary64(value, declared)
@@ -1233,7 +1233,7 @@ def _base_instance_namespace(value: object) -> dict[str, object] | None:
     return None
 
 
-# One arm per Neutral Type variant. It runs per value on Wire encode, so the arms stay
+# One case per Neutral Type variant. It runs per value on Wire encode, so the cases stay
 # inline rather than behind a per-variant call.
 def base_managed_carrier(value: object, declared: NeutralType) -> object:  # noqa: C901
     """``value`` in the built-in carrier of ``declared``'s space when it is

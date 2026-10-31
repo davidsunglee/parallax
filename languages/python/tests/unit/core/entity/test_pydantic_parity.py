@@ -1,4 +1,4 @@
-"""Three arms that must agree: compact backing, ordinary backing, and plain Pydantic.
+"""Three variants that must agree: compact backing, ordinary backing, and plain Pydantic.
 
 A published value keeps its declared members in one tuple rather than in the
 instance dictionary Pydantic reads, and presents that row under the two names
@@ -10,7 +10,7 @@ model's schema can reach, which is why there is no residual section at the end.
 Each shape is declared twice — once as a Parallax Entity or Value Object, once as
 a hand-restated plain ``BaseModel`` with the same fields, defaults, and authored
 extensions — and dumped three ways across the serialization option
-cross-product. The third arm is what makes the comparison mean anything: a
+cross-product. The third variant is what makes the comparison mean anything: a
 ``mode="serialization"`` divergence was invisible to a compact-versus-ordinary
 diff, because both backings were equally wrong. The twins are hand-restated
 rather than derived from ``__pydantic_fields__``, so a defect in the derivation
@@ -311,12 +311,12 @@ def _shape_tag(value: Any) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# The arms
+# The variants
 # --------------------------------------------------------------------------- #
 
 
 @dataclass(frozen=True, slots=True)
-class Arms:
+class MeasurementVariants:
     """One shape's three values, plus the adapters a container case needs."""
 
     name: str
@@ -325,29 +325,29 @@ class Arms:
     plain: Any
 
 
-def _arms() -> list[Arms]:
+def _variants() -> list[MeasurementVariants]:
     address = Address(city="Springfield", geo=Geo(lat=1.5))
     plain_address = PlainAddress(city="Springfield", geo=PlainGeo(lat=1.5))
     return [
-        Arms(
+        MeasurementVariants(
             "all-required",
             published(Warehouse, id=7, code="WH"),
             Warehouse(id=7, code="WH"),
             PlainWarehouse(id=7, code="WH"),
         ),
-        Arms(
+        MeasurementVariants(
             "partial-optional",
             published(Parcel, id=1, weight=2.5, label="x"),
             Parcel(id=1, weight=2.5, label="x"),
             PlainParcel(id=1, weight=2.5, label="x"),
         ),
-        Arms(
+        MeasurementVariants(
             "every-position-carried",
             published(Parcel, id=1, weight=2.5, label="x", note=None),
             Parcel(id=1, weight=2.5, label="x", note=None),
             PlainParcel(id=1, weight=2.5, label="x", note=None),
         ),
-        Arms(
+        MeasurementVariants(
             "nested-value-objects",
             published(
                 Depot,
@@ -362,37 +362,37 @@ def _arms() -> list[Arms]:
                 notes=(PlainNote(body="a"), PlainNote(body="b")),
             ),
         ),
-        Arms(
+        MeasurementVariants(
             "value-object-alone",
             published(Address, city="Springfield", geo=published(Geo, lat=1.5)),
             address,
             plain_address,
         ),
-        Arms(
+        MeasurementVariants(
             "computed-private-and-cached",
             published(Meter, id=1, reading=5),
             Meter(id=1, reading=5),
             PlainMeter(id=1, reading=5),
         ),
-        Arms(
+        MeasurementVariants(
             "authored-plain-model-serializer",
             published(Tally, id=1, n=2),
             Tally(id=1, n=2),
             PlainTally(id=1, n=2),
         ),
-        Arms(
+        MeasurementVariants(
             "authored-wrap-model-serializer",
             published(Wrapped, id=1, n=2),
             Wrapped(id=1, n=2),
             PlainWrapped(id=1, n=2),
         ),
-        Arms(
+        MeasurementVariants(
             "authored-wrap-model-serializer-unset",
             published(Wrapped, id=1),
             Wrapped(id=1),
             PlainWrapped(id=1),
         ),
-        Arms(
+        MeasurementVariants(
             "field-order-is-not-row-order",
             published(
                 Ledger,
@@ -403,19 +403,19 @@ def _arms() -> list[Arms]:
             Ledger(id=2, site=address, opened="mon"),
             PlainLedger(id=2, site=plain_address, opened="mon"),
         ),
-        Arms(
+        MeasurementVariants(
             "inherited-subtype",
             published(Cat, id=9, name="mog", indoor=True),
             Cat(id=9, name="mog", indoor=True),
             PlainCat(id=9, name="mog", indoor=True),
         ),
-        Arms(
+        MeasurementVariants(
             "nested-in-a-plain-model",
             Holder(tag="t", parcel=published(Parcel, id=1, weight=2.5, label="x")),
             Holder(tag="t", parcel=Parcel(id=1, weight=2.5, label="x")),
             PlainHolder(tag="t", parcel=PlainParcel(id=1, weight=2.5, label="x")),
         ),
-        Arms(
+        MeasurementVariants(
             "discriminated-union-member",
             published(Circle, radius=2.0),
             Circle(radius=2.0),
@@ -424,9 +424,9 @@ def _arms() -> list[Arms]:
     ]
 
 
-ARMS = {arm.name: arm for arm in _arms()}
+MEASUREMENT_VARIANTS = {variant.name: variant for variant in _variants()}
 
-# The serialization option cross-product every arm is required to agree on.
+# The serialization option cross-product every variant is required to agree on.
 OPTIONS: dict[str, dict[str, Any]] = {
     "default": {},
     "by-alias": {"by_alias": True},
@@ -459,36 +459,36 @@ def _jsonable(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str))
 
 
-@pytest.mark.parametrize("shape", sorted(ARMS))
+@pytest.mark.parametrize("shape", sorted(MEASUREMENT_VARIANTS))
 @pytest.mark.parametrize("option", sorted(OPTIONS))
-def test_all_three_arms_dump_alike(shape: str, option: str) -> None:
-    arm = ARMS[shape]
+def test_all_three_variants_dump_alike(shape: str, option: str) -> None:
+    variant = MEASUREMENT_VARIANTS[shape]
     kwargs = OPTIONS[option]
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        compact = arm.compact.model_dump(**kwargs)
-        ordinary = arm.ordinary.model_dump(**kwargs)
-        plain = arm.plain.model_dump(**kwargs)
+        compact = variant.compact.model_dump(**kwargs)
+        ordinary = variant.ordinary.model_dump(**kwargs)
+        plain = variant.plain.model_dump(**kwargs)
     assert _jsonable(compact) == _jsonable(ordinary)
     assert _jsonable(compact) == _jsonable(plain)
 
 
-@pytest.mark.parametrize("shape", sorted(ARMS))
+@pytest.mark.parametrize("shape", sorted(MEASUREMENT_VARIANTS))
 @pytest.mark.parametrize("option", sorted(OPTIONS))
-def test_all_three_arms_dump_json_alike(shape: str, option: str) -> None:
-    arm = ARMS[shape]
+def test_all_three_variants_dump_json_alike(shape: str, option: str) -> None:
+    variant = MEASUREMENT_VARIANTS[shape]
     kwargs = OPTIONS[option]
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        compact = arm.compact.model_dump_json(**kwargs)
-        ordinary = arm.ordinary.model_dump_json(**kwargs)
-        plain = arm.plain.model_dump_json(**kwargs)
+        compact = variant.compact.model_dump_json(**kwargs)
+        ordinary = variant.ordinary.model_dump_json(**kwargs)
+        plain = variant.plain.model_dump_json(**kwargs)
     assert compact == ordinary
     assert json.loads(compact) == json.loads(plain)
 
 
 @pytest.mark.parametrize("option", sorted(OPTIONS))
-def test_a_type_adapter_container_serializes_all_three_arms_alike(option: str) -> None:
+def test_a_type_adapter_container_serializes_all_three_variants_alike(option: str) -> None:
     kwargs = OPTIONS[option]
     parallax: TypeAdapter[Any] = TypeAdapter(tuple[Parcel, ...])
     plain: TypeAdapter[Any] = TypeAdapter(tuple[PlainParcel, ...])
@@ -502,7 +502,7 @@ def test_a_type_adapter_container_serializes_all_three_arms_alike(option: str) -
 
 
 @pytest.mark.parametrize("option", sorted(OPTIONS))
-def test_a_type_adapter_union_serializes_all_three_arms_alike(option: str) -> None:
+def test_a_type_adapter_union_serializes_all_three_variants_alike(option: str) -> None:
     kwargs = OPTIONS[option]
     parallax: TypeAdapter[Any] = TypeAdapter(Warehouse | Parcel)
     plain: TypeAdapter[Any] = TypeAdapter(PlainWarehouse | PlainParcel)
@@ -515,7 +515,7 @@ def test_a_type_adapter_union_serializes_all_three_arms_alike(option: str) -> No
 
 
 @pytest.mark.parametrize("option", sorted(OPTIONS))
-def test_a_discriminated_union_serializes_all_three_arms_alike(option: str) -> None:
+def test_a_discriminated_union_serializes_all_three_variants_alike(option: str) -> None:
     kwargs = OPTIONS[option]
     parallax: TypeAdapter[Any] = TypeAdapter(
         Annotated[
@@ -537,7 +537,7 @@ def test_a_discriminated_union_serializes_all_three_arms_alike(option: str) -> N
     )
 
 
-def test_a_runtime_subtype_dumped_through_a_base_adapter_agrees_across_arms() -> None:
+def test_a_runtime_subtype_dumped_through_a_base_adapter_agrees_across_variants() -> None:
     # With `polymorphic_serialization` off, the BASE's schema serializes the
     # subtype. The descriptor-backed presentation therefore resolves the plan
     # from the runtime value rather than interpreting its row with base ordinals.
@@ -657,26 +657,26 @@ def test_serializing_a_compact_value_leaves_its_own_state_untouched() -> None:
     assert real_storage(value) == {}
 
 
-@pytest.mark.parametrize("shape", sorted(ARMS))
+@pytest.mark.parametrize("shape", sorted(MEASUREMENT_VARIANTS))
 def test_serialization_never_materializes_a_published_value_s_storage(shape: str) -> None:
     # The whole of what publication buys is that the storage is never there. A
     # dump that reached `__dict__` the ordinary way would create one permanently
     # per node, and an assertion reading `__dict__` afterwards could not see it,
     # because reading is what creates it. So this probes the object's own
     # references, before anything asks it for a mapping.
-    arm = ARMS[shape]
-    if not isinstance(arm.compact, BackedModel):
-        pytest.skip("this arm's outer value is a plain model holding a published one")
-    assert not carries_instance_storage(arm.compact)
+    variant = MEASUREMENT_VARIANTS[shape]
+    if not isinstance(variant.compact, BackedModel):
+        pytest.skip("this variant's outer value is a plain model holding a published one")
+    assert not carries_instance_storage(variant.compact)
     for kwargs in OPTIONS.values():
-        arm.compact.model_dump(**kwargs)
-        arm.compact.model_dump_json(**kwargs)
-    repr(arm.compact)
-    hash(arm.compact)
-    dict(arm.compact)
-    _ = arm.compact.model_fields_set
-    assert arm.compact == arm.ordinary
-    assert not carries_instance_storage(arm.compact)
+        variant.compact.model_dump(**kwargs)
+        variant.compact.model_dump_json(**kwargs)
+    repr(variant.compact)
+    hash(variant.compact)
+    dict(variant.compact)
+    _ = variant.compact.model_fields_set
+    assert variant.compact == variant.ordinary
+    assert not carries_instance_storage(variant.compact)
 
 
 def test_a_cached_property_memoizes_without_creating_the_storage_it_writes_to() -> None:
@@ -713,12 +713,12 @@ def test_key_order_follows_field_order_and_not_the_order_of_the_published_row() 
     # was built, so what a published value presents has to be built in FIELD
     # order — which a class declaring an occurrence between two attributes makes
     # different from the model-fixed order its row is laid out in.
-    arm = ARMS["field-order-is-not-row-order"]
+    variant = MEASUREMENT_VARIANTS["field-order-is-not-row-order"]
     assert plan_of(Ledger).py_names == ("id", "opened", "closed", "site")
     assert plan_of(Ledger).fields == ("id", "site", "opened", "closed")
-    assert list(arm.compact.model_dump()) == ["id", "site", "opened", "closed"]
-    assert list(arm.compact.model_dump()) == list(arm.plain.model_dump())
-    assert arm.compact.model_dump_json() == arm.ordinary.model_dump_json()
+    assert list(variant.compact.model_dump()) == ["id", "site", "opened", "closed"]
+    assert list(variant.compact.model_dump()) == list(variant.plain.model_dump())
+    assert variant.compact.model_dump_json() == variant.ordinary.model_dump_json()
 
 
 # --------------------------------------------------------------------------- #
@@ -726,29 +726,29 @@ def test_key_order_follows_field_order_and_not_the_order_of_the_published_row() 
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("shape", sorted(ARMS))
-def test_repr_str_equality_hashing_and_iteration_agree_across_arms(shape: str) -> None:
-    arm = ARMS[shape]
-    assert repr(arm.compact) == repr(arm.ordinary)
-    assert str(arm.compact) == str(arm.ordinary)
-    assert arm.compact == arm.ordinary
-    assert arm.ordinary == arm.compact
-    assert hash(arm.compact) == hash(arm.ordinary)
-    assert dict(arm.compact) == dict(arm.ordinary)
-    assert arm.compact.model_fields_set == arm.ordinary.model_fields_set
+@pytest.mark.parametrize("shape", sorted(MEASUREMENT_VARIANTS))
+def test_repr_str_equality_hashing_and_iteration_agree_across_variants(shape: str) -> None:
+    variant = MEASUREMENT_VARIANTS[shape]
+    assert repr(variant.compact) == repr(variant.ordinary)
+    assert str(variant.compact) == str(variant.ordinary)
+    assert variant.compact == variant.ordinary
+    assert variant.ordinary == variant.compact
+    assert hash(variant.compact) == hash(variant.ordinary)
+    assert dict(variant.compact) == dict(variant.ordinary)
+    assert variant.compact.model_fields_set == variant.ordinary.model_fields_set
 
 
-@pytest.mark.parametrize("shape", sorted(ARMS))
+@pytest.mark.parametrize("shape", sorted(MEASUREMENT_VARIANTS))
 def test_iteration_exposes_declared_fields_and_nothing_else(shape: str) -> None:
-    arm = ARMS[shape]
-    for value in (arm.compact, arm.ordinary):
+    variant = MEASUREMENT_VARIANTS[shape]
+    for value in (variant.compact, variant.ordinary):
         assert set(dict(value)) == set(cast("Any", type(value)).__pydantic_fields__)
 
 
 def test_iteration_exposes_no_relationship_sentinel_or_lifecycle_state() -> None:
     # Lifecycle state is attached through the `Entity` root's own slot on both
-    # arms, which is the only place it lives: a dictionary entry of the same name
-    # is not lifecycle state and would prove nothing about the slot. Both arms
+    # variants, which is the only place it lives: a dictionary entry of the same name
+    # is not lifecycle state and would prove nothing about the slot. Both variants
     # carry it, because the two exclusions have different mechanisms — a slot is
     # not in an ordinary value's storage, and a published value's presentation is
     # derived from its row.

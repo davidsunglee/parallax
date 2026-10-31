@@ -117,11 +117,11 @@ class _Projected[T](NamedTuple):
     and ``render`` is the renderer chosen for it, so describing the event later
     needs no second match over the algebra. Where ``subject`` is the narrowed
     value itself, the type binds it to the renderer's parameter and the pairing
-    is checked where the arm creates it.
+    is checked where the case creates it.
 
     The database call is the exception: ``duration_ns`` lives outside the
     outcome, so the subject is the whole event and its three renderers share
-    that one parameter type. There the arm alone — not the type — keeps each
+    that one parameter type. There the case alone — not the type — keeps each
     renderer with the ending it recovers.
     """
 
@@ -538,7 +538,7 @@ def _database_call_projection(event: DatabaseCallFinished, transition: str) -> _
 
     ``duration_ns`` is reported for every ending a call has and lives outside the
     outcome that says which ending it was, so each renderer takes the whole event
-    and reaches the ending this arm already established.
+    and reaches the ending this case already established.
     """
     match event.outcome:
         case DatabaseReadCompleted():
@@ -707,9 +707,9 @@ def _projected(event: ExecutionEvent) -> _Projected[Any]:
     anything, so the Logger can be asked about a record before the work of
     describing it is done.
 
-    The arms stay flat. Exhaustiveness is proved by subtracting matched members
+    The cases stay flat. Exhaustiveness is proved by subtracting matched members
     from the union, and a nested subpattern subtracts nothing, so folding an
-    outcome match into an arm here would turn the guards below into runtime
+    outcome match into a case here would turn the guards below into runtime
     branches.
     """
     match event:

@@ -7,14 +7,14 @@ builds the SAME value both ways and asserts one outcome: an edit, the Change
 Record an edit chain composes, the Typed write source's answers, and a Value Object's
 canonical document.
 
-The two arms are twins by construction. ``model_construct(**members)`` populates
+The two variants are twins by construction. ``model_construct(**members)`` populates
 exactly the named members and fills every other declared field with its declared
 default, which is what publication does with a bitmap and a template row — so the
-arms differ in representation and in nothing else. Neither arm validates, which
+variants differ in representation and in nothing else. Neither variant validates, which
 is also what publication does not do. That premise has one bound, graded at the
 end: a required member carried no value has no declared default to be filled
-with, so the ordinary arm leaves it unset and reading it raises, while the
-published arm reads the ``None`` its position holds. Neither invents a value, and
+with, so the ordinary variant leaves it unset and reading it raises, while the
+published variant reads the ``None`` its position holds. Neither invents a value, and
 neither refuses one.
 
 The models are chosen for reach rather than realism, because a corpus grading an
@@ -25,7 +25,7 @@ beside one never populated, and — on a Value Object and an Entity alike — th
 kinds of state that live outside the members, a ``PrivateAttr`` and a
 ``cached_property``.
 
-Lifecycle state is graded on both arms: it rides a slot of the ``Entity`` root's
+Lifecycle state is graded on both variants: it rides a slot of the ``Entity`` root's
 own layout, so a published node carries it exactly as an ordinary value does.
 """
 
@@ -160,7 +160,7 @@ def _ordinary[M](
     """``cls`` backed by an instance dictionary, populated exactly as ``members``.
 
     The validation-free constructor, because publication validates nothing
-    either: what makes this a twin of the published arm is that both populate the
+    either: what makes this a twin of the published variant is that both populate the
     named members, leave every other declared field at its declared default, and
     report exactly the named members as populated. A loaded relationship goes into
     the storage under its own name, which is where ordinary backing keeps one and
@@ -178,7 +178,7 @@ BACKINGS: tuple[tuple[str, Builder], ...] = (("ordinary", _ordinary), ("publishe
 
 @pytest.fixture(params=BACKINGS, ids=[name for name, _build in BACKINGS])
 def build(request: pytest.FixtureRequest) -> Builder:
-    """One arm's builder: the same call spelling produces either backing."""
+    """One variant's builder: the same call spelling produces either backing."""
     return cast("Builder", request.param[1])
 
 
@@ -195,7 +195,7 @@ def _site() -> Site:
 
 
 # --------------------------------------------------------------------------- #
-# The arms are twins before anything is asked of them
+# The variants are twins before anything is asked of them
 # --------------------------------------------------------------------------- #
 
 
@@ -205,7 +205,7 @@ def test_declared_values_preserve_absence_on_ordinary_backing() -> None:
     assert tuple(declared_values(value)) == (1, "A", None, ABSENT)
 
 
-def test_the_two_arms_agree_about_what_the_value_holds_and_what_it_populated() -> None:
+def test_the_two_variants_agree_about_what_the_value_holds_and_what_it_populated() -> None:
     members: dict[str, object] = {"id": 1, "label": "north", "site": _site()}
     ordinary, compact = _ordinary(Depot, **members), published(Depot, **members)
     assert is_published(compact)
@@ -216,9 +216,9 @@ def test_the_two_arms_agree_about_what_the_value_holds_and_what_it_populated() -
     assert dict(ordinary) == dict(compact)
 
 
-def test_the_two_arms_address_an_inherited_member_the_same_way() -> None:
+def test_the_two_variants_address_an_inherited_member_the_same_way() -> None:
     # A concrete's row is its family's, ancestry first, so `plate` occupies a
-    # position `Truck` never declared and `payload` one it did. Neither arm reads
+    # position `Truck` never declared and `payload` one it did. Neither variant reads
     # a member off the class that declared it, so both answer, populate, and omit
     # the inherited member exactly as they do the declared one.
     members: dict[str, object] = {"id": 1, "plate": "AB-12"}
@@ -411,7 +411,7 @@ def test_an_authored_row_answers_none_only_for_a_value_no_edit_touched(
 
 
 def test_a_row_derived_from_a_published_value_creates_no_storage_for_it() -> None:
-    # The published arm's own obligation, which the ordinary arm cannot have:
+    # The published variant's own obligation, which the ordinary variant cannot have:
     # every operation above reaches for what the value holds by name, and asking
     # a published value's storage for it would create the dictionary publication
     # exists without — permanently, on a read.
@@ -452,7 +452,7 @@ def test_a_document_spells_a_member_populated_as_null(build: Builder) -> None:
 def test_a_document_renders_nested_occurrences_of_either_backing(build: Builder) -> None:
     # Containment past one level, in both shapes: an occurrence inside a One
     # occurrence, and an occurrence inside an element of a Many. Presence is
-    # resolved at every depth against the value standing there, so the arms agree
+    # resolved at every depth against the value standing there, so the variants agree
     # about a leaf populated at depth two and one left absent there.
     document = _stored_document(
         build(
@@ -522,12 +522,12 @@ def test_a_value_object_of_either_backing_pickles_to_an_ordinary_one(build: Buil
 
 
 # --------------------------------------------------------------------------- #
-# Where the two arms are not twins
+# Where the two variants are not twins
 # --------------------------------------------------------------------------- #
 
 
 def test_a_required_member_no_value_was_carried_for_reads_as_its_position_holds() -> None:
-    # The one place the two arms are not twins, and neither invents a value.
+    # The one place the two variants are not twins, and neither invents a value.
     # `model_construct` leaves a required member it was handed nothing for unset,
     # so reading it raises; a row has a position for that member whatever
     # happens, so a published value reads `None` there — which is not a value the

@@ -430,7 +430,7 @@ def _lowered(model: Metamodel, node: ResolvedObjectQuery) -> LoweredStatement:
     ).statement
 
 
-def _arms(statement: LoweredStatement) -> tuple[tuple[str, tuple[object, ...]], ...]:
+def _branches(statement: LoweredStatement) -> tuple[tuple[str, tuple[object, ...]], ...]:
     """Each independently limited SELECT and the binds it owns."""
     sql = statement.sql
     marker = " from (("
@@ -451,7 +451,7 @@ def _arms(statement: LoweredStatement) -> tuple[tuple[str, tuple[object, ...]], 
 
 def _where(statement: LoweredStatement | str) -> str:
     """A lowered page statement's `where` clause, or "" where it carries none."""
-    sql = statement if isinstance(statement, str) else _arms(statement)[0][0]
+    sql = statement if isinstance(statement, str) else _branches(statement)[0][0]
     if " where " not in sql:
         return ""
     return sql.split(" where ", 1)[1].split(" order by ", 1)[0]
@@ -463,7 +463,7 @@ def _seek_binds(statement: LoweredStatement) -> tuple[object, ...]:
     Binds are positional, so what precedes the clause is skipped by counting the
     holes ahead of it rather than by assuming the projection contributed none.
     """
-    sql, binds = _arms(statement)[0]
+    sql, binds = _branches(statement)[0]
     ahead = sql.split(" where ", 1)[0].count("?")
     return binds[ahead:]
 
@@ -547,7 +547,7 @@ def test_a_nullable_leading_term_uses_a_hoisted_range_and_a_disjoint_null_tail()
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU),))
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate(("A-100", 1)), limit=2))
     assert _where(statement).startswith("t0.sku >= ? and (")
-    assert _where(_arms(statement)[1][0]) == "t0.sku is null"
+    assert _where(_branches(statement)[1][0]) == "t0.sku is null"
     hoisted = _where(
         _lowered(
             ORDERS,
@@ -571,7 +571,7 @@ def test_a_nullable_terms_own_two_way_branch_stays_inside_the_ties_above_it() ->
         ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME), OrderKey(attr=_ORDER_SKU))
     )
     node = plan.after(ContinuationCoordinate(("Ada", "A-100", 1)), limit=2)
-    assert _arms(_lowered(ORDERS, node))[0][0].endswith(
+    assert _branches(_lowered(ORDERS, node))[0][0].endswith(
         "where t0.name >= ? and (t0.name > ? or t0.name is null "
         "or (t0.name = ? and (t0.sku > ? or t0.sku is null)) "
         "or (t0.name = ? and t0.sku = ? and (t0.id > ? or t0.id is null))) "
@@ -927,7 +927,7 @@ def _admits(
     Binds are positional, so the holes ahead of the clause are skipped rather
     than assumed absent.
     """
-    for sql, binds in _arms(statement):
+    for sql, binds in _branches(statement):
         where = _where(sql)
         if not where:
             return True

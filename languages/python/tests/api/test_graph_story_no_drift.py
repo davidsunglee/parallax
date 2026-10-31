@@ -140,7 +140,7 @@ _ORDER_1_STATUS_ROWS: list[MappingRow] = [
 ]
 
 # Location 100 and its owning Customer 1, both carrying an `address` document —
-# the value-object composition arm. The customer's two `phones` are queued in the
+# the value-object composition case. The customer's two `phones` are queued in the
 # order the read decodes them, which is the order the surviving view must answer
 # after the story's write rewrites the document with them swapped.
 _LOCATION_100_ROW: MappingRow = {
@@ -386,7 +386,7 @@ class _ReplayPort(_TransactingCannedPort):
 
 
 # The stories whose body commits DML (`m-snapshot-read-017`/`-018`/`-019`/`-020`/
-# `-023`/`-024`/`-025` and `m-unit-work-029`): the composition arm, where what is
+# `-023`/`-024`/`-025` and `m-unit-work-029`): the composition case, where what is
 # demonstrated is the materialized view standing across a persisting write — and,
 # for the read-your-own-writes story, a dependent find inside the write's own unit
 # of work.

@@ -10,7 +10,7 @@ nothing once no value or write reaches the evidence, which only bytes can show.
 A temporal source registers nothing: a read holds nothing for continuation, and
 a completed write holds the rows it produced only for the observations it
 changed, until those are collected. Each byte reading is a DIFFERENCE between
-two row counts or two arms, so everything a transaction costs that does not
+two row counts or two variants, so everything a transaction costs that does not
 grow with them cancels, and an equality says nothing grows.
 
 A read's sources that have not all resolved yet keep the attempt's source
@@ -388,7 +388,7 @@ def _releasing(count: int, *, writing: bool) -> Seam:
 def test_releasing_written_temporal_sources_releases_the_rows_held_for_them() -> None:
     # Releasing the sources a write changed also releases what the attempt
     # held for them, at once and in proportion to how many there were; a
-    # read-only arm releases the sources alone.
+    # read-only variant releases the sources alone.
     released = {
         (count, writing): _reading(
             lambda count=count, writing=writing: retained_increment(

@@ -575,7 +575,7 @@ def validate_instance_state_matrix(
     include_head_only: bool = True,
 ) -> None:
     """Validate the exact instance-state matrix its report owner declares over
-    every supported runtime: each scenario's readings under every arm, each
+    every supported runtime: each scenario's readings under every variant, each
     runtime's aggregates and operation ratios, their units, and the advisory
     comparisons recomputed from the readings they compare."""
     minors = tuple(runtimes) if runtimes is not None else supported_minors()

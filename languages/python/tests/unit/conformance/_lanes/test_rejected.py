@@ -168,7 +168,7 @@ def test_run_rejected_case_refuses_the_conflict_multi_key_array(
     write: list[dict[str, object]],
 ) -> None:
     # The array is the conflict lane's multi-key form and carries no member for
-    # this dispatch to read. Asking it for one instead reaches the bare-row arm
+    # this dispatch to read. Asking it for one instead reaches the bare-row case
     # with a list, which decodes as a mapping of pairs and fails on the row's own
     # data rather than on the form — a raw carrier error where the case's defect
     # is that no rejected lane defines this input at all.

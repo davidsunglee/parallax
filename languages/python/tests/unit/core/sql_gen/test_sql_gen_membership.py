@@ -150,7 +150,7 @@ def test_two_memberships_of_different_widths_render_before_a_comparison_seek_and
 
 
 @_DIALECTS
-def test_a_null_tail_page_renders_its_membership_in_both_arms(dialect: Dialect) -> None:
+def test_a_null_tail_page_renders_its_membership_in_both_branches(dialect: Dialect) -> None:
     def page(ids: Sequence[int], coordinate: tuple[object, ...]) -> ResolvedObjectQuery:
         query = _query(
             ORDERS,

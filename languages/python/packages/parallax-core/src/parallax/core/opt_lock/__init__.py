@@ -151,7 +151,7 @@ def settled_evidence(
     derivation over the write kind (`m-unit-work` "Observed-State Coalescing"),
     which ``key``'s own variant answers.
 
-    The arms are derived from declared facts alone — this family's Optimistic Key
+    The cases are derived from declared facts alone — this family's Optimistic Key
     and the write's own mutation — never from an absent observation, which would
     sweep in the insert: it observes no state either and has no prior row to
     claim at all. ``observation`` reaches the answer only for a versioned or

@@ -22,7 +22,7 @@ type Frontend = Literal["entity", "value-object"]
 type Mode = Literal["cold", "warm"]
 type Work = Callable[[], object]
 type Sample = dict[str, int]
-type ArmReport = dict[str, list[Sample] | list[int]]
+type MeasurementVariantReport = dict[str, list[Sample] | list[int]]
 
 
 class SourceIdentity(TypedDict):
@@ -41,7 +41,7 @@ class Provenance(TypedDict):
 
 class ChildReport(TypedDict):
     provenance: Provenance
-    arms: ArmReport
+    variants: MeasurementVariantReport
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,7 +205,7 @@ def _warm_work(frontend: Frontend, branch: Branch, warmups: int) -> Work:
     return work
 
 
-def _sample_arm(
+def _sample_variant(
     frontend: Frontend, branch: Branch, mode: Mode, samples: int, warmups: int
 ) -> list[dict[str, int]]:
     if mode == "cold":
@@ -218,7 +218,7 @@ def _sample_arm(
         tracemalloc.stop()
 
 
-def _growth_arm(frontend: Frontend, branch: Branch, warmups: int) -> list[int]:
+def _growth_variant(frontend: Frontend, branch: Branch, warmups: int) -> list[int]:
     work = _warm_work(frontend, branch, warmups)
     tracemalloc.start()
     try:
@@ -243,14 +243,14 @@ def _growth_arm(frontend: Frontend, branch: Branch, warmups: int) -> list[int]:
 def _child(samples: int, warmups: int, expected_revision: str | None) -> ChildReport:
     provenance = _loaded_provenance()
     _validate_provenance(provenance, expected_revision)
-    arms: ArmReport = {}
+    variants: MeasurementVariantReport = {}
     for frontend in ("entity", "value-object"):
         for branch in ("changed", "change-free"):
             for mode in ("cold", "warm"):
                 key = f"{frontend}/{branch}/{mode}"
-                arms[key] = _sample_arm(frontend, branch, mode, samples, warmups)
-            arms[f"{frontend}/{branch}/growth"] = _growth_arm(frontend, branch, warmups)
-    return {"provenance": provenance, "arms": arms}
+                variants[key] = _sample_variant(frontend, branch, mode, samples, warmups)
+            variants[f"{frontend}/{branch}/growth"] = _growth_variant(frontend, branch, warmups)
+    return {"provenance": provenance, "variants": variants}
 
 
 def _spread(values: Sequence[float]) -> dict[str, float]:
@@ -264,7 +264,7 @@ def _spread(values: Sequence[float]) -> dict[str, float]:
     }
 
 
-def _summarize(reports: Sequence[ArmReport]) -> dict[str, object]:
+def _summarize(reports: Sequence[MeasurementVariantReport]) -> dict[str, object]:
     summary: dict[str, object] = {}
     for key in reports[0]:
         if key.endswith("/growth"):
@@ -292,7 +292,7 @@ def _summarize(reports: Sequence[ArmReport]) -> dict[str, object]:
 def _run(
     processes: int, samples: int, warmups: int, expected_revision: str | None
 ) -> dict[str, object]:
-    reports: list[ArmReport] = []
+    reports: list[MeasurementVariantReport] = []
     provenances: list[Provenance] = []
     environment = os.environ | {"PYTHONHASHSEED": "0"}
     for _ in range(processes):
@@ -317,7 +317,7 @@ def _run(
         report = cast("ChildReport", json.loads(completed.stdout))
         _validate_provenance(report["provenance"], expected_revision)
         provenances.append(report["provenance"])
-        reports.append(report["arms"])
+        reports.append(report["variants"])
     if any(provenance != provenances[0] for provenance in provenances[1:]):
         raise RuntimeError("child processes loaded different edit implementation sources")
     return {
@@ -335,7 +335,7 @@ def _run(
             "peak": "traced high-water bytes above the pre-call floor",
             "growth": "traced current bytes after dropped-result edit counts",
         },
-        "arms": _summarize(reports),
+        "variants": _summarize(reports),
     }
 
 

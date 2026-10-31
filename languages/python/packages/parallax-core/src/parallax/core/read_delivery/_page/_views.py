@@ -60,7 +60,7 @@ class SourceViewLayout:
 
     Two levels sharing one view key — a guarded path and its broad sibling are
     distinct hops that attach under the same name — share the one slot. A parent
-    both admit keeps the later level's delivered arm while the Page retains the
+    both admit keeps the later level's delivered relationship value while the Page retains the
     overwritten edge until its root-local continuations have been merged.
     """
 
