@@ -3,11 +3,12 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import re
 import subprocess
 from collections.abc import Callable, Generator
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pytest
 
@@ -52,18 +53,27 @@ def _on_authority_host(provenance: Provenance, contract: BudgetContract) -> Prov
     )
 
 
+_ORIGINS: Final = (
+    (
+        "parallax.core.entity._row_fill",
+        "packages/parallax-core/src/parallax/core/entity/_row_fill.py",
+    ),
+)
+
+
 def _preflight(monkeypatch: pytest.MonkeyPatch) -> tuple[BudgetContract, Provenance]:
     contract = BudgetContract.load()
     provenance = _on_authority_host(canary_provenance(contract), contract)
     monkeypatch.setattr(cost_report, "committed_contract", lambda: contract)
 
     def probe(_runtime: str, _namespace: str) -> RuntimeIdentity:
-        return RuntimeIdentity("CPython", str(contract.authority["cpython"]), "/p")
+        return RuntimeIdentity("CPython", str(contract.authority["cpython"]), "/p", _ORIGINS)
 
     def capture(*_args: Any, **_kwargs: Any) -> Provenance:
         return provenance
 
     monkeypatch.setattr(cost_report, "probe_runtime", probe)
+    monkeypatch.setattr(cost_report, "stale_extensions", tuple)
     monkeypatch.setattr(Provenance, "capture", capture)
     return contract, provenance
 
@@ -139,6 +149,29 @@ def test_preflight_probes_real_authority_child(
     with pytest.raises(ValueError, match="authority runtime CPython"):
         cost_report.preflight()
     assert calls == [(authority_minor(contract.authority), snapshot_report.ENVIRONMENT_NAMESPACE)]
+
+
+def test_preflight_refuses_a_probe_that_records_no_production_origins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract, _provenance = _preflight(monkeypatch)
+
+    def probe(_runtime: str, _namespace: str) -> RuntimeIdentity:
+        return RuntimeIdentity("CPython", str(contract.authority["cpython"]), "/p")
+
+    monkeypatch.setattr(cost_report, "probe_runtime", probe)
+    with pytest.raises(ValueError, match="the probe recorded no production origins"):
+        cost_report.preflight()
+
+
+def test_preflight_refuses_a_stale_extension_beside_a_production_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _preflight(monkeypatch)
+    stale = Path("packages/parallax-core/src/parallax/core/entity/_row_fill.cpython-314-darwin.so")
+    monkeypatch.setattr(cost_report, "stale_extensions", lambda: (stale,))
+    with pytest.raises(ValueError, match=re.escape(f"stale extension: {stale}")):
+        cost_report.preflight()
 
 
 @pytest.mark.usefixtures("capture_host")

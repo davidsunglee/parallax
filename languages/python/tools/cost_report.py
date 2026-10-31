@@ -100,6 +100,7 @@ from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract, MemoryGates, reading_bytes
 from parallax.conformance.cost_envelope import Provenance, Reading, classify_authority, validate
 from parallax.conformance.workloads import catalog, workload_digest
+from production_origins import stale_extensions
 from snapshot_delivery_overhead import (
     CONTROL_GROUP,
     ENVIRONMENT_NAMESPACE,
@@ -220,6 +221,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
         (
             "tools/snapshot_delivery_overhead.py",
             "tools/snapshot_delivery_reading.py",
+            "tools/production_origins.py",
             "tests/unit/memory_instruments.py",
         ),
         (
@@ -230,11 +232,14 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
             "tests/unit/_workload_spelling_support.py",
         ),
     ),
-    "lifecycle-overhead": MemberSources(("tools/lifecycle_overhead.py",), ()),
+    "lifecycle-overhead": MemberSources(
+        ("tools/lifecycle_overhead.py", "tools/production_origins.py"), ()
+    ),
     INSTANCE_STATE_SUBJECT: MemberSources(
         (
             "tools/instance_state_overhead.py",
             "tools/instance_state_reading.py",
+            "tools/production_origins.py",
             "tests/unit/memory_instruments.py",
         ),
         ("tests/unit/_instance_state_support.py",),
@@ -243,6 +248,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
         (
             "tools/write_lowering_overhead.py",
             "tools/write_lowering_reading.py",
+            "tools/production_origins.py",
             "tests/unit/memory_instruments.py",
         ),
         WRITE_SOURCES,
@@ -251,6 +257,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
         (
             "tools/feature_boundary_overhead.py",
             "tools/feature_boundary_reading.py",
+            "tools/production_origins.py",
             "tests/unit/memory_instruments.py",
         ),
         ("tests/unit/_feature_boundary_support.py",),
@@ -685,15 +692,11 @@ def preflight() -> None:
         mismatches.append(
             f"budgetContractDigest: loaded {contract.digest}, committed {committed.digest}"
         )
-    runtime = authority_minor(contract.authority)
-    identity = probe_runtime(runtime, ENVIRONMENT_NAMESPACE)
-    if isinstance(identity, RuntimeUnavailable):
-        mismatches.append(f"authority runtime CPython {runtime}: {identity.reason}")
-    elif identity.implementation != "CPython" or identity.version != contract.authority["cpython"]:
-        mismatches.append(
-            f"authority runtime CPython {runtime}: observed {identity.implementation} "
-            f"{identity.version}, authority requires CPython {contract.authority['cpython']}"
-        )
+    mismatches += _authority_runtime_mismatches(contract)
+    mismatches += [
+        f"stale extension: {path} would be imported ahead of the source beside it"
+        for path in stale_extensions()
+    ]
     if classify_authority(provenance, contract) != "authoritative" and not mismatches:
         mismatches.append("provenance does not classify as authoritative")
     if mismatches:
@@ -702,6 +705,26 @@ def preflight() -> None:
             + "\n- ".join(mismatches)
             + "\nChange the contract's authority block first, or run --diagnostic."
         )
+
+
+def _authority_runtime_mismatches(contract: BudgetContract) -> list[str]:
+    """Why the interpreter a reading child of the authority minor would get is
+    not the authority's, or does not run this checkout's production sources."""
+    runtime = authority_minor(contract.authority)
+    identity = probe_runtime(runtime, ENVIRONMENT_NAMESPACE)
+    if isinstance(identity, RuntimeUnavailable):
+        return [f"authority runtime CPython {runtime}: {identity.reason}"]
+    mismatches: list[str] = []
+    if identity.implementation != "CPython" or identity.version != contract.authority["cpython"]:
+        mismatches.append(
+            f"authority runtime CPython {runtime}: observed {identity.implementation} "
+            f"{identity.version}, authority requires CPython {contract.authority['cpython']}"
+        )
+    if not identity.production_origins:
+        mismatches.append(
+            f"authority runtime CPython {runtime}: the probe recorded no production origins"
+        )
+    return mismatches
 
 
 def collect(

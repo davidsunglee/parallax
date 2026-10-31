@@ -5,11 +5,13 @@ import os
 import platform
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 import interpreter_matrix as matrix
+from production_origins import NOT_LOADED, resolved_origins
 
 
 def test_supported_minors_close_the_declared_floor_from_below() -> None:
@@ -76,6 +78,41 @@ def test_the_identity_probe_is_routed_through_the_reading_childs_own_resolution(
     assert asked[0][0] == [sys.executable, str(matrix.IDENTITY_SCRIPT)]
 
 
+def test_the_probe_answers_where_the_read_construction_modules_resolve() -> None:
+    origins = {"parallax.core.entity._row_fill": "packages/a.py", "parallax.x": NOT_LOADED}
+    identity = {"implementation": "CPython", "version": "9.99.1", "executable": "/p"}
+    run, _asked = _probe((0, json.dumps({**identity, "productionOrigins": origins}), ""))
+    status = matrix.probe_runtime("9.99", "probe", run)
+    assert status == matrix.RuntimeIdentity(
+        "CPython", "9.99.1", "/p", tuple(sorted(origins.items()))
+    )
+    assert isinstance(status, matrix.RuntimeIdentity)
+    assert matrix.runtime_status(status.document()) == status
+    assert status.document()["productionOrigins"] == origins
+    malformed_records: tuple[object, ...] = ({}, [], {"parallax.x": 1})
+    for malformed in malformed_records:
+        run, _asked = _probe((0, json.dumps({**identity, "productionOrigins": malformed}), ""))
+        refused = matrix.probe_runtime("9.99", "probe", run)
+        assert isinstance(refused, matrix.RuntimeUnavailable)
+        assert "productionOrigins" in refused.reason
+
+
+def test_a_probe_resolving_foreign_production_code_answers_no_identity(tmp_path: Path) -> None:
+    script = tmp_path / "probe.py"
+    script.write_text(
+        "import runpy, sys, types\n"
+        "stale = types.ModuleType('parallax.stale')\n"
+        "stale.__spec__ = types.SimpleNamespace(origin='/elsewhere/stale.py', loader=None)\n"
+        "sys.modules['parallax.stale'] = stale\n"
+        f"sys.path.insert(0, {str(matrix.IDENTITY_SCRIPT.parent)!r})\n"
+        f"runpy.run_path({str(matrix.IDENTITY_SCRIPT)!r}, run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    status = matrix.probe_identity([sys.executable, str(script)], dict(os.environ))
+    assert isinstance(status, matrix.RuntimeUnavailable)
+    assert "parallax.stale was loaded from /elsewhere/stale.py" in status.reason
+
+
 @pytest.mark.parametrize(
     ("answer", "reason"),
     [
@@ -101,7 +138,9 @@ def test_a_probe_that_answers_no_identity_leaves_the_runtime_unavailable(
 
 def test_the_script_answers_the_identity_of_the_interpreter_running_it() -> None:
     status = matrix.probe_identity([sys.executable, str(matrix.IDENTITY_SCRIPT)], dict(os.environ))
-    assert status == matrix.current_identity()
+    assert status == replace(
+        matrix.current_identity(), production_origins=tuple(sorted(resolved_origins().items()))
+    )
     assert isinstance(status, matrix.RuntimeIdentity)
     assert status.version == platform.python_version()
     assert status.executable == sys.executable

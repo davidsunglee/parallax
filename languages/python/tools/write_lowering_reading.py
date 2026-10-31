@@ -76,6 +76,7 @@ from parallax.core.document_codec._document import (
 from parallax.core.entity import DomainModel
 from parallax.core.execution import prepare_model
 from parallax.snapshot import ScopedDatabase
+from production_origins import require_source_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
@@ -669,10 +670,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--warmups", required=True, type=int)
     parser.add_argument("--measured", required=True, type=int)
     args = parser.parse_args(argv)
+    require_source_origins()
     try:
         reading = measure(args.case, warmups=args.warmups, measured=args.measured)
     except ValueError as error:
         parser.error(str(error))
+    require_source_origins()
     print(json.dumps(reading, sort_keys=True))
     return 0
 

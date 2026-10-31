@@ -58,6 +58,7 @@ from parallax.core.read_delivery._read_plan import (
 )
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import Database, ScopedDatabase
+from production_origins import require_source_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 SUPPORT_DIRECTORY: Final = WORKSPACE / "tests" / "unit"
@@ -1080,6 +1081,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except (KeyError, ValueError) as error:
         parser.error(str(error))
+    require_source_origins()
     if geometry is not None:
         level, layout, metric = geometry
         value, reading_unit, samples = _geometry(
@@ -1114,6 +1116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             measured=args.measured,
             collect_at_page_boundary=contract.memory_collect_at_page_boundary,
         )
+    require_source_origins()
     print(json.dumps({"value": value, "unit": reading_unit, "samples": samples}))
     return 0
 
