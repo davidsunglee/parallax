@@ -159,7 +159,7 @@ def _sql(port: ScriptedAdapter, position: int) -> str:
 def _observation(node: object) -> Any:
     state = snapshot_state_of(node)
     assert state is not None
-    return cast("Any", state.read_evidence)
+    return cast("Any", state.provenance.read_evidence)
 
 
 # --------------------------------------------------------------------------- #

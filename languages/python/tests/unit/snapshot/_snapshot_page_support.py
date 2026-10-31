@@ -432,11 +432,11 @@ class PageFixture:
         *roots: int,
         pin: Pin = _NO_PIN,
         atomic: bool = False,
-        origins: Mapping[int, object] = MappingProxyType({}),
+        read_evidence: Mapping[int, object] = MappingProxyType({}),
     ) -> list[RootObservation]:
         """Every Page root's Root View, observed through the publication pass."""
         page = self.page(*roots, pin=pin)
-        return observed_roots(page, self._model, atomic=atomic, origins=origins)
+        return observed_roots(page, self._model, atomic=atomic, read_evidence=read_evidence)
 
     def materialize(
         self,

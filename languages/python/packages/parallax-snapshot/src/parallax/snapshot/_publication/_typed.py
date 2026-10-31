@@ -1,18 +1,27 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import cast
+from collections.abc import Mapping, Sequence
+from types import MappingProxyType
+from typing import Final, cast
 
 from parallax.core import temporal_read
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
 from parallax.core.temporal_read import Bitemporal, NonTemporal, Pin, TransactionTimeOnly
-from parallax.snapshot._inspection import RootConformance, SnapshotNodeState, pin_for_shape
+from parallax.snapshot._inspection import (
+    NodeProvenance,
+    PageProvenance,
+    RootConformance,
+    SnapshotNodeState,
+    pin_for_shape,
+)
 from parallax.snapshot._publication._classify import ConformingRoot, classify_root
 from parallax.snapshot._publication._root import RootView
 
 __all__ = ["TypedRootPublisher"]
+
+_NO_VIEWS: Final[Mapping[str, object]] = MappingProxyType({})
 
 
 class TypedRootPublisher:
@@ -27,10 +36,20 @@ class TypedRootPublisher:
     ends.
 
     ``versions`` names the explicit version Attribute a classified record
-    publishes.
+    publishes. Provenance and the states of nodes nothing distinguishes are
+    shared across the Page's roots and released with the publisher.
     """
 
-    __slots__ = ("_conformance", "_construction", "_model", "_root", "_temporal", "_versions")
+    __slots__ = (
+        "_conformance",
+        "_construction",
+        "_model",
+        "_provenance",
+        "_root",
+        "_shared_states",
+        "_temporal",
+        "_versions",
+    )
 
     def __init__(
         self,
@@ -44,6 +63,8 @@ class TypedRootPublisher:
         self._temporal = temporal_read.view(model)
         self._root: RootView | None = None
         self._conformance = RootConformance.CONFORMING
+        self._provenance = PageProvenance()
+        self._shared_states: dict[NodeProvenance, SnapshotNodeState] = {}
 
     def __call__(self, root: RootView, ordinal: int) -> tuple[object | InvalidData[object], ...]:
         """``root`` published at result ``ordinal``: as itself when it conforms,
@@ -74,20 +95,26 @@ class TypedRootPublisher:
         As-of axes are family-wide, so the concrete's shared Temporal Shape is
         what a temporal node retains for :func:`~parallax.snapshot.edge_of` to
         read its milestone starts against, at the family root's own Attribute
-        Identities.
+        Identities. A temporal node therefore owns its state, as does a node
+        with a narrowed view or Read Evidence; any other node shares one state
+        per provenance across the Page.
         """
         root = cast("RootView", self._root)
         conformance = self._conformance
+        provenance_for = self._provenance.provenance_for
+        shared_states = self._shared_states
         shape_of = self._temporal.shape
         root_pin = root.pin
         layout_of = root.layout
         view_layout_of = root.view_layout
         view_of = root.view
-        read_evidence_of = root.origin
+        read_evidence_of = root.read_evidence
         states: list[SnapshotNodeState] = []
         last: EntityIdentity | None = None
+        provenance: NodeProvenance | None = None
         pin: Pin | None = None
         edge_cache: TransactionTimeOnly | Bitemporal | None = None
+        shared: SnapshotNodeState | None = None
         for node in range(len(instances)):
             concrete = layout_of(node).concrete
             if concrete is not last:
@@ -95,23 +122,41 @@ class TypedRootPublisher:
                 shape = shape_of(concrete)
                 pin = pin_for_shape(shape, root_pin)
                 edge_cache = None if isinstance(shape, NonTemporal) else shape
+                provenance = provenance_for(concrete, conformance, pin)
+                shared = None
+                if edge_cache is None:
+                    shared = shared_states.get(provenance)
+                    if shared is None:
+                        shared = shared_states.setdefault(
+                            provenance, SnapshotNodeState(provenance, _NO_VIEWS)
+                        )
             narrowed = view_layout_of(node).narrowed_views
-            states.append(
-                SnapshotNodeState(
-                    concrete,
-                    {
-                        name: _resolved(instances, value)
-                        for slot, name in narrowed
-                        if (value := view_of(node, slot)) is not ABSENT
-                    }
-                    if narrowed
-                    else {},
-                    conformance,
-                    pin,
-                    edge_cache,
-                    read_evidence_of(node),
-                )
+            views = (
+                {
+                    name: _resolved(instances, value)
+                    for slot, name in narrowed
+                    if (value := view_of(node, slot)) is not ABSENT
+                }
+                if narrowed
+                else None
             )
+            read_evidence = read_evidence_of(node)
+            if read_evidence is not None:
+                states.append(
+                    SnapshotNodeState(
+                        NodeProvenance(concrete, conformance, pin, read_evidence),
+                        views or _NO_VIEWS,
+                        edge_cache,
+                    )
+                )
+            elif shared is not None and not views:
+                states.append(shared)
+            else:
+                states.append(
+                    SnapshotNodeState(
+                        cast("NodeProvenance", provenance), views or _NO_VIEWS, edge_cache
+                    )
+                )
         return states
 
 

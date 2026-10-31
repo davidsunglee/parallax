@@ -330,20 +330,21 @@ def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() 
 _MILESTONE_PIN = Pin(tx_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
 
 
+def _balance_row(balance_id: int, started: dt.datetime) -> dict[str, object]:
+    return {
+        "bal_id": balance_id,
+        "acct_num": f"A-{balance_id}",
+        "val": Decimal("5.00"),
+        "in_z": started,
+        "out_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
+    }
+
+
 def _balance_graph() -> Any:
     """One temporal `Balance` root materialized under a finite Transaction-Time
     pin, whose own milestone started earlier than the pin selects it at."""
     fixture = PageFixture(_BALANCE)
-    balance = fixture.node(
-        "Balance",
-        {
-            "bal_id": 1,
-            "acct_num": "A-1",
-            "val": Decimal("5.00"),
-            "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-            "out_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
-        },
-    )
+    balance = fixture.node("Balance", _balance_row(1, dt.datetime(2024, 1, 1, tzinfo=dt.UTC)))
     (root,) = fixture.materialize(balance, pin=_MILESTONE_PIN)
     return root
 
@@ -383,6 +384,68 @@ def test_the_inspection_code_set_is_closed_against_an_unlisted_code() -> None:
         SnapshotInspectionError(
             code="snapshot-nosuch", message="invented", operation="is_view_loaded"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Shared provenance. Nodes of one Page stating the same facts share one        #
+# provenance; a node shares its whole state only when it has no edge to cache, #
+# no narrowed view and no Read Evidence.                                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_non_temporal_nodes_without_narrowed_views_share_one_state_per_concrete() -> None:
+    root = _order_graph(items=(_item_row(11), _item_row(12)))
+    first, second = root.items
+    order_state, first_state, second_state = (
+        snapshot_state_of(node) for node in (root, first, second)
+    )
+    assert order_state is not None and first_state is not None
+
+    assert first_state is second_state
+    assert order_state is not first_state
+    assert order_state.provenance.entity == sm.SnapOrder.identity
+    assert first_state.provenance.entity == sm.SnapOrderItem.identity
+    with pytest.raises(SnapshotInspectionError) as no_pin:
+        pin_of(first)
+    assert no_pin.value.entity == sm.SnapOrderItem.identity
+
+
+def test_temporal_nodes_share_provenance_but_each_owns_its_edge_cache() -> None:
+    fixture = PageFixture(_BALANCE)
+    earlier = fixture.node("Balance", _balance_row(1, dt.datetime(2024, 1, 1, tzinfo=dt.UTC)))
+    later = fixture.node("Balance", _balance_row(2, dt.datetime(2024, 3, 1, tzinfo=dt.UTC)))
+    first, second = fixture.materialize(earlier, later, pin=_MILESTONE_PIN)
+    first_state, second_state = snapshot_state_of(first), snapshot_state_of(second)
+    assert first_state is not None and second_state is not None
+
+    assert first_state is not second_state
+    assert first_state.provenance is second_state.provenance
+    first_edge = edge_of(first)
+    assert first_edge == _BALANCE_EDGE
+    assert not isinstance(second_state.edge_cache, Edge)
+    assert edge_of(second) == Edge(tx_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC))
+    assert edge_of(first) is first_edge
+
+
+def test_a_node_with_a_narrowed_view_owns_its_state_and_shares_its_provenance() -> None:
+    fixture = PageFixture(_ANIMAL, ("parallax.compatibility.AnimalOwner.pets", "pets[Dog]"))
+    alice = fixture.node("AnimalOwner", _OWNER_ROW)
+    bob = fixture.node("AnimalOwner", {"id": 11, "name": "Bob", "favorite_id": None})
+    for owner, dog_id in ((alice, 1), (bob, 2)):
+        dog = fixture.node("Dog", {**_DOG_ROW, "id": dog_id, "owner_id": owner})
+        fixture.attach(
+            owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed="pets[Dog]"
+        )
+    first, second = fixture.materialize(alice, bob)
+    first_state, second_state = snapshot_state_of(first), snapshot_state_of(second)
+    assert first_state is not None and second_state is not None
+
+    assert first_state is not second_state
+    assert first_state.provenance is second_state.provenance
+    (first_dog,) = cast("tuple[Any, ...]", view(first, sm.AnimalOwner.pets.narrow(sm.Dog)))
+    (second_dog,) = cast("tuple[Any, ...]", view(second, sm.AnimalOwner.pets.narrow(sm.Dog)))
+    assert (first_dog.id, second_dog.id) == (1, 2)
+    assert snapshot_state_of(first_dog) is snapshot_state_of(second_dog)
 
 
 # --------------------------------------------------------------------------- #

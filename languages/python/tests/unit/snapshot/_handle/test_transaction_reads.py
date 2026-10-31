@@ -839,7 +839,7 @@ def _retained_evidence(node: object) -> object | None:
     """
     state = snapshot_state_of(node)
     assert state is not None, "a published root always carries lifecycle state"
-    return state.read_evidence
+    return state.provenance.read_evidence
 
 
 def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> None:

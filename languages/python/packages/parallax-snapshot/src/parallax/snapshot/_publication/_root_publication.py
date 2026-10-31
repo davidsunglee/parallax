@@ -24,7 +24,7 @@ from parallax.snapshot._publication._root import RootView
 
 __all__ = ["edge_pin", "publication_issue", "publish_roots", "require_publishable"]
 
-_NO_ORIGINS: Final[Mapping[int, ReadEvidence]] = MappingProxyType({})
+_NO_READ_EVIDENCE: Final[Mapping[int, ReadEvidence]] = MappingProxyType({})
 
 
 def publication_issue(root: RootView) -> StoredDataIssueInput | None:
@@ -67,13 +67,13 @@ def publish_roots[T](
     atomic: bool = False,
     ordinal_offset: int = 0,
     milestones: TemporalShape | None = None,
-    origins: Mapping[int, ReadEvidence] = _NO_ORIGINS,
+    read_evidence: Mapping[int, ReadEvidence] = _NO_READ_EVIDENCE,
 ) -> Iterator[T]:
     """Publish ``page``'s roots in result order through one Root View the pass
     re-points at each root, handing it with the root's result ordinal to
     ``publish_root``.
 
-    Each root is resolved, judged, and given its ``origins`` before the Page
+    Each root is resolved, judged, and given its ``read_evidence`` before the Page
     storage it finished with is released, and only then published. A root of a
     ``milestones`` read stands at its own milestone's edge. An ``atomic``
     publication publishes nothing until every root has been, and defers judging
@@ -85,7 +85,7 @@ def publish_roots[T](
     rows = page_rows(page)
     observer = page_cadence(page)
     schedule = page_schedule(page, opt_lock.write_evidence(model), atomic=atomic)
-    root = RootView(rows, schedule, origins=origins)
+    root = RootView(rows, schedule, read_evidence=read_evidence)
     resolve = root._resolve_root  # pyright: ignore[reportPrivateUsage] - the pass owns re-pointing
     edges = page_edges(page, milestones)
     if atomic:

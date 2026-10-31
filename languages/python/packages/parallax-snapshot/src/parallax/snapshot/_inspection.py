@@ -31,6 +31,8 @@ from parallax.core.temporal_read import (
 
 __all__ = [
     "SNAPSHOT_INSPECTION_CODES",
+    "NodeProvenance",
+    "PageProvenance",
     "RootConformance",
     "SnapshotInspectionError",
     "SnapshotNodeState",
@@ -102,36 +104,80 @@ class RootConformance(Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class NodeProvenance:
+    """Where one published node came from, Typed and Wire alike.
+
+    ``entity`` is the node's own concrete Entity and ``pin`` the as-of
+    coordinates it was read at, present exactly for a node whose family declares
+    an As-Of Axis. ``root_conformance`` is its result root's verdict; it is
+    absent only for the node a Wire insert answered, which no read published.
+
+    ``read_evidence`` is the private Read Evidence a writable attempt's read
+    retained for this node — the object it denotes, the participation its read
+    licensed, and the observation retained for the state it saw. It is how a
+    published value reaches its own write evidence, and it is absent for a node
+    no such read observed, which a conforming node of a standalone, read-only,
+    or milestone-set read is. Nothing here interprets it; the write side decides
+    what it licenses.
+
+    One instance may be shared by every node stating the same evidence-free
+    facts, so nothing may tell two nodes apart by their provenance's identity.
+    """
+
+    entity: EntityIdentity
+    root_conformance: RootConformance | None
+    pin: Pin | None = None
+    read_evidence: ReadEvidence | None = None
+
+
+class PageProvenance:
+    """One Page's evidence-free provenance: one :class:`NodeProvenance` per
+    distinct entity, root conformance and pin, shared by every node of the
+    Page's roots stating them.
+
+    Provenance carrying Read Evidence is never interned: equal evidence objects
+    have independent lifetimes and observations, so each such node keeps its
+    own. The memo is owned by one Page's publisher and released with it, and
+    retains no node, Root View or delivery.
+    """
+
+    __slots__ = ("_held",)
+
+    def __init__(self) -> None:
+        self._held: dict[tuple[EntityIdentity, RootConformance, Pin | None], NodeProvenance] = {}
+
+    def provenance_for(
+        self, entity: EntityIdentity, root_conformance: RootConformance, pin: Pin | None
+    ) -> NodeProvenance:
+        key = (entity, root_conformance, pin)
+        held = self._held.get(key)
+        if held is None:
+            held = self._held.setdefault(key, NodeProvenance(entity, root_conformance, pin))
+        return held
+
+
+@dataclass(frozen=True, slots=True)
 class SnapshotNodeState:
-    """One materialized node's whole Snapshot-lifecycle state.
+    """One materialized Typed node's whole Snapshot-lifecycle state.
 
     ``views`` holds the narrowed views the read requested, keyed by the derived
     view key (relationship name plus effective concrete-subtype set); a broad
     view's loaded state lives in the relationship slot itself, since installing
     the unloaded sentinel there is what makes ordinary attribute access raise.
-    ``pin`` and ``edge_cache`` are present exactly for a node whose family
-    declares as-of axes.
 
-    ``edge_cache`` holds the family's Temporal Shape until :func:`edge_of` first
+    ``edge_cache`` is present exactly for a node whose family declares as-of
+    axes. It holds the family's Temporal Shape until :func:`edge_of` first
     resolves it into the node's milestone Edge, which then replaces it. That
     rewrite changes only the form of one fact the node already determines, so
     the field takes no part in comparison.
 
-    ``read_evidence`` is the private Read Evidence a writable attempt's read
-    retained for this node — the object it denotes, the participation its read
-    licensed, and the observation retained for the state it saw. It is how a
-    Typed value reaches its own write evidence, and it is absent for a node no
-    such read observed, which a conforming node of a standalone, read-only, or
-    milestone-set read is. Nothing here interprets it; the write side decides
-    what it licenses.
+    One state may be shared by every node of a Page with no as-of axis, no
+    narrowed view and no Read Evidence, since nothing then distinguishes them.
     """
 
-    entity: EntityIdentity
+    provenance: NodeProvenance
     views: Mapping[str, object]
-    root_conformance: RootConformance
-    pin: Pin | None = None
     edge_cache: Edge | TransactionTimeOnly | Bitemporal | None = field(default=None, compare=False)
-    read_evidence: ReadEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,15 +246,17 @@ def pin_of(node: object) -> Pin:
     Every node of one ``find`` shares the whole-graph pin; a milestone-set read's
     roots each carry their own milestone-derived pin instead.
     """
-    state = _required_state(node, "pin_of")
-    if state.pin is None:
+    provenance = _required_state(node, "pin_of").provenance
+    if provenance.pin is None:
         raise SnapshotInspectionError(
             code="snapshot-pin-unavailable",
-            message=f"{state.entity.canonical} declares no as-of axis, so it was read at no pin",
+            message=(
+                f"{provenance.entity.canonical} declares no as-of axis, so it was read at no pin"
+            ),
             operation="pin_of",
-            entity=state.entity,
+            entity=provenance.entity,
         )
-    return state.pin
+    return provenance.pin
 
 
 def edge_of(node: object) -> Edge:
@@ -225,11 +273,12 @@ def edge_of(node: object) -> Edge:
     state = _required_state(node, "edge_of")
     cached = state.edge_cache
     if cached is None:
+        entity = state.provenance.entity
         raise SnapshotInspectionError(
             code="snapshot-edge-unavailable",
-            message=f"{state.entity.canonical} is not temporal, so it stands on no milestone",
+            message=f"{entity.canonical} is not temporal, so it stands on no milestone",
             operation="edge_of",
-            entity=state.entity,
+            entity=entity,
         )
     if isinstance(cached, Edge):
         return cached

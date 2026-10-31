@@ -78,7 +78,7 @@ declaration engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly, as
 """
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import cached_property
 from time import perf_counter
@@ -117,7 +117,7 @@ from parallax.core.metamodel import (
     Multiplicity,
     OccurrenceMetadata,
 )
-from parallax.snapshot._inspection import RootConformance, SnapshotNodeState
+from parallax.snapshot._inspection import NodeProvenance, RootConformance, SnapshotNodeState
 from tests._support.model_capabilities import graph_construction_for
 
 __all__ = [
@@ -382,6 +382,14 @@ class Scenario:
     warms: bool = False
     """Whether every arm reads this scenario's ``cached_property`` before the
     sample, so the memoized result is state the reading counts."""
+    provenance: NodeProvenance = field(init=False, repr=False, compare=False)
+    """The provenance every node of this scenario states, built with the
+    scenario: publication shares one per Page, so no node's reading prices it."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "provenance", NodeProvenance(self.entity, RootConformance.CONFORMING)
+        )
 
     @cached_property
     def construction(self) -> EntityGraphConstruction:
@@ -435,11 +443,9 @@ class Scenario:
         aggregate counts lifecycle state and a stand-in would misreport the half
         of it that does not change. Allocated per call rather than shared: a state
         object built outside the window would be borrowed by every arm and priced
-        by none.
+        by none. Its provenance is the scenario's, as a Page shares it.
         """
-        return SnapshotNodeState(
-            entity=self.entity, views={}, root_conformance=RootConformance.CONFORMING
-        )
+        return SnapshotNodeState(provenance=self.provenance, views={})
 
 
 def legacy_publication(scenario: Scenario, state: object | None) -> object:

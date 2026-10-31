@@ -313,7 +313,7 @@ def _carried_evidence(value: object) -> object:
     if isinstance(value, WireEntity):
         return read_evidence_of(value)
     state = snapshot_state_of(value)
-    return None if state is None else state.read_evidence
+    return None if state is None else state.provenance.read_evidence
 
 
 def _carried_authoring(value: object) -> object:

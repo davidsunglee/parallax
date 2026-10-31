@@ -224,8 +224,8 @@ def test_a_streamed_reads_unresolved_sources_hold_nothing_of_the_unit_of_work() 
 
 def _evidence_of(value: object) -> object:
     state = snapshot_state_of(value)
-    assert state is not None and state.read_evidence is not None
-    return state.read_evidence
+    assert state is not None and state.provenance.read_evidence is not None
+    return state.provenance.read_evidence
 
 
 def test_a_registration_keeps_none_of_the_values_its_read_published() -> None:

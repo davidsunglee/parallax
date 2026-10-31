@@ -1388,7 +1388,7 @@ def test_every_root_view_accessor_answers_the_identical_object_on_a_second_call(
         assert root.issues(0) is root.issues(0)
         assert root.view_layout(0) is root.view_layout(0)
         assert root.view(0, 0) is root.view(0, 0)
-        assert root.origin(0) is root.origin(0)
+        assert root.read_evidence(0) is root.read_evidence(0)
         assert root.reached is root.reached
         return (len(root), root.view(0, 0))
 

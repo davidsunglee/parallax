@@ -219,7 +219,23 @@ def test_whole_result_projection_preserves_envelope_and_origin_without_io() -> N
     }
     assert projected.pin == typed.pin
     assert projected.edition == typed.edition
-    assert read_evidence_of(wire) is state.read_evidence
+    assert read_evidence_of(wire) is state.provenance.read_evidence
+    assert cast("Any", wire)._provenance is state.provenance
+
+
+def test_projection_passes_shared_provenance_through_to_every_node_stating_it() -> None:
+    second = {**_customer_row(), "id": 2, "name": "Grace"}
+    root, db = _database(Read(rows=[_customer_row(), second]))
+    typed = db.find(vo.Customer.where(vo.Customer.all))
+    root.close()
+    first_state, second_state = (snapshot_state_of(value) for value in typed.results())
+    assert first_state is not None and second_state is not None
+
+    projected = typed.wire().results()
+
+    assert first_state is second_state
+    assert len(projected) == 2
+    assert all(cast("Any", node)._provenance is first_state.provenance for node in projected)
 
 
 def test_projection_does_not_serialize_or_reclassify(
@@ -293,7 +309,7 @@ def test_element_projection_accepts_an_external_published_node_without_membershi
     assert "locations" not in projected
     state = snapshot_state_of(external)
     assert state is not None
-    assert read_evidence_of(projected) is state.read_evidence
+    assert read_evidence_of(projected) is state.provenance.read_evidence
 
 
 def test_element_projection_refuses_edited_and_unpublished_values() -> None:

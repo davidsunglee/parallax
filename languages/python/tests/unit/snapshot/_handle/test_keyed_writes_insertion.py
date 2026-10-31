@@ -965,7 +965,7 @@ def test_an_inserted_value_keeps_the_node_state_a_classified_read_gave_it() -> N
         assert isinstance(published, InvalidData)
         value = cast("Contact", published.data).edit(address=complete)
         node = snapshot_state_of(value)
-        assert node is not None and node.read_evidence is None
+        assert node is not None and node.provenance.read_evidence is None
         tx.insert(value)
         assert snapshot_state_of(value) is node
         assert insertion_of(value) is not None

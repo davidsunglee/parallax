@@ -43,8 +43,22 @@ from parallax.core.execution import (
 from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import Concurrency, WriteEvidenceError, WriteRejectedError
-from parallax.snapshot import Database, ScopedDatabase, Snapshot, TxnContext, WireEntity, connect
-from parallax.snapshot._publication._wire import authoring_of, read_evidence_of
+from parallax.snapshot import (
+    Database,
+    ScopedDatabase,
+    Snapshot,
+    SnapshotInspectionError,
+    TxnContext,
+    WireEntity,
+    connect,
+    edge_of,
+)
+from parallax.snapshot._publication._wire import (
+    authoring_of,
+    read_evidence_of,
+    stored_entity_of,
+    wire_pin_of,
+)
 from tests._support import mirrored_models as mm
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -1757,6 +1771,13 @@ def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> 
         "familyVariant": "CardPayment",
     }
     assert read_evidence_of(opened[0]) is None
+    assert stored_entity_of(opened[0]) is None
+    assert wire_pin_of(opened[0]) is None
+    provenance = cast("Any", opened[0])._provenance
+    assert (provenance.entity.name, provenance.root_conformance) == ("CardPayment", None)
+    with pytest.raises(SnapshotInspectionError, match="an insert answered") as refusal:
+        edge_of(opened[0])
+    assert refusal.value.code == "snapshot-node-required"
     authority = authoring_of(opened[0])
     assert authority is not None
     assert authority.object_key.entity.name == "CardPayment"
