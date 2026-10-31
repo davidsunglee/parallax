@@ -283,7 +283,7 @@ def test_a_measurement_child_refuses_foreign_production_code_loaded_while_measur
         entry()
 
 
-@pytest.mark.parametrize(("module", "measuring", "entry"), _CHILDREN[:3])
+@pytest.mark.parametrize(("module", "measuring", "entry"), [*_CHILDREN[:3], _CHILDREN[4]])
 def test_a_measurement_child_reports_what_it_loaded_once_it_has_measured(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

@@ -7,8 +7,9 @@ cell — each in a child interpreter of its own (the ``read`` subcommand), and
 writes one ``capture.json`` into an output directory that must be new or
 empty. A capture keeps every raw sample beside its median, the warm-up and
 sample counts, what each window contains and what is composed outside it, the
-outcome every run reported, the production subject (commit, a digest of every
-production source and the lock, and whether those match the commit), the
+outcome every run reported, the read-construction modules each child loaded
+and where from, the production subject (commit, a digest of every production
+source and the lock, and whether those match the commit), the
 measurement-support digest, the environment, the execution seam, and every
 flow combination no public lifecycle supports, with its reason. A cell whose
 child fails is recorded as failed and the command exits 3.
@@ -95,7 +96,12 @@ from pathlib import Path
 from typing import Any, Final, Literal, cast
 
 from interpreter_matrix import CURRENT_MINOR, HASH_SEED, child_command, child_environment
-from production_origins import require_source_origins
+from production_origins import (
+    ORIGINS_FIELD,
+    loaded_origins,
+    reported_origins,
+    require_source_origins,
+)
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 REPOSITORY: Final = WORKSPACE.parents[1]
@@ -395,6 +401,12 @@ def cell_record(cell: support.Cell, document: Mapping[str, object] | str) -> dic
     expected = support.expected_outcome(cell).document()
     samples = _positive_samples(document.get("samplesUs"))
     windows = document.get("windows")
+    origins: dict[str, str] | None = None
+    unrecorded = ""
+    try:
+        origins = reported_origins(document.get(ORIGINS_FIELD))
+    except ValueError as error:
+        unrecorded = str(error)
     problems = [
         message
         for failed, message in (
@@ -402,10 +414,11 @@ def cell_record(cell: support.Cell, document: Mapping[str, object] | str) -> dic
             (samples is None, f"the reading carries no {MEASURED} positive samples"),
             (not isinstance(windows, int) or windows <= 0, "the reading timed no window"),
             (document.get("outcome") != expected, f"the outcome is not {expected}"),
+            (origins is None, unrecorded),
         )
         if failed
     ]
-    if problems or samples is None:
+    if problems or samples is None or origins is None:
         return {"status": "failed", "reason": "; ".join(problems)}
     described = support.description(cell)
     return {
@@ -421,6 +434,7 @@ def cell_record(cell: support.Cell, document: Mapping[str, object] | str) -> dic
         "outcome": expected,
         "stages": described.stages,
         "setup": described.setup,
+        ORIGINS_FIELD: origins,
     }
 
 
@@ -1061,8 +1075,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "read":
             require_source_origins()
             document = reading_document(args.cell, warmups=args.warmups, measured=args.measured)
-            require_source_origins()
-            print(json.dumps(document, sort_keys=True))
+            print(json.dumps(document | {ORIGINS_FIELD: loaded_origins()}, sort_keys=True))
             return 0
         if args.command == "capture":
             return capture(selected_cells(args), args.output)
