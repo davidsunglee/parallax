@@ -1,5 +1,5 @@
 """Take one isolated Snapshot delivery reading: a Budget Contract cell, one
-provider-free geometry or leaf-type read family address, one read-plan
+provider-free geometry or scalar-type read family address, one read-plan
 compilation address, or one before/after control address.
 
 This script is imported by nothing. It is the sole report-side reader of the
@@ -77,8 +77,8 @@ from tests._support.db_port import projected_rows  # noqa: E402
 from tests.unit._workload_spelling_support import (  # noqa: E402
     CONTROL_PREFIX,
     GEOMETRY_PREFIX,
-    LEAF_PREFIX,
     PLAN_PREFIX,
+    SCALAR_PREFIX,
 )
 
 # E402 again, and imported below the guard proving the module is this workspace's own.
@@ -110,12 +110,12 @@ def _deferred(name: str) -> ModuleType:
 
 if TYPE_CHECKING:
     from tests.unit import _delivery_control_support as control_support
-    from tests.unit import _leaf_type_support as leaf_support
+    from tests.unit import _scalar_type_support as scalar_support
     from tests.unit import _snapshot_materialization_support as stress_support
     from tests.unit import _structural_geometry_support as geometry_support
 else:
     control_support = _deferred("_delivery_control_support")
-    leaf_support = _deferred("_leaf_type_support")
+    scalar_support = _deferred("_scalar_type_support")
     stress_support = _deferred("_snapshot_materialization_support")
     geometry_support = _deferred("_structural_geometry_support")
 
@@ -577,16 +577,16 @@ def geometry_address(workload: str, path: str) -> tuple[GeometryLevel, str, str]
     return level, layout, metric
 
 
-def leaf_address(workload: str, path: str) -> tuple[leaf_support.LeafType, str, str] | None:
-    """The leaf type, layout, and metric a leaf-type read address names, or
+def scalar_address(workload: str, path: str) -> tuple[scalar_support.ScalarType, str, str] | None:
+    """The scalar type, layout, and metric a scalar-type read address names, or
     absence for any other address."""
-    if not workload.startswith(LEAF_PREFIX):
+    if not workload.startswith(SCALAR_PREFIX):
         return None
-    leaf = leaf_support.read_address(workload)
-    if leaf is None:
+    scalar = scalar_support.read_address(workload)
+    if scalar is None:
         return None
-    layout, metric = _read_cell(workload, path, "leaf-type")
-    return leaf, layout, metric
+    layout, metric = _read_cell(workload, path, "scalar-type")
+    return scalar, layout, metric
 
 
 def _read_cell(workload: str, path: str, family: str) -> tuple[str, str]:
@@ -923,16 +923,18 @@ def _geometry(
     )
 
 
-def _leaf_read(
-    leaf: leaf_support.LeafType, layout: str, metric: str, *, warmups: int, measured: int
+def _scalar_read(
+    scalar_type: scalar_support.ScalarType, layout: str, metric: str, *, warmups: int, measured: int
 ) -> tuple[float, str, tuple[float, ...]]:
-    """One leaf type's provider-free Wire find under ``layout``, at the roots a
+    """One scalar type's provider-free Wire find under ``layout``, at the roots a
     geometry read materializes."""
-    selected = cast("leaf_support.Layout", layout)
+    selected = cast("scalar_support.Layout", layout)
     return _structural_read(
-        leaf_support.LeafPort(leaf_support.entity_class(leaf, selected), READ_GEOMETRY_ROOTS),
-        leaf_support.MODEL,
-        leaf_support.read_query(leaf, selected),
+        scalar_support.ScalarTypePort(
+            scalar_support.entity_class(scalar_type, selected), READ_GEOMETRY_ROOTS
+        ),
+        scalar_support.MODEL,
+        scalar_support.read_query(scalar_type, selected),
         metric,
         warmups=warmups,
         measured=measured,
@@ -1067,10 +1069,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("timing sampling counts do not match the Budget Contract")
     try:
         geometry = geometry_address(args.workload, args.cell)
-        leaf = leaf_address(args.workload, args.cell)
+        scalar = scalar_address(args.workload, args.cell)
         plan = plan_address(args.workload, args.cell)
         control = (
-            control_support.control_address(args.workload, args.cell, contract.memory_scaling_arms)
+            control_support.control_address(
+                args.workload, args.cell, contract.memory_scaling_root_counts
+            )
             if args.workload.startswith(CONTROL_PREFIX)
             else None
         )
@@ -1081,10 +1085,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         value, reading_unit, samples = _geometry(
             level, layout, metric, warmups=args.warmups, measured=args.measured
         )
-    elif leaf is not None:
-        leaf_type, layout, metric = leaf
-        value, reading_unit, samples = _leaf_read(
-            leaf_type, layout, metric, warmups=args.warmups, measured=args.measured
+    elif scalar is not None:
+        scalar_type, layout, metric = scalar
+        value, reading_unit, samples = _scalar_read(
+            scalar_type, layout, metric, warmups=args.warmups, measured=args.measured
         )
     elif plan is not None:
         level, layout, metric = plan

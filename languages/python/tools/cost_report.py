@@ -104,8 +104,8 @@ from snapshot_delivery_overhead import (
     CONTROL_GROUP,
     ENVIRONMENT_NAMESPACE,
     GEOMETRY_GROUP,
-    LEAF_GROUP,
     PLAN_GROUP,
+    SCALAR_GROUP,
     Selection,
     every_cell,
     expanded_cells,
@@ -225,7 +225,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
         (
             "tests/unit/_snapshot_materialization_support.py",
             "tests/unit/_structural_geometry_support.py",
-            "tests/unit/_leaf_type_support.py",
+            "tests/unit/_scalar_type_support.py",
             "tests/unit/_delivery_control_support.py",
             "tests/unit/_workload_spelling_support.py",
         ),
@@ -429,8 +429,8 @@ def validate_snapshot_matrix(
     supported runtime among the addresses ``selected``, with comparisons of the
     selected contract cells on the authority runtime alone.
 
-    The matrix is exact with the leaf-type reads and the control group, without
-    the leaf-type reads as a capture taken before they existed is, or without
+    The matrix is exact with the scalar-type reads and the control group, without
+    the scalar-type reads as a capture taken before they existed is, or without
     either as a capture taken before the control group existed is; ``current``
     accepts the current matrix alone."""
     minors = tuple(runtimes) if runtimes is not None else supported_minors()
@@ -439,7 +439,7 @@ def validate_snapshot_matrix(
     if not current and set(readings) != set(expected):
         for controls in (True, False):
             earlier = selected_addresses(
-                contract, minors, selected, controls=controls, leaf_types=False
+                contract, minors, selected, controls=controls, scalar_types=False
             )
             if set(readings) == set(earlier):
                 expected = earlier
@@ -1049,9 +1049,9 @@ def _unpublished(member: Document, subject: str) -> list[str]:
 
 def _scaling_growth(snapshot: Document, contract: BudgetContract) -> list[str]:
     memory = cast("Mapping[str, object]", contract.sampling["memory"])
-    arm_limit = _number(memory["armGrowthMaxKiB"])
-    arm_size = contract.memory_children
-    arm_count = len(contract.memory_scaling_arms)
+    growth_limit = _number(memory["scalingGrowthMaxKiB"])
+    children = contract.memory_children
+    root_counts = len(contract.memory_scaling_root_counts)
     compared = authority_minor(contract.authority)
     grown: list[str] = []
     for reading in _readings(snapshot):
@@ -1059,17 +1059,17 @@ def _scaling_growth(snapshot: Document, contract: BudgetContract) -> list[str]:
         if not cell.startswith("streamedMemory.") or reading.get("runtime") != compared:
             continue
         samples = [_number(value) for value in cast("Sequence[object]", reading.get("samples", ()))]
-        if len(samples) < arm_size * arm_count:
+        if len(samples) < children * root_counts:
             continue
-        arm_medians = [
-            statistics.median(samples[index * arm_size : (index + 1) * arm_size])
-            for index in range(arm_count)
+        medians = [
+            statistics.median(samples[index * children : (index + 1) * children])
+            for index in range(root_counts)
         ]
-        growth = max(arm_medians[1:]) - arm_medians[0]
-        if growth > arm_limit:
+        growth = max(medians[1:]) - medians[0]
+        if growth > growth_limit:
             grown.append(
                 f"advisory: {reading.get('workload')}.{cell} grows {growth:.3f} KiB between "
-                "memory arms"
+                "scaling root counts"
             )
     return grown
 
@@ -1290,7 +1290,7 @@ def advisories(
 ) -> list[str]:
     """Everything reported about the required evidence that never fails it: a
     timing or memory ceiling exceeded, a reading past its memory gate, a
-    scaling arm grown past its limit, a dependency lock that moved since the
+    scaling root count grown past its limit, a dependency lock that moved since the
     capture, and a producing commit the inspected head no longer descends from.
     A lock comparison that could not be made at all is reported here the same
     way: the provenance it needs is required of the envelope, so :func:`verify`
@@ -1806,7 +1806,7 @@ from parallax.conformance import workloads
 from parallax.conformance.budget import BudgetContract
 from tests.unit import _delivery_control_support as control_support
 
-scales = {*BudgetContract.load().memory_scaling_arms, control_support.HELD_ROOTS}
+scales = {*BudgetContract.load().memory_scaling_root_counts, control_support.HELD_ROOTS}
 generated = {}
 for workload_id, workload in workloads.catalog().items():
     if "generate" in workload.document["dataset"]:
@@ -1823,7 +1823,7 @@ for workload_id, workload in workloads.catalog().items():
 print(json.dumps([
     workloads._GENERATED_KEY_OFFSET,
     workloads.structural_digest(),
-    workloads.leaf_type_digest(),
+    workloads.scalar_type_digest(),
     generated,
 ]))
 """
@@ -1831,7 +1831,7 @@ print(json.dumps([
 checkout running it defines that code: the generated-key offset, the frozen
 manifests, and a digest of each generated dataset (its rows, root entity, root
 count, and fanout) at every scale a measurement reads it: its fixture's, the
-Budget Contract's scaling arms, and the held control's."""
+Budget Contract's scaling root counts, and the held control's."""
 
 type CodeIdentityRunner = Callable[[Path], tuple[int, str, str]]
 """Runs :data:`CODE_IDENTITY_PROGRAM` in the checkout whose Python workspace is
@@ -1886,7 +1886,7 @@ def run_write_code_identity(workspace: Path) -> tuple[int, str, str]:
         [
             "-c",
             "import json; from parallax.conformance import workloads; "
-            "print(json.dumps([workloads.structural_digest(), workloads.leaf_type_digest()]))",
+            "print(json.dumps([workloads.structural_digest(), workloads.scalar_type_digest()]))",
         ],
     )
 
@@ -2447,9 +2447,9 @@ SHARDS: Final[tuple[Shard, ...]] = (
     _snapshot_shard("versioned-document", "versioned-document"),
     _snapshot_shard("controls", CONTROL_GROUP),
     _snapshot_shard(
-        "geometry-leaf-plan-stress",
+        "geometry-scalar-plan-stress",
         GEOMETRY_GROUP,
-        LEAF_GROUP,
+        SCALAR_GROUP,
         PLAN_GROUP,
         "stress-columns",
         "stress-document",

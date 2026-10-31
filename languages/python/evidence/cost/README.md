@@ -154,7 +154,7 @@ digest alone does not establish that two instruments are equivalent.
 Isolated cell readers use a fresh child interpreter, `PYTHONHASHSEED=0`, three
 warm-ups, and nine measured samples per cell. The value is the median; samples
 inside the envelope allow the verifier to recompute it. Structural matrices run
-on both supported minors, with leaf-type families on the newest alone.
+on both supported minors, with scalar-type families on the newest alone.
 Lifecycle overhead instead uses 200 warm-ups and 3,000 interleaved plain/observed
 pairs on 3.14. Its p95 differences include scheduler and collection differences
 between arms and do not bound dispatch-tail latency. With the in-memory port,
@@ -258,7 +258,7 @@ For write lowering, it checks each captured workload source hash against the
 exact producing commit and reconstructs that commit's recorded digest under
 either the legacy raw-source definition or the current definition. It then
 proves that executable workload syntax and the commit's frozen structural and
-leaf manifests equal HEAD's. The current identity includes the shared workload
+scalar-type manifests equal HEAD's. The current identity includes the shared workload
 spelling helper and ignores comments, formatting, standalone documentation
 strings, and only the workload's own digest declaration. Assigned literals and
 operational expressions remain part of the identity. Prose edits therefore

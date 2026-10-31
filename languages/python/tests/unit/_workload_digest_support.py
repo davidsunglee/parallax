@@ -8,7 +8,7 @@ from typing import Final
 WRITE_SOURCES: Final = (
     "tests/unit/_write_lowering_support.py",
     "tests/unit/_structural_geometry_support.py",
-    "tests/unit/_leaf_type_support.py",
+    "tests/unit/_scalar_type_support.py",
     "tests/unit/_workload_spelling_support.py",
 )
 

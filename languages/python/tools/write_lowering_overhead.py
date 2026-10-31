@@ -4,10 +4,10 @@ The report owns the runtime-by-case matrix and the Cost Report Envelope. Each
 reading is taken by ``write_lowering_reading.py`` in an isolated child process:
 the twenty categorical keyed-write cases, the target writes
 beside them, the geometry inserts, the changed-ancestor successors, and the
-leaf-type inserts through their public verbs and the flush's actual driver
+scalar-type inserts through their public verbs and the flush's actual driver
 serialization, the public Wire insert to the node it answers, and the two
-model-preparation checkpoints. The leaf-type cases are read only on the
-supported minors the leaf-type manifest scopes them to. The cross-object
+model-preparation checkpoints. The scalar-type cases are read only on the
+supported minors the scalar-type manifest scopes them to. The cross-object
 flushes are read on every supported minor: each one flush of keyed amendments
 over many distinct objects, read as its planning and Write Group execution
 regions, and where it reaches deferred spans as its range-binding advances
@@ -52,7 +52,7 @@ from parallax.conformance.cost_envelope import (
     classify_authority,
     validate,
 )
-from parallax.conformance.workloads import leaf_type_runtimes
+from parallax.conformance.workloads import scalar_type_runtimes
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "write_lowering_reading.py"
@@ -231,10 +231,10 @@ CONTROL_CASE_NAMES: Final = (
 )
 """The cases added as before/after controls beside the lowering matrix: the
 public insert response and the family-bearing preparation."""
-LEAF_TYPE_CASE_NAMES: Final = tuple(
-    case.name for case in lowering_support.CASES if case.family == lowering_support.LEAF_FAMILY
+SCALAR_TYPE_CASE_NAMES: Final = tuple(
+    case.name for case in lowering_support.CASES if case.family == lowering_support.SCALAR_FAMILY
 )
-"""The leaf-type inserts, read only on the supported minors the leaf-type
+"""The scalar-type inserts, read only on the supported minors the scalar-type
 manifest scopes them to."""
 TARGET_CASE_NAMES: Final = tuple(case.name for case in lowering_support.CASES if case.addressed)
 """The target writes."""
@@ -276,7 +276,7 @@ LEGACY_CASE_NAMES: Final = (
         for name in CASE_NAMES
         if WINDOWS[name] == KEYED_WINDOW
         and name not in TARGET_CASE_NAMES
-        and name not in LEAF_TYPE_CASE_NAMES
+        and name not in SCALAR_TYPE_CASE_NAMES
     ),
     *RETIRED_WINDOWS,
     MODEL_CASE,
@@ -292,11 +292,11 @@ set and one whole counter vocabulary."""
 
 
 def runtime_cases(runtime: str, case_names: Sequence[str] = CASE_NAMES) -> tuple[str, ...]:
-    """The cases among ``case_names`` read on ``runtime``: the leaf-type cases
-    only on the supported minors the leaf-type manifest scopes them to."""
-    if runtime in leaf_type_runtimes(supported_minors()):
+    """The cases among ``case_names`` read on ``runtime``: the scalar-type cases
+    only on the supported minors the scalar-type manifest scopes them to."""
+    if runtime in scalar_type_runtimes(supported_minors()):
         return tuple(case_names)
-    return tuple(case for case in case_names if case not in LEAF_TYPE_CASE_NAMES)
+    return tuple(case for case in case_names if case not in SCALAR_TYPE_CASE_NAMES)
 
 
 @dataclass(frozen=True, slots=True)

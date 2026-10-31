@@ -12,11 +12,11 @@ import snapshot_delivery_overhead as snapshot_report
 import write_lowering_overhead as write_report
 from interpreter_matrix import supported_minors
 from parallax.conformance.budget import BYTE_UNITS, GATED_WINDOWS, BudgetContract, MemoryGates
-from parallax.conformance.workloads import LEAF_TYPE_IDS, STRUCTURAL_LAYOUTS
+from parallax.conformance.workloads import SCALAR_TYPE_IDS, STRUCTURAL_LAYOUTS
 from tests.unit import _delivery_control_support as control_support
 from tests.unit import _memory_gate_support as gate_support
 from tests.unit._session_selection_support import WHOLE_CLASS, selections
-from tests.unit._workload_spelling_support import CONTROL_PREFIX, LEAF_PREFIX
+from tests.unit._workload_spelling_support import CONTROL_PREFIX, SCALAR_PREFIX
 
 
 @pytest.mark.usefixtures("committed_cost_evidence")
@@ -82,23 +82,23 @@ def test_the_owners_partition_every_address_the_instruments_gate() -> None:
     assert gate_support.unowned_gates(every_predicted) == ()
     assert len({owner.nodeid for owner in gate_support.OWNERS}) == len(gate_support.OWNERS)
 
-    leaf_addresses = {
+    scalar_addresses = {
         frozenset(
             (subject, workload, cell)
             for subject, workload, cell in predicted
             if subject == gate_support.SNAPSHOT_SUBJECT
-            and workload == f"{LEAF_PREFIX}{type_id}"
+            and workload == f"{SCALAR_PREFIX}{type_id}"
             and cell.startswith(f"{layout}.")
         )
-        for type_id in LEAF_TYPE_IDS
+        for type_id in SCALAR_TYPE_IDS
         for layout in STRUCTURAL_LAYOUTS
     }
-    claimed_leaf_addresses = {
+    claimed_scalar_addresses = {
         frozenset((gate.subject, gate.workload, gate.cell) for gate in owner.gates(every_predicted))
-        for owner in gate_support.LEAF_READ_OWNERS
+        for owner in gate_support.SCALAR_READ_OWNERS
     }
-    assert all(leaf_addresses)
-    assert claimed_leaf_addresses == leaf_addresses
+    assert all(scalar_addresses)
+    assert claimed_scalar_addresses == scalar_addresses
 
     cross_object_addresses = {
         frozenset(address for address in predicted if address[:2] == (subject, workload))
@@ -141,7 +141,7 @@ def test_every_claimed_control_address_is_a_cold_plan_reading() -> None:
     # cold-plan owner claims the guarded include workloads by workload, so
     # gating a warm-plan or delivery window would hand it addresses it cannot
     # read while the partition above still reports every gate claimed.
-    arms = BudgetContract.load().memory_scaling_arms
+    root_counts = BudgetContract.load().memory_scaling_root_counts
     claimed = [
         (workload, cell)
         for subject, workload, cell in _gated_by_the_instruments()
@@ -152,6 +152,6 @@ def test_every_claimed_control_address_is_a_cold_plan_reading() -> None:
     ]
     assert claimed
     for workload, cell in claimed:
-        control = control_support.control_address(workload, cell, arms)
+        control = control_support.control_address(workload, cell, root_counts)
         assert isinstance(control, control_support.GuardedPlanControl), (workload, cell)
         assert control.phase == "cold", (workload, cell)

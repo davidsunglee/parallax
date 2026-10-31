@@ -50,7 +50,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES
 from parallax.core.write_plan.steps import PlannedInsert
 from tests._support.db_port import WriteCall, inserted_rows
-from tests.unit import _leaf_type_support as leaf_support
+from tests.unit import _scalar_type_support as scalar_support
 from tests.unit import _write_lowering_support as lowering_support
 from tests.unit.tools._provenance_support import pin_dirty_tree
 
@@ -100,8 +100,10 @@ def _matrix(*runtimes: str) -> report.Matrix:
 # --------------------------------------------------------------------------- #
 def test_the_matrix_names_every_keyed_response_and_model_case_once() -> None:
     keyed = [case.name for case in lowering_support.CASES]
-    leaf_keyed = [
-        case.name for case in lowering_support.CASES if case.family == lowering_support.LEAF_FAMILY
+    scalar_keyed = [
+        case.name
+        for case in lowering_support.CASES
+        if case.family == lowering_support.SCALAR_FAMILY
     ]
     target = [case.name for case in lowering_support.CASES if case.addressed]
     response = [case.name for case in lowering_support.RESPONSE_CASES]
@@ -117,11 +119,11 @@ def test_the_matrix_names_every_keyed_response_and_model_case_once() -> None:
     ) == report.CASE_NAMES
     assert len(set(report.CASE_NAMES)) == len(report.CASE_NAMES)
     assert (*response, report.MODEL_FAMILY_CASE) == report.CONTROL_CASE_NAMES
-    assert tuple(leaf_keyed) == report.LEAF_TYPE_CASE_NAMES
+    assert tuple(scalar_keyed) == report.SCALAR_TYPE_CASE_NAMES
     assert tuple(target) == report.TARGET_CASE_NAMES
     assert tuple(cross_object) == report.CROSS_OBJECT_CASE_NAMES
     assert tuple(batch) == report.BATCH_CASE_NAMES
-    legacy_keyed = [name for name in keyed if name not in target and name not in leaf_keyed]
+    legacy_keyed = [name for name in keyed if name not in target and name not in scalar_keyed]
     assert (*legacy_keyed, *report.RETIRED_WINDOWS, report.MODEL_CASE) == report.LEGACY_CASE_NAMES
     assert report.CASE_COVERAGES == {
         "current": report.CASE_NAMES,
@@ -338,45 +340,47 @@ def test_the_counter_vocabularies_differ_only_in_the_retired_and_renamed_counter
     }
 
 
-def test_leaf_type_inserts_cross_every_measured_type_layout_and_ingress_beside_a_wire_control() -> (
+def test_scalar_type_inserts_cross_every_measured_type_layout_and_ingress_beside_wire_control() -> (
     None
 ):
-    leaf = [case for case in lowering_support.CASES if case.family == lowering_support.LEAF_FAMILY]
-    assert {case.name for case in leaf} == {
+    scalar_type = [
+        case for case in lowering_support.CASES if case.family == lowering_support.SCALAR_FAMILY
+    ]
+    assert {case.name for case in scalar_type} == {
         *(
-            f"leaf.{type_id}.{layout}.{ingress}"
-            for type_id in workloads.LEAF_TYPE_IDS
+            f"scalar.{type_id}.{layout}.{ingress}"
+            for type_id in workloads.SCALAR_TYPE_IDS
             for layout in workloads.STRUCTURAL_LAYOUTS
             for ingress in lowering_support.INGRESSES
         ),
         *(
-            f"leaf.{workloads.LEAF_CONTROL_TYPE_ID}.{layout}.wire"
+            f"scalar.{workloads.SCALAR_CONTROL_TYPE_ID}.{layout}.wire"
             for layout in workloads.STRUCTURAL_LAYOUTS
         ),
     }
     assert all(
         case.mutation == "insert"
         and case.stored is None
-        and case.model is leaf_support.MODEL
+        and case.model is scalar_support.MODEL
         and report.WINDOWS[case.name] == report.KEYED_WINDOW
-        for case in leaf
+        for case in scalar_type
     )
-    level = workloads.leaf_type_level()
+    level = workloads.scalar_type_level()
     string_control = lowering_support.case_named(f"geometry.{level.id}.columns.typed")
     assert string_control.model is lowering_support.MODEL
 
 
-def test_a_leaf_type_insert_writes_every_leaf_in_its_canonical_wire_spelling() -> None:
+def test_a_scalar_type_insert_writes_every_leaf_in_its_canonical_wire_spelling() -> None:
     for case in lowering_support.CASES:
-        if case.family != lowering_support.LEAF_FAMILY:
+        if case.family != lowering_support.SCALAR_FAMILY:
             continue
-        leaf = leaf_support.leaf_type_named(case.name.split(".")[1])
+        scalar_type = scalar_support.scalar_type_named(case.name.split(".")[1])
         (insert,) = lowering_support.lowered(case)
         documents = [detach_json_container(document) for document in _documents(insert.binds)]
         if case.layout == "document":
             (payload,) = documents
             documents = [cast("Mapping[str, object]", payload)[name] for name in ("body", "items")]
-        expected = leaf_support.wire_row(leaf, lowering_support.LEAF_KEY)
+        expected = scalar_support.wire_row(scalar_type, lowering_support.SCALAR_KEY)
         assert documents == [expected["body"], expected["items"]], case.name
 
 
@@ -488,7 +492,7 @@ def test_the_workload_digest_covers_every_defining_source(monkeypatch: pytest.Mo
     with monkeypatch.context() as patched:
         patched.setattr(workloads, "READ_GEOMETRY_ROOTS", workloads.READ_GEOMETRY_ROOTS + 1)
         assert lowering_support.write_lowering_digest() != digest
-    monkeypatch.setattr(workloads, "LEAF_TYPE_RUNTIMES", 2)
+    monkeypatch.setattr(workloads, "SCALAR_TYPE_RUNTIMES", 2)
     assert lowering_support.write_lowering_digest() != digest
 
 
@@ -507,7 +511,7 @@ def test_workload_identity_ignores_prose(prose: str) -> None:
     [
         "tests/unit/_write_lowering_support.py",
         "tests/unit/_structural_geometry_support.py",
-        "tests/unit/_leaf_type_support.py",
+        "tests/unit/_scalar_type_support.py",
         "tests/unit/_workload_spelling_support.py",
     ],
 )
@@ -768,7 +772,7 @@ def test_durations_time_every_child_without_changing_the_matrix_or_the_stdout_en
     assert report.main([]) == 0
     plain = capsys.readouterr()
     plain_order = list(asked)
-    assert {runtime for runtime, case in plain_order if case in report.LEAF_TYPE_CASE_NAMES} == {
+    assert {runtime for runtime, case in plain_order if case in report.SCALAR_TYPE_CASE_NAMES} == {
         "3.14"
     }
     asked.clear()
@@ -952,7 +956,7 @@ def test_the_legacy_coverage_drops_the_later_cases_and_carries_the_retired_ones(
     legacy = report.expected_addresses(runtimes, report.CALL_NAMES, report.LEGACY_CASE_NAMES)
     assert {case for _runtime, case, _cell in current - legacy} == {
         *report.CONTROL_CASE_NAMES,
-        *report.LEAF_TYPE_CASE_NAMES,
+        *report.SCALAR_TYPE_CASE_NAMES,
         *report.TARGET_CASE_NAMES,
         *report.CROSS_OBJECT_CASE_NAMES,
         *report.BATCH_CASE_NAMES,
@@ -965,16 +969,16 @@ def test_the_legacy_coverage_drops_the_later_cases_and_carries_the_retired_ones(
     }
 
 
-def test_the_leaf_type_cases_are_read_on_the_newest_supported_minor_alone() -> None:
+def test_the_scalar_type_cases_are_read_on_the_newest_supported_minor_alone() -> None:
     oldest, newest = supported_minors()
     assert report.runtime_cases(newest) == report.CASE_NAMES
     assert report.runtime_cases(oldest) == tuple(
-        name for name in report.CASE_NAMES if name not in report.LEAF_TYPE_CASE_NAMES
+        name for name in report.CASE_NAMES if name not in report.SCALAR_TYPE_CASE_NAMES
     )
     assert {
         runtime
         for runtime, case, _cell in report.expected_addresses((oldest, newest))
-        if case in report.LEAF_TYPE_CASE_NAMES
+        if case in report.SCALAR_TYPE_CASE_NAMES
     } == {newest}
 
 

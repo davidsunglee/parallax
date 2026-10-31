@@ -1,8 +1,8 @@
-"""The leaf-type Value Object structures the leaf-type read and keyed-write
+"""The scalar-type Value Object structures the scalar-type read and keyed-write
 families measure, under both storage layouts.
 
-Every type the leaf-type manifest names is declared at one geometry,
-:func:`~parallax.conformance.workloads.leaf_type_level`: a root occurrence and
+Every type the scalar-type manifest names is declared at one geometry,
+:func:`~parallax.conformance.workloads.scalar_type_level`: a root occurrence and
 a Many of its elements, each declaring that level's width of leaves of the
 type, every leaf populated. The leaves live inside structured documents under
 both layouts, so two types differ only in how production decodes, compares,
@@ -42,11 +42,11 @@ from decimal import Decimal
 from typing import Any, Final, Literal, cast
 
 from parallax.conformance.workloads import (
-    LEAF_CONTROL_TYPE_ID,
-    LEAF_TYPE_IDS,
+    SCALAR_CONTROL_TYPE_ID,
+    SCALAR_TYPE_IDS,
     STRUCTURAL_LAYOUTS,
     GeometryLevel,
-    leaf_type_level,
+    scalar_type_level,
 )
 from parallax.core import (
     Attr,
@@ -64,7 +64,7 @@ from parallax.core.entity import model_of
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.storage_layout import view as storage_layout_view
 from tests._support.db_port import ConnectsAsItself, projected_rows
-from tests.unit._workload_spelling_support import LEAF_PREFIX, leaf_value
+from tests.unit._workload_spelling_support import SCALAR_PREFIX, leaf_value
 
 __all__ = [
     "CONTROL",
@@ -75,15 +75,15 @@ __all__ = [
     "READ_GROUP",
     "WIRE_INSERTED_TYPES",
     "Layout",
-    "LeafPort",
-    "LeafType",
+    "ScalarType",
+    "ScalarTypePort",
     "body_document",
     "entity_class",
     "instance",
-    "leaf_type_named",
     "read_address",
     "read_query",
     "read_workload",
+    "scalar_type_named",
     "stored_row",
     "wire_row",
 ]
@@ -91,10 +91,10 @@ __all__ = [
 type Layout = Literal["columns", "document"]
 
 LAYOUTS: Final[tuple[Layout, ...]] = STRUCTURAL_LAYOUTS
-LEVEL: Final[GeometryLevel] = leaf_type_level()
+LEVEL: Final[GeometryLevel] = scalar_type_level()
 
-READ_GROUP: Final = "leaf"
-"""The name the Snapshot report selects every leaf-type read by."""
+READ_GROUP: Final = "scalar"
+"""The name the Snapshot report selects every scalar-type read by."""
 
 _NAMESPACE: Final = "structural.leaf"
 _MANY: Final = "items"
@@ -102,7 +102,7 @@ _ONE: Final = "body"
 
 if LEVEL.depth != 1 or LEVEL.populated != LEVEL.width:
     raise ValueError(
-        f"{LEVEL.id}: a leaf-type level is one root occurrence with every leaf populated"
+        f"{LEVEL.id}: a scalar-type level is one root occurrence with every leaf populated"
     )
 
 
@@ -220,7 +220,7 @@ def _timestamp(index: int, key: int) -> dt.datetime:
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class LeafType:
+class ScalarType:
     """One declarable Neutral Type as every leaf of a structure declares it.
 
     ``annotation`` is the host type an ``Attr`` names and ``declaration``
@@ -242,60 +242,62 @@ class LeafType:
         return self.id.capitalize()
 
 
-_LEAF_TYPES: Final[Mapping[str, LeafType]] = {
-    leaf.id: leaf
-    for leaf in (
-        LeafType("string", str, None, leaf_value, leaf_value),
-        LeafType("boolean", bool, None, _boolean, _boolean),
-        LeafType("int32", int, lambda: attr(type=Int32), _int32, _int32),
-        LeafType("int64", int, None, _int64, _int64),
-        LeafType("float32", float, lambda: attr(type=Float32), _decimal_tenths, _decimal_tenths),
-        LeafType("float64", float, None, _decimal_tenths, _decimal_tenths),
-        LeafType(
+_SCALAR_TYPES: Final[Mapping[str, ScalarType]] = {
+    scalar_type.id: scalar_type
+    for scalar_type in (
+        ScalarType("string", str, None, leaf_value, leaf_value),
+        ScalarType("boolean", bool, None, _boolean, _boolean),
+        ScalarType("int32", int, lambda: attr(type=Int32), _int32, _int32),
+        ScalarType("int64", int, None, _int64, _int64),
+        ScalarType("float32", float, lambda: attr(type=Float32), _decimal_tenths, _decimal_tenths),
+        ScalarType("float64", float, None, _decimal_tenths, _decimal_tenths),
+        ScalarType(
             "decimal",
             Decimal,
             lambda: attr(precision=_DECIMAL_PRECISION, scale=_DECIMAL_SCALE),
             _decimal,
             _decimal_wire,
         ),
-        LeafType("bytes", bytes, None, _bytes, _bytes_wire),
-        LeafType("date", dt.date, None, _date, _date_wire),
-        LeafType("time", dt.time, None, _time, _time_wire),
-        LeafType("timestamp", dt.datetime, None, _timestamp, _timestamp_wire),
-        LeafType("uuid", uuid.UUID, None, _uuid, _uuid_wire),
+        ScalarType("bytes", bytes, None, _bytes, _bytes_wire),
+        ScalarType("date", dt.date, None, _date, _date_wire),
+        ScalarType("time", dt.time, None, _time, _time_wire),
+        ScalarType("timestamp", dt.datetime, None, _timestamp, _timestamp_wire),
+        ScalarType("uuid", uuid.UUID, None, _uuid, _uuid_wire),
     )
 }
 
-CONTROL: Final[LeafType] = _LEAF_TYPES[LEAF_CONTROL_TYPE_ID]
-MEASURED_TYPES: Final[tuple[LeafType, ...]] = tuple(_LEAF_TYPES[name] for name in LEAF_TYPE_IDS)
+CONTROL: Final[ScalarType] = _SCALAR_TYPES[SCALAR_CONTROL_TYPE_ID]
+MEASURED_TYPES: Final[tuple[ScalarType, ...]] = tuple(
+    _SCALAR_TYPES[name] for name in SCALAR_TYPE_IDS
+)
 """Every type the manifest measures, in manifest order."""
 if CONTROL in MEASURED_TYPES:
-    raise ValueError(f"{CONTROL.id} is the control every measured leaf type is read against")
-_DECLARED_TYPES: Final[tuple[LeafType, ...]] = (CONTROL, *MEASURED_TYPES)
-WIRE_INSERTED_TYPES: Final[tuple[LeafType, ...]] = (CONTROL, *MEASURED_TYPES)
+    raise ValueError(f"{CONTROL.id} is the control every measured scalar type is read against")
+_DECLARED_TYPES: Final[tuple[ScalarType, ...]] = (CONTROL, *MEASURED_TYPES)
+WIRE_INSERTED_TYPES: Final[tuple[ScalarType, ...]] = (CONTROL, *MEASURED_TYPES)
 """Every type a Wire insert opens a row of: the measured types and their
 String control, which no geometry case inserts through Wire."""
 
 
-def leaf_type_named(name: str) -> LeafType:
+def scalar_type_named(name: str) -> ScalarType:
     try:
-        return _LEAF_TYPES[name]
+        return _SCALAR_TYPES[name]
     except KeyError:
-        raise KeyError(f"{name!r} is not a leaf type: {list(_LEAF_TYPES)}") from None
+        raise KeyError(f"{name!r} is not a scalar type: {list(_SCALAR_TYPES)}") from None
 
 
 def _leaf_name(index: int) -> str:
     return f"f{index}"
 
 
-def _value_object(name: str, leaf: LeafType) -> type[ValueObject]:
+def _value_object(name: str, scalar_type: ScalarType) -> type[ValueObject]:
     names = tuple(_leaf_name(index) for index in range(LEVEL.width))
     namespace: dict[str, object] = {
-        "__annotations__": {name: Attr[leaf.annotation | None] for name in names},
+        "__annotations__": {name: Attr[scalar_type.annotation | None] for name in names},
         "__module__": __name__,
     }
-    if leaf.declaration is not None:
-        namespace.update({name: leaf.declaration() for name in names})
+    if scalar_type.declaration is not None:
+        namespace.update({name: scalar_type.declaration() for name in names})
     return cast("type[ValueObject]", type(name, (ValueObject,), namespace))
 
 
@@ -315,38 +317,40 @@ def _entity(
 
 @dataclass(frozen=True, slots=True)
 class _Declared:
-    """The declarations one leaf type needs under every layout."""
+    """The declarations one scalar type needs under every layout."""
 
     body: type[ValueObject]
     item: type[ValueObject]
     entities: Mapping[Layout, type[Entity]]
 
 
-def _declared(leaf: LeafType) -> _Declared:
-    body = _value_object(f"LeafBody{leaf.title}", leaf)
-    item = _value_object(f"LeafItem{leaf.title}", leaf)
+def _declared(scalar_type: ScalarType) -> _Declared:
+    body = _value_object(f"LeafBody{scalar_type.title}", scalar_type)
+    item = _value_object(f"LeafItem{scalar_type.title}", scalar_type)
     return _Declared(
         body,
         item,
         {
-            layout: _entity(f"Leaf{leaf.title}{layout.capitalize()}", body, item, layout)
+            layout: _entity(f"Leaf{scalar_type.title}{layout.capitalize()}", body, item, layout)
             for layout in LAYOUTS
         },
     )
 
 
-_DECLARED: Final[Mapping[str, _Declared]] = {leaf.id: _declared(leaf) for leaf in _DECLARED_TYPES}
+_DECLARED: Final[Mapping[str, _Declared]] = {
+    scalar_type.id: _declared(scalar_type) for scalar_type in _DECLARED_TYPES
+}
 
 MODEL: Final = DomainModel(
     *(declared.entities[layout] for declared in _DECLARED.values() for layout in LAYOUTS)
 )
-"""Every leaf-type Entity, a model of its own: joining the structural write
+"""Every scalar-type Entity, a model of its own: joining the structural write
 model would move what that model's preparation and every read of it retain."""
 
 
-def entity_class(leaf: LeafType, layout: Layout) -> type[Entity]:
+def entity_class(scalar_type: ScalarType, layout: Layout) -> type[Entity]:
     """The non-temporal Entity a read materializes and an insert opens."""
-    return _DECLARED[leaf.id].entities[layout]
+    return _DECLARED[scalar_type.id].entities[layout]
 
 
 def _document_placement(cls: type[Entity]) -> tuple[str, tuple[str, ...]]:
@@ -366,30 +370,36 @@ _DOCUMENT_PLACEMENTS: Final[Mapping[type[Entity], tuple[str, tuple[str, ...]]]] 
 """Where each document-layout Entity's stored row carries its members, resolved
 once so composing a row consults nothing but this mapping."""
 
-_LEAF_TYPE_OF: Final[Mapping[type[Entity], LeafType]] = {
-    entity: leaf for leaf in _DECLARED_TYPES for entity in _DECLARED[leaf.id].entities.values()
+_SCALAR_TYPE_OF: Final[Mapping[type[Entity], ScalarType]] = {
+    entity: scalar_type
+    for scalar_type in _DECLARED_TYPES
+    for entity in _DECLARED[scalar_type.id].entities.values()
 }
 
 
-def body_document(leaf: LeafType, key: int) -> dict[str, object]:
+def body_document(scalar_type: ScalarType, key: int) -> dict[str, object]:
     """The root occurrence keyed ``key`` in Wire spellings, fresh on every call."""
-    wire = leaf.wire
+    wire = scalar_type.wire
     return {_leaf_name(index): wire(index, key) for index in range(LEVEL.width)}
 
 
-def _items_document(leaf: LeafType, key: int) -> list[dict[str, object]]:
-    return [body_document(leaf, key + element) for element in range(LEVEL.many)]
+def _items_document(scalar_type: ScalarType, key: int) -> list[dict[str, object]]:
+    return [body_document(scalar_type, key + element) for element in range(LEVEL.many)]
 
 
-def wire_row(leaf: LeafType, key: int) -> dict[str, object]:
+def wire_row(scalar_type: ScalarType, key: int) -> dict[str, object]:
     """One authored row as a Wire caller states it, fresh on every call."""
-    return {"id": key, _ONE: body_document(leaf, key), _MANY: _items_document(leaf, key)}
+    return {
+        "id": key,
+        _ONE: body_document(scalar_type, key),
+        _MANY: _items_document(scalar_type, key),
+    }
 
 
-def instance(leaf: LeafType, layout: Layout, key: int) -> Entity:
-    """One authored Typed value of ``leaf`` under ``layout``."""
-    declared = _DECLARED[leaf.id]
-    typed = leaf.typed
+def instance(scalar_type: ScalarType, layout: Layout, key: int) -> Entity:
+    """One authored Typed value of ``scalar_type`` under ``layout``."""
+    declared = _DECLARED[scalar_type.id]
+    typed = scalar_type.typed
 
     def members(occurrence: int) -> dict[str, object]:
         return {_leaf_name(index): typed(index, occurrence) for index in range(LEVEL.width)}
@@ -401,7 +411,7 @@ def instance(leaf: LeafType, layout: Layout, key: int) -> Entity:
 def stored_row(entity: type[Entity], key: int) -> dict[str, object]:
     """One stored row of ``entity`` as the driver would answer it, keyed by
     physical column."""
-    row = wire_row(_LEAF_TYPE_OF[entity], key)
+    row = wire_row(_SCALAR_TYPE_OF[entity], key)
     placement = _DOCUMENT_PLACEMENTS.get(entity)
     if placement is None:
         return row
@@ -409,29 +419,29 @@ def stored_row(entity: type[Entity], key: int) -> dict[str, object]:
     return {"id": key, column: {name: row[name] for name in members}}
 
 
-def read_workload(leaf: LeafType) -> str:
-    """The Snapshot workload a read of ``leaf`` is reported under."""
-    return f"{LEAF_PREFIX}{leaf.id}"
+def read_workload(scalar_type: ScalarType) -> str:
+    """The Snapshot workload a read of ``scalar_type`` is reported under."""
+    return f"{SCALAR_PREFIX}{scalar_type.id}"
 
 
-def read_address(workload: str) -> LeafType | None:
-    """The leaf type a read workload names, or absence for any other workload."""
-    if not workload.startswith(LEAF_PREFIX):
+def read_address(workload: str) -> ScalarType | None:
+    """The scalar type a read workload names, or absence for any other workload."""
+    if not workload.startswith(SCALAR_PREFIX):
         return None
-    leaf = leaf_type_named(workload.removeprefix(LEAF_PREFIX))
-    if leaf not in MEASURED_TYPES:
-        raise KeyError(f"{workload} is not a measured leaf-type read")
-    return leaf
+    scalar_type = scalar_type_named(workload.removeprefix(SCALAR_PREFIX))
+    if scalar_type not in MEASURED_TYPES:
+        raise KeyError(f"{workload} is not a measured scalar-type read")
+    return scalar_type
 
 
-def read_query(leaf: LeafType, layout: Layout) -> ObjectQuery[Any, Any]:
-    """The whole-table instance read of ``leaf``'s Entity under ``layout``."""
-    cls = entity_class(leaf, layout)
+def read_query(scalar_type: ScalarType, layout: Layout) -> ObjectQuery[Any, Any]:
+    """The whole-table instance read of ``scalar_type``'s Entity under ``layout``."""
+    cls = entity_class(scalar_type, layout)
     return cls.where(cls.all)
 
 
-class LeafPort(ConnectsAsItself):
-    """Provider-free stored rows of one leaf-type Entity.
+class ScalarTypePort(ConnectsAsItself):
+    """Provider-free stored rows of one scalar-type Entity.
 
     Every statement composes its rows afresh and keeps none of them, so what a
     reading retains after materialization is what production kept.

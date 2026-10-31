@@ -29,22 +29,22 @@ from parallax.core.wire._json import dump_document
 __all__ = [
     "ANCESTOR_LEVEL_IDS",
     "GEOMETRY_LEVELS",
-    "LEAF_CONTROL_TYPE_ID",
-    "LEAF_TYPE_IDS",
-    "LEAF_TYPE_LEVEL_ID",
-    "LEAF_TYPE_RUNTIMES",
     "PLAN_LEVEL_IDS",
     "READ_GEOMETRY_ROOTS",
+    "SCALAR_CONTROL_TYPE_ID",
+    "SCALAR_TYPE_IDS",
+    "SCALAR_TYPE_LEVEL_ID",
+    "SCALAR_TYPE_RUNTIMES",
     "STRUCTURAL_LAYOUTS",
     "GeometryLevel",
     "ScriptedRows",
     "Workload",
     "ancestor_levels",
     "catalog",
-    "leaf_type_digest",
-    "leaf_type_level",
-    "leaf_type_runtimes",
     "plan_levels",
+    "scalar_type_digest",
+    "scalar_type_level",
+    "scalar_type_runtimes",
     "structural_digest",
     "workload_digest",
 ]
@@ -139,7 +139,7 @@ def structural_digest() -> str:
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-LEAF_TYPE_IDS: Final[tuple[str, ...]] = (
+SCALAR_TYPE_IDS: Final[tuple[str, ...]] = (
     "boolean",
     "int32",
     "int64",
@@ -152,41 +152,41 @@ LEAF_TYPE_IDS: Final[tuple[str, ...]] = (
     "timestamp",
     "uuid",
 )
-"""The declarable Neutral Types the leaf-type families measure, each against
-:data:`LEAF_CONTROL_TYPE_ID`, in report order."""
+"""The declarable Neutral Types the scalar-type families measure, each against
+:data:`SCALAR_CONTROL_TYPE_ID`, in report order."""
 
-LEAF_CONTROL_TYPE_ID: Final = "string"
-"""The leaf type every measured type is read against: the geometry families'
-own leaf type, valued as they value it."""
+SCALAR_CONTROL_TYPE_ID: Final = "string"
+"""The scalar type every measured type is read against: the geometry families'
+own scalar type, valued as they value it."""
 
-LEAF_TYPE_LEVEL_ID: Final = "width-64"
-"""The geometry level every leaf type is measured at: one root occurrence and
+SCALAR_TYPE_LEVEL_ID: Final = "width-64"
+"""The geometry level every scalar type is measured at: one root occurrence and
 its Many elements, every declared leaf of the measured type and populated."""
 
-LEAF_TYPE_RUNTIMES: Final = 1
-"""How many supported CPython minors, newest first, the leaf-type families are
+SCALAR_TYPE_RUNTIMES: Final = 1
+"""How many supported CPython minors, newest first, the scalar-type families are
 measured on; every other family is measured on every supported minor."""
 
 
-def leaf_type_level() -> GeometryLevel:
-    """The geometry level the leaf-type families measure."""
-    return next(level for level in GEOMETRY_LEVELS if level.id == LEAF_TYPE_LEVEL_ID)
+def scalar_type_level() -> GeometryLevel:
+    """The geometry level the scalar-type families measure."""
+    return next(level for level in GEOMETRY_LEVELS if level.id == SCALAR_TYPE_LEVEL_ID)
 
 
-def leaf_type_runtimes(supported: Sequence[str]) -> tuple[str, ...]:
+def scalar_type_runtimes(supported: Sequence[str]) -> tuple[str, ...]:
     """The CPython minors among ``supported``, each spelled ``<major>.<minor>``,
-    that the leaf-type families are measured on, oldest first."""
+    that the scalar-type families are measured on, oldest first."""
     ordered = sorted(supported, key=lambda minor: tuple(map(int, minor.split("."))))
-    return tuple(ordered[-LEAF_TYPE_RUNTIMES:])
+    return tuple(ordered[-SCALAR_TYPE_RUNTIMES:])
 
 
-def leaf_type_digest() -> str:
-    """The SHA-256 digest of the leaf-type families' frozen identity."""
+def scalar_type_digest() -> str:
+    """The SHA-256 digest of the scalar-type families' frozen identity."""
     manifest = {
-        "types": list(LEAF_TYPE_IDS),
-        "control": LEAF_CONTROL_TYPE_ID,
-        "level": asdict(leaf_type_level()),
-        "newestRuntimes": LEAF_TYPE_RUNTIMES,
+        "types": list(SCALAR_TYPE_IDS),
+        "control": SCALAR_CONTROL_TYPE_ID,
+        "level": asdict(scalar_type_level()),
+        "newestRuntimes": SCALAR_TYPE_RUNTIMES,
     }
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -223,7 +223,7 @@ class _GeneratedRows(Sequence[RowDocument]):
 
 @dataclass(frozen=True, slots=True)
 class ScriptedRows:
-    """Deterministic logical rows for one provider-free workload arm."""
+    """Deterministic logical rows for one provider-free workload at one root count."""
 
     entities: FixtureRows
     root_entity: str
@@ -480,7 +480,7 @@ def workload_digest(
     """The SHA-256 digest of what ``workloads`` measure: each workload's id, the
     canonical JSON of its fixture's measured sections and of its parsed model,
     every number keeping its authored meaning, the generated-key offset, and the
-    structural and leaf-type manifests.
+    structural and scalar-type manifests.
     Comments, formatting, and fixture keys outside the measured sections leave
     it unchanged.
 
@@ -498,7 +498,7 @@ def workload_digest(
             digest.update(part)
             digest.update(b"\0")
     digest.update(structural_digest().encode("utf-8"))
-    digest.update(leaf_type_digest().encode("utf-8"))
+    digest.update(scalar_type_digest().encode("utf-8"))
     return digest.hexdigest()
 
 

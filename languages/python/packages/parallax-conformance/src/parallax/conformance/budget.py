@@ -137,17 +137,19 @@ class BudgetContract:
         return value
 
     @property
-    def memory_scaling_arms(self) -> tuple[int, ...]:
+    def memory_scaling_root_counts(self) -> tuple[int, ...]:
         memory = self._sampling_group("memory")
-        arms = memory.get("scalingArms")
-        if not isinstance(arms, Sequence) or isinstance(arms, str | bytes):
-            raise ValueError("sampling.memory.scalingArms is not a sequence")
+        root_counts = memory.get("scalingRootCounts")
+        if not isinstance(root_counts, Sequence) or isinstance(root_counts, str | bytes):
+            raise ValueError("sampling.memory.scalingRootCounts is not a sequence")
         counts = tuple(
-            self._positive_int(value, "sampling.memory.scalingArms")
-            for value in cast("Sequence[object]", arms)
+            self._positive_int(value, "sampling.memory.scalingRootCounts")
+            for value in cast("Sequence[object]", root_counts)
         )
         if len(counts) < 2 or len(set(counts)) != len(counts):
-            raise ValueError("sampling.memory.scalingArms must contain distinct scaling counts")
+            raise ValueError(
+                "sampling.memory.scalingRootCounts must contain distinct scaling counts"
+            )
         return counts
 
     def _sampling_count(self, group: str, name: str) -> int:

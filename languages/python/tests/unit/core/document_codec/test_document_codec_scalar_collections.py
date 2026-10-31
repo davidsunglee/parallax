@@ -54,7 +54,6 @@ from parallax.core.document_codec import (
     SetScalar,
     apply_prepared_patches,
     classify_effective_change,
-    decode_scalar_many_classified,
     encode_occurrence,
     encode_scalar_many,
     entity_member_plan,
@@ -362,14 +361,12 @@ def test_every_empty_alias_reads_as_the_empty_collection(document: object) -> No
 
 
 def test_a_direct_column_reads_sql_null_and_json_null_as_empty() -> None:
-    assert decode_scalar_many_classified(_TAGS, SQL_NULL) == ((), ())
-    assert decode_scalar_many_classified(_TAGS, PresentDocument(None)) == ((), ())
+    assert MemberDecodePlan(_TAGS).value(SQL_NULL) == ((), ())
+    assert MemberDecodePlan(_TAGS).value(PresentDocument(None)) == ((), ())
 
 
 def test_a_canonical_array_reads_as_its_ordered_managed_tuple() -> None:
-    value, findings = decode_scalar_many_classified(
-        _AMOUNTS, PresentDocument(["1.50", "1.50", "7.00"])
-    )
+    value, findings = MemberDecodePlan(_AMOUNTS).value(PresentDocument(["1.50", "1.50", "7.00"]))
 
     assert findings == ()
     assert value == (decimal.Decimal("1.50"), decimal.Decimal("1.50"), decimal.Decimal("7.00"))
@@ -382,15 +379,15 @@ def test_a_non_array_carrier_leaves_the_whole_collection_unavailable() -> None:
         UNAVAILABLE,
         (DocumentFinding("leaf-undecodable", ("tags",), "a,b"),),
     )
-    assert decode_scalar_many_classified(_TAGS, PresentDocument({"a": 1})) == (
+    assert MemberDecodePlan(_TAGS).value(PresentDocument({"a": 1})) == (
         UNAVAILABLE,
         (DocumentFinding("leaf-undecodable", (), {"a": 1}),),
     )
 
 
 def test_every_invalid_element_is_found_in_order_and_nothing_is_shortened() -> None:
-    value, findings = decode_scalar_many_classified(
-        _AMOUNTS, PresentDocument(["1.50", "1.5", None, "7.00", 3])
+    value, findings = MemberDecodePlan(_AMOUNTS).value(
+        PresentDocument(["1.50", "1.5", None, "7.00", 3])
     )
 
     assert value is UNAVAILABLE

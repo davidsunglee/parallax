@@ -12,18 +12,18 @@ from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Order
 from parallax.conformance.workloads import (
     ANCESTOR_LEVEL_IDS,
     GEOMETRY_LEVELS,
-    LEAF_CONTROL_TYPE_ID,
-    LEAF_TYPE_IDS,
-    LEAF_TYPE_LEVEL_ID,
-    LEAF_TYPE_RUNTIMES,
+    SCALAR_CONTROL_TYPE_ID,
+    SCALAR_TYPE_IDS,
+    SCALAR_TYPE_LEVEL_ID,
+    SCALAR_TYPE_RUNTIMES,
     GeometryLevel,
     Workload,
     ancestor_levels,
     catalog,
-    leaf_type_digest,
-    leaf_type_level,
-    leaf_type_runtimes,
     plan_levels,
+    scalar_type_digest,
+    scalar_type_level,
+    scalar_type_runtimes,
     structural_digest,
     workload_digest,
 )
@@ -251,43 +251,45 @@ def test_the_workload_digest_covers_the_changed_ancestor_selection(
     assert workload_digest() != original
 
 
-def test_the_leaf_types_are_measured_at_one_frozen_level_against_their_control() -> None:
-    assert len(set(LEAF_TYPE_IDS)) == len(LEAF_TYPE_IDS)
-    assert LEAF_CONTROL_TYPE_ID not in LEAF_TYPE_IDS
-    level = leaf_type_level()
-    assert level.id == LEAF_TYPE_LEVEL_ID
+def test_the_scalar_types_are_measured_at_one_frozen_level_against_their_control() -> None:
+    assert len(set(SCALAR_TYPE_IDS)) == len(SCALAR_TYPE_IDS)
+    assert SCALAR_CONTROL_TYPE_ID not in SCALAR_TYPE_IDS
+    level = scalar_type_level()
+    assert level.id == SCALAR_TYPE_LEVEL_ID
     assert (level.depth, level.populated) == (1, level.width)
 
 
-def test_the_leaf_types_are_measured_on_the_newest_supported_minor_alone() -> None:
-    assert LEAF_TYPE_RUNTIMES == 1
-    assert leaf_type_runtimes(("3.13", "3.14")) == ("3.14",)
-    assert leaf_type_runtimes(("3.14", "3.9", "3.13")) == ("3.14",)
+def test_the_scalar_types_are_measured_on_the_newest_supported_minor_alone() -> None:
+    assert SCALAR_TYPE_RUNTIMES == 1
+    assert scalar_type_runtimes(("3.13", "3.14")) == ("3.14",)
+    assert scalar_type_runtimes(("3.14", "3.9", "3.13")) == ("3.14",)
 
 
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("LEAF_TYPE_IDS", ("float64", "float32")),
-        ("LEAF_CONTROL_TYPE_ID", "bytes"),
-        ("LEAF_TYPE_LEVEL_ID", "width-16"),
-        ("LEAF_TYPE_RUNTIMES", 2),
+        ("SCALAR_TYPE_IDS", ("float64", "float32")),
+        ("SCALAR_CONTROL_TYPE_ID", "bytes"),
+        ("SCALAR_TYPE_LEVEL_ID", "width-16"),
+        ("SCALAR_TYPE_RUNTIMES", 2),
     ],
 )
-def test_the_workload_digest_covers_the_leaf_type_manifest_apart_from_the_structural_one(
+def test_the_workload_digest_covers_the_scalar_type_manifest_apart_from_the_structural_one(
     monkeypatch: pytest.MonkeyPatch, name: str, value: object
 ) -> None:
     original = workload_digest()
-    leaf_types = leaf_type_digest()
+    scalar_types = scalar_type_digest()
     structural = structural_digest()
     monkeypatch.setattr(workloads, name, value)
-    assert leaf_type_digest() != leaf_types
+    assert scalar_type_digest() != scalar_types
     assert workload_digest() != original
     assert structural_digest() == structural
 
 
-@pytest.mark.parametrize("roots", BudgetContract.load().memory_scaling_arms)
-def test_generated_scaling_arms_use_uncached_keys_without_changing_row_payloads(roots: int) -> None:
+@pytest.mark.parametrize("roots", BudgetContract.load().memory_scaling_root_counts)
+def test_generated_scaling_root_counts_use_uncached_keys_without_changing_row_payloads(
+    roots: int,
+) -> None:
     for workload in catalog().values():
         rows = workload.rows(roots)
         for entity_rows in rows.entities.values():

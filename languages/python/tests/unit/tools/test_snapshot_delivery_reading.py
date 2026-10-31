@@ -29,17 +29,17 @@ from snapshot_delivery_reading import (
     _control,  # pyright: ignore[reportPrivateUsage] - the control readings are under test
     _geometry,  # pyright: ignore[reportPrivateUsage] - the geometry reading is under test
     _last_streamed,  # pyright: ignore[reportPrivateUsage] - drain protocol is under test
-    _leaf_read,  # pyright: ignore[reportPrivateUsage] - the leaf-type reading is under test
     _plan,  # pyright: ignore[reportPrivateUsage] - the plan reading is under test
+    _scalar_read,  # pyright: ignore[reportPrivateUsage] - the scalar-type reading is under test
     _timed,  # pyright: ignore[reportPrivateUsage] - sampling protocol is under test
     _traced,  # pyright: ignore[reportPrivateUsage] - instrument boundary under test
     geometry_address,
-    leaf_address,
     plan_address,
+    scalar_address,
 )
 from tests._support.root_ownership import own_root
 from tests.unit import _delivery_control_support as control_support
-from tests.unit import _leaf_type_support as leaf_support
+from tests.unit import _scalar_type_support as scalar_support
 from tests.unit import _structural_geometry_support as geometry_support
 from tests.unit.memory_instruments import (
     OWN_INTERPRETER_VARIABLE,
@@ -191,7 +191,7 @@ print(" ".join(sorted(
     ("workload", "cell", "support"),
     [
         ("read-depth-1", "columns.elapsedUsPerRoot", "_structural_geometry_support"),
-        ("leaf-float64", "document.elapsedUsPerRoot", "_leaf_type_support"),
+        ("scalar-float64", "document.elapsedUsPerRoot", "_scalar_type_support"),
         ("plan-depth-1", "columns.elapsedUs", "_structural_geometry_support"),
         (
             "control-delivery-conventional-fanout",
@@ -217,7 +217,7 @@ def test_a_reading_child_runs_only_the_support_module_its_address_reads(
             "-c",
             _RUN_SUPPORT_MODULES,
             *("--workload", workload, "--cell", cell),
-            *("--roots", str(contract.memory_scaling_arms[0])),
+            *("--roots", str(contract.memory_scaling_root_counts[0])),
             *("--warmups", str(contract.timing_warmups)),
             *("--measured", str(contract.timing_measured)),
         ],
@@ -261,31 +261,36 @@ def test_a_geometry_level_reads_every_metric_over_a_provider_free_find() -> None
         assert len(samples) == (2 if metric == "elapsedUsPerRoot" else 1)
 
 
-def test_leaf_addresses_name_a_measured_type_layout_and_metric() -> None:
-    measured = leaf_support.MEASURED_TYPES[0]
-    leaf, layout, metric = (
-        leaf_address(leaf_support.read_workload(measured), "document.retainedKiB") or (None,) * 3
+def test_scalar_addresses_name_a_measured_type_layout_and_metric() -> None:
+    measured = scalar_support.MEASURED_TYPES[0]
+    scalar_type, layout, metric = (
+        scalar_address(scalar_support.read_workload(measured), "document.retainedKiB")
+        or (None,) * 3
     )
-    assert leaf is measured
+    assert scalar_type is measured
     assert (layout, metric) == ("document", "retainedKiB")
-    assert leaf_address("read-width-64", "columns.peakKiB") is None
-    with pytest.raises(KeyError, match="not a measured leaf-type read"):
-        leaf_address(leaf_support.read_workload(leaf_support.CONTROL), "columns.peakKiB")
+    assert scalar_address("read-width-64", "columns.peakKiB") is None
+    with pytest.raises(KeyError, match="not a measured scalar-type read"):
+        scalar_address(scalar_support.read_workload(scalar_support.CONTROL), "columns.peakKiB")
     with pytest.raises(KeyError):
-        leaf_address("leaf-unknown", "columns.peakKiB")
-    with pytest.raises(ValueError, match="not a leaf-type read address"):
-        leaf_address(leaf_support.read_workload(measured), "columns.elapsedUs")
+        scalar_address("scalar-unknown", "columns.peakKiB")
+    with pytest.raises(ValueError, match="not a scalar-type read address"):
+        scalar_address(scalar_support.read_workload(measured), "columns.elapsedUs")
 
 
-def test_a_leaf_type_read_publishes_every_stored_leaf_as_its_wire_spelling() -> None:
-    for leaf in leaf_support.MEASURED_TYPES:
-        for layout in leaf_support.LAYOUTS:
-            port = leaf_support.LeafPort(leaf_support.entity_class(leaf, layout), 2)
-            root = own_root(Database(port.open(), leaf_support.MODEL))
-            results = root.using_database_login().wire.find(leaf_support.read_query(leaf, layout))
+def test_a_scalar_type_read_publishes_every_stored_leaf_as_its_wire_spelling() -> None:
+    for scalar_type in scalar_support.MEASURED_TYPES:
+        for layout in scalar_support.LAYOUTS:
+            port = scalar_support.ScalarTypePort(
+                scalar_support.entity_class(scalar_type, layout), 2
+            )
+            root = own_root(Database(port.open(), scalar_support.MODEL))
+            results = root.using_database_login().wire.find(
+                scalar_support.read_query(scalar_type, layout)
+            )
             assert [dict(node) for node in results.results()] == [
-                leaf_support.wire_row(leaf, key) for key in (1, 2)
-            ], (leaf.id, layout)
+                scalar_support.wire_row(scalar_type, key) for key in (1, 2)
+            ], (scalar_type.id, layout)
 
 
 def _binary32(value: float) -> float:
@@ -335,33 +340,43 @@ _GENERAL_PATHS: Final[Mapping[str, Callable[[object], bool]]] = {
 """What keeps each measured type's values off any shortcut its codec could take."""
 
 
-@pytest.mark.parametrize("leaf", leaf_support.MEASURED_TYPES, ids=lambda leaf: leaf.id)
-def test_every_leaf_type_is_valued_on_its_general_path(leaf: leaf_support.LeafType) -> None:
+@pytest.mark.parametrize(
+    "scalar_type", scalar_support.MEASURED_TYPES, ids=lambda scalar_type: scalar_type.id
+)
+def test_every_scalar_type_is_valued_on_its_general_path(
+    scalar_type: scalar_support.ScalarType,
+) -> None:
     rows = [
-        [leaf.typed(index, key) for index in range(leaf_support.LEVEL.width)]
-        for key in (0, 1, 2, leaf_support.LEVEL.many + 32)
+        [scalar_type.typed(index, key) for index in range(scalar_support.LEVEL.width)]
+        for key in (0, 1, 2, scalar_support.LEVEL.many + 32)
     ]
-    assert all(_GENERAL_PATHS[leaf.id](value) for row in rows for value in row), leaf.id
+    assert all(_GENERAL_PATHS[scalar_type.id](value) for row in rows for value in row), (
+        scalar_type.id
+    )
     assert len({tuple(row) for row in rows}) == len(rows)
-    assert len(set(rows[1])) == (2 if leaf.id == "boolean" else len(rows[1]))
-    if leaf.id == "decimal":
+    assert len(set(rows[1])) == (2 if scalar_type.id == "boolean" else len(rows[1]))
+    if scalar_type.id == "decimal":
         assert {_decimal_integer_digits(value) for value in rows[1]} == set(range(1, 17))
 
 
 def test_the_string_control_is_the_geometry_level_it_is_measured_at() -> None:
-    level = leaf_support.LEVEL
-    for layout in leaf_support.LAYOUTS:
-        assert leaf_support.stored_row(
-            leaf_support.entity_class(leaf_support.CONTROL, layout), 7
+    level = scalar_support.LEVEL
+    for layout in scalar_support.LAYOUTS:
+        assert scalar_support.stored_row(
+            scalar_support.entity_class(scalar_support.CONTROL, layout), 7
         ) == geometry_support.stored_row(level, layout, 7)
-        assert leaf_support.wire_row(leaf_support.CONTROL, 7) == geometry_support.wire_row(level, 7)
+        assert scalar_support.wire_row(scalar_support.CONTROL, 7) == geometry_support.wire_row(
+            level, 7
+        )
 
 
 @in_a_child_interpreter
-def test_a_leaf_type_reads_every_metric_over_a_provider_free_find() -> None:
-    leaf = leaf_support.MEASURED_TYPES[0]
+def test_a_scalar_type_reads_every_metric_over_a_provider_free_find() -> None:
+    scalar_type = scalar_support.MEASURED_TYPES[0]
     for metric in GEOMETRY_METRICS:
-        value, reading_unit, samples = _leaf_read(leaf, "document", metric, warmups=1, measured=2)
+        value, reading_unit, samples = _scalar_read(
+            scalar_type, "document", metric, warmups=1, measured=2
+        )
         assert value > 0
         assert reading_unit == ("us/root" if metric == "elapsedUsPerRoot" else "KiB")
         assert len(samples) == (2 if metric == "elapsedUsPerRoot" else 1)
@@ -424,36 +439,38 @@ def test_a_cold_plan_checkpoint_prices_one_entry_in_a_cache_composed_before_the_
 # The control addresses and the workloads behind them                          #
 # --------------------------------------------------------------------------- #
 def test_control_addresses_parse_back_to_the_control_each_cell_names() -> None:
-    arms = BudgetContract.load().memory_scaling_arms
-    assert control_support.control_address("read-depth-1", "columns.peakKiB", arms) is None
+    root_counts = BudgetContract.load().memory_scaling_root_counts
+    assert control_support.control_address("read-depth-1", "columns.peakKiB", root_counts) is None
     assert control_support.control_address(
-        "control-delivery-duplicate-include", f"typed.page32.roots{arms[-1]}.retainedKiB", arms
+        "control-delivery-duplicate-include",
+        f"typed.page32.roots{root_counts[-1]}.retainedKiB",
+        root_counts,
     ) == control_support.DeliveryControl(
-        "duplicate-include", "typed", "page32", arms[-1], "retainedKiB"
+        "duplicate-include", "typed", "page32", root_counts[-1], "retainedKiB"
     )
     assert control_support.control_address(
-        "control-guarded-3", "plan.warm.elapsedUs", arms
+        "control-guarded-3", "plan.warm.elapsedUs", root_counts
     ) == control_support.GuardedPlanControl(3, "warm", "elapsedUs")
     assert control_support.control_address(
-        "control-guarded-2", "wire.eager.roots256.peakKiB", arms
+        "control-guarded-2", "wire.eager.roots256.peakKiB", root_counts
     ) == control_support.GuardedReadControl(2, "wire", 256, "peakKiB")
     assert control_support.control_address(
-        "control-held", "large.closed.retainedKiB", arms
+        "control-held", "large.closed.retainedKiB", root_counts
     ) == control_support.HeldControl("large", "closed")
     for workload, path in (
-        ("control-delivery-document-heavy", f"wire.eager.roots{arms[0]}.elapsedUs"),
+        ("control-delivery-document-heavy", f"wire.eager.roots{root_counts[0]}.elapsedUs"),
         ("control-delivery-duplicate-include", "wire.eager.roots7.elapsedUs"),
         ("control-guarded-4", "plan.cold.elapsedUs"),
         ("control-guarded-1", "plan.warm.peakKiB"),
         ("control-held", "small.shared.elapsedUs"),
     ):
         with pytest.raises(ValueError, match="not a control address"):
-            control_support.control_address(workload, path, arms)
+            control_support.control_address(workload, path, root_counts)
     parsed = {
-        control_support.control_address(workload, path, arms)
-        for workload, path in control_support.control_cells(arms)
+        control_support.control_address(workload, path, root_counts)
+        for workload, path in control_support.control_cells(root_counts)
     }
-    assert len(parsed) == len(control_support.control_cells(arms))
+    assert len(parsed) == len(control_support.control_cells(root_counts))
 
 
 def test_the_typed_twins_canonicalize_to_their_fixture_queries() -> None:

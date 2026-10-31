@@ -4,13 +4,13 @@ The report expands work from the contract, takes every quantitative reading in
 ``snapshot_delivery_reading.py`` children on every supported CPython minor, and
 emits one Cost Report Envelope. The contract's ceilings are compared on the
 runtime its authority fingerprint names; every other runtime's readings are
-evidence beside them. The provider-free geometry and leaf-type read families
+evidence beside them. The provider-free geometry and scalar-type read families
 are read the same way and compared against nothing. Budget outcomes are
 observations: an outside reading never changes this command's exit status.
 Missing or malformed readings are explicit incompleteness and errors.
 
 ``--workload`` narrows the evidence path to named contract workloads and the
-``geometry``, ``leaf``, ``plan``, and ``control`` groups: the envelope keeps
+``geometry``, ``scalar``, ``plan``, and ``control`` groups: the envelope keeps
 full provenance and completeness is judged over the addresses selected, so a
 slice of the matrix is evidence about that slice, never a diagnostic promoted
 to evidence.
@@ -18,17 +18,17 @@ to evidence.
 The ``control`` group is the before/after control matrix
 ``tests/unit/_delivery_control_support.py`` spells: unprojected Typed delivery
 beside direct Wire delivery over the provider-free catalog workloads at each
-memory scaling arm, the guarded include workload planned cold and hit warm and
+memory scaling root count, the guarded include workload planned cold and hit warm and
 delivered through both lanes at two root counts, and one eager Typed result held
 while its model is shared and after its root has closed. It joins the exact
 matrix a complete envelope carries; a capture taken before the group existed
 remains exact without it.
 
-The ``leaf`` group reads each measured leaf type of
-``tests/unit/_leaf_type_support.py`` at the geometry level the leaf-type
+The ``scalar`` group reads each measured scalar type of
+``tests/unit/_scalar_type_support.py`` at the geometry level the scalar-type
 manifest names, whose geometry read is its String control, and only on the
-supported minors that manifest scopes the leaf-type families to. It joins the
-exact matrix as well; a capture taken before the leaf-type families existed
+supported minors that manifest scopes the scalar-type families to. It joins the
+exact matrix as well; a capture taken before the scalar-type families existed
 remains exact without them.
 """
 
@@ -74,23 +74,23 @@ from parallax.conformance.workloads import (
     STRUCTURAL_LAYOUTS,
     Workload,
     catalog,
-    leaf_type_runtimes,
     plan_levels,
+    scalar_type_runtimes,
     workload_digest,
 )
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "snapshot_delivery_reading.py"
 CONTROL_MODULE: Final = WORKSPACE / "tests" / "unit" / "_delivery_control_support.py"
-LEAF_MODULE: Final = WORKSPACE / "tests" / "unit" / "_leaf_type_support.py"
+SCALAR_MODULE: Final = WORKSPACE / "tests" / "unit" / "_scalar_type_support.py"
 sys.path.insert(0, str(WORKSPACE))
 
 # `sys.path` gains the workspace above, so these imports cannot precede it; that is
 # what the E402 suppression each one carries records.
 from tests.unit import _delivery_control_support as control_support  # noqa: E402
-from tests.unit import _leaf_type_support as leaf_support  # noqa: E402
+from tests.unit import _scalar_type_support as scalar_support  # noqa: E402
 
-for module, expected_file in ((control_support, CONTROL_MODULE), (leaf_support, LEAF_MODULE)):
+for module, expected_file in ((control_support, CONTROL_MODULE), (scalar_support, SCALAR_MODULE)):
     if Path(module.__file__ or "").resolve() != expected_file:
         raise ImportError(
             f"this report expands its matrix from {expected_file}, but resolved {module.__file__}"
@@ -99,8 +99,8 @@ for module, expected_file in ((control_support, CONTROL_MODULE), (leaf_support, 
 from tests.unit._workload_spelling_support import (  # noqa: E402
     CONTROL_PREFIX,
     GEOMETRY_PREFIX,
-    LEAF_PREFIX,
     PLAN_PREFIX,
+    SCALAR_PREFIX,
 )
 
 SUBJECT: Final = "snapshot-delivery"
@@ -178,7 +178,7 @@ class ChildReading:
 
 @dataclass(frozen=True, slots=True)
 class GeometryCell:
-    """One address outside the Budget Contract: a geometry, leaf-type, plan, or
+    """One address outside the Budget Contract: a geometry, scalar-type, plan, or
     control workload's cell."""
 
     workload: str
@@ -206,19 +206,19 @@ def geometry_cells() -> tuple[GeometryCell, ...]:
     )
 
 
-def leaf_cells() -> tuple[GeometryCell, ...]:
-    """Every leaf-type read address, in type then layout then metric order."""
+def scalar_cells() -> tuple[GeometryCell, ...]:
+    """Every scalar-type read address, in type then layout then metric order."""
     return tuple(
-        GeometryCell(leaf_support.read_workload(leaf), f"{layout}.{metric}")
-        for leaf in leaf_support.MEASURED_TYPES
+        GeometryCell(scalar_support.read_workload(scalar_type), f"{layout}.{metric}")
+        for scalar_type in scalar_support.MEASURED_TYPES
         for layout in STRUCTURAL_LAYOUTS
         for metric in GEOMETRY_METRICS
     )
 
 
-def reads_leaf_types(runtime: str) -> bool:
-    """Whether the leaf-type group is read on ``runtime``."""
-    return runtime in leaf_type_runtimes(supported_minors())
+def reads_scalar_types(runtime: str) -> bool:
+    """Whether the scalar-type group is read on ``runtime``."""
+    return runtime in scalar_type_runtimes(supported_minors())
 
 
 def plan_cells() -> tuple[GeometryCell, ...]:
@@ -233,10 +233,10 @@ def plan_cells() -> tuple[GeometryCell, ...]:
 
 def control_cells(contract: BudgetContract) -> tuple[GeometryCell, ...]:
     """Every before/after control address, the delivery controls at each of
-    ``contract``'s memory scaling arms."""
+    ``contract``'s memory scaling root counts."""
     return tuple(
         GeometryCell(workload, path)
-        for workload, path in control_support.control_cells(contract.memory_scaling_arms)
+        for workload, path in control_support.control_cells(contract.memory_scaling_root_counts)
     )
 
 
@@ -412,7 +412,7 @@ def comparison(
 def expected_readings(contract: BudgetContract, path: str) -> int:
     """How many isolated child readings one cell path takes."""
     if is_scaling_cell(path):
-        return contract.memory_children * len(contract.memory_scaling_arms)
+        return contract.memory_children * len(contract.memory_scaling_root_counts)
     if is_memory_cell(path):
         return contract.memory_children
     return 1
@@ -423,11 +423,11 @@ def _reading(
     workload: str,
     path: str,
     results: Sequence[ChildReading],
-    scaling_arms: Sequence[int],
+    scaling_root_counts: Sequence[int],
 ) -> Reading:
     samples = tuple(sample for result in results for sample in (result.samples or (result.value,)))
     if is_scaling_cell(path):
-        split = len(results) // len(scaling_arms)
+        split = len(results) // len(scaling_root_counts)
         value = statistics.median(result.value for result in results[:split])
     else:
         value = statistics.median(samples)
@@ -447,20 +447,20 @@ def addresses(
     runtimes: Sequence[str],
     *,
     controls: bool = True,
-    leaf_types: bool = True,
+    scalar_types: bool = True,
 ) -> tuple[Address, ...]:
     """Every (runtime, workload, cell) address a complete envelope carries,
-    the leaf-type reads on the runtimes :func:`reads_leaf_types` admits alone;
-    without ``leaf_types``, the matrix a capture taken before the leaf-type
+    the scalar-type reads on the runtimes :func:`reads_scalar_types` admits alone;
+    without ``scalar_types``, the matrix a capture taken before the scalar-type
     reads existed carries, and without ``controls`` as well, the one taken
     before the control group existed."""
     leading = (*expanded_cells(contract), *geometry_cells())
-    leaves = leaf_cells() if leaf_types else ()
+    scalars = scalar_cells() if scalar_types else ()
     trailing = (*plan_cells(), *(control_cells(contract) if controls else ()))
     return tuple(
         (runtime, cell.workload, cell.path)
         for runtime in runtimes
-        for cell in (*leading, *(leaves if reads_leaf_types(runtime) else ()), *trailing)
+        for cell in (*leading, *(scalars if reads_scalar_types(runtime) else ()), *trailing)
     )
 
 
@@ -470,12 +470,12 @@ def selected_addresses(
     selected: Selection,
     *,
     controls: bool = True,
-    leaf_types: bool = True,
+    scalar_types: bool = True,
 ) -> tuple[Address, ...]:
     """The addresses among :func:`addresses` that ``selected`` keeps."""
     return tuple(
         address
-        for address in addresses(contract, runtimes, controls=controls, leaf_types=leaf_types)
+        for address in addresses(contract, runtimes, controls=controls, scalar_types=scalar_types)
         if selected(address[1], address[2])
     )
 
@@ -489,7 +489,7 @@ def _collected(
     one of them is unavailable."""
     readings: list[Reading] = []
     diagnostics: list[Diagnostic] = []
-    scaling_arms = contract.memory_scaling_arms
+    scaling_root_counts = contract.memory_scaling_root_counts
     for address in selected:
         runtime, workload, path = address
         outcomes = results.get(address, ())
@@ -506,7 +506,7 @@ def _collected(
                 )
             )
             continue
-        readings.append(_reading(runtime, workload, path, successful, scaling_arms))
+        readings.append(_reading(runtime, workload, path, successful, scaling_root_counts))
     return readings, diagnostics
 
 
@@ -571,7 +571,7 @@ def canary(contract: BudgetContract, runner: ChildRunner) -> CostReportEnvelope:
         ChildRequest(
             cell.workload,
             cell.path,
-            contract.memory_scaling_arms[0],
+            contract.memory_scaling_root_counts[0],
             contract.timing_warmups,
             contract.timing_measured,
         )
@@ -616,10 +616,10 @@ def every_cell(_workload: str, _path: str) -> bool:
 
 
 GEOMETRY_GROUP: Final = "geometry"
-LEAF_GROUP: Final = leaf_support.READ_GROUP
+SCALAR_GROUP: Final = scalar_support.READ_GROUP
 PLAN_GROUP: Final = "plan"
 CONTROL_GROUP: Final = control_support.CONTROL_GROUP
-WORKLOAD_GROUPS: Final = (GEOMETRY_GROUP, LEAF_GROUP, PLAN_GROUP, CONTROL_GROUP)
+WORKLOAD_GROUPS: Final = (GEOMETRY_GROUP, SCALAR_GROUP, PLAN_GROUP, CONTROL_GROUP)
 
 
 def workload_names(contract: BudgetContract) -> tuple[str, ...]:
@@ -630,7 +630,7 @@ def workload_names(contract: BudgetContract) -> tuple[str, ...]:
 
 def workload_selection(names: Iterable[str], contract: BudgetContract | None = None) -> Selection:
     """The addresses the exact workload ``names`` cover: a contract workload id
-    selects its cells, ``geometry``, ``leaf``, ``plan``, and ``control`` select
+    selects its cells, ``geometry``, ``scalar``, ``plan``, and ``control`` select
     the groups outside the contract, and no name at all selects every cell. An
     unknown name is a ``ValueError`` before any work starts."""
     active = contract if contract is not None else BudgetContract.load()
@@ -645,8 +645,8 @@ def workload_selection(names: Iterable[str], contract: BudgetContract | None = N
     def selected(workload: str, _path: str) -> bool:
         if workload.startswith(GEOMETRY_PREFIX):
             return GEOMETRY_GROUP in chosen
-        if workload.startswith(LEAF_PREFIX):
-            return LEAF_GROUP in chosen
+        if workload.startswith(SCALAR_PREFIX):
+            return SCALAR_GROUP in chosen
         if workload.startswith(PLAN_PREFIX):
             return PLAN_GROUP in chosen
         if workload.startswith(CONTROL_PREFIX):
@@ -685,7 +685,7 @@ def _measure_runtime(
             )
     for group, group_cells in (
         (GEOMETRY_GROUP, geometry_cells()),
-        (LEAF_GROUP, leaf_cells() if reads_leaf_types(runtime) else ()),
+        (SCALAR_GROUP, scalar_cells() if reads_scalar_types(runtime) else ()),
         (PLAN_GROUP, plan_cells()),
         (CONTROL_GROUP, control_cells(contract)),
     ):
@@ -694,12 +694,18 @@ def _measure_runtime(
             continue
         with recorder.span("workload", group, member=SUBJECT, runtime=runtime):
             for cell in chosen:
-                _read_arm(
-                    contract, runner, runtime, results, cell, contract.memory_scaling_arms[0], None
+                _read_root_count(
+                    contract,
+                    runner,
+                    runtime,
+                    results,
+                    cell,
+                    contract.memory_scaling_root_counts[0],
+                    None,
                 )
 
 
-def _read_arm(
+def _read_root_count(
     contract: BudgetContract,
     runner: ChildRunner,
     runtime: str,
@@ -740,7 +746,7 @@ def _measure_workload(
     cells: Sequence[BudgetCell],
     recorder: Spans,
 ) -> None:
-    scaling_arms = contract.memory_scaling_arms
+    scaling_root_counts = contract.memory_scaling_root_counts
     live = [cell for cell in cells if needs_database(cell.path)]
     if live and provisioner is None:
         for cell in live:
@@ -752,18 +758,20 @@ def _measure_workload(
             )
     elif live:
         assert provisioner is not None
-        _provision(workload, provisioner, scaling_arms[0], runtime, recorder)
+        _provision(workload, provisioner, scaling_root_counts[0], runtime, recorder)
         for cell in live:
-            _read_arm(contract, runner, runtime, results, cell, scaling_arms[0], provisioner)
+            _read_root_count(
+                contract, runner, runtime, results, cell, scaling_root_counts[0], provisioner
+            )
         memory_live = [cell for cell in live if is_scaling_cell(cell.path)]
-        for roots in scaling_arms[1:]:
+        for roots in scaling_root_counts[1:]:
             if memory_live:
                 _provision(workload, provisioner, roots, runtime, recorder)
             for cell in memory_live:
-                _read_arm(contract, runner, runtime, results, cell, roots, provisioner)
+                _read_root_count(contract, runner, runtime, results, cell, roots, provisioner)
     for cell in cells:
         if not needs_database(cell.path):
-            _read_arm(contract, runner, runtime, results, cell, scaling_arms[0], None)
+            _read_root_count(contract, runner, runtime, results, cell, scaling_root_counts[0], None)
 
 
 def measure(
@@ -864,7 +872,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="append",
         default=[],
         help=(
-            "an exact contract workload id, or the geometry, leaf, plan, or control group, "
+            "an exact contract workload id, or the geometry, scalar, plan, or control group, "
             "to measure as evidence"
         ),
     )

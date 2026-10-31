@@ -3,9 +3,9 @@ its Budget Contract, geometry read, and read-plan cells.
 
 Three families, one control matrix. The two provider-free catalog workloads are
 read through the Typed lane as well as the Wire lane, eager and streamed, at
-each memory scaling arm, so a Typed result that is never projected is priced
+each memory scaling root count, so a Typed result that is never projected is priced
 beside the direct Wire result of the same rows and the per-root slope is read
-across arms rather than assumed. The guarded include workload reads
+across root counts rather than assumed. The guarded include workload reads
 ``models/animal.yaml``'s family through its class mirror under three group
 widths — ``Dog.owner``, then ``Cat.owner`` beside it, then ``WildBoar.owner`` —
 each continued by ``pets`` narrowed to ``Cat``, so the number of guarded

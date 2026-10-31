@@ -15,7 +15,7 @@ against a production shape — one
 logging at INFO into an application-owned bounded queue, bounded metrics, and
 sampled tracing into a bounded exporter. The variants alternate rather than running
 one after the other, and the order inside each pair alternates too, so frequency
-scaling, thermal drift, and a noisy neighbour land on both arms and largely
+scaling, thermal drift, and a noisy neighbour land on both variants and largely
 cancel. Pairing is also what makes the per-event figure honest: it comes from one
 pair's own difference rather than from two independently ranked distributions.
 
