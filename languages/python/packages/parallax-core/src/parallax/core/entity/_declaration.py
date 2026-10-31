@@ -214,8 +214,9 @@ Pickling is the one conversion it does not merely disappear from: a lifecycle's
 private record of a live read has no truthful form on the other side of a process
 boundary, so a value carrying state here is refused at the pickle entry point.
 That refusal is the one thing Entity reads this slot for, and it reads the slot's
-own descriptor: a factory returning ``None`` leaves a node every reader of a
-lifecycle sees nothing on, and a pickle of it can claim nothing untrue. That is a
+own descriptor: a node whose lifecycle answered ``None`` as its state is one
+every reader of a lifecycle sees nothing on, and a pickle of it can claim
+nothing untrue. That is a
 different read from ``lifecycle_state_of``, which resolves the name through the
 class, so a class body binding ``__getattr__``, ``__getattribute__``, or a class
 attribute at this very name can make the two disagree. Every write the framework

@@ -847,11 +847,11 @@ def _supplied_value(
 
 
 def attach_lifecycle_state(value: BaseModel, state: object) -> None:
-    """Attach the opaque lifecycle state a construction's factory produced.
+    """Attach the opaque lifecycle state a construction's lifecycle answered.
 
-    The one write of that slot there is, made after every factory in a
-    construction has succeeded, so a node either carries the state its whole
-    graph earned or carries none.
+    The one write of that slot there is, made only after the lifecycle has
+    answered a state for every node of the construction, so a node either
+    carries the state its whole graph earned or carries none.
     """
     _LifecycleState.__set__(value, state)
 

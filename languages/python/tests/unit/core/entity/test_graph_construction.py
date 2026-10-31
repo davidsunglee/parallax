@@ -191,12 +191,13 @@ def test_a_layout_this_model_does_not_lay_its_entity_out_by_is_refused() -> None
     assert (refusal.value.index, refusal.value.identity) == (0, _ORDER)
 
 
-def test_a_node_answering_no_layout_at_all_is_refused_as_a_mismatch() -> None:
+@pytest.mark.parametrize("answer", [_ORDER, None], ids=["identity", "none"])
+def test_a_node_answering_no_layout_at_all_is_refused_as_a_mismatch(answer: object) -> None:
     construction = graph_construction_for(_ORDERS)
     graph = literal_graph(construction, _ONE_ORDER)
     with pytest.raises(GraphConstructionError) as refusal:
         construction.publish(
-            LiteralGraph((cast("Any", _ORDER),), graph.members, graph.relationships), _no_states
+            LiteralGraph((cast("Any", answer),), graph.members, graph.relationships), _no_states
         )
     assert refusal.value.code == "entity-graph-layout-mismatch"
     assert refusal.value.index == 0
