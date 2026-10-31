@@ -49,10 +49,11 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.write_plan.steps import PlannedInsert
+from production_origins import ORIGINS_FIELD
 from tests._support.db_port import WriteCall, inserted_rows
 from tests.unit import _scalar_type_support as scalar_support
 from tests.unit import _write_lowering_support as lowering_support
-from tests.unit.tools._provenance_support import pin_dirty_tree
+from tests.unit.tools._provenance_support import CHILD_ORIGINS, pin_dirty_tree
 
 _CATEGORICAL_OPERATIONS = {
     "txtime": ("opening", "changed", "unchanged"),
@@ -78,6 +79,7 @@ def _child_document(case: str, overrides: Mapping[str, object] | None = None) ->
         "warmups": report.WARMUPS,
         "measured": report.MEASURED,
         "retainedWarmups": 200,
+        ORIGINS_FIELD: CHILD_ORIGINS,
     }
     document.update(overrides or {})
     return document
@@ -851,7 +853,7 @@ def test_durations_are_refused_beside_a_diagnostic(
     assert not sidecar.exists()
 
 
-def test_metadata_probes_each_runtime_through_the_childs_resolution_before_any_case(
+def test_metadata_probes_each_runtime_before_any_case_and_records_what_its_children_loaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     matrix = _matrix("3.13", "3.14")
@@ -870,6 +872,7 @@ def test_metadata_probes_each_runtime_through_the_childs_resolution_before_any_c
             "implementation": "CPython",
             "version": versions[tuple(command)],
             "executable": "/p",
+            ORIGINS_FIELD: dict.fromkeys(CHILD_ORIGINS, "packages/resolved.py"),
         }
         return (0, json.dumps(identity), "")
 
@@ -897,6 +900,10 @@ def test_metadata_probes_each_runtime_through_the_childs_resolution_before_any_c
     assert {r: s["version"] for r, s in recorded["runtimes"].items()} == {
         "3.13": "3.13.15",
         "3.14": "3.14.7",
+    }
+    assert {r: s[ORIGINS_FIELD] for r, s in recorded["runtimes"].items()} == {
+        "3.13": CHILD_ORIGINS,
+        "3.14": CHILD_ORIGINS,
     }
 
 

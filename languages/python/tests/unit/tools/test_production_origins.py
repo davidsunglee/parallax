@@ -8,14 +8,16 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 
 import feature_boundary_reading
+import instance_state_reading
 import lifecycle_overhead
 import production_origins as origins
 import snapshot_delivery_reading
+import time_interval_runtime
 import write_lowering_reading
 from parallax.conformance.budget import BudgetContract
 
@@ -136,6 +138,23 @@ def test_loaded_origins_record_only_what_was_loaded() -> None:
     assert record == {loaded: relative, **dict.fromkeys(unloaded, origins.NOT_LOADED)}
 
 
+def test_a_reported_record_names_each_inventory_module_once() -> None:
+    record = dict.fromkeys(origins.MEASURED_MODULES, origins.NOT_LOADED)
+    assert origins.reported_origins(record) == record
+    first, *rest = origins.MEASURED_MODULES
+    malformed: tuple[object, ...] = (
+        None,
+        [],
+        dict.fromkeys(rest, origins.NOT_LOADED),
+        record | {"parallax.unlisted": origins.NOT_LOADED},
+        record | {first: ""},
+        record | {first: 1},
+    )
+    for value in malformed:
+        with pytest.raises(ValueError, match=origins.ORIGINS_FIELD):
+            origins.reported_origins(value)
+
+
 def test_resolution_answers_every_inventory_module_as_a_checkout_source() -> None:
     record = origins.resolved_origins()
     assert list(record) == list(origins.MEASURED_MODULES)
@@ -196,26 +215,40 @@ def _snapshot_reading() -> int:
     )
 
 
+_CHILDREN: Final = [
+    (snapshot_delivery_reading, "_geometry", _snapshot_reading),
+    (
+        write_lowering_reading,
+        "measure",
+        lambda: write_lowering_reading.main(
+            [write_lowering_reading.CASE_NAMES[0], "--warmups", "0", "--measured", "1"]
+        ),
+    ),
+    (
+        feature_boundary_reading,
+        "measure",
+        lambda: feature_boundary_reading.main(
+            [feature_boundary_reading.CASE_NAMES[0], "--warmups", "0", "--measured", "1"]
+        ),
+    ),
+    (
+        instance_state_reading,
+        "measure",
+        lambda: instance_state_reading.main([instance_state_reading.SCENARIOS[0].name]),
+    ),
+    (
+        time_interval_runtime,
+        "reading_document",
+        lambda: time_interval_runtime.main(
+            ["read", time_interval_runtime.support.CELLS[0].id, "--warmups", "0", "--measured", "1"]
+        ),
+    ),
+]
+
+
 @pytest.mark.parametrize(
     ("module", "measuring", "entry"),
-    [
-        (snapshot_delivery_reading, "_geometry", _snapshot_reading),
-        (
-            write_lowering_reading,
-            "measure",
-            lambda: write_lowering_reading.main(
-                [write_lowering_reading.CASE_NAMES[0], "--warmups", "0", "--measured", "1"]
-            ),
-        ),
-        (
-            feature_boundary_reading,
-            "measure",
-            lambda: feature_boundary_reading.main(
-                [feature_boundary_reading.CASE_NAMES[0], "--warmups", "0", "--measured", "1"]
-            ),
-        ),
-        (lifecycle_overhead, "_shape", lambda: lifecycle_overhead.main([])),
-    ],
+    [*_CHILDREN, (lifecycle_overhead, "_shape", lambda: lifecycle_overhead.main([]))],
 )
 def test_a_measurement_child_refuses_foreign_production_code_before_measuring(
     monkeypatch: pytest.MonkeyPatch, module: ModuleType, measuring: str, entry: Callable[[], int]
@@ -226,3 +259,42 @@ def test_a_measurement_child_refuses_foreign_production_code_before_measuring(
     )
     with pytest.raises(RuntimeError, match="did not load the checkout's production sources"):
         entry()
+
+
+_MEASURED: Final[dict[str, object]] = {
+    "_geometry": (1.0, "KiB", [1.0]),
+    "measure": {},
+    "reading_document": {},
+}
+
+
+@pytest.mark.parametrize(("module", "measuring", "entry"), _CHILDREN)
+def test_a_measurement_child_refuses_foreign_production_code_loaded_while_measuring(
+    monkeypatch: pytest.MonkeyPatch, module: ModuleType, measuring: str, entry: Callable[[], int]
+) -> None:
+    def measuring_foreign(*_args: object, **_kwargs: object) -> object:
+        monkeypatch.setitem(
+            sys.modules, "parallax.stale", _module("parallax.stale", "/elsewhere/parallax/stale.py")
+        )
+        return _MEASURED[measuring]
+
+    monkeypatch.setattr(module, measuring, measuring_foreign)
+    with pytest.raises(RuntimeError, match="did not load the checkout's production sources"):
+        entry()
+
+
+@pytest.mark.parametrize(("module", "measuring", "entry"), _CHILDREN[:3])
+def test_a_measurement_child_reports_what_it_loaded_once_it_has_measured(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    module: ModuleType,
+    measuring: str,
+    entry: Callable[[], int],
+) -> None:
+    def measured(*_args: object, **_kwargs: object) -> object:
+        return _MEASURED[measuring]
+
+    monkeypatch.setattr(module, measuring, measured)
+    assert entry() == 0
+    line = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert line[origins.ORIGINS_FIELD] == origins.loaded_origins()

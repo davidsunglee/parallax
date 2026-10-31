@@ -58,7 +58,7 @@ from parallax.core.read_delivery._read_plan import (
 )
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import Database, ScopedDatabase
-from production_origins import require_source_origins
+from production_origins import ORIGINS_FIELD, loaded_origins, require_source_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 SUPPORT_DIRECTORY: Final = WORKSPACE / "tests" / "unit"
@@ -1116,8 +1116,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             measured=args.measured,
             collect_at_page_boundary=contract.memory_collect_at_page_boundary,
         )
-    require_source_origins()
-    print(json.dumps({"value": value, "unit": reading_unit, "samples": samples}))
+    origins = loaded_origins()
+    print(
+        json.dumps(
+            {"value": value, "unit": reading_unit, "samples": samples, ORIGINS_FIELD: origins}
+        )
+    )
     return 0
 
 

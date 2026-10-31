@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import math
 import subprocess
@@ -20,6 +21,7 @@ from interpreter_matrix import (
     RuntimeStatus,
     child_command,
     child_environment,
+    measured_identities,
     probe_runtime,
     supported_minors,
     write_metadata,
@@ -32,6 +34,7 @@ from parallax.conformance.cost_envelope import (
     classify_authority,
     validate,
 )
+from production_origins import ORIGINS_FIELD, reported_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 READING_SCRIPT: Final = Path(__file__).with_name("feature_boundary_reading.py")
@@ -62,6 +65,7 @@ class ChildReading:
     window: str
     units: int
     samples: Mapping[str, tuple[float, ...]]
+    origins: Mapping[str, str] = dataclasses.field(default_factory=dict[str, str])
 
 
 type Cell = ChildReading | str
@@ -110,7 +114,16 @@ def decode_child(output: str, case: str) -> Cell:
         if not lines:
             raise ValueError("the child printed nothing")
         document = _mapping(json.loads(lines[-1]), "reading")
-        expected = {"case", "window", "units", "samples", "warmups", "measured", "retainedWarmups"}
+        expected = {
+            "case",
+            "window",
+            "units",
+            "samples",
+            "warmups",
+            "measured",
+            "retainedWarmups",
+            ORIGINS_FIELD,
+        }
         if set(document) != expected:
             raise ValueError(f"reading fields must be {sorted(expected)}")
         for name, value in (
@@ -135,6 +148,7 @@ def decode_child(output: str, case: str) -> Cell:
             WINDOWS[case],
             UNITS[case],
             {metric: _samples(samples[metric], metric) for metric in METRICS},
+            reported_origins(document[ORIGINS_FIELD]),
         )
     except (KeyError, TypeError, ValueError) as error:
         return f"the child's reading did not decode: {error}"
@@ -354,12 +368,21 @@ def _emit(document: Mapping[str, object], out: Path | None) -> None:
         out.write_text(rendered, encoding="utf-8")
 
 
+def _reported_origins(matrix: Matrix) -> dict[str, list[Mapping[str, str]]]:
+    """What each child that answered a reading reported loading, by runtime."""
+    return {
+        runtime: [cell.origins for cell in cells.values() if isinstance(cell, ChildReading)]
+        for runtime, cells in matrix.items()
+    }
+
+
 def _measured(spans: Spans, out: Path | None, metadata: Path | None) -> int:
     runtimes = supported_minors()
-    if metadata is not None:
-        identities = runtime_identities(runtimes, spans)
-        write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, identities))
+    probed = {} if metadata is None else runtime_identities(runtimes, spans)
     matrix = timed_matrix(runtimes, CASE_NAMES, spans)
+    if metadata is not None:
+        measured = measured_identities(probed, _reported_origins(matrix))
+        write_sidecar(metadata, lambda path: write_metadata(path, SUBJECT, measured))
     absent = missing_cells(matrix, runtimes, CASE_NAMES)
     if absent:
         print("\n".join(("the feature-boundary matrix is incomplete:", *absent)), file=sys.stderr)

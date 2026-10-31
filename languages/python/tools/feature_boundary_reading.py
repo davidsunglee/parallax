@@ -12,7 +12,7 @@ from pathlib import Path
 from time import perf_counter_ns
 from typing import Final
 
-from production_origins import require_source_origins
+from production_origins import ORIGINS_FIELD, loaded_origins, require_source_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKSPACE))
@@ -105,8 +105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         document = measure(args.case, warmups=args.warmups, measured=args.measured)
     except ValueError as error:
         parser.error(str(error))
-    require_source_origins()
-    print(json.dumps(document, sort_keys=True))
+    print(json.dumps(document | {ORIGINS_FIELD: loaded_origins()}, sort_keys=True))
     return 0
 
 

@@ -13,6 +13,8 @@ import feature_boundary_overhead as report
 from durations import Spans
 from interpreter_matrix import CURRENT_MINOR, HASH_SEED, RuntimeIdentity, supported_minors
 from parallax.conformance.budget import BudgetContract
+from production_origins import ORIGINS_FIELD
+from tests.unit.tools._provenance_support import CHILD_ORIGINS
 
 
 def _answer(case: str) -> dict[str, object]:
@@ -27,6 +29,7 @@ def _answer(case: str) -> dict[str, object]:
         "warmups": report.WARMUPS,
         "measured": report.MEASURED,
         "retainedWarmups": report.RETAINED_WARMUPS,
+        ORIGINS_FIELD: CHILD_ORIGINS,
     }
 
 
@@ -78,6 +81,8 @@ def test_child_non_objects_and_incomplete_answers_are_rejected(replacement: obje
         ("measured", 8),
         ("measured", 9.0),
         ("retainedWarmups", 1),
+        (ORIGINS_FIELD, {}),
+        (ORIGINS_FIELD, {**CHILD_ORIGINS, "parallax.unlisted": "not-loaded"}),
     ],
 )
 def test_child_protocol_disagreement_is_rejected(field: str, value: object) -> None:
@@ -217,7 +222,11 @@ def test_measured_cli_writes_envelope_metadata_and_durations(
     )
     report.validate_matrix(json.loads(out.read_text()))
     assert probes == list(supported_minors())
-    assert json.loads(metadata.read_text())["subject"] == report.SUBJECT
+    recorded = json.loads(metadata.read_text())
+    assert recorded["subject"] == report.SUBJECT
+    assert {
+        runtime: status[ORIGINS_FIELD] for runtime, status in recorded["runtimes"].items()
+    } == dict.fromkeys(supported_minors(), CHILD_ORIGINS)
     assert durations.is_file()
 
 

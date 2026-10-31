@@ -14,8 +14,9 @@ from interpreter_matrix import IDENTITY_SCRIPT
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
 from parallax.conformance.workloads import workload_digest
+from production_origins import ORIGINS_FIELD
 from tests.unit._instance_state_support import MEASUREMENT_VARIANTS, REPORTED, Scenario
-from tests.unit.tools._provenance_support import pin_dirty_tree
+from tests.unit.tools._provenance_support import CHILD_ORIGINS, pin_dirty_tree
 
 
 def test_envelope_retains_the_complete_matrix_and_member_provenance() -> None:
@@ -325,7 +326,9 @@ def test_metadata_probes_each_runtime_through_this_reports_own_launch_path(
 
     def child(selected_runtime: str, scenario: Scenario) -> report.Cell:
         events.append("child")
-        return matrix.get(selected_runtime, matrix[runtime])[scenario.name]
+        reading = matrix.get(selected_runtime, matrix[runtime])[scenario.name]
+        assert isinstance(reading, report.Reading)
+        return reading._replace(origins=tuple(CHILD_ORIGINS.items()))
 
     monkeypatch.setattr(report, "run_probe", probe)
     monkeypatch.setattr(report, "in_a_child", child)
@@ -352,6 +355,7 @@ def test_metadata_probes_each_runtime_through_this_reports_own_launch_path(
         "reason": "the identity probe exited 2: no such interpreter",
     }
     assert recorded["runtimes"][runtime]["version"] == "3.14.7"
+    assert recorded["runtimes"][runtime][ORIGINS_FIELD] == CHILD_ORIGINS
 
 
 def test_the_report_declares_the_matrix_its_envelope_carries() -> None:

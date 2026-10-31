@@ -824,7 +824,8 @@ def main(argv: list[str]) -> int:
     for a number that is too large, deliberately. ``--durations`` names where
     the empty sidecar goes: every variant here is timed in-process, so the member's
     only span is the one its collector records around it. ``--metadata`` names
-    where the one runtime this process is, and measures in, is recorded.
+    where the one runtime this process is, and measures in, is recorded once it
+    has measured, with the read-construction modules its measurement loaded.
     """
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--durations", type=Path)
@@ -839,9 +840,6 @@ def main(argv: list[str]) -> int:
         return 2
     if args.durations is not None:
         write_sidecar(args.durations, Spans().write)
-    if args.metadata is not None:
-        identity = {CURRENT_MINOR: current_identity()}
-        write_sidecar(args.metadata, lambda path: write_metadata(path, SUBJECT, identity))
     require_source_origins()
     port = _MemoryPort()
     records: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=QUEUE_CAPACITY)
@@ -861,7 +859,9 @@ def main(argv: list[str]) -> int:
         plain_root.close()
     contract = BudgetContract.load()
     envelope = build_envelope(contract, _provenance(contract), measurements, shape)
-    require_source_origins()
+    identity = {CURRENT_MINOR: current_identity()}
+    if args.metadata is not None:
+        write_sidecar(args.metadata, lambda path: write_metadata(path, SUBJECT, identity))
     print(json.dumps(envelope.document(), indent=2, sort_keys=True))
     return 0
 

@@ -14,8 +14,9 @@ reaches. A member probes once per runtime outside every measured window and
 records the answer in a metadata sidecar beside its envelope. The probe also
 resolves the read-construction modules :mod:`production_origins` names and
 refuses to answer for an interpreter that would load any production module from
-outside this checkout's sources, so the identity a runtime records says which
-sources its readings ran.
+outside this checkout's sources. What a runtime's recorded identity says about
+those modules is not the probe's resolution but what that runtime's measurement
+children reported loading, merged once the member has read them.
 """
 
 from __future__ import annotations
@@ -29,11 +30,11 @@ import sys
 import tempfile
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, cast
 
-from production_origins import loaded_origins, resolved_origins
+from production_origins import ORIGINS_FIELD, loaded_origins, merged_origins, resolved_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 CURRENT_MINOR: Final = f"{sys.version_info.major}.{sys.version_info.minor}"
@@ -43,7 +44,6 @@ OWN_INTERPRETER_VARIABLE: Final = "PARALLAX_OWN_INTERPRETER"
 """What marks a child as an interpreter of its own, spelled as
 ``tests/unit/memory_instruments.py`` requires it before any reading."""
 IDENTITY_SCRIPT: Final = Path(__file__).resolve()
-PRODUCTION_ORIGINS_FIELD: Final = "productionOrigins"
 METADATA_VERSION: Final = 1
 
 _COVERAGE_VARIABLES: Final = frozenset(
@@ -123,9 +123,10 @@ class RuntimeIdentity:
     """The interpreter one runtime's command resolution reaches.
 
     ``production_origins`` pairs each read-construction module with the
-    checkout-relative source it resolves to there, or ``not-loaded`` where it
-    was read in a process that never loaded it; an identity recorded before the
-    pairs existed carries none.
+    checkout-relative source it was found at there — by the probe's resolution,
+    or, once a member has measured, by the processes that took its readings —
+    or ``not-loaded`` where none of those processes loaded it; an identity
+    recorded before the pairs existed carries none.
     """
 
     implementation: str
@@ -141,7 +142,7 @@ class RuntimeIdentity:
             "executable": self.executable,
         }
         if self.production_origins:
-            document[PRODUCTION_ORIGINS_FIELD] = dict(self.production_origins)
+            document[ORIGINS_FIELD] = dict(self.production_origins)
         return document
 
 
@@ -184,14 +185,14 @@ def current_identity() -> RuntimeIdentity:
 def _production_origins(document: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
     """The module origins ``document`` records, none where it records none;
     ``ValueError`` for any other shape."""
-    recorded = document.get(PRODUCTION_ORIGINS_FIELD)
+    recorded = document.get(ORIGINS_FIELD)
     if recorded is None:
         return ()
     if not isinstance(recorded, Mapping) or not recorded:
-        raise ValueError(f"{PRODUCTION_ORIGINS_FIELD} {recorded!r} is not a non-empty object")
+        raise ValueError(f"{ORIGINS_FIELD} {recorded!r} is not a non-empty object")
     pairs = cast("Mapping[object, object]", recorded).items()
     if not all(isinstance(name, str) and isinstance(origin, str) for name, origin in pairs):
-        raise ValueError(f"{PRODUCTION_ORIGINS_FIELD} {dict(pairs)!r} names a non-string")
+        raise ValueError(f"{ORIGINS_FIELD} {dict(pairs)!r} names a non-string")
     return tuple(sorted(cast("Mapping[str, str]", recorded).items()))
 
 
@@ -238,6 +239,28 @@ def probe_identity(
     if not all(isinstance(value, str) and value for value in (implementation, version, executable)):
         return RuntimeUnavailable("the identity probe answered an incomplete identity")
     return RuntimeIdentity(str(implementation), str(version), str(executable), origins)
+
+
+def measured_identities(
+    identities: Mapping[str, RuntimeStatus], reported: Mapping[str, Sequence[Mapping[str, str]]]
+) -> dict[str, RuntimeStatus]:
+    """``identities`` with each available runtime's module origins replaced by
+    the merge of what its measurement children ``reported`` loading, and none
+    for a runtime no child reported for; ``ValueError`` where two children of
+    one runtime loaded a module from different origins."""
+    return {
+        runtime: (
+            replace(
+                identity,
+                production_origins=tuple(sorted(merged_origins(reported[runtime]).items()))
+                if reported.get(runtime)
+                else (),
+            )
+            if isinstance(identity, RuntimeIdentity)
+            else identity
+        )
+        for runtime, identity in identities.items()
+    }
 
 
 def probe_runtime(runtime: str, namespace: str, run: ProbeRunner = run_probe) -> RuntimeStatus:
@@ -303,4 +326,4 @@ def runtime_status(document: object) -> RuntimeStatus:
 
 
 if __name__ == "__main__":
-    print(json.dumps({**identity_document(), PRODUCTION_ORIGINS_FIELD: resolved_origins()}))
+    print(json.dumps({**identity_document(), ORIGINS_FIELD: resolved_origins()}))
