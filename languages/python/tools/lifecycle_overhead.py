@@ -71,11 +71,11 @@ import queue
 import sys
 import time
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
 from types import TracebackType
-from typing import Final, NamedTuple
+from typing import Final, NamedTuple, cast
 
 from durations import Spans, write_sidecar
 from interpreter_matrix import CURRENT_MINOR, current_identity, write_metadata
@@ -152,6 +152,47 @@ DISPATCH_CEILING_US: Final = 5.0
 P50_OVERHEAD_CEILING: Final = 0.05
 P95_OVERHEAD_CEILING: Final = 0.10
 SUBJECT: Final = "lifecycle-overhead"
+
+CONFIGURATIONS: Final = (
+    "one Handler that keeps nothing",
+    "Safe logging alone, discarding every record",
+    "Safe logging alone, at INFO",
+    f"fan-out of three, tracing one root in {TRACE_SAMPLE}",
+    "fan-out of three, tracing every root",
+)
+"""Every observed configuration, cheapest first, each an envelope workload of
+its own; :func:`_configurations` says what each one composes."""
+
+WORKLOAD: Final = "workload"
+"""The envelope workload carrying the measured workload's own shape."""
+
+SHAPE_CELLS: Final = (("events", "count"), ("statements", "count"))
+"""The workload shape's cells, each with its unit."""
+
+CONFIGURATION_CELLS: Final = (
+    ("plain.p50", "us"),
+    ("plain.p95", "us"),
+    ("observed.p50", "us"),
+    ("observed.p95", "us"),
+    ("pairedDelta.p50", "us"),
+    ("pairedDelta.p95", "us"),
+    ("dispatchPerEvent.p50", "us/event"),
+    ("dispatchPerEvent.p95", "us/event"),
+    ("rankedOverhead.p50", "ratio"),
+    ("rankedOverhead.p95", "ratio"),
+    ("pairedOverhead.p50", "ratio"),
+    ("pairedOverhead.p95", "ratio"),
+    *((f"latencyProjection.{latency}us", "ratio") for latency in LATENCY_PROJECTION_US),
+)
+"""Each configuration's cells, each with its unit."""
+
+COMPARED_CELLS: Final = (
+    ("dispatchPerEvent.p95", DISPATCH_CEILING_US),
+    ("rankedOverhead.p50", P50_OVERHEAD_CEILING),
+    ("rankedOverhead.p95", P95_OVERHEAD_CEILING),
+)
+"""The configuration cells each compared at most against its ceiling."""
+
 _LOGIN: Final = "lifecycle-overhead"
 
 
@@ -558,9 +599,10 @@ def build_envelope(
     shape: _Shape,
 ) -> CostReportEnvelope:
     """Retain every value the lifecycle report computes in its own envelope."""
+    units = dict(CONFIGURATION_CELLS)
     readings = [
-        Reading("workload", "events", float(shape.events), "count"),
-        Reading("workload", "statements", float(shape.statements), "count"),
+        Reading(WORKLOAD, cell, float(value), unit)
+        for (cell, unit), value in zip(SHAPE_CELLS, shape, strict=True)
     ]
     comparisons: list[Comparison] = []
     for label, measurement in measurements.items():
@@ -570,61 +612,31 @@ def build_envelope(
         observed_p95 = _percentile(measurement.observed, 0.95) / 1_000
         delta_p50 = _percentile(measurement.difference, 0.50) / 1_000
         delta_p95 = _percentile(measurement.difference, 0.95) / 1_000
-        dispatch_p50 = delta_p50 / shape.events
-        dispatch_p95 = delta_p95 / shape.events
-        ranked_p50 = observed_p50 / plain_p50 - 1
-        ranked_p95 = observed_p95 / plain_p95 - 1
-        paired_p50 = _percentile(measurement.ratio, 0.50)
-        paired_p95 = _percentile(measurement.ratio, 0.95)
-        values = (
-            ("plain.p50", plain_p50, "us"),
-            ("plain.p95", plain_p95, "us"),
-            ("observed.p50", observed_p50, "us"),
-            ("observed.p95", observed_p95, "us"),
-            ("pairedDelta.p50", delta_p50, "us"),
-            ("pairedDelta.p95", delta_p95, "us"),
-            ("dispatchPerEvent.p50", dispatch_p50, "us/event"),
-            ("dispatchPerEvent.p95", dispatch_p95, "us/event"),
-            ("rankedOverhead.p50", ranked_p50, "ratio"),
-            ("rankedOverhead.p95", ranked_p95, "ratio"),
-            ("pairedOverhead.p50", paired_p50, "ratio"),
-            ("pairedOverhead.p95", paired_p95, "ratio"),
+        values = {
+            "plain.p50": plain_p50,
+            "plain.p95": plain_p95,
+            "observed.p50": observed_p50,
+            "observed.p95": observed_p95,
+            "pairedDelta.p50": delta_p50,
+            "pairedDelta.p95": delta_p95,
+            "dispatchPerEvent.p50": delta_p50 / shape.events,
+            "dispatchPerEvent.p95": delta_p95 / shape.events,
+            "rankedOverhead.p50": observed_p50 / plain_p50 - 1,
+            "rankedOverhead.p95": observed_p95 / plain_p95 - 1,
+            "pairedOverhead.p50": _percentile(measurement.ratio, 0.50),
+            "pairedOverhead.p95": _percentile(measurement.ratio, 0.95),
+            **{
+                f"latencyProjection.{latency}us": delta_p50
+                / (plain_p50 + shape.statements * latency)
+                for latency in LATENCY_PROJECTION_US
+            },
+        }
+        readings.extend(
+            Reading(label, cell, values[cell], unit) for cell, unit in CONFIGURATION_CELLS
         )
-        readings.extend(Reading(label, cell, value, unit) for cell, value, unit in values)
-        for latency in LATENCY_PROJECTION_US:
-            denominator = plain_p50 + shape.statements * latency
-            readings.append(
-                Reading(
-                    label,
-                    f"latencyProjection.{latency}us",
-                    delta_p50 / denominator,
-                    "ratio",
-                )
-            )
         comparisons.extend(
-            (
-                _comparison(
-                    label,
-                    "dispatchPerEvent.p95",
-                    dispatch_p95,
-                    DISPATCH_CEILING_US,
-                    "us/event",
-                ),
-                _comparison(
-                    label,
-                    "rankedOverhead.p50",
-                    ranked_p50,
-                    P50_OVERHEAD_CEILING,
-                    "ratio",
-                ),
-                _comparison(
-                    label,
-                    "rankedOverhead.p95",
-                    ranked_p95,
-                    P95_OVERHEAD_CEILING,
-                    "ratio",
-                ),
-            )
+            _comparison(label, cell, values[cell], limit, units[cell])
+            for cell, limit in COMPARED_CELLS
         )
     envelope = CostReportEnvelope(
         SUBJECT,
@@ -637,6 +649,90 @@ def build_envelope(
     return envelope
 
 
+def expected_readings() -> dict[tuple[str, str], str]:
+    """Every (workload, cell) a complete envelope reads, with its unit."""
+    return {
+        **{(WORKLOAD, cell): unit for cell, unit in SHAPE_CELLS},
+        **{(label, cell): unit for label in CONFIGURATIONS for cell, unit in CONFIGURATION_CELLS},
+    }
+
+
+def expected_comparisons() -> dict[tuple[str, str], float]:
+    """Every (workload, cell) a complete envelope compares, with its ceiling."""
+    return {(label, cell): limit for label in CONFIGURATIONS for cell, limit in COMPARED_CELLS}
+
+
+def _indexed(
+    document: Mapping[str, object], field: str
+) -> dict[tuple[str, str], Mapping[str, object]]:
+    entries = document.get(field)
+    if not isinstance(entries, list):
+        raise ValueError(f"lifecycle-overhead {field} is not a list")
+    indexed: dict[tuple[str, str], Mapping[str, object]] = {}
+    for entry in cast("list[object]", entries):
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"a lifecycle-overhead {field} entry is not an object")
+        fields = cast("Mapping[str, object]", entry)
+        address = (str(fields.get("workload")), str(fields.get("cell")))
+        if address in indexed:
+            raise ValueError(f"duplicate lifecycle-overhead {field} {'.'.join(address)}")
+        indexed[address] = fields
+    return indexed
+
+
+def _require_exact(
+    expected: Iterable[tuple[str, str]], found: Iterable[tuple[str, str]], field: str
+) -> None:
+    wanted, present = set(expected), set(found)
+    details = [
+        *(f"missing {'.'.join(address)}" for address in sorted(wanted - present)),
+        *(f"unexpected {'.'.join(address)}" for address in sorted(present - wanted)),
+    ]
+    if details:
+        raise ValueError(f"lifecycle-overhead {field} matrix is not exact: {', '.join(details)}")
+
+
+def _value(reading: Mapping[str, object], address: tuple[str, str]) -> float:
+    value = reading.get("value")
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{'.'.join(address)} value {value!r} is not a number")
+    return float(value)
+
+
+def validate_matrix(document: Mapping[str, object]) -> None:
+    """Raise ``ValueError`` unless ``document`` reads exactly the cells this
+    report's configurations declare, each in its unit, and compares exactly the
+    cells it declares, each against its ceiling with the outcome its reading
+    earns."""
+    readings = _indexed(document, "readings")
+    units = expected_readings()
+    _require_exact(units, readings, "reading")
+    for address, reading in readings.items():
+        _value(reading, address)
+        if reading.get("unit") != units[address]:
+            raise ValueError(
+                f"{'.'.join(address)} reading unit {reading.get('unit')!r}, "
+                f"expected {units[address]!r}"
+            )
+    comparisons = _indexed(document, "comparisons")
+    limits = expected_comparisons()
+    _require_exact(limits, comparisons, "comparison")
+    for address, comparison in comparisons.items():
+        limit = limits[address]
+        expected = {
+            "operator": "at-most",
+            "limit": limit,
+            "unit": units[address],
+            "outcome": "within" if _value(readings[address], address) <= limit else "outside",
+        }
+        for name, field in expected.items():
+            if comparison.get(name) != field:
+                raise ValueError(
+                    f"{'.'.join(address)} comparison {name} {comparison.get(name)!r}, "
+                    f"expected {field!r}"
+                )
+
+
 def canary(contract: BudgetContract, provenance: Provenance) -> CostReportEnvelope:
     """Build one schema-valid measured envelope without running the timer."""
     measurement = _Measurement()
@@ -647,7 +743,7 @@ def canary(contract: BudgetContract, provenance: Provenance) -> CostReportEnvelo
     return build_envelope(
         contract,
         provenance,
-        {"canary": measurement},
+        dict.fromkeys(CONFIGURATIONS, measurement),
         _Shape(events=2, statements=3),
     )
 
@@ -711,16 +807,14 @@ def _configurations(
     """
     emitting = _bounded_logger(records, "parallax.lifecycle.overhead", logging.INFO)
     silent = _bounded_logger(records, "parallax.lifecycle.overhead.silent", logging.CRITICAL)
-    return [
-        ("one Handler that keeps nothing", _NullProvider()),
-        ("Safe logging alone, discarding every record", LoggingLifecycleProvider(silent)),
-        ("Safe logging alone, at INFO", LoggingLifecycleProvider(emitting)),
-        (
-            f"fan-out of three, tracing one root in {TRACE_SAMPLE}",
-            _fanout(emitting, TRACE_SAMPLE),
-        ),
-        ("fan-out of three, tracing every root", _fanout(emitting, 1)),
-    ]
+    providers = (
+        _NullProvider(),
+        LoggingLifecycleProvider(silent),
+        LoggingLifecycleProvider(emitting),
+        _fanout(emitting, TRACE_SAMPLE),
+        _fanout(emitting, 1),
+    )
+    return list(zip(CONFIGURATIONS, providers, strict=True))
 
 
 def main(argv: list[str]) -> int:

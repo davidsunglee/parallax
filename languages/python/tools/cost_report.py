@@ -84,6 +84,7 @@ from jsonschema import ValidationError
 
 import feature_boundary_overhead as feature_report
 import instance_state_overhead as instance_report
+import lifecycle_overhead as lifecycle_report
 import write_lowering_overhead as write_report
 from durations import Span, Spans, render
 from interpreter_matrix import (
@@ -142,11 +143,13 @@ SNAPSHOT_SUBJECT: Final = "snapshot-delivery"
 WRITE_SUBJECT: Final = write_report.SUBJECT
 INSTANCE_STATE_SUBJECT: Final = instance_report.SUBJECT
 FEATURE_SUBJECT: Final = feature_report.SUBJECT
+LIFECYCLE_SUBJECT: Final = lifecycle_report.SUBJECT
 REQUIRABLE_MEMBERS: Final = (
     SNAPSHOT_SUBJECT,
     WRITE_SUBJECT,
     INSTANCE_STATE_SUBJECT,
     FEATURE_SUBJECT,
+    LIFECYCLE_SUBJECT,
 )
 """The subjects ``--require-member`` accepts: each has a report owner that
 declares its exact matrix, which is what requiring a member checks it against."""
@@ -193,7 +196,7 @@ MEMBERS: Final = (
         SNAPSHOT_SUBJECT,
         required=True,
     ),
-    Member("python-report-lifecycle-overhead", "lifecycle_overhead.py", "lifecycle-overhead"),
+    Member("python-report-lifecycle-overhead", "lifecycle_overhead.py", LIFECYCLE_SUBJECT),
     Member("python-report-instance-state", "instance_state_overhead.py", "instance-state"),
     Member(
         "python-report-write-lowering",
@@ -232,7 +235,7 @@ MEMBER_SOURCES: Final[Mapping[str, MemberSources]] = {
             "tests/unit/_workload_spelling_support.py",
         ),
     ),
-    "lifecycle-overhead": MemberSources(
+    LIFECYCLE_SUBJECT: MemberSources(
         ("tools/lifecycle_overhead.py", "tools/production_origins.py"), ()
     ),
     INSTANCE_STATE_SUBJECT: MemberSources(
@@ -377,6 +380,8 @@ def validate_matrix(
         validate_write_lowering_matrix(document, runtimes)
     if subject == FEATURE_SUBJECT:
         feature_report.validate_matrix(document, runtimes)
+    if subject == LIFECYCLE_SUBJECT:
+        lifecycle_report.validate_matrix(document)
 
 
 def _readings(document: Document) -> Sequence[Document]:
@@ -1106,6 +1111,17 @@ def is_diagnostic(document: Document) -> bool:
     )
 
 
+_OPTIONAL_REQUIREMENTS: Final[
+    tuple[tuple[str, Callable[[Document], None], Callable[[], str]], ...]
+] = (
+    (INSTANCE_STATE_SUBJECT, validate_instance_state_matrix, workload_digest),
+    (FEATURE_SUBJECT, feature_report.validate_matrix, feature_report.workload_digest),
+    (LIFECYCLE_SUBJECT, lifecycle_report.validate_matrix, workload_digest),
+)
+"""Each member verification holds only when required: its subject, its owner's
+exact matrix, and the workload digest it must be current against."""
+
+
 def verify(
     document: Document,
     contract: BudgetContract | None = None,
@@ -1170,26 +1186,11 @@ def verify(
         failures += replacement.commit_failures(WRITE_SUBJECT, write)
     elif len(commits) != 1:
         failures.append("the snapshot-delivery and write-lowering envelopes name different commits")
-    if INSTANCE_STATE_SUBJECT in required:
-        failures += _optional_member_failures(
-            document,
-            commits,
-            active,
-            INSTANCE_STATE_SUBJECT,
-            validate_instance_state_matrix,
-            workload_digest(),
-            replacement,
-        )
-    if FEATURE_SUBJECT in required:
-        failures += _optional_member_failures(
-            document,
-            commits,
-            active,
-            FEATURE_SUBJECT,
-            feature_report.validate_matrix,
-            feature_report.workload_digest(),
-            replacement,
-        )
+    for subject, matrix, digest in _OPTIONAL_REQUIREMENTS:
+        if subject in required:
+            failures += _optional_member_failures(
+                document, commits, active, subject, matrix, digest(), replacement
+            )
     return failures
 
 

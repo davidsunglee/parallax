@@ -14,6 +14,7 @@ import pytest
 import cost_report
 import feature_boundary_overhead as feature_report
 import instance_state_overhead as instance_report
+import lifecycle_overhead as lifecycle_report
 import write_lowering_overhead as write_report
 from cost_report import (
     COLLECTION_SPAN,
@@ -60,7 +61,7 @@ from snapshot_delivery_overhead import (
     scalar_cells,
     unit,
 )
-from tests.unit.tools._cost_report_support import complete_instance_state
+from tests.unit.tools._cost_report_support import complete_instance_state, lifecycle_document
 
 
 def _just_report_recipes() -> frozenset[str]:
@@ -177,6 +178,8 @@ def gates_no_reading_reaches(monkeypatch: pytest.MonkeyPatch) -> None:
 def _optional_document(member: Member) -> dict[str, object]:
     if member.subject == feature_report.SUBJECT:
         return feature_report.canary(BudgetContract.load()).document()
+    if member.subject == lifecycle_report.SUBJECT:
+        return dict(lifecycle_document(BudgetContract.load()))
     contract = BudgetContract.load()
     return CostReportEnvelope(
         member.subject, _canary_provenance(contract), "non-authoritative"
@@ -1589,7 +1592,7 @@ def test_requiring_instance_state_holds_it_to_its_owners_complete_matrix(
     (failure,) = verify(document, required=["instance-state"])
     assert failure.startswith("the instance-state envelope is invalid: instance-state reading")
     with pytest.raises(ValueError, match="requirable members are"):
-        verify(document, required=["lifecycle-overhead"])
+        verify(document, required=["time-interval-runtime"])
 
 
 def test_requiring_feature_boundaries_keeps_historical_portfolios_valid() -> None:
@@ -1619,6 +1622,40 @@ def test_requiring_feature_boundaries_keeps_historical_portfolios_valid() -> Non
     feature["readings"].pop()
     (failure,) = verify(document, required=[feature_report.SUBJECT])
     assert "matrix" in failure and "missing" in failure
+
+
+def test_requiring_lifecycle_overhead_holds_it_to_its_owners_complete_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    monkeypatch.setattr(cost_report, "is_published", _published)
+    document = _verifiable(contract)
+    assert verify(document, required=[lifecycle_report.SUBJECT]) == [
+        "the portfolio has no required lifecycle-overhead envelope"
+    ]
+    lifecycle = deepcopy(lifecycle_document(contract))
+    _clean(lifecycle, contract, authoritative=False)
+    lifecycle["provenance"]["commit"] = _snapshot_of(document)["provenance"]["commit"]
+    document["members"].append(lifecycle)
+    assert verify(document, required=[lifecycle_report.SUBJECT]) == []
+    lifecycle["provenance"]["commit"] = "f" * 40
+    assert verify(document, required=[lifecycle_report.SUBJECT]) == [
+        "the lifecycle-overhead envelope names a different commit from the required members"
+    ]
+    lifecycle["provenance"]["commit"] = _snapshot_of(document)["provenance"]["commit"]
+    lifecycle["readings"].pop()
+    assert verify(document) == []
+    (failure,) = verify(document, required=[lifecycle_report.SUBJECT])
+    assert "lifecycle-overhead reading matrix is not exact: missing" in failure
+
+
+def test_collection_refuses_an_inexact_lifecycle_matrix_through_the_matrix_validator() -> None:
+    contract = BudgetContract.load()
+    document = dict(lifecycle_document(contract))
+    cost_report.validate_matrix(document, lifecycle_report.SUBJECT, contract)
+    cast("list[object]", document["comparisons"]).pop()
+    with pytest.raises(ValueError, match="comparison matrix is not exact: missing"):
+        cost_report.validate_matrix(document, lifecycle_report.SUBJECT, contract)
 
 
 def _instance_add_window(document: dict[str, Any]) -> None:
@@ -1676,7 +1713,7 @@ def test_require_member_is_a_verify_or_compare_option_over_requirable_subjects(
 ) -> None:
     for arguments in (
         ["--require-member", "instance-state"],
-        ["--verify", "portfolio.json", "--require-member", "lifecycle-overhead"],
+        ["--verify", "portfolio.json", "--require-member", "time-interval-runtime"],
         ["--require-compatible"],
         ["--verify", "portfolio.json", "--require-compatible"],
     ):
