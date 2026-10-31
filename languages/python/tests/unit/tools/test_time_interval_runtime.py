@@ -29,10 +29,12 @@ from psycopg.rows import TupleRow
 import time_interval_runtime as tool
 from parallax.core.base import INFINITY
 from parallax.postgres._connection import initialize_connection
+from production_origins import MEASURED_MODULES, NOT_LOADED, ORIGINS_FIELD, loaded_origins
 from tests.unit import _time_interval_runtime_support as support
 
 _SOURCE_KEYED = "flow/source-keyed/typed/columns/preparation-inclusive"
 _READ_PLAN = importlib.import_module("parallax.core.read_delivery._read_plan")
+_ORIGINS = dict.fromkeys(MEASURED_MODULES, NOT_LOADED)
 
 
 # --------------------------------------------------------------------------- #
@@ -332,6 +334,7 @@ def _reading(cell: support.Cell, samples: Sequence[float] | None = None) -> dict
         "samplesUs": list(_samples(100.0) if samples is None else samples),
         "windows": 1,
         "outcome": support.expected_outcome(cell).document(),
+        ORIGINS_FIELD: _ORIGINS,
     }
 
 
@@ -353,6 +356,7 @@ def test_a_capture_records_every_sample_identity_condition_and_failure(tmp_path:
     assert record["medianUs"] == 5.0
     assert (record["warmups"], record["measured"], record["windows"]) == (3, 9, 1)
     assert record["stages"] == support.description(measured).stages
+    assert record[ORIGINS_FIELD] == _ORIGINS
     assert document["cells"][failing.id] == {"status": "failed", "reason": "the child exited 1"}
     assert document["subject"] == dict(_SUBJECT)
     assert document["support"] == tool.support_identity()
@@ -381,6 +385,8 @@ def test_a_recorded_capture_is_never_overwritten(tmp_path: Path) -> None:
         ({"samplesUs": [0.0] * 9}, "9 positive samples"),
         ({"windows": 0}, "timed no window"),
         ({"outcome": support.Outcome(statements=1).document()}, "the outcome is not"),
+        ({ORIGINS_FIELD: None}, ORIGINS_FIELD),
+        ({ORIGINS_FIELD: {MEASURED_MODULES[0]: NOT_LOADED}}, ORIGINS_FIELD),
     ],
 )
 def test_a_reading_that_is_not_a_complete_run_of_its_cell_is_refused(
@@ -397,6 +403,7 @@ def test_the_read_child_prints_one_reading_of_its_cell(capsys: pytest.CaptureFix
     document = json.loads(capsys.readouterr().out)
     assert document["cell"] == _SOURCE_KEYED
     assert len(document["samplesUs"]) == 2
+    assert document[ORIGINS_FIELD] == loaded_origins()
 
 
 def test_a_child_interpreter_answers_a_reading_the_capture_accepts() -> None:
@@ -404,6 +411,7 @@ def test_a_child_interpreter_answers_a_reading_the_capture_accepts() -> None:
     record = tool.cell_record(cell, tool.child_reader(cell))
     assert record["status"] == "measured", record
     assert len(cast("list[float]", record["samplesUs"])) == tool.MEASURED
+    assert set(cast("Mapping[str, str]", record[ORIGINS_FIELD])) == set(MEASURED_MODULES)
 
 
 def test_the_production_subject_is_the_checkout_commit_and_a_digest_of_its_sources() -> None:
