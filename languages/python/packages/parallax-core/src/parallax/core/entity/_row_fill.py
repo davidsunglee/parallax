@@ -12,7 +12,7 @@ filled instances the callback was handed and kept.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from parallax.core.entity._construction_input import ABSENT, UNLOADED
 from parallax.core.entity._entity import attach_lifecycle_state
@@ -31,6 +31,8 @@ if TYPE_CHECKING:
     from parallax.core.metamodel import EntityIdentity, OccurrenceMetadata
 
 __all__ = ["EntityFacts", "OccurrenceFacts", "compact_row", "publish"]
+
+_NO_LAYOUT: Final = object()
 
 
 class _InvalidOccurrence(Exception):
@@ -269,7 +271,7 @@ def publish(
         )
     bound: list[EntityFacts] = []
     shells: list[BaseModel] = []
-    last: object = None
+    last: object = _NO_LAYOUT
     entity: EntityFacts | None = None
     for node in range(count):
         layout = graph.layout(node)
