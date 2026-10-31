@@ -58,7 +58,6 @@ class OccurrenceFacts:
         "attributes",
         "cls",
         "declared",
-        "every_member",
         "many",
         "nested",
         "template",
@@ -79,7 +78,6 @@ class OccurrenceFacts:
         self.template = plan.template
         self.width = len(plan.py_names)
         self.attributes = self.width - len(plan.occurrences)
-        self.every_member = (1 << self.width) - 1
 
     def build(self, value: object, bitmaps: dict[int, int]) -> object:
         """One occurrence's value as frozen Value Object instances.
@@ -119,28 +117,9 @@ class OccurrenceFacts:
         row = cast("tuple[object, ...]", member_values)
         if type(row) is not tuple or len(row) != self.width:
             raise _InvalidOccurrence(self, _member_row_detail(row, self.width))
-        for value in row:
-            if value is ABSENT:
-                attach_row(
-                    instance,
-                    tuple(compact_row(self.template, self.attributes, self.nested, row, bitmaps)),
-                )
-                return
-        if self.nested:
-            attributes = self.attributes
-            attach_row(
-                instance,
-                (
-                    self.every_member,
-                    *row[:attributes],
-                    *[
-                        nested.build(value, bitmaps)
-                        for nested, value in zip(self.nested, row[attributes:], strict=True)
-                    ],
-                ),
-            )
-        else:
-            attach_row(instance, (self.every_member, *row))
+        attach_row(
+            instance, tuple(compact_row(self.template, self.attributes, self.nested, row, bitmaps))
+        )
 
 
 class EntityFacts:
@@ -257,16 +236,23 @@ def compact_row(
     shape and so repeats one pattern, which the memo turns into one shared
     integer per pattern; it lives only as long as that publication.
     """
-    row = list(template)
-    bitmap = 0
-    for position, member in enumerate(member_values):
-        if member is not ABSENT:
-            row[position + 1] = (
-                member
-                if position < attributes
-                else occurrences[position - attributes].build(member, bitmaps)
-            )
-            bitmap |= 1 << position
+    width = len(member_values)
+    row = [0, *member_values, *template[width + 1 :]]
+    bitmap = (1 << width) - 1
+    # A read usually carries every member, so the per-position pass runs only
+    # once a scan by identity finds one absent.
+    for member in member_values:
+        if member is ABSENT:
+            for position, value in enumerate(member_values):
+                if value is ABSENT:
+                    row[position + 1] = template[position + 1]
+                    bitmap ^= 1 << position
+            break
+    for index, occurrence in enumerate(occurrences):
+        position = attributes + index
+        value = member_values[position]
+        if value is not ABSENT:
+            row[position + 1] = occurrence.build(value, bitmaps)
     row[0] = bitmaps.setdefault(bitmap, bitmap)
     return row
 
