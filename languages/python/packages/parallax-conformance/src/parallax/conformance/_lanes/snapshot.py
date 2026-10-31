@@ -354,7 +354,7 @@ def _root_members(
     Member NAME keyed, because that is the vocabulary a case's `set` is authored
     in — the Wire result's own keying — and detached into a plain mapping so
     what a later step names is a value of this lane's own rather than the frozen
-    result production published. The relationship arms ride along by reference:
+    result production published. The relationship values ride along by reference:
     a copy derived from this state answers the SAME materialized children, which
     is the composition rule itself (`m-snapshot-read` *Closed world*).
     """
@@ -491,11 +491,11 @@ def _navigate_step_view(
                     "asserting relationship contents names a read whose `includes` "
                     "materialized them"
                 )
-            arm = cast("Mapping[str, object]", node)[name]
-            if isinstance(arm, list | tuple):
-                reached.extend(cast("Sequence[object]", arm))
-            elif arm is not None or not fans_out:
-                reached.append(arm)
+            value = cast("Mapping[str, object]", node)[name]
+            if isinstance(value, list | tuple):
+                reached.extend(cast("Sequence[object]", value))
+            elif value is not None or not fans_out:
+                reached.append(value)
         nodes = reached
     return identity.name, nodes
 

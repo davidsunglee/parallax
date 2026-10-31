@@ -129,7 +129,7 @@ _MULTIPLICITIES: Final[dict[Multiplicity, str]] = {
     Multiplicity.MANY: "many",
 }
 
-# The Neutral Type algebra's arms, so a type reaches `m-descriptor`'s own
+# The Neutral Type algebra's cases, so a type reaches `m-descriptor`'s own
 # spelling rather than a second one written here.
 _NEUTRAL_TYPES: Final[tuple[type, ...]] = (
     Boolean,
@@ -605,7 +605,7 @@ def _enumerated(value: object) -> Any:
 
     ``int`` is matched here rather than beside the scalars above because every
     closed vocabulary this module spells is an ``enum.Enum`` over ints, and an
-    ``int`` pattern would swallow one before its own arm ran.
+    ``int`` pattern would swallow one before its own case ran.
     """
     for vocabulary, spellings in _VOCABULARIES:
         if isinstance(value, vocabulary):

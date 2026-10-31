@@ -522,7 +522,7 @@ def test_create_index_spells_uniqueness_and_component_order(dialect: Dialect) ->
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_postgres_indexes_an_unbounded_string(dialect: Dialect) -> None:
-    # The refusal arm exists for a dialect that needs a key length; Postgres has
+    # The refusal case exists for a dialect that needs a key length; Postgres has
     # no such requirement, so it answers with a statement for every component.
     statement = dialect.create_index(
         "widget",

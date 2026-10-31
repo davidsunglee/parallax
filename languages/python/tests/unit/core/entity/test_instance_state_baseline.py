@@ -5,7 +5,7 @@ under each backing. A byte total is machine- and interpreter-relative, so these
 tests grade how the report computes and compares readings: the mix the
 measurement contract names, the warmed scenario held outside every aggregate, the
 matrix being the supported minors, an aggregate dividing sums rather than
-averaging percentages, the ordinary arm staying out of both, construction being
+averaging percentages, the ordinary variant staying out of both, construction being
 split into a per-node cost and a per-call one, the construction ratio being
 corrected by the per-node work the legacy fixture never reproduced and the
 regression rule being stated over that corrected figure, the escalation block naming a
@@ -20,12 +20,12 @@ and the module imported here neither binds an instrument nor reaches one. A test
 taking a reading beside the rest of the suite would be classified `dbfree` while
 needing an interpreter no other test shares.
 
-The arm the aggregates compare against is a fixture: ``legacy_publication``
+The variant the aggregates compare against is a fixture: ``legacy_publication``
 builds one node the way Entity Graph Construction built one before the flip, with
 a zero-argument ``model_construct`` filled a member at a time. While that path
 existed the report compared every scenario's fixture against it before measuring
 anything, and refused to measure a fixture that had drifted; the flip deleted the
-path and that check retired with it. The third arm, ordinary validating
+path and that check retired with it. The third variant, ordinary validating
 construction, is a different comparison and enters no aggregate — which is itself
 one of the things graded here.
 """
@@ -45,9 +45,9 @@ from parallax.core.entity import _row_fill as row_fill
 from parallax.core.entity import lifecycle_state_of
 from tests.unit import _instance_state_support as support
 from tests.unit._instance_state_support import (
-    ARMS,
     COMPACT,
     LEGACY,
+    MEASUREMENT_VARIANTS,
     ORDINARY,
     REPORTED,
     SCENARIOS,
@@ -137,7 +137,7 @@ def test_an_aggregate_divides_sums_rather_than_averaging_percentages() -> None:
     assert primary.reduction != pytest.approx(mean)
 
 
-def test_both_aggregates_divide_the_legacy_arm_and_neither_sees_the_ordinary_one() -> None:
+def test_both_aggregates_divide_the_legacy_variant_and_neither_sees_the_ordinary_one() -> None:
     readings = [
         _reading(
             "small",
@@ -194,7 +194,7 @@ def test_a_scenario_carries_both_comparisons_and_they_can_disagree() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Construction, at the scope the arms have in common.                          #
+# Construction, at the scope the variants have in common.                          #
 # --------------------------------------------------------------------------- #
 
 
@@ -204,24 +204,24 @@ def test_construction_is_the_cost_of_one_more_node_with_the_call_left_beside_it(
     assert per_call == pytest.approx(600.0)
 
 
-def test_an_arm_that_builds_a_node_and_nothing_else_reports_no_per_call_cost() -> None:
+def test_an_variant_that_builds_a_node_and_nothing_else_reports_no_per_call_cost() -> None:
     per_node, per_call = report.marginal(one_node_ns=400.0, many_nodes_ns=400.0 * 11)
     assert per_node == pytest.approx(400.0)
     assert per_call == pytest.approx(0.0)
 
 
-def test_two_arms_whose_calls_cost_differently_still_compare_at_the_node() -> None:
+def test_two_variants_whose_calls_cost_differently_still_compare_at_the_node() -> None:
     # The defect this scope exists to remove: pricing a whole call would make the
-    # compact arm 3.50x here and escalate it, where one more node of it costs
-    # 1.10x one of the legacy arm's and is inside the limit.
+    # compact variant 3.50x here and escalate it, where one more node of it costs
+    # 1.10x one of the legacy variant's and is inside the limit.
     legacy_call, compact_call = 400.0, 1_400.0
     legacy = report.marginal(legacy_call, legacy_call + 10 * 400.0)
     compact = report.marginal(compact_call, compact_call + 10 * 440.0)
     assert compact[0] / legacy[0] == pytest.approx(1.10)
     assert compact_call / legacy_call == pytest.approx(3.50)
     reading = _reading("shallow")._replace(
-        legacy=_arm(1_000, 900, (legacy[0], 20.0, 500.0)),
-        compact=_arm(100, 90, (compact[0], 20.0, 500.0)),
+        legacy=_variant(1_000, 900, (legacy[0], 20.0, 500.0)),
+        compact=_variant(100, 90, (compact[0], 20.0, 500.0)),
     )
     assert report.mix_ratio([reading], report.OPERATIONS[0]) == pytest.approx(1.10)
     assert "construction" not in "\n".join(report.escalation_block({"3.14": {"shallow": reading}}))
@@ -241,7 +241,7 @@ def test_the_construction_ratio_is_corrected_by_what_the_fixture_never_reproduce
     assert report.scenario_ratio(reading, construction) == pytest.approx(1.30)
 
 
-def test_an_operation_whose_arms_do_the_same_work_is_corrected_by_nothing() -> None:
+def test_an_operation_whose_variants_do_the_same_work_is_corrected_by_nothing() -> None:
     reading = _reading(
         "shallow",
         legacy_ns=(1_000.0, 20.0, 500.0),
@@ -277,7 +277,7 @@ def test_a_correction_that_measured_below_zero_corrects_by_nothing() -> None:
     is small, so a scenario's difference can land below zero. Carrying that onto
     the legacy side would price the pre-flip path under the fixture standing for
     it and lower the ratio on noise alone, so the floor is zero and the corrected
-    ratio stays at or under the arm-against-arm one the rule reads."""
+    ratio stays at or under the variant-against-variant one the rule reads."""
     reading = _reading(
         "shallow",
         legacy_ns=(1_000.0, 20.0, 500.0),
@@ -292,13 +292,13 @@ def test_a_correction_that_measured_below_zero_corrects_by_nothing() -> None:
     )
 
 
-def test_only_the_arm_whose_call_does_more_than_build_nodes_reports_scaffolding() -> None:
+def test_only_the_variant_whose_call_does_more_than_build_nodes_reports_scaffolding() -> None:
     assert (ORDINARY.common_work_ns, LEGACY.common_work_ns) == (None, None)
     assert COMPACT.common_work_ns is compact_common_work_ns
     assert COMPACT.graph is not compact_common_work_ns
 
 
-def test_the_compact_arm_times_the_common_work_and_leaves_the_call_a_remainder() -> None:
+def test_the_compact_variant_times_the_common_work_and_leaves_the_call_a_remainder() -> None:
     scenario = SCENARIOS[0]
     compact_common_work_ns(scenario, report.MARGINAL_NODES)
     start = perf_counter()
@@ -307,11 +307,11 @@ def test_the_compact_arm_times_the_common_work_and_leaves_the_call_a_remainder()
     assert 0.0 < inside < whole
 
 
-def test_the_compact_arm_prices_every_attach_the_legacy_fixture_also_pays(
+def test_the_compact_variant_prices_every_attach_the_legacy_fixture_also_pays(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The residue is added to the LEGACY side, so common work left inside it
-    lands there twice and flatters the compact arm. ``publish`` performs the
+    lands there twice and flatters the compact variant. ``publish`` performs the
     lifecycle attach in its own loop, which calls nothing back, so the span
     timing that call is what keeps the attach out of the residue: every attach
     the fixture pays is paid inside it."""
@@ -337,12 +337,12 @@ def _counted_attaches(monkeypatch: pytest.MonkeyPatch, module: object) -> list[o
     return attached
 
 
-def test_each_operation_is_reported_against_the_ordinary_arm_as_well() -> None:
+def test_each_operation_is_reported_against_the_ordinary_variant_as_well() -> None:
     reading = _reading(
         "shallow",
         legacy_ns=(1_000.0, 20.0, 500.0),
         compact_ns=(1_500.0, 60.0, 1_000.0),
-    )._replace(ordinary=_arm(2_000, 1_800, (500.0, 30.0, 250.0)))
+    )._replace(ordinary=_variant(2_000, 1_800, (500.0, 30.0, 250.0)))
     assert report.ordinary_ratio([reading], report.OPERATIONS[0]) == pytest.approx(3.0)
     assert report.ordinary_ratio([reading], report.OPERATIONS[1]) == pytest.approx(2.0)
     assert report.ordinary_ratio([reading], report.OPERATIONS[2]) == pytest.approx(4.0)
@@ -356,24 +356,24 @@ def test_no_ordinary_ratio_can_reach_the_escalation_block() -> None:
         bare=(900, 90),
         legacy_ns=(1_000.0, 20.0, 500.0),
         compact_ns=(1_100.0, 22.0, 505.0),
-    )._replace(ordinary=_arm(2_000, 1_800, (1.0, 1.0, 1.0)))
+    )._replace(ordinary=_variant(2_000, 1_800, (1.0, 1.0, 1.0)))
     block = report.escalation_block({"3.14": {"shallow": reading}})
     assert block[0].startswith("no escalation")
 
 
-def test_every_arm_pairs_its_node_builder_with_its_own_graph_builder() -> None:
-    assert ARMS == (ORDINARY, LEGACY, COMPACT)
-    assert [arm.name for arm in ARMS] == ["ordinary", "legacy", "compact"]
-    for arm in ARMS:
+def test_every_variant_pairs_its_node_builder_with_its_own_graph_builder() -> None:
+    assert MEASUREMENT_VARIANTS == (ORDINARY, LEGACY, COMPACT)
+    assert [variant.name for variant in MEASUREMENT_VARIANTS] == ["ordinary", "legacy", "compact"]
+    for variant in MEASUREMENT_VARIANTS:
         scenario = SCENARIOS[0]
-        graph = arm.graph(scenario, report.MARGINAL_NODES)
+        graph = variant.graph(scenario, report.MARGINAL_NODES)
         assert len(graph) == report.MARGINAL_NODES
         assert all(type(node) is type(graph[0]) for node in graph)
-        state = scenario.state() if arm.lifecycle else None
-        assert type(graph[0]) is type(arm.node(scenario, state))
+        state = scenario.state() if variant.lifecycle else None
+        assert type(graph[0]) is type(variant.node(scenario, state))
 
 
-def test_an_ordinary_instance_has_no_lifecycle_state_and_the_arm_refuses_one() -> None:
+def test_an_ordinary_instance_has_no_lifecycle_state_and_the_variant_refuses_one() -> None:
     scenario = SCENARIOS[0]
     assert (ORDINARY.lifecycle, LEGACY.lifecycle, COMPACT.lifecycle) == (False, True, True)
     assert lifecycle_state_of(ORDINARY.node(scenario, None)) is None
@@ -397,9 +397,9 @@ def test_each_scenario_carries_its_own_percentage_as_a_diagnostic() -> None:
 
 
 def test_what_a_construction_freed_again_is_its_high_water_mark_less_what_it_kept() -> None:
-    arm = _arm(retained=400, bare=300, timings=(1.0, 1.0, 1.0))._replace(peak_bytes=1_800)
-    assert arm.transient_bytes == 1_400
-    assert arm.lifecycle_bytes == 100
+    variant = _variant(retained=400, bare=300, timings=(1.0, 1.0, 1.0))._replace(peak_bytes=1_800)
+    assert variant.transient_bytes == 1_400
+    assert variant.lifecycle_bytes == 100
 
 
 # --------------------------------------------------------------------------- #
@@ -426,7 +426,7 @@ def test_the_escalation_block_names_a_representative_operation_past_its_limit() 
     block = report.escalation_block({"3.14": {"shallow": reading}})
     raised = "\n".join(block)
     assert block[0] == "REVIEW REQUIRED"
-    assert "attribute read 4.00x arm against arm over the mix" in raised
+    assert "attribute read 4.00x variant against variant over the mix" in raised
     assert "surfaced for human review" in raised
     assert "construction" not in raised
     assert "serialization" not in raised
@@ -449,7 +449,7 @@ def test_the_regression_rule_is_stated_over_the_figure_that_needs_no_correction(
     assert report.mix_ratio([surfaced], construction) == pytest.approx(1.50)
     assert report.like_for_like_ratio([surfaced], construction) == pytest.approx(1.50 / 1.40)
     raised = "\n".join(report.escalation_block({"3.14": {"shallow": surfaced}}))
-    assert "construction 1.50x arm against arm over the mix" in raised
+    assert "construction 1.50x variant against variant over the mix" in raised
 
     under = surfaced._replace(
         compact=surfaced.compact._replace(construct_ns=1_100.0, scaffolding_ns=0.0)
@@ -468,7 +468,7 @@ def test_a_reading_that_meets_both_rules_raises_no_escalation() -> None:
     block = report.escalation_block({"3.14": {"shallow": reading}})
     assert block == [
         "no escalation: every runtime's primary aggregate reaches 33% and no "
-        "representative operation moved past 1.20x arm against arm"
+        "representative operation moved past 1.20x variant against variant"
     ]
 
 
@@ -548,8 +548,8 @@ def test_every_scenario_both_aggregates_and_every_timing_appear_for_every_runtim
         for line in printed.splitlines()
         if line.split() and line.split()[-1].replace(",", "").isdigit()
     ]
-    for arm in ARMS:
-        assert sum(arm.name in row for row in measured) == 2 * len(REPORTED)
+    for variant in MEASUREMENT_VARIANTS:
+        assert sum(variant.name in row for row in measured) == 2 * len(REPORTED)
     assert printed.count("Typed-envelope Wire projection") == 2
     assert all(
         column in printed
@@ -562,15 +562,15 @@ def test_every_scenario_both_aggregates_and_every_timing_appear_for_every_runtim
     )
 
 
-def test_each_printed_reduction_names_the_arm_it_divides() -> None:
+def test_each_printed_reduction_names_the_variant_it_divides() -> None:
     lines = report.render(_matrix())
     reductions = [line for line in lines if "reduction" in line]
     assert [line.split()[0] for line in reductions].count("vs") == 2 * len(REPORTED)
     assert sum(line.startswith("vs legacy") for line in reductions) == len(REPORTED)
     assert sum(line.startswith("vs ordinary") for line in reductions) == len(REPORTED)
     printed = "\n".join(lines)
-    assert "the representation change — legacy arm against compact" in printed
-    assert "stated separately, in no aggregate — ordinary arm against compact" in printed
+    assert "the representation change — legacy variant against compact" in printed
+    assert "stated separately, in no aggregate — ordinary variant against compact" in printed
 
 
 def test_construction_is_printed_both_ways_and_the_scope_block_says_which_rules() -> None:
@@ -579,7 +579,7 @@ def test_construction_is_printed_both_ways_and_the_scope_block_says_which_rules(
         "shallow", compact_ns=(1_300.0, 20.0, 500.0), scaffolding_ns=300.0
     )
     printed = "\n".join(report.render(matrix))
-    header = next(line for line in printed.splitlines() if "arm against arm" in line)
+    header = next(line for line in printed.splitlines() if "variant against variant" in line)
     assert "like for like" in header
     construction = next(line for line in printed.splitlines() if "construction" in line)
     raw, corrected = (float(field.rstrip("x")) for field in construction.split()[1:3])
@@ -589,7 +589,9 @@ def test_construction_is_printed_both_ways_and_the_scope_block_says_which_rules(
         report.like_for_like_ratio(readings, report.OPERATIONS[0]), abs=5e-3
     )
     assert raw > corrected
-    assert "THE 20% RULE IS STATED OVER `ARM AGAINST ARM`, the figure that needs no" in printed
+    assert (
+        "THE 20% RULE IS STATED OVER `VARIANT AGAINST VARIANT`, the figure that needs no" in printed
+    )
 
 
 def test_the_escalation_block_reaches_what_the_report_prints() -> None:
@@ -631,14 +633,14 @@ def test_a_child_that_answers_nothing_usable_is_a_reason_rather_than_a_crash() -
 # --------------------------------------------------------------------------- #
 
 
-def _arm(
+def _variant(
     retained: int,
     bare: int,
     timings: tuple[float, float, float],
     scaffolding: float = 0.0,
-) -> report.ArmReading:
+) -> report.MeasurementVariantReading:
     construct_ns, read_ns, dump_ns = timings
-    return report.ArmReading(
+    return report.MeasurementVariantReading(
         cells=6,
         retained_bytes=retained,
         bare_bytes=bare,
@@ -665,9 +667,9 @@ def _reading(
     """One scenario's reading, with every number chosen rather than measured.
 
     ``retained`` and ``bare`` are the pair the aggregates divide — legacy, then
-    compact. The ordinary arm is a third number rather than a member of either,
+    compact. The ordinary variant is a third number rather than a member of either,
     which is the shape of the thing being graded. ``scaffolding_ns`` is the
-    compact arm's alone, because it is the only arm whose call does per-node work
+    compact variant's alone, because it is the only variant whose call does per-node work
     beyond what the legacy fixture also does.
     """
     return report.Reading(
@@ -675,9 +677,9 @@ def _reading(
         summary=f"the {scenario} scenario",
         fields=4,
         warmup=200,
-        ordinary=_arm(ordinary_retained, ordinary_bare, legacy_ns),
-        legacy=_arm(retained[0], bare[0], legacy_ns),
-        compact=_arm(retained[1], bare[1], compact_ns, scaffolding=scaffolding_ns),
+        ordinary=_variant(ordinary_retained, ordinary_bare, legacy_ns),
+        legacy=_variant(retained[0], bare[0], legacy_ns),
+        compact=_variant(retained[1], bare[1], compact_ns, scaffolding=scaffolding_ns),
         projection=report.ProjectionReading(
             retained_bytes=400,
             peak_bytes=700,

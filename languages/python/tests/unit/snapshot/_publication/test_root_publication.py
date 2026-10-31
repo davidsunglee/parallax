@@ -2,10 +2,10 @@
 resets, and the failure boundary, in both representations and at both delivery
 boundaries.
 
-Page reach can include an overwritten arm or a claimant's losing slot. Such an
-arm is judged and compared, so a projection conflict in it still refuses, but
-it publishes nowhere, so a finding in it neither classifies nor refuses a root
-whose carried views never reach it.
+Page reach can include an overwritten relationship value or a claimant's losing
+slot. Such a relationship value is judged and compared, so a projection conflict
+in it still refuses, but it publishes nowhere, so a finding in it neither
+classifies nor refuses a root whose carried views never reach it.
 """
 
 from __future__ import annotations
@@ -118,25 +118,27 @@ def _evidence(form: _Form, value: object) -> object:
 # --------------------------------------------------------------------------- #
 # Realized reach: an arm the carried views discard publishes nowhere.          #
 # --------------------------------------------------------------------------- #
-def _overwritten_arm(*, invalid: Literal["discarded", "current"]) -> tuple[PageFixture, int]:
-    """An order whose items view was written twice, the invalid item arm first
+def _overwritten_relationship_value(
+    *, invalid: Literal["discarded", "current"]
+) -> tuple[PageFixture, int]:
+    """An order whose items view was written twice, the invalid item relationship value first
     when it is ``discarded`` and last when it is ``current``."""
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     order = _order(fixture)
     valid = _item(fixture, 11)
     broken = _item(fixture, 12, code=_UNDECODABLE)
-    arms = (broken, valid) if invalid == "discarded" else (valid, broken)
-    for arm in arms:
-        fixture.attach(order, _ITEMS, (arm,))
+    values = (broken, valid) if invalid == "discarded" else (valid, broken)
+    for value in values:
+        fixture.attach(order, _ITEMS, (value,))
     return fixture, order
 
 
 @_DELIVERY
 @_FORM
-def test_a_discarded_invalid_arm_does_not_classify_the_valid_current_arm(
+def test_a_discarded_invalid_value_does_not_classify_the_valid_current_value(
     form: _Form, atomic: bool
 ) -> None:
-    fixture, order = _overwritten_arm(invalid="discarded")
+    fixture, order = _overwritten_relationship_value(invalid="discarded")
 
     (published,) = _published(fixture, form, order, atomic=atomic)
 
@@ -148,8 +150,10 @@ def test_a_discarded_invalid_arm_does_not_classify_the_valid_current_arm(
 
 @_DELIVERY
 @_FORM
-def test_a_current_invalid_arm_still_classifies_its_root(form: _Form, atomic: bool) -> None:
-    fixture, order = _overwritten_arm(invalid="current")
+def test_a_current_invalid_relationship_value_still_classifies_its_root(
+    form: _Form, atomic: bool
+) -> None:
+    fixture, order = _overwritten_relationship_value(invalid="current")
 
     (published,) = _published(fixture, form, order, atomic=atomic)
 
@@ -163,7 +167,9 @@ def test_a_current_invalid_arm_still_classifies_its_root(form: _Form, atomic: bo
 
 @_DELIVERY
 @_FORM
-def test_a_projection_conflict_in_a_discarded_arm_still_refuses(form: _Form, atomic: bool) -> None:
+def test_a_projection_conflict_in_a_discarded_relationship_value_still_refuses(
+    form: _Form, atomic: bool
+) -> None:
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     order = _order(fixture)
     discarded = _item(fixture, 11, code="0d")
@@ -178,7 +184,7 @@ def test_a_projection_conflict_in_a_discarded_arm_still_refuses(form: _Form, ato
     assert type(conflict.value) is SnapshotConsistencyError
 
 
-def _continuing_past_a_discarded_arm() -> tuple[PageFixture, int, int]:
+def _continuing_past_a_discarded_relationship_value() -> tuple[PageFixture, int, int]:
     """An order reaching item 11 through ``items`` and item 12 through
     ``itemsByCode``, each item's order cycling back to it. Item 11's order view
     was first written to an invalid order the later write discards, so Page
@@ -198,8 +204,10 @@ def _continuing_past_a_discarded_arm() -> tuple[PageFixture, int, int]:
 
 @_DELIVERY
 @_FORM
-def test_continuation_views_survive_compacting_a_discarded_arm(form: _Form, atomic: bool) -> None:
-    fixture, order, _discarded = _continuing_past_a_discarded_arm()
+def test_continuation_views_survive_compacting_a_discarded_relationship_value(
+    form: _Form, atomic: bool
+) -> None:
+    fixture, order, _discarded = _continuing_past_a_discarded_relationship_value()
 
     (published,) = _published(fixture, form, order, atomic=atomic)
 
@@ -216,7 +224,7 @@ def test_continuation_views_survive_compacting_a_discarded_arm(form: _Form, atom
 
 
 def test_compaction_renumbers_every_carried_reference_and_keeps_full_reach() -> None:
-    fixture, order, discarded = _continuing_past_a_discarded_arm()
+    fixture, order, discarded = _continuing_past_a_discarded_relationship_value()
 
     (root,) = fixture.observed_roots(order)
 
@@ -233,7 +241,9 @@ def test_compaction_renumbers_every_carried_reference_and_keeps_full_reach() -> 
 
 @_DELIVERY
 @_FORM
-def test_a_back_reference_survives_compacting_a_discarded_arm(form: _Form, atomic: bool) -> None:
+def test_a_back_reference_survives_compacting_a_discarded_relationship_value(
+    form: _Form, atomic: bool
+) -> None:
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS, references={_ITEM_ORDER: ("EncodedOrder",)})
     order = _order(fixture)
     discarded = _item(fixture, 12, code=_UNDECODABLE)
@@ -353,8 +363,10 @@ def test_only_a_conforming_root_acquires_origins_for_a_state_it_shares(
 
 @_DELIVERY
 @_FORM
-def test_a_discarded_issue_bearing_arm_acquires_no_origin(form: _Form, atomic: bool) -> None:
-    fixture, order, discarded = _continuing_past_a_discarded_arm()
+def test_a_discarded_issue_bearing_relationship_value_acquires_no_origin(
+    form: _Form, atomic: bool
+) -> None:
+    fixture, order, discarded = _continuing_past_a_discarded_relationship_value()
     origins = _origins_for(fixture, order)
 
     (published,) = _published(fixture, form, order, atomic=atomic, origins=origins)
@@ -505,7 +517,7 @@ def test_equal_read_evidence_is_never_shared_between_nodes(form: _Form, atomic: 
 # Alternating roots: every per-root fact is reset, and no value is shared.     #
 # --------------------------------------------------------------------------- #
 def _alternating() -> tuple[PageFixture, tuple[int, ...]]:
-    """Roots differing in size, concrete, findings, and arms: an order whose
+    """Roots differing in size, concrete, findings, and relationship values: an order whose
     items and by-code items reach one diamond of items with a narrowed view
     and a cycle; an order whose own badge never decodes; an item root with a
     null order; an order with empty items and unloaded by-code items; and an

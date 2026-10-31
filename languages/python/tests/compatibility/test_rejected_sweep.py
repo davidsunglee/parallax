@@ -96,7 +96,7 @@ def test_reachable_rejected_population_is_non_empty() -> None:
 
 def test_reachable_rejected_population_spans_every_when_kind() -> None:
     # `objectQuery` / `model` / `write` inputs are all exercised above. All three
-    # kinds should be present in the reachable set so no dispatch arm silently
+    # kinds should be present in the reachable set so no dispatch case silently
     # goes untested.
     kinds = {_when_kind(case) for case in _REACHABLE_REJECTED}
     assert kinds == {"objectQuery", "model", "write"}, kinds
@@ -114,7 +114,7 @@ def test_reachable_rejected_population_spans_every_write_form() -> None:
     # `when.write` is itself four-formed, dispatched in order on the members the
     # input carries: `target` is a predicate-selected instruction, `rows` a whole
     # keyed instruction, `row` a whole target instruction, anything else the bare
-    # neutral write row. Each arm reaches preparation differently, so each needs a
+    # neutral write row. Each case reaches preparation differently, so each needs a
     # reachable witness of its own.
     forms: set[str] = set()
     for case in _REACHABLE_REJECTED:

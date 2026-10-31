@@ -168,7 +168,7 @@ def _trace_declarations(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> li
 
 
 def _prepared_writes() -> list[ComposedWrite]:
-    """Every non-temporal arm version settlement forks on: a versioned insert,
+    """Every non-temporal case version settlement forks on: a versioned insert,
     observed updates and deletes of a standalone Entity and of an inherited
     position, and a collapsing unversioned run."""
     fridge_update = KeyedWriteInstruction("amend", "Fridge", ({"id": 1, "name": "Chill"},))

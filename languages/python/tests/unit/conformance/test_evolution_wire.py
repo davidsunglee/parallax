@@ -567,7 +567,7 @@ def test_an_unspellable_declaration_or_scope_is_refused_the_same_way() -> None:
 
 def test_a_plain_integer_fact_survives_the_closed_vocabulary_lookup() -> None:
     # Every closed vocabulary the encoder spells is an enum over ints, so the
-    # integer arm has to run AFTER them or a maximum length would be read as one.
+    # integer case has to run AFTER them or a maximum length would be read as one.
     assert _spelled(AttributeAltered(_ID, (MaximumLengthChanged(64, 128),)))[0]["deltas"] == [
         {"kind": "MaximumLengthChanged", "earlier": 64, "later": 128}
     ]
@@ -692,7 +692,7 @@ _JOIN_SPELLING = {"source": f"{_ORDER_SPELLING}.id", "target": f"{_ORDER_SPELLIN
 )
 def test_the_encoder_spells_every_endpoint_fact(fact: Any, expected: Any) -> None:
     # A delta is the carrier: `earlier` and `later` are the two positions every
-    # accepted value reaches the corpus through, and one arm of the spelling has
+    # accepted value reaches the corpus through, and one case of the spelling has
     # to answer for each shape the closed vocabulary can hold.
     spelled = _spelled(AttributeAltered(_ID, (NullabilityChanged(fact, fact),)))
     assert spelled[0]["deltas"] == [

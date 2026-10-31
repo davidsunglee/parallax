@@ -392,7 +392,7 @@ def test_a_participating_read_flushes_the_first_intent_and_frees_the_state() -> 
 
 
 def test_an_unversioned_update_then_delete_of_one_object_is_one_delete() -> None:
-    # The object-claimed arm of the same algebra `-022`'s versioned pair proves:
+    # The object-claimed case of the same algebra `-022`'s versioned pair proves:
     # the destruction supersedes the assignment buffered before it, so the UPDATE
     # never reaches the wire.
     port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))

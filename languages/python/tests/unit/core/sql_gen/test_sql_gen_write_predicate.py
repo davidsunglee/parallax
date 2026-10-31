@@ -5,7 +5,7 @@
 `update`/`delete` templates, unless a demand reads through a shared source:
 then it renders the aliased selection of the target's physical keys.
 
-Its production caller (`sql_gen._write`'s Predicate Target arm) is
+Its production caller (`sql_gen._write`'s Predicate Target case) is
 exercised indirectly
 by `test_where_verbs.py`, `test_batch_write.py`, and
 `test_transaction_predicate_writes.py`, but nothing pins this function BY NAME.
@@ -433,7 +433,7 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     #
     # This is a STRUCTURAL pin, deliberately independent of the write lane's own
     # `subtype-write-set-based-unsupported` rejection
-    # (write finalization's predicate arm, pinned in `test_write_lowering.py`):
+    # (write finalization's predicate case, pinned in `test_write_lowering.py`):
     # that rejection is policy and lives at the write boundary; `sql_gen` is a
     # pure renderer that must not depend on some caller having applied it. The
     # previous unreachability argument for this site — "every predicate-write

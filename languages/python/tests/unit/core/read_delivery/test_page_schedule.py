@@ -244,7 +244,7 @@ def test_an_edge_free_root_reaches_itself_into_a_cleared_buffer_without_a_walk(
     assert reached == [1]
 
 
-def test_reach_follows_slots_in_order_then_overwritten_arms_each_projection_once() -> None:
+def test_reach_follows_slots_in_order_then_overwritten_values_each_fetched_row_once() -> None:
     builder = _graph_builder()
     ledger = _node(builder, "Ledger", {"id": 1})
     first, second, replaced = (_entry(builder, entry) for entry in (11, 12, 13))

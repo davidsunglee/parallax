@@ -819,7 +819,7 @@ def test_a_member_naming_nothing_in_the_shape_is_a_caller_error_rather_than_an_a
 
 
 def test_stored_data_that_contradicts_its_shape_is_classified_and_never_answered() -> None:
-    # Every arm of invalid stored data: a value that does not decode into its
+    # Every case of invalid stored data: a value that does not decode into its
     # declared type, a nested structure that is not the declared kind, and a
     # required member that is absent or JSON null. None of them answers with a
     # value, because inventing one turns corrupt storage into a plausible row.

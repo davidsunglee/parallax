@@ -874,12 +874,12 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "materialization-stress-columns": (
             "measurement-only Columns twin: the runtime realization is exercised by the "
             "materialization cost suite, while the descriptor twin gate proves its logical "
-            "equivalence to the Document arm"
+            "equivalence to the Document twin"
         ),
         "materialization-stress-document": (
             "measurement-only Document twin: the runtime realization is exercised by the "
             "materialization cost suite, while the descriptor twin gate proves its logical "
-            "equivalence to the Columns arm"
+            "equivalence to the Columns twin"
         ),
         "orders-versioned": (
             "no mirror authored; it composes the mirrored `orders`' relationship declarations "
@@ -927,38 +927,38 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "serialized streaming boundary rather than a new class-frontend construct"
         ),
         "classification-transparency-layout-twin-columns": (
-            "no mirror authored; this production descriptor is the Columns arm of the "
+            "no mirror authored; this production descriptor is the Columns twin of the "
             "cross-layout stored-data classification proof, and the twin-layout gate compares "
-            "its logical model directly with the Document arm"
+            "its logical model directly with the Document twin"
         ),
         "classification-transparency-layout-twin-document": (
-            "no mirror authored; this production descriptor is the Document arm of the "
+            "no mirror authored; this production descriptor is the Document twin of the "
             "cross-layout stored-data classification proof, and the twin-layout gate compares "
-            "its logical model directly with the Columns arm"
+            "its logical model directly with the Columns twin"
         ),
         "shared-coverage-layout-twin-columns": _SHARED_COVERAGE_TWIN,
         "shared-coverage-layout-twin-document": _SHARED_COVERAGE_TWIN,
         "storage-layout-transparency-layout-twin-columns": (
-            "no mirror authored; this production descriptor is the Columns arm of the "
+            "no mirror authored; this production descriptor is the Columns twin of the "
             "cross-layout corpus proof, and the twin-layout gate compares its logical model "
-            "directly with the Document arm"
+            "directly with the Document twin"
         ),
         "storage-layout-transparency-layout-twin-document": (
-            "no mirror authored; this production descriptor is the Document arm of the "
+            "no mirror authored; this production descriptor is the Document twin of the "
             "cross-layout corpus proof, and the twin-layout gate compares its logical model "
-            "directly with the Columns arm"
+            "directly with the Columns twin"
         ),
         "unchanged-milestone-layout-twin-columns": _UNCHANGED_MILESTONE_TWIN,
         "unchanged-milestone-layout-twin-document": _UNCHANGED_MILESTONE_TWIN,
         "write-transparency-layout-twin-columns": (
-            "no mirror authored; this production descriptor is the Columns arm of the "
+            "no mirror authored; this production descriptor is the Columns twin of the "
             "cross-layout Value Object write proof, and the twin-layout gate compares its "
-            "logical model directly with the Document arm"
+            "logical model directly with the Document twin"
         ),
         "write-transparency-layout-twin-document": (
-            "no mirror authored; this production descriptor is the Document arm of the "
+            "no mirror authored; this production descriptor is the Document twin of the "
             "cross-layout Value Object write proof, and the twin-layout gate compares its "
-            "logical model directly with the Columns arm"
+            "logical model directly with the Columns twin"
         ),
         "temporal-authored-index": (
             "behavioral-only model: it exists to observe authored indices on temporal tables, "

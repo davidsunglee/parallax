@@ -443,7 +443,7 @@ Every byte figure here is read over containers the interpreter sizes by hash. A
 set's fill and a dictionary's probe sequence follow the hashes of the keys put
 into them, and those hashes are salted per process unless this is set, so the
 same structure occupies a different number of bytes in one child than in the
-next and a difference between two arms carries that variance rather than
+next and a difference between two variants carries that variance rather than
 cancelling it. The seam is held fixed by the caller and the interpreter is the
 child's own; this is what holds the last thing that varies, and it is what lets
 a reading be an exact equality rather than a tolerance."""

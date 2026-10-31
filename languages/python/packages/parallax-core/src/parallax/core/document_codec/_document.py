@@ -544,7 +544,7 @@ class SetValueObject:
     ``document`` is that occurrence's complete stored document — the object a ``one``
     holds, the ordered array a ``many`` holds — or ``None``, which stores JSON null.
     Nothing inside the replaced subtree survives: an omitted declared member is absent
-    afterwards and an undeclared key is gone. Cardinality selects no arm here, because
+    afterwards and an undeclared key is gone. Cardinality selects no case here, because
     an author who states an occurrence has stated a complete value either way.
     """
 

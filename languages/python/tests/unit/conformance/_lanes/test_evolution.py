@@ -1,7 +1,7 @@
 """The evolution lane, driven database-free: the refusal of a case whose
 ``when.evolve`` names no loadable endpoints, and the schema cell a Dialect's
 refusal to render an operation is reported as, since no shipped dialect refuses
-one and the arm has no corpus witness.
+one and the case has no corpus witness.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def test_an_evolution_case_whose_earlier_endpoint_is_neither_a_path_nor_null_is_
 def test_a_dialect_that_cannot_render_an_operation_reports_an_unsupported_cell(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Postgres renders every physical operation this algebra emits, so the arm
+    # Postgres renders every physical operation this algebra emits, so the case
     # that turns a refusal into a cell has no corpus witness until a dialect that
     # refuses one ships. The engine must report the refusal AS the cell rather
     # than letting it escape as a run failure.

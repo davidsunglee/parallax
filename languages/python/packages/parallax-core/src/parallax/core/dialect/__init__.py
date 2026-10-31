@@ -469,10 +469,10 @@ class Dialect:
 
         ``element`` is the element's own JSON value reference. The scalar is
         extracted, and cast where the type's comparison casts, only inside the
-        arm of a `case` whose guard confirms the element's JSON kind is
+        `when` branch of a `case` whose guard confirms the element's JSON kind is
         ``kind``; any other element yields SQL null, so it stays a candidate
         whose every comparison is unknown. Placing the cast inside the matching
-        arm, rather than beside a separate kind conjunct, is what keeps a
+        branch, rather than beside a separate kind conjunct, is what keeps a
         wrong-kind element from reaching the cast at all.
         """
         extraction = f"case when jsonb_typeof({element}) = ? then {element} #>> ? end"

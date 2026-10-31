@@ -104,7 +104,7 @@ repetitions of ONE level says nothing about the levels that occur once. Every
 live activity holds its own parent and nothing else of the tree, and the kinds
 that open at more than one depth hold exactly the same wherever they sit. Both
 are read as TOTALS of what one activity holds, never as the difference between
-two arms — a difference cancels whatever the two arms share, which is precisely
+two variants — a difference cancels whatever the two variants share, which is precisely
 the ancestor-derived state a depth claim is about. They are taken over the
 CORRELATION chains, enumerated from the activity Protocols rather than listed by
 hand, so an algebra that grows a level — the Stream and Stream Batch
@@ -1062,8 +1062,8 @@ def _held_by_each_level(shape: _Chain) -> tuple[Closure, ...]:
     """What every activity of one live chain of ``shape`` holds of its own.
 
     Read at the innermost point, where every level is open, and read as a total
-    per level rather than as the difference between two arms: what two arms share
-    cancels, and an activity's ancestors are exactly what two arms of a depth
+    per level rather than as the difference between two variants: what two variants share
+    cancels, and an activity's ancestors are exactly what two variants of a depth
     comparison share.
     """
     with ExitStack() as stack:

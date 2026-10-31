@@ -403,7 +403,7 @@ def test_a_second_state_of_one_object_does_not_close_the_first_states_claim() ->
 
 
 def test_object_locked_writes_of_one_unversioned_row_merge_into_one_step() -> None:
-    # The object-locked arm reaches the same algebra by the same call: what such
+    # The object-locked case reaches the same algebra by the same call: what such
     # writes share is the object, because no state stands behind them.
     first = _claimed(
         KeyedWriteInstruction("amend", "Wallet", ({"id": 1, "balance": Decimal("5.00")},))
@@ -1481,7 +1481,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Spelling resolution is raw authored input's own branch, and the buffer a
-    # flush plans holds none: every arm settlement forks on is driven here —
+    # flush plans holds none: every case settlement forks on is driven here —
     # keyed insert, observed versioned update, and a bitemporal mutation — and
     # so is a readless predicate write's own planning, with the scan wired to
     # fail, so reaching it at all is the failure rather than a slow path.

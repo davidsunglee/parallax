@@ -132,7 +132,7 @@ def _one_of_every_kind() -> tuple[EvolutionOperation, ...]:
 
 
 def test_every_operation_kind_has_a_witness() -> None:
-    # The closed algebra is 24 arms wide, so a witness set that quietly shrinks
+    # The closed algebra is 24 cases wide, so a witness set that quietly shrinks
     # would leave the ordering law below graded over a subset of it.
     assert len({type(operation) for operation in _one_of_every_kind()}) == 24
 

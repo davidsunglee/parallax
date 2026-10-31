@@ -98,10 +98,12 @@ def optional_document(member: Member, contract: BudgetContract) -> Document:
     ).document()
 
 
-def _instance_arm(scenario: Scenario, retained: int, ratio: float) -> instance_report.ArmReading:
+def _instance_variant(
+    scenario: Scenario, retained: int, ratio: float
+) -> instance_report.MeasurementVariantReading:
     cells = len(scenario.values) + len(scenario.unloaded)
     baseline_ns = float(max(cells, 1) * 100)
-    return instance_report.ArmReading(
+    return instance_report.MeasurementVariantReading(
         cells=cells,
         retained_bytes=retained,
         bare_bytes=retained - max(cells, 1),
@@ -122,9 +124,9 @@ def _instance_reading(scenario: Scenario, contract: BudgetContract) -> instance_
         scenario.summary,
         len(scenario.values),
         contract.timing_warmups,
-        _instance_arm(scenario, legacy * 2, 1.0),
-        _instance_arm(scenario, legacy, 1.0),
-        _instance_arm(scenario, legacy // 2, 1.0),
+        _instance_variant(scenario, legacy * 2, 1.0),
+        _instance_variant(scenario, legacy, 1.0),
+        _instance_variant(scenario, legacy // 2, 1.0),
         instance_report.ProjectionReading(
             retained_bytes=scale * 10,
             peak_bytes=scale * 20,
@@ -139,7 +141,7 @@ def _instance_reading(scenario: Scenario, contract: BudgetContract) -> instance_
 
 def complete_instance_state(contract: BudgetContract) -> Document:
     """A complete instance-state envelope over every supported minor, its
-    compact arm retaining half of the legacy one and moving no operation."""
+    compact variant retaining half of the legacy one and moving no operation."""
     matrix: instance_report.Matrix = {
         runtime: {scenario.name: _instance_reading(scenario, contract) for scenario in REPORTED}
         for runtime in supported_minors()

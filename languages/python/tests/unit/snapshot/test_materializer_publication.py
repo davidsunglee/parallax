@@ -200,7 +200,7 @@ _CONFLICT_ANIMALS = DomainModel(
 
 
 # --------------------------------------------------------------------------- #
-# Construction: frozen instances, closed-world arms, cycle closure.            #
+# Construction: frozen instances, closed-world relationship values, cycles. #
 # --------------------------------------------------------------------------- #
 def test_a_resolved_node_becomes_a_frozen_instance_of_its_registered_class() -> None:
     fixture = PageFixture(_ORDERS)
@@ -317,7 +317,7 @@ def test_publication_issue_reads_the_first_node_issue_in_node_order() -> None:
     assert cast("StoredDataIssueInput", issue).stored_value == "no"
 
 
-def test_a_discarded_arms_finding_is_no_publication_issue() -> None:
+def test_a_discarded_relationship_values_finding_is_no_publication_issue() -> None:
     # An arm the root's carried views discard publishes nowhere, so its finding
     # neither classifies nor refuses the realized graph.
     fixture = PageFixture(ENCODED_ORDERS, _ENCODED_ITEMS)
@@ -1298,7 +1298,7 @@ def test_a_loaded_view_naming_another_entitys_direction_of_the_same_name_is_refu
     # view carrying the item's direction names a position the order has under a
     # direction it does not navigate. The whole Relationship Identity is what
     # locates a position, so this is the same refusal an unknown name takes
-    # rather than a silent write of the foreign arm at the declared one's index.
+    # rather than a silent write of the foreign relationship value at the declared one's index.
     foreign = RelationshipIdentity(EntityIdentity(_NAMESPACE, "SnapOrderItem"), "statuses")
     fixture = PageFixture(_ORDERS, "parallax.compatibility.SnapOrderItem.statuses")
     order = fixture.node("SnapOrder", _ORDER_ROW)

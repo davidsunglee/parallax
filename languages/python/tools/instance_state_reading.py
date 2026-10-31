@@ -1,11 +1,11 @@
-"""One scenario's reading under every arm, taken in a child interpreter.
+"""One scenario's reading under every variant, taken in a child interpreter.
 
 The half of `tools/instance_state_overhead.py` that measures. It is a script
 rather than a function that report calls: every instrument here reads the whole
 process, so a reading is only a property of its own subject when it is taken in
 an interpreter that has loaded nothing else, and the report starts one child per
-complete scenario naming this file. Every arm is measured in that one child —
-a byte reading is read against a floor the interpreter decides, so two arms
+complete scenario naming this file. Every variant is measured in that one child —
+a byte reading is read against a floor the interpreter decides, so two variants
 compared across two processes would be compared across two floors.
 
 Keeping it out of the report's own module is structural. The `dbfree` suite that
@@ -63,7 +63,7 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
 from instance_state_overhead import (  # noqa: E402
     MARGINAL_NODES,
     REPETITIONS,
-    ArmReading,
+    MeasurementVariantReading,
     ProjectionReading,
     Reading,
     marginal,
@@ -74,7 +74,7 @@ from tests.unit._instance_state_support import (  # noqa: E402
     LEGACY,
     ORDINARY,
     SCENARIOS,
-    Arm,
+    MeasurementVariant,
     Scenario,
     scenario_named,
     state_cells,
@@ -87,23 +87,23 @@ from tests.unit.memory_instruments import (  # noqa: E402
 )
 
 
-def held(scenario: Scenario, arm: Arm, *, lifecycle: bool) -> Seam:
-    """One node of ``arm``, built inside the window and held at the sample.
+def held(scenario: Scenario, variant: MeasurementVariant, *, lifecycle: bool) -> Seam:
+    """One node of ``variant``, built inside the window and held at the sample.
 
     The lifecycle state is built inside the window too, so the reading that
     carries it counts it: an object allocated before the window would be borrowed
     rather than retained, and the difference between the two readings would be
     zero for the wrong reason.
 
-    ``lifecycle`` asks for the reading that carries state; whether the arm has
-    any to carry is the arm's own (:attr:`~_instance_state_support.Arm.lifecycle`),
-    so an ordinary node is read the same way twice rather than given state it
-    cannot hold.
+    ``lifecycle`` asks for the reading that carries state; whether the variant has
+    any to carry is the variant's own
+    (:attr:`~_instance_state_support.MeasurementVariant.lifecycle`), so an ordinary
+    node is read the same way twice rather than given state it cannot hold.
     """
 
     def run(sample: Callable[[], None]) -> None:
-        state = scenario.state() if lifecycle and arm.lifecycle else None
-        node = arm.node(scenario, state)
+        state = scenario.state() if lifecycle and variant.lifecycle else None
+        node = variant.node(scenario, state)
         sample()
         assert node is not None
 
@@ -126,7 +126,7 @@ def peak(seam: Seam) -> int:
     subtracting that from the high-water mark answers neither what the run
     reached nor what it freed again. The floor is therefore taken and collected
     for BEFORE the run, and what the node keeps is subtracted from the answer
-    rather than from the sample (:attr:`ArmReading.transient_bytes`).
+    rather than from the sample (:attr:`MeasurementVariantReading.transient_bytes`).
     """
     with untraced():
         for _ in range(WARMUP):
@@ -152,29 +152,29 @@ def _elapsed_ns(work: Callable[[], None], *, per: int = 1) -> float:
     return elapsed * 1e9 / (REPETITIONS * per)
 
 
-def _construction_ns(scenario: Scenario, arm: Arm) -> tuple[float, float]:
-    """What one more node of ``arm`` costs, and what one call costs besides them.
+def _construction_ns(scenario: Scenario, variant: MeasurementVariant) -> tuple[float, float]:
+    """What one more node of ``variant`` costs, and what one call costs besides them.
 
-    Two builds of the same arm, differing only in how many nodes they are asked
+    Two builds of the same variant, differing only in how many nodes they are asked
     for, so the per-call cost is common to both and cancels in the difference
     (:func:`~instance_state_overhead.marginal`). Timing one call and calling it
-    the construction cost is what this replaces: an arm whose call also pays
+    the construction cost is what this replaces: a variant whose call also pays
     validation and lifecycle-state buffering would be charged for them against an
-    arm that has none, and the difference would read as a per-node regression
+    variant that has none, and the difference would read as a per-node regression
     that no node pays.
     """
 
     def one() -> None:
-        arm.graph(scenario, 1)
+        variant.graph(scenario, 1)
 
     def many() -> None:
-        arm.graph(scenario, MARGINAL_NODES)
+        variant.graph(scenario, MARGINAL_NODES)
 
     return marginal(_elapsed_ns(one), _elapsed_ns(many))
 
 
-def _common_work_ns(scenario: Scenario, arm: Arm, count: int) -> float:
-    """Mean nanoseconds one ``count``-node call of ``arm`` spends on work the
+def _common_work_ns(scenario: Scenario, variant: MeasurementVariant, count: int) -> float:
+    """Mean nanoseconds one ``count``-node call of ``variant`` spends on work the
     legacy fixture also does, over :data:`REPETITIONS` calls.
 
     Summed per call rather than read off one window, because the quantity is a
@@ -182,8 +182,8 @@ def _common_work_ns(scenario: Scenario, arm: Arm, count: int) -> float:
     inside the measured call and none is inside the call :func:`_construction_ns`
     times, so the timing this feeds cannot move the timing it corrects.
     """
-    measured = arm.common_work_ns
-    assert measured is not None, arm.name
+    measured = variant.common_work_ns
+    assert measured is not None, variant.name
     with untraced():
         for _ in range(WARMUP):
             measured(scenario, count)
@@ -193,13 +193,13 @@ def _common_work_ns(scenario: Scenario, arm: Arm, count: int) -> float:
     return total / REPETITIONS
 
 
-def _scaffolding_ns(scenario: Scenario, arm: Arm, construct_ns: float) -> float:
-    """What one more node of ``arm``'s call costs BEYOND the work the legacy
+def _scaffolding_ns(scenario: Scenario, variant: MeasurementVariant, construct_ns: float) -> float:
+    """What one more node of ``variant``'s call costs BEYOND the work the legacy
     fixture also does — the per-node work that fixture never reproduces.
 
-    Zero for an arm whose call is a loop over its own node builder: every
+    Zero for a variant whose call is a loop over its own node builder: every
     nanosecond such a call spends is spent in that builder, so the figure is a
-    fact about the arm rather than a measurement it declined to take.
+    fact about the variant rather than a measurement it declined to take.
 
     Split the same way ``construct_ns`` was, so the call's fixed cost cancels
     from both and what is left is per-node on both sides. A subtraction, so the
@@ -210,17 +210,19 @@ def _scaffolding_ns(scenario: Scenario, arm: Arm, construct_ns: float) -> float:
     noise, so a single reading of this can land either side of the truth, which is
     why the report grades the ratio that does not use it.
     """
-    if arm.common_work_ns is None:
+    if variant.common_work_ns is None:
         return 0.0
     common_per_node, _ = marginal(
-        _common_work_ns(scenario, arm, 1), _common_work_ns(scenario, arm, MARGINAL_NODES)
+        _common_work_ns(scenario, variant, 1), _common_work_ns(scenario, variant, MARGINAL_NODES)
     )
     return construct_ns - common_per_node
 
 
-def measure_arm(scenario: Scenario, arm: Arm, field_names: tuple[str, ...]) -> ArmReading:
-    """``arm``'s reading of ``scenario``, taken in this interpreter."""
-    node = arm.node(scenario, scenario.state() if arm.lifecycle else None)
+def measure_variant(
+    scenario: Scenario, variant: MeasurementVariant, field_names: tuple[str, ...]
+) -> MeasurementVariantReading:
+    """``variant``'s reading of ``scenario``, taken in this interpreter."""
+    node = variant.node(scenario, scenario.state() if variant.lifecycle else None)
 
     def read_fields() -> None:
         for name in field_names:
@@ -231,20 +233,20 @@ def measure_arm(scenario: Scenario, arm: Arm, field_names: tuple[str, ...]) -> A
 
     tracemalloc.start()
     try:
-        retained_bytes = retained(held(scenario, arm, lifecycle=True))
-        bare_bytes = retained(held(scenario, arm, lifecycle=False))
-        peak_bytes = peak(held(scenario, arm, lifecycle=True))
+        retained_bytes = retained(held(scenario, variant, lifecycle=True))
+        bare_bytes = retained(held(scenario, variant, lifecycle=False))
+        peak_bytes = peak(held(scenario, variant, lifecycle=True))
     finally:
         tracemalloc.stop()
-    construct_ns, call_ns = _construction_ns(scenario, arm)
-    return ArmReading(
+    construct_ns, call_ns = _construction_ns(scenario, variant)
+    return MeasurementVariantReading(
         cells=state_cells(node),
         retained_bytes=retained_bytes,
         bare_bytes=bare_bytes,
         peak_bytes=peak_bytes,
         construct_ns=construct_ns,
         call_ns=call_ns,
-        scaffolding_ns=_scaffolding_ns(scenario, arm, construct_ns),
+        scaffolding_ns=_scaffolding_ns(scenario, variant, construct_ns),
         read_ns=_elapsed_ns(read_fields, per=len(field_names)),
         dump_ns=_elapsed_ns(dump),
     )
@@ -365,16 +367,16 @@ def direct_wire_result(
 
 
 def measure(scenario: Scenario) -> Reading:
-    """``scenario``'s reading under every arm, taken in this interpreter."""
+    """``scenario``'s reading under every variant, taken in this interpreter."""
     field_names = tuple(cast("Any", scenario.cls).__pydantic_fields__)
     return Reading(
         scenario=scenario.name,
         summary=scenario.summary,
         fields=len(field_names),
         warmup=WARMUP,
-        ordinary=measure_arm(scenario, ORDINARY, field_names),
-        legacy=measure_arm(scenario, LEGACY, field_names),
-        compact=measure_arm(scenario, COMPACT, field_names),
+        ordinary=measure_variant(scenario, ORDINARY, field_names),
+        legacy=measure_variant(scenario, LEGACY, field_names),
+        compact=measure_variant(scenario, COMPACT, field_names),
         projection=_projection_reading(scenario) if scenario in SCENARIOS else None,
     )
 

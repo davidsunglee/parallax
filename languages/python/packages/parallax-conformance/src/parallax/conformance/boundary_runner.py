@@ -814,7 +814,7 @@ def fault_injecting_adapter[Authorization](
     """
     state = _FaultState()
     seam = _fault(fault).seam if fault is not None else None
-    # Compared arm by arm rather than against a tuple, because that is what
+    # Compared case by case rather than against a tuple, because that is what
     # narrows the seam to the alias the wrapper's constructor declares.
     if seam == "acquisition" or seam == "release":
         return _ResourceFaultingAdapter(adapter, seam=seam, persistent=persistent, state=state)

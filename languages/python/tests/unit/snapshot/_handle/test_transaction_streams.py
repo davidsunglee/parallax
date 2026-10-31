@@ -407,9 +407,9 @@ def test_the_locking_preference_locks_every_level_of_a_streamed_page() -> None:
 
 def test_a_locking_delivery_keeps_its_second_page_and_outer_row_authority() -> None:
     # A participating locking stream with a real continuation reaches both pages:
-    # page two remains one statement, its range and NULL-tail arms are unlocked,
+    # page two remains one statement, its range and NULL-tail branches are unlocked,
     # and one outer join identifies and locks exactly the base rows they selected.
-    # The repeated predicate, seek, arm caps, and outer cap stay in textual order.
+    # The repeated predicate, seek, branch caps, and outer cap stay in textual order.
     port = ScriptedAdapter(
         Transact(
             Read(rows=[_account_row(1), _account_row(2)]),

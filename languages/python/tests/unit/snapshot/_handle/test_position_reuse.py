@@ -305,7 +305,7 @@ def test_a_continuing_stream_resolves_once_per_compiled_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # One root per page: the first page and the first continuing page each
-    # compile, the continuing page as two arms over one physical plan, and the
+    # compile, the continuing page as two branches over one physical plan, and the
     # last page reuses the continuing page's plan.
     read = _READS[shape]
     served = _served(profile_run, spies)

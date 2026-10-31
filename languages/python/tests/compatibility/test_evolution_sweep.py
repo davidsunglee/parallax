@@ -107,7 +107,7 @@ def test_reachable_evolution_population_is_non_empty() -> None:
 def test_the_reachable_population_covers_both_earlier_endpoint_forms() -> None:
     # `when.evolve.earlier` is either a model descriptor path or the explicit
     # fresh-provisioning sentinel, and the two reach `evolve` as different
-    # arguments — a model, and `ABSENT`. Both dispatch arms need a witness.
+    # arguments — a model, and `ABSENT`. Both dispatch cases need a witness.
     endpoints = {
         case_document(case)["when"]["evolve"]["earlier"] is None for case in _REACHABLE_EVOLUTION
     }

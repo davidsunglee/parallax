@@ -1,9 +1,9 @@
 """What a published Entity retains and costs under each backing, over the six
 canonical scenarios and on every supported CPython minor.
 
-Three arms — the legacy publication fixture, the shipping publication path, and
+Three variants — the legacy publication fixture, the shipping publication path, and
 ordinary validating construction — measured side by side in the same fresh child
-interpreter, one child per complete scenario, so no arm pays a process of its own
+interpreter, one child per complete scenario, so no variant pays a process of its own
 and no ordering contaminates the allocator. Six canonical scenarios (shallow,
 wide, nested, nullable, partial, polymorphic) carry the aggregate; a seventh,
 deliberately warmed with a ``PrivateAttr`` and a ``cached_property``, is reported
@@ -13,7 +13,7 @@ the representation's.
 **Two different comparisons are retained, and each says which it is.** The
 aggregates are legacy against compact: the representation change, which is the
 before and after the measurement contract states its target over. The ordinary
-arm enters neither, and answers the other question a caller asks — what a
+variant enters neither, and answers the other question a caller asks — what a
 published instance costs against one they built themselves.
 
 It is a `report`, so it DECIDES nothing about what it measures. It computes the
@@ -27,30 +27,30 @@ exits non-zero on is COMPLETENESS — a matrix cell that has no reading is named
 and refused, which says there is nothing here to read rather than that what is
 here is wrong.
 
-**Every arm is read over one object layout**, which is what makes a ratio between
+**Every variant is read over one object layout**, which is what makes a ratio between
 two of them the representation's. Every framework slot a declared class carries
 is carried by all three — an ordinary value holds the compact and auxiliary
 pointers exactly as a published one does, and an Entity of any backing holds the
 lifecycle slot. Ratios require readings from this same layout; measurements from
 a layout without those slots are not comparable.
 
-**The legacy arm is a FIXTURE** —
+**The legacy variant is a FIXTURE** —
 ``_instance_state_support.legacy_publication``, which builds one node the way
 Entity Graph Construction built one before publication became compact: a
 zero-argument ``model_construct`` filled one member at a time. It reproduced the
 real path exactly while that path existed, and every scenario's fixture was
-compared against it before any reading was taken. The compact arm needs no
-fixture: it is ``EntityGraphConstruction.publish`` itself. The ordinary arm is
+compared against it before any reading was taken. The compact variant needs no
+fixture: it is ``EntityGraphConstruction.publish`` itself. The ordinary variant is
 the validating constructor, which needs none either.
 
-**What is measured, per scenario and per arm.** Bytes reachable at the seam's
-innermost point while one node of that arm is held that were not reachable before
+**What is measured, per scenario and per variant.** Bytes reachable at the seam's
+innermost point while one node of that variant is held that were not reachable before
 the window opened — read twice, once with the node's lifecycle state attached
-where its arm has one to attach and once without, so the aggregate that includes
+where its variant has one to attach and once without, so the aggregate that includes
 unchanged lifecycle state and the one that isolates publication state are both
 available. An ordinary node has none to attach, so its
 two readings are the same reading rather than a pair. Beside them: what one
-MORE node of that arm costs to construct, what one call costs besides its nodes,
+MORE node of that variant costs to construct, what one call costs besides its nodes,
 how much of that per-node cost is left once the work the legacy fixture also does
 is timed out of it, what an ordinary declared-field read costs, what
 ``model_dump()`` costs, and the
@@ -60,41 +60,41 @@ again is the difference.
 **Construction is timed per node, and its ratio is printed twice.** A compact
 node arrives from an ``EntityGraphConstruction.publish`` call that also pays
 layout validation, one lifecycle-states call, and buffering and counting its
-states, where the two other arms build a node and nothing else — so a per-CALL
-construction figure compares two different amounts of work. Each arm is
+states, where the two other variants build a node and nothing else — so a per-CALL
+construction figure compares two different amounts of work. Each variant is
 therefore timed building one node and building :data:`MARGINAL_NODES`, and
 :func:`marginal` splits the two into the cost of one more node and the per-call
 remainder, printed beside it.
 
 That split removes the FIXED per-call cost and not the per-NODE one. A
 ``publish`` call's layout and row-shape validation and its state buffering both
-scale with node count, so they stay inside the compact arm's ``node µs``, and the
+scale with node count, so they stay inside the compact variant's ``node µs``, and the
 legacy FIXTURE reproduces only the node building and its lifecycle state. So the
-compact arm's call is measured a second time in spans covering each thing that
+compact variant's call is measured a second time in spans covering each thing that
 fixture also does — a closed list, because the fixture is four statements — and
 the remainder, ``outside µs``, is the per-node work the fixture does not
 reproduce.
 
 **Construction is printed as two ratios, and the rule is stated over the one that
-needs no correction.** Dividing the two ``node µs`` columns gives ``arm against
-arm``, which charges the compact arm for all of that remainder; adding ``outside
+needs no correction.** Dividing the two ``node µs`` columns gives ``variant against
+variant``, which charges the compact variant for all of that remainder; adding ``outside
 µs`` to the legacy side gives ``like for like``, the closer estimate of what the
 representation change itself cost.
 
 Only the first bounds the truth. The work the fixture never reproduced is work the
-pre-flip path really paid, so the true before side is at least the legacy arm's
-own timing and the true ratio is therefore at most ``arm against arm`` — whatever
+pre-flip path really paid, so the true before side is at least the legacy variant's
+own timing and the true ratio is therefore at most ``variant against variant`` — whatever
 ``outside µs`` is worth, and without measuring it. ``like for like`` cannot make
 that claim: it is a remainder of two independently sampled marginal timings, its
-expected error runs against the compact arm but its sampling error runs both ways,
+expected error runs against the compact variant but its sampling error runs both ways,
 and a residue sampled high lowers the corrected ratio below the true one. So the
-20% rule reads ``arm against arm``, whose error can only surface an operation that
+20% rule reads ``variant against variant``, whose error can only surface an operation that
 did not regress; ``like for like`` is printed beside it as the tighter estimate,
 never as the graded figure. For a member read and a ``model_dump()`` the correction
 is exactly zero and the two columns are the same exact figure. The ordinary ratio
 needs no correction at all: a caller building an ordinary instance genuinely pays
 no construction call, so both its sides are the same quantity — the marginal cost
-of one additional node, with each arm's per-call cost printed beside it rather
+of one additional node, with each variant's per-call cost printed beside it rather
 than inside it.
 
 **Where a reading is taken.** Every reading is taken in a child, by
@@ -208,7 +208,7 @@ MARGINAL_NODES: Final = 11
 
 Ten more than the smaller, so the per-node cost is a tenth of the difference and
 one call's fixed cost divides out of it. Large enough that the difference is far
-above the timer's resolution on every arm, small enough that no scenario's graph
+above the timer's resolution on every variant, small enough that no scenario's graph
 starts costing the allocator something a one-node build does not."""
 
 AGGREGATE_TARGET: Final = 0.33
@@ -228,26 +228,26 @@ SUPPORTED_MINORS: Final = 2
 SUBJECT: Final = "instance-state"
 
 
-class ArmReading(NamedTuple):
-    """One arm's whole reading of one scenario."""
+class MeasurementVariantReading(NamedTuple):
+    """One variant's whole reading of one scenario."""
 
     cells: int
     retained_bytes: int
     bare_bytes: int
     peak_bytes: int
     construct_ns: float
-    """What one MORE node of this arm costs — the marginal per-node cost
+    """What one MORE node of this variant costs — the marginal per-node cost
     :func:`marginal` separates out, not what one call costs."""
     call_ns: float
-    """What one call of this arm costs BESIDES the nodes it builds. Zero within
-    noise for an arm that builds a node and nothing else."""
+    """What one call of this variant costs BESIDES the nodes it builds. Zero within
+    noise for a variant that builds a node and nothing else."""
     scaffolding_ns: float
-    """How much of :attr:`construct_ns` this arm's call spends BEYOND the work the
+    """How much of :attr:`construct_ns` this variant's call spends BEYOND the work the
     legacy fixture also does — per-node work that fixture reproduces none of,
     although the path it stands for paid all of it through the same call.
 
-    Exactly zero for an arm whose call is a loop over its own node builder, which
-    is a fact about that arm rather than a measurement it declined to take. It is
+    Exactly zero for a variant whose call is a loop over its own node builder, which
+    is a fact about that variant rather than a measurement it declined to take. It is
     what turns the raw legacy construction ratio into the like-for-like one
     (:func:`like_for_like_ratio`).
 
@@ -274,9 +274,9 @@ class ArmReading(NamedTuple):
         timings' noise to swamp it. A negative correction is not a measurement of
         work: subtracting it from the legacy side would make the pre-flip path
         cost LESS than the fixture that stands for it, which moves the ratio in
-        the compact arm's favour on nothing but noise. Zero is the honest floor —
+        the compact variant's favour on nothing but noise. Zero is the honest floor —
         the case where nothing could be separated out — and it keeps the
-        corrected ratio at or under the arm-against-arm one, which is what makes
+        corrected ratio at or under the variant-against-variant one, which is what makes
         the graded figure the looser of the two.
         """
         return max(self.scaffolding_ns, 0.0)
@@ -318,7 +318,7 @@ def marginal(one_node_ns: float, many_nodes_ns: float) -> tuple[float, float]:
     """What one more node costs, and what one call costs besides its nodes.
 
     ``many_nodes_ns`` times a build of :data:`MARGINAL_NODES` and
-    ``one_node_ns`` a build of one, both under the same arm, so their difference
+    ``one_node_ns`` a build of one, both under the same variant, so their difference
     holds no per-call cost at all: the per-node cost is that difference over the
     node count between them, and the remainder of the one-node timing is what the
     call cost regardless of how many nodes it built.
@@ -333,7 +333,7 @@ def marginal(one_node_ns: float, many_nodes_ns: float) -> tuple[float, float]:
 
 
 class Reading(NamedTuple):
-    """One scenario's reading under every arm, as a child interpreter answers it."""
+    """One scenario's reading under every variant, as a child interpreter answers it."""
 
     scenario: str
     summary: str
@@ -342,15 +342,15 @@ class Reading(NamedTuple):
     """Unsampled runs the child took before every window, as its own instruments
     declare — a condition of this reading rather than of the process printing
     it, since a child of another minor resolves its own."""
-    ordinary: ArmReading
-    legacy: ArmReading
-    compact: ArmReading
+    ordinary: MeasurementVariantReading
+    legacy: MeasurementVariantReading
+    compact: MeasurementVariantReading
     projection: ProjectionReading | None = None
     """Typed-envelope projection for canonical scenarios; absent for ``warmed``."""
 
     @property
     def reduction(self) -> float:
-        """This scenario's own percentage against the LEGACY arm, lifecycle state
+        """This scenario's own percentage against the LEGACY variant, lifecycle state
         included — the representation change the aggregates divide. Diagnostic:
         an aggregate is never the mean of these."""
         return 1 - self.compact.retained_bytes / self.legacy.retained_bytes
@@ -362,7 +362,7 @@ class Reading(NamedTuple):
 
     @property
     def ordinary_reduction(self) -> float:
-        """This scenario's percentage against the ORDINARY arm — a different
+        """This scenario's percentage against the ORDINARY variant — a different
         comparison from :attr:`reduction`. It enters no aggregate.
 
         What each side holds rather than a matched pair: the published node
@@ -387,16 +387,16 @@ class Operation(NamedTuple):
     """One representative operation the regression rule is stated over."""
 
     name: str
-    nanoseconds: Callable[[ArmReading], float]
-    unreproduced: Callable[[ArmReading], float]
-    """Given the COMPACT arm's reading, an estimate of the per-node work inside
+    nanoseconds: Callable[[MeasurementVariantReading], float]
+    unreproduced: Callable[[MeasurementVariantReading], float]
+    """Given the COMPACT variant's reading, an estimate of the per-node work inside
     its call that the legacy fixture does not reproduce and the pre-flip path paid
     through the same call, biased low.
 
-    Zero for an operation whose two arms do the same work on the same object —
+    Zero for an operation whose two variants do the same work on the same object —
     a member read and a ``model_dump()`` are one call against one call — and the
-    compact arm's measured scaffolding for construction, which is the one
-    operation whose arms are timed at different scopes. Exact where it is zero,
+    compact variant's measured scaffolding for construction, which is the one
+    operation whose variants are timed at different scopes. Exact where it is zero,
     and a noisy remainder where it is measured, which is why the figure it
     produces is reported and not graded (:func:`like_for_like_ratio`)."""
 
@@ -405,23 +405,23 @@ class Operation(NamedTuple):
 # Operation declares and the timings stay statically checked.
 
 
-def _construction_ns(arm: ArmReading) -> float:
-    return arm.construct_ns
+def _construction_ns(variant: MeasurementVariantReading) -> float:
+    return variant.construct_ns
 
 
-def _read_ns(arm: ArmReading) -> float:
-    return arm.read_ns
+def _read_ns(variant: MeasurementVariantReading) -> float:
+    return variant.read_ns
 
 
-def _dump_ns(arm: ArmReading) -> float:
-    return arm.dump_ns
+def _dump_ns(variant: MeasurementVariantReading) -> float:
+    return variant.dump_ns
 
 
-def _scaffolding_ns(arm: ArmReading) -> float:
-    return arm.unreproduced_ns
+def _scaffolding_ns(variant: MeasurementVariantReading) -> float:
+    return variant.unreproduced_ns
 
 
-def _same_scope(_arm: ArmReading) -> float:
+def _same_scope(_variant: MeasurementVariantReading) -> float:
     return 0.0
 
 
@@ -523,9 +523,9 @@ def runtime_identities(
 def in_a_child(runtime: str, scenario: Scenario) -> Cell:
     """``scenario``'s reading on ``runtime``, or why there is none.
 
-    One child per COMPLETE scenario rather than per arm: the isolation a whole-
+    One child per COMPLETE scenario rather than per variant: the isolation a whole-
     interpreter reading needs is a property of the process, and paying one process
-    per arm would buy nothing while making every arm's floor a different one.
+    per variant would buy nothing while making every variant's floor a different one.
 
     A child that fails answers with its own output rather than ending the run, so
     one unavailable runtime names every cell it cost instead of hiding the cells
@@ -563,9 +563,9 @@ def _decoded(output: str) -> Cell:
             summary=cast("str", decoded["summary"]),
             fields=cast("int", decoded["fields"]),
             warmup=cast("int", decoded["warmup"]),
-            ordinary=ArmReading(**cast("dict[str, Any]", decoded["ordinary"])),
-            legacy=ArmReading(**cast("dict[str, Any]", decoded["legacy"])),
-            compact=ArmReading(**cast("dict[str, Any]", decoded["compact"])),
+            ordinary=MeasurementVariantReading(**cast("dict[str, Any]", decoded["ordinary"])),
+            legacy=MeasurementVariantReading(**cast("dict[str, Any]", decoded["legacy"])),
+            compact=MeasurementVariantReading(**cast("dict[str, Any]", decoded["compact"])),
             projection=(
                 None
                 if decoded.get("projection") is None
@@ -656,11 +656,11 @@ class Aggregate(NamedTuple):
 def aggregates(readings: Sequence[Reading]) -> tuple[Aggregate, Aggregate]:
     """The primary and secondary aggregates over ``readings``.
 
-    Both divide the LEGACY arm into the compact one: the representation change,
+    Both divide the LEGACY variant into the compact one: the representation change,
     which is the before-and-after the measurement contract names. Primary
     includes the unchanged lifecycle state, because a caller retains it;
     secondary excludes it, which is what isolates the publication state this work
-    changed. The ordinary arm is in neither — see :func:`against_ordinary`.
+    changed. The ordinary variant is in neither — see :func:`against_ordinary`.
     """
     return (
         Aggregate(
@@ -682,7 +682,7 @@ def against_ordinary(readings: Sequence[Reading]) -> Aggregate:
 
     A DIFFERENT comparison from :func:`aggregates` and deliberately not one of
     them: the measurement contract's 33% target is stated over the representation
-    change, so folding a third arm into that comparison would state the result
+    change, so folding a third variant into that comparison would state the result
     over a pair the target was never set against. This figure is reported beside
     the aggregates rather than inside them.
 
@@ -700,14 +700,14 @@ def against_ordinary(readings: Sequence[Reading]) -> Aggregate:
 
 
 def mix_ratio(readings: Sequence[Reading], operation: Operation) -> float:
-    """How far ``operation`` moved from the legacy ARM to the compact one over
+    """How far ``operation`` moved from the legacy MEASUREMENT_VARIANT to the compact one over
     the whole mix — summed, for the same reason an aggregate is.
 
-    Arm against arm, exactly as each was timed. For a member read and a
+    MeasurementVariant against variant, exactly as each was timed. For a member read and a
     ``model_dump()`` that is already the before and after; for construction it is
-    a LOOSE upper bound, because the compact arm's timing carries per-node work
+    a LOOSE upper bound, because the compact variant's timing carries per-node work
     the legacy fixture reproduces none of — work the pre-flip path did pay, so the
-    true before side is at least the legacy arm's own timing and the true ratio is
+    true before side is at least the legacy variant's own timing and the true ratio is
     at most this one.
 
     That is why the regression rule is stated over THIS figure and not the tighter
@@ -735,7 +735,7 @@ def before_ns(reading: Reading, operation: Operation) -> float:
     remainder left by spans that price the common work high, so its expected error
     under-states what it adds, but it is one marginal timing subtracted from
     another and a low common-work sample makes it too large
-    (:attr:`ArmReading.scaffolding_ns`). A before side that came out too large
+    (:attr:`MeasurementVariantReading.scaffolding_ns`). A before side that came out too large
     lowers the ratio taken over it, which is why the figure this feeds is reported
     and :func:`mix_ratio` is the one graded.
     """
@@ -743,22 +743,22 @@ def before_ns(reading: Reading, operation: Operation) -> float:
 
 
 def like_for_like_ratio(readings: Sequence[Reading], operation: Operation) -> float:
-    """:func:`mix_ratio` with as much of the two arms' scope difference measured
+    """:func:`mix_ratio` with as much of the two variants' scope difference measured
     out as a measurement can take out — the closest ESTIMATE of what the
     representation change itself cost, and the figure printed beside the graded
     one rather than the graded one.
 
     An estimate and not a bound, because the correction is a remainder: it is what
-    is left of the compact arm's per-node cost once every quantity the legacy
+    is left of the compact variant's per-node cost once every quantity the legacy
     fixture also pays has been timed out of it, in an independent timing loop.
     Each of those spans prices its term high
     (``_instance_state_support.compact_common_work_ns``), so the expected error
-    runs against the compact arm — but a common-work marginal that samples low
+    runs against the compact variant — but a common-work marginal that samples low
     leaves the residue too large, enlarges the before side and puts this ratio
     UNDER the true one. A rule that must not miss a regression therefore cannot be
     stated over it, and :func:`escalations` reads :func:`mix_ratio` instead.
 
-    Identical to :func:`mix_ratio` for every operation whose arms already do the
+    Identical to :func:`mix_ratio` for every operation whose variants already do the
     same work, where the correction is exactly zero and the figure is exact, so
     printing the two side by side is what shows WHICH comparison needed a
     correction rather than asserting it.
@@ -769,7 +769,7 @@ def like_for_like_ratio(readings: Sequence[Reading], operation: Operation) -> fl
 
 
 def scenario_ratio(reading: Reading, operation: Operation) -> float:
-    """One scenario's own arm-against-arm ratio — how the escalation block picks
+    """One scenario's own variant-against-variant ratio — how the escalation block picks
     the worst of a mix it is naming a summed figure for.
 
     The same comparison the block grades, so the scenario it names is the worst of
@@ -806,7 +806,7 @@ def escalations(runtime: str, readings: Sequence[Reading]) -> list[str]:
 
     The operation rule is applied to :func:`mix_ratio` rather than the tighter
     :func:`like_for_like_ratio`, because a rule that must not MISS a regression has
-    to read a figure nothing can pull under the limit. The arm-against-arm ratio
+    to read a figure nothing can pull under the limit. The variant-against-variant ratio
     divides two measured timings and needs no correction; the like-for-like one
     subtracts a noisy remainder that, sampled high, puts the ratio under the true
     one. So the rule reads the looser of the two, and pays for it by being able to
@@ -827,7 +827,8 @@ def escalations(runtime: str, readings: Sequence[Reading]) -> list[str]:
             continue
         worst = max(readings, key=lambda reading: scenario_ratio(reading, operation))
         lines.append(
-            f"CPython {runtime}: {operation.name} {ratio:.2f}x arm against arm over the mix "
+            f"CPython {runtime}: {operation.name} {ratio:.2f}x variant against variant "
+            "over the mix "
             f"(> {REGRESSION_LIMIT:.2f}x), worst {worst.scenario} at "
             f"{scenario_ratio(worst, operation):.2f}x — surfaced for human review"
         )
@@ -843,7 +844,7 @@ def escalation_block(matrix: Matrix) -> list[str]:
         return [
             "no escalation: every runtime's primary aggregate reaches "
             f"{AGGREGATE_TARGET:.0%} and no representative operation moved past "
-            f"{REGRESSION_LIMIT:.2f}x arm against arm"
+            f"{REGRESSION_LIMIT:.2f}x variant against variant"
         ]
     return ["REVIEW REQUIRED", *(f"  {line}" for line in raised)]
 
@@ -870,15 +871,17 @@ def _conditions(runtimes: Sequence[str], warmups: Sequence[int]) -> list[tuple[s
 
 
 _HEADER: Final = (
-    f"{'scenario':<12} {'fields':>6} {'arm':<9} {'cells':>5} {'retained B':>11} {'bare B':>9} "
+    f"{'scenario':<12} {'fields':>6} {'variant':<9} {'cells':>5} {'retained B':>11} {'bare B':>9} "
     f"{'lifecycle B':>12} {'node us':>8} {'call us':>8} {'outside us':>11} {'read ns':>8} "
     f"{'dump us':>8} {'transient B':>12} {'peak B':>9}"
 )
 
 
-def _arm_line(scenario: str, fields: str, arm: str, reading: ArmReading) -> str:
+def _variant_line(
+    scenario: str, fields: str, variant: str, reading: MeasurementVariantReading
+) -> str:
     return (
-        f"{scenario:<12} {fields:>6} {arm:<9} {reading.cells:>5} "
+        f"{scenario:<12} {fields:>6} {variant:<9} {reading.cells:>5} "
         f"{reading.retained_bytes:>11,} {reading.bare_bytes:>9,} "
         f"{reading.lifecycle_bytes:>12,} {reading.construct_ns / 1e3:>8.2f} "
         f"{reading.call_ns / 1e3:>8.2f} {reading.unreproduced_ns / 1e3:>11.2f} "
@@ -888,7 +891,7 @@ def _arm_line(scenario: str, fields: str, arm: str, reading: ArmReading) -> str:
 
 
 def _comparison_line(against: str, retained: float, bare: float) -> str:
-    """One reduction line, naming which arm the compact one is divided into.
+    """One reduction line, naming which variant the compact one is divided into.
 
     Named on every line rather than in a legend: two comparisons are printed per
     scenario and only one of them enters an aggregate.
@@ -898,9 +901,9 @@ def _comparison_line(against: str, retained: float, bare: float) -> str:
 
 def _reading_lines(reading: Reading) -> list[str]:
     return [
-        _arm_line(reading.scenario, str(reading.fields), "ordinary", reading.ordinary),
-        _arm_line("", "", "legacy", reading.legacy),
-        _arm_line("", "", "compact", reading.compact),
+        _variant_line(reading.scenario, str(reading.fields), "ordinary", reading.ordinary),
+        _variant_line("", "", "legacy", reading.legacy),
+        _variant_line("", "", "compact", reading.compact),
         _comparison_line("vs legacy", reading.reduction, reading.bare_reduction),
         _comparison_line(
             "vs ordinary", reading.ordinary_reduction, reading.ordinary_bare_reduction
@@ -918,20 +921,20 @@ def _runtime_section(runtime: str, cells: Mapping[str, Cell]) -> list[str]:
         lines += _reading_lines(cell)
     readings = canonical(cells)
     lines.append("")
-    lines.append("  the representation change — legacy arm against compact")
+    lines.append("  the representation change — legacy variant against compact")
     for aggregate in aggregates(readings):
         lines.append(
             f"    {aggregate.label:<42} {aggregate.before:>7,} -> {aggregate.after:>7,} B "
             f"= {aggregate.reduction:>6.1%}"
         )
-    lines.append(f"    {'over the mix':<42} {'arm against arm':>16} {'like for like':>16}")
+    lines.append(f"    {'over the mix':<42} {'variant against variant':>16} {'like for like':>16}")
     for operation in OPERATIONS:
         lines.append(
             f"    {operation.name:<42} {mix_ratio(readings, operation):>15.2f}x "
             f"{like_for_like_ratio(readings, operation):>15.2f}x"
         )
     lines.append("")
-    lines.append("  stated separately, in no aggregate — ordinary arm against compact")
+    lines.append("  stated separately, in no aggregate — ordinary variant against compact")
     ordinary = against_ordinary(readings)
     lines.append(
         f"    {ordinary.label:<42} {ordinary.before:>7,} -> {ordinary.after:>7,} B "
@@ -971,38 +974,39 @@ def _projection_lines(readings: Sequence[Reading]) -> list[str]:
 
 
 def _scope() -> list[str]:
-    """What each arm is, and which comparison each printed number makes.
+    """What each variant is, and which comparison each printed number makes.
 
     Stated beside the escalation block rather than in a document, because it is
     what a reader deciding on a surfaced regression needs at the moment of
     reading it.
     """
     return [
-        "what the arms are, and what is compared with what",
+        "what the variants are, and what is compared with what",
         "  ordinary  the validating constructor: what a caller builds for themselves.",
         "  legacy    the node-building the publication flip replaced, as a fixture.",
         "  compact   the shipping publication path, EntityGraphConstruction.publish.",
         "",
         "  The aggregates and the regression rule divide LEGACY into compact: that pair is",
-        "  the representation change this measurement was taken for. The ordinary arm is in",
+        "  the representation change this measurement was taken for. The ordinary variant is in",
         "  neither, and answers the other question — what a published node costs against one",
         "  a caller built — so its bytes and its three ratios are printed beside the aggregates.",
         "",
-        "  `node us` is what one MORE node of that arm costs, measured by timing a 1-node",
+        "  `node us` is what one MORE node of that variant costs, measured by timing a 1-node",
         "  build against an 11-node one, and `call us` is what one call costs besides its",
         "  nodes. That split is what makes construction comparable at all: a compact node",
         "  arrives from a publish call that also pays layout validation and buffering its",
-        "  lifecycle states, where the other two arms build a node and nothing else.",
+        "  lifecycle states, where the other two variants build a node and nothing else.",
         "",
         "  `outside us` is what is LEFT of `node us` once everything the legacy fixture also",
         "  does has been timed out of it, in a separate call. That list is closed because the",
         "  fixture is: it does four things per node. Its lifecycle states, node building and",
         "  attach are timed together as the whole publish call, since publish performs them",
         "  in loops that call back only once; and the result tuple its graph returns is timed",
-        "  as this arm's, built and released inside the span as this arm's caller releases",
-        "  it. No clock runs inside the call `node us` is taken over. What is left is only",
-        "  this arm's collecting of the instances publish hands its callback. It is exactly",
-        "  zero for the ordinary and legacy arms, whose call IS a loop over their node builder.",
+        "  as this variant's, built and released inside the span as this variant's caller",
+        "  releases it. No clock runs inside the call `node us` is taken over. What is left",
+        "  is only this variant's collecting of the instances publish hands its callback.",
+        "  It is exactly zero for the ordinary and legacy variants, whose call IS a loop over",
+        "  their node builder.",
         "",
         "  Every one of those spans prices its term HIGH and none prices one low: the publish",
         "  span also carries the validation and buffering the fixture never did, and each",
@@ -1011,14 +1015,15 @@ def _scope() -> list[str]:
         "  independently sampled marginal timings, about 0.2 us against a 0.00-1.71 spread,",
         "  so a single reading of it can be too large as easily as too small.",
         "",
-        "  So every ratio is printed twice. `arm against arm` divides the two `node us`",
+        "  So every ratio is printed twice. `variant against variant` divides the two `node us`",
         "  columns as each was timed, charging compact for the whole of what the fixture did",
         "  not reproduce. `like for like` adds `outside us` to the legacy side instead, which",
         "  is the closer estimate of what the representation change itself cost.",
-        "  THE 20% RULE IS STATED OVER `ARM AGAINST ARM`, the figure that needs no correction:",
-        "  the work the fixture never reproduced is work the pre-flip path did pay, so the",
-        "  true before side is at least the legacy `node us` and the true ratio is at most",
-        "  this one — whatever `outside us` is worth. Grading the corrected figure instead",
+        "  THE 20% RULE IS STATED OVER `VARIANT AGAINST VARIANT`, the figure that needs no",
+        "  correction: the work the fixture never reproduced is work the pre-flip path did",
+        "  pay, so the true before side is at least the legacy `node us` and the true ratio",
+        "  is at most this one — whatever `outside us` is worth. Grading the corrected figure",
+        "  instead",
         "  would let a residue that sampled high pull the reading under the limit. The price",
         "  is that this block can surface an operation whose true ratio is under it, which is",
         "  a line to read rather than a gate that fails.",
@@ -1028,7 +1033,7 @@ def _scope() -> list[str]:
         "",
         "  The ordinary construction ratio needs no such correction and gets none: a caller",
         "  building an ordinary instance pays no publish call at all, so both sides of it",
-        "  are the same quantity — the marginal cost of one additional node, with each arm's",
+        "  are the same quantity — the marginal cost of one additional node, with each variant's",
         "  `call us` outside it.",
     ]
 
@@ -1040,7 +1045,7 @@ def _detail() -> list[str]:
         "",
         "The aggregate is 1 - sum(after) / sum(before) over the summed columns, never the",
         "mean of the per-scenario percentages, and both sums come from one object layout:",
-        "every arm is measured on this tree, in one child, so every framework slot one",
+        "every variant is measured on this tree, in one child, so every framework slot one",
         "carries the others carry too. The `warmed` scenario is reported and excluded from",
         "every aggregate — a PrivateAttr's value and a cached_property's result are the",
         "author's state under every backing.",
@@ -1049,7 +1054,7 @@ def _detail() -> list[str]:
 
 def render(matrix: Matrix) -> list[str]:
     """The whole report, given a complete matrix."""
-    lines = ["parallax published instance state — ordinary, legacy and compact arms", ""]
+    lines = ["parallax published instance state — ordinary, legacy and compact variants", ""]
     warmups = [
         cell.warmup
         for cells in matrix.values()
@@ -1062,7 +1067,7 @@ def render(matrix: Matrix) -> list[str]:
     return [*lines, "", *escalation_block(matrix), "", *_scope(), "", *_detail()]
 
 
-_ARM_METRICS: Final = (
+_MEASUREMENT_VARIANT_METRICS: Final = (
     ("cells", "count"),
     ("retained_bytes", "B"),
     ("bare_bytes", "B"),
@@ -1076,7 +1081,7 @@ _ARM_METRICS: Final = (
     ("read_ns", "ns"),
     ("dump_ns", "ns"),
 )
-ARM_NAMES: Final = ("ordinary", "legacy", "compact")
+MEASUREMENT_VARIANT_NAMES: Final = ("ordinary", "legacy", "compact")
 SCENARIO_COUNT_CELLS: Final = ("fields", "warmups")
 SCENARIO_RATIO_CELLS: Final = (
     "vsLegacy.retainedReduction",
@@ -1133,9 +1138,9 @@ def expected_addresses(runtimes: Sequence[str]) -> frozenset[tuple[str, str]]:
             workload = scenario_workload(runtime, scenario.name)
             addresses.update((workload, cell) for cell in SCENARIO_COUNT_CELLS)
             addresses.update(
-                (workload, f"{arm}.{_metric_name(metric)}")
-                for arm in ARM_NAMES
-                for metric, _unit in _ARM_METRICS
+                (workload, f"{variant}.{_metric_name(metric)}")
+                for variant in MEASUREMENT_VARIANT_NAMES
+                for metric, _unit in _MEASUREMENT_VARIANT_METRICS
             )
             addresses.update((workload, cell) for cell in SCENARIO_RATIO_CELLS)
             if scenario in SCENARIOS:
@@ -1174,9 +1179,11 @@ def unit_of(cell: str) -> str:
     projection_units = dict(_PROJECTION_METRICS)
     if cell in projection_units:
         return projection_units[cell]
-    arm, _separator, metric = cell.partition(".")
-    if arm in ARM_NAMES:
-        return next(unit for name, unit in _ARM_METRICS if _metric_name(name) == metric)
+    variant, _separator, metric = cell.partition(".")
+    if variant in MEASUREMENT_VARIANT_NAMES:
+        return next(
+            unit for name, unit in _MEASUREMENT_VARIANT_METRICS if _metric_name(name) == metric
+        )
     if cell.endswith((".before", ".after")):
         return "B"
     return "ratio"
@@ -1218,16 +1225,16 @@ def build_envelope(
                 EnvelopeReading(workload, name, counts[name], unit_of(name))
                 for name in SCENARIO_COUNT_CELLS
             )
-            for arm_name in ARM_NAMES:
-                arm = cast("ArmReading", getattr(cell, arm_name))
+            for variant_name in MEASUREMENT_VARIANT_NAMES:
+                variant = cast("MeasurementVariantReading", getattr(cell, variant_name))
                 readings.extend(
                     EnvelopeReading(
                         workload,
-                        f"{arm_name}.{_metric_name(metric)}",
-                        float(getattr(arm, metric)),
+                        f"{variant_name}.{_metric_name(metric)}",
+                        float(getattr(variant, metric)),
                         unit,
                     )
-                    for metric, unit in _ARM_METRICS
+                    for metric, unit in _MEASUREMENT_VARIANT_METRICS
                 )
             ratios = {
                 "vsLegacy.retainedReduction": cell.reduction,
@@ -1277,10 +1284,10 @@ def build_envelope(
         )
         for operation in OPERATIONS:
             name = f"operation.{_operation_name(operation)}"
-            arm_ratio = mix_ratio(mix, operation)
+            variant_ratio = mix_ratio(mix, operation)
             readings.extend(
                 (
-                    EnvelopeReading(workload, f"{name}.armAgainstArm", arm_ratio, "ratio"),
+                    EnvelopeReading(workload, f"{name}.armAgainstArm", variant_ratio, "ratio"),
                     EnvelopeReading(
                         workload,
                         f"{name}.likeForLike",
@@ -1299,7 +1306,7 @@ def build_envelope(
                 _comparison(
                     workload,
                     f"{name}.{OPERATION_COMPARISON}",
-                    arm_ratio,
+                    variant_ratio,
                     "at-most",
                     REGRESSION_LIMIT,
                 )

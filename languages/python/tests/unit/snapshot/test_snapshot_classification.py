@@ -228,7 +228,7 @@ def test_a_non_hydrating_root_leaves_its_own_subtree_out_of_construction() -> No
     order = fixture.node("EncodedOrder", _ORDER_ROW)
     item = fixture.node("EncodedOrderItem", {**_ITEM_ROW, "code_hex": "not-hex"})
     # A loaded-null view reaches nothing and so attributes nothing, which is the
-    # arm distinct from an empty to-many and from an unloaded relationship.
+    # relationship value distinct from an empty to-many and from an unloaded relationship.
     fixture.attach(item, _ITEM_ORDER, None)
     fixture.attach(order, _ITEMS, (item,))
 
@@ -479,7 +479,7 @@ def test_classification_locates_a_root_without_reading_its_axis_ends(
 
 
 def test_a_loaded_to_one_view_carries_attribution_to_its_parent() -> None:
-    # A to-one arm is a lone allocation index rather than a tuple, and reaching an
+    # A to-one relationship value is a lone allocation index rather than a tuple, and reaching an
     # invalid node through one invalidates its holder exactly as a to-many does.
     fixture = PageFixture(ENCODED_ORDERS, _ITEM_ORDER, _ITEMS)
     order = fixture.node("EncodedOrder", _ORDER_ROW)
