@@ -39,7 +39,7 @@ def test_budget_contract_has_one_unique_positive_address_per_cell() -> None:
     assert contract.timing_measured == 9
     assert contract.memory_collect_at_page_boundary is True
     assert contract.memory_children == 3
-    assert contract.memory_scaling_arms == (200, 2_000)
+    assert contract.memory_scaling_root_counts == (200, 2_000)
 
 
 @pytest.mark.parametrize(
@@ -99,16 +99,16 @@ def test_budget_contract_rejects_malformed_sampling_protocols() -> None:
         match=r"sampling\.memory\.children is not a positive integer",
     ):
         _ = replace(contract, sampling={"memory": {"children": 0}}).memory_children
-    with pytest.raises(ValueError, match="scalingArms is not a sequence"):
+    with pytest.raises(ValueError, match="scalingRootCounts is not a sequence"):
         _ = replace(
             contract,
-            sampling={"memory": {"scalingArms": 200}},
-        ).memory_scaling_arms
+            sampling={"memory": {"scalingRootCounts": 200}},
+        ).memory_scaling_root_counts
     with pytest.raises(ValueError, match="must contain distinct scaling counts"):
         _ = replace(
             contract,
-            sampling={"memory": {"scalingArms": [200, 200]}},
-        ).memory_scaling_arms
+            sampling={"memory": {"scalingRootCounts": [200, 200]}},
+        ).memory_scaling_root_counts
 
 
 @pytest.mark.parametrize("value", [None, 1, "true"])

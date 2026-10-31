@@ -57,7 +57,7 @@ from snapshot_delivery_overhead import (
     expanded_cells,
     expected_readings,
     is_memory_cell,
-    leaf_cells,
+    scalar_cells,
     unit,
 )
 from tests.unit.tools._cost_report_support import complete_instance_state
@@ -566,7 +566,7 @@ def test_snapshot_matrix_validation_rejects_semantic_forgeries(
         validate_snapshot_matrix(document, contract)
 
 
-def test_snapshot_matrix_validation_requires_every_scaling_arm() -> None:
+def test_snapshot_matrix_validation_requires_every_scaling_root_count() -> None:
     contract = BudgetContract.load()
     document = _complete_snapshot(contract)
     reading = next(
@@ -1114,7 +1114,7 @@ def test_invalid_evidence_fails_while_every_drift_is_reported_beside_it(
         if item["cell"].startswith("streamedMemory.") and item["runtime"] == compared
     )
     scaling["samples"][contract.memory_children :] = [scaling["value"] + 100] * (
-        contract.memory_children * (len(contract.memory_scaling_arms) - 1)
+        contract.memory_children * (len(contract.memory_scaling_root_counts) - 1)
     )
     scaling_comparison = next(
         item
@@ -1136,7 +1136,8 @@ def test_invalid_evidence_fails_while_every_drift_is_reported_beside_it(
     assert advisories(document) == [
         f"advisory: {memory['workload']}.{memory['cell']} is outside its memory ceiling",
         f"advisory: {scaling['workload']}.{scaling['cell']} is outside its memory ceiling",
-        f"advisory: {scaling['workload']}.{scaling['cell']} grows 100.000 KiB between memory arms",
+        f"advisory: {scaling['workload']}.{scaling['cell']} grows 100.000 KiB between "
+        "scaling root counts",
     ]
     (tmp_path / "uv.lock").write_bytes(b"updated dependencies")
     monkeypatch.setattr(cost_report, "WORKSPACE", tmp_path)
@@ -1416,13 +1417,13 @@ def test_diagnostic_options_are_fenced_from_verification_and_collection(
 # --------------------------------------------------------------------------- #
 # Required members: a member held to the exact matrix its owner declares      #
 # --------------------------------------------------------------------------- #
-def _without_leaf_types(snapshot: dict[str, Any]) -> None:
+def _without_scalar_types(snapshot: dict[str, Any]) -> None:
     readings = cast("list[dict[str, Any]]", snapshot["readings"])
-    readings[:] = [r for r in readings if not str(r["workload"]).startswith("leaf-")]
+    readings[:] = [r for r in readings if not str(r["workload"]).startswith("scalar-")]
 
 
 def _without_controls(snapshot: dict[str, Any]) -> None:
-    _without_leaf_types(snapshot)
+    _without_scalar_types(snapshot)
     readings = cast("list[dict[str, Any]]", snapshot["readings"])
     readings[:] = [r for r in readings if not str(r["workload"]).startswith("control-")]
 
@@ -1488,52 +1489,54 @@ def test_a_capture_under_the_legacy_write_cases_verifies_but_cannot_be_required_
     assert "write-lowering reading matrix is not exact" in mixed
 
 
-def test_a_capture_without_the_leaf_types_verifies_but_cannot_be_required_current(
+def test_a_capture_without_the_scalar_types_verifies_but_cannot_be_required_current(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     contract = BudgetContract.load()
     monkeypatch.setattr(cost_report, "is_published", _published)
     document = _verifiable(contract)
-    _without_leaf_types(_snapshot_of(document))
+    _without_scalar_types(_snapshot_of(document))
     assert verify(document) == []
     (snapshot_failure,) = verify(document, required=["snapshot-delivery"])
     assert snapshot_failure.startswith(
         "the snapshot-delivery envelope is invalid: Snapshot reading matrix is not exact: "
         "missing CPython"
     )
-    assert "leaf-" in snapshot_failure
+    assert "scalar-" in snapshot_failure
     _without_controls(_snapshot_of(document))
     readings = cast("list[dict[str, Any]]", _snapshot_of(document)["readings"])
     readings.append(
-        {**deepcopy(readings[0]), "workload": "leaf-float64", "cell": "columns.peakKiB"}
+        {**deepcopy(readings[0]), "workload": "scalar-float64", "cell": "columns.peakKiB"}
     )
     (mixed,) = verify(document)
     assert "Snapshot reading matrix is not exact" in mixed
 
 
-def test_a_leaf_type_reading_is_required_on_its_one_runtime_and_refused_on_any_other(
+def test_a_scalar_type_reading_is_required_on_its_one_runtime_and_refused_on_any_other(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     contract = BudgetContract.load()
     monkeypatch.setattr(cost_report, "is_published", _published)
     oldest, newest = supported_minors()
-    for member, leaf_workloads in (
-        (_snapshot_of, {cell.workload for cell in leaf_cells()}),
-        (_write_of, set(write_report.LEAF_TYPE_CASE_NAMES)),
+    for member, scalar_workloads in (
+        (_snapshot_of, {cell.workload for cell in scalar_cells()}),
+        (_write_of, set(write_report.SCALAR_TYPE_CASE_NAMES)),
     ):
         document = _verifiable(contract)
         readings = cast("list[dict[str, Any]]", member(document)["readings"])
-        leaf_readings = [reading for reading in readings if reading["workload"] in leaf_workloads]
-        assert leaf_readings
-        assert {reading["runtime"] for reading in leaf_readings} == {newest}
+        scalar_readings = [
+            reading for reading in readings if reading["workload"] in scalar_workloads
+        ]
+        assert scalar_readings
+        assert {reading["runtime"] for reading in scalar_readings} == {newest}
         assert verify(document) == []
-        readings.append({**deepcopy(leaf_readings[0]), "runtime": oldest})
+        readings.append({**deepcopy(scalar_readings[0]), "runtime": oldest})
         (carried,) = verify(document)
-        assert f"unexpected CPython {oldest} {leaf_readings[0]['workload']}" in carried
+        assert f"unexpected CPython {oldest} {scalar_readings[0]['workload']}" in carried
         readings.pop()
-        readings.remove(leaf_readings[0])
+        readings.remove(scalar_readings[0])
         (missing,) = verify(document)
-        assert f"missing CPython {newest} {leaf_readings[0]['workload']}" in missing
+        assert f"missing CPython {newest} {scalar_readings[0]['workload']}" in missing
 
 
 def test_a_capture_without_the_control_group_verifies_but_cannot_be_required_current(

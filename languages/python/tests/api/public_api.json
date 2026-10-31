@@ -455,7 +455,6 @@
     "apply_prepared_patches",
     "classify_effective_change",
     "comparison_text",
-    "decode_scalar_many_classified",
     "encode_leaf",
     "encode_occurrence",
     "encode_scalar_many",

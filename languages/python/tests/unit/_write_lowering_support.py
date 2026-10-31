@@ -8,8 +8,8 @@ One Value Object nesting another One and a Many — beside the geometry Entities
 :mod:`tests.unit._structural_geometry_support` declares. The geometry levels
 open a lineage; the changed-ancestor levels succeed one, changing a single leaf
 of a wide root occurrence so the cost of replacing that occurrence is read
-against its declared width. The leaf-type inserts open a lineage of each type
-:mod:`tests.unit._leaf_type_support` declares, over that module's own model,
+against its declared width. The scalar-type inserts open a lineage of each type
+:mod:`tests.unit._scalar_type_support` declares, over that module's own model,
 through Typed and Wire input; the width level's Typed geometry insert is their
 String control, and a Wire String insert is declared beside them. Every case
 names its model, ingress, layout, mutation, authored values, and the stored row
@@ -107,7 +107,7 @@ from psycopg.adapt import AdaptersMap, PyFormat, Transformer
 from psycopg.rows import TupleRow
 
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.conformance.workloads import GEOMETRY_LEVELS, leaf_type_digest, structural_digest
+from parallax.conformance.workloads import GEOMETRY_LEVELS, scalar_type_digest, structural_digest
 from parallax.core import (
     AbstractRoot,
     Attr,
@@ -154,7 +154,7 @@ from parallax.core.write_plan.steps import PlannedStep, PlannedTemporalRevision,
 from parallax.postgres._connection import adapt_binds, initialize_connection
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, WireEntity
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_rows
-from tests.unit import _leaf_type_support as leaf_support
+from tests.unit import _scalar_type_support as scalar_support
 from tests.unit import _structural_geometry_support as geometry_support
 
 __all__ = [
@@ -367,8 +367,8 @@ CATALOG: Final = CatalogedModel(model_of(MODEL))
 LAYOUTS: Final[tuple[Layout, ...]] = ("columns", "document")
 INGRESSES: Final[tuple[Ingress, ...]] = ("typed", "wire")
 ANCESTOR_KEY: Final = 1
-LEAF_FAMILY: Final = "leaf"
-LEAF_KEY: Final = 1
+SCALAR_FAMILY: Final = "scalar"
+SCALAR_KEY: Final = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -694,27 +694,29 @@ def _ancestor_cases() -> tuple[Case, ...]:
     )
 
 
-def _leaf_cases() -> tuple[Case, ...]:
-    """One insert per leaf type, layout, and ingress over the leaf-type model:
+def _scalar_cases() -> tuple[Case, ...]:
+    """One insert per scalar type, layout, and ingress over the scalar-type model:
     Typed and Wire for each measured type, Wire alone for the String control,
     whose Typed insert is the width level's geometry case."""
     return tuple(
         Case(
-            f"{LEAF_FAMILY}.{leaf.id}.{layout}.{ingress}",
-            LEAF_FAMILY,
-            leaf_support.entity_class(leaf, layout),
+            f"{SCALAR_FAMILY}.{scalar_type.id}.{layout}.{ingress}",
+            SCALAR_FAMILY,
+            scalar_support.entity_class(scalar_type, layout),
             ingress,
             layout,
             "insert",
-            leaf_support.instance(leaf, layout, LEAF_KEY) if ingress == "typed" else None,
-            leaf_support.wire_row(leaf, LEAF_KEY) if ingress == "wire" else {},
+            scalar_support.instance(scalar_type, layout, SCALAR_KEY)
+            if ingress == "typed"
+            else None,
+            scalar_support.wire_row(scalar_type, SCALAR_KEY) if ingress == "wire" else {},
             None,
             1,
-            leaf_support.MODEL,
+            scalar_support.MODEL,
         )
-        for leaf in leaf_support.WIRE_INSERTED_TYPES
+        for scalar_type in scalar_support.WIRE_INSERTED_TYPES
         for layout in LAYOUTS
-        for ingress in (INGRESSES if leaf in leaf_support.MEASURED_TYPES else ("wire",))
+        for ingress in (INGRESSES if scalar_type in scalar_support.MEASURED_TYPES else ("wire",))
     )
 
 
@@ -722,7 +724,7 @@ CASES: Final[tuple[Case, ...]] = (
     *_categorical_cases(),
     *_geometry_cases(),
     *_ancestor_cases(),
-    *_leaf_cases(),
+    *_scalar_cases(),
     *_target_cases(),
 )
 
@@ -1827,5 +1829,5 @@ def write_lowering_digest() -> str:
         digest.update(canonical_source(source, omit_digest=index == 0))
         digest.update(b"\0")
     digest.update(structural_digest().encode("utf-8"))
-    digest.update(leaf_type_digest().encode("utf-8"))
+    digest.update(scalar_type_digest().encode("utf-8"))
     return digest.hexdigest()

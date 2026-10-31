@@ -46,9 +46,9 @@ def _tree_after_projecting(roots: int) -> Closure:
 
 
 def test_the_include_tree_memo_is_flat_in_roots() -> None:
-    arms = BudgetContract.load().memory_scaling_arms
-    small = _tree_after_projecting(arms[0])
-    large = _tree_after_projecting(arms[-1])
+    root_counts = BudgetContract.load().memory_scaling_root_counts
+    small = _tree_after_projecting(root_counts[0])
+    large = _tree_after_projecting(root_counts[-1])
 
     assert small.tracked > 0
     assert small == large

@@ -217,8 +217,10 @@ def test_the_changed_ancestor_successors_stay_within_their_memory_gates() -> Non
 
 
 @in_a_child_interpreter
-def test_the_leaf_type_inserts_stay_within_their_memory_gates() -> None:
-    _within_gates(gate_support.owner_of(test_the_leaf_type_inserts_stay_within_their_memory_gates))
+def test_the_scalar_type_inserts_stay_within_their_memory_gates() -> None:
+    _within_gates(
+        gate_support.owner_of(test_the_scalar_type_inserts_stay_within_their_memory_gates)
+    )
 
 
 @in_a_child_interpreter

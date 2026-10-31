@@ -317,8 +317,8 @@ def test_a_changed_ancestor_successor_reads_its_keyed_window() -> None:
 
 
 @in_a_child_interpreter
-def test_a_leaf_type_insert_reads_its_keyed_window() -> None:
-    _assert_reading("leaf.float64.document.wire", units=1)
+def test_a_scalar_type_insert_reads_its_keyed_window() -> None:
+    _assert_reading("scalar.float64.document.wire", units=1)
 
 
 @in_a_child_interpreter

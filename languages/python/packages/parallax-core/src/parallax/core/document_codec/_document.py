@@ -57,7 +57,6 @@ __all__ = [
     "SetValueObject",
     "apply_prepared_patches",
     "comparison_text",
-    "decode_scalar_many_classified",
     "encode_managed_document",
     "encode_managed_many",
     "entity_member_plan",
@@ -223,19 +222,6 @@ def located_occurrence(located: object) -> SqlNull | PresentDocument:
     return PresentDocument(
         None if located is _PRESENT_JSON_NULL else cast("DocumentValue", located)
     )
-
-
-def decode_scalar_many_classified(
-    member: ScalarDefinition, located: SqlNull | PresentDocument
-) -> tuple[object, tuple[DocumentFinding, ...]]:
-    """Classify one scalar collection stored in a Structured Column of its own.
-
-    The answer is the ordered managed tuple, or :data:`UNAVAILABLE` with the
-    findings that make the whole collection unavailable; finding paths are
-    relative to the collection, so its own carrier is located at ``()`` and an
-    element at its index.
-    """
-    return _interpreted_scalar_many(member, _raw_member(located), ())
 
 
 _LEAF: Final = 0

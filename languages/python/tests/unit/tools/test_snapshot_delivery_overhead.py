@@ -23,12 +23,12 @@ from snapshot_delivery_overhead import (
     CONTROL_GROUP,
     GEOMETRY_GROUP,
     GEOMETRY_METRICS,
-    LEAF_GROUP,
     LIVE_WINDOW,
     PLAN_GROUP,
     PLAN_METRICS,
     PLAN_WINDOW,
     PROVIDER_FREE_WINDOW,
+    SCALAR_GROUP,
     STRESS_WINDOW,
     ChildReading,
     ChildRequest,
@@ -42,8 +42,8 @@ from snapshot_delivery_overhead import (
     expected_readings,
     geometry_cells,
     is_memory_cell,
-    leaf_cells,
     plan_cells,
+    scalar_cells,
     selection,
     unit,
     window_of,
@@ -98,13 +98,13 @@ def test_plan_cells_cover_the_frozen_levels_under_both_layouts_in_their_own_wind
         )
 
 
-def test_leaf_cells_read_every_measured_leaf_type_as_a_geometry_read_is_read() -> None:
-    cells = leaf_cells()
+def test_scalar_cells_read_every_measured_scalar_type_as_a_geometry_read_is_read() -> None:
+    cells = scalar_cells()
     assert len(cells) == (
-        len(workloads.LEAF_TYPE_IDS) * len(workloads.STRUCTURAL_LAYOUTS) * len(GEOMETRY_METRICS)
+        len(workloads.SCALAR_TYPE_IDS) * len(workloads.STRUCTURAL_LAYOUTS) * len(GEOMETRY_METRICS)
     )
     assert {cell.workload for cell in cells} == {
-        f"{report.LEAF_PREFIX}{type_id}" for type_id in workloads.LEAF_TYPE_IDS
+        f"{report.SCALAR_PREFIX}{type_id}" for type_id in workloads.SCALAR_TYPE_IDS
     }
     assert {cell.path for cell in cells} == {cell.path for cell in geometry_cells()}
     for cell in cells:
@@ -117,7 +117,7 @@ def test_leaf_cells_read_every_measured_leaf_type_as_a_geometry_read_is_read() -
 def test_addresses_cross_every_runtime_with_contract_and_geometry_cells() -> None:
     contract = BudgetContract.load()
     expected = addresses(contract, ("3.13", "3.14"))
-    assert len(expected) == len(leaf_cells()) + 2 * (
+    assert len(expected) == len(scalar_cells()) + 2 * (
         len(expanded_cells(contract))
         + len(geometry_cells())
         + len(plan_cells())
@@ -125,14 +125,16 @@ def test_addresses_cross_every_runtime_with_contract_and_geometry_cells() -> Non
     )
     assert len(set(expected)) == len(expected)
     assert {
-        runtime for runtime, workload, _cell in expected if workload.startswith(report.LEAF_PREFIX)
+        runtime
+        for runtime, workload, _cell in expected
+        if workload.startswith(report.SCALAR_PREFIX)
     } == {"3.14"}
-    before_leaf_types = addresses(contract, ("3.13", "3.14"), leaf_types=False)
-    assert set(before_leaf_types) == set(expected) - {
-        address for address in expected if address[1].startswith(report.LEAF_PREFIX)
+    before_scalar_types = addresses(contract, ("3.13", "3.14"), scalar_types=False)
+    assert set(before_scalar_types) == set(expected) - {
+        address for address in expected if address[1].startswith(report.SCALAR_PREFIX)
     }
-    without = addresses(contract, ("3.13", "3.14"), controls=False, leaf_types=False)
-    assert set(without) == set(before_leaf_types) - {
+    without = addresses(contract, ("3.13", "3.14"), controls=False, scalar_types=False)
+    assert set(without) == set(before_scalar_types) - {
         address for address in expected if address[1].startswith(report.CONTROL_PREFIX)
     }
     assert window_of("live.eager.maxMs") == LIVE_WINDOW
@@ -343,7 +345,7 @@ def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_pro
         for name in (
             *contract.workload_ids,
             GEOMETRY_GROUP,
-            *((LEAF_GROUP,) if runtime == "3.14" else ()),
+            *((SCALAR_GROUP,) if runtime == "3.14" else ()),
             PLAN_GROUP,
             CONTROL_GROUP,
         )
@@ -357,7 +359,7 @@ def test_snapshot_spans_cover_every_workload_and_group_on_every_runtime_with_pro
     }
     assert {workload for workload, _roots in provisioned} == live_workloads
     assert {roots for _workload, roots in provisioned} == {
-        str(arm) for arm in contract.memory_scaling_arms
+        str(roots) for roots in contract.memory_scaling_root_counts
     }
     assert {span.scope for span in spans.spans} == {"workload", "setup"}
     assert spans.unavailable == ()
@@ -395,17 +397,17 @@ def test_workload_selection_names_exact_contract_ids_and_the_groups() -> None:
     assert not any(controls(cell.workload, cell.path) for cell in plan_cells())
     geometry = workload_selection([GEOMETRY_GROUP], contract)
     assert all(geometry(cell.workload, cell.path) for cell in geometry_cells())
-    assert not any(geometry(cell.workload, cell.path) for cell in leaf_cells())
+    assert not any(geometry(cell.workload, cell.path) for cell in scalar_cells())
     assert not geometry(first, "live.eager.maxMs")
-    leaf = workload_selection([LEAF_GROUP], contract)
-    assert all(leaf(cell.workload, cell.path) for cell in leaf_cells())
-    assert not any(leaf(cell.workload, cell.path) for cell in geometry_cells())
+    scalar = workload_selection([SCALAR_GROUP], contract)
+    assert all(scalar(cell.workload, cell.path) for cell in scalar_cells())
+    assert not any(scalar(cell.workload, cell.path) for cell in geometry_cells())
     with pytest.raises(ValueError, match="unknown workload read-depth-1, unknown"):
         workload_selection(["unknown", "read-depth-1", first], contract)
     assert report.workload_names(contract) == (
         *contract.workload_ids,
         GEOMETRY_GROUP,
-        LEAF_GROUP,
+        SCALAR_GROUP,
         PLAN_GROUP,
         CONTROL_GROUP,
     )
@@ -447,7 +449,7 @@ def test_a_selected_measurement_reads_and_compares_the_selected_addresses_alone(
     }
     assert len(asked) == sum(expected_readings(contract, cell) for _r, _w, cell in expected)
     assert provisioner.resets == [type(workloads.catalog(contract)[first].model).__name__] * (
-        len(contract.memory_scaling_arms) * 2
+        len(contract.memory_scaling_root_counts) * 2
     )
     assert "provenance" in envelope.document()
 
@@ -616,8 +618,8 @@ def test_the_entrypoint_measures_a_slice_with_identities_probed_before_any_readi
 def test_control_cells_expand_the_control_matrix_in_their_windows_and_units() -> None:
     contract = BudgetContract.load()
     cells = control_cells(contract)
-    arms = len(contract.memory_scaling_arms)
-    delivery = len(control_support.DELIVERY_WORKLOAD_IDS) * 2 * 2 * arms * 3
+    root_counts = len(contract.memory_scaling_root_counts)
+    delivery = len(control_support.DELIVERY_WORKLOAD_IDS) * 2 * 2 * root_counts * 3
     guarded = len(control_support.GUARD_WIDTHS) * (
         3 + 2 + 2 * len(control_support.GUARDED_ROOTS) * 3
     )
@@ -648,7 +650,7 @@ def test_control_cells_expand_the_control_matrix_in_their_windows_and_units() ->
             assert window == report.CONTROL_DELIVERY_WINDOW
     assert {
         cell.path.split(".")[2] for cell in cells if cell.workload.startswith("control-delivery-")
-    } == {f"roots{arm}" for arm in contract.memory_scaling_arms}
+    } == {f"roots{roots}" for roots in contract.memory_scaling_root_counts}
     assert set(report.WINDOW_DESCRIPTIONS) >= {
         report.WARM_PLAN_WINDOW,
         report.CONTROL_DELIVERY_WINDOW,

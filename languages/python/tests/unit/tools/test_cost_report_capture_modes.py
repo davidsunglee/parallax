@@ -431,7 +431,7 @@ def test_reclassify_preserves_optional_member_failures(
 
 RECORDED_DIGEST = "a" * 64
 PRODUCING_COMMIT = "c" * 40
-CODE_IDENTITY = json.dumps([256, "structural", "leaf-type"])
+CODE_IDENTITY = json.dumps([256, "structural", "scalar-type"])
 
 
 def _stale_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -705,7 +705,7 @@ def _stale_write_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     portfolio = _stale_capture(tmp_path, monkeypatch)
     document = json.loads(portfolio.read_text())
     sources = [(cost_report.WORKSPACE / source).read_text() for source in WRITE_SOURCES]
-    manifests = [workloads.structural_digest(), workloads.leaf_type_digest()]
+    manifests = [workloads.structural_digest(), workloads.scalar_type_digest()]
     recorded = write_digest(sources, manifests, legacy=True)
     for member in document["members"]:
         provenance = member["provenance"]

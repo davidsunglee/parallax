@@ -20,20 +20,20 @@ from dataclasses import dataclass
 from typing import Final
 
 from parallax.conformance.budget import MemoryGate, MemoryGates, ScalingDomain
-from parallax.conformance.workloads import LEAF_TYPE_IDS, STRUCTURAL_LAYOUTS
+from parallax.conformance.workloads import SCALAR_TYPE_IDS, STRUCTURAL_LAYOUTS
 from tests.unit._workload_spelling_support import (
     GEOMETRY_PREFIX,
     GUARDED_PREFIX,
-    LEAF_PREFIX,
     PLAN_PREFIX,
+    SCALAR_PREFIX,
 )
 from tests.unit._write_lowering_support import BATCH_PREFIX, CROSS_OBJECT_CASES
 
 __all__ = [
     "BATCH_INSERT_OWNER",
     "CROSS_OBJECT_FLUSH_OWNERS",
-    "LEAF_READ_OWNERS",
     "OWNERS",
+    "SCALAR_READ_OWNERS",
     "GateOwner",
     "owner_of",
     "unowned_gates",
@@ -90,18 +90,18 @@ def _exactly(*names: str) -> Callable[[str], bool]:
     return lambda workload: workload in names
 
 
-LEAF_READ_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
+SCALAR_READ_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
     GateOwner(
         SNAPSHOT_MODULE,
-        f"test_the_{type_id}_leaf_reads_under_{layout}_stay_within_their_memory_gates",
+        f"test_the_{type_id}_scalar_reads_under_{layout}_stay_within_their_memory_gates",
         SNAPSHOT_SUBJECT,
-        _exactly(f"{LEAF_PREFIX}{type_id}"),
+        _exactly(f"{SCALAR_PREFIX}{type_id}"),
         f"{layout}.",
     )
-    for type_id in LEAF_TYPE_IDS
+    for type_id in SCALAR_TYPE_IDS
     for layout in STRUCTURAL_LAYOUTS
 )
-"""One cost item per measured leaf type and storage layout."""
+"""One cost item per measured scalar type and storage layout."""
 
 CROSS_OBJECT_FLUSH_OWNERS: Final[tuple[GateOwner, ...]] = tuple(
     GateOwner(
@@ -143,9 +143,9 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
     ),
     GateOwner(
         WRITE_MODULE,
-        "test_the_leaf_type_inserts_stay_within_their_memory_gates",
+        "test_the_scalar_type_inserts_stay_within_their_memory_gates",
         WRITE_SUBJECT,
-        _prefixed("leaf."),
+        _prefixed("scalar."),
     ),
     GateOwner(
         WRITE_MODULE,
@@ -173,7 +173,7 @@ OWNERS: Final[tuple[GateOwner, ...]] = (
         SNAPSHOT_SUBJECT,
         _prefixed(f"{GEOMETRY_PREFIX}width-", f"{GEOMETRY_PREFIX}sparse-"),
     ),
-    *LEAF_READ_OWNERS,
+    *SCALAR_READ_OWNERS,
     GateOwner(
         SNAPSHOT_MODULE,
         "test_the_cold_read_plans_stay_within_their_memory_gates",

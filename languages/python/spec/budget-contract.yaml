@@ -17,8 +17,8 @@ sampling:
     collectAtPageBoundary: true
     medianMeetsCeiling: true
     individualMax: 1.10
-    scalingArms: [200, 2000]
-    armGrowthMaxKiB: 16
+    scalingRootCounts: [200, 2000]
+    scalingGrowthMaxKiB: 16
 workloads:
   conventional-fanout:
     fixture: benchmarks/stream.yaml

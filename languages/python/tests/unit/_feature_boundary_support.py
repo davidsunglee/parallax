@@ -28,8 +28,8 @@ from parallax.core.base import INT64, STRING, DocumentValue, NeutralType, Presen
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
+    MemberDecodePlan,
     ScalarDefinition,
-    decode_scalar_many_classified,
     encode_scalar_many,
 )
 from parallax.core.entity._expressions import AuthoredQuery
@@ -207,10 +207,11 @@ class _PredicateDriver:
 
 class _ScalarDriver:
     units: int = 1
+    _plan: MemberDecodePlan
 
     def __init__(self, scalar_type: str, size: int, *, encode: bool) -> None:
         self._type = _NEUTRAL_TYPES[scalar_type]
-        self._leaf = ScalarDefinition("values", self._type, False, Multiplicity.MANY)
+        self._member = ScalarDefinition("values", self._type, False, Multiplicity.MANY)
         self._encode = encode
         raw: list[DocumentValue]
         match scalar_type:
@@ -228,12 +229,12 @@ class _ScalarDriver:
         self._stored = PresentDocument(raw)
 
     def prepare(self) -> None:
-        pass
+        self._plan = MemberDecodePlan(self._member)
 
     def run(self) -> object:
         if self._encode:
             return encode_scalar_many(self._type, self._managed)
-        return decode_scalar_many_classified(self._leaf, self._stored)
+        return self._plan.value(self._stored)
 
 
 @contextmanager

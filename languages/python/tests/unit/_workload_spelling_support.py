@@ -6,7 +6,7 @@ Every family's support module builds its models when it runs, so these live
 apart from all of them and build nothing: a reading child routes an address to
 its family before running that family's module, the memory-gate owners select
 their gates in every reading child without building any family, and the
-leaf-type family values its String control as the geometry families value their
+scalar-type family values its String control as the geometry families value their
 leaves without building the geometry models.
 
 Never imported by production code.
@@ -20,14 +20,14 @@ __all__ = [
     "CONTROL_PREFIX",
     "GEOMETRY_PREFIX",
     "GUARDED_PREFIX",
-    "LEAF_PREFIX",
     "PLAN_PREFIX",
+    "SCALAR_PREFIX",
     "leaf_value",
 ]
 
 GEOMETRY_PREFIX: Final = "read-"
 PLAN_PREFIX: Final = "plan-"
-LEAF_PREFIX: Final = "leaf-"
+SCALAR_PREFIX: Final = "scalar-"
 CONTROL_PREFIX: Final = "control-"
 GUARDED_PREFIX: Final = f"{CONTROL_PREFIX}guarded-"
 
