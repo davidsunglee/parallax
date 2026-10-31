@@ -1956,7 +1956,7 @@ _CORRUPT_STORED_STATE_REASON: Final[str] = (
 )
 
 
-# The composition family's Transaction-Time-only arm. `m-snapshot-read-021`
+# The composition family's Transaction-Time-only case. `m-snapshot-read-021`
 # reads `models/invoice.yaml`, which this package deliberately authors no
 # idiomatic class family for (`tests/_support/mirrored_models.UNMIRRORED`: the
 # model composes `balance`'s transaction-time-only axis with `orders`' dependent
@@ -2204,8 +2204,8 @@ _WRITE_VALUE_PROVENANCE_REASON: Final[str] = (
     "`tests/unit/test_write_value_runner.py` Docker-free), which arranges each stated "
     "provenance through the source that produces it: a read through the source under "
     "test, a read through the second managed source the adapter supplies "
-    "(`another_source.AnotherSource`), and a plain construction for the one token no "
-    "managed read produced. The runner's generic "
+    "(`foreign_lifecycle_source.ForeignLifecycleSource`), and a plain construction "
+    "for the one token no managed read produced. The runner's generic "
     "provenance-to-value mapping is deliberately not a per-case hand function, and the "
     "refusals themselves are unit-pinned at every keyed verb "
     "(`KeyedWriteValueError`, test_transaction_writes.py); the idiomatic spelling is "
@@ -2321,7 +2321,7 @@ _ISOLATION_BOUNDARY_RUNNER_REASON: Final[str] = (
 )
 
 _EXECUTION_LIFECYCLE_STREAMED_ROOT_REASON: Final[str] = (
-    "the m-execution-lifecycle spine's streamed arm: its `then.executionLifecycle` oracle is "
+    "the m-execution-lifecycle spine's streamed case: its `then.executionLifecycle` oracle is "
     "graded end-to-end by the run sweep (`tests/compatibility/test_run_sweep.py`) against the "
     "stream a REAL `db.wire.stream` delivered to an installed Provider, and the spelling an "
     "application reaches that stream through — a Provider named at `connect` — is the one the "
@@ -2349,14 +2349,14 @@ _RELATIONSHIP_FORMATION_REASON: Final[str] = (
 )
 
 _TARGET_REPLACEMENT_TWIN_REASON: Final[str] = (
-    "a layout-twin replacement graded per arm by the compile/run conformance lanes and "
+    "a layout-twin replacement graded per twin by the compile/run conformance lanes and "
     "by the reference harness; its developer spelling is the exercised `m-temporal-write-016` "
     "Transaction-Time-Only replacement story, and what the twins add is the empty value "
     "each omitted occurrence is written as under each Storage Layout, which no caller spells"
 )
 
 _BUFFERED_SEQUENCE_REASON: Final[str] = (
-    "a state-graded buffered sequence, run per layout arm through the public verbs by "
+    "a state-graded buffered sequence, run per layout twin through the public verbs by "
     "the run conformance lane and checked for consistency by the reference harness; "
     "its developer spellings are the real-database public witnesses of the target, "
     "disjoint, predicate-write and dependent-read suites, so a story here would add no "
@@ -2364,7 +2364,7 @@ _BUFFERED_SEQUENCE_REASON: Final[str] = (
 )
 
 _TEMPORAL_CONFLICT_REASON: Final[str] = (
-    "a state-graded buffered sequence whose refused closes run per layout arm through the "
+    "a state-graded buffered sequence whose refused closes run per layout twin through the "
     "public verbs by the run conformance lane and are checked for consistency by the "
     "reference harness; a fixed per-unit clock cannot show the replay a Temporal Conflict "
     "earns, so its developer spelling — the caught refusal, the rollback, and the retry at a "
@@ -2373,7 +2373,7 @@ _TEMPORAL_CONFLICT_REASON: Final[str] = (
 )
 
 _UNCHANGED_MILESTONE_REASON: Final[str] = (
-    "a state-graded buffered sequence, run per layout arm through the public verbs by "
+    "a state-graded buffered sequence, run per layout twin through the public verbs by "
     "the run conformance lane and checked for consistency by the reference harness; "
     "its developer spellings are the real-database public witnesses of the "
     "unchanged-milestone suite, so a story here would add no developer surface"
@@ -2381,7 +2381,7 @@ _UNCHANGED_MILESTONE_REASON: Final[str] = (
 
 _SHARED_COVERAGE_REASON: Final[str] = (
     "a layout-twin flush whose deferred writes share or do not share their coverage reads, "
-    "graded per arm by the run conformance lane and checked for consistency by the reference "
+    "graded per twin by the run conformance lane and checked for consistency by the reference "
     "harness; the reads a flush makes are no developer verb, and its developer spellings are "
     "the real-database public witnesses of shared coverage acquisition, so a story here "
     "would add no developer surface"
@@ -2736,7 +2736,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-snapshot-read: milestone-set graph siblings ----------------------- #
     "m-snapshot-read-013": _MILESTONE_SET_GRAPH_SIBLING_REASON,
     "m-snapshot-read-014": _MILESTONE_SET_GRAPH_SIBLING_REASON,
-    # -- m-snapshot-read: the composition arm on an unmirrored model --------- #
+    # -- m-snapshot-read: the composition case on an unmirrored model --------- #
     "m-snapshot-read-021": _COMPOSITION_UNMIRRORED_MODEL_REASON,
     # -- m-snapshot-read: the streamed-delivery lane ------------------------- #
     "m-snapshot-read-027": _STREAMED_DELIVERY_REASON,

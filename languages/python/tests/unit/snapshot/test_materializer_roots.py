@@ -13,15 +13,18 @@ from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
+from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import (
+    ABSENT,
     ROOT_LEVEL,
+    EntityState,
     PageBuilder,
     ViewSchema,
+    entity_state,
     page_rows,
     page_schedule,
     reach_into,
     release_finished_rows,
-    state_for,
 )
 from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
@@ -180,15 +183,15 @@ def test_releasing_a_finished_root_twice_is_idempotent() -> None:
     schedule = page_schedule(cast("Any", page), _every_family_versioned, atomic=True)
     reached: list[int] = []
     reach_into(rows, root, reached)
-    state_for(rows, root)
+    entity_state(rows, root)
     assert rows.judged_states.singleton(0) is not None
 
     release_finished_rows(cast("Any", page), schedule, 0, reached)
-    released = (list(rows.member_rows), list(rows.keys), list(rows.logical_ids))
+    released = (list(rows.member_rows), list(rows.keys), list(rows.logical_rows))
     release_finished_rows(cast("Any", page), schedule, 0, reached)
 
     assert released == ([()], [None], [0])
-    assert (list(rows.member_rows), list(rows.keys), list(rows.logical_ids)) == released
+    assert (list(rows.member_rows), list(rows.keys), list(rows.logical_rows)) == released
     assert rows.judged_states.singleton(0) is None
 
 
@@ -210,13 +213,18 @@ def test_root_zero_publishes_before_root_one_state_is_decoded() -> None:
 
 
 def _shared_keyless_animal(
-    owners: tuple[int, ...], animal_row: dict[str, object], uncarrying: tuple[str, ...]
+    owners: tuple[int, ...],
+    animal_row: dict[str, object],
+    uncarrying: tuple[str, ...],
+    *,
+    proved: bool = False,
 ) -> object:
     """A Page rooted at ``owners``, each Person owning the one keyless Animal
-    occurrence ``animal_row`` claims through a read carrying no source for the
-    members stored under ``uncarrying``."""
+    fetched row ``animal_row`` records through a read carrying no source for the
+    members stored under ``uncarrying``, on a ``proved`` level where its level
+    records each row key at most once."""
     animals = RelationshipViewKey(RelationshipIdentity(identity_of(_ANIMAL, "Person"), "animals"))
-    builder = PageBuilder(ViewSchema.of(animals))
+    builder = PageBuilder(ViewSchema.of(animals, repeating_levels=frozenset() if proved else None))
     cataloged = CatalogedModel(_ANIMAL)
     animal = convert_cells(
         cataloged,
@@ -224,11 +232,17 @@ def _shared_keyless_animal(
         animal_row,
         builder,
         source=ROOT_LEVEL,
+        singleton=proved,
     )
     people = compiled_read(_ANIMAL, "Person")
     roots = tuple(
         convert_cells(
-            cataloged, people, {"id": owner, "name": f"P{owner}"}, builder, source=ROOT_LEVEL
+            cataloged,
+            people,
+            {"id": owner, "name": f"P{owner}"},
+            builder,
+            source=ROOT_LEVEL,
+            singleton=proved,
         )
         for owner in owners
     )
@@ -268,16 +282,19 @@ def _shared_keyless_animal(
         ),
     ],
 )
-def test_a_keyless_occurrence_is_judged_again_for_every_root_reaching_it(
+@pytest.mark.parametrize("proved", [False, True], ids=["deferred", "proved"])
+def test_a_keyless_fetched_row_publishes_the_same_state_to_every_root_reaching_it(
     owners: tuple[int, ...],
     atomic: bool,
     animal_row: dict[str, object],
     uncarrying: tuple[str, ...],
     expected: tuple[object, ...],
+    proved: bool,
 ) -> None:
-    # A keyless claim shares no judged state, so each root reaching it judges its
-    # payload anew, after earlier roots released what they alone reached.
-    page = _shared_keyless_animal(owners, animal_row, uncarrying)
+    # A deferred keyless fetched row shares no judged state, so each root reaching
+    # it judges its payload anew, after earlier roots released what they alone
+    # reached; a proved one was judged once, as it was recorded.
+    page = _shared_keyless_animal(owners, animal_row, uncarrying, proved=proved)
 
     def publish(root: RootView, _ordinal: int) -> tuple[object, ...]:
         (node,) = (node for node in range(len(root)) if root.layout(node).concrete.name != "Person")
@@ -291,3 +308,125 @@ def test_a_keyless_occurrence_is_judged_again_for_every_root_reaching_it(
     published = list(publish_roots(cast("Any", page), publish, _ANIMAL, atomic=atomic))
 
     assert published == [expected] * len(owners)
+
+
+def _proved_orders(*badges: str) -> tuple[object, tuple[int, ...]]:
+    """A one-level proved Page of EncodedOrder roots, one per badge spelling."""
+    builder = PageBuilder(ViewSchema(((),), repeating_levels=frozenset()))
+    compiled = compiled_read(_ENCODED, "EncodedOrder")
+    cataloged = CatalogedModel(_ENCODED)
+    roots = tuple(
+        convert_cells(
+            cataloged,
+            compiled,
+            _encoded_order(f"{ordinal:02d}", badge=badge),
+            builder,
+            source=ROOT_LEVEL,
+            singleton=True,
+        )
+        for ordinal, badge in enumerate(badges, 1)
+    )
+    return builder.finish(roots, Pin()), roots
+
+
+def test_a_proved_level_judges_each_row_as_it_is_recorded_and_publication_reads_it() -> None:
+    with recorded_conversion_dependencies() as calls:
+        page, _roots = _proved_orders("0e", "0f")
+        assert calls.decoded == ["0e", "0f"]
+
+        first, second = observed_roots(cast("Any", page), _ENCODED)
+
+    assert calls.decoded == ["0e", "0f"]
+    assert [first.member_values[0][2], second.member_values[0][2]] == [b"\x0e", b"\x0f"]
+    rows = page_rows(page)
+    assert list(rows.stored_values) == [None, None]
+    assert len(rows.decoders) == 2
+    assert not any(rows.decoders.pending(fetched_row) for fetched_row in (0, 1))
+
+
+def test_a_proved_row_judged_without_findings_is_held_as_its_member_row_alone() -> None:
+    page, _roots = _proved_orders("0e", "not-hex")
+    recorded = page_rows(page).judged_states.by_logical_row
+
+    first, second = recorded[0], recorded[1]
+    assert type(first) is tuple
+    assert first[2] == b"\x0e"
+    assert type(second) is EntityState
+    assert second.findings
+
+
+def test_a_keyless_proved_row_recorded_without_findings_answers_its_member_row() -> None:
+    builder = PageBuilder(ViewSchema(((),), repeating_levels=frozenset()))
+    layout = CatalogedModel(_ENCODED).layouts.entity(identity_of(_ENCODED, "EncodedOrder"))
+    values = tuple(ABSENT for _ in layout.members)
+    fetched_row = builder.add_fetched_row(ROOT_LEVEL, layout, None, values, values, (), values)
+    rows = page_rows(builder.finish((fetched_row,), Pin()))
+
+    assert entity_state(rows, fetched_row) == EntityState(values, ())
+
+
+def test_proved_and_merged_levels_number_their_logical_rows_densely() -> None:
+    builder = PageBuilder(ViewSchema(((), (), ()), repeating_levels=frozenset({0, 2})))
+    compiled = compiled_read(_ENCODED, "EncodedOrder")
+    cataloged = CatalogedModel(_ENCODED)
+
+    def record(source: int, key: str) -> int:
+        return convert_cells(
+            cataloged,
+            compiled,
+            _encoded_order(key),
+            builder,
+            source=source,
+            singleton=source == 1,
+        )
+
+    fetched = (record(0, "01"), record(0, "01"), record(1, "02"), record(2, "03"))
+    rows = page_rows(builder.finish(fetched[:1], Pin()))
+
+    assert list(rows.logical_rows) == [0, 0, 1, 2]
+    assert list(rows.fetched_rows_by_logical_row) == [(0, 1), 2, 3]
+    assert rows.judged_states.by_logical_row[0] is None
+    assert rows.judged_states.by_logical_row[1] is not None
+
+
+def test_a_row_judged_as_it_is_recorded_is_refused_on_a_level_that_may_repeat_rows() -> None:
+    builder = PageBuilder(ViewSchema.of())
+
+    with pytest.raises(ValueError, match="compared before it is judged"):
+        convert_cells(
+            CatalogedModel(_ENCODED),
+            compiled_read(_ENCODED, "EncodedOrder"),
+            _encoded_order("01"),
+            builder,
+            source=ROOT_LEVEL,
+            singleton=True,
+        )
+
+
+def test_a_proved_row_reached_by_several_roots_shares_its_state_but_not_its_node() -> None:
+    fixture = PageFixture(ENCODED_ORDERS, "EncodedOrderItem.order", proved=True)
+    order = fixture.node("EncodedOrder", _encoded_order("01"))
+    items = tuple(
+        fixture.node("EncodedOrderItem", {"id": item, "order_id": 1, "code_hex": "0a"})
+        for item in (10, 11)
+    )
+    for item in items:
+        fixture.attach(item, "EncodedOrderItem.order", order)
+
+    first, second = fixture.materialize(*items)
+
+    first_order = cast("Any", first).order
+    second_order = cast("Any", second).order
+    assert first_order is not second_order
+    assert first_order == second_order
+    assert first_order.badge == b"\x0f"
+
+
+def test_a_proved_row_no_root_reaches_classifies_no_root() -> None:
+    fixture = PageFixture(ENCODED_ORDERS, proved=True)
+    valid = fixture.node("EncodedOrder", _encoded_order("01"))
+    fixture.node("EncodedOrder", _encoded_order("02", badge="not-hex"))
+
+    (published,) = fixture.materialize(valid)
+
+    assert not isinstance(published, InvalidData)

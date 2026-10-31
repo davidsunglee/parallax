@@ -40,7 +40,7 @@ def each_root[T](
     *,
     atomic: bool = False,
     milestones: TemporalShape | None = None,
-    origins: Mapping[int, object] = MappingProxyType({}),
+    read_evidence: Mapping[int, object] = MappingProxyType({}),
 ) -> list[T]:
     """What ``inspect`` answers for each of ``page``'s roots, given the Root View
     and result ordinal the pass hands that root's publisher."""
@@ -51,7 +51,7 @@ def each_root[T](
             model,
             atomic=atomic,
             milestones=milestones,
-            origins=cast("Mapping[int, Any]", origins),
+            read_evidence=cast("Mapping[int, Any]", read_evidence),
         )
     )
 
@@ -70,7 +70,7 @@ class RootObservation:
     issues: tuple[tuple[StoredDataIssueInput, ...], ...]
     view_layouts: tuple[RootViewLayout, ...]
     views: tuple[tuple[object, ...], ...]
-    origins: tuple[object, ...]
+    read_evidence: tuple[object, ...]
     invalid_root: InvalidRootInput | None
     has_issues: bool
     pin: Pin
@@ -102,7 +102,7 @@ def observed(root: RootView, _ordinal: int = 0) -> RootObservation:
             tuple(root.view(node, slot) for slot in range(len(root.view_layout(node).slots)))
             for node in nodes
         ),
-        origins=tuple(root.origin(node) for node in nodes),
+        read_evidence=tuple(root.read_evidence(node) for node in nodes),
         invalid_root=root.invalid_root,
         has_issues=root.has_issues,
         pin=root.pin,
@@ -116,7 +116,9 @@ def observed_roots(
     *,
     atomic: bool = False,
     milestones: TemporalShape | None = None,
-    origins: Mapping[int, object] = MappingProxyType({}),
+    read_evidence: Mapping[int, object] = MappingProxyType({}),
 ) -> list[RootObservation]:
     """Every root of ``page``, observed in result order."""
-    return each_root(page, model, observed, atomic=atomic, milestones=milestones, origins=origins)
+    return each_root(
+        page, model, observed, atomic=atomic, milestones=milestones, read_evidence=read_evidence
+    )

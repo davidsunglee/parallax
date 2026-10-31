@@ -1,6 +1,6 @@
 """Write-observation retention unit tests (`parallax.core._execution._retention`).
 
-Drives :class:`RecordedProjections` and :func:`defer_read_evidence` directly, off
+Drives :class:`RecordedFetchedRows` and :func:`defer_read_evidence` directly, off
 hand-written rows admitted as judged positional Entity State rather than through
 a `TxnContext.find`: which of the two mutually exclusive branches a row takes (a
 versioned row's observed version, a temporal row's whole predecessor milestone),
@@ -32,8 +32,8 @@ from parallax.core import inheritance, opt_lock, temporal_read
 from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._retention import (
-    ReadEvidenceByProjection,
-    RecordedProjections,
+    ReadEvidenceByFetchedRow,
+    RecordedFetchedRows,
     defer_read_evidence,
 )
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
@@ -46,8 +46,8 @@ from parallax.core.read_delivery._page import (
     ROOT_LEVEL,
     PageBuilder,
     ViewSchema,
+    entity_state,
     page_rows,
-    state_for,
 )
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
@@ -156,7 +156,7 @@ def _in_transaction[T](model: AcceptedMetamodel, body: Callable[[UnitOfWork], T]
 
 def _retained(
     model: AcceptedMetamodel, entity: EntityIdentity, *rows: Mapping[str, object]
-) -> ReadEvidenceByProjection:
+) -> ReadEvidenceByFetchedRow:
     """What one participating read of ``rows`` retains, in a unit of work of its own."""
     return judged_evidence(
         model, entity, *rows, evidence_context=_unit_of_work(model).source_authority
@@ -192,8 +192,8 @@ def test_a_collector_that_observed_nothing_retains_no_sources() -> None:
 def test_deferred_sources_release_callbacks_after_resolving_every_origin() -> None:
     model = _accepted("orders")
     entity = corpus_entity("Order")
-    observations = RecordedProjections()
-    observations.observe_projection(0, entity, None)
+    observations = RecordedFetchedRows()
+    observations.observe_fetched_row(0, entity, None)
     sources = defer_read_evidence(
         model,
         observations,
@@ -214,8 +214,8 @@ def test_deferred_sources_release_callbacks_after_resolving_every_origin() -> No
 def test_deferred_sources_report_a_reached_projection_with_no_admissible_state_as_absent() -> None:
     model = _accepted("orders")
     unknown = EntityIdentity("parallax.compatibility", "Unknown")
-    observations = RecordedProjections()
-    observations.observe_projection(0, unknown, None)
+    observations = RecordedFetchedRows()
+    observations.observe_fetched_row(0, unknown, None)
     sources = defer_read_evidence(
         model,
         observations,
@@ -589,7 +589,7 @@ def _instrument_root(builder: PageBuilder, tag: str, price: Decimal) -> int:
     }
     model = _accepted("instrument")
     row = result_row(compiled_read(model, "Instrument"), stored)
-    ref, _resolved, _document, _variant = bound_read(model, "Instrument").convert_row(
+    ref, _resolved, _document, _variant = bound_read(model, "Instrument").record_row(
         row, builder, source=ROOT_LEVEL
     )
     return ref
@@ -608,15 +608,15 @@ def test_a_root_retains_evidence_from_its_own_judged_state_beside_an_equal_sibli
     bond = _instrument_root(builder, "bond", bond_price)
     stock = _instrument_root(builder, "stock", stock_price)
     page = builder.finish((bond, stock), Pin())
-    assert page_rows(page).logical_ids[bond] == page_rows(page).logical_ids[stock]
-    assert page_rows(page).witnesses[bond] == page_rows(page).witnesses[stock]
-    state_for(page_rows(page), bond)
-    state_for(page_rows(page), stock)
+    assert page_rows(page).logical_rows[bond] == page_rows(page).logical_rows[stock]
+    assert page_rows(page).stored_values[bond] == page_rows(page).stored_values[stock]
+    entity_state(page_rows(page), bond)
+    entity_state(page_rows(page), stock)
     observations = ReadEvidenceCollector(
         model, evidence_context=_unit_of_work(model).source_authority
     )
-    observations.observe_projection(bond, corpus_entity("Bond"), None)
-    observations.observe_projection(stock, corpus_entity("Stock"), None)
+    observations.observe_fetched_row(bond, corpus_entity("Bond"), None)
+    observations.observe_fetched_row(stock, corpus_entity("Stock"), None)
     # Page judgment and Read Evidence retention meet only inside the read that
     # owns both, so the collector's origin step is called directly.
     sources = observations.origins_for(page)

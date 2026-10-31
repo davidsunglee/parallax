@@ -70,7 +70,7 @@ type ObjectStateKey = VersionedObjectStateKey | TemporalObjectStateKey
 
 Closed and structural. An insert and an unversioned Non-Temporal write observe
 no state and therefore have no Object State Key at all — the absence is the
-missing arm, never a key with an empty coordinate.
+missing case, never a key with an empty coordinate.
 """
 
 

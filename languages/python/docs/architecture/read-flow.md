@@ -178,16 +178,17 @@ An eager graph read, from the lane's entry point to the sealed Page:
    ▼
  driver rows
    ▼
- ReadRowConverter.convert_row → PageBuilder                             _row_converter
+ ReadRowConverter.record_rows → PageBuilder                             _row_converter
    row_identity: the concrete Entity from the identity cell, the shared document
-   from its cell; each member read at its own cell or at its name in that document;
-   register the identity claim; leave payload judgement until it is needed;
-   the origin collector observes each projection
+   from its cell, skipped where every row names one Entity; each member read at its
+   own cell or at its name in that document; record the row identity; judge the
+   payload now on a level that records each row key once, else when it is needed;
+   the origin collector observes each fetched row
    ▼
  each round of ready fetch steps (ReadPlan.ready_fetches):
    guarded_parents → gather_keys → CompiledTemplate.render(keys, query=query)
    one statement: execute_read; several: DatabaseConnection.execute_pipeline
-   convert rows → attach_children / attach_back_reference / attach_empty
+   record rows → attach_children / attach_back_reference / attach_empty
    ▼
  PageBuilder.finish(root refs, query pin)
    ▼
@@ -203,7 +204,7 @@ A `CompiledRead` carries its statement, the resolved concrete position, the
 together. The `SelectListBuilder` that renders a select list builds the contract from
 the cells it emitted, so where each value sits in a driver row is recorded once, when
 the statement is rendered. It refuses a select list that does not carry what its plan
-requires, union branches or NULL-tail arms whose cells disagree, and two cells one
+requires, union branches or NULL-tail branches whose cells disagree, and two cells one
 Entity would publish under one key. `bind` builds the converter from that same contract
 and projection. Binding, conversion, row identity, Continuation Order coordinates and
 flat-row publication all index the folded row by ordinal, so no column alias is
@@ -290,7 +291,7 @@ admission stay outside the cache.
 - `parallax.core.sql_gen._inheritance:DriverRowSlot`
 - `parallax.core.read_delivery._row_converter:bind`
 - `parallax.core.read_delivery._row_converter:ReadRowConverter`
-- `parallax.core.read_delivery._row_converter:ReadRowConverter.convert_row`
+- `parallax.core.read_delivery._row_converter:ReadRowConverter.record_rows`
 - `parallax.core.read_delivery._row_decoding:row_identity`
 - `parallax.core.read_delivery._read_plan:ReadPlan`
 - `parallax.core.read_delivery._read_plan:ReadPlan.ready_fetches`
@@ -322,8 +323,8 @@ admission stay outside the cache.
               ▼
  publish_roots: one pass per Page                                       _root_publication
               │   page_schedule and page_edges once; one RootView for the pass
-              │   each root: resolve claims, states, carried views and, for a
-              │              root publishing no finding, its origins
+              │   each root: resolve logical rows, states, carried views and, for a
+              │              root publishing no finding, its Read Evidence
               │              → release the Page rows it finished with
               │              → publish_root(root view, result ordinal)
               ├ eager (atomic): hold every root's values, release the Page,
@@ -331,12 +332,14 @@ admission stay outside the cache.
               └ stream:         hand over each root in turn
               │
               ▼
- TypedRootPublisher / WireRootPublisher, one per Page                   _typed / _wire
+ TypedRootPublisher / WireRootPublisher, one per Page            _typed / _wire_render
               ├ classify_root: a conforming root, or an InvalidData record
               ├ Read Evidence reaches the nodes of a conforming root only
-              ├ Typed: EntityGraphConstruction → frozen Entity instances
-              └ Wire:  WireWalk along the requested Include Paths
-                        → frozen WireEntity mappings
+              ├ NodeProvenance: one per entity, conformance and pin per Page;
+              │                 a node carrying Read Evidence owns its own
+              ├ Typed: EntityGraphConstruction.publish(Root View) → frozen Entity instances
+              └ Wire:  WireRenderer along the requested Include Paths, one prepared
+                        plan per render token and concrete → frozen WireEntity mappings
               │
               ▼
  conforming value | InvalidData[value]
@@ -350,16 +353,19 @@ admission stay outside the cache.
 A Root View is one root's view over the Page, and the pass points its one Root View at
 each root in turn. Within a root, one logical row is one node, so a diamond of include
 paths shares a node and following a relationship never reads. Two roots never share a
-node object, even when they reached the same Entity State. An arm the root's carried
-views discard, such as an overwritten view, is still compared and judged but publishes
-nowhere, so its findings do not classify the root.
+node object, even when they reached the same Entity State. A relationship value the
+root's carried views discard, such as an overwritten view, is still compared and judged
+but publishes nowhere, so its findings do not classify the root.
 
 The eager path publishes nothing until every root is ready, which is the whole-result
 boundary; a stream publishes each root as soon as it is ready and keeps what it has
 already published if a later root fails. Typed publication needs the selection's
 `EntityGraphConstruction`; Wire publication does not, so Wire can serve a model with no
-classes. The Wire publication holds one scalar encoder for the delivery and drops it
-when the delivery releases the publication.
+classes. Model preparation derives every Entity's Wire facts, for class-less models
+too, and the compiled read's include tree keeps the plans rendered from them, so every
+Wire reader of one read — each direct root, each stream Page, each Typed projection —
+renders through the same plans. The Wire publication holds one scalar encoder for the
+delivery and drops it when the delivery releases the publication.
 
 `Snapshot.wire()` and a paused Typed stream's `SnapshotStream.wire` project values that
 are already published into Wire form in memory, with no further read.
@@ -377,9 +383,10 @@ are already published into Wire form in memory, with no further read.
 - `parallax.core.read_delivery._page._rows:release_finished_rows`
 - `parallax.snapshot._publication._root:RootView`
 - `parallax.snapshot._publication._typed:TypedRootPublisher`
-- `parallax.snapshot._publication._wire:WireRootPublisher`
+- `parallax.snapshot._publication._wire_render:WireRootPublisher`
 - `parallax.snapshot._publication._classify:classify_root`
-- `parallax.snapshot._publication._wire:WireWalk`
+- `parallax.snapshot._publication._wire_render:WireRenderer`
+- `parallax.core._execution._planning:wire_model_facts`
 - `parallax.snapshot._publication._wire:WireEntity`
 - `parallax.snapshot._publication._wire:shared_wire_encoder`
 - `parallax.core.read_delivery._page._stored_data:InvalidData`
@@ -466,7 +473,8 @@ value's pin is checked at the same verb: a value read at a finite Transaction-Ti
 instant is refused by `validate_source_pin` with `TransactionTimePinReadOnlyError`,
 even when a writable attempt read it. Publication provenance — the concrete Entity,
 the Pin, and whether the root conformed — is recorded on every published value, with
-or without evidence. A standalone or read-only value therefore stays a stored value
+or without evidence, as one `NodeProvenance` that a Typed node's state and a Wire node
+share for the same facts. A standalone or read-only value therefore stays a stored value
 whose revision a target write can state, though it cannot license a source write.
 [Write flow](write-flow.md#what-licenses-each-admitted-write) follows the write from
 admission onward.

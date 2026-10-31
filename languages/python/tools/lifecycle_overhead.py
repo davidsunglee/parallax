@@ -9,11 +9,11 @@ aggregate, because no number in this repository is enforced against elapsed
 time, every CI job runs the floating `ubuntu-latest` label, and a wall clock that
 gates turns an unrelated slow machine into a failed merge.
 
-**Two arms, interleaved.** The same workload runs with no Provider installed and
+**Two variants, interleaved.** The same workload runs with no Provider installed and
 against a production shape — one
 :class:`~parallax.core.execution_lifecycle.FanoutLifecycleProvider` over Safe
 logging at INFO into an application-owned bounded queue, bounded metrics, and
-sampled tracing into a bounded exporter. The arms alternate rather than running
+sampled tracing into a bounded exporter. The variants alternate rather than running
 one after the other, and the order inside each pair alternates too, so frequency
 scaling, thermal drift, and a noisy neighbour land on both arms and largely
 cancel. Pairing is also what makes the per-event figure honest: it comes from one
@@ -39,21 +39,21 @@ arithmetic rather than in prose, by projecting the measured absolute overhead
 across a range of plausible per-round-trip latencies.
 
 **Two readings of the overhead, because they answer differently.** The ratio of
-the two arms' own percentiles is the reading the initial targets are worded in,
-and it is the noisier one: the unobserved arm's tail inflates its own p95, which
+the two variants' own percentiles is the reading the initial targets are worded in,
+and it is the noisier one: the unobserved variant's tail inflates its own p95, which
 DEFLATES a p95 stated as a ratio of two independently ranked distributions. The
 paired reading — the percentile of each pair's own ratio — is immune to that,
 because both halves of every ratio were measured microseconds apart. Both are
 printed.
 
 **What a p95 of a DIFFERENCE can and cannot say.** Every tail this measurement
-has belongs to both arms — a scheduler preemption, a collection, a frequency
-step — and subtracting one arm from the other does not remove either one's
+has belongs to both variants — a scheduler preemption, a collection, a frequency
+step — and subtracting one variant from the other does not remove either one's
 tail, it combines them. The p95 of a paired difference is therefore a percentile
-of the dispatch cost PLUS whatever the two arms disagreed about, which bounds
+of the dispatch cost PLUS whatever the two variants disagreed about, which bounds
 the dispatch tail in neither direction: a preemption landing on the unobserved
-arm is subtracted out of that pair's difference and understates it as surely as
-one landing on the observed arm overstates it. Only the p50 is a measurement of
+variant is subtracted out of that pair's difference and understates it as surely as
+one landing on the observed variant overstates it. Only the p50 is a measurement of
 the work itself. The cheapest configuration is what shows the scale of the
 disagreement: its own p95 difference is twice its p50 while it does barely any
 work at all.
@@ -118,7 +118,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 
 PAIRS: Final = 3_000
-"""Timed pairs per configuration. Each contributes one sample to each arm, so the
+"""Timed pairs per configuration. Each contributes one sample to each variant, so the
 p95 is ranked over three thousand observations rather than over a handful."""
 
 WARMUP_PAIRS: Final = 200
@@ -238,7 +238,7 @@ class _MemoryPort:
     """An in-memory `m-db-port` with no boundary of its own.
 
     It answers one row to every read and one affected row to every write, so the
-    denominator is the smallest a real workload could have and the two arms
+    denominator is the smallest a real workload could have and the two variants
     differ by the lifecycle alone. ``statements`` is what the latency projection
     charges its round trips against. It has no ordered write transport, so
     every write it answers is one call of its own.
@@ -464,7 +464,7 @@ def _timed(work: Callable[[], None]) -> int:
 
 
 class _Measurement:
-    """Both arms' samples, and each pair's own difference and ratio.
+    """Both variants' samples, and each pair's own difference and ratio.
 
     The paired series are kept rather than derived afterwards because pairing is
     the point: a difference or a ratio is only meaningful between two runs a few
@@ -484,7 +484,7 @@ def _measure(
     observed: ScopedDatabase,
     records: queue.Queue[logging.LogRecord],
 ) -> _Measurement:
-    """Run both arms ``PAIRS`` times, alternating which of the two goes first.
+    """Run both variants ``PAIRS`` times, alternating which of the two goes first.
 
     The queue is emptied between pairs and outside every timed window, so its
     depth never becomes the thing being measured and its drain never lands in a
@@ -727,7 +727,7 @@ def main(argv: list[str]) -> int:
 
     Exit codes: 0 — the measurement ran; 2 — usage error. There is no exit code
     for a number that is too large, deliberately. ``--durations`` names where
-    the empty sidecar goes: every arm here is timed in-process, so the member's
+    the empty sidecar goes: every variant here is timed in-process, so the member's
     only span is the one its collector records around it. ``--metadata`` names
     where the one runtime this process is, and measures in, is recorded.
     """

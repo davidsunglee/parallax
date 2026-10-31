@@ -121,7 +121,7 @@ type PlannedValue = object
 :data:`GeneratedValueExpression`.
 
 Python carries every neutral value natively, so the alias names the position
-rather than narrowing it; the generated-value arm is the only one a consumer
+rather than narrowing it; the generated-value case is the only one a consumer
 distinguishes structurally.
 """
 

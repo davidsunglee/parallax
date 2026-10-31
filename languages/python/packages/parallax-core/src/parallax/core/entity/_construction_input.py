@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import ClassVar, Final, Self
 
-__all__ = ["ABSENT", "UNLOADED", "NodeHandle"]
+__all__ = ["ABSENT", "UNLOADED"]
 
 
 class Absent:
@@ -84,17 +84,3 @@ class _Unloaded:
 
 
 UNLOADED: _Unloaded = _Unloaded()
-
-
-class NodeHandle:
-    """An opaque, callback-scoped reference to one allocated node.
-
-    It holds nothing whatever: the issuing construction owns the mapping from
-    handle to allocation index, so a handle exposes no attribute to read, no
-    index to restate, and no route to a partially built instance. A caller
-    composes graph shape by passing handles back, never by reading anything off
-    one, and a handle means nothing outside the ``construct(...)`` call that
-    issued it.
-    """
-
-    __slots__ = ()

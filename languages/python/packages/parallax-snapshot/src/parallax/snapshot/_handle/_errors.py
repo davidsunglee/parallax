@@ -31,9 +31,10 @@ class SnapshotMaterializationError(RuntimeError):
     """Building the Entity graph failed after the read itself had succeeded.
 
     Raised exactly once, at the materialization boundary, for a graph-construction
-    refusal, a lifecycle build failure, or a state-factory failure. The original
-    exception is the ``__cause__`` and is also carried as :attr:`cause`, so the
-    defect stays diagnosable while callers branch on one stable code.
+    refusal, or a failure answering the node-indexed graph or its lifecycle
+    states. The original exception is the ``__cause__`` and is also carried as
+    :attr:`cause`, so the defect stays diagnosable while callers branch on one
+    stable code.
 
     Everything upstream keeps its own classification: query, capability,
     transaction, adapter, SQL, and neutral-decoding failures are never re-wrapped

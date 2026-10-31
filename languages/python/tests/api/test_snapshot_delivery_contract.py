@@ -75,7 +75,7 @@ def test_moving_an_authored_sort_key_can_skip_or_duplicate_a_root(
 def test_a_postgres_locking_stream_continues_and_retains_write_authority(
     profile_run: Any,
 ) -> None:
-    # A participating PostgreSQL delivery crosses more than one two-arm page in
+    # A participating PostgreSQL delivery crosses more than one two-branch page in
     # one transaction, so successful publication proves the union inputs carry no
     # illegal lock clause. Updating a published unversioned root in that attempt
     # proves the outer base-row lock retained pessimistic write authority.

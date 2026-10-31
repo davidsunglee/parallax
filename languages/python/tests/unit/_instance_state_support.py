@@ -1,12 +1,12 @@
 """The canonical scenarios published-instance state is measured over, and the
-three arms every reading takes over them.
+three variants every reading takes over them.
 
 Six scenarios — shallow, wide, nested, nullable, partial, polymorphic — carry
 retained bytes on both sides of a representation change, and
 :data:`WARMED_AUXILIARY` carries the seventh the measurement contract reports
 beside them and excludes from every aggregate.
 
-**Three arms, and the two different comparisons they make.**
+**Three variants, and the two different comparisons they make.**
 
 - :data:`COMPACT` is the "after": the shipping publication path in full, which
   needs no fixture because it is production.
@@ -20,14 +20,14 @@ beside them and excludes from every aggregate.
   constructor. It enters no aggregate and provides the published-versus-ordinary
   comparison, distinct from the representation change the aggregates measure.
 
-**Every arm is measured on one tree, which is what makes their differences the
+**Every variant is measured on one tree, which is what makes their differences the
 representation's.** Every framework slot a declared class carries is carried by
 all three — an ordinary value holds the compact and auxiliary pointers exactly
 as a published one does, and an Entity of any backing holds the lifecycle slot —
 so an aggregate over two of them divides two readings taken over one object
 layout; readings from a layout without those slots are not comparable.
 
-**Why the legacy fixture is not the ordinary arm.** A materialized node WAS
+**Why the legacy fixture is not the ordinary variant.** A materialized node WAS
 ``cls.model_construct()`` with no arguments followed by one
 ``object.__setattr__`` per member, which leaves ``__pydantic_fields_set__``
 permanently empty — the sharpest part of what publication retained then, and the
@@ -36,25 +36,24 @@ records every member it was passed. A Value Object was different and is
 reproduced differently: ``vo_class.model_construct(present, **values)``, where
 ``present`` is exactly the members the row carried.
 
-**Why each arm also builds a graph of ``count`` nodes.** Construction is the one
-timing whose per-call scope differs between the arms: a compact node arrives from
-an ``EntityGraphConstruction.construct`` call that also pays a scope, a writer,
-root validation and factory buffering, where the other two arms build a node and
-nothing else. Timing a one-node build against an eleven-node one separates the
-two, so what the report prints as construction is the cost of one MORE node under
-each arm — the quantity the arms hold in common — with the per-call remainder
-printed beside it.
+**Why each variant also builds a graph of ``count`` nodes.** Construction is the one
+timing whose per-call scope differs between the variants: a compact node arrives from
+an ``EntityGraphConstruction.publish`` call that also pays layout validation,
+one lifecycle-states call and the buffering and counting of its result, where
+the other two variants build a node and nothing else. Timing a one-node build against
+an eleven-node one separates the two, so what the report prints as construction
+is the cost of one MORE node under each variant — the quantity the variants hold in
+common — with the per-call remainder printed beside it.
 
-**Why the compact arm also reports what the two arms have in common.** That split
-cancels a call's FIXED cost and not its per-NODE one, and a ``construct`` call
+**Why the compact variant also reports what the two variants have in common.** That split
+cancels a call's FIXED cost and not its per-NODE one, and a ``publish`` call
 does per-node work of its own around the node building it is asked for. The
-pre-flip path paid exactly that work through the same call; the legacy fixture
-reproduces the node building and its lifecycle state and pays none of the rest,
-so the two arms' ``node µs`` are still not the same scope.
+legacy fixture reproduces the node building and its lifecycle state and pays
+none of the rest, so the two variants' ``node µs`` are still not the same scope.
 :func:`compact_common_work_ns` measures the difference by timing, inside one
 call, each thing the fixture also does — which lets the report derive the
-correction rather than state it in prose. Only the compact arm carries one: an
-arm whose call IS a loop over its node builder spends every nanosecond in that
+correction rather than state it in prose. Only the compact variant carries one: an
+variant whose call IS a loop over its node builder spends every nanosecond in that
 builder and has nothing to separate. Every span there prices its term high, so
 the correction EXPECTS to under-state what the pre-flip path paid; it is still a
 remainder of two independently sampled timings, so the corrected ratio is the
@@ -62,7 +61,7 @@ closer estimate and not a bound, and the report grades the uncorrected one.
 
 **What a scenario carries.** One positional member row, ``ABSENT``-spelled and
 aligned to the exact Entity's ``EntityLayout`` — the same row a compiled read
-lays out and hands across ``populate``'s door, with nested tuples at every Value
+lays out and hands across ``publish``'s door, with nested tuples at every Value
 Object containment depth. Every leaf value is built once at import, outside every
 measurement window, so a reading counts the positions a node holds and not the
 payload it borrows.
@@ -78,8 +77,8 @@ declaration engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly, as
 ``tests/_support/snapshot_models.py`` does for the same reason.
 """
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import cached_property
 from time import perf_counter
@@ -106,10 +105,9 @@ from parallax.core.entity import (
     UNLOADED,
     EntityGraphConstruction,
 )
-from parallax.core.entity._construction_input import ABSENT, NodeHandle
+from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._entity import attach_lifecycle_state
-from parallax.core.entity._graph_construction import EntityGraphWriter
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.entity._model import DomainModel as ModelType
@@ -119,19 +117,20 @@ from parallax.core.metamodel import (
     Multiplicity,
     OccurrenceMetadata,
 )
-from parallax.snapshot._inspection import RootConformance, SnapshotNodeState
-from tests._support.model_capabilities import graph_construction_for
+from parallax.core.wire._facts import WireModelFacts
+from parallax.snapshot._inspection import NodeProvenance, RootConformance, SnapshotNodeState
+from tests._support.model_capabilities import graph_construction_for, wire_facts_for
 
 __all__ = [
-    "ARMS",
     "COMPACT",
     "LEGACY",
+    "MEASUREMENT_VARIANTS",
     "ORDINARY",
     "REPORTED",
     "SCENARIOS",
     "WARMED_AUXILIARY",
-    "Arm",
     "LegacyPlan",
+    "MeasurementVariant",
     "Scenario",
     "compact_common_work_ns",
     "scenario_named",
@@ -149,9 +148,9 @@ NAMESPACE: Final = "instance.state"
 #                                                                              #
 # Every root declares one self-referential broad relationship, left unloaded.   #
 # Publication writes EVERY declared relationship slot on every node, so a mix   #
-# declaring none would understate the publication arms; one per scenario keeps  #
+# declaring none would understate the publication variants; one per scenario keeps  #
 # that cost uniform across the mix and attributable to a single position. The   #
-# ordinary arm writes none, because ordinary construction does not.             #
+# ordinary variant writes none, because ordinary construction does not.             #
 # --------------------------------------------------------------------------- #
 
 
@@ -347,13 +346,13 @@ _WARMED_ROW: Final[tuple[object, ...]] = (7, None, "warmed-name", Decimal("12.50
 
 
 # --------------------------------------------------------------------------- #
-# The three arms.                                                              #
+# The three variants.                                                              #
 # --------------------------------------------------------------------------- #
 
 
 @dataclass(frozen=True, slots=True)
 class LegacyPlan:
-    """Everything the legacy arm resolves once per exact Entity rather than per node.
+    """Everything the legacy variant resolves once per exact Entity rather than per node.
 
     Entity Graph Construction memoizes exactly this much — the concrete class and
     where each of the model's row positions lands on it — on its ``facts_for``
@@ -374,7 +373,7 @@ class LegacyPlan:
 
 @dataclass(frozen=True)
 class Scenario:
-    """One canonical shape and the input row its arms are built from."""
+    """One canonical shape and the input row its variants are built from."""
 
     name: str
     summary: str
@@ -382,14 +381,28 @@ class Scenario:
     entity: EntityIdentity
     values: tuple[object, ...]
     warms: bool = False
-    """Whether every arm reads this scenario's ``cached_property`` before the
+    """Whether every variant reads this scenario's ``cached_property`` before the
     sample, so the memoized result is state the reading counts."""
+    provenance: NodeProvenance = field(init=False, repr=False, compare=False)
+    """The provenance every node of this scenario states, built with the
+    scenario: publication shares one per Page, so no node's reading prices it."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "provenance", NodeProvenance(self.entity, RootConformance.CONFORMING)
+        )
 
     @cached_property
     def construction(self) -> EntityGraphConstruction:
         """The Entity Graph Construction preparation composes for this scenario's
         model, derived on first reach."""
         return graph_construction_for(self.model)
+
+    @cached_property
+    def wire(self) -> WireModelFacts:
+        """The Wire facts preparation derives for this scenario's model, derived
+        on first reach."""
+        return wire_facts_for(self.construction.cataloged)
 
     @cached_property
     def layout(self) -> EntityLayout:
@@ -410,7 +423,7 @@ class Scenario:
 
     @cached_property
     def plan(self) -> LegacyPlan:
-        """What the legacy arm resolves once, read from the construction facts
+        """What the legacy variant resolves once, read from the construction facts
         publication resolves it from."""
         facts = self.construction.facts_for(self.entity)
         py_names = facts.plan.py_names
@@ -436,12 +449,10 @@ class Scenario:
         The real `SnapshotNodeState` rather than a stand-in, because the primary
         aggregate counts lifecycle state and a stand-in would misreport the half
         of it that does not change. Allocated per call rather than shared: a state
-        object built outside the window would be borrowed by every arm and priced
-        by none.
+        object built outside the window would be borrowed by every variant and priced
+        by none. Its provenance is the scenario's, as a Page shares it.
         """
-        return SnapshotNodeState(
-            entity=self.entity, views={}, root_conformance=RootConformance.CONFORMING
-        )
+        return SnapshotNodeState(provenance=self.provenance, views={})
 
 
 def legacy_publication(scenario: Scenario, state: object | None) -> object:
@@ -453,7 +464,7 @@ def legacy_publication(scenario: Scenario, state: object | None) -> object:
     publication installed the unloaded sentinel where a read loaded nothing; and
     the lifecycle state written last, as the construction call's own final phase
     still does. Lifecycle state occupies the ``Entity`` root's slot in every
-    arm, so comparisons share the same object layout.
+    variant, so comparisons share the same object layout.
     """
     plan = scenario.plan
     values = scenario.values
@@ -473,31 +484,42 @@ def legacy_publication(scenario: Scenario, state: object | None) -> object:
     return _warmed(scenario, instance)
 
 
+@dataclass(frozen=True, slots=True)
+class _ScenarioGraph:
+    """``count`` unrelated nodes of one scenario, as the indexed graph publication
+    takes: every node the scenario's member row and unloaded relationships."""
+
+    scenario: Scenario
+    count: int
+
+    def __len__(self) -> int:
+        return self.count
+
+    def layout(self, node: int) -> EntityLayout:
+        del node
+        return self.scenario.layout
+
+    def member_values(self, node: int) -> tuple[object, ...]:
+        del node
+        return self.scenario.values
+
+    def relationship_values(self, node: int) -> tuple[object, ...]:
+        del node
+        return self.scenario.unloaded
+
+
 def compact_publication(scenario: Scenario, state: object | None) -> object:
     """``scenario``'s node built the way publication builds one today.
 
     The shipping path in full rather than a fixture of it: one Entity Graph
-    Construction call allocating one shell, populating it with the scenario's
-    positional member row and one unloaded position per navigable relationship,
-    and attaching one complete row exactly once. There is nothing here to keep in
-    step with production, because it IS production — which is the half of the
-    comparison the legacy arm cannot be.
+    Construction call publishing a one-node graph of the scenario's positional
+    member row and one unloaded position per navigable relationship, attaching
+    one complete row exactly once. There is nothing here to keep in step with
+    production, because it IS production — which is the half of the comparison
+    the legacy variant cannot be.
     """
-    construction = scenario.construction
-    entity = scenario.entity
-    members = scenario.values
-    relationships = scenario.unloaded
-
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(entity)
-        writer.populate(handle, members, relationships)
-        return (handle,)
-
-    roots = construction.construct(
-        build,
-        state_factory=None if state is None else lambda _view, _handle: state,
-    )
-    return _warmed(scenario, roots[0])
+    root = scenario.construction.publish(_ScenarioGraph(scenario, 1), lambda _instances: (state,))
+    return _warmed(scenario, root)
 
 
 def ordinary_publication(scenario: Scenario, state: object | None) -> object:
@@ -520,7 +542,7 @@ def ordinary_publication(scenario: Scenario, state: object | None) -> object:
     if state is not None:
         raise ValueError(
             "an ordinary instance has no lifecycle state to carry (spec/python.md §3), "
-            "so the ordinary arm may not be given one"
+            "so the ordinary variant may not be given one"
         )
     plan = scenario.plan
     values = scenario.values
@@ -579,13 +601,13 @@ def _one_at_a_time(
     *,
     lifecycle: bool,
 ) -> Callable[[Scenario, int], tuple[object, ...]]:
-    """``count`` nodes from an arm that builds one node per call.
+    """``count`` nodes from a variant that builds one node per call.
 
-    Both non-compact arms build a node and nothing else, so their graph IS the
+    Both non-compact variants build a node and nothing else, so their graph IS the
     loop — which is what makes their per-call remainder measure as the zero it
     should be, rather than as an allowance the comparison would have to grant
-    them. ``lifecycle`` says whether that arm's node carries state at all, which
-    is a fact about the arm rather than about the reading: a published node has
+    them. ``lifecycle`` says whether that variant's node carries state at all, which
+    is a fact about the variant rather than about the reading: a published node has
     state under either backing and an ordinary one has none.
     """
 
@@ -598,27 +620,24 @@ def _one_at_a_time(
 def compact_graph(scenario: Scenario, count: int) -> tuple[object, ...]:
     """``count`` of ``scenario``'s nodes from ONE Entity Graph Construction call.
 
-    Allocation before any populate, as the writer requires, and one lifecycle
-    state per node, so the only thing that varies with ``count`` is how many
-    nodes one call's scaffolding is spread over.
+    Every node is allocated before any is filled, as publication requires, and
+    each carries its own lifecycle state, so the only thing that varies with
+    ``count`` is how many nodes one call's scaffolding is spread over. The graph
+    answers only its root, so the nodes are taken from the lifecycle-states
+    call, which is handed every one.
     """
-    construction = scenario.construction
-    entity = scenario.entity
-    members = scenario.values
-    relationships = scenario.unloaded
+    published: list[object] = []
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handles = tuple(writer.allocate(entity) for _ in range(count))
-        for handle in handles:
-            writer.populate(handle, members, relationships)
-        return handles
+    def lifecycle_states(instances: Sequence[object]) -> list[object]:
+        published.extend(instances)
+        return [scenario.state() for _ in instances]
 
-    roots = construction.construct(build, state_factory=lambda _view, _handle: scenario.state())
-    return _published_graph(scenario, roots)
+    scenario.construction.publish(_ScenarioGraph(scenario, count), lifecycle_states)
+    return _published_graph(scenario, tuple(published))
 
 
 def _published_graph(scenario: Scenario, roots: tuple[object, ...]) -> tuple[object, ...]:
-    """``roots`` warmed, and collected the way this arm's graph answers them.
+    """``roots`` warmed, and collected the way this variant's graph answers them.
 
     Shared by :func:`compact_graph` and by the span
     :func:`compact_common_work_ns` times rather than spelled in both: the residue
@@ -630,7 +649,7 @@ def _published_graph(scenario: Scenario, roots: tuple[object, ...]) -> tuple[obj
 
 
 def _released_graph(scenario: Scenario, roots: tuple[object, ...]) -> None:
-    """This arm's result tuple, built and released again when this frame ends.
+    """This variant's result tuple, built and released again when this frame ends.
 
     A tuple is not only built. :func:`compact_graph` hands its tuple to a caller
     that discards it inside the same window the call is timed in, so a span that
@@ -646,35 +665,24 @@ def compact_common_work_ns(scenario: Scenario, count: int) -> float:
     """Nanoseconds one :func:`compact_graph` call spends on work the legacy
     fixture also does, per call.
 
-    The same call, built the same way, with one timed span for each thing the
+    The same call, built the same way, timed in spans that cover each thing the
     fixture does. **That list is closed because the fixture is closed**: the
-    legacy arm's per-node work is the statements of :func:`_one_at_a_time` and
-    :func:`legacy_publication` and nothing else, four between them, and each has
-    exactly one span here.
+    legacy variant's per-node work is the statements of :func:`_one_at_a_time` and
+    :func:`legacy_publication` and nothing else, four between them.
 
-    - ``scenario.state()`` — the state factory, timed from inside it.
-    - ``model_construct`` and one ``object.__setattr__`` per member — the build
-      callback, timed from inside it, where this arm spells the same node as
-      ``allocate`` and ``populate``.
-    - ``attach_lifecycle_state`` — repeated once per node inside the span, since
-      ``construct`` performs its own in a loop that is no callback and cannot be
-      entered.
+    - ``scenario.state()``, ``model_construct`` with one ``object.__setattr__``
+      per member, and ``attach_lifecycle_state`` — the lifecycle states, the
+      node building and the attach, which ``publish`` performs in loops that call
+      back only once. They are timed together as the whole ``publish`` call.
     - :func:`_warmed` into the tuple the graph answers — :func:`_released_graph`,
-      built and released inside the span as this arm's own caller releases it.
-
-    What is left outside is the per-node work ``construct`` does and the fixture
-    reproduces none of: the populated check, root validation, the resolution view
-    each factory invocation gets, the factory buffering, and ``construct``'s own
-    root tuple. The pre-flip path paid all of it through the same call, which is
-    why the report adds it to the legacy side rather than removing it from this
-    one.
+      built and released inside the span as this variant's own caller releases it.
 
     **Every span prices its term high and none prices one low, which is the
-    direction this figure's error runs in and the whole of what it is worth.** The
-    repeated attach writes a slot that already holds a value and so releases the
-    state it displaces, where ``construct``'s own write finds that slot empty; each
-    span also carries the clock reads that bound it, and a call runs ``count``
-    state-factory spans, so one clock pair per node survives the marginal.
+    direction this figure's error runs in and the whole of what it is worth.**
+    The ``publish`` span also carries the per-node work the fixture never
+    reproduces — validating each node's layout and row shapes, and buffering
+    and counting the states — so this figure over-states the common work by
+    exactly that, and each span carries the clock reads that bound it.
 
     That is a bias, not a bound. The report subtracts this figure's own 1-node and
     11-node marginal from a construction marginal taken in a SEPARATE timing loop,
@@ -682,55 +690,38 @@ def compact_common_work_ns(scenario: Scenario, count: int) -> float:
     enlarges the legacy side it is added to and puts the corrected ratio under the
     true one. So the corrected ratio is the closer estimate of what the
     representation change cost, printed for that, and the 20% rule is stated over
-    the uncorrected arm-against-arm ratio, which needs no term measured here at
+    the uncorrected variant-against-variant ratio, which needs no term measured here at
     all.
 
     A SEPARATE call from the one :func:`compact_graph` answers, so no timer runs
-    inside the call the report's own construction figure is taken over: reading
-    the clock twelve times inside an eleven-node build would move the number this
-    correction is applied to. Nothing untimed here reaches the residue either —
-    the residue is this figure subtracted from a timing of :func:`compact_graph`,
-    so only what is counted INTO it can move the correction.
+    inside the call the report's own construction figure is taken over. Nothing
+    untimed here reaches the residue either — the residue is this figure
+    subtracted from a timing of :func:`compact_graph`, so only what is counted
+    INTO it can move the correction.
     """
-    construction = scenario.construction
-    entity = scenario.entity
-    members = scenario.values
-    relationships = scenario.unloaded
-    inside = 0.0
+    published: list[object] = []
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        nonlocal inside
-        start = perf_counter()
-        handles = tuple(writer.allocate(entity) for _ in range(count))
-        for handle in handles:
-            writer.populate(handle, members, relationships)
-        inside += perf_counter() - start
-        return handles
+    def lifecycle_states(instances: Sequence[object]) -> list[object]:
+        published.extend(instances)
+        return [scenario.state() for _ in instances]
 
-    def state_factory(_view: object, _handle: NodeHandle) -> object:
-        nonlocal inside
-        start = perf_counter()
-        state = scenario.state()
-        inside += perf_counter() - start
-        return state
-
-    roots = construction.construct(build, state_factory=state_factory)
-    reattached = scenario.state()
+    graph = _ScenarioGraph(scenario, count)
     start = perf_counter()
-    _released_graph(scenario, roots)
-    for root in roots:
-        attach_lifecycle_state(cast("BaseModel", root), reattached)
+    scenario.construction.publish(graph, lifecycle_states)
+    inside = perf_counter() - start
+    start = perf_counter()
+    _released_graph(scenario, tuple(published))
     inside += perf_counter() - start
     return inside * 1e9
 
 
 @dataclass(frozen=True, slots=True)
-class Arm:
+class MeasurementVariant:
     """One way of building ``scenario``'s node, at both scopes a reading needs.
 
     The two builders are paired here rather than at the reading, so a graph
-    builder cannot be measured against another arm's node builder — which would
-    silently make the construction figure a difference between two arms rather
+    builder cannot be measured against another variant's node builder — which would
+    silently make the construction figure a difference between two variants rather
     than a cost of one.
     """
 
@@ -740,36 +731,36 @@ class Arm:
     graph: Callable[[Scenario, int], tuple[object, ...]]
     """``count`` nodes, so the cost of one more is separable from the call's."""
     lifecycle: bool
-    """Whether a node of this arm carries lifecycle state at all.
+    """Whether a node of this variant carries lifecycle state at all.
 
     A published node does under either backing, so the reading takes it twice —
     once carrying state and once without — and the pair is what the primary and
     secondary aggregates divide. An ordinary node never does, so the reading
-    must not attach one: an arm asked for
+    must not attach one: a variant asked for
     a comparand a caller cannot hold answers about no instance that exists.
     """
     common_work_ns: Callable[[Scenario, int], float] | None = None
-    """Nanoseconds one call of this arm spends on work the legacy fixture also
-    does, or ``None`` for an arm whose call IS its node builder.
+    """Nanoseconds one call of this variant spends on work the legacy fixture also
+    does, or ``None`` for a variant whose call IS its node builder.
 
-    ``None`` is the honest answer for the ordinary and legacy arms rather than a
+    ``None`` is the honest answer for the ordinary and legacy variants rather than a
     missing measurement: their graph is a loop over the node builder, so every
     nanosecond a call spends is spent on that builder and there is nothing to
-    separate. The compact arm's call runs per-node work of its own around the
+    separate. The compact variant's call runs per-node work of its own around the
     common work, and this is what measures the common half so the report can
     subtract it."""
 
 
-ORDINARY: Final = Arm(
+ORDINARY: Final = MeasurementVariant(
     "ordinary",
     ordinary_publication,
     _one_at_a_time(ordinary_publication, lifecycle=False),
     lifecycle=False,
 )
-LEGACY: Final = Arm(
+LEGACY: Final = MeasurementVariant(
     "legacy", legacy_publication, _one_at_a_time(legacy_publication, lifecycle=True), lifecycle=True
 )
-COMPACT: Final = Arm(
+COMPACT: Final = MeasurementVariant(
     "compact",
     compact_publication,
     compact_graph,
@@ -777,16 +768,16 @@ COMPACT: Final = Arm(
     common_work_ns=compact_common_work_ns,
 )
 
-ARMS: Final[tuple[Arm, ...]] = (ORDINARY, LEGACY, COMPACT)
-"""Every arm a reading is taken under, in the order the tables print them."""
+MEASUREMENT_VARIANTS: Final[tuple[MeasurementVariant, ...]] = (ORDINARY, LEGACY, COMPACT)
+"""Every variant a reading is taken under, in the order the tables print them."""
 
 
 def _warmed(scenario: Scenario, instance: object) -> object:
     """``instance``, with its author-owned auxiliary state warmed if the scenario
     asks for it.
 
-    Inside the arm rather than outside it, so the memoized result is allocated
-    within whatever window the arm is measured in and is counted as state the
+    Inside the variant rather than outside it, so the memoized result is allocated
+    within whatever window the variant is measured in and is counted as state the
     node holds rather than borrowed from before it.
     """
     if scenario.warms:

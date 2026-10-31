@@ -71,7 +71,7 @@ can be in — two such writes can never have observed two different states, so t
 state-keyed rule's own reason does not apply and the object is the correct grain.
 An insert claims nothing at all and reaches no scope.
 
-Both keyed arms address ONE object, so an instruction naming SEVERAL rows reaches
+Both keyed cases address ONE object, so an instruction naming SEVERAL rows reaches
 no scope either: it has no single object and no single observed state. Only a
 caller holding a pre-formed multi-row instruction can author one — a keyed
 developer verb writes the one row the value it was handed names — and every

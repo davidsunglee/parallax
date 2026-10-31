@@ -195,7 +195,7 @@ def encode_managed_wire(neutral_type: NeutralType, value: ManagedValue) -> WireV
 
 type EncodedJsonKind = Literal["boolean", "number", "string"]
 
-# The JSON primitive kind each arm of `_canonical_spelling` below spells its
+# The JSON primitive kind each case of `_canonical_spelling` below spells its
 # variant's values in. Json has no single kind: its values are any JSON value.
 _ENCODED_JSON_KIND: Final[Mapping[type[NeutralType], EncodedJsonKind | None]] = MappingProxyType(
     {
@@ -222,8 +222,8 @@ def encoded_json_kind(neutral_type: NeutralType) -> EncodedJsonKind | None:
     return _ENCODED_JSON_KIND[type(neutral_type)]
 
 
-# One arm per Neutral Type variant. It runs per value on Wire encode (all of
-# `encode_wire`, and `encode_managed_wire` past its scalar fast path), so the arms stay
+# One case per Neutral Type variant. It runs per value on Wire encode (all of
+# `encode_wire`, and `encode_managed_wire` past its scalar fast path), so the cases stay
 # inline rather than behind a per-variant call.
 def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue:  # noqa: C901
     """The canonical spelling of a value already known to be a managed member."""
@@ -271,7 +271,7 @@ def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue
             assert_never(unreachable)
 
 
-# One arm per Neutral Type variant, dispatched once per value on Wire decode (all of
+# One case per Neutral Type variant, dispatched once per value on Wire decode (all of
 # `decode_wire`, and `decode_canonical_wire` past its scalar fast path); splitting the
 # dispatch would add a call to that per-value path.
 def _decode_admitted(neutral_type: NeutralType, value: object) -> _DecodedWireLiteral:  # noqa: C901
@@ -639,8 +639,8 @@ def _json_failure_reason(failure: JsonCarrierFailure) -> WireDecodingReason:
     return "out-of-space" if failure.kind == "member-name-unicode" else "type-mismatch"
 
 
-# One arm per JSON scalar kind. It runs per scalar inside every Json value on Wire encode
-# and decode, so the arms stay inline rather than behind a per-kind call.
+# One case per JSON scalar kind. It runs per scalar inside every Json value on Wire encode
+# and decode, so the cases stay inline rather than behind a per-kind call.
 def _normalize_json_scalar(value: object) -> WireValue:  # noqa: C901
     if _is_unrecognized_exclusion(value):
         raise _JsonFailure(

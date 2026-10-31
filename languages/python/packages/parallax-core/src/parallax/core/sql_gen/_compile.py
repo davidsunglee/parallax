@@ -60,7 +60,7 @@ from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 
 # The planning lane: one immutable statement plan per read or write filter,
-# decided before anything renders and shared by every arm of a read. Same
+# decided before anything renders and shared by every branch of a read. Same
 # aliasing-down convention as above.
 from parallax.core.sql_gen._planning import EvaluationContext as _EvaluationContext
 from parallax.core.sql_gen._planning import LexicalScopeId as _LexicalScopeId
@@ -384,12 +384,12 @@ def _compile_read(
     facet = _inheritance_view(model)
     terms = _lowered_terms(query.order_by, _reserved_result_keys(model, storage))
     seek = None if query.paging is None else query.paging.seek
-    two_arms = (
+    two_branches = (
         seek is not None and query.limit is not None and _needs_null_tail(seek, storage, dialect)
     )
-    outer_lock = two_arms and lock == "locking" and dialect.name == "postgres"
-    arm_lock = None if outer_lock else lock
-    read_shape = _plan_read_shape(query, facet, storage, result_form == "instance", arm_lock)
+    outer_lock = two_branches and lock == "locking" and dialect.name == "postgres"
+    branch_lock = None if outer_lock else lock
+    read_shape = _plan_read_shape(query, facet, storage, result_form == "instance", branch_lock)
     statement_plan = _plan_statement(
         query.predicate,
         evaluation_context=_EvaluationContext.SHARING_ALLOWED,
@@ -402,7 +402,7 @@ def _compile_read(
         execution_value_sources=query.execution_value_sources if deferred else None,
     )
     position = tuple(read_shape.concrete_types)
-    statement, select_list = _render_read_arm(
+    statement, select_list = _render_read_branch(
         query,
         read_shape,
         statement_plan,
@@ -411,12 +411,12 @@ def _compile_read(
         facet,
         storage,
         dialect,
-        lock=arm_lock,
+        lock=branch_lock,
         null_tail=False,
         deferred=page_deferred,
     )
-    if two_arms:
-        null_tail, tail_list = _render_read_arm(
+    if two_branches:
+        null_tail, tail_list = _render_read_branch(
             query,
             read_shape,
             statement_plan,
@@ -425,7 +425,7 @@ def _compile_read(
             facet,
             storage,
             dialect,
-            lock=arm_lock,
+            lock=branch_lock,
             null_tail=True,
             deferred=page_deferred,
         )
@@ -473,7 +473,7 @@ def _union_null_tail(
     deferred: bool,
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
     """The ordered, capped `union all` of a continuing page's ordinary and
-    NULL-tail arms, selected through the cells both arms emit; a ``locking``
+    NULL-tail branches, selected through the cells both branches emit; a ``locking``
     union joins back to the planned physical Table and locks that row instead."""
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
     statement_ctx.append_fragment(ordinary)
@@ -510,7 +510,7 @@ def _union_null_tail(
 
 
 def _needs_null_tail(seek: ResolvedSeek, storage: _StorageLayoutFacet, dialect: Dialect) -> bool:
-    """Whether a continuing page needs a NULL-tail arm, with the leading term
+    """Whether a continuing page needs a NULL-tail branch, with the leading term
     counted as document-resident unless every Table placing it gives it a Column."""
     if not seek.terms:  # pragma: no cover - validated continuations always order by a term
         return False
@@ -758,7 +758,7 @@ def _bind_limit[RowScope](
         ctx.bind_structural(limit)
 
 
-def _render_read_arm(
+def _render_read_branch(
     query: PlannedEntityQuery,
     plan: _SingleTableReadPlan | _TpcsUnionReadPlan,
     statement_plan: _StatementPlan,
@@ -772,8 +772,8 @@ def _render_read_arm(
     null_tail: bool,
     deferred: bool,
 ) -> tuple[LoweredStatement, _SelectListBuilder]:
-    """Render one ordinary or NULL-tail arm of ``query`` from its one physical
-    plan and one statement plan, through builders of this arm's own: its
+    """Render one ordinary or NULL-tail branch of ``query`` from its one physical
+    plan and one statement plan, through builders of this branch's own: its
     statement and its outermost select list.
 
     The physical plan decides whether a read is one Table or a union, and the

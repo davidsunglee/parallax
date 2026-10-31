@@ -1,24 +1,26 @@
 """The advanced Entity Graph Construction collaboration
-(``parallax.core.entity._graph_construction``): the two positional rows that
-cross its door, the three-phase barrier, handle and scope rules, the
-deterministic allocation index every rejection reads back, and the all-or-none
-lifecycle-state attachment that makes a failed construction return no root and
-attach no state to any node — which is the whole of that atomicity, since a
-factory that keeps the instance its view resolved keeps it.
+(``parallax.core.entity._graph_construction``): the node-indexed graph that
+crosses its door, the allocate-before-fill order that closes cycles, the node
+index every refusal reads back, and the lifecycle states attached all or none —
+which is the whole of that atomicity, since a callback that keeps the instances
+it was handed keeps them.
 
-Driven directly rather than through Snapshot, because the contract is the roots a
-caller gives and what is reachable from them — never "the query result".
+Driven directly rather than through Snapshot, because the contract is the graph
+a caller gives — never "the query result".
 
 Every row here is written as a literal tuple against the exact Entity's member
 layout, rather than assembled from that layout by name. A row assembled from the
-layout would agree with the writer however either end drifted; a literal one is
-what makes the alignment between the two a thing this suite can be wrong about.
+layout would agree with construction however either end drifted; a literal one
+is what makes the alignment between the two a thing this suite can be wrong
+about.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import warnings
+from collections.abc import Callable, Iterator, Sequence
 from decimal import Decimal
 from typing import Any, cast
 
@@ -28,22 +30,27 @@ from parallax.core import Attr, Bitemporal, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
     UNLOADED,
-    EntityGraphWriter,
     GraphConstructionError,
-    NodeHandle,
-    ResolutionView,
     lifecycle_state_of,
     relationship_value_of,
 )
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._errors import GRAPH_CONSTRUCTION_CODES
-from parallax.core.entity._model import DomainModel
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import DomainModel, model_of
 from parallax.core.metamodel import (
     EntityIdentity,
     RelationshipIdentity,
 )
 from tests._support import snapshot_models as sm
 from tests._support.model_capabilities import graph_construction_for
+from tests.unit._indexed_graph_support import (
+    LiteralGraph,
+    Node,
+    literal_graph,
+    published,
+    published_nodes,
+)
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ORDER = sm.SnapOrder.identity
@@ -62,9 +69,13 @@ _ORDER_UNLOADED: tuple[object, ...] = (UNLOADED, UNLOADED)
 _ITEM_MEMBERS: tuple[object, ...] = (11, 1, "x", 1, None)
 _ITEM_UNLOADED: tuple[object, ...] = (UNLOADED, UNLOADED)
 
+_ONE_ORDER: Node = (_ORDER, _ORDER_MEMBERS, _ORDER_UNLOADED)
 
-def _construct(build: Any, *, state_factory: Any = None) -> tuple[object, ...]:
-    return graph_construction_for(_ORDERS).construct(build, state_factory=state_factory)
+
+def _refused(*nodes: Node, model: DomainModel = _ORDERS) -> GraphConstructionError:
+    with pytest.raises(GraphConstructionError) as refusal:
+        published(model, *nodes)
+    return refusal.value
 
 
 class _CallerDefinedTuple(tuple[Any, ...]):
@@ -72,257 +83,157 @@ class _CallerDefinedTuple(tuple[Any, ...]):
     still not the exact built-in the seams take."""
 
 
-def _one_order(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-    handle = writer.allocate(_ORDER)
-    writer.populate(handle, _ORDER_MEMBERS, _ORDER_UNLOADED)
-    return (handle,)
-
-
 # --------------------------------------------------------------------------- #
-# Allocation, population, and the cycle the barrier exists for.                #
+# Allocation, filling, and the cycle allocating first exists for.              #
 # --------------------------------------------------------------------------- #
 
 
-def test_construct_publishes_frozen_instances_of_the_composed_classes() -> None:
-    (root,) = _construct(_one_order)
+def test_publish_answers_node_0_as_a_frozen_instance_of_the_composed_class() -> None:
+    root = published(_ORDERS, _ONE_ORDER)
     assert isinstance(root, sm.SnapOrder)
     assert (root.id, root.name, root.qty) == (1, "Ada", 1)
     assert root.sku is None
 
 
-def test_an_allocated_shell_closes_a_cycle_before_either_node_is_populated() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        item = writer.allocate(_ITEM)
-        writer.populate(order, _ORDER_MEMBERS, ((item,), UNLOADED))
-        writer.populate(item, _ITEM_MEMBERS, (order, UNLOADED))
-        return (order,)
-
-    (root,) = _construct(build)
-    root = cast("sm.SnapOrder", root)
+def test_every_node_is_allocated_before_any_is_filled_so_a_cycle_closes() -> None:
+    root = cast(
+        "sm.SnapOrder",
+        published(
+            _ORDERS,
+            (_ORDER, _ORDER_MEMBERS, ((1,), UNLOADED)),
+            (_ITEM, _ITEM_MEMBERS, (0, UNLOADED)),
+        ),
+    )
     assert root.items[0].order is root
 
 
-def test_an_unnamed_relationship_view_installs_the_closed_world_sentinel() -> None:
-    (root,) = _construct(_one_order)
+def test_a_node_reached_from_two_positions_is_one_instance() -> None:
+    order, first, second = published_nodes(
+        _ORDERS,
+        (_ORDER, _ORDER_MEMBERS, ((1, 2, 1), UNLOADED)),
+        (_ITEM, _ITEM_MEMBERS, (0, UNLOADED)),
+        (_ITEM, (12, 1, "y", 2, None), (0, UNLOADED)),
+    )
+    assert cast("sm.SnapOrder", order).items == (first, second, first)
+
+
+def test_each_publication_creates_fresh_instances() -> None:
+    construction = graph_construction_for(_ORDERS)
+    first = published(construction, _ONE_ORDER)
+    second = published(construction, _ONE_ORDER)
+    assert first is not second
+    assert first == second
+
+
+def test_an_unloaded_relationship_value_installs_the_closed_world_sentinel() -> None:
+    root = published(_ORDERS, _ONE_ORDER)
     assert relationship_value_of(root, _rel(_ORDER, "items")) is UNLOADED
     assert relationship_value_of(root, _rel(_ORDER, "statuses")) is UNLOADED
 
 
 def test_loaded_null_and_loaded_empty_stay_distinct_from_unloaded() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        item = writer.allocate(_ITEM)
-        writer.populate(order, _ORDER_MEMBERS, ((), UNLOADED))
-        writer.populate(item, _ITEM_MEMBERS, (None, UNLOADED))
-        return (order, item)
-
-    order, item = _construct(build)
+    order, item = published_nodes(
+        _ORDERS,
+        (_ORDER, _ORDER_MEMBERS, ((), UNLOADED)),
+        (_ITEM, _ITEM_MEMBERS, (None, UNLOADED)),
+    )
     assert cast("sm.SnapOrder", order).items == ()
     assert cast("sm.SnapOrderItem", item).order is None
     assert relationship_value_of(order, _rel(_ORDER, "statuses")) is UNLOADED
 
 
-def test_roots_are_published_in_the_order_the_build_callback_answers() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        first = writer.allocate(_ORDER)
-        second = writer.allocate(_ITEM)
-        writer.populate(first, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        writer.populate(second, _ITEM_MEMBERS, _ITEM_UNLOADED)
-        return (second, first)
-
-    published = _construct(build)
-    assert [type(node) for node in published] == [sm.SnapOrderItem, sm.SnapOrder]
-
-
 def test_an_absent_member_position_leaves_its_declared_default_in_place() -> None:
-    # A positional row cannot omit, so absence is a value at the position. What it
-    # buys is what omitting an entry bought: the member is never written, so it
-    # reads back as its declared default and its presence bit stays clear.
-    #
-    # A published Entity now records presence per member, exactly as a published
-    # Value Object does: the bitmap its row carries is what `model_fields_set`
-    # answers from, so an absent position and a carried one are distinguishable
-    # where publication once left them identical.
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_ORDER)
-        writer.populate(handle, (1, "Ada", ABSENT, ABSENT, ABSENT, ABSENT, ABSENT), _ORDER_UNLOADED)
-        return (handle,)
-
-    (root,) = _construct(build)
-    order = cast("sm.SnapOrder", root)
+    # A positional row cannot omit, so absence is a value at the position. The
+    # member is never written, so it reads back as its declared default and its
+    # presence bit stays clear: `model_fields_set` answers from that bitmap.
+    order = cast(
+        "sm.SnapOrder",
+        published(
+            _ORDERS, (_ORDER, (1, "Ada", ABSENT, ABSENT, ABSENT, ABSENT, ABSENT), _ORDER_UNLOADED)
+        ),
+    )
     assert (order.id, order.name) == (1, "Ada")
     assert order.sku is None
     assert order.model_fields_set == {"id", "name"}
 
 
 # --------------------------------------------------------------------------- #
-# The phase barrier and the rejections that read the allocation index back.    #
+# The graph and its layouts.                                                   #
 # --------------------------------------------------------------------------- #
 
 
-def test_allocation_closes_permanently_at_the_first_populate() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.populate(order, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        writer.allocate(_ITEM)
-        raise AssertionError("unreachable")
+def test_an_empty_graph_is_refused_because_it_has_no_root() -> None:
+    refusal = _refused()
+    assert refusal.code == "entity-graph-invalid-value"
+    assert refusal.index is None
 
+
+def test_a_node_of_an_entity_the_model_composed_no_class_for_is_refused() -> None:
+    construction = graph_construction_for(_ORDERS)
+    foreign = graph_construction_for(sm.ANIMAL_MODEL).cataloged.layouts.entity(sm.Cat.identity)
+    graph = literal_graph(construction, _ONE_ORDER)
+    graph = LiteralGraph(
+        (*graph.layouts, foreign), (*graph.members, ()), (*graph.relationships, ())
+    )
     with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-allocation-closed"
-    assert refusal.value.index == 1
+        construction.publish(graph, _no_states)
+    assert refusal.value.code == "entity-graph-invalid-entity"
+    assert (refusal.value.index, refusal.value.identity) == (1, sm.Cat.identity)
 
 
-def test_populating_one_node_twice_is_refused_with_its_allocation_index() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.populate(order, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        writer.populate(order, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        raise AssertionError("unreachable")
-
+def test_a_layout_this_model_does_not_lay_its_entity_out_by_is_refused() -> None:
+    construction = graph_construction_for(_ORDERS)
+    graph = literal_graph(construction, _ONE_ORDER)
+    other = dataclasses.replace(graph.layouts[0], relationships=())
     with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-node-already-populated"
+        construction.publish(LiteralGraph((other,), graph.members, graph.relationships), _no_states)
+    assert refusal.value.code == "entity-graph-layout-mismatch"
+    assert (refusal.value.index, refusal.value.identity) == (0, _ORDER)
+
+
+@pytest.mark.parametrize("answer", [_ORDER, None], ids=["identity", "none"])
+def test_a_node_answering_no_layout_at_all_is_refused_as_a_mismatch(answer: object) -> None:
+    construction = graph_construction_for(_ORDERS)
+    graph = literal_graph(construction, _ONE_ORDER)
+    with pytest.raises(GraphConstructionError) as refusal:
+        construction.publish(
+            LiteralGraph((cast("Any", answer),), graph.members, graph.relationships), _no_states
+        )
+    assert refusal.value.code == "entity-graph-layout-mismatch"
     assert refusal.value.index == 0
 
 
-def test_the_lowest_unpopulated_index_is_the_one_reported() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.allocate(_ITEM)
-        writer.allocate(_ITEM)
-        writer.populate(order, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        return (order,)
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-node-unpopulated"
-    assert refusal.value.index == 1
-
-
-def test_allocating_an_entity_the_model_composed_no_class_for_is_refused() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        writer.allocate(EntityIdentity("parallax.compatibility", "Nowhere"))
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-entity"
+def test_an_equal_layout_from_another_catalog_of_one_model_is_accepted() -> None:
+    # Layouts are pure functions of the accepted model, so nothing compares one
+    # by identity: an interchangeable catalog lays the same rows out.
+    construction = graph_construction_for(_ORDERS)
+    graph = literal_graph(construction, _ONE_ORDER)
+    twin = CatalogedModel(model_of(_ORDERS)).layouts.entity(_ORDER)
+    assert twin is not graph.layouts[0]
+    root = construction.publish(
+        LiteralGraph((twin,), graph.members, graph.relationships), _no_states
+    )
+    assert isinstance(root, sm.SnapOrder)
 
 
-def test_a_retained_writer_refuses_before_inspecting_its_arguments() -> None:
-    escaped: list[EntityGraphWriter] = []
-
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        escaped.append(writer)
-        return ()
-
-    _construct(build)
-    with pytest.raises(GraphConstructionError) as refusal:
-        escaped[0].populate(cast("Any", "not a handle"), (), ())
-    assert refusal.value.code == "entity-graph-scope-closed"
-
-
-def test_a_handle_from_another_construction_is_refused_as_foreign() -> None:
-    escaped: list[NodeHandle] = []
-
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_ORDER)
-        writer.populate(handle, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        escaped.append(handle)
-        return (handle,)
-
-    _construct(build)
-
-    def reuse(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        writer.populate(escaped[0], _ORDER_MEMBERS, _ORDER_UNLOADED)
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(reuse)
-    assert refusal.value.code == "entity-graph-foreign-handle"
-
-
-def test_a_foreign_handle_answered_as_a_root_is_refused_as_foreign() -> None:
-    escaped: list[NodeHandle] = []
-
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_ORDER)
-        writer.populate(handle, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        escaped.append(handle)
-        return (handle,)
-
-    _construct(build)
-
-    def answer_foreign(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_ORDER)
-        writer.populate(handle, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        return (escaped[0],)
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(answer_foreign)
-    assert refusal.value.code == "entity-graph-foreign-handle"
-
-
-def test_a_foreign_handle_at_a_relationship_position_is_refused_as_foreign() -> None:
-    escaped: list[NodeHandle] = []
-
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_ITEM)
-        writer.populate(handle, _ITEM_MEMBERS, _ITEM_UNLOADED)
-        escaped.append(handle)
-        return (handle,)
-
-    _construct(build)
-
-    def name_foreign(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.populate(order, _ORDER_MEMBERS, ((escaped[0],), UNLOADED))
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(name_foreign)
-    assert refusal.value.code == "entity-graph-foreign-handle"
-
-
-def test_a_build_callback_answering_something_other_than_handles_is_refused() -> None:
-    def answers_a_list(writer: EntityGraphWriter) -> Any:
-        del writer
-        return []
-
-    def answers_a_tuple_subclass(writer: EntityGraphWriter) -> Any:
-        handle = writer.allocate(_ORDER)
-        writer.populate(handle, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        return _CallerDefinedTuple((handle,))
-
-    def answers_a_string(writer: EntityGraphWriter) -> Any:
-        del writer
-        return ("root",)
-
-    with pytest.raises(GraphConstructionError) as not_a_tuple:
-        _construct(answers_a_list)
-    assert not_a_tuple.value.code == "entity-graph-invalid-root"
-
-    with pytest.raises(GraphConstructionError) as not_exactly_a_tuple:
-        _construct(answers_a_tuple_subclass)
-    assert not_exactly_a_tuple.value.code == "entity-graph-invalid-root"
-
-    with pytest.raises(GraphConstructionError) as not_a_handle:
-        _construct(answers_a_string)
-    assert not_a_handle.value.code == "entity-graph-invalid-root"
-
-
-def test_a_build_callback_exception_propagates_unchanged() -> None:
+def test_an_exception_a_graph_accessor_raises_propagates_unchanged() -> None:
     class _Boom(RuntimeError):
         pass
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        writer.allocate(_ORDER)
-        raise _Boom("the caller's own failure")
+    class _Failing(LiteralGraph):
+        def relationship_values(self, node: int) -> Any:
+            raise _Boom(f"the caller's own failure at {node}")
 
-    with pytest.raises(_Boom, match="the caller's own failure"):
-        _construct(build)
+    construction = graph_construction_for(_ORDERS)
+    graph = literal_graph(construction, _ONE_ORDER)
+    with pytest.raises(_Boom, match="the caller's own failure at 0"):
+        construction.publish(
+            _Failing(graph.layouts, graph.members, graph.relationships), _no_states
+        )
+
+
+def _no_states(instances: Sequence[object]) -> list[object]:
+    return [None] * len(instances)
 
 
 # --------------------------------------------------------------------------- #
@@ -336,23 +247,21 @@ def test_a_build_callback_exception_propagates_unchanged() -> None:
         pytest.param((*_ORDER_MEMBERS, 1), id="one-position-too-many"),
         pytest.param(_ORDER_MEMBERS[:-1], id="one-position-too-few"),
         pytest.param((), id="no-positions-at-all"),
+        pytest.param(list(_ORDER_MEMBERS), id="an-abstract-sequence"),
+        pytest.param(_CallerDefinedTuple(_ORDER_MEMBERS), id="a-caller-defined-collection-subtype"),
+        pytest.param("idnamesku", id="a-value-that-is-no-row-at-all"),
     ],
 )
-def test_a_member_row_of_the_wrong_width_is_refused(members: Any) -> None:
+def test_a_member_row_that_is_not_an_exact_tuple_of_the_layout_width_is_refused(
+    members: Any,
+) -> None:
     # Width is the whole membership check a positional row needs. A position
     # names one declared member and nothing else, so an undeclared member has no
-    # position to occupy and a duplicate has one position to occupy — the two
-    # rejections the identity-keyed algebra made separately are unrepresentable
-    # rather than checked. What is left to refuse is a row of any other width.
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.populate(order, members, _ORDER_UNLOADED)
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-member"
-    assert refusal.value.index == 0
+    # position to occupy and a duplicate has one position to occupy. What is left
+    # to refuse is a row of any other width or kind.
+    refusal = _refused(_ONE_ORDER, (_ORDER, members, _ORDER_UNLOADED))
+    assert refusal.code == "entity-graph-invalid-member"
+    assert (refusal.index, refusal.identity) == (1, _ORDER)
 
 
 @pytest.mark.parametrize(
@@ -360,28 +269,26 @@ def test_a_member_row_of_the_wrong_width_is_refused(members: Any) -> None:
     [
         pytest.param((UNLOADED,), id="one-position-too-few"),
         pytest.param((UNLOADED, UNLOADED, UNLOADED), id="one-position-too-many"),
+        pytest.param([UNLOADED, UNLOADED], id="an-abstract-sequence"),
+        pytest.param(
+            _CallerDefinedTuple((UNLOADED, UNLOADED)), id="a-caller-defined-collection-subtype"
+        ),
     ],
 )
-def test_a_broad_relationship_row_of_the_wrong_width_is_refused(relationships: Any) -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.populate(order, _ORDER_MEMBERS, relationships)
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-member"
+def test_a_relationship_row_that_is_not_an_exact_tuple_of_the_layout_width_is_refused(
+    relationships: Any,
+) -> None:
+    refusal = _refused((_ORDER, _ORDER_MEMBERS, relationships))
+    assert refusal.code == "entity-graph-invalid-member"
+    assert refusal.index == 0
 
 
 def test_construction_does_not_rejudge_attribute_nullability() -> None:
     # Member rows are already-judged Entity State. Graph Construction installs
     # their values without recreating the admission decision at this later seam.
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.populate(order, (1, None, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT), _ORDER_UNLOADED)
-        return (order,)
-
-    (root,) = _construct(build)
+    root = published(
+        _ORDERS, (_ORDER, (1, None, ABSENT, ABSENT, ABSENT, ABSENT, ABSENT), _ORDER_UNLOADED)
+    )
     assert cast("sm.SnapOrder", root).name is None
 
 
@@ -389,92 +296,65 @@ def test_construction_does_not_rejudge_an_attribute_neutral_type() -> None:
     # The producer of Entity State owns scalar admission. Construction bypasses
     # Pydantic validation deliberately and preserves that earlier judgment rather
     # than claiming a second source-data boundary.
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.populate(
-            order,
-            (1, "Ada", ABSENT, ABSENT, ABSENT, ABSENT, "2024-01-01"),
-            _ORDER_UNLOADED,
-        )
-        return (order,)
-
-    (root,) = _construct(build)
+    root = published(
+        _ORDERS,
+        (_ORDER, (1, "Ada", ABSENT, ABSENT, ABSENT, ABSENT, "2024-01-01"), _ORDER_UNLOADED),
+    )
     assert cast("sm.SnapOrder", root).ordered_on == "2024-01-01"
 
 
-def test_a_to_many_direction_refuses_a_to_one_arm() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.populate(order, _ORDER_MEMBERS, (None, UNLOADED))
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-value"
-    assert refusal.value.identity == _rel(_ORDER, "items")
-
-
-def test_a_to_one_direction_refuses_a_loaded_many_arm() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        item = writer.allocate(_ITEM)
-        writer.populate(item, _ITEM_MEMBERS, ((), UNLOADED))
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-value"
-    assert refusal.value.identity == _rel(_ITEM, "order")
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(None, id="loaded-null"),
+        pytest.param(1, id="one-node"),
+        pytest.param([1], id="a-mutable-collection"),
+        pytest.param(_CallerDefinedTuple((1,)), id="a-caller-defined-collection-subtype"),
+    ],
+)
+def test_a_to_many_direction_takes_only_an_exact_tuple_of_node_indices(value: object) -> None:
+    refusal = _refused(
+        (_ORDER, _ORDER_MEMBERS, (value, UNLOADED)), (_ITEM, _ITEM_MEMBERS, _ITEM_UNLOADED)
+    )
+    assert refusal.code == "entity-graph-invalid-value"
+    assert (refusal.index, refusal.identity) == (0, _rel(_ORDER, "items"))
 
 
-def test_a_node_handle_publishes_nothing_a_build_callback_could_read() -> None:
-    # The handle is the whole of what a callback holds between allocation and
-    # publication, so a public attribute on it would hand that callback the
-    # part-built instances the build phase has no reason to expose, and an
-    # allocation index the writer alone owns.
-    captured: list[NodeHandle] = []
-
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_ORDER)
-        captured.append(handle)
-        writer.populate(handle, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        return (handle,)
-
-    _construct(build)
-    handle = captured[0]
-    assert [name for name in dir(handle) if not name.startswith("__")] == []
-    with pytest.raises(AttributeError):
-        cast("Any", handle).index = 0
+def test_a_to_one_direction_refuses_a_tuple_of_node_indices() -> None:
+    refusal = _refused(_ONE_ORDER, (_ITEM, _ITEM_MEMBERS, ((0,), UNLOADED)))
+    assert refusal.code == "entity-graph-invalid-value"
+    assert (refusal.index, refusal.identity) == (1, _rel(_ITEM, "order"))
 
 
 @pytest.mark.parametrize(
-    "collection",
+    "value",
     [
-        pytest.param(list, id="a-mutable-collection"),
-        pytest.param(_CallerDefinedTuple, id="a-caller-defined-collection-subtype"),
+        pytest.param(2, id="past-the-last-node"),
+        pytest.param(-1, id="a-negative-index"),
+        pytest.param(True, id="a-bool"),
+        pytest.param("0", id="no-index-at-all"),
     ],
 )
-def test_a_loaded_many_arm_carries_only_an_exact_tuple_of_handles(collection: Any) -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        item = writer.allocate(_ITEM)
-        writer.populate(item, _ITEM_MEMBERS, _ITEM_UNLOADED)
-        writer.populate(order, _ORDER_MEMBERS, (collection((item,)), UNLOADED))
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-value"
+def test_a_to_one_value_naming_no_node_of_the_graph_is_refused(value: object) -> None:
+    refusal = _refused(_ONE_ORDER, (_ITEM, _ITEM_MEMBERS, (value, UNLOADED)))
+    assert refusal.code == "entity-graph-invalid-value"
+    assert (refusal.index, refusal.identity) == (1, _rel(_ITEM, "order"))
 
 
-def test_a_value_that_is_no_relationship_arm_at_all_is_refused() -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        item = writer.allocate(_ITEM)
-        writer.populate(item, _ITEM_MEMBERS, ("not an arm", UNLOADED))
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-value"
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param((1, 2), id="past-the-last-node"),
+        pytest.param((1, -1), id="a-negative-index"),
+        pytest.param((1.0,), id="no-index-at-all"),
+    ],
+)
+def test_a_to_many_value_naming_no_node_of_the_graph_is_refused(value: object) -> None:
+    refusal = _refused(
+        (_ORDER, _ORDER_MEMBERS, (value, UNLOADED)), (_ITEM, _ITEM_MEMBERS, _ITEM_UNLOADED)
+    )
+    assert refusal.code == "entity-graph-invalid-value"
+    assert (refusal.index, refusal.identity) == (0, _rel(_ORDER, "items"))
 
 
 # --------------------------------------------------------------------------- #
@@ -492,18 +372,12 @@ def _tag(label: object, *, detail: object = ABSENT, details: object = ABSENT) ->
     return (label, detail, details)
 
 
-def _status(*, primary: object = ABSENT, tags: object = ABSENT) -> Any:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        status = writer.allocate(_STATUS)
-        writer.populate(status, (*_STATUS_MEMBERS[:4], primary, tags), ())
-        return (status,)
-
-    return build
+def _status(*, primary: object = ABSENT, tags: object = ABSENT) -> Node:
+    return (_STATUS, (*_STATUS_MEMBERS[:4], primary, tags), ())
 
 
 def test_a_value_object_occurrence_builds_a_frozen_instance() -> None:
-    (root,) = _construct(_status(primary=_tag("urgent")))
-    tag = cast("Any", root).primary_tag
+    tag = published(_ORDERS, _status(primary=_tag("urgent"))).primary_tag
     assert isinstance(tag, sm.Tag)
     assert tag.label == "urgent"
     # An absent nested occurrence reads as absent at every depth: `None` for a
@@ -513,13 +387,13 @@ def test_a_value_object_occurrence_builds_a_frozen_instance() -> None:
 
 
 def test_a_nested_occurrence_builds_recursively_in_declaration_order() -> None:
-    (root,) = _construct(_status(primary=_tag("x", detail=("handled",))))
-    assert cast("Any", root).primary_tag.detail.note == "handled"
+    root = published(_ORDERS, _status(primary=_tag("x", detail=("handled",))))
+    assert root.primary_tag.detail.note == "handled"
 
 
 def test_a_many_occurrence_preserves_its_record_order() -> None:
-    (root,) = _construct(_status(tags=(_tag("first"), _tag("second"))))
-    assert [tag.label for tag in cast("Any", root).tags] == ["first", "second"]
+    root = published(_ORDERS, _status(tags=(_tag("first"), _tag("second"))))
+    assert [tag.label for tag in root.tags] == ["first", "second"]
 
 
 @pytest.mark.parametrize(
@@ -530,9 +404,8 @@ def test_a_many_occurrence_preserves_its_record_order() -> None:
     ],
 )
 def test_a_many_occurrence_refuses_anything_but_an_exact_tuple(collection: Any) -> None:
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(_status(tags=collection((_tag("x"),))))
-    assert refusal.value.code == "entity-graph-invalid-value"
+    refusal = _refused(_status(tags=collection((_tag("x"),))))
+    assert refusal.code == "entity-graph-invalid-value"
 
 
 @pytest.mark.parametrize(
@@ -543,73 +416,54 @@ def test_a_many_occurrence_refuses_anything_but_an_exact_tuple(collection: Any) 
     ],
 )
 def test_a_value_object_member_row_of_the_wrong_width_is_refused(row: Any) -> None:
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(_status(primary=row))
-    assert refusal.value.code == "entity-graph-invalid-value"
+    refusal = _refused(_status(primary=row))
+    assert refusal.code == "entity-graph-invalid-value"
 
 
-def test_construction_does_not_rejudge_a_value_object_leaf() -> None:
-    (root,) = _construct(_status(primary=_tag(7)))
-    assert cast("Any", root).primary_tag.label == 7
+def test_construction_does_not_rejudge_a_value_object_scalar() -> None:
+    assert published(_ORDERS, _status(primary=_tag(7))).primary_tag.label == 7
 
 
 def test_a_raw_document_mapping_never_crosses_the_construction_seam() -> None:
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(_status(primary={"label": "x"}))
-    assert refusal.value.code == "entity-graph-invalid-value"
+    refusal = _refused(_status(primary={"label": "x"}))
+    assert refusal.code == "entity-graph-invalid-value"
 
 
 def test_a_many_occurrence_is_never_null() -> None:
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(_status(tags=None))
-    assert refusal.value.code == "entity-graph-invalid-value"
+    refusal = _refused(_status(tags=None))
+    assert refusal.code == "entity-graph-invalid-value"
 
 
-def test_a_refusal_at_any_value_object_depth_names_the_node_being_populated() -> None:
-    # The allocation index a refusal reads back is the populating node's even
-    # when the refused value sits inside a nested occurrence's own row.
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        first = writer.allocate(_STATUS)
-        second = writer.allocate(_STATUS)
-        writer.populate(first, (*_STATUS_MEMBERS[:4], ABSENT, ABSENT), ())
-        writer.populate(second, (*_STATUS_MEMBERS[:4], _tag("x", details=[_tag("y")]), ABSENT), ())
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-value"
-    assert refusal.value.index == 1
-    assert cast("Any", refusal.value.identity).path == ("primaryTag", "details")
+def test_a_refusal_at_any_value_object_depth_names_the_node_whose_row_holds_it() -> None:
+    # The node index a refusal reads back is the owning node's even when the
+    # refused value sits inside a nested occurrence's own row.
+    refusal = _refused(_status(), _status(primary=_tag("x", details=[_tag("y")])))
+    assert refusal.code == "entity-graph-invalid-value"
+    assert refusal.index == 1
+    assert cast("Any", refusal.identity).path == ("primaryTag", "details")
 
 
 def test_publication_resolves_no_class_facts_per_record(monkeypatch: pytest.MonkeyPatch) -> None:
     # Correspondence proves each occurrence path's class and plan once per
     # model, so publishing a record at any depth looks neither up again.
-    from parallax.core.entity import _graph_construction
+    from parallax.core.entity import _graph_construction, _row_fill
 
     construction = graph_construction_for(_ORDERS)
 
     def refuse(*_args: object) -> Any:
         raise AssertionError("a per-record class-fact lookup")
 
-    for name in ("plan_of", "shape_of", "wire_names_of"):
-        monkeypatch.setattr(_graph_construction, name, refuse)
+    for module in (_graph_construction, _row_fill):
+        for name in ("plan_of", "shape_of", "wire_names_of"):
+            monkeypatch.setattr(module, name, refuse, raising=False)
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        status = writer.allocate(_STATUS)
-        writer.populate(
-            status,
-            (
-                *_STATUS_MEMBERS[:4],
-                _tag("x", detail=("handled",), details=(("a",), ("b",))),
-                (_tag("first"), _tag("second", details=())),
-            ),
-            (),
-        )
-        return (status,)
-
-    (root,) = construction.construct(build)
-    status = cast("Any", root)
+    status = published(
+        construction,
+        _status(
+            primary=_tag("x", detail=("handled",), details=(("a",), ("b",))),
+            tags=(_tag("first"), _tag("second", details=())),
+        ),
+    )
     assert status.primary_tag.detail.note == "handled"
     assert [detail.note for detail in status.primary_tag.details] == ["a", "b"]
     assert [tag.label for tag in status.tags] == ["first", "second"]
@@ -620,12 +474,32 @@ def test_a_null_one_occurrence_is_the_documents_own_absent_state() -> None:
     # in the wrong kind all reach construction as `None`, because the read seam
     # already collapsed them into one not-present state. Re-deriving a
     # nullability verdict here would contradict that collapse.
-    (root,) = _construct(_status(primary=None))
-    assert cast("Any", root).primary_tag is None
+    assert published(_ORDERS, _status(primary=None)).primary_tag is None
+
+
+def test_an_absent_value_object_scalar_reads_as_absent_rather_than_failing() -> None:
+    # `Tag.label` is required, yet a document that omits it decoded to `ABSENT`
+    # before construction saw it — the read seam's own absence collapse. The
+    # frozen Value Object carries the member as absent, and construction neither
+    # invents a value nor re-judges the collapse.
+    tag = published(_ORDERS, _status(primary=_tag(ABSENT))).primary_tag
+    assert tag.label is None
+    assert "label" not in tag.model_fields_set
+
+
+def test_an_absent_scalar_inside_a_many_element_reads_as_absent_too() -> None:
+    # Absence is per element, not per occurrence: an element of a Many carries the
+    # same distinction its One sibling does, so re-serializing the collection
+    # never spells an omission the element never held as an explicit null.
+    absent, named = published(_ORDERS, _status(tags=(_tag(ABSENT), _tag("named")))).tags
+    assert absent.label is None
+    assert "label" not in absent.model_fields_set
+    assert named.label == "named"
+    assert "label" in named.model_fields_set
 
 
 # --------------------------------------------------------------------------- #
-# Native infinity in already-judged temporal state.                              #
+# Native infinity in already-judged temporal state.                            #
 # --------------------------------------------------------------------------- #
 
 
@@ -641,35 +515,31 @@ _MILESTONE = _Milestone.identity
 _MILESTONE_BOUNDS: tuple[str, ...] = ("validStart", "validEnd", "txStart", "txEnd")
 
 
-def _bound(name: str) -> tuple[object, ...]:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        node = writer.allocate(_MILESTONE)
-        writer.populate(
-            node,
+def _bound(name: str) -> Any:
+    return published(
+        _MILESTONES,
+        (
+            _MILESTONE,
             (
                 1,
                 Decimal("1.00"),
                 *(INFINITY if bound == name else ABSENT for bound in _MILESTONE_BOUNDS),
             ),
             (),
-        )
-        return (node,)
-
-    return graph_construction_for(_MILESTONES).construct(build)
+        ),
+    )
 
 
 @pytest.mark.parametrize("name", ["txEnd", "validEnd"])
 def test_a_temporal_end_attribute_carries_the_open_upper_bound(name: str) -> None:
-    (root,) = _bound(name)
-    assert getattr(root, "tx_end" if name == "txEnd" else "valid_end") is INFINITY
+    assert getattr(_bound(name), "tx_end" if name == "txEnd" else "valid_end") is INFINITY
 
 
 @pytest.mark.parametrize("name", ["txStart", "validStart"])
 def test_construction_does_not_rejudge_a_temporal_start(name: str) -> None:
     # Temporal-end admission belongs to snapshot materialization. At this lower
     # seam every endpoint is already-judged Entity State and is installed as-is.
-    (root,) = _bound(name)
-    assert getattr(root, "tx_start" if name == "txStart" else "valid_start") is INFINITY
+    assert getattr(_bound(name), "tx_start" if name == "txStart" else "valid_start") is INFINITY
 
 
 # --------------------------------------------------------------------------- #
@@ -684,13 +554,7 @@ _CAT_UNCARRIED: tuple[object, ...] = (1, "Tom", ABSENT, ABSENT, ABSENT)
 
 
 def _cat(members: tuple[object, ...]) -> Any:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        node = writer.allocate(_CAT)
-        writer.populate(node, members, ())
-        return (node,)
-
-    (root,) = graph_construction_for(sm.ANIMAL_MODEL).construct(build)
-    return cast("Any", root)
+    return published(sm.ANIMAL_MODEL, (_CAT, members, ()))
 
 
 def test_a_published_subtype_reads_an_uncarried_inherited_member_as_its_default() -> None:
@@ -723,137 +587,113 @@ def test_a_published_subtype_reads_a_carried_inherited_member_as_the_carried_val
 
 
 # --------------------------------------------------------------------------- #
-# Lifecycle state: ordering, resolution scope, and atomic publication.         #
+# Lifecycle states: one call, every state buffered, all attached or none.      #
 # --------------------------------------------------------------------------- #
 
-
-def _two_nodes(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-    order = writer.allocate(_ORDER)
-    item = writer.allocate(_ITEM)
-    writer.populate(order, _ORDER_MEMBERS, ((item,), UNLOADED))
-    writer.populate(item, _ITEM_MEMBERS, (order, UNLOADED))
-    return (order,)
+_TWO_NODES: tuple[Node, ...] = (
+    (_ORDER, _ORDER_MEMBERS, ((1,), UNLOADED)),
+    (_ITEM, _ITEM_MEMBERS, (0, UNLOADED)),
+)
 
 
-def test_state_factories_run_once_per_node_in_allocation_order() -> None:
-    seen: list[type] = []
-
-    def factory(view: ResolutionView, handle: NodeHandle) -> object:
-        seen.append(type(view.resolve(handle)))
-        return len(seen)
-
-    (root,) = _construct(_two_nodes, state_factory=factory)
-    assert seen == [sm.SnapOrder, sm.SnapOrderItem]
-    assert lifecycle_state_of(root) == 1
-    assert lifecycle_state_of(cast("sm.SnapOrder", root).items[0]) == 2
+def _publish_two(lifecycle_states: Any) -> object:
+    construction = graph_construction_for(_ORDERS)
+    return construction.publish(literal_graph(construction, *_TWO_NODES), lifecycle_states)
 
 
-def test_a_factory_sees_every_instance_fully_wired_including_cycles() -> None:
-    resolved: list[object] = []
+def test_lifecycle_states_are_answered_once_for_every_instance_in_node_order() -> None:
+    calls: list[tuple[type, ...]] = []
 
-    def factory(view: ResolutionView, handle: NodeHandle) -> object:
-        node = view.resolve(handle)
-        resolved.append(node)
-        if isinstance(node, sm.SnapOrder):
-            # The cycle is already closed while the FIRST factory runs, and no
-            # state has attached to either end of it yet.
-            assert node.items[0].order is node
-            assert lifecycle_state_of(node.items[0]) is None
-        return "state"
+    def lifecycle_states(instances: Sequence[object]) -> tuple[object, ...]:
+        calls.append(tuple(type(instance) for instance in instances))
+        return ("order state", "item state")
 
-    _construct(_two_nodes, state_factory=factory)
-    assert len(resolved) == 2
+    root = cast("sm.SnapOrder", _publish_two(lifecycle_states))
+    assert calls == [(sm.SnapOrder, sm.SnapOrderItem)]
+    assert lifecycle_state_of(root) == "order state"
+    assert lifecycle_state_of(root.items[0]) == "item state"
 
 
-def test_a_resolution_view_closes_when_its_own_factory_invocation_returns() -> None:
-    escaped: list[ResolutionView] = []
+def test_the_callback_sees_every_instance_filled_and_wired_and_none_stateful() -> None:
+    seen: list[object] = []
 
-    def factory(view: ResolutionView, handle: NodeHandle) -> object:
-        escaped.append(view)
-        return view.resolve(handle)
+    def lifecycle_states(instances: Sequence[object]) -> list[object]:
+        order, item = (cast("Any", instance) for instance in instances)
+        assert order.items[0] is item
+        assert item.order is order
+        assert [lifecycle_state_of(instance) for instance in instances] == [None, None]
+        seen.extend(instances)
+        return ["state", "state"]
 
-    _construct(_one_order, state_factory=factory)
-    with pytest.raises(GraphConstructionError) as refusal:
-        escaped[0].resolve(cast("Any", "not a handle"))
-    assert refusal.value.code == "entity-graph-scope-closed"
-
-
-def test_a_resolution_view_refuses_a_handle_of_another_construction() -> None:
-    escaped: list[NodeHandle] = []
-
-    def collect(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(_ORDER)
-        writer.populate(handle, _ORDER_MEMBERS, _ORDER_UNLOADED)
-        escaped.append(handle)
-        return (handle,)
-
-    _construct(collect)
-
-    def factory(view: ResolutionView, handle: NodeHandle) -> object:
-        del handle
-        return view.resolve(escaped[0])
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(_one_order, state_factory=factory)
-    assert refusal.value.code == "entity-graph-foreign-handle"
+    root = _publish_two(lifecycle_states)
+    assert seen[0] is root
 
 
-def test_a_factory_exception_propagates_unchanged_and_stops_later_factories() -> None:
+def test_a_lazily_produced_sequence_of_the_right_length_is_accepted() -> None:
+    def lifecycle_states(instances: Sequence[object]) -> Any:
+        return (f"state {node}" for node in range(len(instances)))
+
+    root = cast("sm.SnapOrder", _publish_two(lifecycle_states))
+    assert lifecycle_state_of(root.items[0]) == "state 1"
+
+
+def _kept_and_refused(
+    lifecycle_states: Callable[[Sequence[object]], object],
+) -> tuple[list[object], BaseException]:
+    kept: list[object] = []
+
+    def keeping(instances: Sequence[object]) -> object:
+        kept.extend(instances)
+        return lifecycle_states(instances)
+
+    with pytest.raises(BaseException) as refusal:
+        _publish_two(keeping)
+    return kept, refusal.value
+
+
+def test_a_callback_exception_propagates_unchanged_and_attaches_no_state() -> None:
     class _Boom(RuntimeError):
         pass
 
-    invoked: list[int] = []
-
-    def factory(view: ResolutionView, handle: NodeHandle) -> object:
-        del view, handle
-        invoked.append(len(invoked))
+    def lifecycle_states(instances: Sequence[object]) -> object:
         raise _Boom("the lifecycle's own failure")
 
-    with pytest.raises(_Boom, match="the lifecycle's own failure"):
-        _construct(_two_nodes, state_factory=factory)
-    assert invoked == [0]
+    kept, refusal = _kept_and_refused(lifecycle_states)
+    assert type(refusal) is _Boom
+    assert [lifecycle_state_of(node) for node in kept] == [None, None]
 
 
-def test_a_failed_factory_publishes_no_state_on_any_node() -> None:
-    captured: list[object] = []
-
-    def factory(view: ResolutionView, handle: NodeHandle) -> object:
-        node = view.resolve(handle)
-        captured.append(node)
-        if len(captured) == 2:
-            raise RuntimeError("the second factory fails")
-        return "state"
-
-    with pytest.raises(RuntimeError, match="the second factory fails"):
-        _construct(_two_nodes, state_factory=factory)
-    # The first factory succeeded, but its result was only buffered: nothing
-    # attaches unless every factory does.
-    assert [lifecycle_state_of(node) for node in captured] == [None, None]
+@pytest.mark.parametrize(
+    "states", [pytest.param(("one",), id="short"), pytest.param(("a", "b", "c"), id="long")]
+)
+def test_a_state_count_other_than_the_node_count_attaches_none(states: tuple[str, ...]) -> None:
+    kept, refusal = _kept_and_refused(lambda _instances: states)
+    assert isinstance(refusal, GraphConstructionError)
+    assert (refusal.code, refusal.index) == ("entity-graph-invalid-value", None)
+    assert [lifecycle_state_of(node) for node in kept] == [None, None]
 
 
-def test_a_node_a_failed_factory_kept_is_still_populated_and_still_state_free() -> None:
+def test_states_failing_while_being_consumed_attach_none() -> None:
+    def failing() -> Iterator[object]:
+        yield "order state"
+        raise LookupError("the second state failed")
+
+    kept, refusal = _kept_and_refused(lambda _instances: failing())
+    assert type(refusal) is LookupError
+    assert [lifecycle_state_of(node) for node in kept] == [None, None]
+
+
+def test_an_instance_a_failed_callback_kept_is_still_filled_and_still_state_free() -> None:
     # The input that breaks the obvious summary of the atomicity, so the summary
-    # is not what this suite grades. A factory is handed the FINAL instance —
-    # that is the phase barrier's own contract — so a factory that keeps what its
-    # view resolved still holds that node after the call fails, fully populated
-    # and no less reachable for the failure. Nothing here can take it back, and
-    # rolling the rows back would break the earlier atomicity instead: a row is
-    # attached once, as its node is populated.
-    #
-    # What the failure does guarantee is graded in its place: the call returns no
-    # root at all, and no node carries lifecycle state — not even the one whose
-    # own factory already returned a value for it.
-    kept: list[object] = []
+    # is not what this suite grades. The callback is handed the FINAL instances,
+    # so a callback that keeps them still holds them after publication fails,
+    # fully filled and no less reachable for the failure. Nothing here can take
+    # them back; what the failure does guarantee is that no root is answered and
+    # no node carries lifecycle state.
+    def lifecycle_states(_instances: Sequence[object]) -> object:
+        raise RuntimeError("the lifecycle fails")
 
-    def factory(view: ResolutionView, handle: NodeHandle) -> object:
-        kept.append(view.resolve(handle))
-        if len(kept) == 2:
-            raise RuntimeError("the second factory fails")
-        return "state"
-
-    with pytest.raises(RuntimeError, match="the second factory fails"):
-        _construct(_two_nodes, state_factory=factory)
-
+    kept, _ = _kept_and_refused(lifecycle_states)
     order, item = (cast("Any", node) for node in kept)
     assert (order.name, order.qty) == ("Ada", 1)
     assert (item.id, item.sku) == (11, "x")
@@ -861,13 +701,8 @@ def test_a_node_a_failed_factory_kept_is_still_populated_and_still_state_free() 
     assert [lifecycle_state_of(node) for node in kept] == [None, None]
 
 
-def test_construction_without_a_state_factory_attaches_no_state() -> None:
-    (root,) = _construct(_one_order)
-    assert lifecycle_state_of(root) is None
-
-
 def test_reading_a_relationship_the_class_family_does_not_declare_is_refused() -> None:
-    (root,) = _construct(_one_order)
+    root = published(_ORDERS, _ONE_ORDER)
     with pytest.raises(GraphConstructionError) as refusal:
         relationship_value_of(root, _rel(_ORDER, "nosuch"))
     assert refusal.value.code == "entity-graph-invalid-member"
@@ -887,23 +722,17 @@ def test_an_entity_the_model_does_not_declare_is_refused_at_lookup() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The closed code set, and the row rules the collaboration states in it.       #
+# The closed code set.                                                         #
 # --------------------------------------------------------------------------- #
 
 
-# The ten closed codes are restated here rather than imported so a code added,
+# The four closed codes are restated here rather than imported so a code added,
 # renamed, or dropped on either side fails instead of agreeing with itself.
 _SPEC_CODES = frozenset(
     {
         "entity-graph-invalid-entity",
         "entity-graph-invalid-member",
         "entity-graph-invalid-value",
-        "entity-graph-allocation-closed",
-        "entity-graph-scope-closed",
-        "entity-graph-node-already-populated",
-        "entity-graph-node-unpopulated",
-        "entity-graph-invalid-root",
-        "entity-graph-foreign-handle",
         "entity-graph-layout-mismatch",
     }
 )
@@ -911,70 +740,5 @@ _SPEC_CODES = frozenset(
 
 def test_the_code_set_is_closed_against_an_unlisted_code() -> None:
     assert GRAPH_CONSTRUCTION_CODES == _SPEC_CODES
-    assert len(GRAPH_CONSTRUCTION_CODES) == 10
     with pytest.raises(ValueError, match="not a graph construction code"):
         GraphConstructionError(code="entity-graph-nosuch", message="invented")
-
-
-@pytest.mark.parametrize(
-    "row",
-    [
-        pytest.param(list(_ORDER_MEMBERS), id="an-abstract-sequence"),
-        pytest.param(_CallerDefinedTuple(_ORDER_MEMBERS), id="a-caller-defined-collection-subtype"),
-        pytest.param("idnamesku", id="a-value-that-is-no-row-at-all"),
-    ],
-)
-def test_only_an_exact_tuple_crosses_the_seam(row: Any) -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.populate(order, row, _ORDER_UNLOADED)
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-member"
-
-
-@pytest.mark.parametrize(
-    "row",
-    [
-        pytest.param([UNLOADED, UNLOADED], id="an-abstract-sequence"),
-        pytest.param(
-            _CallerDefinedTuple((UNLOADED, UNLOADED)), id="a-caller-defined-collection-subtype"
-        ),
-    ],
-)
-def test_only_an_exact_tuple_of_relationship_positions_crosses_the_seam(row: Any) -> None:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        writer.populate(order, _ORDER_MEMBERS, row)
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        _construct(build)
-    assert refusal.value.code == "entity-graph-invalid-member"
-
-
-def test_an_absent_value_object_leaf_reads_as_absent_rather_than_failing() -> None:
-    # `Tag.label` is required, yet a document that omits it decoded to `ABSENT`
-    # before construction saw it — the read seam's own absence collapse. The
-    # frozen Value Object carries the member as absent, and construction neither
-    # invents a value nor re-judges the collapse.
-    (root,) = _construct(_status(primary=_tag(ABSENT)))
-    tag = cast("Any", root).primary_tag
-    assert tag.label is None
-    assert "label" not in tag.model_fields_set
-
-
-def test_an_absent_leaf_inside_a_many_element_reads_as_absent_too() -> None:
-    # Absence is per element, not per occurrence: an element of a Many carries the
-    # same distinction its One sibling does, so a document that omits a leaf in one
-    # element and holds it in another builds two rows that differ in exactly
-    # that. Without this, re-serializing the collection would spell an omission the
-    # element never held as an explicit null.
-    (root,) = _construct(_status(tags=(_tag(ABSENT), _tag("named"))))
-    absent, named = cast("Any", root).tags
-    assert absent.label is None
-    assert "label" not in absent.model_fields_set
-    assert named.label == "named"
-    assert "label" in named.model_fields_set

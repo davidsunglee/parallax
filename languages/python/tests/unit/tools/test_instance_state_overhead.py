@@ -14,7 +14,7 @@ from interpreter_matrix import IDENTITY_SCRIPT
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import validate
 from parallax.conformance.workloads import workload_digest
-from tests.unit._instance_state_support import ARMS, REPORTED, Scenario
+from tests.unit._instance_state_support import MEASUREMENT_VARIANTS, REPORTED, Scenario
 from tests.unit.tools._provenance_support import pin_dirty_tree
 
 
@@ -111,9 +111,9 @@ def test_successful_entrypoint_stdout_is_only_the_owned_envelope(
 
 
 def _expected_addresses(runtimes: tuple[str, ...]) -> set[tuple[str, str]]:
-    arm_metrics = {
+    variant_metrics = {
         report._metric_name(name)  # pyright: ignore[reportPrivateUsage] - emitted contract
-        for name in report.ArmReading._fields
+        for name in report.MeasurementVariantReading._fields
     } | {"lifecycleBytes", "transientBytes", "unreproducedNs"}
     expected: set[tuple[str, str]] = set()
     for runtime in runtimes:
@@ -121,7 +121,9 @@ def _expected_addresses(runtimes: tuple[str, ...]) -> set[tuple[str, str]]:
             workload = f"cpython-{runtime}/{scenario.name}"
             expected.update((workload, cell) for cell in ("fields", "warmups"))
             expected.update(
-                (workload, f"{arm.name}.{metric}") for arm in ARMS for metric in arm_metrics
+                (workload, f"{variant.name}.{metric}")
+                for variant in MEASUREMENT_VARIANTS
+                for metric in variant_metrics
             )
             expected.update(
                 (workload, cell)
@@ -152,17 +154,17 @@ def _expected_addresses(runtimes: tuple[str, ...]) -> set[tuple[str, str]]:
     return expected
 
 
-def _arm(
+def _variant(
     scenario: Scenario,
     retained: int,
     operation_ratio: float,
     *,
     legacy: bool,
-) -> report.ArmReading:
+) -> report.MeasurementVariantReading:
     cells = len(scenario.values) + len(scenario.unloaded)
     baseline_ns = float(max(cells, 1) * 100)
     scaled_ns = baseline_ns if legacy else baseline_ns * operation_ratio
-    return report.ArmReading(
+    return report.MeasurementVariantReading(
         cells=cells,
         retained_bytes=retained,
         bare_bytes=retained - max(cells, 1),
@@ -188,9 +190,9 @@ def _reading(
         scenario.summary,
         len(scenario.values),
         BudgetContract.load().timing_warmups,
-        _arm(scenario, legacy_retained * 2, 1.0, legacy=True),
-        _arm(scenario, legacy_retained, 1.0, legacy=True),
-        _arm(
+        _variant(scenario, legacy_retained * 2, 1.0, legacy=True),
+        _variant(scenario, legacy_retained, 1.0, legacy=True),
+        _variant(
             scenario,
             compact_retained,
             compact_operation_ratio,

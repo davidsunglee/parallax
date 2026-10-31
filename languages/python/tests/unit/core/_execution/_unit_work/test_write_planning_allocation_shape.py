@@ -262,7 +262,7 @@ def _planner_over(entities: int) -> Seam:
 """Both arms a Materialized Write Group settles into, under the same readings.
 
 A resolved row is a resolved row whether its step assigns an advanced version or
-closes a predecessor, so a reading taken of one arm says nothing about the other.
+closes a predecessor, so a reading taken of one case says nothing about the other.
 A deferred group's plan holds its selected rows only by reference, for the
 continuation that settles them.
 """

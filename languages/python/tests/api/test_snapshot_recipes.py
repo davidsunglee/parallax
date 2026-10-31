@@ -108,7 +108,7 @@ def test_a_to_one_relationship_takes_its_three_declared_runtime_states(
     assert by_id[101].order_item is None
     assert is_view_loaded(by_id[101], OrderStatus.order_item) is True
 
-    # The unloaded arm: neither multiplicity is knowable, and the two states are
+    # The unloaded case: neither multiplicity is knowable, and the two states are
     # told apart by `is_view_loaded` rather than by the value.
     unloaded = unincluded.results()[0]
     assert is_view_loaded(unloaded, OrderStatus.order) is False

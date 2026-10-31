@@ -5,12 +5,12 @@ A read driver composes a Page by converting provider rows through a bound read
 into a Page builder and writing each level's views as that level lands. These
 suites need the same composition without a database, so this builds one the same
 way — compiling a real read, binding it as a find binds it, and converting rows
-through ``ReadRowConverter.convert_row`` — rather than hand-assembling rows or levels
+through ``ReadRowConverter.record_row`` — rather than hand-assembling rows or levels
 that no driver would produce.
 
 ``materialize`` then publishes it through the typed read's own publication, which
-is what makes these suites cover the real seam: Root View, allocate, populate, and
-per-node state factory, with no stand-in anywhere.
+is what makes these suites cover the real seam: Root View, allocate, fill, and
+lifecycle states, with no stand-in anywhere.
 
 Exported names carry no leading underscore: importing an underscored name across
 modules is a ``reportPrivateUsage`` error under pyright strict, so privacy is
@@ -66,7 +66,7 @@ from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.core.wire import WireValue, decode_canonical_wire
 from parallax.snapshot._handle._read import typed_publication, wire_publication
-from tests._support.model_capabilities import graph_construction_for
+from tests._support.model_capabilities import graph_construction_for, wire_facts_for
 from tests.unit._prepared_read_support import compiled_read, result_row, uncarried
 from tests.unit._root_publication_support import RootObservation, observed_roots
 
@@ -188,11 +188,11 @@ class RecordingObserver:
         del level
         self.events.append(("statement_executed", rows))
 
-    def occurrences_reached(self, count: int) -> None:
-        self.events.append(("occurrences_reached", count))
+    def fetched_rows_reached(self, count: int) -> None:
+        self.events.append(("fetched_rows_reached", count))
 
-    def witnesses_compared(self, count: int) -> None:
-        self.events.append(("witnesses_compared", count))
+    def stored_values_compared(self, count: int) -> None:
+        self.events.append(("stored_values_compared", count))
 
     def states_decoded(self) -> None:
         self.events.append(("states_decoded", 1))
@@ -287,6 +287,10 @@ class PageFixture:
     Entities its logical claims may resolve to, which is what the plan's slot
     table records for an inverse hop.
 
+    A ``proved`` fixture's one level records each row key at most once, as a
+    read plan proves where no row key can recur: every row is judged as it is
+    recorded and is its own logical row.
+
     ``observer`` records the Page's cadence. ``model`` overrides the accepted
     model conversion and Root View judgment without
     changing the classes construction resolves, which is how a suite exercises a
@@ -298,7 +302,7 @@ class PageFixture:
     holds both reads which one it is talking to.
     """
 
-    __slots__ = ("_builder", "_cataloged", "_domain", "_model", "_reads", "_sealed")
+    __slots__ = ("_builder", "_cataloged", "_domain", "_model", "_proved", "_reads", "_sealed")
 
     def __init__(
         self,
@@ -307,9 +311,11 @@ class PageFixture:
         references: Mapping[str, tuple[str, ...]] | None = None,
         model: Metamodel | None = None,
         observer: object | None = None,
+        proved: bool = False,
     ) -> None:
         assert class_index(domain) is not None, "the Page suites compose class-backed models"
         self._domain = domain
+        self._proved = proved
         self._model = model if model is not None else model_of(domain)
         self._cataloged = CatalogedModel(self._model)
         self._builder = PageBuilder(
@@ -327,7 +333,8 @@ class PageFixture:
                             for view, targets in (references or {}).items()
                         ),
                     ),
-                )
+                ),
+                repeating_levels=frozenset() if proved else None,
             ),
             observer,
         )
@@ -349,7 +356,7 @@ class PageFixture:
     def node(
         self, entity: str, columns: Mapping[str, object], *, uncarrying: tuple[str, ...] = ()
     ) -> int:
-        """Convert one driver row of ``entity``, spelled by the names its read
+        """Record one driver row of ``entity``, spelled by the names its read
         selects, through that read bound once for this fixture, as a read level
         would; the read carries no source for the members stored under
         ``uncarrying``."""
@@ -358,9 +365,12 @@ class PageFixture:
         prepared = self._reads.get(address)
         if prepared is None:
             prepared = self._reads[address] = bind(
-                self._cataloged, compiled.result_contract, compiled.projection
+                self._cataloged,
+                compiled.result_contract,
+                compiled.projection,
+                singleton=self._proved,
             )
-        ref, _resolved, _document, _variant = prepared.convert_row(
+        ref, _resolved, _document, _variant = prepared.record_row(
             result_row(compiled, driver_row(compiled, columns)), self._builder, source=ROOT_LEVEL
         )
         return ref
@@ -422,11 +432,11 @@ class PageFixture:
         *roots: int,
         pin: Pin = _NO_PIN,
         atomic: bool = False,
-        origins: Mapping[int, object] = MappingProxyType({}),
+        read_evidence: Mapping[int, object] = MappingProxyType({}),
     ) -> list[RootObservation]:
         """Every Page root's Root View, observed through the publication pass."""
         page = self.page(*roots, pin=pin)
-        return observed_roots(page, self._model, atomic=atomic, origins=origins)
+        return observed_roots(page, self._model, atomic=atomic, read_evidence=read_evidence)
 
     def materialize(
         self,
@@ -453,7 +463,10 @@ class PageFixture:
         """:meth:`materialize`'s roots as the publication hands them over."""
         page = self.page(*roots, pin=pin)
         publication = typed_publication(
-            self._cataloged, graph_construction_for(self._domain), "fixture"
+            self._cataloged,
+            graph_construction_for(self._domain),
+            wire_facts_for(self._cataloged),
+            "fixture",
         )
         queried = self._model.entities[0].identity
         includes = build_include_tree(queried=queried, root=(queried,), positions=())
@@ -522,7 +535,7 @@ class PageFixture:
         if includes is None:
             queried = self._model.entities[0].identity
             includes = build_include_tree(queried=queried, root=(queried,), positions=())
-        publication = wire_publication(self._cataloged, "fixture")
+        publication = wire_publication(self._cataloged, wire_facts_for(self._cataloged), "fixture")
         try:
             yield from publication.roots_of(
                 page, includes, atomic=atomic, origins=cast("Mapping[int, Any]", origins)

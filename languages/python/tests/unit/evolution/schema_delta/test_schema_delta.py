@@ -662,11 +662,11 @@ def test_a_temporal_index_alteration_creates_its_end_keyed_target_before_droppin
 
 
 def test_a_domain_is_restated_downward_only_where_no_shape_stores_the_column() -> None:
-    # The restatement arm's second legality shape and the reason it is safe, as
+    # The restatement case's second legality shape and the reason it is safe, as
     # one pair. `Draft` composes no concrete subtype, so `caption` narrowing is
     # unilateral AND holds no value; the same contraction over a Column a shape
     # stores is not a Unilateral Evolution at all, so it never reaches the
-    # generator and the arm never has to refuse it.
+    # generator and the case never has to refuse it.
     rowless = evolve(_MODELS["evolution-rowless-domain-v1"], _MODELS["evolution-rowless-domain-v2"])
     assert isinstance(rowless, UnilateralEvolution)
     assert schema_delta(rowless, POSTGRES).statements == (
@@ -701,7 +701,7 @@ def _with_single_strokes(stem: str) -> AcceptedMetamodel:
 def test_a_scalar_multiplicity_change_never_reaches_the_generator() -> None:
     # Under `Columns` the move would turn a scalar Column into a Structured
     # Column, which no restatement shape admits over a stored value — and the
-    # rowless `Sketch` shows the classification, not the restatement arm, is what
+    # rowless `Sketch` shows the classification, not the restatement case, is what
     # keeps it out: its Column stores no shape, so restating it would destroy
     # nothing, yet an authored path still changes between one value and a
     # collection.
@@ -763,8 +763,8 @@ def test_a_delta_retains_neither_the_model_nor_the_layouts_it_resolved() -> None
 
 # --------------------------------------------------------------------------- #
 # The algebra is CLOSED by ADR 0063 and by the case schema's operation enum, so #
-# every arm renders and addresses a location today even though the lowering     #
-# reaches only two of them so far. An arm defined but unrendered would be a     #
+# every case renders and addresses a location today even though the lowering     #
+# reaches only two of them so far. A case defined but unrendered would be a     #
 # hole no type checker can see.                                                 #
 # --------------------------------------------------------------------------- #
 _TABLE = Table(name="widget")

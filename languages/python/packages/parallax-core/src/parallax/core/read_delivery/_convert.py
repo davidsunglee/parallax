@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import InitVar, dataclass, field
 from operator import itemgetter
 from typing import Final, cast
@@ -16,15 +16,13 @@ from parallax.core.base import (
 from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.document_codec import (
     UNAVAILABLE,
+    DecodeOutput,
     DocumentFinding,
     DocumentFindingCode,
     DocumentPathSegment,
+    MemberDecodePlan,
     MemberShape,
-    Missing,
-    Present,
-    decode_occurrence_classified,
     located_occurrence,
-    occurrence_shape,
 )
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
@@ -40,21 +38,30 @@ from parallax.core.metamodel import (
 from parallax.core.read_delivery._evidence import freeze_evidence
 from parallax.core.read_delivery._page import (
     ABSENT,
-    LogicalKey,
-    PageBuilder,
-    SourceLevel,
     StoredDataIssueCode,
     StoredDataIssueInput,
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 
 __all__ = [
+    "POSITIONAL_OUTPUT",
     "EntityReadMapping",
-    "build_positional_many",
-    "build_positional_object",
-    "complete_occurrences",
-    "register_reduced_row",
+    "judge_positions",
+    "occurrence_completion",
 ]
+
+type _Classifier = Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]
+
+
+def _positional_object(_shape: MemberShape, values: list[object]) -> tuple[object, ...]:
+    return tuple(values)
+
+
+POSITIONAL_OUTPUT: Final = DecodeOutput(
+    _positional_object, tuple, missing=ABSENT, unavailable=ABSENT
+)
+"""Each Value Object a declaration-ordered member row, ``ABSENT`` where it holds
+no value, and each Many a tuple of them."""
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -75,13 +82,21 @@ class EntityReadMapping:
 
     The judgment selections are fixed here, once per bound read. A reduced row's
     host-checked identity positions, then its host-checked non-identity
-    correlation positions, are judged when the row is claimed, so its logical
-    key and routing values are ready for page assembly. ``payload_positions``
-    are processed only when a Root View needs the row's state; the correlations
-    among them reuse the verdict formed at the claim rather than being judged
-    again. Correlations and payload positions are both in attribute order, which
-    is what places each captured correlation finding at its own payload position
-    without a lookup.
+    correlation positions, are judged when the row is recorded, so its row key
+    and routing values are ready for page assembly. ``payload_positions`` are
+    processed when the row is recorded on a level that records each row key at
+    most once, and otherwise only when a Root View needs the row's state; the
+    correlations among them reuse the verdict formed for routing rather than
+    being judged again. Correlations and payload positions are both in attribute
+    order, which is what places each captured correlation finding at its own
+    payload position without a lookup. ``judges_scalars_only`` marks a mapping
+    whose payload is host-checked scalars alone, with no document member to
+    classify and no requested occurrence.
+
+    Everything a row's judgment consults per position is fixed here too: each
+    Attribute by position, the temporal ends one bit each, the positions
+    holding a classifier, and the decode plan of each requested occurrence,
+    which judges an occurrence its classifier did not already classify.
     """
 
     layout: EntityLayout
@@ -101,6 +116,13 @@ class EntityReadMapping:
     eager_correlation_positions: tuple[int, ...] = field(init=False)
     payload_positions: tuple[int, ...] = field(init=False)
     requires_state_reduction: bool = field(init=False)
+    judges_scalars_only: bool = field(init=False)
+    attribute_positions: int = field(init=False)
+    attributes: tuple[AttributeMetadata, ...] = field(init=False)
+    temporal_end_positions: int = field(init=False)
+    classifier_positions: tuple[tuple[int, _Classifier], ...] = field(init=False)
+    occurrence_plans: tuple[MemberDecodePlan | None, ...] = field(init=False)
+    projected_occurrences: int = field(init=False)
 
     def __post_init__(
         self,
@@ -171,10 +193,60 @@ class EntityReadMapping:
             "requires_state_reduction",
             classifies or bool(payload) or bool(eager_identity) or any(projected_by_position),
         )
+        object.__setattr__(
+            self, "judges_scalars_only", not classifies and not any(projected_by_position)
+        )
+        object.__setattr__(self, "attribute_positions", (1 << layout.attribute_count) - 1)
+        # The member bindings themselves, which the Attributes open: read only at
+        # Attribute positions, they cost a mapping no copy.
+        object.__setattr__(
+            self,
+            "attributes",
+            cast("tuple[AttributeMetadata, ...]", layout.member_selection.bindings),
+        )
+        object.__setattr__(
+            self,
+            "temporal_end_positions",
+            sum(
+                1 << position
+                for position, attribute in enumerate(layout.attributes)
+                if attribute.identity in layout.temporal_ends
+            ),
+        )
+        object.__setattr__(
+            self,
+            "classifier_positions",
+            tuple(
+                (position, classifier)
+                for position, classifier in enumerate(self.classifiers)
+                if classifier is not None
+            ),
+        )
+        object.__setattr__(
+            self,
+            "occurrence_plans",
+            tuple(
+                _occurrence_plan(occurrence) if projected else None
+                for occurrence, projected in zip(
+                    layout.occurrences, projected_by_position, strict=True
+                )
+            ),
+        )
+        object.__setattr__(
+            self,
+            "projected_occurrences",
+            sum(
+                1 << position
+                for position, projected in enumerate(
+                    projected_by_position, start=layout.attribute_count
+                )
+                if projected
+            ),
+        )
 
     def decode_payload(
         self,
-        witness: tuple[object, ...],
+        stored_values: tuple[object, ...],
         routed_values: tuple[object, ...],
         classifiable: int | None,
         correlation_findings: tuple[StoredDataIssueInput, ...],
@@ -182,95 +254,50 @@ class EntityReadMapping:
         *,
         occurrences: bool = True,
     ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
-        """Judge the payload of one reduced row claimed under this mapping, from the
-        inputs its Page retained for it, answering its member row and findings.
+        """Judge the payload of one reduced row recorded under this mapping, from
+        the inputs its Page retained for it, answering its member row and findings.
 
         Without ``occurrences`` only the row's Attributes are judged: each Value
         Object occurrence the row carried keeps the input its classification
-        takes, which :func:`complete_occurrences` judges later."""
+        takes, which an :func:`occurrence_completion` judges later."""
         carried = self.every_member_present if classifiable is None else classifiable
-        values, findings, classified = _classify_payload(
-            witness, self, carried if occurrences else carried & self._attribute_positions
-        )
-        members, issues = _decode_payload(
+        if not occurrences:
+            carried &= self.attribute_positions
+        members: list[object] | None = None
+        for position in self.eager_identity_positions:
+            if routed_values[position] is not stored_values[position]:
+                if members is None:
+                    members = list(stored_values)
+                members[position] = routed_values[position]
+        members, issues, classified = _classified(self, stored_values, carried, members)
+        values = stored_values if members is None else members
+        if unknown_family_tag is not None:
+            issues = [
+                *(() if issues is None else issues),
+                StoredDataIssueInput(
+                    "stored-data-family-tag-unknown",
+                    self.concrete_entity,
+                    stored_value=freeze_evidence(unknown_family_tag.stored_value),
+                ),
+            ]
+        members, issues = judge_positions(
+            self.payload_positions,
             values,
             self,
-            routed_values,
-            correlation_findings,
-            findings,
-            unknown_family_tag,
-            classified,
-            occurrences=occurrences,
+            members,
+            issues,
+            routed_values=routed_values,
+            captured=correlation_findings,
+            classified=classified,
         )
         if not occurrences:
             members = _pending_occurrences(values, self, members)
-        return values if members is None else tuple(members), issues
-
-    @property
-    def _attribute_positions(self) -> int:
-        return (1 << self.layout.attribute_count) - 1
-
-
-def register_reduced_row(
-    witness: tuple[object, ...],
-    mapping: EntityReadMapping,
-    builder: PageBuilder,
-    *,
-    source: SourceLevel,
-    classifiable: int,
-    unknown_family_tag: UnknownFamilyTag | None,
-) -> int:
-    """Claim one reduced row's identity now, register it in ``builder`` with its
-    payload deferred to the Root View that needs it, and answer the projection
-    index the builder assigned.
-
-    ``witness`` is positional, laid out by ``mapping.layout``, with ``ABSENT``
-    wherever the read carried no value. ``classifiable`` marks, one bit per
-    position, the members the row carried for document classification.
-
-    The claim keeps the raw witness for comparing claimants and classifying the
-    payload, beside the routed values page assembly reads: the witness with
-    each judged identity and correlation cell decoded, or ``ABSENT`` where
-    rejected. Identity findings join the Page's identity issues; correlation
-    findings wait for the payload judgment, which places them at their own
-    positions.
-    """
-    routed, identity_findings = _judge(
-        mapping.eager_identity_positions, witness, mapping, None, None
-    )
-    routed, correlation_findings = _judge(
-        mapping.eager_correlation_positions, witness, mapping, routed, None
-    )
-    routed_values = witness if routed is None else tuple(routed)
-    layout = mapping.layout
-    key = (
-        None
-        if unknown_family_tag is not None
-        or any(routed_values[position] is ABSENT for position in layout.primary_key)
-        else LogicalKey(
-            layout.family,
-            routed_values[layout.primary_key[0]],
-            mapping.temporal_start_values(routed_values),
+        elif self.projected_occurrences & ~classified:
+            members, issues = _decode_occurrences(values, self, classified, members, issues)
+        return (
+            stored_values if members is None else tuple(members),
+            () if issues is None else tuple(issues),
         )
-    )
-    projection = builder.add_claim(
-        source,
-        layout,
-        key,
-        witness,
-        routed_values,
-        () if identity_findings is None else tuple(identity_findings),
-        mapping,
-    )
-    partial = None if classifiable == mapping.every_member_present else classifiable
-    if partial is not None or correlation_findings or unknown_family_tag is not None:
-        builder.add_payload_inputs(
-            projection,
-            partial,
-            () if correlation_findings is None else tuple(correlation_findings),
-            unknown_family_tag,
-        )
-    return projection
 
 
 def _tuple_getter(
@@ -289,98 +316,55 @@ def _no_values(_values: tuple[object, ...]) -> tuple[object, ...]:
     return ()
 
 
-def _classify_payload(
-    witness: tuple[object, ...],
+def _classified(
     mapping: EntityReadMapping,
-    classifiable: int,
-) -> tuple[tuple[object, ...], tuple[DocumentFinding, ...], int]:
-    """Classify each document member the row carried, answering the classified
-    values, the codec's findings, and the classified positions, one bit each."""
-    if not mapping.classifies:
-        return witness, (), 0
-    values = list(witness)
-    findings: list[DocumentFinding] = []
+    stored_values: tuple[object, ...],
+    carried: int,
+    members: list[object] | None,
+) -> tuple[list[object] | None, list[StoredDataIssueInput] | None, int]:
+    """Classify each document member a row carried: ``members``, copied from
+    ``stored_values`` if still ``None``, with each classified value written
+    in, the codec's findings as issues, and the classified positions, one bit
+    each."""
+    issues: list[StoredDataIssueInput] | None = None
     classified = 0
-    for position, optional_classifier in enumerate(mapping.classifiers):
-        if optional_classifier is None:
+    for position, classifier in mapping.classifier_positions:
+        raw = stored_values[position]
+        if raw is ABSENT or not carried >> position & 1:
             continue
-        raw = witness[position]
-        if raw is ABSENT or not classifiable & (1 << position):
-            continue
-        value, member_findings = optional_classifier(raw)
-        values[position] = value
-        findings.extend(member_findings)
+        if members is None:
+            members = list(stored_values)
+        members[position], findings = classifier(raw)
+        if findings:
+            if issues is None:
+                issues = []
+            issues.extend([_translate_finding(finding, mapping) for finding in findings])
         classified |= 1 << position
-    return tuple(values), tuple(findings), classified
+    return members, issues, classified
 
 
-def _decode_payload(
-    values: tuple[object, ...],
-    mapping: EntityReadMapping,
-    routed_values: tuple[object, ...],
-    correlation_findings: tuple[StoredDataIssueInput, ...],
-    findings: tuple[DocumentFinding, ...],
-    unknown_family_tag: UnknownFamilyTag | None,
-    classified: int,
-    *,
-    occurrences: bool,
-) -> tuple[list[object] | None, tuple[StoredDataIssueInput, ...]]:
-    issues: list[StoredDataIssueInput] | None = (
-        [_translate_finding(finding, mapping) for finding in findings] if findings else None
-    )
-    if unknown_family_tag is not None:
-        if issues is None:
-            issues = []
-        issues.append(
-            StoredDataIssueInput(
-                "stored-data-family-tag-unknown",
-                mapping.concrete_entity,
-                stored_value=freeze_evidence(unknown_family_tag.stored_value),
-            )
-        )
-    members: list[object] | None = None
-    for position in mapping.eager_identity_positions:
-        if routed_values[position] is not values[position]:
-            if members is None:
-                members = list(values)
-            members[position] = routed_values[position]
-    members, issues = _judge(
-        mapping.payload_positions,
-        values,
-        mapping,
-        members,
-        issues,
-        routed_values=routed_values,
-        captured=correlation_findings,
-        classified=classified,
-    )
-    if occurrences:
-        members, issues = _decode_occurrences(values, mapping, classified, members, issues)
-    return members, () if issues is None else tuple(issues)
+def _occurrence_plan(declared: OccurrenceMetadata) -> MemberDecodePlan:
+    """The plan judging ``declared``'s stored value, building positional member
+    rows and locating findings relative to the occurrence."""
+    return MemberDecodePlan(declared.definition, POSITIONAL_OUTPUT)
 
 
 def _decode_occurrences(
-    values: tuple[object, ...],
+    values: tuple[object, ...] | list[object],
     mapping: EntityReadMapping,
     classified: int,
     members: list[object] | None,
     issues: list[StoredDataIssueInput] | None,
 ) -> tuple[list[object] | None, list[StoredDataIssueInput] | None]:
     layout = mapping.layout
-    for occurrence_position, (occurrence, projected) in enumerate(
-        zip(layout.occurrences, mapping.projected_by_position, strict=True),
-        start=layout.attribute_count,
-    ):
-        if not projected or (raw := values[occurrence_position]) is ABSENT:
+    for position, plan in enumerate(mapping.occurrence_plans, start=layout.attribute_count):
+        if plan is None or classified >> position & 1 or (raw := values[position]) is ABSENT:
             continue
-        value, occurrence_findings = _occurrence(
-            raw,
-            occurrence,
-            outer_classified=bool(classified & (1 << occurrence_position)),
-        )
+        value, occurrence_findings = _occurrence(raw, plan)
         if occurrence_findings:
             if issues is None:
                 issues = []
+            occurrence = layout.occurrences[position - layout.attribute_count]
             issues.extend(
                 _occurrence_issue(finding, occurrence, mapping.concrete_entity)
                 for finding in occurrence_findings
@@ -388,15 +372,15 @@ def _decode_occurrences(
         if value is not raw:
             if members is None:
                 members = list(values)
-            members[occurrence_position] = value
+            members[position] = value
     return members, issues
 
 
 # One branch per verdict source. It runs per selected cell per row, so the branches
 # stay inline rather than behind a per-cell call.
-def _judge(  # noqa: C901
+def judge_positions(  # noqa: C901
     selection: tuple[int, ...],
-    values: tuple[object, ...],
+    values: tuple[object, ...] | list[object],
     mapping: EntityReadMapping,
     members: list[object] | None,
     issues: list[StoredDataIssueInput] | None,
@@ -410,16 +394,18 @@ def _judge(  # noqa: C901
     replacement, and ``issues`` with each new finding appended.
 
     Given ``routed_values``, the mapping's eager correlation positions reuse the
-    value their claim routed and the finding it ``captured``, in attribute order;
+    value their recording routed and the finding it ``captured``, in attribute order;
     a ``classified`` position takes its document codec's verdict; every other
     position is a host-checked stored scalar, decoded and admitted here.
     """
-    layout = mapping.layout
+    attributes = mapping.attributes
+    encoded = mapping.encoded_positions
+    temporal_ends = mapping.temporal_end_positions
     reused = mapping.eager_correlation_positions if routed_values else ()
     next_reused = 0
     next_captured = 0
     for position in selection:
-        attribute = layout.attributes[position]
+        attribute = attributes[position]
         raw = values[position]
         if next_reused < len(reused) and reused[next_reused] == position:
             next_reused += 1
@@ -440,7 +426,7 @@ def _judge(  # noqa: C901
             )
         else:
             value = raw
-            if raw is not None and mapping.encoded_positions >> position & 1:
+            if raw is not None and encoded >> position & 1:
                 try:
                     value = decode_canonical_wire(attribute.type, cast("WireValue", raw))
                 except WireDecodingError:
@@ -449,7 +435,7 @@ def _judge(  # noqa: C901
                 value,
                 attribute.type,
                 nullable=attribute.nullable,
-                temporal_end=attribute.identity in layout.temporal_ends,
+                temporal_end=bool(temporal_ends >> position & 1),
             )
             if not verdict.accepted:
                 if issues is None:
@@ -492,21 +478,8 @@ def _attribute_issue(
     )
 
 
-def build_positional_object(shape: MemberShape, values: Iterable[object]) -> tuple[object, ...]:
-    """Build one declaration-ordered member row from interpreted codec values."""
-    return tuple(
-        ABSENT if isinstance(value, Missing) or value is UNAVAILABLE else value
-        for _member, value in zip(shape.members, values, strict=True)
-    )
-
-
-def build_positional_many(values: Iterable[object]) -> tuple[object, ...]:
-    """Build one ordered Many result from completed positional elements."""
-    return tuple(values)
-
-
 def _pending_occurrences(
-    values: tuple[object, ...],
+    values: tuple[object, ...] | list[object],
     mapping: EntityReadMapping,
     members: list[object] | None,
 ) -> list[object] | None:
@@ -530,22 +503,34 @@ def _pending_occurrences(
     return members
 
 
-def complete_occurrences(
-    layout: EntityLayout, row: tuple[object, ...]
-) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
+def occurrence_completion(
+    layout: EntityLayout,
+) -> Callable[[tuple[object, ...]], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]]:
     """Judge the Value Object occurrences an Attribute-only judgment left
-    pending (:meth:`EntityReadMapping.decode_payload`), answering the completed
-    member row and the occurrences' findings in member order.
+    pending in a row of ``layout``'s Entity (:meth:`EntityReadMapping.decode_payload`),
+    answering the completed member row and the occurrences' findings in member
+    order.
 
     Each occurrence takes the classification an ordinary read gives it, so the
     completed row and its findings are the ones an ordinary read judges from
     the same stored state; the Attribute prefix is not judged again."""
-    members = list(row)
-    issues: list[StoredDataIssueInput] = []
-    for position, declared in enumerate(layout.occurrences, start=layout.attribute_count):
-        members[position], findings = _occurrence(row[position], declared)
-        issues.extend(_occurrence_issue(finding, declared, layout.concrete) for finding in findings)
-    return tuple(members), tuple(issues)
+    occurrences = tuple(
+        (position, declared, _occurrence_plan(declared))
+        for position, declared in enumerate(layout.occurrences, start=layout.attribute_count)
+    )
+    entity = layout.concrete
+
+    def complete(
+        row: tuple[object, ...],
+    ) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
+        members = list(row)
+        issues: list[StoredDataIssueInput] = []
+        for position, declared, plan in occurrences:
+            members[position], findings = _occurrence(row[position], plan)
+            issues.extend(_occurrence_issue(finding, declared, entity) for finding in findings)
+        return tuple(members), tuple(issues)
+
+    return complete
 
 
 def _occurrence_input(raw: object) -> SqlNull | PresentDocument:
@@ -560,31 +545,10 @@ def _occurrence_input(raw: object) -> SqlNull | PresentDocument:
     )
 
 
-def _occurrence(
-    raw: object,
-    declared: OccurrenceMetadata,
-    *,
-    outer_classified: bool = False,
-) -> tuple[object, tuple[DocumentFinding, ...]]:
-    """Build one top-level occurrence directly as positional member rows."""
-    if outer_classified:
-        return raw, ()
-    classified = decode_occurrence_classified(
-        occurrence_shape(declared),
-        _occurrence_input(raw),
-        multiplicity=declared.multiplicity,
-        nullable=declared.nullable,
-        build_object=build_positional_object,
-        build_many=build_positional_many,
-    )
-    value = (
-        classified.presence.value
-        if isinstance(classified.presence, Present)
-        else ()
-        if declared.multiplicity is Multiplicity.MANY
-        else None
-    )
-    return value, classified.findings
+def _occurrence(raw: object, plan: MemberDecodePlan) -> tuple[object, tuple[DocumentFinding, ...]]:
+    """One top-level occurrence built as positional member rows, its findings
+    relative to the occurrence."""
+    return plan.value(_occurrence_input(raw))
 
 
 def _translate_finding(

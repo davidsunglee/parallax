@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, cast
@@ -85,7 +85,7 @@ class IncludeTree:
     one canonical answer.
     """
 
-    __slots__ = ("_admitted", "_multi", "_positions", "_tokens", "_unions", "queried")
+    __slots__ = ("_admitted", "_multi", "_positions", "_prepared", "_tokens", "_unions", "queried")
 
     def __init__(self, queried: EntityIdentity, positions: Sequence[IncludePosition]) -> None:
         if not positions or positions[ROOT_POSITION].parent is not None:
@@ -100,6 +100,7 @@ class IncludeTree:
         ] = {}
         self._tokens: dict[tuple[PositionId, ...], dict[EntityIdentity, RenderToken | None]] = {}
         self._multi: dict[tuple[PositionId, ...], tuple[PositionId, ...]] = {}
+        self._prepared: dict[Hashable, object] = {}
 
     @property
     def positions(self) -> tuple[IncludePosition, ...]:
@@ -160,6 +161,21 @@ class IncludeTree:
         if held is not _UNRESOLVED:
             return cast("RenderToken | None", held)
         return by_concrete.setdefault(concrete, self._resolve_token(candidates, concrete))
+
+    def prepared[T](self, key: Hashable, build: Callable[[], T]) -> T:
+        """A consumer's own answer derived from this tree for ``key``, built by
+        ``build`` on first request and kept for the tree's lifetime.
+
+        The tree holds the answer opaquely and never reads it, so a consumer
+        bounds the memo the way the tree's own answers are bounded: by keys drawn
+        from this tree's positions and the accepted model. ``build`` must not
+        request the same key. Concurrent first requests may each build, and every
+        caller receives whichever answer was stored first.
+        """
+        held = self._prepared.get(key, _UNRESOLVED)
+        if held is _UNRESOLVED:
+            held = self._prepared.setdefault(key, build())
+        return cast("T", held)
 
     def _union(
         self, token: tuple[PositionId, ...]

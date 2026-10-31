@@ -33,7 +33,7 @@ def _case(case_id: str) -> case_format.Case:
 
 
 def test_run_read_case_wire_renders_managed_row_values() -> None:
-    # Production actuals select the codec arm from accepted Metadata, never from
+    # Production actuals select the codec case from accepted Metadata, never from
     # the UUID carrier itself.
     model = models.load_models()["scalars"]
     entity = model.entities[0]

@@ -491,6 +491,15 @@ mutable callback table. A future Managed Object materializer can use the same
 Entity Graph Construction capability with its own build function while
 coexisting with Snapshot and without either lifecycle importing the other.
 
+*Superseded in part (2026-10, COR-259, [ADR 0014](0014-entity-graph-construction-publishes-a-node-indexed-graph.md)):*
+the build function, `EntityGraphWriter`, `NodeHandle`, `ResolutionView`, the
+per-node state factory, and the six handle-misuse codes above are retired.
+`EntityGraphConstruction.publish(graph, lifecycle_states)` publishes a
+node-indexed graph and answers every node's lifecycle state in one call. The
+Snapshot Graph Input of neutral nodes was replaced earlier by the sealed Page
+and the Root View, which is the graph Snapshot now hands over. The ownership
+split between Entity and Snapshot stated here stands.
+
 Entity stores exactly one opaque lifecycle-state value per constructed node;
 there is no keyed extension bag or common lifecycle state protocol. Snapshot
 reads that value and broad relationship slots only through the advanced Entity

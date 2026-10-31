@@ -37,11 +37,11 @@ from parallax.core.read_delivery._page import (
     PageSchedule,
     ViewSchema,
     _rows,
+    entity_state,
     page_rows,
     page_schedule,
     reach_into,
     release_finished_rows,
-    state_for,
 )
 from parallax.core.temporal_read import Pin
 from tests.unit._corpus_model_support import model as corpus_model
@@ -211,7 +211,10 @@ def test_scheduling_judges_no_root_state() -> None:
     page_schedule(page, _WRITE_EVIDENCE, atomic=True)
     page_schedule(page, lambda _entity: True, atomic=True)
 
-    assert all(rows.judged_states.singleton(logical) is None for logical in range(len(rows.claims)))
+    assert all(
+        rows.judged_states.singleton(logical) is None
+        for logical in range(len(rows.fetched_rows_by_logical_row))
+    )
 
 
 def test_an_edge_free_page_computes_its_last_uses_without_walking_a_root(
@@ -241,7 +244,7 @@ def test_an_edge_free_root_reaches_itself_into_a_cleared_buffer_without_a_walk(
     assert reached == [1]
 
 
-def test_reach_follows_slots_in_order_then_overwritten_arms_each_projection_once() -> None:
+def test_reach_follows_slots_in_order_then_overwritten_values_each_fetched_row_once() -> None:
     builder = _graph_builder()
     ledger = _node(builder, "Ledger", {"id": 1})
     first, second, replaced = (_entry(builder, entry) for entry in (11, 12, 13))
@@ -284,14 +287,14 @@ def _shared_entry_page() -> tuple[Page, tuple[int, int], int]:
     for ledger in ledgers:
         builder.write_view(ledger, _ENTRIES, (shared,))
     page = builder.finish(ledgers, Pin())
-    state_for(page_rows(page), shared)
+    entity_state(page_rows(page), shared)
     return page, ledgers, shared
 
 
 def test_raw_only_release_frees_reached_member_rows_and_keeps_judged_states() -> None:
     page, (first, second), shared = _shared_entry_page()
     rows = page_rows(page)
-    logical = rows.logical_ids[shared]
+    logical = rows.logical_rows[shared]
 
     release_finished_rows(page, PageSchedule(None, False), 0, _reached(page, first))
 
@@ -305,7 +308,7 @@ def test_raw_only_release_frees_reached_member_rows_and_keeps_judged_states() ->
 def test_last_use_release_frees_a_projection_and_its_state_once_no_later_root_reaches_it() -> None:
     page, (first, second), shared = _shared_entry_page()
     rows = page_rows(page)
-    logical = rows.logical_ids[shared]
+    logical = rows.logical_rows[shared]
     schedule = page_schedule(page, lambda _entity: True, atomic=True)
 
     release_finished_rows(page, schedule, 0, _reached(page, first))
@@ -317,13 +320,17 @@ def test_last_use_release_frees_a_projection_and_its_state_once_no_later_root_re
 
     reached = _reached(page, second)
     release_finished_rows(page, schedule, 1, reached)
-    released = (list(rows.member_rows), list(rows.keys), list(rows.logical_ids))
+    released = (list(rows.member_rows), list(rows.keys), list(rows.logical_rows))
     release_finished_rows(page, schedule, 1, reached)
 
-    assert (rows.keys[shared], rows.view_rows[shared], rows.witnesses[shared]) == (None, (), None)
+    assert (rows.keys[shared], rows.view_rows[shared], rows.stored_values[shared]) == (
+        None,
+        (),
+        None,
+    )
     assert rows.judged_states.singleton(logical) is None
-    assert rows.claims[logical] == 0
-    assert (list(rows.member_rows), list(rows.keys), list(rows.logical_ids)) == released
+    assert rows.fetched_rows_by_logical_row[logical] == 0
+    assert (list(rows.member_rows), list(rows.keys), list(rows.logical_rows)) == released
 
 
 def _shared_keyless_animal(owners: Sequence[int]) -> tuple[Page, int]:

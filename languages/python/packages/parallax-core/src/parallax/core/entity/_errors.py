@@ -134,12 +134,6 @@ GRAPH_CONSTRUCTION_CODES: Final[frozenset[str]] = frozenset(
     {
         "entity-graph-invalid-entity",
         "entity-graph-invalid-member",
-        "entity-graph-allocation-closed",
-        "entity-graph-scope-closed",
-        "entity-graph-foreign-handle",
-        "entity-graph-node-already-populated",
-        "entity-graph-node-unpopulated",
-        "entity-graph-invalid-root",
         "entity-graph-invalid-value",
         "entity-graph-layout-mismatch",
     }
@@ -158,11 +152,11 @@ class GraphConstructionError(RuntimeError):
     model-formation contract failures on ``RuntimeError`` while a stored-value
     rejection stays a ``ValueError``.
 
-    ``index`` is the deterministic zero-based allocation index of the node the
-    failure is about, absent for a failure that is about no single node.
-    ``identity`` is the structured Entity, member, or Relationship Identity at
-    fault, and ``cause`` the original conversion failure when one exists. Neither
-    a handle, a writer, a resolution view, nor a partially built Entity is ever
+    ``index`` is the zero-based index of the graph node the failure is about —
+    the node whose row holds a refused value — absent for a failure that is
+    about no single node. ``identity`` is the structured Entity, member, or
+    Relationship Identity at fault, and ``cause`` the original conversion
+    failure when one exists. No graph and no partially filled Entity is ever
     retained here.
     """
 

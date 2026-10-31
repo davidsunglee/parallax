@@ -6,7 +6,7 @@ the read that licenses the write held that row's shared lock, which correct
 locking prevents. The claim is therefore pinned here, with no database, no
 interference, and no write ingress:
 
-* a versioned keyed write settled UNGATED (the Locking arm) carries the
+* a versioned keyed write settled UNGATED (the Locking case) carries the
   never-retriable stale write as its shortfall class, and an unversioned one
   carries the never-retriable missing target;
 * the retry policy calls both ineligible, so no retry candidate carries them
@@ -103,7 +103,7 @@ def _locking_policy(
 def test_a_versioned_locking_write_reaching_no_row_is_the_non_retriable_stale_write(
     write: KeyedWriteInstruction,
 ) -> None:
-    # The Locking arm renders no gate — the shared read lock is what makes the
+    # The Locking case renders no gate — the shared read lock is what makes the
     # write correct — so a shortfall cannot be a gate that came up short.
     step, policy = _locking_policy(write, _ACCOUNT, observed=1)
     assert policy == ExactCount(1, STALE_WRITE)

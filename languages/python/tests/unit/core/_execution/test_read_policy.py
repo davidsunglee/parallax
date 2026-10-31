@@ -303,7 +303,7 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
     except ExecutionFailure as failure:
         assert (failure.edition, failure.cause) == ("test", boom)
         assert failure.__cause__ is boom
-    else:  # pragma: no cover - the assertion is the except arm
+    else:  # pragma: no cover - the assertion is the except clause
         raise AssertionError("a standalone read's failure was not contextualized")
     (root,) = provider.roots
     # The connection is acquired before the body and released after it however
@@ -322,7 +322,7 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
             attempt.eager(_TARGET, "typed", failing)
         except RuntimeError as raised:
             assert raised is boom
-        else:  # pragma: no cover - the assertion is the except arm
+        else:  # pragma: no cover - the assertion is the except clause
             raise AssertionError("a participating read wrapped its failure")
 
     _participating(run, ScriptedAdapter(Transact()))
@@ -336,7 +336,7 @@ def test_a_standalone_read_lets_a_control_flow_exception_pass_untouched() -> Non
         _scope(ScriptedAdapter()).begin().eager(_TARGET, "typed", interrupting)
     except KeyboardInterrupt:
         pass
-    else:  # pragma: no cover - the assertion is the except arm
+    else:  # pragma: no cover - the assertion is the except clause
         raise AssertionError("a control-flow exception was contextualized")
 
 
@@ -558,7 +558,7 @@ def test_a_standalone_advance_names_the_edition_and_a_participating_one_does_not
         read.advance(failing)
     except ExecutionFailure as failure:
         assert (failure.edition, failure.cause) == ("test", boom)
-    else:  # pragma: no cover - the assertion is the except arm
+    else:  # pragma: no cover - the assertion is the except clause
         raise AssertionError("a standalone advance's failure was not contextualized")
 
     def run(attempt: TxnAttempt) -> None:
@@ -567,7 +567,7 @@ def test_a_standalone_advance_names_the_edition_and_a_participating_one_does_not
             attempt.begin().advance(failing)
         except RuntimeError as raised:
             assert raised is boom
-        else:  # pragma: no cover - the assertion is the except arm
+        else:  # pragma: no cover - the assertion is the except clause
             raise AssertionError("a participating advance wrapped its failure")
 
     _participating(run, ScriptedAdapter(Transact()))
@@ -627,7 +627,7 @@ def test_every_observed_writable_page_takes_a_fresh_evidence_collector() -> None
 
 def test_the_empty_collector_records_nothing_and_answers_no_origin() -> None:
     page = cast("Page", object())
-    EMPTY_PAGE_ORIGIN_COLLECTOR.observe_projection(
+    EMPTY_PAGE_ORIGIN_COLLECTOR.observe_fetched_row(
         0, EntityIdentity("parallax.compatibility", "Account"), {}
     )
 

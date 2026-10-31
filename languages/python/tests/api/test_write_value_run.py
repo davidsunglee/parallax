@@ -20,8 +20,8 @@ import pytest
 
 from parallax.conformance import case_format, engine, write_value_runner
 from parallax.conformance._lifecycle_observation import LifecycleObservation
-from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.foreign_lifecycle_source import ForeignLifecycleSource
 from parallax.conformance.story_models import Account
 from parallax.conformance.vo_models import Customer
 from parallax.core.execution import prepare_model
@@ -48,7 +48,7 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     # A `anotherSource` value is read through this second managed source, which
     # materializes and recognizes its own independently of the Snapshot lifecycle
     # the verbs under test write through.
-    another = AnotherSource(
+    foreign = ForeignLifecycleSource(
         prepare_model(model, edition=engine.case_edition(case)), profile_run.port
     )
     steps = write_value_runner.write_value_steps(case)
@@ -58,7 +58,7 @@ def test_write_value_case_runs_through_the_shipped_verbs(
 
     def fn(tx: TxnContext) -> list[str | None]:
         return write_value_runner.graded_outcomes(
-            tx, steps, another, lambda: invalid_customer_root(model), outside
+            tx, steps, foreign, lambda: invalid_customer_root(model), outside
         )
 
     outcomes = db.transact(fn)

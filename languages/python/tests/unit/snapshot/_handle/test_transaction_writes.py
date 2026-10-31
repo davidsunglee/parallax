@@ -35,7 +35,6 @@ from parallax.core._execution._unit_work import instructions
 from parallax.core.base import INT64, DocumentValue, InstantError, PresentDocument
 from parallax.core.db_port import ArrayBind, MappingRow
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import EntityGraphWriter, NodeHandle
 from parallax.core.entity._errors import EntityRowError
 from parallax.core.execution import (
     KEYED_WRITE_VALUE_CODES,
@@ -67,8 +66,9 @@ from tests._support.db_port import (
     WriteCall,
     inserted_rows,
 )
-from tests._support.model_capabilities import cataloged_for, graph_construction_for
+from tests._support.model_capabilities import cataloged_for
 from tests._support.root_ownership import own_root
+from tests.unit._indexed_graph_support import published
 from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
@@ -1359,18 +1359,15 @@ def _foreign_lifecycle_account() -> mm.Account:
     lifecycle's? What a value with a foreign answer is refused for is pinned here;
     that a value ANOTHER framework-managed source actually produced is refused is
     pinned by the corpus (`m-unit-work-019`, arranged through
-    `parallax.conformance.another_source`).
+    `parallax.conformance.foreign_lifecycle_source`).
     """
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(mm.Account.identity)
-        # `Account`'s member row: id, owner, balance, version — and no
-        # relationship of its own to carry a position for.
-        writer.populate(handle, (1, "Ada", Decimal("100.00"), 1), ())
-        return (handle,)
-
-    (node,) = graph_construction_for(ACCOUNT).construct(
-        build, state_factory=lambda view, handle: _OtherLifecycleState()
+    # `Account`'s member row: id, owner, balance, version — and no relationship
+    # of its own to carry a position for.
+    node = published(
+        ACCOUNT,
+        (mm.Account.identity, (1, "Ada", Decimal("100.00"), 1), ()),
+        state=lambda _instance: _OtherLifecycleState(),
     )
     return cast("mm.Account", node)
 
@@ -1650,7 +1647,9 @@ def test_an_insert_after_a_cancelled_insert_terminate_pair_opens_the_milestone_a
 
 
 @pytest.mark.parametrize("verb", ["insert", "amend"], ids=["insert", "amend"])
-def test_a_value_carrying_another_sources_state_is_refused_by_both_families(verb: str) -> None:
+def test_a_value_carrying_foreign_lifecycle_sources_state_is_refused_by_both_families(
+    verb: str,
+) -> None:
     # A value's stored counterpart is only the one the writing source itself
     # produced, so neither family accepts another source's value — and the
     # raising port proves the refusal precedes every adapter call.

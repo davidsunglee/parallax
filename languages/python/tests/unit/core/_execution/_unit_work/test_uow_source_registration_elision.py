@@ -26,7 +26,7 @@ from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.core import opt_lock
 from parallax.core._execution._planning import build_write_planner
-from parallax.core._execution._retention import ReadEvidenceByProjection
+from parallax.core._execution._retention import ReadEvidenceByFetchedRow
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
@@ -145,7 +145,7 @@ class _Production:
             actor_identity=TEST_ACTOR_IDENTITY,
             evidence_policy_for=opt_lock.view(meta).required_key,
         )
-        self.captured: dict[str, ReadEvidenceByProjection] = {}
+        self.captured: dict[str, ReadEvidenceByFetchedRow] = {}
         self.published: dict[str, ReadEvidence] = {}
 
     def run(self, step: _Step) -> None:

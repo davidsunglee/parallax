@@ -2,10 +2,10 @@
 resets, and the failure boundary, in both representations and at both delivery
 boundaries.
 
-Page reach can include an overwritten arm or a claimant's losing slot. Such an
-arm is judged and compared, so a projection conflict in it still refuses, but
-it publishes nowhere, so a finding in it neither classifies nor refuses a root
-whose carried views never reach it.
+Page reach can include an overwritten relationship value or a claimant's losing
+slot. Such a relationship value is judged and compared, so a projection conflict
+in it still refuses, but it publishes nowhere, so a finding in it neither
+classifies nor refuses a root whose carried views never reach it.
 """
 
 from __future__ import annotations
@@ -18,8 +18,10 @@ import pytest
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import NeutralType, PresentDocument
 from parallax.core.deep_fetch import IncludeTree
+from parallax.core.entity import UNLOADED
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.read_delivery import InvalidData
-from parallax.core.read_delivery._page import Page, judged_state, page_rows
+from parallax.core.read_delivery._page import Page, page_rows, shared_entity_state
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot import (
     SnapshotConsistencyError,
@@ -27,16 +29,13 @@ from parallax.snapshot import (
     is_view_loaded,
 )
 from parallax.snapshot._inspection import RootConformance, snapshot_state_of
-from parallax.snapshot._publication import _root, _typed, _wire
+from parallax.snapshot._publication import _root, _typed, _wire_render
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
-from parallax.snapshot._publication._wire import (
-    WireRootPublisher,
-    read_evidence_of,
-    stored_entity_of,
-)
-from tests._support.model_capabilities import graph_construction_for
+from parallax.snapshot._publication._wire import read_evidence_of, stored_entity_of
+from parallax.snapshot._publication._wire_render import WireRootPublisher
+from tests._support.model_capabilities import graph_construction_for, wire_facts_for
 from tests.unit._root_publication_support import each_root, observed
 from tests.unit.snapshot._encoded_page_models import ENCODED_ACCOUNT, ENCODED_ORDERS, EncodedOrder
 from tests.unit.snapshot._snapshot_page_support import PageFixture, identity_of, invalid_record
@@ -104,7 +103,7 @@ def _conforming(form: _Form, value: object) -> bool:
     if form == "typed":
         state = snapshot_state_of(value)
         assert state is not None
-        return state.root_conformance is RootConformance.CONFORMING
+        return state.provenance.root_conformance is RootConformance.CONFORMING
     return stored_entity_of(cast("Any", value)) is not None
 
 
@@ -112,32 +111,34 @@ def _evidence(form: _Form, value: object) -> object:
     if form == "typed":
         state = snapshot_state_of(value)
         assert state is not None
-        return state.read_evidence
+        return state.provenance.read_evidence
     return read_evidence_of(cast("Any", value))
 
 
 # --------------------------------------------------------------------------- #
 # Realized reach: an arm the carried views discard publishes nowhere.          #
 # --------------------------------------------------------------------------- #
-def _overwritten_arm(*, invalid: Literal["discarded", "current"]) -> tuple[PageFixture, int]:
-    """An order whose items view was written twice, the invalid item arm first
+def _overwritten_relationship_value(
+    *, invalid: Literal["discarded", "current"]
+) -> tuple[PageFixture, int]:
+    """An order whose items view was written twice, the invalid item relationship value first
     when it is ``discarded`` and last when it is ``current``."""
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     order = _order(fixture)
     valid = _item(fixture, 11)
     broken = _item(fixture, 12, code=_UNDECODABLE)
-    arms = (broken, valid) if invalid == "discarded" else (valid, broken)
-    for arm in arms:
-        fixture.attach(order, _ITEMS, (arm,))
+    values = (broken, valid) if invalid == "discarded" else (valid, broken)
+    for value in values:
+        fixture.attach(order, _ITEMS, (value,))
     return fixture, order
 
 
 @_DELIVERY
 @_FORM
-def test_a_discarded_invalid_arm_does_not_classify_the_valid_current_arm(
+def test_a_discarded_invalid_value_does_not_classify_the_valid_current_value(
     form: _Form, atomic: bool
 ) -> None:
-    fixture, order = _overwritten_arm(invalid="discarded")
+    fixture, order = _overwritten_relationship_value(invalid="discarded")
 
     (published,) = _published(fixture, form, order, atomic=atomic)
 
@@ -149,8 +150,10 @@ def test_a_discarded_invalid_arm_does_not_classify_the_valid_current_arm(
 
 @_DELIVERY
 @_FORM
-def test_a_current_invalid_arm_still_classifies_its_root(form: _Form, atomic: bool) -> None:
-    fixture, order = _overwritten_arm(invalid="current")
+def test_a_current_invalid_relationship_value_still_classifies_its_root(
+    form: _Form, atomic: bool
+) -> None:
+    fixture, order = _overwritten_relationship_value(invalid="current")
 
     (published,) = _published(fixture, form, order, atomic=atomic)
 
@@ -164,7 +167,9 @@ def test_a_current_invalid_arm_still_classifies_its_root(form: _Form, atomic: bo
 
 @_DELIVERY
 @_FORM
-def test_a_projection_conflict_in_a_discarded_arm_still_refuses(form: _Form, atomic: bool) -> None:
+def test_a_projection_conflict_in_a_discarded_relationship_value_still_refuses(
+    form: _Form, atomic: bool
+) -> None:
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     order = _order(fixture)
     discarded = _item(fixture, 11, code="0d")
@@ -175,11 +180,11 @@ def test_a_projection_conflict_in_a_discarded_arm_still_refuses(form: _Form, ato
     with pytest.raises(SnapshotConsistencyError) as conflict:
         _published(fixture, form, order, atomic=atomic)
 
-    assert conflict.value.code == "snapshot-projection-conflict"
+    assert conflict.value.code == "snapshot-fetched-row-conflict"
     assert type(conflict.value) is SnapshotConsistencyError
 
 
-def _continuing_past_a_discarded_arm() -> tuple[PageFixture, int, int]:
+def _continuing_past_a_discarded_relationship_value() -> tuple[PageFixture, int, int]:
     """An order reaching item 11 through ``items`` and item 12 through
     ``itemsByCode``, each item's order cycling back to it. Item 11's order view
     was first written to an invalid order the later write discards, so Page
@@ -199,8 +204,10 @@ def _continuing_past_a_discarded_arm() -> tuple[PageFixture, int, int]:
 
 @_DELIVERY
 @_FORM
-def test_continuation_views_survive_compacting_a_discarded_arm(form: _Form, atomic: bool) -> None:
-    fixture, order, _discarded = _continuing_past_a_discarded_arm()
+def test_continuation_views_survive_compacting_a_discarded_relationship_value(
+    form: _Form, atomic: bool
+) -> None:
+    fixture, order, _discarded = _continuing_past_a_discarded_relationship_value()
 
     (published,) = _published(fixture, form, order, atomic=atomic)
 
@@ -217,7 +224,7 @@ def test_continuation_views_survive_compacting_a_discarded_arm(form: _Form, atom
 
 
 def test_compaction_renumbers_every_carried_reference_and_keeps_full_reach() -> None:
-    fixture, order, discarded = _continuing_past_a_discarded_arm()
+    fixture, order, discarded = _continuing_past_a_discarded_relationship_value()
 
     (root,) = fixture.observed_roots(order)
 
@@ -234,7 +241,9 @@ def test_compaction_renumbers_every_carried_reference_and_keeps_full_reach() -> 
 
 @_DELIVERY
 @_FORM
-def test_a_back_reference_survives_compacting_a_discarded_arm(form: _Form, atomic: bool) -> None:
+def test_a_back_reference_survives_compacting_a_discarded_relationship_value(
+    form: _Form, atomic: bool
+) -> None:
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS, references={_ITEM_ORDER: ("EncodedOrder",)})
     order = _order(fixture)
     discarded = _item(fixture, 12, code=_UNDECODABLE)
@@ -303,7 +312,9 @@ class _RecordedOrigins(Mapping[int, object]):
             raise RuntimeError("origin resolution failed")
         rows = page_rows(self.page)
         assert rows.keys[projection] is not None, f"projection {projection} was released"
-        assert judged_state(rows, projection) is not None, f"projection {projection} is unjudged"
+        assert shared_entity_state(rows, projection) is not None, (
+            f"projection {projection} is unjudged"
+        )
         self.lookups.append(projection)
         return ("evidence", projection)
 
@@ -352,8 +363,10 @@ def test_only_a_conforming_root_acquires_origins_for_a_state_it_shares(
 
 @_DELIVERY
 @_FORM
-def test_a_discarded_issue_bearing_arm_acquires_no_origin(form: _Form, atomic: bool) -> None:
-    fixture, order, discarded = _continuing_past_a_discarded_arm()
+def test_a_discarded_issue_bearing_relationship_value_acquires_no_origin(
+    form: _Form, atomic: bool
+) -> None:
+    fixture, order, discarded = _continuing_past_a_discarded_relationship_value()
     origins = _origins_for(fixture, order)
 
     (published,) = _published(fixture, form, order, atomic=atomic, origins=origins)
@@ -401,10 +414,110 @@ def test_an_origin_resolution_failure_propagates_unwrapped(form: _Form, atomic: 
 
 
 # --------------------------------------------------------------------------- #
+# Provenance: shared by nodes of one Page stating the same facts, owned by a   #
+# node carrying Read Evidence.                                                 #
+# --------------------------------------------------------------------------- #
+def _provenance(form: _Form, value: object) -> Any:
+    if form == "typed":
+        state = snapshot_state_of(value)
+        assert state is not None
+        return state.provenance
+    return cast("Any", value)._provenance
+
+
+@_DELIVERY
+@_FORM
+def test_nodes_stating_the_same_facts_share_one_provenance_within_one_page_only(
+    form: _Form, atomic: bool
+) -> None:
+    def two_orders() -> tuple[object, ...]:
+        fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+        orders = (_order(fixture), _order(fixture, 2))
+        for order, item in zip(orders, (11, 12), strict=True):
+            fixture.attach(order, _ITEMS, (_item(fixture, item, order_id=order),))
+        return _published(fixture, form, *orders, atomic=atomic)
+
+    first, second = two_orders()
+    again, _ = two_orders()
+
+    (first_item,) = _field(form, first, "items")
+    (second_item,) = _field(form, second, "items")
+    assert _provenance(form, first) is _provenance(form, second)
+    assert _provenance(form, first_item) is _provenance(form, second_item)
+    assert _provenance(form, first) is not _provenance(form, first_item)
+    assert _provenance(form, again) == _provenance(form, first)
+    assert _provenance(form, again) is not _provenance(form, first)
+
+
+@_DELIVERY
+@_FORM
+def test_a_valid_and_an_invalid_root_reaching_one_page_state_never_share_provenance(
+    form: _Form, atomic: bool
+) -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    valid = _order(fixture)
+    invalid = _order(fixture, 2, address=_WRONG_KIND)
+    shared = _item(fixture, 11)
+    fixture.attach(valid, _ITEMS, (shared,))
+    fixture.attach(invalid, _ITEMS, (shared,))
+
+    conforming, record = _published(fixture, form, valid, invalid, atomic=atomic)
+
+    hydrated = invalid_record(record).data
+    (item,) = _field(form, conforming, "items")
+    (diagnostic,) = _field(form, hydrated, "items")
+    assert _provenance(form, item).root_conformance is RootConformance.CONFORMING
+    assert _provenance(form, diagnostic).root_conformance is RootConformance.NONCONFORMING
+    assert _provenance(form, conforming).root_conformance is RootConformance.CONFORMING
+    assert _provenance(form, hydrated).root_conformance is RootConformance.NONCONFORMING
+    if form == "typed":
+        assert snapshot_state_of(item) is not snapshot_state_of(diagnostic)
+
+
+class _EqualEvidence(Mapping[int, object]):
+    """Read Evidence that is equal for every fetched row yet a distinct,
+    unhashable object each time, so interning it by equality would merge
+    evidence with independent lifetimes, or fail to hash it."""
+
+    def __init__(self) -> None:
+        self.given: dict[int, object] = {}
+
+    def __getitem__(self, fetched_row: int) -> object:
+        evidence = self.given[fetched_row] = ["evidence"]
+        return evidence
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+
+@_DELIVERY
+@_FORM
+def test_equal_read_evidence_is_never_shared_between_nodes(form: _Form, atomic: bool) -> None:
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    order = _order(fixture)
+    items = (_item(fixture, 11), _item(fixture, 12))
+    fixture.attach(order, _ITEMS, items)
+    evidence = _EqualEvidence()
+
+    (published,) = _published(fixture, form, order, atomic=atomic, origins=evidence)
+
+    first, second = _field(form, published, "items")
+    assert _evidence(form, first) is evidence.given[items[0]]
+    assert _evidence(form, second) is evidence.given[items[1]]
+    assert _evidence(form, first) == _evidence(form, second)
+    assert _provenance(form, first) is not _provenance(form, second)
+    if form == "typed":
+        assert snapshot_state_of(first) is not snapshot_state_of(second)
+
+
+# --------------------------------------------------------------------------- #
 # Alternating roots: every per-root fact is reset, and no value is shared.     #
 # --------------------------------------------------------------------------- #
 def _alternating() -> tuple[PageFixture, tuple[int, ...]]:
-    """Roots differing in size, concrete, findings, and arms: an order whose
+    """Roots differing in size, concrete, findings, and relationship values: an order whose
     items and by-code items reach one diamond of items with a narrowed view
     and a cycle; an order whose own badge never decodes; an item root with a
     null order; an order with empty items and unloaded by-code items; and an
@@ -553,7 +666,7 @@ class _Boom(Exception):
     pass
 
 
-def test_the_wire_walk_forgets_a_root_whose_rendering_failed() -> None:
+def test_the_wire_renderer_forgets_a_root_whose_rendering_failed() -> None:
     # Item 12's code refuses to encode after item 11 rendered, so a memo kept
     # across roots would answer the next root's item from the failed root.
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
@@ -569,7 +682,9 @@ def test_the_wire_walk_forgets_a_root_whose_rendering_failed() -> None:
         return encode_managed_wire(neutral_type, cast("Any", value))
 
     includes = fixture.include_tree("EncodedOrder", (0, _ITEMS, "EncodedOrderItem"))
-    publisher = WireRootPublisher(fixture.model, CONCURRENCY, includes, encode)
+    publisher = WireRootPublisher(
+        fixture.model, wire_facts_for(CatalogedModel(fixture.model)), CONCURRENCY, includes, encode
+    )
 
     def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
         try:
@@ -629,7 +744,9 @@ def test_a_typed_publisher_failure_is_wrapped_once_with_its_cause(
         )
     else:
         monkeypatch.setattr(
-            TypedRootPublisher, "build", _failing_second_call(TypedRootPublisher.build)
+            TypedRootPublisher,
+            "_lifecycle_states",
+            _failing_second_call(vars(TypedRootPublisher)["_lifecycle_states"]),
         )
 
     received, failure = _publish_until_failure(fixture, roots, "typed", atomic=atomic)
@@ -650,10 +767,14 @@ def test_a_pass_side_or_wire_failure_propagates_unwrapped(
 ) -> None:
     fixture, roots = _two_orders()
     if seam == "decoding":
-        monkeypatch.setattr(_root, "state_for", _failing_second_call(vars(_root)["state_for"]))
+        monkeypatch.setattr(
+            _root, "entity_state", _failing_second_call(vars(_root)["entity_state"])
+        )
     else:
         monkeypatch.setattr(
-            _wire, "classify_root", _failing_second_call(vars(_wire)["classify_root"])
+            _wire_render,
+            "classify_root",
+            _failing_second_call(vars(_wire_render)["classify_root"]),
         )
 
     received, failure = _publish_until_failure(fixture, roots, form, atomic=atomic)
@@ -672,19 +793,17 @@ def test_a_typed_publisher_clears_its_root_bookkeeping_however_a_root_ends(
     publisher = TypedRootPublisher(
         fixture.model, graph_construction_for(ENCODED_ORDERS), CONCURRENCY
     )
-    bookkeeping: list[tuple[int, int]] = []
+    held: list[RootView | None] = []
 
     def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
         published = publisher(root, ordinal)
-        bookkeeping.append(
-            (len(publisher._handles), publisher._pending)  # pyright: ignore[reportPrivateUsage]
-        )
+        held.append(publisher._root)  # pyright: ignore[reportPrivateUsage]
         return published
 
     (published,) = publish_roots(fixture.page(order), publish_root, fixture.model)
 
     assert (invalid_record(published).data is not None) is hydrates
-    assert bookkeeping == [(0, 0)]
+    assert held == [None]
 
 
 def test_a_typed_publisher_clears_its_root_bookkeeping_when_construction_fails(
@@ -700,17 +819,33 @@ def test_a_typed_publisher_clears_its_root_bookkeeping_when_construction_fails(
     def failing_state(*_args: object) -> object:
         raise _Boom
 
-    monkeypatch.setattr(TypedRootPublisher, "state", failing_state)
+    monkeypatch.setattr(TypedRootPublisher, "_lifecycle_states", failing_state)
     with pytest.raises(_Boom):
         list(publish_roots(fixture.page(order), publisher, fixture.model))
 
-    assert publisher._handles == []  # pyright: ignore[reportPrivateUsage]
-    assert publisher._pending == 0  # pyright: ignore[reportPrivateUsage]
+    assert publisher._root is None  # pyright: ignore[reportPrivateUsage]
 
 
 # --------------------------------------------------------------------------- #
 # A Root View is borrowed: only what a callback copies outlives the call.      #
 # --------------------------------------------------------------------------- #
+def test_a_root_view_answers_broad_relationship_values_as_node_indices() -> None:
+    # The graph Typed publication hands Entity Graph Construction: a loaded
+    # to-many is the tuple of this root's nodes in carried order, and a direction
+    # no fetched row loaded is the unloaded sentinel.
+    fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
+    order = _order(fixture)
+    fixture.attach(order, _ITEMS, (_item(fixture, 11), _item(fixture, 12)))
+
+    answered = each_root(
+        fixture.page(order),
+        fixture.model,
+        lambda root, _ordinal: [root.relationship_values(node) for node in range(len(root))],
+    )
+
+    assert answered == [[((1, 2), UNLOADED), (UNLOADED,), (UNLOADED,)]]
+
+
 def test_a_retained_root_view_answers_for_the_last_root_while_copies_survive() -> None:
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
     first = _order(fixture)

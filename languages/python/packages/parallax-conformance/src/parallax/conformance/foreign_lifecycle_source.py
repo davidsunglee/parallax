@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, cast
@@ -9,12 +9,7 @@ from parallax.core import ObjectQuery
 from parallax.core._execution._publication import read_projection
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.db_port import DatabaseConnection
-from parallax.core.entity import (
-    UNLOADED,
-    EntityGraphWriter,
-    NodeHandle,
-    lifecycle_state_of,
-)
+from parallax.core.entity import lifecycle_state_of
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.execution import ModelSelection
 from parallax.core.metamodel import EntityIdentity
@@ -23,7 +18,7 @@ from parallax.core.read_delivery._page import Page
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots, require_publishable
 
-__all__ = ["AnotherSource"]
+__all__ = ["ForeignLifecycleSource"]
 
 
 class _NoOrigins:
@@ -32,7 +27,7 @@ class _NoOrigins:
 
     __slots__ = ()
 
-    def observe_projection(
+    def observe_fetched_row(
         self, node: int, entity: EntityIdentity, document: object | None
     ) -> None:
         del node, entity, document
@@ -46,9 +41,9 @@ _NO_ORIGINS = _NoOrigins()
 
 
 @dataclass(frozen=True, slots=True)
-class _AnotherSourceState:
-    """The per-node state one :class:`AnotherSource` attaches to every value it
-    materializes.
+class _ForeignLifecycleState:
+    """The per-node state one :class:`ForeignLifecycleSource` attaches to every
+    value it materializes.
 
     It carries the source itself, which is how that source later recognizes its
     own. The production classifier reads none of that — it reads only that the
@@ -57,10 +52,10 @@ class _AnotherSourceState:
     consults.
     """
 
-    source: AnotherSource
+    source: ForeignLifecycleSource
 
 
-class AnotherSource:
+class ForeignLifecycleSource:
     """One managed value lifecycle over a store, distinct from the Snapshot's.
 
     Construct one per store and reuse it: the values it answers are recognized by
@@ -103,7 +98,7 @@ class AnotherSource:
         result = execute_read(validated, self._model, self._port, origin_collector=_NO_ORIGINS)
         return cast("tuple[S, ...]", self._materialize(result.page))
 
-    def produced(self, value: object) -> bool:
+    def materialized(self, value: object) -> bool:
         """Whether THIS source materialized ``value``.
 
         State another source attached — or no managed state at all — answers
@@ -111,27 +106,23 @@ class AnotherSource:
         than a test for managed-ness in general.
         """
         state = lifecycle_state_of(value)
-        return isinstance(state, _AnotherSourceState) and state.source is self
+        return isinstance(state, _ForeignLifecycleState) and state.source is self
 
     def _materialize(self, page: Page) -> tuple[object, ...]:
-        """Publish Page roots through the shared seam using this source state."""
+        """Publish Page roots through the shared seam using this source's state.
+
+        The Root View is the graph handed over: a root-only Page carries no
+        relationship view, so every relationship of every node publishes
+        unloaded.
+        """
         construction = self._construction
+        state = _ForeignLifecycleState(self)
+
+        def lifecycle_states(instances: Sequence[object]) -> tuple[object, ...]:
+            return (state,) * len(instances)
 
         def publish(root: RootView, _ordinal: int) -> tuple[object, ...]:
             require_publishable(root)
-
-            def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-                handles = [writer.allocate(root.layout(node).concrete) for node in range(len(root))]
-                for node, handle in enumerate(handles):
-                    writer.populate(
-                        handle,
-                        root.member_values(node),
-                        (UNLOADED,) * len(root.layout(node).relationships),
-                    )
-                return (handles[0],)
-
-            return construction.construct(
-                build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
-            )
+            return (construction.publish(root, lifecycle_states),)
 
         return tuple(publish_roots(page, publish, self._model.meta))

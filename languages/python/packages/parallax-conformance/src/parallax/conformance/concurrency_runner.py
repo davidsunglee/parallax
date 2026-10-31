@@ -74,10 +74,11 @@ _DEADLOCK_TIMEOUT: str = "100ms"
 _LOCK_TIMEOUT: str = "250ms"
 
 # A blocking step's statement waits on its peer by design, so its session's
-# budget must outlast the rounds until the peer releases the lock; the same
-# bound limits how long the runner waits to see the wait begin and end.
-_BLOCKING_LOCK_TIMEOUT: str = "10s"
-_BLOCKING_STEP_BOUND_SECONDS: float = 10.0
+# budget must outlast the rounds until the peer releases the lock. The runner's
+# bound on seeing the wait begin and end outlasts that budget, so a wait no peer
+# releases surfaces as the statement's own lock-timeout error.
+_BLOCKING_LOCK_TIMEOUT_SECONDS: int = 10
+_BLOCKING_STEP_BOUND_SECONDS: float = _BLOCKING_LOCK_TIMEOUT_SECONDS + 2.0
 _LOCK_WAIT_POLL_SECONDS: float = 0.01
 
 _LOCK_WAITS: str = (
@@ -374,7 +375,7 @@ def _start_blocking(
 ) -> _Blocked:
     """Issue a blocking step's statement and return once the engine reports a
     lock wait, the statement finished without one, or the bound passed."""
-    session.execute(f"set lock_timeout = '{_BLOCKING_LOCK_TIMEOUT}'", [])
+    session.execute(f"set lock_timeout = '{_BLOCKING_LOCK_TIMEOUT_SECONDS}s'", [])
     finished: list[NodeOutcome | BaseException] = []
 
     def run() -> None:

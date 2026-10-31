@@ -32,8 +32,6 @@ from parallax.core import LATEST, Attr, Bitemporal, Document, Entity, ValueObjec
 from parallax.core.base import PresentDocument
 from parallax.core.entity import (
     EntityDefinitionError,
-    EntityGraphWriter,
-    NodeHandle,
 )
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import lifecycle_state
@@ -70,10 +68,10 @@ from tests._support.db_port import (
     Write,
     WriteCall,
 )
-from tests._support.model_capabilities import graph_construction_for
 from tests._support.root_ownership import own_root
 from tests.unit._authored_storage_support import answering_for_instance_state, stored_state
 from tests.unit._gc_reachability import reachable_objects
+from tests.unit._indexed_graph_support import published
 from tests.unit._transact_support import (
     ACCOUNT,
     BALANCE,
@@ -99,7 +97,7 @@ _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 def _typed_hint(node: object) -> object:
     state = snapshot_state_of(node)
     assert state is not None
-    return state.read_evidence
+    return state.provenance.read_evidence
 
 
 def _read_in_a_transaction() -> mm.Account:
@@ -224,7 +222,7 @@ def test_plain_dict_conversion_strips_a_wire_nodes_keyed_source_status() -> None
     assert converted == dict(node.items())
     assert type(converted) is dict
     assert not isinstance(converted, WireEntity)
-    assert not hasattr(converted, "_read_evidence")
+    assert not hasattr(converted, "_provenance")
 
 
 # --------------------------------------------------------------------------- #
@@ -595,14 +593,7 @@ def test_a_class_diverting_the_lifecycle_slot_is_refused_all_the_same() -> None:
     state = object()
     identity = _DivertedSlotNode.identity
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        node = writer.allocate(identity)
-        writer.populate(node, (7,), ())
-        return (node,)
-
-    (root,) = graph_construction_for(_DIVERTED_MODEL).construct(
-        build, state_factory=lambda _view, _handle: state
-    )
+    root = published(_DIVERTED_MODEL, (identity, (7,), ()), state=lambda _instance: state)
     assert lifecycle_state(cast("_DivertedSlotNode", root)) is state
     assert stored_state(cast("_DivertedSlotNode", root)).get(_DIVERTED_TO) is None
 
@@ -968,9 +959,9 @@ def test_a_value_no_writable_attempt_read_keeps_its_published_provenance(placeme
     node = snapshot.result()
     state = snapshot_state_of(node)
     assert state is not None
-    assert state.read_evidence is None
-    assert state.entity == _CensusCharter.identity
-    assert state.root_conformance is RootConformance.CONFORMING
+    assert state.provenance.read_evidence is None
+    assert state.provenance.entity == _CensusCharter.identity
+    assert state.provenance.root_conformance is RootConformance.CONFORMING
     assert pin_of(node) == Pin(tx_time=LATEST, valid_time=_CENSUS_AT)
     assert edge_of(node) == Edge(tx_time=_CENSUS_START, valid_time=_CENSUS_START)
 
@@ -991,15 +982,15 @@ def test_inspecting_an_edge_changes_none_of_the_facts_a_write_or_projection_read
         node = snapshot.result()
         edit = node.edit(title="Southbound")
         state = snapshot_state_of(node)
-        assert state is not None and state.read_evidence is not None
+        assert state is not None and state.provenance.read_evidence is not None
 
         def facts() -> tuple[object, ...]:
             return (
-                state.entity,
+                state.provenance.entity,
                 state.views,
-                state.root_conformance,
-                state.pin,
-                state.read_evidence,
+                state.provenance.root_conformance,
+                state.provenance.pin,
+                state.provenance.read_evidence,
             )
 
         before = facts()
@@ -1011,9 +1002,9 @@ def test_inspecting_an_edge_changes_none_of_the_facts_a_write_or_projection_read
         assert all(after is held for after, held in zip(facts(), before, strict=True))
         projected = snapshot.wire().result()
         assert isinstance(projected, WireEntity)
-        assert read_evidence_of(projected) is state.read_evidence
-        assert wire_pin_of(projected) is state.pin
-        assert stored_entity_of(projected) == state.entity
+        assert read_evidence_of(projected) is state.provenance.read_evidence
+        assert wire_pin_of(projected) is state.provenance.pin
+        assert stored_entity_of(projected) == state.provenance.entity
 
     db.transact(inspected)
 
@@ -1059,7 +1050,7 @@ def test_a_classified_roots_nodes_are_published_as_no_stored_value() -> None:
     assert isinstance(typed, InvalidData)
     state = snapshot_state_of(typed.data)
     assert state is not None
-    assert state.root_conformance is RootConformance.NONCONFORMING
+    assert state.provenance.root_conformance is RootConformance.NONCONFORMING
     assert isinstance(wire, InvalidData)
     assert isinstance(wire.data, WireEntity)
     assert stored_entity_of(wire.data) is None

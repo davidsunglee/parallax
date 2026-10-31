@@ -486,7 +486,7 @@ def audit(
     every module must also be one that row names or carry a first-party import,
     nor a package holding an isolated scope, whose own files are the one origin
     no forbidden row reaches, nor a sealed scope, whose imports of that same
-    package its own row cannot reject, so all three arms run here too.
+    package its own row cannot reject, so all three cases run here too.
     """
     unowned: list[str] = []
     overlapping: list[str] = []

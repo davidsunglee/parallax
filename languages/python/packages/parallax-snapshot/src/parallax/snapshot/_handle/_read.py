@@ -11,7 +11,6 @@ from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._expressions import include_traversal
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
-from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._nodes import IncludePathNode
 from parallax.core.object_query.validate import validate_include_path
 from parallax.core.predicate import root_position
@@ -20,9 +19,10 @@ from parallax.core.read_delivery._page import Page
 from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
 from parallax.core.read_delivery._publication import RootsOf
 from parallax.core.temporal_read import Pin, TemporalShape
+from parallax.core.wire._facts import WireModelFacts
 
 if TYPE_CHECKING:
-    from parallax.snapshot._publication._wire import EntityReader
+    from parallax.snapshot._publication._wire import InstanceReader
 
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._publication import SelectedReadModel
@@ -31,7 +31,8 @@ from parallax.snapshot._inspection import SnapshotInspectionError
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
-from parallax.snapshot._publication._wire import WireEntity, WireRootPublisher
+from parallax.snapshot._publication._wire import WireEntity
+from parallax.snapshot._publication._wire_render import WireRootPublisher
 
 __all__ = [
     "CheckedSnapshot",
@@ -39,7 +40,6 @@ __all__ = [
     "Snapshot",
     "SnapshotPublication",
     "TooManyResultsFound",
-    "projection_concrete",
     "typed_publication",
     "typed_publication_for",
     "wire_position",
@@ -100,8 +100,9 @@ class Snapshot[T]:
     ``__repr__``. Deliberately ABSENT: iteration / ``len`` / truthiness /
     indexing on the container, refresh or write methods, any lazy
     behavior, and every lifecycle accessor. A Typed result retains the request's
-    canonical finite include shape and the graph construction that published it
-    so :meth:`wire` can publish the value in memory; it retains no execution
+    canonical finite include shape, the graph construction that published it,
+    and its model's prepared Wire facts so :meth:`wire` can publish the value in
+    memory; it retains no execution
     scope, Page, Root View, connection, authority, or other lifecycle of the read.
 
     A root whose stored state contradicted the model is held as its
@@ -114,7 +115,7 @@ class Snapshot[T]:
     union is partitioned with ordinary collection operations.
     """
 
-    __slots__ = ("_construction", "_edition", "_includes", "_invalid", "_pin", "_roots")
+    __slots__ = ("_construction", "_edition", "_includes", "_invalid", "_pin", "_roots", "_wire")
 
     _roots: tuple[T | InvalidData[T], ...]
     _invalid: tuple[InvalidData[object], ...]
@@ -122,6 +123,7 @@ class Snapshot[T]:
     _edition: str
     _includes: deep_fetch.IncludeTree | None
     _construction: EntityGraphConstruction | None
+    _wire: WireModelFacts | None
 
     def __init__(
         self,
@@ -130,6 +132,7 @@ class Snapshot[T]:
         edition: str,
         includes: deep_fetch.IncludeTree | None = None,
         construction: EntityGraphConstruction | None = None,
+        wire: WireModelFacts | None = None,
     ) -> None:
         self._roots = roots
         self._invalid = _invalid_records(roots)
@@ -137,6 +140,7 @@ class Snapshot[T]:
         self._edition = edition
         self._includes = includes
         self._construction = construction
+        self._wire = wire
 
     def result(self) -> T:
         """The single matched root; raises on zero, on more than one, and on
@@ -198,7 +202,8 @@ class Snapshot[T]:
         """Publish this Typed result, or one eligible node, in canonical Wire form."""
         projection = self._construction
         includes = self._includes
-        if projection is None or includes is None:
+        wire = self._wire
+        if projection is None or includes is None or wire is None:
             raise SnapshotInspectionError(
                 code="snapshot-wire-envelope-ineligible",
                 message="Wire projection is available only on a Typed Snapshot",
@@ -212,7 +217,7 @@ class Snapshot[T]:
             edition = self._edition
             del self
             try:
-                projected = _project_eager_values(values, includes, projection, includes.root)
+                projected = _project_eager_values(values, includes, projection, wire, includes.root)
                 return Snapshot(projected, pin, edition)
             finally:
                 values = ()
@@ -223,7 +228,9 @@ class Snapshot[T]:
             reader.model,
             None if at is _WIRE_AT_OMITTED else cast("IncludePath[Entity, Any] | None", at),
         )
-        return _project_eager_values((value,), includes, projection, position, reader=reader)[0]
+        return _project_eager_values((value,), includes, projection, wire, position, reader=reader)[
+            0
+        ]
 
     @property
     def pin(self) -> Pin:
@@ -263,39 +270,18 @@ def _require_projection_inputs(
     projection: EntityGraphConstruction,
     *,
     operation: str = "Snapshot.wire",
-) -> EntityReader:
+) -> InstanceReader:
     """Validate explicit inputs before resolving a separately supplied position."""
-    from parallax.snapshot._publication._wire import EntityReader
+    from parallax.snapshot._publication._wire import InstanceReader
 
-    reader = EntityReader(projection, operation=operation)
+    reader = InstanceReader(projection, operation=operation)
     for value in values:
         record = cast("InvalidData[object]", value) if isinstance(value, InvalidData) else None
         node: object | None = record.data if record is not None else cast("object", value)
         if node is None:
             continue
-        projection_concrete(reader, node, operation=operation)
+        reader.concrete(node)
     return reader
-
-
-def projection_concrete(
-    reader: EntityReader, node: object, *, operation: str = "Snapshot.wire"
-) -> EntityIdentity:
-    """Require lifecycle identity and retained layout to describe one concrete."""
-    from parallax.snapshot._publication._wire import projection_entity
-
-    concrete = projection_entity(node, operation=operation)
-    layout = reader.layout(node)
-    if layout.concrete != concrete:  # pragma: no cover - correspondence includes identity
-        raise SnapshotInspectionError(
-            code="snapshot-wire-input-incompatible",
-            message=(
-                f"{type(node).__name__} lifecycle identity {concrete.canonical} does not "
-                f"match retained layout {layout.concrete.canonical}"
-            ),
-            operation=operation,
-            entity=concrete,
-        )
-    return concrete
 
 
 def wire_position(
@@ -343,18 +329,16 @@ def _project_eager_values(
     values: tuple[object, ...],
     includes: deep_fetch.IncludeTree,
     projection: EntityGraphConstruction,
+    wire: WireModelFacts,
     position: deep_fetch.PositionId,
     *,
-    reader: EntityReader | None = None,
+    reader: InstanceReader | None = None,
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
-    from parallax.snapshot._publication._wire import (
-        EntityReader,
-        WireWalk,
-        shared_wire_encoder,
-    )
-    from parallax.snapshot._publication._wire_memo import StrongIdentityMemo
+    from parallax.snapshot._publication._wire import InstanceReader, shared_wire_encoder
+    from parallax.snapshot._publication._wire_memo import InstanceIdentityMemo
+    from parallax.snapshot._publication._wire_render import WireRenderer
 
-    walk: WireWalk[object] | None = None
+    renderer: WireRenderer[object] | None = None
     encoder: _DeliveryWireEncoder | None = None
     projected: list[WireEntity | InvalidData[WireEntity]] = []
     value: object | None = None
@@ -370,8 +354,8 @@ def _project_eager_values(
                 projected.append(cast("InvalidData[WireEntity]", record))
                 continue
             if reader is None:
-                reader = EntityReader(projection)
-            concrete = projection_concrete(reader, node)
+                reader = InstanceReader(projection)
+            concrete = reader.concrete(node)
             if not includes.admits(position, concrete):
                 raise SnapshotInspectionError(
                     code="snapshot-wire-at-concrete-mismatch",
@@ -381,16 +365,17 @@ def _project_eager_values(
                     operation="Snapshot.wire",
                     entity=concrete,
                 )
-            if walk is None:
+            if renderer is None:
                 encoder = shared_wire_encoder()
                 encoder.begin_page()
-                walk = WireWalk(
+                renderer = WireRenderer(
                     reader,
                     includes,
+                    wire,
                     encoder,
-                    memo=StrongIdentityMemo(),
+                    memo=InstanceIdentityMemo(),
                 )
-            rendered = walk.position(node, position)
+            rendered = renderer.render_at(node, position)
             projected.append(
                 rendered
                 if record is None
@@ -398,8 +383,8 @@ def _project_eager_values(
             )
         return tuple(projected)
     finally:
-        if walk is not None:
-            walk.clear()
+        if renderer is not None:
+            renderer.clear()
         if reader is not None:
             reader.clear()
         projected.clear()
@@ -506,6 +491,7 @@ class SnapshotPublication:
     edition: str
     release: Callable[[], None]
     construction: EntityGraphConstruction | None = None
+    wire: WireModelFacts | None = None
 
     def from_find(self, result: EagerPageResult[ReadEvidence]) -> Snapshot[Any]:
         """``result``'s Page as a Snapshot at that read's own pin."""
@@ -523,6 +509,7 @@ class SnapshotPublication:
                 self.edition,
                 result.includes if self.construction is not None else None,
                 self.construction,
+                self.wire,
             )
         finally:
             self.release()
@@ -550,6 +537,7 @@ class SnapshotPublication:
                 self.edition,
                 result.includes if self.construction is not None else None,
                 self.construction,
+                self.wire,
             )
         finally:
             self.release()
@@ -574,7 +562,7 @@ def typed_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication
             "this read is served under a model that composed no Entity Class, so it "
             "cannot materialize a Snapshot (snapshot-class-backed-model-required)"
         )
-    return typed_publication(selected.model, construction, selected.edition)
+    return typed_publication(selected.model, construction, selected.wire, selected.edition)
 
 
 def wire_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
@@ -583,13 +571,17 @@ def wire_publication_for(selected: SelectedReadModel, /) -> SnapshotPublication:
     A Wire node is no Entity Class instance, so no materializer is required and
     no classless refusal applies.
     """
-    return wire_publication(selected.model, selected.edition)
+    return wire_publication(selected.model, selected.wire, selected.edition)
 
 
 def typed_publication(
-    model: CatalogedModel, construction: EntityGraphConstruction, edition: str
+    model: CatalogedModel,
+    construction: EntityGraphConstruction,
+    wire: WireModelFacts,
+    edition: str,
 ) -> SnapshotPublication:
-    """Publish through the typed materializer: frozen Entity instances."""
+    """Publish through the typed materializer: frozen Entity instances, each
+    result retaining ``wire`` for its later Wire projection."""
 
     def roots_of(
         page: Page,
@@ -625,18 +617,20 @@ def typed_publication(
             atomic=atomic,
             ordinal_offset=ordinal_offset,
             milestones=milestones,
-            origins=origins,
+            read_evidence=origins,
         )
 
-    return SnapshotPublication("typed", roots_of, edition, _release_nothing, construction)
+    return SnapshotPublication("typed", roots_of, edition, _release_nothing, construction, wire)
 
 
-def wire_publication(model: CatalogedModel, edition: str) -> SnapshotPublication:
+def wire_publication(
+    model: CatalogedModel, wire: WireModelFacts, edition: str
+) -> SnapshotPublication:
     """Publish through the wire materializer: frozen declared-name value trees.
 
-    ``model`` is the selection's cataloged model. Each node's family variant
-    is read off the layout that catalog fixed, so the publication's one
-    delivery-scoped reuse state is the scalar encoder.
+    ``model`` is the selection's cataloged model and ``wire`` the facts its
+    preparation derived, which every node renders through, so the
+    publication's one delivery-scoped reuse state is the scalar encoder.
     """
 
     from parallax.snapshot._publication._wire import shared_wire_encoder
@@ -670,12 +664,12 @@ def wire_publication(model: CatalogedModel, edition: str) -> SnapshotPublication
         current.begin_page()
         yield from publish_roots(
             page,
-            WireRootPublisher(model.meta, CONCURRENCY, includes, current),
+            WireRootPublisher(model.meta, wire, CONCURRENCY, includes, current),
             model.meta,
             atomic=atomic,
             ordinal_offset=ordinal_offset,
             milestones=milestones,
-            origins=origins,
+            read_evidence=origins,
         )
 
     return SnapshotPublication("wire", roots_of, edition, release)

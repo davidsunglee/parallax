@@ -90,7 +90,7 @@ from tests._support.db_port import (
     WriteCall,
 )
 from tests._support.lowering_probes import lowered_steps
-from tests._support.model_capabilities import graph_construction_for
+from tests._support.model_capabilities import graph_construction_for, wire_facts_for
 from tests._support.planner_probes import (
     NO_COUNTED_STEPS,
     NO_ROW_READS,
@@ -168,7 +168,7 @@ def _trace_declarations(monkeypatch: pytest.MonkeyPatch, model: Metamodel) -> li
 
 
 def _prepared_writes() -> list[ComposedWrite]:
-    """Every non-temporal arm version settlement forks on: a versioned insert,
+    """Every non-temporal case version settlement forks on: a versioned insert,
     observed updates and deletes of a standalone Entity and of an inherited
     position, and a collapsing unversioned run."""
     fridge_update = KeyedWriteInstruction("amend", "Fridge", ({"id": 1, "name": "Chill"},))
@@ -443,9 +443,11 @@ class _PreparedPage:
                 )
             )
         selected = (
-            typed_publication(self.cataloged, self.construction, "owned")
+            typed_publication(
+                self.cataloged, self.construction, wire_facts_for(self.cataloged), "owned"
+            )
             if publication == "typed"
-            else wire_publication(self.cataloged, "owned")
+            else wire_publication(self.cataloged, wire_facts_for(self.cataloged), "owned")
         )
         return tuple(
             selected.roots_of(self.page, self.includes, atomic=True, milestones=self.milestones)

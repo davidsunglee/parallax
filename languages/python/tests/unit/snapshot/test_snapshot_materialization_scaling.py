@@ -56,6 +56,7 @@ import tracemalloc
 from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from itertools import count, repeat
+from types import MappingProxyType
 from typing import Any, Final, cast
 
 from parallax.core._execution._publication import read_projection
@@ -70,7 +71,7 @@ from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ReadEvidence
 from parallax.snapshot import Database, Snapshot
-from parallax.snapshot._inspection import RootConformance, SnapshotNodeState
+from parallax.snapshot._inspection import NodeProvenance, RootConformance, SnapshotNodeState
 from tests.unit import _delivery_control_support as control_support
 from tests.unit._gc_reachability import Closure, closure, reachable_objects
 from tests.unit._snapshot_materialization_support import (
@@ -361,21 +362,24 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     held = cast("Any", result)
     construction = held._construction
     includes = held._includes
+    wire = held._wire
     root.close()
     del root, scope
     gc.collect()
     gc.collect()
 
-    assert construction is not None and includes is not None
+    assert construction is not None and includes is not None and wire is not None
     direct = gc.get_referents(result)
     assert any(value is construction for value in direct)
     assert any(value is includes for value in direct)
+    assert any(value is wire for value in direct)
 
-    reached = reachable_objects(result, boundaries=(construction, includes))
+    reached = reachable_objects(result, boundaries=(construction, includes, wire))
     kinds: tuple[tuple[type, str], ...] = (
         (Snapshot, "snapshot"),
         (Entity, "entity"),
         (SnapshotNodeState, "node-state"),
+        (NodeProvenance, "provenance"),
         (ReadEvidence, "origin"),
         (EntityIdentity, "entity-identity"),
         (Pin, "pin"),
@@ -384,6 +388,7 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
     )
     exact_kinds: dict[type, str] = {
         dict: "views",
+        MappingProxyType: "views",
         tuple: "tuple",
         type(None): "shared",
         bool: "shared",
@@ -396,6 +401,8 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
             return "construction"
         if value is includes:
             return "includes"
+        if value is wire:
+            return "wire-facts"
         if value is UNLOADED:
             return "unloaded"
         for kind, name in kinds:
@@ -415,12 +422,14 @@ def test_a_closed_eager_typed_result_retains_only_projection_metadata_not_execut
         "snapshot": 1,
         "construction": 1,
         "includes": 1,
+        "wire-facts": 1,
         "entity": 97,
-        "node-state": 97,
+        "node-state": 35,
+        "provenance": 4,
         "entity-identity": 4,
         "pin": 1,
         "unloaded": 1,
-        "views": 97,
+        "views": 34,
         "tuple": 131,
     }
 

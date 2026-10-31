@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import replace
 from typing import cast
 
 from parallax.core.base import (
@@ -14,16 +13,13 @@ from parallax.core.base import (
 from parallax.core.db_port import Row
 from parallax.core.document_codec import (
     DocumentFinding,
+    MemberDecodePlan,
     MemberShape,
-    Present,
-    decode_occurrence_classified,
-    decode_scalar_many_classified,
-    occurrence_shape,
-    prepared_raw_member_classifier,
+    entity_member_plan,
 )
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, ValueObjectMetadata
 from parallax.core.object_query._resolved import ContinuationCoordinate
-from parallax.core.read_delivery._convert import build_positional_many, build_positional_object
+from parallax.core.read_delivery._convert import POSITIONAL_OUTPUT
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._inheritance import (
     FixedRowIdentity,
@@ -33,9 +29,12 @@ from parallax.core.sql_gen._inheritance import (
 )
 
 __all__ = [
+    "fixed_entity",
     "member_classifiers",
+    "require_arity",
     "row_coordinates",
     "row_identity",
+    "row_variants",
 ]
 
 type MemberClassifier = Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]
@@ -46,7 +45,7 @@ def row_identity(
 ) -> tuple[EntityIdentity, str | None, UnknownFamilyTag | None, object | None]:
     """The Entity ``row`` names, its `familyVariant` spelling, the stored tag no
     composed concrete claimed, and the row's shared document."""
-    _require_arity(contract, row)
+    require_arity(contract, row)
     source = contract.row_identity
     shared = contract.shared_document_ordinal
     # An isinstance chain rather than a class-pattern match: this runs per row,
@@ -67,6 +66,30 @@ def row_identity(
     if shared is None:
         return entity, variant, unknown, None
     return entity, variant, unknown, unwrap_document_read(_document_read(row[shared]))
+
+
+def fixed_entity(contract: ReadResultContract) -> EntityIdentity | None:
+    """The one Entity every row of ``contract`` names without consulting the row,
+    or ``None`` where a row's own cells name it or carry a shared document."""
+    source = contract.row_identity
+    if isinstance(source, FixedRowIdentity) and contract.shared_document_ordinal is None:
+        return source.entity
+    return None
+
+
+def row_variants(
+    contract: ReadResultContract,
+) -> tuple[tuple[EntityIdentity, str | None], ...]:
+    """Every Entity and `familyVariant` spelling pair a row of ``contract`` can
+    resolve to, an unrecognized tag's family root included."""
+    source = contract.row_identity
+    if isinstance(source, FixedRowIdentity):
+        return ((source.entity, None),)
+    if isinstance(source, TaggedRowIdentity):
+        answers = (*source.by_tag.values(), (source.root, None, None))
+    else:
+        answers = tuple(source.by_spelling.values())
+    return tuple(dict.fromkeys((entity, variant) for entity, variant, _unknown in answers))
 
 
 def member_classifiers(
@@ -102,26 +125,13 @@ def member_classifiers(
 
 
 def _direct_classifier(member: AttributeMetadata | ValueObjectMetadata) -> MemberClassifier:
-    if isinstance(member, AttributeMetadata):
-        return _collection_classifier(member)
-    occurrence = member
-    shape = occurrence_shape(occurrence)
+    name = (
+        member.identity.name if isinstance(member, AttributeMetadata) else member.identity.path[-1]
+    )
+    plan = MemberDecodePlan(member.definition, POSITIONAL_OUTPUT, path=(name,))
 
     def classify(document_read: object) -> tuple[object, tuple[DocumentFinding, ...]]:
-        decoded = decode_occurrence_classified(
-            shape,
-            _document_read(document_read),
-            multiplicity=occurrence.multiplicity,
-            nullable=occurrence.nullable,
-            build_object=build_positional_object,
-            build_many=build_positional_many,
-        )
-        findings = tuple(
-            replace(finding, path=(occurrence.identity.path[-1], *finding.path))
-            for finding in decoded.findings
-        )
-        value = decoded.presence.value if isinstance(decoded.presence, Present) else None
-        return value, findings
+        return plan.value(_document_read(document_read))
 
     return classify
 
@@ -129,23 +139,7 @@ def _direct_classifier(member: AttributeMetadata | ValueObjectMetadata) -> Membe
 def _located_classifier(shape: MemberShape | None, member_name: str) -> MemberClassifier:
     if shape is None:  # pragma: no cover - a located resident belongs to its owner's shape
         raise SqlGenError(f"the shared document member {member_name!r} has no shape")
-    classifier = prepared_raw_member_classifier(
-        shape, member_name, build_object=build_positional_object, build_many=build_positional_many
-    )
-    return cast("MemberClassifier", classifier)
-
-
-def _collection_classifier(attribute: AttributeMetadata) -> MemberClassifier:
-    leaf = attribute.definition
-    name = attribute.identity.name
-
-    def classify(document_read: object) -> tuple[object, tuple[DocumentFinding, ...]]:
-        value, findings = decode_scalar_many_classified(leaf, _document_read(document_read))
-        if findings:
-            findings = tuple(replace(finding, path=(name, *finding.path)) for finding in findings)
-        return value, findings
-
-    return classify
+    return cast("MemberClassifier", entity_member_plan(shape, member_name, POSITIONAL_OUTPUT).value)
 
 
 def row_coordinates(
@@ -162,11 +156,12 @@ def row_coordinates(
 def _coordinate(
     contract: ReadResultContract, row: Row, ordinals: tuple[int, ...]
 ) -> ContinuationCoordinate:
-    _require_arity(contract, row)
+    require_arity(contract, row)
     return ContinuationCoordinate(tuple(inert_scalar(row[ordinal]) for ordinal in ordinals))
 
 
-def _require_arity(contract: ReadResultContract, row: Row) -> None:
+def require_arity(contract: ReadResultContract, row: Row) -> None:
+    """Refuse a provider row whose cell count is not the read's."""
     if len(row) != len(contract.slots):
         raise ValueError(
             f"result cell count {len(contract.slots)} does not match row arity {len(row)}"

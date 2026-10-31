@@ -10,6 +10,7 @@ from parallax.core._execution._unit_work.write_planner import WritePlanner
 from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import ClassIndex
+from parallax.core.wire._facts import WireModelFacts
 
 __all__ = [
     "ModelSelection",
@@ -59,13 +60,16 @@ class SelectedReadModel:
 
     ``classes`` is the class index the model composed, borrowed rather than
     rebuilt, or ``None`` for a descriptor-backed model; Typed predicate
-    resolution reads Python member names through it.
+    resolution reads Python member names through it. ``wire`` is how every
+    Entity of the model renders as Wire, prepared for every model alike,
+    since a Wire read needs no class.
     """
 
     edition: str
     model: CatalogedModel
     construction: EntityGraphConstruction | None
     classes: ClassIndex | None
+    wire: WireModelFacts
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +142,7 @@ def select_model(
     catalog: CatalogedModel,
     classes: ClassIndex | None,
     construction: EntityGraphConstruction | None,
+    wire: WireModelFacts,
     preparation: WritePreparation,
     planner: WritePlanner,
     evidence_policy_for: EvidencePolicyLookup,
@@ -157,7 +162,7 @@ def select_model(
     """
     checked = check_edition(edition)
     read = SelectedReadModel(
-        edition=checked, model=catalog, construction=construction, classes=classes
+        edition=checked, model=catalog, construction=construction, classes=classes, wire=wire
     )
     write = SelectedWriteModel(
         edition=checked,

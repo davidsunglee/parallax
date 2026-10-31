@@ -378,7 +378,7 @@ def test_run_graph_case_reports_the_records_a_classified_root_published() -> Non
 
 
 def test_run_graph_case_publishes_null_where_nothing_could_be_hydrated() -> None:
-    # The other arm of the same observation: a leaf no declared decoding admits
+    # The other case of the same observation: a leaf no declared decoding admits
     # leaves the position with no value at all, so the graph carries `null` and
     # `hydrated` is what says the null means "unhydrated" rather than "collapsed".
     port = QueueDbPort(

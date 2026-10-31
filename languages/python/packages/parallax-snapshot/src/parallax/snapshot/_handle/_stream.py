@@ -12,14 +12,12 @@ from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.read_delivery import InvalidData, StreamStateError
 from parallax.core.read_delivery._stream import StreamDelivery
 from parallax.core.temporal_read import Pin
-from parallax.snapshot._handle._read import (
-    SnapshotPublication,
-    projection_concrete,
-    wire_position,
-)
+from parallax.core.wire._facts import WireModelFacts
+from parallax.snapshot._handle._read import SnapshotPublication, wire_position
 from parallax.snapshot._publication import _wire as wire_materialize
-from parallax.snapshot._publication._wire import EntityReader, WireEntity, WireWalk
+from parallax.snapshot._publication._wire import InstanceReader, WireEntity
 from parallax.snapshot._publication._wire_memo import WeakIdentityMemo
+from parallax.snapshot._publication._wire_render import WireRenderer
 
 __all__ = ["DEFAULT_BATCH_SIZE", "SnapshotStream", "StreamExecution"]
 
@@ -62,15 +60,19 @@ _CURRENT_PROJECTION_PAGE: Final = (
 
 
 class _StreamWireProjection:
-    __slots__ = ("_construction", "_encoder", "_includes", "_reader", "_walk")
+    __slots__ = ("_construction", "_encoder", "_includes", "_reader", "_renderer", "_wire")
 
     def __init__(
-        self, construction: EntityGraphConstruction, includes: deep_fetch.IncludeTree
+        self,
+        construction: EntityGraphConstruction,
+        wire: WireModelFacts,
+        includes: deep_fetch.IncludeTree,
     ) -> None:
         self._construction = construction
+        self._wire = wire
         self._includes = includes
-        self._reader: EntityReader | None = None
-        self._walk: WireWalk[object] | None = None
+        self._reader: InstanceReader | None = None
+        self._renderer: WireRenderer[object] | None = None
         self._encoder: _PageWireEncoder | None = None
 
     def begin_page(self, includes: deep_fetch.IncludeTree) -> None:
@@ -92,8 +94,8 @@ class _StreamWireProjection:
         reader = self._reader
         if node is not None:
             if reader is None:
-                reader = EntityReader(self._construction, operation="SnapshotStream.wire")
-            concrete = projection_concrete(reader, node, operation="SnapshotStream.wire")
+                reader = InstanceReader(self._construction, operation="SnapshotStream.wire")
+            concrete = reader.concrete(node)
         position = wire_position(
             self._includes,
             self._construction.cataloged,
@@ -115,19 +117,20 @@ class _StreamWireProjection:
         if self._reader is None:
             assert reader is not None
             self._reader = reader
-        if self._walk is None:
+        if self._renderer is None:
             if self._encoder is None:
                 self._encoder = wire_materialize.shared_wire_encoder()
                 self._encoder.begin_page()
             reader = self._reader
             assert reader is not None
-            self._walk = WireWalk(
+            self._renderer = WireRenderer(
                 reader,
                 self._includes,
+                self._wire,
                 self._encoder,
                 memo=WeakIdentityMemo[object](),
             )
-        rendered = cast("WireEntity", self._walk.position(node, position))
+        rendered = cast("WireEntity", self._renderer.render_at(node, position))
         return (
             rendered
             if record is None
@@ -141,9 +144,9 @@ class _StreamWireProjection:
             self._encoder = None
 
     def _clear_entities(self) -> None:
-        if self._walk is not None:
-            self._walk.clear()
-            self._walk = None
+        if self._renderer is not None:
+            self._renderer.clear()
+            self._renderer = None
         if self._reader is not None:
             self._reader.clear()
             self._reader = None
@@ -162,7 +165,7 @@ class SnapshotStream[T]:
     counts root positions and does not change their order or contents.
     """
 
-    __slots__ = ("_delivery", "_projection_construction", "_projection_state")
+    __slots__ = ("_delivery", "_projection_publication", "_projection_state")
 
     def __init__[Q](
         self,
@@ -173,7 +176,7 @@ class SnapshotStream[T]:
         convert_query: Callable[[Q], ReadQuery],
         build_publication: Callable[[SelectedReadModel], SnapshotPublication],
     ) -> None:
-        self._projection_construction: EntityGraphConstruction | None = None
+        self._projection_publication: SnapshotPublication | None = None
         self._projection_state: _StreamWireProjection | None = None
         self._delivery = execution.stream(
             query,
@@ -189,7 +192,7 @@ class SnapshotStream[T]:
         stream's publication, gates the query, plans its pages, and starts
         observing it. Nothing reaches the database."""
         publication = self._delivery.enter()
-        self._projection_construction = publication.construction
+        self._projection_publication = publication
         return self
 
     def __exit__(
@@ -241,8 +244,10 @@ class SnapshotStream[T]:
         at: IncludePath[Entity, Any] | None = None,
     ) -> WireEntity | InvalidData[WireEntity]:
         """Publish one eligible node under the current delivery Page's request shape."""
-        construction = self._projection_construction
-        if construction is None:
+        publication = self._projection_publication
+        construction = None if publication is None else publication.construction
+        wire = None if publication is None else publication.wire
+        if construction is None or wire is None:
             if self._delivery.entered:
                 from parallax.snapshot._inspection import SnapshotInspectionError
 
@@ -257,7 +262,7 @@ class SnapshotStream[T]:
             raise StreamStateError(_CURRENT_PROJECTION_PAGE)
         projection = self._projection_state
         if projection is None:
-            projection = _StreamWireProjection(construction, includes)
+            projection = _StreamWireProjection(construction, wire, includes)
             self._projection_state = projection
         return projection.project(value, at)
 

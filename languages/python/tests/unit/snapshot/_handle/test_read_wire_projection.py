@@ -63,6 +63,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot._publication import _wire as wire_materialize
+from parallax.snapshot._publication import _wire_render
 from parallax.snapshot._publication._wire import read_evidence_of
 from tests._support.db_port import Read, ScriptedAdapter
 
@@ -219,7 +220,23 @@ def test_whole_result_projection_preserves_envelope_and_origin_without_io() -> N
     }
     assert projected.pin == typed.pin
     assert projected.edition == typed.edition
-    assert read_evidence_of(wire) is state.read_evidence
+    assert read_evidence_of(wire) is state.provenance.read_evidence
+    assert cast("Any", wire)._provenance is state.provenance
+
+
+def test_projection_passes_shared_provenance_through_to_every_node_stating_it() -> None:
+    second = {**_customer_row(), "id": 2, "name": "Grace"}
+    root, db = _database(Read(rows=[_customer_row(), second]))
+    typed = db.find(vo.Customer.where(vo.Customer.all))
+    root.close()
+    first_state, second_state = (snapshot_state_of(value) for value in typed.results())
+    assert first_state is not None and second_state is not None
+
+    projected = typed.wire().results()
+
+    assert first_state is second_state
+    assert len(projected) == 2
+    assert all(cast("Any", node)._provenance is first_state.provenance for node in projected)
 
 
 def test_projection_does_not_serialize_or_reclassify(
@@ -246,7 +263,7 @@ def test_projection_does_not_serialize_or_reclassify(
     monkeypatch.setattr(vo.Customer, "model_dump", forbidden)
     monkeypatch.setattr(deep_fetch_module, "plan", forbidden)
     monkeypatch.setattr(read_query_module, "resolve_read_query", forbidden)
-    monkeypatch.setattr(wire_materialize, "classify_root", forbidden)
+    monkeypatch.setattr(_wire_render, "classify_root", forbidden)
 
     assert typed.wire().result()["name"] == "Ada"
     assert named_state_reads > 0
@@ -293,7 +310,7 @@ def test_element_projection_accepts_an_external_published_node_without_membershi
     assert "locations" not in projected
     state = snapshot_state_of(external)
     assert state is not None
-    assert read_evidence_of(projected) is state.read_evidence
+    assert read_evidence_of(projected) is state.provenance.read_evidence
 
 
 def test_element_projection_refuses_edited_and_unpublished_values() -> None:
@@ -624,11 +641,11 @@ def test_failed_projection_releases_successful_inputs(
     root, db = _database(Read(rows=[_customer_row(), second]))
     snapshot = db.find(vo.Customer.where(vo.Customer.all))
     first_ref = weakref.ref(snapshot.results()[0])
-    original = wire_materialize.WireWalk[object].position
+    original = _wire_render.WireRenderer[object].render_at
     calls = 0
 
     def fail_second(
-        walk: wire_materialize.WireWalk[object],
+        renderer: _wire_render.WireRenderer[object],
         node: object,
         position: int,
     ) -> WireEntity:
@@ -636,9 +653,9 @@ def test_failed_projection_releases_successful_inputs(
         calls += 1
         if calls == 2:
             raise RuntimeError("second projection failed")
-        return original(walk, node, position)
+        return original(renderer, node, position)
 
-    monkeypatch.setattr(wire_materialize.WireWalk, "position", fail_second)
+    monkeypatch.setattr(_wire_render.WireRenderer, "render_at", fail_second)
     with pytest.raises(RuntimeError, match="second projection failed") as failure:
         snapshot.wire()
 

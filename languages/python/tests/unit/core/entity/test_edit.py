@@ -36,8 +36,6 @@ from parallax.core.entity import (
     EditError,
     EditViolation,
     EntityDefinitionError,
-    EntityGraphWriter,
-    NodeHandle,
     UnloadedRelationshipError,
     lifecycle_state_of,
     relationship_value_of,
@@ -73,7 +71,7 @@ from parallax.core.metamodel import (
 from tests._support import mirrored_models as mm
 from tests._support import snapshot_models as sm
 from tests._support import value_object_models as vm
-from tests._support.model_capabilities import graph_construction_for
+from tests.unit._indexed_graph_support import published
 from tests.unit.core.entity._compact_support import layout_slots
 
 
@@ -519,15 +517,11 @@ def _materialized_order(state: object = "one lifecycle's own state") -> sm.SnapO
     child that points back at it, `statuses` never fetched, and lifecycle state
     attached."""
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        order = writer.allocate(_ORDER)
-        item = writer.allocate(_ITEM)
-        writer.populate(order, _ORDER_MEMBERS, ((item,), UNLOADED))
-        writer.populate(item, _ITEM_MEMBERS, (order, UNLOADED))
-        return (order,)
-
-    (root,) = graph_construction_for(sm.SNAP_ORDERS_MODEL).construct(
-        build, state_factory=lambda _view, _handle: state
+    root = published(
+        sm.SNAP_ORDERS_MODEL,
+        (_ORDER, _ORDER_MEMBERS, ((1,), UNLOADED)),
+        (_ITEM, _ITEM_MEMBERS, (0, UNLOADED)),
+        state=lambda _instance: state,
     )
     return cast("sm.SnapOrder", root)
 
@@ -536,13 +530,10 @@ def _materialized_status() -> sm.SnapOrderStatus:
     """One `SnapOrderStatus` carrying a Value Object occurrence — the declared
     kind `SnapOrder` has none of."""
 
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        status = writer.allocate(_STATUS)
-        writer.populate(status, _STATUS_MEMBERS, ())
-        return (status,)
-
-    (root,) = graph_construction_for(sm.SNAP_ORDERS_MODEL).construct(
-        build, state_factory=lambda _view, _handle: "one lifecycle's own state"
+    root = published(
+        sm.SNAP_ORDERS_MODEL,
+        (_STATUS, _STATUS_MEMBERS, ()),
+        state=lambda _instance: "one lifecycle's own state",
     )
     return cast("sm.SnapOrderStatus", root)
 
@@ -627,7 +618,7 @@ mapping of each instead.
 _CARRIED_BY_IDENTITY: Final = frozenset({LIFECYCLE_STATE_SLOT})
 """The one slot a copy takes as it stands, rather than deriving or copying.
 
-Its payload is whatever a lifecycle's state factory returned and is opaque to
+Its payload is whatever a lifecycle answered for the node and is opaque to
 Entity, so there is nothing to copy shallowly and nothing to rebuild: the copy
 either carries the record of the read that published its source or it does not,
 and `test_an_edit_preserves_the_lifecycle_state` is where it does.

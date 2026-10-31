@@ -1,7 +1,7 @@
 """Real compiled reads, bound as a read plan binds them, and the positional rows
 they convert, for unit suites that convert driver rows without a database.
 
-Conversion is graded through the same ``bind`` plus ``ReadRowConverter.convert_row``
+Conversion is graded through the same ``bind`` plus ``ReadRowConverter.record_row``
 boundary every production read crosses. These helpers only compile, bind, and lay
 cells out by the names the compiled statement selects them under, folded as a
 database port folds them; witness extraction and stored-value judgment stay in
@@ -175,8 +175,10 @@ def bound_cells(
     cells: Mapping[str, object],
     *,
     correlation_members: tuple[AttributeIdentity, ...] = (),
+    singleton: bool = False,
 ) -> tuple[ReadRowConverter, Row]:
     """``compiled`` bound against ``model`` routing by ``correlation_members``,
+    as a ``singleton`` level's read where its level records each row key once,
     beside ``cells`` as its :func:`result_row`."""
     return (
         bind(
@@ -184,6 +186,8 @@ def bound_cells(
             compiled.result_contract,
             compiled.projection,
             correlation_members=correlation_members,
+            singleton=singleton,
+            row_operations=True,
         ),
         result_row(compiled, cells),
     )
@@ -197,8 +201,11 @@ def convert_cells(
     *,
     source: SourceLevel,
     correlation_members: tuple[AttributeIdentity, ...] = (),
+    singleton: bool = False,
 ) -> int:
-    """Convert ``cells`` into ``builder`` through :func:`bound_cells`, answering
-    the projection index."""
-    prepared, row = bound_cells(model, compiled, cells, correlation_members=correlation_members)
-    return prepared.convert_row(row, builder, source=source)[0]
+    """Record ``cells`` into ``builder`` through :func:`bound_cells`, answering
+    the fetched row index."""
+    prepared, row = bound_cells(
+        model, compiled, cells, correlation_members=correlation_members, singleton=singleton
+    )
+    return prepared.record_row(row, builder, source=source)[0]

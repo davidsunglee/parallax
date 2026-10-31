@@ -67,8 +67,8 @@ def _structural_hash(value: object) -> int:
     """``value``'s hash under the structural equality evidence compares by.
 
     A read-only mapping is unhashable and its equality is key-order
-    insensitive, so the mapping arm hashes an unordered set of member hashes;
-    every other frozen shape is already hashable, and the tuple arm exists only
+    insensitive, so the mapping case hashes an unordered set of member hashes;
+    every other frozen shape is already hashable, and the tuple case exists only
     so a tuple holding a mapping stays reachable.
     """
     if isinstance(value, Mapping):

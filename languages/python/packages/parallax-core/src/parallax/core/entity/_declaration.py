@@ -195,8 +195,8 @@ _VALIDATION: Final = "__parallax_member_validation__"
 LIFECYCLE_STATE_SLOT: Final = "__parallax_lifecycle__"
 """The one per-instance slot a materialized node's lifecycle state occupies.
 
-Entity Graph Construction attaches whatever opaque value the constructing
-lifecycle's state factory returned and never interprets it, so a lifecycle
+Entity Graph Construction attaches whatever opaque value the publishing
+lifecycle answered for the node and never interprets it, so a lifecycle
 package's own state — the Snapshot slice's views, pin, and edge, or a future
 managed slice's entirely different record — travels under one name Entity
 exposes nowhere and interprets never. One slot rather than a per-fact family is
@@ -214,8 +214,9 @@ Pickling is the one conversion it does not merely disappear from: a lifecycle's
 private record of a live read has no truthful form on the other side of a process
 boundary, so a value carrying state here is refused at the pickle entry point.
 That refusal is the one thing Entity reads this slot for, and it reads the slot's
-own descriptor: a factory returning ``None`` leaves a node every reader of a
-lifecycle sees nothing on, and a pickle of it can claim nothing untrue. That is a
+own descriptor: a node whose lifecycle answered ``None`` as its state is one
+every reader of a lifecycle sees nothing on, and a pickle of it can claim
+nothing untrue. That is a
 different read from ``lifecycle_state_of``, which resolves the name through the
 class, so a class body binding ``__getattr__``, ``__getattribute__``, or a class
 attribute at this very name can make the two disagree. Every write the framework
