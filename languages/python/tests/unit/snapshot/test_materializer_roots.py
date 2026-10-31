@@ -15,7 +15,9 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import (
+    ABSENT,
     ROOT_LEVEL,
+    EntityState,
     PageBuilder,
     ViewSchema,
     entity_state,
@@ -340,6 +342,27 @@ def test_a_proved_level_judges_each_row_as_it_is_recorded_and_publication_reads_
     assert list(rows.stored_values) == [None, None]
     assert len(rows.decoders) == 2
     assert not any(rows.decoders.pending(fetched_row) for fetched_row in (0, 1))
+
+
+def test_a_proved_row_judged_without_findings_is_held_as_its_member_row_alone() -> None:
+    page, _roots = _proved_orders("0e", "not-hex")
+    recorded = page_rows(page).judged_states.by_logical_row
+
+    first, second = recorded[0], recorded[1]
+    assert type(first) is tuple
+    assert first[2] == b"\x0e"
+    assert type(second) is EntityState
+    assert second.findings
+
+
+def test_a_keyless_proved_row_recorded_without_findings_answers_its_member_row() -> None:
+    builder = PageBuilder(ViewSchema(((),), repeating_levels=frozenset()))
+    layout = CatalogedModel(_ENCODED).layouts.entity(identity_of(_ENCODED, "EncodedOrder"))
+    values = tuple(ABSENT for _ in layout.members)
+    fetched_row = builder.add_fetched_row(ROOT_LEVEL, layout, None, values, values, (), values)
+    rows = page_rows(builder.finish((fetched_row,), Pin()))
+
+    assert entity_state(rows, fetched_row) == EntityState(values, ())
 
 
 def test_proved_and_merged_levels_number_their_logical_rows_densely() -> None:

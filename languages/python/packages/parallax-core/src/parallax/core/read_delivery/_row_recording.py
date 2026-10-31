@@ -126,7 +126,8 @@ def record_trusted_singleton(
     source: SourceLevel,
 ) -> int:
     """Record a row nothing host-checks or classifies on a level that records each
-    row key at most once: its stored values are its Entity State already."""
+    row key at most once: its stored values are its member row, judged with no
+    finding."""
     del classifiable, unknown_family_tag
     return builder.add_fetched_row(
         source,
@@ -135,7 +136,7 @@ def record_trusted_singleton(
         stored_values,
         stored_values,
         (),
-        _new_state(EntityState, (stored_values, ())),
+        stored_values,
     )
 
 
@@ -178,6 +179,7 @@ def record_judged(
             unknown_family_tag,
         )
     identity = () if identity_findings is None else tuple(identity_findings)
+    findings = with_identity_findings(payload_findings, identity)
     return builder.add_fetched_row(
         source,
         mapping.layout,
@@ -185,7 +187,7 @@ def record_judged(
         None,
         member_row,
         identity,
-        _new_state(EntityState, (member_row, with_identity_findings(payload_findings, identity))),
+        _new_state(EntityState, (member_row, findings)) if findings else member_row,
     )
 
 

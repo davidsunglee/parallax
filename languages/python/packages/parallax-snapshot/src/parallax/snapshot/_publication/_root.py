@@ -79,9 +79,11 @@ class RootView:
     __slots__ = (
         "_defers_states",
         "_every_level_proved",
+        "_findings",
         "_has_issues",
         "_invalid_root",
         "_layouts",
+        "_member_rows",
         "_pin",
         "_proved_levels",
         "_reached",
@@ -89,7 +91,6 @@ class RootView:
         "_read_evidence_values",
         "_resolved",
         "_rows",
-        "_states",
         "_view_layouts",
         "_view_rows",
         "_winner",
@@ -114,7 +115,8 @@ class RootView:
         self._winner: list[int] = []
         self._resolved: dict[int, int] = {}
         self._layouts: list[EntityLayout] = []
-        self._states: list[EntityState] = []
+        self._member_rows: list[tuple[object, ...]] = []
+        self._findings: list[tuple[StoredDataIssueInput, ...]] = []
         self._view_layouts: list[RootViewLayout] = []
         self._view_rows: list[list[object] | tuple[()]] = []
         self._reached: list[int] = []
@@ -155,11 +157,11 @@ class RootView:
     def member_values(self, node: int) -> tuple[object, ...]:
         """``node``'s Page-owned Entity State row by reference, positional
         against :meth:`layout`."""
-        return self._states[node].member_row
+        return self._member_rows[node]
 
     def issues(self, node: int) -> tuple[StoredDataIssueInput, ...]:
         """The findings from ``node``'s one Page-owned payload judgment."""
-        return self._states[node].findings
+        return self._findings[node]
 
     def view_layout(self, node: int) -> RootViewLayout:
         """``node``'s relationship view slots, in canonical order."""
@@ -230,7 +232,8 @@ class RootView:
         self._winner.clear()
         self._resolved.clear()
         self._layouts.clear()
-        self._states.clear()
+        self._member_rows.clear()
+        self._findings.clear()
         self._view_layouts.clear()
         self._view_rows.clear()
         self._read_evidence_values = ()
@@ -256,29 +259,37 @@ class RootView:
         else:
             self._allocate_merged(rows, reached, judging)
         _notify(rows.observer, "fetched_rows_reached", len(reached))
-        states = self._states
+        findings = self._findings
         if not judging:
-            states.extend([self._state(rows, winner) for winner in self._winner])
-        for state in states:
-            if state.findings:
-                if len(states) > 1:
-                    self._realize()
-                self._has_issues = any(published.findings for published in states)
-                break
+            for winner in self._winner:
+                self._judge(rows, winner)
+        if any(findings):
+            if len(findings) > 1:
+                self._realize()
+            self._has_issues = any(findings)
         else:
             self._has_issues = False
         if not self._has_issues:
             evidence = self._read_evidence
             self._read_evidence_values = [evidence.get(winner) for winner in self._winner]
 
-    def _state(self, rows: PageRows, fetched_row: int) -> EntityState:
-        """``fetched_row``'s Entity State: the one recording judged on a proved
-        level, read where the Page holds it, otherwise its shared judgment."""
+    def _judge(self, rows: PageRows, fetched_row: int) -> None:
+        """Append ``fetched_row``'s Entity State: the one recording judged on a
+        proved level, read where the Page holds it, otherwise its shared
+        judgment."""
         if self._proved_levels[rows.sources[fetched_row]]:
             recorded = rows.judged_states.by_logical_row[rows.logical_rows[fetched_row]]
+            if type(recorded) is tuple:
+                self._member_rows.append(recorded)
+                self._findings.append(())
+                return
             if type(recorded) is EntityState:
-                return recorded
-        return entity_state(rows, fetched_row)
+                self._member_rows.append(recorded.member_row)
+                self._findings.append(recorded.findings)
+                return
+        state = entity_state(rows, fetched_row)
+        self._member_rows.append(state.member_row)
+        self._findings.append(state.findings)
 
     def _allocate_per_fetched_row(
         self, rows: PageRows, reached: Sequence[int], judging: bool
@@ -288,7 +299,8 @@ class RootView:
         node."""
         resolved = self._resolved
         winner = self._winner
-        states = self._states
+        member_rows = self._member_rows
+        findings = self._findings
         proved = self._proved_levels
         sources = rows.sources
         logical_rows = rows.logical_rows
@@ -298,9 +310,14 @@ class RootView:
                 state = (
                     recorded[logical_rows[fetched_row]] if proved[sources[fetched_row]] else None
                 )
-                states.append(
-                    state if type(state) is EntityState else entity_state(rows, fetched_row)
-                )
+                if type(state) is tuple:
+                    member_rows.append(state)
+                    findings.append(())
+                else:
+                    if type(state) is not EntityState:
+                        state = entity_state(rows, fetched_row)
+                    member_rows.append(state.member_row)
+                    findings.append(state.findings)
             resolved[fetched_row] = len(winner)
             winner.append(fetched_row)
             self._allocated(rows, fetched_row)
@@ -348,7 +365,7 @@ class RootView:
         for logical, canonical in local_rows.items():
             winner = cast("int", canonical)
             if judging:
-                self._states.append(self._state(rows, winner))
+                self._judge(rows, winner)
             table[logical] = len(self._winner)
             self._winner.append(winner)
             self._allocated(rows, winner)
@@ -394,7 +411,8 @@ class RootView:
         renumbered = {node: index for index, node in enumerate(nodes)}
         self._winner[:] = [self._winner[node] for node in nodes]
         self._layouts[:] = [self._layouts[node] for node in nodes]
-        self._states[:] = [self._states[node] for node in nodes]
+        self._member_rows[:] = [self._member_rows[node] for node in nodes]
+        self._findings[:] = [self._findings[node] for node in nodes]
         self._view_layouts[:] = [self._view_layouts[node] for node in nodes]
         self._view_rows[:] = [_renumbered(view_rows[node], renumbered) for node in nodes]
 
