@@ -45,6 +45,7 @@ from parallax.core.document_codec import (
     NULL,
     UNAVAILABLE,
     DocumentFinding,
+    MemberDecodePlan,
     MemberShape,
     OccurrenceCarrier,
     OccurrenceDefinition,
@@ -53,14 +54,13 @@ from parallax.core.document_codec import (
     SetScalar,
     apply_prepared_patches,
     classify_effective_change,
-    decode_occurrence_classified,
     decode_scalar_many_classified,
     encode_occurrence,
     encode_scalar_many,
+    entity_member_plan,
     locate_raw_entity_member,
     prepare_effective_change,
     prepare_patches,
-    prepared_raw_member_classifier,
     reduce_declared_members,
 )
 from parallax.core.document_codec._leaf import LeafEncodingError, encode_managed_scalar_many
@@ -353,7 +353,7 @@ def test_an_occurrence_encodes_a_nested_collection_through_its_carrier() -> None
     ids=["missing-key", "json-null", "empty-array", "non-object-carrier"],
 )
 def test_every_empty_alias_reads_as_the_empty_collection(document: object) -> None:
-    classify = prepared_raw_member_classifier(_SHAPE, "tags")
+    classify = entity_member_plan(_SHAPE, "tags").value
 
     assert classify(locate_raw_entity_member(cast("DocumentValue", document), "tags")) == (
         (),
@@ -376,7 +376,7 @@ def test_a_canonical_array_reads_as_its_ordered_managed_tuple() -> None:
 
 
 def test_a_non_array_carrier_leaves_the_whole_collection_unavailable() -> None:
-    classify = prepared_raw_member_classifier(_SHAPE, "tags")
+    classify = entity_member_plan(_SHAPE, "tags").value
 
     assert classify(locate_raw_entity_member(cast("DocumentValue", {"tags": "a,b"}), "tags")) == (
         UNAVAILABLE,
@@ -402,13 +402,8 @@ def test_every_invalid_element_is_found_in_order_and_nothing_is_shortened() -> N
 
 
 def test_nested_collections_keep_every_enclosing_name_and_index() -> None:
-    decoded = decode_occurrence_classified(
-        _LINE,
-        PresentDocument(
-            [{"sku": "a", "marks": [1]}, {"sku": "b", "marks": [2, "x"]}, {"sku": "c"}]
-        ),
-        multiplicity=_MANY,
-        nullable=False,
+    decoded = MemberDecodePlan(OccurrenceDefinition("", _MANY, False, _LINE)).classified(
+        PresentDocument([{"sku": "a", "marks": [1]}, {"sku": "b", "marks": [2, "x"]}, {"sku": "c"}])
     )
 
     assert decoded.findings == (DocumentFinding("leaf-undecodable", (1, "marks", 1), "x"),)
@@ -420,9 +415,9 @@ def test_nested_collections_keep_every_enclosing_name_and_index() -> None:
 
 
 def test_an_absent_enclosing_occurrence_invents_no_collection() -> None:
-    decoded = decode_occurrence_classified(
-        _DETAIL, PresentDocument(None), multiplicity=Multiplicity.ONE, nullable=True
-    )
+    decoded = MemberDecodePlan(
+        OccurrenceDefinition("", Multiplicity.ONE, True, _DETAIL)
+    ).classified(PresentDocument(None))
 
     assert decoded.presence is NULL
     assert decoded.findings == ()

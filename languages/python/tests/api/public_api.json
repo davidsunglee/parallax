@@ -430,13 +430,16 @@
     "value_object_metadata"
   ],
   "parallax.core.document_codec": [
+    "DecodeOutput",
     "DecodedMember",
     "DocumentFinding",
     "DocumentFindingCode",
     "DocumentPatch",
     "DocumentPathSegment",
     "EffectiveChangeSet",
+    "MAPPING_OUTPUT",
     "MISSING",
+    "MemberDecodePlan",
     "MemberShape",
     "Missing",
     "NULL",
@@ -452,11 +455,11 @@
     "apply_prepared_patches",
     "classify_effective_change",
     "comparison_text",
-    "decode_occurrence_classified",
     "decode_scalar_many_classified",
     "encode_leaf",
     "encode_occurrence",
     "encode_scalar_many",
+    "entity_member_plan",
     "is_text_compared",
     "locate_raw_entity_member",
     "located_occurrence",
@@ -464,7 +467,6 @@
     "persisted_document_equal",
     "prepare_effective_change",
     "prepare_patches",
-    "prepared_raw_member_classifier",
     "reduce_declared_members"
   ],
   "parallax.core.storage_layout": [
