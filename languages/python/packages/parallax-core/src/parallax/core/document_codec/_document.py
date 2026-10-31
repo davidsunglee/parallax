@@ -171,7 +171,7 @@ def _adopt_document_builder(value: object) -> object:
     return retain_document_value(value)
 
 
-def _mapping_output(shape: MemberShape, values: list[object]) -> dict[str, object]:
+def _mapping_object(shape: MemberShape, values: list[object]) -> dict[str, object]:
     output: dict[str, object] = {}
     for member, value in zip(shape.members, values, strict=True):
         if value is not MISSING:
@@ -181,14 +181,14 @@ def _mapping_output(shape: MemberShape, values: list[object]) -> dict[str, objec
 
 @dataclass(frozen=True, slots=True, eq=False)
 class DecodeOutput:
-    """The carrier a :class:`MemberDecodePlan` builds each occurrence value in.
+    """The construction a :class:`MemberDecodePlan` builds each occurrence value with.
 
     ``build_object`` receives one stored object's member values in canonical
     shape order, ``missing`` standing for a member the object does not hold and
     ``unavailable`` for one no value of its declared type can be read from;
     ``build_many`` receives a Many's built elements in stored order. Each is
     called once per object or Many, innermost first, while the one traversal
-    runs. A carrier chooses only the output: classification, decoding, and
+    runs. A construction chooses only the output: classification, decoding, and
     finding paths are the plan's.
     """
 
@@ -198,7 +198,7 @@ class DecodeOutput:
     unavailable: object = UNAVAILABLE
 
 
-MAPPING_OUTPUT: Final = DecodeOutput(_mapping_output, list)
+MAPPING_OUTPUT: Final = DecodeOutput(_mapping_object, list)
 """Each object a ``dict`` of the members it holds, each Many a ``list``."""
 
 
@@ -235,27 +235,27 @@ def decode_scalar_many_classified(
     relative to the collection, so its own carrier is located at ``()`` and an
     element at its index.
     """
-    return _interpreted_scalar_many(member, _stored_raw(located), ())
+    return _interpreted_scalar_many(member, _raw_member(located), ())
 
 
 _LEAF: Final = 0
 _ONE: Final = 1
 _MANY: Final = 2
-_LEAF_MANY: Final = 3
+_SCALAR_MANY: Final = 3
 
 
-def _kind(member: MemberDefinition) -> int:
+def _member_kind(member: MemberDefinition) -> int:
     many = member.multiplicity is Multiplicity.MANY
     if isinstance(member, ScalarDefinition):
-        return _LEAF_MANY if many else _LEAF
+        return _SCALAR_MANY if many else _LEAF
     return _MANY if many else _ONE
 
 
 class MemberDecodePlan:
     """One member's stored-shape classification, compiled once for its
-    definition, an output carrier, and the path its findings are located at.
+    definition, an output construction, and the path its findings are located at.
 
-    The plan is this module's one read-side traversal. An occurrence's object
+    The plan is this module's one read-side traversal. An occurrence's shape
     plan fixes each member's kind and recurses through the plans of its nested
     occurrences, and is compiled once, so classifying a conforming document
     resolves nothing and wraps nothing. A finding is built only where stored
@@ -271,7 +271,7 @@ class MemberDecodePlan:
     otherwise unavailable unless it is an array every element of which decodes.
     """
 
-    __slots__ = ("_kind", "_member", "_output", "_path", "_plan")
+    __slots__ = ("_kind", "_member", "_output", "_path", "_shape_plan")
 
     def __init__(
         self,
@@ -281,9 +281,9 @@ class MemberDecodePlan:
         path: tuple[DocumentPathSegment, ...] = (),
     ) -> None:
         self._member: Any = member
-        self._kind = _kind(member)
+        self._kind = _member_kind(member)
         self._output = output
-        self._plan: _ObjectPlan | None = None
+        self._shape_plan: _ShapeDecodePlan | None = None
         self._path = path
 
     def value(self, stored: StoredMember) -> tuple[object, tuple[DocumentFinding, ...]]:
@@ -292,38 +292,38 @@ class MemberDecodePlan:
         than an object, and :data:`UNAVAILABLE` for a scalar that does not
         decode."""
         findings: list[DocumentFinding] = []
-        presence = self._classified(stored, findings)
+        presence = self._presence(stored, findings)
         value = None if presence is MISSING or presence is NULL else presence
         return value, tuple(findings) if findings else ()
 
     def classified(self, stored: StoredMember) -> DecodedMember:
         """``stored``'s presence and the findings classifying it."""
         findings: list[DocumentFinding] = []
-        presence = self._classified(stored, findings)
+        presence = self._presence(stored, findings)
         found = tuple(findings) if findings else ()
         if presence is MISSING or presence is NULL or presence is UNAVAILABLE:
             return DecodedMember(cast("Missing | ExplicitNull | Unavailable", presence), found)
         return DecodedMember(Present(presence), found)
 
-    def _classified(self, stored: StoredMember, findings: list[DocumentFinding]) -> object:
+    def _presence(self, stored: StoredMember, findings: list[DocumentFinding]) -> object:
         """The member's presence — :data:`MISSING`, :data:`NULL`,
         :data:`UNAVAILABLE`, or its present value unwrapped."""
-        raw: Any = _stored_raw(stored)
+        raw: Any = _raw_member(stored)
         kind = self._kind
         path = self._path
         if kind == _MANY:
-            return self._object_plan().many(raw, path, findings)
-        if kind == _LEAF_MANY:
+            return self._compiled_shape_plan().many_value(raw, path, findings)
+        if kind == _SCALAR_MANY:
             value, found = _interpreted_scalar_many(self._member, raw, path)
             findings.extend(found)
             return value
         if raw is MISSING or raw is None:
             if not self._member.nullable:
-                findings.append(_not_present(raw, path))
+                findings.append(_required_member_finding(raw, path))
             return MISSING if raw is MISSING else NULL
         if kind == _ONE:
             if _is_document_object(raw):
-                return self._object_plan().object(raw, path, findings)
+                return self._compiled_shape_plan().single_value(raw, path, findings)
             findings.append(DocumentFinding("one-wrong-kind", path, raw))
             return MISSING
         try:
@@ -332,13 +332,13 @@ class MemberDecodePlan:
             findings.append(DocumentFinding("leaf-undecodable", path, raw))
             return UNAVAILABLE
 
-    def _object_plan(self) -> _ObjectPlan:
-        """The occurrence's object plan, compiled on first request: a read binds
+    def _compiled_shape_plan(self) -> _ShapeDecodePlan:
+        """The occurrence's shape plan, compiled on first request: a read binds
         a plan for every occurrence it may classify, and compiling each tree
         then would retain it for every compiled read, decoded or not."""
-        plan = self._plan
+        plan = self._shape_plan
         if plan is None:
-            plan = self._plan = _ObjectPlan(self._member.shape, self._output)
+            plan = self._shape_plan = _ShapeDecodePlan(self._member.shape, self._output)
         return plan
 
 
@@ -356,7 +356,7 @@ def entity_member_plan(
     return MemberDecodePlan(member, output, path=(member_name,))
 
 
-class _ObjectPlan:
+class _ShapeDecodePlan:
     """One occurrence shape's members, walked over each stored object of it.
 
     The plan reads each member's name, type, and nullability from the shape's
@@ -379,9 +379,9 @@ class _ObjectPlan:
     def __init__(self, shape: MemberShape, output: DecodeOutput) -> None:
         self.shape = shape
         self._members: tuple[Any, ...] = shape.members
-        self._kinds = bytes(_kind(member) for member in shape.members)
+        self._kinds = bytes(_member_kind(member) for member in shape.members)
         self._nested = tuple(
-            _ObjectPlan(member.shape, output)
+            _ShapeDecodePlan(member.shape, output)
             for member in shape.members
             if isinstance(member, OccurrenceDefinition)
         )
@@ -393,7 +393,7 @@ class _ObjectPlan:
     # One loop per stored object is the whole traversal: a call per member would
     # be paid by every member of every decoded object. Members and stored values
     # are typed ``Any`` so it calls no ``cast`` per member either.
-    def object(  # noqa: C901
+    def single_value(  # noqa: C901
         self,
         document: Mapping[str, Any],
         path: tuple[DocumentPathSegment, ...],
@@ -412,7 +412,7 @@ class _ObjectPlan:
             if kind == _LEAF:
                 if raw is MISSING or raw is None:
                     if not member.nullable:
-                        findings.append(_not_present(raw, (*path, name)))
+                        findings.append(_required_member_finding(raw, (*path, name)))
                     append(missing if raw is MISSING else None)
                     continue
                 try:
@@ -427,16 +427,16 @@ class _ObjectPlan:
                     if member.nullable:
                         append(missing if raw is MISSING else None)
                         continue
-                    findings.append(_not_present(raw, (*path, name)))
+                    findings.append(_required_member_finding(raw, (*path, name)))
                     append(None)
                     continue
                 if _is_document_object(raw):
-                    append(plan.object(raw, (*path, name), findings))
+                    append(plan.single_value(raw, (*path, name), findings))
                 else:
                     findings.append(DocumentFinding("one-wrong-kind", (*path, name), raw))
                     append(None)
             elif kind == _MANY:
-                append(nested[occurrence].many(raw, (*path, name), findings))
+                append(nested[occurrence].many_value(raw, (*path, name), findings))
                 occurrence += 1
             else:
                 value, found = _interpreted_scalar_many(member, raw, (*path, name))
@@ -446,7 +446,7 @@ class _ObjectPlan:
                 append(value)
         return self._build_object(self.shape, values)
 
-    def many(
+    def many_value(
         self, raw: object, path: tuple[DocumentPathSegment, ...], findings: list[DocumentFinding]
     ) -> object:
         """A Many's value: its stored objects built in stored order, or no
@@ -463,7 +463,7 @@ class _ObjectPlan:
                 objects = cast("Sequence[Mapping[str, object]]", documents)
                 return self._build_many(
                     [
-                        self.object(document, (*path, index), findings)
+                        self.single_value(document, (*path, index), findings)
                         for index, document in enumerate(objects)
                     ]
                 )
@@ -471,7 +471,7 @@ class _ObjectPlan:
         return self._build_many([])
 
 
-def _stored_raw(stored: object) -> object:
+def _raw_member(stored: object) -> object:
     """The stored value a member's classification reads: :data:`MISSING` for
     SQL null and an absent member alike, ``None`` for a present JSON null."""
     if isinstance(stored, PresentDocument):
@@ -483,7 +483,7 @@ def _stored_raw(stored: object) -> object:
     return stored
 
 
-def _not_present(raw: object, path: tuple[DocumentPathSegment, ...]) -> DocumentFinding:
+def _required_member_finding(raw: object, path: tuple[DocumentPathSegment, ...]) -> DocumentFinding:
     """The finding a required member earns for being absent or null."""
     if raw is MISSING:
         return DocumentFinding("required-member-absent", path, raw)

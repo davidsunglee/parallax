@@ -99,16 +99,16 @@ class ReadRowConverter:
                 if len(mapping.result_ordinals) != 1
                 else (selected,)
             )
-            classifiable = mapping.every_member_present
+            carried_positions = mapping.member_positions
         else:
-            stored_values, classifiable = located_stored_values(mapping, row, document)
+            stored_values, carried_positions = located_stored_values(mapping, row, document)
         record = (
             self._record_trusted
             if not mapping.requires_state_reduction and unknown is None
             else self._record_reduced
         )
         return (
-            record(mapping, stored_values, classifiable, unknown, builder, source),
+            record(mapping, stored_values, carried_positions, unknown, builder, source),
             resolved,
             document,
             variant,
@@ -155,7 +155,7 @@ class ReadRowConverter:
         record = self._record_reduced if mapping.requires_state_reduction else self._record_trusted
         direct = mapping.direct_row
         single = len(mapping.result_ordinals) == 1
-        every_member = mapping.every_member_present
+        member_positions = mapping.member_positions
         concrete = mapping.concrete_entity
         refs: list[int] = []
         append = refs.append
@@ -163,15 +163,15 @@ class ReadRowConverter:
             if len(row) != width:
                 require_arity(contract, row)
             if direct is None:
-                stored_values, classifiable = located_stored_values(mapping, row, None)
-                ref = record(mapping, stored_values, classifiable, None, builder, source)
+                stored_values, carried_positions = located_stored_values(mapping, row, None)
+                ref = record(mapping, stored_values, carried_positions, None, builder, source)
             elif single:
-                ref = record(mapping, (direct(row),), every_member, None, builder, source)
+                ref = record(mapping, (direct(row),), member_positions, None, builder, source)
             else:
                 ref = record(
                     mapping,
                     cast("tuple[object, ...]", direct(row)),
-                    every_member,
+                    member_positions,
                     None,
                     builder,
                     source,
