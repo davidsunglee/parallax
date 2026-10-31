@@ -25,8 +25,9 @@ Timing is never asserted here, and no elapsed reading is taken.
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, Iterable
-from typing import Any, Final
+from collections.abc import Callable
+from dataclasses import replace
+from typing import Any, Final, cast
 
 import pytest
 
@@ -34,9 +35,10 @@ from parallax.conformance.budget import BudgetContract, MemoryGates
 from parallax.conformance.workloads import plan_levels
 from parallax.core.base import detach_json_container
 from parallax.core.dialect import POSTGRES
+from parallax.core.document_codec import DecodeOutput
 from parallax.core.metamodel import MemberShape
 from parallax.core.read_delivery import _row_decoding as row_decoding
-from parallax.core.read_delivery._convert import build_positional_object
+from parallax.core.read_delivery._convert import POSITIONAL_OUTPUT
 from parallax.core.read_delivery._read_plan import DEFAULT_READ_PLAN_CACHE_CAPACITY, ReadPlanCache
 from snapshot_delivery_reading import (
     PLAN_EDITION,
@@ -142,17 +144,17 @@ class _Registry:
 _REGISTRY: Final = _Registry()
 
 
-def _keeping_a_reduced_tree(
-    build: Callable[[MemberShape, Iterable[object]], tuple[object, ...]],
-) -> Callable[[MemberShape, Iterable[object]], tuple[object, ...]]:
-    def built(shape: MemberShape, values: Iterable[object]) -> tuple[object, ...]:
-        row = build(shape, values)
+def _keeping_a_reduced_tree(output: DecodeOutput) -> DecodeOutput:
+    build = output.build_object
+
+    def built(shape: MemberShape, values: list[object]) -> object:
+        row = cast("tuple[object, ...]", build(shape, values))
         _REGISTRY.kept.append(
             {member.name: value for member, value in zip(shape.members, row, strict=True)}
         )
         return row
 
-    return built
+    return replace(output, build_object=built)
 
 
 def _copying_answered_rows(project: Callable[..., Any]) -> Callable[..., Any]:
@@ -238,8 +240,8 @@ def test_a_seeded_reduced_tree_beside_every_positional_row_trips_the_retained_ga
     with pytest.MonkeyPatch.context() as patched:
         patched.setattr(
             row_decoding,
-            "build_positional_object",
-            _keeping_a_reduced_tree(build_positional_object),
+            "POSITIONAL_OUTPUT",
+            _keeping_a_reduced_tree(POSITIONAL_OUTPUT),
         )
         for workload in DUPLICATED_READS:
             for layout in geometry_support.LAYOUTS:

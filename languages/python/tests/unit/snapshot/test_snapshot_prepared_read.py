@@ -1567,13 +1567,13 @@ def test_a_keyless_holding_keeps_its_payload_finding_for_every_holder_reaching_i
 # What still happens per row on the conforming path.                           #
 # --------------------------------------------------------------------------- #
 _DECLARATION_FIXED: Final = (
-    "occurrence_shape",
-    "decode_occurrence_classified",
+    "_occurrence_plan",
+    "_occurrence",
 )
-"""The codec entries conversion reaches only for a document its compiled read did
-not already classify. Each one's work is fixed by the occurrence's declaration,
-so reaching any of them once per row is declaration-fixed work scaling with
-rows."""
+"""The conversion sites that reach the codec only for a document its compiled read
+did not already classify. Each one's work is fixed by the occurrence's
+declaration, so reaching any of them once per row is declaration-fixed work
+scaling with rows."""
 
 _COUNTED: Final = (*_DECLARATION_FIXED, "check_stored_scalar")
 

@@ -1,24 +1,26 @@
 from __future__ import annotations
 
 from parallax.core.document_codec._document import (
+    MAPPING_OUTPUT,
     UNAVAILABLE,
     DecodedMember,
+    DecodeOutput,
     DocumentFinding,
     DocumentFindingCode,
     DocumentPatch,
     DocumentPathSegment,
+    MemberDecodePlan,
     PreparedPatch,
     SetScalar,
     SetValueObject,
     apply_prepared_patches,
     comparison_text,
-    decode_occurrence_classified,
     decode_scalar_many_classified,
+    entity_member_plan,
     locate_raw_entity_member,
     located_occurrence,
     persisted_document_equal,
     prepare_patches,
-    prepared_raw_member_classifier,
     reduce_declared_members,
 )
 from parallax.core.document_codec._leaf import encode_leaf, encode_scalar_many, is_text_compared
@@ -41,15 +43,18 @@ from parallax.core.document_codec._shape import (
 )
 
 __all__ = [
+    "MAPPING_OUTPUT",
     "MISSING",
     "NULL",
     "UNAVAILABLE",
+    "DecodeOutput",
     "DecodedMember",
     "DocumentFinding",
     "DocumentFindingCode",
     "DocumentPatch",
     "DocumentPathSegment",
     "EffectiveChangeSet",
+    "MemberDecodePlan",
     "MemberShape",
     "Missing",
     "OccurrenceCarrier",
@@ -63,11 +68,11 @@ __all__ = [
     "apply_prepared_patches",
     "classify_effective_change",
     "comparison_text",
-    "decode_occurrence_classified",
     "decode_scalar_many_classified",
     "encode_leaf",
     "encode_occurrence",
     "encode_scalar_many",
+    "entity_member_plan",
     "is_text_compared",
     "locate_raw_entity_member",
     "located_occurrence",
@@ -75,6 +80,5 @@ __all__ = [
     "persisted_document_equal",
     "prepare_effective_change",
     "prepare_patches",
-    "prepared_raw_member_classifier",
     "reduce_declared_members",
 ]

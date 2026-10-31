@@ -58,9 +58,9 @@ class OccurrenceFacts:
         "attributes",
         "cls",
         "declared",
+        "every_member",
         "many",
         "nested",
-        "plan",
         "template",
         "width",
     )
@@ -74,12 +74,12 @@ class OccurrenceFacts:
     ) -> None:
         self.declared = declared
         self.cls = cls
-        self.plan = plan
         self.many = declared.multiplicity is Multiplicity.MANY
         self.nested = nested
         self.template = plan.template
         self.width = len(plan.py_names)
         self.attributes = self.width - len(plan.occurrences)
+        self.every_member = (1 << self.width) - 1
 
     def build(self, value: object, bitmaps: dict[int, int]) -> object:
         """One occurrence's value as frozen Value Object instances.
@@ -119,9 +119,28 @@ class OccurrenceFacts:
         row = cast("tuple[object, ...]", member_values)
         if type(row) is not tuple or len(row) != self.width:
             raise _InvalidOccurrence(self, _member_row_detail(row, self.width))
-        attach_row(
-            instance, tuple(compact_row(self.template, self.attributes, self.nested, row, bitmaps))
-        )
+        for value in row:
+            if value is ABSENT:
+                attach_row(
+                    instance,
+                    tuple(compact_row(self.template, self.attributes, self.nested, row, bitmaps)),
+                )
+                return
+        if self.nested:
+            attributes = self.attributes
+            attach_row(
+                instance,
+                (
+                    self.every_member,
+                    *row[:attributes],
+                    *[
+                        nested.build(value, bitmaps)
+                        for nested, value in zip(self.nested, row[attributes:], strict=True)
+                    ],
+                ),
+            )
+        else:
+            attach_row(instance, (self.every_member, *row))
 
 
 class EntityFacts:

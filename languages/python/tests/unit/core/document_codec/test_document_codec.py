@@ -44,8 +44,10 @@ from parallax.core.document_codec import (
     NULL,
     UNAVAILABLE,
     DecodedMember,
+    DecodeOutput,
     DocumentFinding,
     DocumentPatch,
+    MemberDecodePlan,
     MemberShape,
     OccurrenceCarrier,
     OccurrenceDefinition,
@@ -55,15 +57,14 @@ from parallax.core.document_codec import (
     SetValueObject,
     apply_prepared_patches,
     comparison_text,
-    decode_occurrence_classified,
     encode_leaf,
     encode_occurrence,
+    entity_member_plan,
     is_text_compared,
     locate_raw_entity_member,
     occurrence_shape,
     persisted_document_equal,
     prepare_patches,
-    prepared_raw_member_classifier,
     reduce_declared_members,
 )
 from parallax.core.document_codec._document import encode_managed_many
@@ -107,7 +108,7 @@ type _Reading = tuple[object, tuple[DocumentFinding, ...]]
 def _read_member(shape: MemberShape, document: object, name: str) -> _Reading:
     """What a read answers for one direct member of a stored document, and its findings."""
     located = locate_raw_entity_member(cast("DocumentValue", document), name)
-    return prepared_raw_member_classifier(shape, name)(located)
+    return entity_member_plan(shape, name).value(located)
 
 
 def _read_leaf(neutral_type: NeutralType, stored: object) -> _Reading:
@@ -121,11 +122,8 @@ def _undecodable(reading: _Reading) -> bool:
 
 def _decoded(shape: MemberShape, document: object) -> DecodedMember:
     """A whole stored document classified and reduced against ``shape``."""
-    return decode_occurrence_classified(
-        shape,
-        PresentDocument(cast("DocumentValue", document)),
-        multiplicity=Multiplicity.ONE,
-        nullable=False,
+    return MemberDecodePlan(OccurrenceDefinition("", Multiplicity.ONE, False, shape)).classified(
+        PresentDocument(cast("DocumentValue", document))
     )
 
 
@@ -276,7 +274,7 @@ def test_classified_member_variants_report_each_detection_without_inventing_valu
             OccurrenceDefinition("many", Multiplicity.MANY, False, nested),
         )
     )
-    leaf = prepared_raw_member_classifier(shape, "leaf")
+    leaf = entity_member_plan(shape, "leaf").value
     assert leaf(SQL_NULL) == (
         None,
         (DocumentFinding("required-member-absent", ("leaf",), MISSING),),
@@ -293,13 +291,13 @@ def test_classified_member_variants_report_each_detection_without_inventing_valu
     assert _undecodable(_read_member(shape, {"leaf": "wrong"}, "leaf"))
 
     with pytest.raises(KeyError, match="names no member"):
-        prepared_raw_member_classifier(shape, "unknown")
+        entity_member_plan(shape, "unknown")
 
 
 def test_raw_member_location_preserves_missing_null_and_present_states() -> None:
-    classify = prepared_raw_member_classifier(
+    classify = entity_member_plan(
         MemberShape(members=(ScalarDefinition("leaf", INT32, False),)), "leaf"
-    )
+    ).value
 
     assert locate_raw_entity_member([], "leaf") is MISSING
     assert locate_raw_entity_member({}, "leaf") is MISSING
@@ -373,14 +371,10 @@ def test_classified_decoding_constructs_positional_output_during_the_shared_walk
             for _member, value in zip(member_shape.members, values, strict=True)
         )
 
-    decoded = decode_occurrence_classified(
-        shape,
-        PresentDocument(stored),
-        multiplicity=Multiplicity.ONE,
-        nullable=False,
-        build_object=positional_object,
-        build_many=lambda values: tuple(values),
-    )
+    decoded = MemberDecodePlan(
+        OccurrenceDefinition("", Multiplicity.ONE, False, shape),
+        DecodeOutput(positional_object, lambda values: tuple(values)),
+    ).classified(PresentDocument(stored))
 
     assert decoded.presence == Present(
         (unavailable, unavailable, (unavailable,), ((7,), (unavailable,)))
@@ -456,14 +450,10 @@ def test_every_member_state_reaches_the_builders_as_one_stream_with_one_finding_
         manys.append(tuple(values))
         return ("many", len(manys) - 1)
 
-    recorded = decode_occurrence_classified(
-        shape,
-        PresentDocument(stored),
-        multiplicity=Multiplicity.ONE,
-        nullable=False,
-        build_object=record_object,
-        build_many=record_many,
-    )
+    recorded = MemberDecodePlan(
+        OccurrenceDefinition("", Multiplicity.ONE, False, shape),
+        DecodeOutput(record_object, record_many),
+    ).classified(PresentDocument(stored))
     mapping = _decoded(shape, stored)
 
     assert recorded.presence == Present(("object", 3))
@@ -527,15 +517,12 @@ def test_every_member_state_reaches_the_builders_as_one_stream_with_one_finding_
 
 def test_top_level_occurrence_classification_uses_the_sql_null_aware_carrier() -> None:
     shape = MemberShape(members=(ScalarDefinition("required", INT32, False),))
-    absent = decode_occurrence_classified(
-        shape, SQL_NULL, multiplicity=Multiplicity.ONE, nullable=False
+    absent = MemberDecodePlan(OccurrenceDefinition("", Multiplicity.ONE, False, shape)).classified(
+        SQL_NULL
     )
-    wrong_many = decode_occurrence_classified(
-        shape,
-        PresentDocument([{"required": 1}, "wrong"]),
-        multiplicity=Multiplicity.MANY,
-        nullable=False,
-    )
+    wrong_many = MemberDecodePlan(
+        OccurrenceDefinition("", Multiplicity.MANY, False, shape)
+    ).classified(PresentDocument([{"required": 1}, "wrong"]))
     assert absent.findings[0].code == "required-member-absent"
     assert wrong_many.findings[0].code == "many-wrong-kind"
     assert cast("Present", wrong_many.presence).value == []
@@ -546,18 +533,12 @@ def test_document_classification_rejects_container_subclasses() -> None:
     tuple_subclass = type("TupleSubclass", (tuple,), {})
     dict_subclass = type("DictSubclass", (dict,), {})
 
-    wrong_many = decode_occurrence_classified(
-        shape,
-        PresentDocument(tuple_subclass(({"required": 1},))),
-        multiplicity=Multiplicity.MANY,
-        nullable=False,
-    )
-    wrong_one = decode_occurrence_classified(
-        shape,
-        PresentDocument(dict_subclass(required=1)),
-        multiplicity=Multiplicity.ONE,
-        nullable=False,
-    )
+    wrong_many = MemberDecodePlan(
+        OccurrenceDefinition("", Multiplicity.MANY, False, shape)
+    ).classified(PresentDocument(tuple_subclass(({"required": 1},))))
+    wrong_one = MemberDecodePlan(
+        OccurrenceDefinition("", Multiplicity.ONE, False, shape)
+    ).classified(PresentDocument(dict_subclass(required=1)))
 
     assert wrong_many.findings[0].code == "many-wrong-kind"
     assert wrong_one.findings[0].code == "one-wrong-kind"
@@ -815,7 +796,7 @@ def test_decode_distinguishes_absent_from_explicitly_null_and_collapses_a_many()
 
 def test_a_member_naming_nothing_in_the_shape_is_a_caller_error_rather_than_an_absence() -> None:
     with pytest.raises(KeyError):
-        prepared_raw_member_classifier(_SHAPE, "absent")
+        entity_member_plan(_SHAPE, "absent")
 
 
 def test_stored_data_that_contradicts_its_shape_is_classified_and_never_answered() -> None:
