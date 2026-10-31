@@ -28,6 +28,7 @@ from typing import Any, Final
 import pytest
 
 from parallax.core import opt_lock
+from parallax.core._execution import _planning as planning_module
 from parallax.core._execution._publication import (
     read_projection,
     write_projection,
@@ -139,6 +140,7 @@ def _refuse_every_derivation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(layout_module.LayoutCatalog, "_build", refuse)
     monkeypatch.setattr(preparation_module, "_entity_preparation", refuse)
     monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse)
+    monkeypatch.setattr(planning_module, "_wire_entity_facts", refuse)
 
 
 # --------------------------------------------------------------------------- #
@@ -160,6 +162,7 @@ def test_a_class_backed_model_prepares_every_product_for_every_entity() -> None:
     assert set(read.model.layouts._layouts) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(write.preparation._entities) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(read.construction._facts) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
+    assert set(read.wire._entities) == expected  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     facet = opt_lock.view(write.model.meta)
     assert write.evidence_policy_for == facet.required_key
     assert all(write.evidence_policy_for(entity) is facet.key(entity) for entity in expected)
@@ -171,6 +174,7 @@ def test_a_descriptor_backed_model_prepares_with_no_graph_construction() -> None
 
     assert read.construction is None
     assert set(read.model.layouts._layouts) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
+    assert set(read.wire._entities) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert set(write.preparation._entities) == _identities(selection.model)  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
     assert write.preparation.entity(mm.Account.identity).typed_class is None
 
@@ -198,6 +202,7 @@ def test_two_preparations_of_one_model_are_distinct_selections() -> None:
     assert first is not second
     assert first != second
     assert first.edition == second.edition
+    assert read_projection(first).wire is not read_projection(second).wire
 
 
 # --------------------------------------------------------------------------- #

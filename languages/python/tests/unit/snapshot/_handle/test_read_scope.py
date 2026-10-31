@@ -93,7 +93,11 @@ from parallax.snapshot._handle._wire import (
 )
 from tests._support import mirrored_models as mm
 from tests._support.db_port import Read, ReadCall, RefusingAdapter, ScriptedAdapter
-from tests._support.model_capabilities import cataloged_for, graph_construction_for
+from tests._support.model_capabilities import (
+    cataloged_for,
+    graph_construction_for,
+    wire_facts_for,
+)
 from tests.unit._transact_support import ACCOUNT, BALANCE, NEW_ROW, balance_row
 
 _ACCOUNT_ROWS: Final = (NEW_ROW,)
@@ -112,6 +116,7 @@ def _selection(model: Any = ACCOUNT, *, materializing: bool = True) -> SelectedR
         model=cataloged,
         construction=graph_construction_for(model) if materializing else None,
         classes=class_index(model),
+        wire=wire_facts_for(cataloged),
     )
 
 

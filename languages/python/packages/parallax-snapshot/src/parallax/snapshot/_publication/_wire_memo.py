@@ -19,7 +19,7 @@ class WireMemo(Protocol[Node]):
     def clear(self) -> None: ...
 
 
-class IndexMemo:
+class NodeIndexMemo:
     """One root's completed Root View outputs keyed by node and token."""
 
     __slots__ = ("_entries",)
@@ -38,7 +38,7 @@ class IndexMemo:
         self._entries.clear()
 
 
-class StrongIdentityMemo[Node]:
+class InstanceIdentityMemo[Node]:
     """Call-local completed outputs keyed by actual input identity and token."""
 
     __slots__ = ("_entries",)

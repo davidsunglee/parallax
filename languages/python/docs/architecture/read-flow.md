@@ -332,14 +332,14 @@ admission stay outside the cache.
               └ stream:         hand over each root in turn
               │
               ▼
- TypedRootPublisher / WireRootPublisher, one per Page                   _typed / _wire
+ TypedRootPublisher / WireRootPublisher, one per Page            _typed / _wire_render
               ├ classify_root: a conforming root, or an InvalidData record
               ├ Read Evidence reaches the nodes of a conforming root only
               ├ NodeProvenance: one per entity, conformance and pin per Page;
               │                 a node carrying Read Evidence owns its own
               ├ Typed: EntityGraphConstruction.publish(Root View) → frozen Entity instances
-              └ Wire:  WireWalk along the requested Include Paths
-                        → frozen WireEntity mappings
+              └ Wire:  WireRenderer along the requested Include Paths, one prepared
+                        plan per render token and concrete → frozen WireEntity mappings
               │
               ▼
  conforming value | InvalidData[value]
@@ -361,8 +361,11 @@ The eager path publishes nothing until every root is ready, which is the whole-r
 boundary; a stream publishes each root as soon as it is ready and keeps what it has
 already published if a later root fails. Typed publication needs the selection's
 `EntityGraphConstruction`; Wire publication does not, so Wire can serve a model with no
-classes. The Wire publication holds one scalar encoder for the delivery and drops it
-when the delivery releases the publication.
+classes. Model preparation derives every Entity's Wire facts, for class-less models
+too, and the compiled read's include tree keeps the plans rendered from them, so every
+Wire reader of one read — each direct root, each stream Page, each Typed projection —
+renders through the same plans. The Wire publication holds one scalar encoder for the
+delivery and drops it when the delivery releases the publication.
 
 `Snapshot.wire()` and a paused Typed stream's `SnapshotStream.wire` project values that
 are already published into Wire form in memory, with no further read.
@@ -380,9 +383,10 @@ are already published into Wire form in memory, with no further read.
 - `parallax.core.read_delivery._page._rows:release_finished_rows`
 - `parallax.snapshot._publication._root:RootView`
 - `parallax.snapshot._publication._typed:TypedRootPublisher`
-- `parallax.snapshot._publication._wire:WireRootPublisher`
+- `parallax.snapshot._publication._wire_render:WireRootPublisher`
 - `parallax.snapshot._publication._classify:classify_root`
-- `parallax.snapshot._publication._wire:WireWalk`
+- `parallax.snapshot._publication._wire_render:WireRenderer`
+- `parallax.core._execution._planning:wire_model_facts`
 - `parallax.snapshot._publication._wire:WireEntity`
 - `parallax.snapshot._publication._wire:shared_wire_encoder`
 - `parallax.core.read_delivery._page._stored_data:InvalidData`

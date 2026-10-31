@@ -19,6 +19,7 @@ from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import NeutralType, PresentDocument
 from parallax.core.deep_fetch import IncludeTree
 from parallax.core.entity import UNLOADED
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import Page, page_rows, shared_entity_state
 from parallax.core.wire._codec import encode_managed_wire
@@ -28,16 +29,13 @@ from parallax.snapshot import (
     is_view_loaded,
 )
 from parallax.snapshot._inspection import RootConformance, snapshot_state_of
-from parallax.snapshot._publication import _root, _typed, _wire
+from parallax.snapshot._publication import _root, _typed, _wire_render
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._typed import TypedRootPublisher
-from parallax.snapshot._publication._wire import (
-    WireRootPublisher,
-    read_evidence_of,
-    stored_entity_of,
-)
-from tests._support.model_capabilities import graph_construction_for
+from parallax.snapshot._publication._wire import read_evidence_of, stored_entity_of
+from parallax.snapshot._publication._wire_render import WireRootPublisher
+from tests._support.model_capabilities import graph_construction_for, wire_facts_for
 from tests.unit._root_publication_support import each_root, observed
 from tests.unit.snapshot._encoded_page_models import ENCODED_ACCOUNT, ENCODED_ORDERS, EncodedOrder
 from tests.unit.snapshot._snapshot_page_support import PageFixture, identity_of, invalid_record
@@ -656,7 +654,7 @@ class _Boom(Exception):
     pass
 
 
-def test_the_wire_walk_forgets_a_root_whose_rendering_failed() -> None:
+def test_the_wire_renderer_forgets_a_root_whose_rendering_failed() -> None:
     # Item 12's code refuses to encode after item 11 rendered, so a memo kept
     # across roots would answer the next root's item from the failed root.
     fixture = PageFixture(ENCODED_ORDERS, _ITEMS)
@@ -672,7 +670,9 @@ def test_the_wire_walk_forgets_a_root_whose_rendering_failed() -> None:
         return encode_managed_wire(neutral_type, cast("Any", value))
 
     includes = fixture.include_tree("EncodedOrder", (0, _ITEMS, "EncodedOrderItem"))
-    publisher = WireRootPublisher(fixture.model, CONCURRENCY, includes, encode)
+    publisher = WireRootPublisher(
+        fixture.model, wire_facts_for(CatalogedModel(fixture.model)), CONCURRENCY, includes, encode
+    )
 
     def publish_root(root: RootView, ordinal: int) -> tuple[object, ...]:
         try:
@@ -760,7 +760,9 @@ def test_a_pass_side_or_wire_failure_propagates_unwrapped(
         )
     else:
         monkeypatch.setattr(
-            _wire, "classify_root", _failing_second_call(vars(_wire)["classify_root"])
+            _wire_render,
+            "classify_root",
+            _failing_second_call(vars(_wire_render)["classify_root"]),
         )
 
     received, failure = _publish_until_failure(fixture, roots, form, atomic=atomic)

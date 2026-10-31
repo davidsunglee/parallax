@@ -168,6 +168,7 @@ def test_snapshot_wheel_ships_only_its_private_packages(wheelhouse: Wheelhouse) 
         "parallax/snapshot/_publication/_typed.py",
         "parallax/snapshot/_publication/_wire.py",
         "parallax/snapshot/_publication/_wire_memo.py",
+        "parallax/snapshot/_publication/_wire_render.py",
     }
 
 

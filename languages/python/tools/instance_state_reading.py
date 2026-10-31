@@ -44,7 +44,8 @@ from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, RowKey, V
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Snapshot
 from parallax.snapshot._publication._root_publication import publish_roots
-from parallax.snapshot._publication._wire import WireRootPublisher, shared_wire_encoder
+from parallax.snapshot._publication._wire import shared_wire_encoder
+from parallax.snapshot._publication._wire_render import WireRootPublisher
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
@@ -267,6 +268,7 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
         "instance-state",
         includes,
         construction,
+        scenario.wire,
     )
     many = Snapshot(
         cast("Any", COMPACT.graph(scenario, MARGINAL_NODES)),
@@ -274,6 +276,7 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
         "instance-state",
         includes,
         construction,
+        scenario.wire,
     )
     layout = scenario.layout
     values = scenario.values
@@ -307,12 +310,12 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
         assert projected.result() is not None
 
     def direct_wire() -> None:
-        projected = direct_wire_result(page, meta, includes, one.pin, one.edition)
+        projected = direct_wire_result(page, meta, scenario.wire, includes, one.pin, one.edition)
         assert projected.result() is not None
 
     assert (
         one.wire().results()
-        == direct_wire_result(page, meta, includes, one.pin, one.edition).results()
+        == direct_wire_result(page, meta, scenario.wire, includes, one.pin, one.edition).results()
     )
     tracemalloc.start()
     try:
@@ -334,6 +337,7 @@ def _projection_reading(scenario: Scenario) -> ProjectionReading:
 def direct_wire_result(
     page: object,
     model: object,
+    wire: object,
     includes: object,
     pin: Pin,
     edition: str,
@@ -345,7 +349,13 @@ def direct_wire_result(
         roots = tuple(
             publish_roots(
                 cast("Any", page),
-                WireRootPublisher(cast("Any", model), CONCURRENCY, cast("Any", includes), encoder),
+                WireRootPublisher(
+                    cast("Any", model),
+                    cast("Any", wire),
+                    CONCURRENCY,
+                    cast("Any", includes),
+                    encoder,
+                ),
                 cast("Any", model),
             )
         )

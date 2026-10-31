@@ -123,6 +123,7 @@ def test_every_scope_submodule_imports() -> None:
         "parallax.snapshot._handle",
         "parallax.snapshot._publication",
         "parallax.snapshot._publication._wire",
+        "parallax.snapshot._publication._wire_render",
         "parallax.core.read_delivery",
         "parallax.core.read_delivery._page",
         "parallax.core.execution",

@@ -12,7 +12,7 @@ from typing import Any, cast
 from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Snapshot, WireEntity
-from parallax.snapshot._publication import _wire as wire_materialize
+from parallax.snapshot._publication import _wire_render
 from tests.unit._gc_reachability import reachable_objects
 from tests.unit._instance_state_support import COMPACT, SCENARIOS, Scenario
 from tests.unit.memory_instruments import (
@@ -31,7 +31,12 @@ def _snapshot(scenario: Scenario, count: int = 1) -> Snapshot[Any]:
     )
     roots = COMPACT.graph(scenario, count)
     return Snapshot(
-        cast("tuple[Any, ...]", roots), Pin(), "retention", includes, scenario.construction
+        cast("tuple[Any, ...]", roots),
+        Pin(),
+        "retention",
+        includes,
+        scenario.construction,
+        scenario.wire,
     )
 
 
@@ -91,18 +96,18 @@ def test_projected_output_does_not_retain_the_typed_graph() -> None:
 @in_a_child_interpreter
 def test_failed_eager_projection_releases_all_projection_scaffolding() -> None:
     source = _snapshot(SCENARIOS[0], count=2)
-    position = cast(
-        "Callable[[wire_materialize.WireWalk[object], object, int], WireEntity]",
-        wire_materialize.WireWalk[object].position,
+    render_at = cast(
+        "Callable[[_wire_render.WireRenderer[object], object, int], WireEntity]",
+        _wire_render.WireRenderer[object].render_at,
     )
 
     def fail_after_render(
-        walk: wire_materialize.WireWalk[object], node: object, requested: int
+        renderer: _wire_render.WireRenderer[object], node: object, requested: int
     ) -> WireEntity:
-        position(walk, node, requested)
+        render_at(renderer, node, requested)
         raise RuntimeError("projection failed after rendering")
 
-    cast("Any", wire_materialize.WireWalk).position = fail_after_render
+    cast("Any", _wire_render.WireRenderer).render_at = fail_after_render
     try:
 
         def failed(sample: Callable[[], None]) -> None:
@@ -114,7 +119,7 @@ def test_failed_eager_projection_releases_all_projection_scaffolding() -> None:
 
         alive = survivors(warmed(failed))
     finally:
-        cast("Any", wire_materialize.WireWalk).position = position
+        cast("Any", _wire_render.WireRenderer).render_at = render_at
 
     assert alive == []
 
