@@ -231,6 +231,15 @@ def test_shared_wire_encoding_delegates_unhashable_managed_values() -> None:
     assert shared_wire_encoder()(JSON, cast("ManagedValue", document)) == document
 
 
+def test_shared_wire_encoding_keeps_equal_json_values_of_distinct_kinds_apart() -> None:
+    encoder = shared_wire_encoder()
+    values: list[object] = [True, 1, 1.0, False, 0, 0.0, -0.0]
+
+    spelled = [json.dumps(encoder(JSON, cast("ManagedValue", value))) for value in values]
+
+    assert spelled == ["true", "1", "1.0", "false", "0", "0.0", "-0.0"]
+
+
 def test_wire_encoding_reuse_is_scoped_to_one_encoder() -> None:
     instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     first_encoder = shared_wire_encoder()
