@@ -46,6 +46,7 @@ from parallax.snapshot import Snapshot
 from parallax.snapshot._publication._root_publication import publish_roots
 from parallax.snapshot._publication._wire import shared_wire_encoder
 from parallax.snapshot._publication._wire_render import WireRootPublisher
+from production_origins import require_source_origins
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
@@ -386,7 +387,11 @@ def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print("usage: python tools/instance_state_reading.py <scenario>", file=sys.stderr)
         return 2
-    print(payload(measure(scenario_named(argv[0]))))
+    scenario = scenario_named(argv[0])
+    require_source_origins()
+    reading = measure(scenario)
+    require_source_origins()
+    print(payload(reading))
     return 0
 
 

@@ -12,6 +12,8 @@ from pathlib import Path
 from time import perf_counter_ns
 from typing import Final
 
+from production_origins import require_source_origins
+
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKSPACE))
 
@@ -98,10 +100,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--warmups", type=int, required=True)
     parser.add_argument("--measured", type=int, required=True)
     args = parser.parse_args(argv)
+    require_source_origins()
     try:
         document = measure(args.case, warmups=args.warmups, measured=args.measured)
     except ValueError as error:
         parser.error(str(error))
+    require_source_origins()
     print(json.dumps(document, sort_keys=True))
     return 0
 

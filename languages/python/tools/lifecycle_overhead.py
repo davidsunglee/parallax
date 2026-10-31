@@ -116,6 +116,7 @@ from parallax.core.execution_lifecycle import (
     RootExecution,
 )
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
+from production_origins import require_source_origins
 
 PAIRS: Final = 3_000
 """Timed pairs per configuration. Each contributes one sample to each variant, so the
@@ -747,6 +748,7 @@ def main(argv: list[str]) -> int:
     if args.metadata is not None:
         identity = {CURRENT_MINOR: current_identity()}
         write_sidecar(args.metadata, lambda path: write_metadata(path, SUBJECT, identity))
+    require_source_origins()
     port = _MemoryPort()
     records: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=QUEUE_CAPACITY)
     shape = _shape()
@@ -765,6 +767,7 @@ def main(argv: list[str]) -> int:
         plain_root.close()
     contract = BudgetContract.load()
     envelope = build_envelope(contract, _provenance(contract), measurements, shape)
+    require_source_origins()
     print(json.dumps(envelope.document(), indent=2, sort_keys=True))
     return 0
 

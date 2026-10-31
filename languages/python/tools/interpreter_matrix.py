@@ -11,7 +11,11 @@ interpreter that spawned the children, so which patch release read a minor is
 established by a probe: this module run as a script, through the same command
 and environment a reading child gets, answers the interpreter that resolution
 reaches. A member probes once per runtime outside every measured window and
-records the answer in a metadata sidecar beside its envelope.
+records the answer in a metadata sidecar beside its envelope. The probe also
+resolves the read-construction modules :mod:`production_origins` names and
+refuses to answer for an interpreter that would load any production module from
+outside this checkout's sources, so the identity a runtime records says which
+sources its readings ran.
 """
 
 from __future__ import annotations
@@ -29,6 +33,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast
 
+from production_origins import loaded_origins, resolved_origins
+
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 CURRENT_MINOR: Final = f"{sys.version_info.major}.{sys.version_info.minor}"
 SUPPORTED_MINORS: Final = 2
@@ -37,6 +43,7 @@ OWN_INTERPRETER_VARIABLE: Final = "PARALLAX_OWN_INTERPRETER"
 """What marks a child as an interpreter of its own, spelled as
 ``tests/unit/memory_instruments.py`` requires it before any reading."""
 IDENTITY_SCRIPT: Final = Path(__file__).resolve()
+PRODUCTION_ORIGINS_FIELD: Final = "productionOrigins"
 METADATA_VERSION: Final = 1
 
 _COVERAGE_VARIABLES: Final = frozenset(
@@ -113,19 +120,29 @@ def child_command(runtime: str, script: Path, arguments: Sequence[str]) -> list[
 
 @dataclass(frozen=True, slots=True)
 class RuntimeIdentity:
-    """The interpreter one runtime's command resolution reaches."""
+    """The interpreter one runtime's command resolution reaches.
+
+    ``production_origins`` pairs each read-construction module with the
+    checkout-relative source it resolves to there, or ``not-loaded`` where it
+    was read in a process that never loaded it; an identity recorded before the
+    pairs existed carries none.
+    """
 
     implementation: str
     version: str
     executable: str
+    production_origins: tuple[tuple[str, str], ...] = ()
 
     def document(self) -> dict[str, object]:
-        return {
+        document: dict[str, object] = {
             "status": "available",
             "implementation": self.implementation,
             "version": self.version,
             "executable": self.executable,
         }
+        if self.production_origins:
+            document[PRODUCTION_ORIGINS_FIELD] = dict(self.production_origins)
+        return document
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,9 +169,30 @@ def identity_document() -> dict[str, str]:
 
 
 def current_identity() -> RuntimeIdentity:
-    """The identity of the interpreter running this process."""
+    """The identity of the interpreter running this process, with the origins
+    of the read-construction modules it has loaded; ``RuntimeError`` where a
+    loaded production module is not this checkout's source."""
     document = identity_document()
-    return RuntimeIdentity(document["implementation"], document["version"], document["executable"])
+    return RuntimeIdentity(
+        document["implementation"],
+        document["version"],
+        document["executable"],
+        tuple(sorted(loaded_origins().items())),
+    )
+
+
+def _production_origins(document: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
+    """The module origins ``document`` records, none where it records none;
+    ``ValueError`` for any other shape."""
+    recorded = document.get(PRODUCTION_ORIGINS_FIELD)
+    if recorded is None:
+        return ()
+    if not isinstance(recorded, Mapping) or not recorded:
+        raise ValueError(f"{PRODUCTION_ORIGINS_FIELD} {recorded!r} is not a non-empty object")
+    pairs = cast("Mapping[object, object]", recorded).items()
+    if not all(isinstance(name, str) and isinstance(origin, str) for name, origin in pairs):
+        raise ValueError(f"{PRODUCTION_ORIGINS_FIELD} {dict(pairs)!r} names a non-string")
+    return tuple(sorted(cast("Mapping[str, str]", recorded).items()))
 
 
 def run_probe(command: Sequence[str], environment: Mapping[str, str]) -> tuple[int, str, str]:
@@ -194,11 +232,12 @@ def probe_identity(
             fields["version"],
             fields["executable"],
         )
+        origins = _production_origins(fields)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         return RuntimeUnavailable(f"the identity probe answered no identity: {error}")
     if not all(isinstance(value, str) and value for value in (implementation, version, executable)):
         return RuntimeUnavailable("the identity probe answered an incomplete identity")
-    return RuntimeIdentity(str(implementation), str(version), str(executable))
+    return RuntimeIdentity(str(implementation), str(version), str(executable), origins)
 
 
 def probe_runtime(runtime: str, namespace: str, run: ProbeRunner = run_probe) -> RuntimeStatus:
@@ -259,8 +298,9 @@ def runtime_status(document: object) -> RuntimeStatus:
     fields = [status.get(name) for name in ("implementation", "version", "executable")]
     if not all(isinstance(value, str) and value for value in fields):
         raise ValueError(f"runtime identity {dict(status)!r} is incomplete")
-    return RuntimeIdentity(*(str(value) for value in fields))
+    implementation, version, executable = (str(value) for value in fields)
+    return RuntimeIdentity(implementation, version, executable, _production_origins(status))
 
 
 if __name__ == "__main__":
-    print(json.dumps(identity_document()))
+    print(json.dumps({**identity_document(), PRODUCTION_ORIGINS_FIELD: resolved_origins()}))

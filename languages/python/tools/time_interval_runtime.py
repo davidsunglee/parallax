@@ -120,6 +120,7 @@ NAMESPACE: Final = "time-interval-runtime"
 SUPPORT_SOURCES: Final = (
     "tools/time_interval_runtime.py",
     "tools/interpreter_matrix.py",
+    "tools/production_origins.py",
     "tests/_support/db_port.py",
 )
 """The measurement sources beyond the workload module's own digest."""
