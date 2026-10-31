@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
@@ -12,7 +12,7 @@ from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query._resolved import ResolvedObjectQuery
-from parallax.core.read_delivery._convert import occurrence_completion
+from parallax.core.read_delivery._convert import occurrence_completer
 from parallax.core.read_delivery._page import (
     INERT_OBSERVER,
     EntityState,
@@ -49,8 +49,8 @@ __all__ = [
     "PublishedRow",
     "RowsResult",
     "admitted_member_rows",
+    "completed_member_rows",
     "find_rows",
-    "member_row_completion",
     "publishable_member_rows",
 ]
 
@@ -222,7 +222,7 @@ def admitted_member_rows(page: Page) -> Generator[tuple[object, ...]]:
     root carried stays the unexamined input its classification takes — its
     Column's value, or its location in the raw Structured Column, SQL null and
     a present JSON null kept apart — so the row outlives the Page and
-    :func:`member_row_completion` judges those inputs later, if at all. Each
+    :func:`completed_member_rows` judges those inputs later, if at all. Each
     root is judged only when the caller asks for it, and its raw row is
     released once judged.
     """
@@ -236,22 +236,19 @@ def admitted_member_rows(page: Page) -> Generator[tuple[object, ...]]:
         yield state.member_row
 
 
-def member_row_completion(
-    layout: EntityLayout,
-) -> Callable[[tuple[object, ...]], tuple[object, ...]]:
-    """Complete a member row :func:`admitted_member_rows` produced for
-    ``layout``'s Entity, its Value Object occurrences judged as an ordinary read
-    judges them, refusing the first that holds invalid stored data. No
-    statement runs and no Page is involved."""
-    complete = occurrence_completion(layout)
-
-    def completed(row: tuple[object, ...]) -> tuple[object, ...]:
+def completed_member_rows(
+    layout: EntityLayout, rows: Iterable[tuple[object, ...]]
+) -> Generator[tuple[object, ...]]:
+    """Each of ``rows``, member rows :func:`admitted_member_rows` produced for
+    ``layout``'s Entity, completed in order: its Value Object occurrences judged
+    as an ordinary read judges them, refusing the first that holds invalid
+    stored data. No statement runs and no Page is involved."""
+    complete = occurrence_completer(layout)
+    for row in rows:
         member_row, findings = complete(row)
         if findings:
             raise stored_data_refusal(findings[0])
-        return member_row
-
-    return completed
+        yield member_row
 
 
 def _invalid_root(

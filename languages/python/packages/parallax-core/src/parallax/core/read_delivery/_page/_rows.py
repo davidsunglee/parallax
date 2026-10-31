@@ -134,7 +134,7 @@ class EntityState(NamedTuple):
 class PayloadDecoder(Protocol):
     """Judges a deferred fetched row's payload from the inputs its Page retains:
     its ``stored_values``, the ``routed_values`` recording registered, the
-    ``classifiable`` member mask (``None`` where the row carried every member),
+    ``carried_positions`` member mask (``None`` where the row carried every member),
     the findings its correlations raised when recorded, and its unrecognized
     family tag. One decoder serves every fetched row of its level."""
 
@@ -142,7 +142,7 @@ class PayloadDecoder(Protocol):
         self,
         stored_values: tuple[object, ...],
         routed_values: tuple[object, ...],
-        classifiable: int | None,
+        carried_positions: int | None,
         correlation_findings: tuple[StoredDataIssueInput, ...],
         unknown_family_tag: UnknownFamilyTag | None,
         *,
@@ -213,7 +213,7 @@ class DecoderRows:
     """
 
     __slots__ = (
-        "_classifiable",
+        "_carried_positions",
         "_correlation_findings",
         "_count",
         "_member_rows",
@@ -228,7 +228,7 @@ class DecoderRows:
         values: dict[int, PayloadDecoder | None],
         stored_values: Sequence[object],
         member_rows: Sequence[tuple[object, ...]],
-        classifiable: dict[int, int] | None,
+        carried_positions: dict[int, int] | None,
         correlation_findings: dict[int, tuple[StoredDataIssueInput, ...]] | None,
         unknown_family_tags: dict[int, UnknownFamilyTag] | None,
     ) -> None:
@@ -236,7 +236,7 @@ class DecoderRows:
         self._values = values
         self._stored_values = stored_values
         self._member_rows = member_rows
-        self._classifiable = classifiable
+        self._carried_positions = carried_positions
         self._correlation_findings = correlation_findings
         self._unknown_family_tags = unknown_family_tags
 
@@ -261,7 +261,7 @@ class DecoderRows:
             raise ValueError("a released fetched row decoder has no unjudged state")
         if isinstance(decoder, tuple):
             return decoder, ()
-        masks = self._classifiable
+        masks = self._carried_positions
         findings = self._correlation_findings
         tags = self._unknown_family_tags
         return decoder.decode_payload(
@@ -276,8 +276,8 @@ class DecoderRows:
     def settle(self, fetched_row: int) -> None:
         """Retire ``fetched_row``'s judgment once its state no longer needs one."""
         self._values[fetched_row] = None
-        if self._classifiable:
-            self._classifiable.pop(fetched_row, None)
+        if self._carried_positions:
+            self._carried_positions.pop(fetched_row, None)
         if self._correlation_findings:
             self._correlation_findings.pop(fetched_row, None)
         if self._unknown_family_tags:
@@ -286,7 +286,7 @@ class DecoderRows:
     def release(self, fetched_rows: Sequence[int]) -> None:
         for held in (
             self._values,
-            self._classifiable,
+            self._carried_positions,
             self._correlation_findings,
             self._unknown_family_tags,
         ):
@@ -296,7 +296,7 @@ class DecoderRows:
 
     def clear(self) -> None:
         self._values.clear()
-        self._classifiable = None
+        self._carried_positions = None
         self._correlation_findings = None
         self._unknown_family_tags = None
         self._stored_values = ()
@@ -357,11 +357,11 @@ class JudgedStates:
             raise ValueError("a singleton judged state has no group of distinct stored values")
         return group
 
-    def release(self) -> None:
+    def clear(self) -> None:
         self._groups.clear()
         self._fetched_rows_by_logical_row.clear()
 
-    def release_logical(self, logical_rows: Sequence[int]) -> None:
+    def release(self, logical_rows: Sequence[int]) -> None:
         groups = self._groups
         fetched_rows_by_logical_row = self._fetched_rows_by_logical_row
         for logical in logical_rows:
@@ -604,7 +604,7 @@ def release_page_rows(page: Page) -> None:
     rows.issues.clear()
     rows.overwritten_edges.clear()
     rows.decoders.clear()
-    rows.judged_states.release()
+    rows.judged_states.clear()
 
 
 class PageSchedule(NamedTuple):
@@ -740,7 +740,7 @@ def release_finished_rows(
     rows.issues.release(finished)
     rows.overwritten_edges.release(finished)
     decoders.release(finished)
-    rows.judged_states.release_logical(finished_logical)
+    rows.judged_states.release(finished_logical)
 
 
 def push_edges(rows: PageRows, fetched_row: int, pending: list[int]) -> None:
@@ -827,20 +827,20 @@ class PageBuilder:
     """
 
     __slots__ = (
-        "_classifiable",
+        "_carried_positions",
         "_correlation_findings",
         "_decoders",
         "_fetched_rows_by_logical_row",
         "_identity",
         "_issues",
         "_keys",
-        "_last_layout",
         "_last_member",
         "_last_member_layout",
         "_last_member_position",
         "_last_repeats",
         "_last_slots",
-        "_last_source",
+        "_last_slots_layout",
+        "_last_slots_source",
         "_layouts",
         "_logical_rows",
         "_member_rows",
@@ -864,9 +864,9 @@ class PageBuilder:
         self._issues: dict[int, tuple[StoredDataIssueInput, ...]] = {}
         self._logical_rows: list[int] = []
         self._keys: list[RowKey | None] = []
-        self._last_layout: EntityLayout | None = None
+        self._last_slots_layout: EntityLayout | None = None
         self._last_slots: SourceViewLayout | None = None
-        self._last_source: SourceLevel | None = None
+        self._last_slots_source: SourceLevel | None = None
         self._last_repeats = False
         self._last_member_layout: EntityLayout | None = None
         self._last_member: MemberIdentity | None = None
@@ -879,7 +879,7 @@ class PageBuilder:
         self._fetched_rows_by_logical_row: list[int | list[int]] = []
         self._states: list[RecordedState | list[tuple[int, EntityState]] | None] = []
         self._decoders: dict[int, PayloadDecoder | None] = {}
-        self._classifiable: dict[int, int] = {}
+        self._carried_positions: dict[int, int] = {}
         self._correlation_findings: dict[int, tuple[StoredDataIssueInput, ...]] = {}
         self._unknown_family_tags: dict[int, UnknownFamilyTag] = {}
         self._stored_values: list[object] = []
@@ -916,14 +916,14 @@ class PageBuilder:
         """
         if self._sealed:
             self._require_open()
-        if source == self._last_source and layout is self._last_layout:
+        if source == self._last_slots_source and layout is self._last_slots_layout:
             slots = cast("SourceViewLayout", self._last_slots)
             repeats = self._last_repeats
         else:
             slots = self._schema.source(source, layout)
             repeats = self._schema.may_repeat_rows(source)
-            self._last_source = source
-            self._last_layout = layout
+            self._last_slots_source = source
+            self._last_slots_layout = layout
             self._last_slots = slots
             self._last_repeats = repeats
         fetched_row = len(self._layouts)
@@ -968,7 +968,7 @@ class PageBuilder:
     def add_payload_inputs(
         self,
         fetched_row: int,
-        classifiable: int | None,
+        carried_positions: int | None,
         correlation_findings: tuple[StoredDataIssueInput, ...],
         unknown_family_tag: UnknownFamilyTag | None,
     ) -> None:
@@ -978,8 +978,8 @@ class PageBuilder:
         findings its correlations raised when recorded, and its unrecognized
         family tag."""
         self._require_open()
-        if classifiable is not None:
-            self._classifiable[fetched_row] = classifiable
+        if carried_positions is not None:
+            self._carried_positions[fetched_row] = carried_positions
         if correlation_findings:
             self._correlation_findings[fetched_row] = correlation_findings
         if unknown_family_tag is not None:
@@ -1120,7 +1120,7 @@ class PageBuilder:
                 self._decoders,
                 self._stored_values,
                 self._member_rows,
-                self._classifiable or None,
+                self._carried_positions or None,
                 self._correlation_findings or None,
                 self._unknown_family_tags or None,
             ),
@@ -1136,9 +1136,9 @@ class PageBuilder:
         self._views = []
         self._overwritten_edges = {}
         self._identity = {}
-        self._last_layout = None
+        self._last_slots_layout = None
         self._last_slots = None
-        self._last_source = None
+        self._last_slots_source = None
         self._last_repeats = False
         self._last_member_layout = None
         self._last_member = None
@@ -1146,7 +1146,7 @@ class PageBuilder:
         self._fetched_rows_by_logical_row = []
         self._states = []
         self._decoders = {}
-        self._classifiable = {}
+        self._carried_positions = {}
         self._correlation_findings = {}
         self._unknown_family_tags = {}
         self._stored_values = []

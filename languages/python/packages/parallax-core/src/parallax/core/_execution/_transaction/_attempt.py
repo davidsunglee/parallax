@@ -85,7 +85,7 @@ from parallax.core.read_delivery._publication import Publication
 from parallax.core.read_delivery._read_plan import ReadPlanner
 from parallax.core.read_delivery._row_lane import (
     admitted_member_rows,
-    member_row_completion,
+    completed_member_rows,
     publishable_member_rows,
 )
 from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
@@ -715,11 +715,10 @@ class TxnAttempt(_TxnAttemptBase):
         reader as it is asked for."""
         layout = self._write.model.layouts.entity(request.entity.identity)
         rows = request.rows
-        completed = member_row_completion(layout)
         return consumer(
             request,
             layout.member_selection,
-            (completed(row) for row in rows),
+            completed_member_rows(layout, rows),
             ABSENT,
             request.documents,
             len(rows),

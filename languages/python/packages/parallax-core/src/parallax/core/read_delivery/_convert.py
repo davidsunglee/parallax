@@ -46,11 +46,12 @@ from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wi
 __all__ = [
     "POSITIONAL_OUTPUT",
     "EntityReadMapping",
+    "MemberClassifier",
     "judge_positions",
-    "occurrence_completion",
+    "occurrence_completer",
 ]
 
-type _Classifier = Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]
+type MemberClassifier = Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]
 
 
 def _positional_object(_shape: MemberShape, values: list[object]) -> tuple[object, ...]:
@@ -102,15 +103,14 @@ class EntityReadMapping:
     layout: EntityLayout
     projection: InitVar[ResolvedReadProjection]
     result_ordinals: tuple[int | None, ...]
-    classifiers: tuple[Callable[[object], tuple[object, tuple[DocumentFinding, ...]]] | None, ...]
+    classifiers: tuple[MemberClassifier | None, ...]
     document_member_names: tuple[str | None, ...]
     encoded_positions: int
     correlation_members: InitVar[tuple[MemberIdentity, ...]]
     concrete_entity: EntityIdentity = field(init=False)
-    classifies: bool = field(init=False)
-    projected_by_position: tuple[bool, ...] = field(init=False)
+    projected_by_occurrence: tuple[bool, ...] = field(init=False)
     direct_row: Callable[[tuple[object, ...]], object] | None = field(init=False)
-    every_member_present: int = field(init=False)
+    member_positions: int = field(init=False)
     temporal_start_values: Callable[[tuple[object, ...]], tuple[object, ...]] = field(init=False)
     eager_identity_positions: tuple[int, ...] = field(init=False)
     eager_correlation_positions: tuple[int, ...] = field(init=False)
@@ -120,9 +120,9 @@ class EntityReadMapping:
     attribute_positions: int = field(init=False)
     attributes: tuple[AttributeMetadata, ...] = field(init=False)
     temporal_end_positions: int = field(init=False)
-    classifier_positions: tuple[tuple[int, _Classifier], ...] = field(init=False)
+    positioned_classifiers: tuple[tuple[int, MemberClassifier], ...] = field(init=False)
     occurrence_plans: tuple[MemberDecodePlan | None, ...] = field(init=False)
-    projected_occurrences: int = field(init=False)
+    projected_occurrence_positions: int = field(init=False)
 
     def __post_init__(
         self,
@@ -139,12 +139,11 @@ class EntityReadMapping:
             raise ValueError("an entity read mapping's member sources must align with its members")
         object.__setattr__(self, "concrete_entity", layout.concrete)
         classifies = any(classifier is not None for classifier in self.classifiers)
-        object.__setattr__(self, "classifies", classifies)
-        projected_by_position = tuple(
+        projected_by_occurrence = tuple(
             projection.includes_value_object(occurrence.identity)
             for occurrence in layout.occurrences
         )
-        object.__setattr__(self, "projected_by_position", projected_by_position)
+        object.__setattr__(self, "projected_by_occurrence", projected_by_occurrence)
         direct_ordinals = tuple(ordinal for ordinal in self.result_ordinals if ordinal is not None)
         object.__setattr__(
             self,
@@ -153,7 +152,7 @@ class EntityReadMapping:
             if direct_ordinals and len(direct_ordinals) == member_count
             else None,
         )
-        object.__setattr__(self, "every_member_present", (1 << member_count) - 1)
+        object.__setattr__(self, "member_positions", (1 << member_count) - 1)
         object.__setattr__(self, "temporal_start_values", _tuple_getter(layout.temporal_starts))
         host_checked = frozenset(
             position
@@ -191,10 +190,10 @@ class EntityReadMapping:
         object.__setattr__(
             self,
             "requires_state_reduction",
-            classifies or bool(payload) or bool(eager_identity) or any(projected_by_position),
+            classifies or bool(payload) or bool(eager_identity) or any(projected_by_occurrence),
         )
         object.__setattr__(
-            self, "judges_scalars_only", not classifies and not any(projected_by_position)
+            self, "judges_scalars_only", not classifies and not any(projected_by_occurrence)
         )
         object.__setattr__(self, "attribute_positions", (1 << layout.attribute_count) - 1)
         # The member bindings themselves, which the Attributes open: read only at
@@ -215,7 +214,7 @@ class EntityReadMapping:
         )
         object.__setattr__(
             self,
-            "classifier_positions",
+            "positioned_classifiers",
             tuple(
                 (position, classifier)
                 for position, classifier in enumerate(self.classifiers)
@@ -228,17 +227,17 @@ class EntityReadMapping:
             tuple(
                 _occurrence_plan(occurrence) if projected else None
                 for occurrence, projected in zip(
-                    layout.occurrences, projected_by_position, strict=True
+                    layout.occurrences, projected_by_occurrence, strict=True
                 )
             ),
         )
         object.__setattr__(
             self,
-            "projected_occurrences",
+            "projected_occurrence_positions",
             sum(
                 1 << position
                 for position, projected in enumerate(
-                    projected_by_position, start=layout.attribute_count
+                    projected_by_occurrence, start=layout.attribute_count
                 )
                 if projected
             ),
@@ -248,7 +247,7 @@ class EntityReadMapping:
         self,
         stored_values: tuple[object, ...],
         routed_values: tuple[object, ...],
-        classifiable: int | None,
+        carried_positions: int | None,
         correlation_findings: tuple[StoredDataIssueInput, ...],
         unknown_family_tag: UnknownFamilyTag | None,
         *,
@@ -259,8 +258,8 @@ class EntityReadMapping:
 
         Without ``occurrences`` only the row's Attributes are judged: each Value
         Object occurrence the row carried keeps the input its classification
-        takes, which an :func:`occurrence_completion` judges later."""
-        carried = self.every_member_present if classifiable is None else classifiable
+        takes, which an :func:`occurrence_completer` judges later."""
+        carried = self.member_positions if carried_positions is None else carried_positions
         if not occurrences:
             carried &= self.attribute_positions
         members: list[object] | None = None
@@ -269,7 +268,7 @@ class EntityReadMapping:
                 if members is None:
                     members = list(stored_values)
                 members[position] = routed_values[position]
-        members, issues, classified = _classified(self, stored_values, carried, members)
+        members, issues, classified = _classify_documents(self, stored_values, carried, members)
         values = stored_values if members is None else members
         if unknown_family_tag is not None:
             issues = [
@@ -292,7 +291,7 @@ class EntityReadMapping:
         )
         if not occurrences:
             members = _pending_occurrences(values, self, members)
-        elif self.projected_occurrences & ~classified:
+        elif self.projected_occurrence_positions & ~classified:
             members, issues = _decode_occurrences(values, self, classified, members, issues)
         return (
             stored_values if members is None else tuple(members),
@@ -316,7 +315,7 @@ def _no_values(_values: tuple[object, ...]) -> tuple[object, ...]:
     return ()
 
 
-def _classified(
+def _classify_documents(
     mapping: EntityReadMapping,
     stored_values: tuple[object, ...],
     carried: int,
@@ -328,7 +327,7 @@ def _classified(
     each."""
     issues: list[StoredDataIssueInput] | None = None
     classified = 0
-    for position, classifier in mapping.classifier_positions:
+    for position, classifier in mapping.positioned_classifiers:
         raw = stored_values[position]
         if raw is ABSENT or not carried >> position & 1:
             continue
@@ -338,7 +337,7 @@ def _classified(
         if findings:
             if issues is None:
                 issues = []
-            issues.extend([_translate_finding(finding, mapping) for finding in findings])
+            issues.extend([_document_member_issue(finding, mapping) for finding in findings])
         classified |= 1 << position
     return members, issues, classified
 
@@ -503,7 +502,7 @@ def _pending_occurrences(
     return members
 
 
-def occurrence_completion(
+def occurrence_completer(
     layout: EntityLayout,
 ) -> Callable[[tuple[object, ...]], tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]]:
     """Judge the Value Object occurrences an Attribute-only judgment left
@@ -551,7 +550,7 @@ def _occurrence(raw: object, plan: MemberDecodePlan) -> tuple[object, tuple[Docu
     return plan.value(_occurrence_input(raw))
 
 
-def _translate_finding(
+def _document_member_issue(
     finding: DocumentFinding, mapping: EntityReadMapping
 ) -> StoredDataIssueInput:
     """One Entity-document finding as the issue it publishes.

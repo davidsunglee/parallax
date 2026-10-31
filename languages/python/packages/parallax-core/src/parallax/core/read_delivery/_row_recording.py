@@ -55,7 +55,7 @@ def located_stored_values(
     A member located in the row's shared ``document`` is read from it, a cell
     from its ordinal, and an uncarried member stays :data:`ABSENT`. A requested
     occurrence the Entity carries no source for reads as stored SQL NULL."""
-    classifiable = 0
+    carried_positions = 0
     layout = mapping.layout
     ordinals = mapping.result_ordinals
     document_members = mapping.document_member_names
@@ -72,9 +72,9 @@ def located_stored_values(
             values[position] = row[ordinal]
         else:
             continue
-        classifiable |= 1 << position
+        carried_positions |= 1 << position
     for position, projected in enumerate(
-        mapping.projected_by_position, start=layout.attribute_count
+        mapping.projected_by_occurrence, start=layout.attribute_count
     ):
         if not projected:
             continue
@@ -90,21 +90,21 @@ def located_stored_values(
         else:
             values[position] = None
             continue
-        classifiable |= 1 << position
-    return tuple(values), classifiable
+        carried_positions |= 1 << position
+    return tuple(values), carried_positions
 
 
 def record_trusted(
     mapping: EntityReadMapping,
     stored_values: tuple[object, ...],
-    classifiable: int,
+    carried_positions: int,
     unknown_family_tag: UnknownFamilyTag | None,
     builder: PageBuilder,
     source: SourceLevel,
 ) -> int:
     """Record a row nothing host-checks or classifies on a level that may repeat
     rows: its stored values are its member row, compared before they are shared."""
-    del classifiable, unknown_family_tag
+    del carried_positions, unknown_family_tag
     layout = mapping.layout
     return builder.add_fetched_row(
         source,
@@ -120,7 +120,7 @@ def record_trusted(
 def record_trusted_singleton(
     mapping: EntityReadMapping,
     stored_values: tuple[object, ...],
-    classifiable: int,
+    carried_positions: int,
     unknown_family_tag: UnknownFamilyTag | None,
     builder: PageBuilder,
     source: SourceLevel,
@@ -128,7 +128,7 @@ def record_trusted_singleton(
     """Record a row nothing host-checks or classifies on a level that records each
     row key at most once: its stored values are its member row, judged with no
     finding."""
-    del classifiable, unknown_family_tag
+    del carried_positions, unknown_family_tag
     return builder.add_fetched_row(
         source,
         mapping.layout,
@@ -143,7 +143,7 @@ def record_trusted_singleton(
 def record_judged(
     mapping: EntityReadMapping,
     stored_values: tuple[object, ...],
-    classifiable: int,
+    carried_positions: int,
     unknown_family_tag: UnknownFamilyTag | None,
     builder: PageBuilder,
     source: SourceLevel,
@@ -174,7 +174,7 @@ def record_judged(
         member_row, payload_findings = mapping.decode_payload(
             stored_values,
             routed_values,
-            None if classifiable == mapping.every_member_present else classifiable,
+            None if carried_positions == mapping.member_positions else carried_positions,
             () if correlation_findings is None else tuple(correlation_findings),
             unknown_family_tag,
         )
@@ -194,7 +194,7 @@ def record_judged(
 def record_deferred(
     mapping: EntityReadMapping,
     stored_values: tuple[object, ...],
-    classifiable: int,
+    carried_positions: int,
     unknown_family_tag: UnknownFamilyTag | None,
     builder: PageBuilder,
     source: SourceLevel,
@@ -221,7 +221,7 @@ def record_deferred(
         () if identity_findings is None else tuple(identity_findings),
         mapping,
     )
-    partial = None if classifiable == mapping.every_member_present else classifiable
+    partial = None if carried_positions == mapping.member_positions else carried_positions
     if partial is not None or correlation_findings or unknown_family_tag is not None:
         builder.add_payload_inputs(
             fetched_row,

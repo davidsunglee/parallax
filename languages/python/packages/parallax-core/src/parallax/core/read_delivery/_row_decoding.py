@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import cast
 
 from parallax.core.base import (
@@ -19,7 +19,7 @@ from parallax.core.document_codec import (
 )
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, ValueObjectMetadata
 from parallax.core.object_query._resolved import ContinuationCoordinate
-from parallax.core.read_delivery._convert import POSITIONAL_OUTPUT
+from parallax.core.read_delivery._convert import POSITIONAL_OUTPUT, MemberClassifier
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._inheritance import (
     FixedRowIdentity,
@@ -36,8 +36,6 @@ __all__ = [
     "row_identity",
     "row_variants",
 ]
-
-type MemberClassifier = Callable[[object], tuple[object, tuple[DocumentFinding, ...]]]
 
 
 def row_identity(
@@ -115,16 +113,16 @@ def member_classifiers(
         member.identity for member in (() if direct is None else direct.by_entity.get(resolved, ()))
     )
     return tuple(
-        _located_classifier(None if entry is None else entry.shape, name)
+        _shared_document_classifier(None if entry is None else entry.shape, name)
         if name is not None
-        else _direct_classifier(member)
+        else _own_document_classifier(member)
         if member.identity in own_documents
         else None
         for member, name in zip(members, document_member_names, strict=True)
     )
 
 
-def _direct_classifier(member: AttributeMetadata | ValueObjectMetadata) -> MemberClassifier:
+def _own_document_classifier(member: AttributeMetadata | ValueObjectMetadata) -> MemberClassifier:
     name = (
         member.identity.name if isinstance(member, AttributeMetadata) else member.identity.path[-1]
     )
@@ -136,7 +134,7 @@ def _direct_classifier(member: AttributeMetadata | ValueObjectMetadata) -> Membe
     return classify
 
 
-def _located_classifier(shape: MemberShape | None, member_name: str) -> MemberClassifier:
+def _shared_document_classifier(shape: MemberShape | None, member_name: str) -> MemberClassifier:
     if shape is None:  # pragma: no cover - a located resident belongs to its owner's shape
         raise SqlGenError(f"the shared document member {member_name!r} has no shape")
     return cast("MemberClassifier", entity_member_plan(shape, member_name, POSITIONAL_OUTPUT).value)
