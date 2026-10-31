@@ -257,9 +257,11 @@ class MemberDecodePlan:
 
     The plan is this module's one read-side traversal. An occurrence's object
     plan fixes each member's kind and recurses through the plans of its nested
-    occurrences, and is compiled once, so classifying a stored value resolves
-    nothing and wraps nothing on a conforming document: a finding and its path
-    are built only where stored data contradicts the shape.
+    occurrences, and is compiled once, so classifying a conforming document
+    resolves nothing and wraps nothing. A finding is built only where stored
+    data contradicts the shape, at the path of the nested occurrence, ``Many``
+    element, or scalar collection it was found in: the traversal extends that
+    path on entering each, so no finding is relocated afterwards.
 
     A ``One`` occurrence classifies as absent, explicit null, a present object,
     or ``one-wrong-kind``; a ``Many`` as empty, a present array of objects, or
