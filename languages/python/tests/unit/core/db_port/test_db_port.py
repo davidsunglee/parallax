@@ -93,7 +93,7 @@ def test_invalid_authorization_is_a_caller_value_error() -> None:
     assert issubclass(InvalidAuthorizationError, ValueError)
 
 
-def test_an_acquisition_names_one_of_six_reasons_for_granting_nothing() -> None:
+def test_an_acquisition_names_one_of_eight_reasons_for_granting_nothing() -> None:
     # Read back off the alias rather than off a table that projects it, so a
     # member added on one side and not the other is caught here rather than as
     # a lookup that raises on the one acquisition that failed that way.
@@ -101,8 +101,10 @@ def test_an_acquisition_names_one_of_six_reasons_for_granting_nothing() -> None:
         "timeout",
         "queue_rejected",
         "closed",
+        "unavailable",
         "preparation_failed",
         "authorization_failed",
+        "authentication_refused",
         "credentials_refused",
     }
 

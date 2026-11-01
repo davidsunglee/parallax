@@ -1150,7 +1150,7 @@ def test_a_sample_is_unavailable_rather_than_raising_when_the_pool_will_not_answ
 
         # The native pool is the runtime's own and its statistics call is the
         # one seam this failure can come from.
-        monkeypatch.setattr(runtime._pool, "get_stats", refuse)
+        monkeypatch.setattr(runtime._writer.pool, "get_stats", refuse)
         unavailable = source.sample()
         monkeypatch.undo()
 

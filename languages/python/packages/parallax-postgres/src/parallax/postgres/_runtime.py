@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -8,88 +7,36 @@ from time import monotonic
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
-import psycopg_pool
-
-from parallax.core.base import INFINITY
 from parallax.core.db_port import (
     CleanupIssue,
     ConnectionAcquisitionError,
     ConnectionContext,
     ConnectionContextSource,
-    CredentialResolutionError,
-    CredentialSource,
-    DatabaseStartupError,
-    DriverManaged,
     InvalidAuthorizationError,
     PoolMetricsSource,
     ReleaseUnconfirmed,
     Route,
     RouteCapabilities,
     RoutePolicy,
-    Row,
-    StartupPhase,
     report_resource_issues,
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres._authorization import PostgresRole
-from parallax.postgres._connection import (
-    CONNECT_KWARGS,
-    ConnectionEstablishment,
-    IncompatibleSessionError,
-)
-from parallax.postgres._context import NativePool, PostgresConnectionContext
-from parallax.postgres._options import PoolOptions, RetentionOptions
-from parallax.postgres._pool_metrics import PostgresPoolMetrics
+from parallax.postgres._context import PostgresConnectionContext
+from parallax.postgres._route_plan import planned_route
 
 if TYPE_CHECKING:
-    from psycopg_pool.abc import KwargsParam
+    from parallax.postgres._route import PostgresRoute
 
-    from parallax.postgres._endpoint import PostgresEndpoint
-
-__all__ = ["PostgresRuntime", "open_runtime"]
-
-PROBE_SQL: Final = """SELECT
-    1 AS ready,
-    'infinity'::timestamptz AS temporal_bound,
-    '{"ready": true}'::jsonb AS document,
-    '7.038530691851209e-26'::float8::real AS float32_witness,
-    0.30000000000000004::float8 AS float64_witness,
-    session_user AS login_identity"""
-"""The one statement a runtime runs before it is usable.
-
-It proves the decodings the read path cannot work without and that a bare
-connectivity check does not exercise: an ordinary integer, the neutral sentinel a
-temporal interval's open upper bound reads back as, a structured document
-decoded to a mapping, and two floats that come back exactly only when the server
-spells floats without rounding them. It also captures the authenticated
-``session_user`` that database-login execution projects as its identity. It
-reads no model, opens no explicit transaction, and registers nothing — the
-connection it runs on was already initialized like every other. It is a smoke
-probe, not a substitute for the codec suites.
-
-The Float64 witness needs all 17 significant digits. The Float32 witness is one
-whose shortest spelling, parsed to the nearest binary64 and then narrowed, lands
-on the adjacent binary32 value, so it also reads back exactly only through the
-adapter's own Float32 loader.
-"""
-
-_FLOAT32_WITNESS: Final = 7.038530691851209e-26
-_FLOAT64_WITNESS: Final = 0.30000000000000004
-_ROUNDED_FLOATS = (
-    "the session's extra_float_digits is at or below zero, so the server rounds float "
-    "output, which no loader can recover; set it to 1 or more"
-)
+__all__ = ["PostgresRuntime"]
 
 _CLOSED = "this Database is closed, so it opens no new database connection"
 
-_WRITER_ROUTES: Final[Mapping[Route, RouteCapabilities]] = MappingProxyType(
-    {"writer": RouteCapabilities.every_level()}
-)
-
-
-class _ProbeMismatch(Exception):
-    """The probe ran but read back something other than what it asked for."""
+_WRITER: Final = RouteCapabilities.every_level()
+_READER: Final = RouteCapabilities(frozenset({"read_committed", "repeatable_read"}))
+"""A hot standby begins a read-only transaction at these levels and refuses
+``serializable``, so a reader route never declares it."""
 
 
 class PostgresRuntime:
@@ -97,7 +44,9 @@ class PostgresRuntime:
 
     Two runtimes built from one configuration share nothing: closing either
     leaves the other working, which is what makes reusing configuration safe.
-    It serves its writer route through one pool.
+    It serves its writer route through one pool and, where one is configured,
+    its reader route through another; both share one admission decision and
+    one close.
     """
 
     dialect: Dialect = POSTGRES
@@ -106,23 +55,25 @@ class PostgresRuntime:
         "_acquire_timeout",
         "_admission",
         "_closed",
-        "_establishment",
         "_login_identity",
-        "_metrics",
-        "_pool",
+        "_reader",
+        "_routes",
+        "_writer",
     )
 
     def __init__(
         self,
-        pool: NativePool,
-        establishment: ConnectionEstablishment,
+        writer: PostgresRoute,
+        reader: PostgresRoute | None = None,
         *,
         acquire_timeout: float,
     ) -> None:
-        self._pool = pool
+        self._writer = writer
+        self._reader = reader
         self._acquire_timeout = acquire_timeout
-        self._establishment = establishment
-        self._metrics = PostgresPoolMetrics(pool, "writer")
+        self._routes: Mapping[Route, RouteCapabilities] = MappingProxyType(
+            {"writer": _WRITER} if reader is None else {"writer": _WRITER, "reader": _READER}
+        )
         self._closed = False
         self._login_identity: str | None = None
         # Held only across the two field reads that decide admission, never
@@ -132,18 +83,18 @@ class PostgresRuntime:
 
     @property
     def routes(self) -> Mapping[Route, RouteCapabilities]:
-        return _WRITER_ROUTES
+        return self._routes
 
     @property
     def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
-        """One source per pool, each the same object for the runtime's whole life.
+        """One source per route's pool, each the same object for the runtime's whole life.
 
-        A pool is what this runtime manages, so there is always something to
-        measure and this is never empty. Each source stays the same object across
-        the close as well: an exporter holding one keeps a handle that answers
-        detached rather than a handle that has gone stale.
+        A pool is what each route manages, so there is always something to
+        measure and this is never empty. Each source stays the same object
+        across the close as well: an exporter holding one keeps a handle that
+        answers detached rather than a handle that has gone stale.
         """
-        return (self._metrics,)
+        return tuple(route.metrics for route in self._served())
 
     @property
     def login_identity(self) -> str:
@@ -154,7 +105,7 @@ class PostgresRuntime:
         return identity
 
     def _complete_startup(self, login: str) -> None:
-        """Install the readiness probe's validated login exactly once."""
+        """Install the writer's validated login exactly once."""
         if self._login_identity is not None:
             raise RuntimeError("the database runtime has already completed startup")
         self._login_identity = login
@@ -171,38 +122,44 @@ class PostgresRuntime:
             )
         return _PostgresContextSource(self, authorization)
 
-    def acquisition(self, deadline: float) -> PostgresConnectionContext:
-        """A fresh acquisition bounded by ``deadline`` rather than by the ordinary budget.
+    def acquisition(self, route: PostgresRoute, deadline: float) -> PostgresConnectionContext:
+        """A fresh acquisition on ``route`` bounded by ``deadline`` rather than by
+        the ordinary budget.
 
         Startup uses this: readiness has one budget of its own that the
         acquisition it makes has to fit inside, rather than an ordinary
-        acquisition timeout added to it.
+        acquisition timeout added to it. The route is still unproven, so the
+        lease runs no proof of its own: startup's probe is that proof.
         """
-        return PostgresConnectionContext(
-            self._pool, self._admit, deadline, self._establishment, None, route="writer"
-        )
+        return PostgresConnectionContext(route, self._admit, deadline, None, expected_login=None)
 
-    def _context(self, role: PostgresRole | None) -> PostgresConnectionContext:
+    def _context(self, role: PostgresRole | None, policy: RoutePolicy) -> PostgresConnectionContext:
+        reader = self._reader
+        planned = planned_route(policy, has_reader=reader is not None)
+        route = reader if planned == "reader" and reader is not None else self._writer
         return PostgresConnectionContext(
-            self._pool,
+            route,
             self._admit,
             monotonic() + self._acquire_timeout,
-            self._establishment,
             role,
-            route="writer",
+            expected_login=self._login_identity,
         )
 
+    def _served(self) -> tuple[PostgresRoute, ...]:
+        reader = self._reader
+        return (self._writer,) if reader is None else (self._writer, reader)
+
     def close(self) -> None:
-        """Stop admitting work and close the native pool. Idempotent and permanent.
+        """Stop admitting work and close every route's native pool. Idempotent and permanent.
 
-        Admission stops first, so nothing is admitted while the pool is being
-        torn down. The native close then refuses waiting and future checkouts,
-        closes what is idle, and closes what comes back later; it neither drains
-        borrowers nor interrupts their statements, so an operation already
-        running finishes on the connection it holds and that connection is
-        closed when it is returned.
+        Admission stops first, so nothing is admitted on any route while the
+        pools are being torn down. Each native close then refuses waiting and
+        future checkouts, closes what is idle, and closes what comes back
+        later; it neither drains borrowers nor interrupts their statements, so
+        an operation already running finishes on the connection it holds and
+        that connection is closed when it is returned.
 
-        The metrics source detaches between the two, so every sample begun
+        Every metrics source detaches between the two, so every sample begun
         after that reaches nothing — and a native close that is slow or that
         fails delays nothing about that, because detachment has already happened
         by then. A sample already inside the native read may complete and report
@@ -210,18 +167,22 @@ class PostgresRuntime:
         this close holds.
 
         Problems closing are reported through the restricted resource logger and
-        never raised: close is what a caller runs while unwinding, and a handle
-        that refused to close would leave them nothing better to do.
+        never raised, and one route's failure to close does not stop the
+        other's: close is what a caller runs while unwinding, and a handle that
+        refused to close would leave them nothing better to do.
         """
         with self._admission:
             if self._closed:
                 return
             self._closed = True
-        self._metrics.detach()
-        try:
-            self._pool.close()
-        except Exception as exc:
-            report_resource_issues("shutdown", _shutdown_issue(exc))
+        routes = self._served()
+        for route in routes:
+            route.metrics.detach()
+        for route in routes:
+            try:
+                route.pool.close()
+            except Exception as exc:
+                report_resource_issues("shutdown", _shutdown_issue(exc))
 
     def _admit(self, deadline: float) -> None:
         """Decide, in one critical section, whether this acquisition may proceed.
@@ -249,258 +210,7 @@ class _PostgresContextSource:
     role: PostgresRole | None
 
     def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
-        # The runtime declares only its writer, so the one policy core can
-        # resolve against it is `writer_only`.
-        del policy
-        return self.runtime._context(self.role)  # pyright: ignore[reportPrivateUsage] - source is runtime-owned
-
-
-def open_runtime(
-    writer: PostgresEndpoint,
-    *,
-    acquire_timeout: float,
-    startup_timeout: float,
-    prepare_threshold: int | None,
-) -> PostgresRuntime:
-    """Open one ready runtime over ``writer``, or raise having released what it took.
-
-    Every failure below publishes no runtime: the native pool is closed on the
-    way out, and a startup connection that was already acquired is released
-    through the same cleanup path an ordinary operation uses — which reports
-    what it established, so a disposal or handoff that itself failed is stated
-    rather than assumed away.
-    """
-    deadline = monotonic() + startup_timeout
-    establishment = ConnectionEstablishment()
-    pool = _build_pool(writer, acquire_timeout, prepare_threshold, establishment)
-    runtime = PostgresRuntime(pool, establishment, acquire_timeout=acquire_timeout)
-    try:
-        _await_minimum(pool, writer.pool, deadline, establishment)
-        runtime._complete_startup(_probe(runtime, deadline))  # pyright: ignore[reportPrivateUsage] - module-owned startup transition
-    except BaseException:
-        with contextlib.suppress(Exception):
-            pool.close()
-        raise
-    return runtime
-
-
-def _build_pool(
-    endpoint: PostgresEndpoint,
-    acquire_timeout: float,
-    prepare_threshold: int | None,
-    establishment: ConnectionEstablishment,
-) -> NativePool:
-    """Create and open the native pool this runtime manages.
-
-    ``open=False`` then an explicit open, because the driver's implicit opening
-    is a deprecated default whose behavior is documented to change. The
-    connection keyword arguments are the ones this adapter owns — autocommit,
-    row shape, and prepared-statement policy — and ``configure`` is where every
-    connection, however it came to exist, is initialized and checked.
-
-    Where a credential source is configured, those keywords become a CALLABLE
-    the pool resolves on every connection attempt, which is what makes the
-    secret late rather than frozen into configuration. Under
-    :data:`~parallax.core.db_port.DRIVER_MANAGED` the static dictionary is
-    passed exactly as it would be otherwise and carries no ``password`` at all,
-    leaving authentication to the driver and the server.
-
-    No ``reset`` callback is configured. Native return already brings a
-    connection back to a usable state or discards it, and a reset callback runs
-    after that decision rather than instead of it — so it could not prevent an
-    unexpected transaction being rolled back for reuse, which is exactly the
-    outcome this adapter refuses by disposing of such a connection itself.
-
-    No ``check`` callback is configured either, so a checkout costs no round
-    trip. A connection the server ended while it sat idle is found by its first
-    submission instead, which the connection context replaces where that
-    submission can be repeated.
-    """
-    conninfo = endpoint.connection_string
-    options = endpoint.pool
-    credentials: CredentialSource | DriverManaged = endpoint.credentials
-    base: dict[str, object] = {**CONNECT_KWARGS, "prepare_threshold": prepare_threshold}
-    kwargs: KwargsParam = (
-        base
-        if isinstance(credentials, DriverManaged)
-        else establishment.connect_kwargs(base, credentials)
-    )
-    pool: NativePool
-    if isinstance(options, PoolOptions):
-        pool = psycopg_pool.ConnectionPool(
-            conninfo,
-            kwargs=kwargs,
-            open=False,
-            configure=establishment,
-            min_size=options.min_size,
-            max_size=options.max_size,
-            timeout=acquire_timeout,
-            max_waiting=options.max_waiting,
-            max_idle=options.max_idle,
-            max_lifetime=options.max_lifetime,
-            reconnect_timeout=options.reconnect_timeout,
-            num_workers=options.num_workers,
-        )
-    else:
-        pool = psycopg_pool.NullConnectionPool(
-            conninfo,
-            kwargs=kwargs,
-            open=False,
-            configure=establishment,
-            max_size=options.max_size,
-            timeout=acquire_timeout,
-            max_waiting=options.max_waiting,
-            max_lifetime=options.max_lifetime,
-            reconnect_timeout=options.reconnect_timeout,
-            num_workers=options.num_workers,
-        )
-    try:
-        pool.open()
-    except Exception as exc:
-        with contextlib.suppress(Exception):
-            pool.close()
-        raise DatabaseStartupError(
-            "the database runtime's connection pool could not be opened", phase="open"
-        ) from exc
-    return pool
-
-
-def _await_minimum(
-    pool: NativePool,
-    options: RetentionOptions,
-    deadline: float,
-    establishment: ConnectionEstablishment,
-) -> None:
-    """Wait for the retained minimum, where there is one to wait for.
-
-    Skipped for a zero minimum and for on-demand retention, because neither has
-    retained capacity: the native wait would either return immediately having
-    proved nothing, or establish a connection of its own that is then thrown
-    away. The probe below is what proves readiness in every mode, so nothing is
-    lost by skipping this one.
-
-    Filling happens on the runtime's own background path, where an establishment
-    refusal is retried rather than reported, so all this wait can see is that
-    time ran out. Where such a refusal is on record it is stated as the failure
-    instead: a configuration every connection is refused under is what an
-    operator has to fix, and "timed out" names none of it. A credential the
-    source would not produce and a session the codecs cannot run under are
-    different things to fix, so each says which one happened.
-    """
-    if not isinstance(options, PoolOptions) or options.min_size <= 0:
-        return
-    remaining = _remaining(deadline, "minimum_ready")
-    try:
-        pool.wait(timeout=remaining)
-    except Exception as exc:
-        refusal = establishment.last_refusal
-        raise DatabaseStartupError(
-            _minimum_failure(refusal),
-            phase="minimum_ready",
-        ) from (refusal if refusal is not None else exc)
-
-
-def _minimum_failure(
-    refusal: IncompatibleSessionError | CredentialResolutionError | None,
-) -> str:
-    if refusal is None:
-        return "the database runtime did not reach its minimum number of connections in time"
-    if isinstance(refusal, CredentialResolutionError):
-        return "no database connection this runtime opened could be authenticated"
-    return "no database connection this runtime opened became usable"
-
-
-def _probe(runtime: PostgresRuntime, deadline: float) -> str:
-    """Acquire one real connection, prove it decodes, capture its login, and give it back.
-
-    Startup owns no model and adopts no edition, so this creates no execution
-    and reports through no observer: it runs on an initialized connection
-    exactly as later work will. It establishes that later work can run at all
-    and records the authenticated login identity before the runtime is published.
-    """
-    _remaining(deadline, "acquire")
-    resource = runtime.acquisition(deadline)
-    try:
-        connection = resource.__enter__()
-    except ConnectionAcquisitionError as exc:
-        report_resource_issues("startup", resource.cleanup_result)
-        raise DatabaseStartupError(
-            "no database connection could be acquired while starting up",
-            phase="acquire",
-            cleanup_result=resource.cleanup_result,
-        ) from exc
-    try:
-        login = _check_probe(connection.execute(PROBE_SQL, [], read_only=True))
-    except BaseException as exc:
-        resource.__exit__(type(exc), exc, exc.__traceback__)
-        report_resource_issues("startup", resource.cleanup_result)
-        if not isinstance(exc, Exception):
-            # The connection is released either way, but a fatal or
-            # control-flow exception keeps its own propagation: an interpreter
-            # being torn down is not a runtime that failed to become ready, and
-            # a caller unwinding must not have that turned into an ordinary
-            # startup error it might handle.
-            raise
-        raise DatabaseStartupError(
-            str(exc)
-            if isinstance(exc, _ProbeMismatch)
-            else "the database runtime's startup probe did not return what it asked for",
-            phase="probe",
-            cleanup_result=resource.cleanup_result,
-        ) from exc
-    resource.__exit__(None, None, None)
-    result = resource.cleanup_result
-    report_resource_issues("startup", result)
-    if isinstance(result, ReleaseUnconfirmed):
-        raise DatabaseStartupError(
-            "the database runtime's startup connection release could not be confirmed",
-            phase="release",
-            cleanup_result=result,
-        )
-    _remaining(deadline, "release")
-    return login
-
-
-def _check_probe(rows: list[Row]) -> str:
-    if len(rows) != 1:
-        raise _ProbeMismatch(f"the startup probe returned {len(rows)} rows rather than one")
-    (row,) = rows
-    if len(row) != 6:
-        raise _ProbeMismatch(f"the startup probe returned {len(row)} columns rather than six")
-    if row[0] != 1:
-        raise _ProbeMismatch("the startup probe did not read its integer back")
-    if row[1] is not INFINITY:
-        raise _ProbeMismatch("the startup probe did not read an unbounded instant back")
-    if row[2] != {"ready": True}:
-        raise _ProbeMismatch("the startup probe did not read its structured document back")
-    if row[4] != _FLOAT64_WITNESS:
-        raise _ProbeMismatch(
-            f"the startup probe did not read its Float64 back exactly: {_ROUNDED_FLOATS}"
-        )
-    if row[3] != _FLOAT32_WITNESS:
-        raise _ProbeMismatch(
-            f"the startup probe did not read its Float32 back exactly: either the adapter's "
-            f"Float32 loader is not installed, or {_ROUNDED_FLOATS}"
-        )
-    login = row[5]
-    if not isinstance(login, str) or not login:
-        raise _ProbeMismatch("the startup probe did not read a nonempty session_user")
-    return login
-
-
-def _remaining(deadline: float, phase: StartupPhase) -> float:
-    """The startup budget left, refusing to begin ``phase`` without any.
-
-    Checked between phases rather than inside them: the budget stops the next
-    step from starting and makes no claim about interrupting one already running.
-    """
-    remaining = deadline - monotonic()
-    if remaining <= 0.0:
-        raise DatabaseStartupError(
-            "the database runtime did not become ready within its startup timeout",
-            phase=phase,
-        )
-    return remaining
+        return self.runtime._context(self.role, policy)  # pyright: ignore[reportPrivateUsage] - source is runtime-owned
 
 
 def _shutdown_issue(exc: Exception) -> ReleaseUnconfirmed:

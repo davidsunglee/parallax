@@ -291,12 +291,12 @@ def test_an_acquisition_states_the_policy_it_requested_and_the_route_it_landed_o
     adapter = ScriptedAdapter(
         Read(rows=[NEW_ROW]),
         Transact(),
-        selections=[RouteSelection("writer", "unavailable")],
+        selections=[RouteSelection("reader")],
         routes=("writer", "reader"),
     )
 
     with _db(adapter, recorder) as _root_db:
-        db = _root_db.using_database_login().with_routing(read_policy="reader_preferred")
+        db = _root_db.using_database_login()
         _read(db)
         db.transact(lambda _tx: None)
 
@@ -305,8 +305,8 @@ def test_an_acquisition_states_the_policy_it_requested_and_the_route_it_landed_o
         _of(read, AcquisitionStarted),
         _of(read, AcquisitionFinished),
     )
-    assert read_started.route_policy == "reader_preferred"
-    assert read_finished.outcome == ConnectionAcquired("writer", "unavailable")
+    assert read_started.route_policy == "reader_only"
+    assert read_finished.outcome == ConnectionAcquired("reader", None)
     (attempt_started,) = _of(transaction, AcquisitionStarted)
     (attempt_finished,) = _of(transaction, AcquisitionFinished)
     assert attempt_started.route_policy == "writer_only"

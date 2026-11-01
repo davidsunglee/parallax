@@ -152,8 +152,10 @@ _ACQUISITION_REASON: Final[dict[AcquisitionReason, str]] = {
     "timeout": "timeout",
     "queue_rejected": "queue-rejected",
     "closed": "closed",
+    "unavailable": "unavailable",
     "preparation_failed": "preparation-failed",
     "authorization_failed": "authorization-failed",
+    "authentication_refused": "authentication-refused",
     "credentials_refused": "credentials-refused",
 }
 

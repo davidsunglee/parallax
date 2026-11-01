@@ -26,6 +26,7 @@ from parallax.core.db_port._resource_logging import (
     RESOURCE_LOGGER_NAME,
     ResourceCondition,
     report_resource_issues,
+    report_route_readiness,
     report_unregistration_failure,
 )
 from parallax.core.db_port._resources import (
@@ -108,6 +109,7 @@ __all__ = [
     "Route",
     "RouteCapabilities",
     "RoutePolicy",
+    "RouteReadiness",
     "RouteSelection",
     "Row",
     "StartupPhase",
@@ -117,6 +119,7 @@ __all__ = [
     "WriteResultIntegrityError",
     "isolation_level",
     "report_resource_issues",
+    "report_route_readiness",
     "report_unregistration_failure",
 ]
 
@@ -262,6 +265,12 @@ Route = Literal["writer", "reader"]
 # How one acquisition asks for a route (m-execution): `<route>_<mode>`, so a
 # policy never shares a spelling with the route it lands on.
 RoutePolicy = Literal["writer_only", "reader_only", "reader_preferred"]
+
+# Whether a declared route has proved it can serve: `verified` once its identity
+# and decoding were proved, `pending` while that proof is deferred, and
+# `refused` once it positively failed. Only `verified` routes are known to
+# serve; a `refused` one serves nothing for the runtime's remaining life.
+RouteReadiness = Literal["verified", "pending", "refused"]
 
 # Why a preferred acquisition moved from the reader to the writer before any
 # modeled work began.

@@ -196,14 +196,17 @@ class ProvisionedRun(ProfileRun):
         prepare_threshold: int | None = None,
         settings: Mapping[str, str] | None = None,
         credentials: Any = None,
+        reader: Any = None,
+        reader_startup: str | None = None,
     ) -> Any:
         """This run's database as configuration tuned for one pool proof.
 
         ``settings`` are session settings a deployment would configure its
         connections with, carried so every connection this configuration opens
         already has them. ``credentials`` replaces this run's own login secret
-        with a source a credential proof supplies. An omitted budget takes the
-        adapter's own default.
+        with a source a credential proof supplies. ``reader`` adds a reader
+        route and ``reader_startup`` says what opening does when it cannot be
+        reached. An omitted budget takes the adapter's own default.
         """
         return self._provisioner.configured(
             pool=pool,
@@ -212,7 +215,19 @@ class ProvisionedRun(ProfileRun):
             prepare_threshold=prepare_threshold,
             settings=settings,
             credentials=credentials,
+            reader=reader,
+            reader_startup=reader_startup,
         )
+
+    def endpoint(  # pragma: no cover - Docker
+        self,
+        *,
+        pool: Any = None,
+        settings: Mapping[str, str] | None = None,
+        credentials: Any = None,
+    ) -> Any:
+        """This run's database as one endpoint, for a proof composing several routes."""
+        return self._provisioner.endpoint(pool=pool, settings=settings, credentials=credentials)
 
     @property
     def connection_info(self) -> str:  # pragma: no cover - Docker

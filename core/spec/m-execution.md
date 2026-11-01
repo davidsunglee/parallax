@@ -115,6 +115,13 @@ refusals of *Option resolution* are unchanged, and routing can never conflict
 with an active transaction. A standalone read made inside a callback stays
 standalone and requests its own scope's policy.
 
+A new outer read-only invocation is also checked against what its route can
+serve. Once its isolation is resolved, a strict policy whose route declares no
+read-only transaction at that level (`m-db-port` *Route Capabilities*) is
+refused before the invocation is observed or anything is acquired, naming
+`writer-only` as the remedy where the route was the reader; no attempt would
+ever be able to begin there. A join never reaches this check.
+
 Each operation keeps one routing state for its whole life — one eager read,
 one stream across every page, one outer invocation across every retry. Once any
 acquisition it made reports a fallback to the writer (`m-db-port`), every later

@@ -320,6 +320,33 @@ releases what it took on the way out, under the release rule below: what
 it reports is what that release ESTABLISHED, never a promise of reclamation a
 native disposal or accounting that itself failed cannot make.
 
+**Every declared route proves the same login.** A runtime declaring a reader
+proves the writer first and then the reader, within the same one budget, and
+the reader's proof MUST also establish that it authenticated the writer's
+Database Login Identity, however differently the two are credentialed. A
+mismatch, and any failure that is not the reader being unreachable, fails the
+open and releases both routes. Readiness adds no physical-writer check: a
+writer route that reaches a replica stays valid, and its writes fail natively.
+
+**A reader that cannot be reached MAY defer its proof.** Where configuration
+permits it, a reader that could not be reached — or whose share of the budget
+ran out with no other failure on record — leaves the open successful with the
+reader's **Route Readiness** `pending` rather than `verified`; configuration MAY
+instead require the reader, so the same outage fails the open naming the
+reader. Every connection a pending reader hands over runs the readiness proof
+before any authorization setup or modeled work, under the acquisition's own
+budget and as the lease's first submission, so it spends the one replacement
+opportunity that submission carries. The first proof that succeeds makes the
+reader `verified`. A proof whose identity or decoding positively does not match
+makes it `refused`, terminally: from then on every acquisition on it fails as
+preparation failure, chained to that refusal, and no proof that succeeds
+concurrently can admit work after it or undo it. A proof that fails for any
+other reason fails only its own acquisition and changes no readiness, and a
+credential or authentication refusal met on a pending reader is the same
+ordinary acquisition failure it is on a verified one. A deferral and each later
+transition are reported once, in fixed text, through restricted resource
+reporting.
+
 **One acquisition is single-use.** Creating a connection context from a bound
 source takes nothing. Entering it acquires, prepares, establishes the bound
 authorization where one is required, and admits, or fails having already run
@@ -420,23 +447,38 @@ exceptions, whose existing precedence and cleanup rules are unchanged.
 
 ## Acquisition and readiness failures are outside the SQL categories
 
-An acquisition that produces no usable connection reports one of six
+An acquisition that produces no usable connection reports one of eight
 driver-neutral reasons, with the Route Selection its failure was terminal on
 where it selected one: **timeout**, **queue rejected**, **closed**,
-**preparation failed**, **authorization failed**, or **credentials refused**.
-Preparation failure covers
-establishing or preparing execution access, including a direct connection attempt that failed, a session
-configuration the codecs cannot execute under, and a checkout that handed over a
-connection which was not idle. Authorization failure means the provider could
-not establish the source's bound authorization. Credentials refused means the
-Credential Source produced no credential, so nothing was offered to the server —
-reported wherever that refusal is what the acquisition met, whether it was
-raised on the acquiring thread or read from what the runtime last recorded. No
-modeled statement ran, so nothing was
-classified: these are not `m-db-error` categories and no retry rule reads them.
+**unavailable**, **preparation failed**, **authorization failed**,
+**authentication refused**, or **credentials refused**. An implementation
+classifies every attempt to establish a physical connection on a route, on
+whichever thread made it, and keeps that route's latest outcome so a caller
+waiting on a pool learns what its establishment met.
 
-A runtime that did not become ready reports which readiness phase stopped it and
-what is known about a connection it had already acquired. An earlier readiness
+Unavailable means the route could not be reached: a dial that met no server or
+a server not yet accepting connections, a connection lost while the lease was
+being set up, or a spent budget while a dial failure recorded DURING that wait
+remained the route's latest outcome. A failure recorded before the wait began
+does not make a later timeout an outage, because a saturated, healthy route
+must never read as an unreachable one. Timeout is a spent budget with no such
+failure on record, including a native success that arrived after it.
+Preparation failure covers establishing or preparing execution access
+otherwise: a dial the server refused for any reason not classified here, a
+session configuration the codecs cannot execute under, a checkout that handed
+over a connection which was not idle, and a route `refused` at verification.
+Authorization failure means the provider could not establish the source's bound
+authorization. Authentication refused means the server rejected the login it
+was offered, where the driver reports that distinctly. Credentials refused means
+the Credential Source produced no credential, so nothing was offered to the
+server. Each refusal is reported wherever it is what the acquisition met,
+whether it was raised on the acquiring thread or read from what the route last
+recorded. No modeled statement ran, so nothing was classified: these are not
+`m-db-error` categories and no retry rule reads them.
+
+A runtime that did not become ready reports which route and which readiness
+phase stopped it and what is known about a connection it had already acquired.
+An earlier readiness
 failure stays primary; cleanup that follows it reports through the
 implementation's restricted resource reporting rather than replacing it.
 
@@ -464,7 +506,7 @@ It answers exactly one of three:
 
 | Sample | Meaning |
 |---|---|
-| Available | These are the measurements, as read |
+| Available | These are the measurements, as read, and the Route Readiness of the route the pool serves |
 | Unavailable | The reading did not happen, and the source is still attached |
 | Detached | The runtime has closed; there is nothing to read and nothing was tried |
 
@@ -661,6 +703,7 @@ this table lists.
 | Read Committed | fresh statement snapshot; a statement that waited on a row another transaction changed re-evaluates its conditions against that row's new version while keeping the versions of every other row it read | fresh statement/read snapshot with `innodb_snapshot_isolation` off, so no snapshot conflict raises `1020`; a statement that waited on a row another transaction changed re-reads that row's committed version, and a key-selecting statement may then exclude a row Postgres would still write |
 | Repeatable Read | transaction-stable snapshot taken by the first statement; no phantoms on supported versions; write skew possible; writing or locking a row whose physical version changed after the snapshot raises `40001`, whether or not a modeled value changed | transaction-stable snapshot with `innodb_snapshot_isolation` on, taken by the first consistent read; no phantoms on the supported floor; write skew possible; a locking read or write of a row changed after that read view raises `1020`, which retries, while a transaction that writes before it reads anything has no read view yet and writes the latest committed row |
 | Serializable / conflict behavior | SSI; conflict raises `40001`, which retries | shared locking reads and range protection; conflict raises `1213`, which retries |
+| Read-only transactions on a reader route | a hot standby begins Read Committed and Repeatable Read and refuses Serializable with `0A000`, so a reader route declares only the first two | no reader route is declared |
 
 The Read Committed and Repeatable Read rows are **qualified provider profiles**:
 two-session compatibility cases witness them per dialect, and they are stronger

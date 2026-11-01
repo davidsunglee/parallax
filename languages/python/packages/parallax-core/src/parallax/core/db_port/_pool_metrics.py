@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Protocol
 from parallax.core.diagnostics import FailureDiagnostic
 
 if TYPE_CHECKING:
-    from parallax.core.db_port import Route
+    from parallax.core.db_port import Route, RouteReadiness
 
 __all__ = [
     "PoolAvailable",
@@ -72,7 +72,18 @@ class PoolMeasurements:
 
 @dataclass(frozen=True, slots=True)
 class PoolAvailable:
+    """One reading of a pool, beside the readiness of the route it serves.
+
+    ``readiness`` is read with the measurements rather than fixed on the
+    source, because a route whose verification was deferred at startup becomes
+    verified, or is refused, while the source stays the same object. A pool
+    whose route is ``pending`` or ``refused`` can still be measured: its
+    measurements say what the pool did, and its readiness says whether that
+    route serves at all.
+    """
+
     measurements: PoolMeasurements
+    readiness: RouteReadiness
 
 
 @dataclass(frozen=True, slots=True)

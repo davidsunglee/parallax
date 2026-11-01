@@ -4,7 +4,7 @@ import sys
 from collections.abc import Callable
 from time import monotonic
 from types import TracebackType
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 import psycopg
 import psycopg_pool
@@ -17,15 +17,14 @@ from parallax.core.db_port import (
     CleanupPhase,
     CleanupResult,
     ConnectionAcquisitionError,
-    CredentialResolutionError,
     DatabaseConnection,
     Invalidated,
     ReleaseUnconfirmed,
     Returned,
-    Route,
     RouteSelection,
 )
 from parallax.core.diagnostics import diagnostic_for
+from parallax.core.dialect import POSTGRES
 from parallax.postgres._authorization import (
     PostgresRole,
     _install_role,  # pyright: ignore[reportPrivateUsage] - the one role installation, run as the lease's first send
@@ -34,14 +33,19 @@ from parallax.postgres._authorization import (
 from parallax.postgres._authorization import restore_role as _restore_role
 from parallax.postgres._connection import (
     ConnectionEstablishment,
+    DialReason,
     PostgresConnection,
     _displaced_control_flow,  # pyright: ignore[reportPrivateUsage] - the adapter's one reading of an interrupt a driver failure displaced
+    _execute_rows,  # pyright: ignore[reportPrivateUsage] - the one read operation, submitting a pending route's proof
+    dial_reason,
 )
+from parallax.postgres._route import PROBE_SQL, ProbeMismatch, check_probe
 
 if TYPE_CHECKING:
     from parallax.postgres._connection import (
         _NativeOperation,  # pyright: ignore[reportPrivateUsage] - the runner's operation shape
     )
+    from parallax.postgres._route import PostgresRoute
 
 __all__ = ["NativePool", "PostgresConnectionContext"]
 
@@ -80,34 +84,31 @@ def _issue(phase: CleanupPhase, code: CleanupCode, exc: BaseException) -> Cleanu
     return CleanupIssue(phase=phase, code=code, diagnostic=diagnostic_for(exc))
 
 
-def checkout(
-    pool: NativePool, deadline: float, establishment: ConnectionEstablishment
-) -> psycopg.Connection[TupleRow]:
-    """Take a connection out of ``pool`` within ``deadline``, or raise.
+def checkout(route: PostgresRoute, deadline: float) -> psycopg.Connection[TupleRow]:
+    """Take a connection out of ``route``'s pool within ``deadline``, or raise.
 
     The remaining budget is what the native checkout is given, so its wait
-    spends the caller's time rather than an additional allowance. Native
-    failures map to the checkout-reachable acquisition reasons and keep their
-    cause; authorization setup is classified later, after checkout.
+    spends the caller's time rather than an additional allowance. It is one
+    fair wait: the pool queues the caller once, and nothing here polls it
+    again. Native failures map to the checkout-reachable acquisition reasons
+    and keep their cause; authorization setup is classified later, after
+    checkout.
 
-    An expiry is reported as the refusal currently on record rather than as a
-    ``timeout``: a configuration every new connection is refused under is what
-    the caller has to fix, and the pool retries such failures in the background
-    where nothing would otherwise reach the caller waiting on them. A single
-    successful establishment clears the record, so a healthy runtime cannot
-    report an old refusal for a later, unrelated timeout.
-
-    An on-demand pool establishes on this thread, so a credential the source
-    would not produce arrives here as itself rather than as a timeout, and is
-    classified on the spot without consulting the record at all.
+    A spent budget is reported as the failure on the route's record where that
+    record explains it, and as a ``timeout`` otherwise; see :func:`_expired`.
+    An on-demand pool establishes on this thread, so what its dial met arrives
+    here as itself rather than as a timeout, and is classified on the spot
+    without consulting the record at all.
     """
+    establishment = route.establishment
+    waited_from = establishment.generation()
     remaining = deadline - monotonic()
     if remaining <= 0.0:
-        raise _expired(establishment, None)
+        raise _expired(establishment, waited_from, None)
     try:
-        return pool.getconn(timeout=remaining)
+        return route.pool.getconn(timeout=remaining)
     except psycopg_pool.PoolTimeout as exc:
-        raise _expired(establishment, exc)  # noqa: B904 - the cause is chosen above
+        raise _expired(establishment, waited_from, exc)  # noqa: B904 - the cause is chosen above
     except psycopg_pool.TooManyRequests as exc:
         raise ConnectionAcquisitionError(
             "the database runtime already has as many callers waiting as it admits",
@@ -118,56 +119,91 @@ def checkout(
             "this Database is closed, so it opens no new database connection",
             reason="closed",
         ) from exc
-    except CredentialResolutionError as exc:
-        raise ConnectionAcquisitionError(
-            "a database connection could not be authenticated",
-            reason="credentials_refused",
-        ) from exc
     except Exception as exc:
-        raise ConnectionAcquisitionError(
-            "a database connection could not be established or prepared",
-            reason="preparation_failed",
-        ) from exc
+        reason = dial_reason(exc)
+        raise ConnectionAcquisitionError(_DIAL_FAILURES[reason], reason=reason) from exc
+
+
+_DIAL_FAILURES: Final[dict[DialReason, str]] = {
+    "unavailable": (
+        "a database connection could not be established: its server could not be reached"
+    ),
+    "authentication_refused": "a database connection's login was refused by its server",
+    "credentials_refused": "a database connection could not be authenticated",
+    "preparation_failed": "a database connection could not be established or prepared",
+}
+
+_EXPIRED_FAILURES: Final[dict[DialReason, str]] = {
+    "unavailable": (
+        "no database connection became available within the acquisition timeout; the last "
+        "connection this route tried to open could not reach its server"
+    ),
+    "authentication_refused": (
+        "no database connection became available within the acquisition timeout; the last "
+        "login this route offered was refused by its server"
+    ),
+    "credentials_refused": (
+        "no database connection could be authenticated within the acquisition timeout"
+    ),
+    "preparation_failed": (
+        "no database connection became usable within the acquisition timeout; the last "
+        "connection this route opened was refused as unusable"
+    ),
+}
 
 
 def _expired(
-    establishment: ConnectionEstablishment, native: BaseException | None
+    establishment: ConnectionEstablishment, waited_from: int, native: BaseException | None
 ) -> ConnectionAcquisitionError:
     """The failure a spent acquisition budget reports, and what it chains.
 
-    An expiry names the establishment refusal on record where there is one, and
-    the native timeout otherwise. The refusal is the more actionable of the two:
-    it happened on the runtime's own background path, where the pool retries and
-    logs it and nothing reaches the caller waiting on it, and a configuration
-    every new connection is refused under is what an operator has to fix. A bare
-    "timed out" names none of that.
+    A refusal on record — a credential the source would not produce, a login the
+    server rejected, a session the codecs cannot run under — is named in place
+    of the wait, however long ago it was recorded: it happened on the route's
+    own background path, where the pool retries and logs it and nothing reaches
+    the caller waiting on it, it stays on record until a connection becomes
+    usable, and a configuration every new connection is refused under is what
+    an operator has to fix. Each is a different thing to fix, so each reports
+    its own reason.
 
-    The two kinds a record can hold are two different things to fix — a
-    credential the source would not produce, or a session the codecs cannot run
-    under — so each reports its own reason and says so in its own words.
+    An unreachable server is different, because a pool that is merely full
+    looks the same from inside the wait. It is reported only where it was
+    recorded DURING this wait (after ``waited_from``) and is still the route's
+    latest outcome; one that was already history when the wait began says
+    nothing about why this wait ran out, so that wait is a ``timeout``.
     """
-    refusal = establishment.last_refusal
-    if refusal is None:
+    failure = establishment.last_failure
+    if failure is None or (failure.reason == "unavailable" and failure.generation <= waited_from):
         timed_out = ConnectionAcquisitionError(
             "no database connection became available within the acquisition timeout",
             reason="timeout",
         )
         timed_out.__cause__ = native
         return timed_out
-    if isinstance(refusal, CredentialResolutionError):
-        unauthenticated = ConnectionAcquisitionError(
-            "no database connection could be authenticated within the acquisition timeout",
-            reason="credentials_refused",
-        )
-        unauthenticated.__cause__ = refusal
-        return unauthenticated
-    unusable = ConnectionAcquisitionError(
-        "no database connection became usable within the acquisition timeout; the last "
-        "connection this runtime opened was refused as unusable",
+    explained = ConnectionAcquisitionError(_EXPIRED_FAILURES[failure.reason], reason=failure.reason)
+    explained.__cause__ = failure.cause
+    return explained
+
+
+_LOST_UNVERIFIED = (
+    "the connection handed over while its route's readiness was pending was lost before it "
+    "could be verified"
+)
+_UNVERIFIED = (
+    "the connection handed over while its route's readiness was pending could not be verified"
+)
+
+_PROBE_SQL: Final = PROBE_SQL.encode()
+
+
+def _refused(refusal: ProbeMismatch) -> ConnectionAcquisitionError:
+    """The failure every acquisition on a refused route reports, chained to why."""
+    refused = ConnectionAcquisitionError(
+        "this route was refused when one of its connections was verified, so it serves nothing",
         reason="preparation_failed",
     )
-    unusable.__cause__ = refusal
-    return unusable
+    refused.__cause__ = refusal
+    return refused
 
 
 def _status(connection: psycopg.Connection[TupleRow]) -> TransactionStatus | None:
@@ -236,13 +272,14 @@ def release(
 
 
 class PostgresConnectionContext:
-    """One single-use acquisition of a connection from a native pool.
+    """One single-use acquisition of a connection from one route's native pool.
 
     Creating it takes nothing. Entering it checks out, verifies the connection
-    is idle, checks admission against the deadline, installs any bound role,
-    rechecks admission after that provider work, and yields fresh execution
-    access. Leaving it revokes that access and releases the connection once,
-    restoring an installed role only where the session remains reusable.
+    is idle, checks admission against the deadline, proves the connection where
+    its route's readiness is still pending, installs any bound role, rechecks
+    admission after that provider work, and yields fresh execution access.
+    Leaving it revokes that access and releases the connection once, restoring
+    an installed role only where the session remains reusable.
 
     Entry is permitted once and once only, including after an entry that failed:
     a failed entry has already run cleanup over whatever it took and left what
@@ -251,16 +288,16 @@ class PostgresConnectionContext:
 
     The context is the only holder of the physical connection for the whole
     lease: execution borrows the current one for each operation. That is what
-    lets the lease's actual first submission — its role installation, an outer
-    ``BEGIN``, or a read or batch of reads its caller designated — run once
-    more if it meets a broken session: the connection is disposed of and
-    handed back, another is taken within the original deadline, and the same
-    prepared submission is made on it, all inside this one acquisition. Any other submission, the
-    second attempt itself, and a write never are. Once no connection can be
-    kept, the slot holds the cleanup that ended it instead, and that is what
-    leaving reports.
+    lets the lease's actual first submission — a pending route's proof, its
+    role installation, an outer ``BEGIN``, or a read or batch of reads its
+    caller designated — run once more if it meets a broken session: the
+    connection is disposed of and handed back, another is taken within the
+    original deadline, and the same prepared submission is made on it, all
+    inside this one acquisition. Any other submission, the second attempt
+    itself, and a write never are. Once no connection can be kept, the slot
+    holds the cleanup that ended it instead, and that is what leaving reports.
 
-    Every lease is served on ``route``, which entry reports as its selection
+    Every lease is served on its route, which entry reports as its selection
     whichever way it ends, a failed entry's refusal included.
     """
 
@@ -269,12 +306,12 @@ class PostgresConnectionContext:
         "_authorized",
         "_cleanup_result",
         "_deadline",
-        "_establishment",
         "_execution",
+        "_expected_login",
         "_first_send_state",
-        "_pool",
         "_resource",
         "_role",
+        "_route",
         "_selection",
         "_suspect",
         "_used",
@@ -282,20 +319,19 @@ class PostgresConnectionContext:
 
     def __init__(
         self,
-        pool: NativePool,
+        route: PostgresRoute,
         admit: Admit,
         deadline: float,
-        establishment: ConnectionEstablishment,
         role: PostgresRole | None,
         *,
-        route: Route,
+        expected_login: str | None,
     ) -> None:
-        self._selection = RouteSelection(route)
-        self._pool = pool
+        self._route = route
+        self._selection = RouteSelection(route.route)
         self._admit = admit
         self._deadline = deadline
-        self._establishment = establishment
         self._role = role
+        self._expected_login = expected_login
         self._used = False
         self._authorized = False
         self._suspect = False
@@ -323,7 +359,11 @@ class PostgresConnectionContext:
             raise
 
     def _entered(self) -> DatabaseConnection:
-        self._resource = checkout(self._pool, self._deadline, self._establishment)
+        route = self._route
+        refusal = route.refusal
+        if refusal is not None:
+            raise _refused(refusal)
+        self._resource = checkout(route, self._deadline)
         try:
             self._require_idle(self._current_native())
             self._admit(self._deadline)
@@ -334,6 +374,8 @@ class PostgresConnectionContext:
             # made twice.
             self._cleanup_result = self._settled(suspect=False)
             raise
+        if route.awaiting_verification:
+            self._verify()
         role = self._role
         if role is not None:
             try:
@@ -356,6 +398,49 @@ class PostgresConnectionContext:
         execution = PostgresConnection._from_context(self)  # pyright: ignore[reportPrivateUsage] - the facade borrowing this owner's connection
         self._execution = execution
         return execution
+
+    def _verify(self) -> None:
+        """Prove this lease's connection before anything else runs on it.
+
+        The proof is the lease's first submission, so a broken session met by
+        it is replaced once like any other first send — and the replacement,
+        acquired while the route is still pending, is proved by that same
+        resubmission. Submitting it spends the opportunity, whatever the rows
+        then turn out to say, so nothing after it earns another.
+
+        A positive mismatch refuses the route; any other failure fails only
+        this acquisition. A proof that succeeded still admits nothing on a
+        route another lease refused in the meantime.
+        """
+        route = self._route
+        try:
+            no_binds: list[object] = []
+            rows = self._run_native(
+                _execute_rows, POSTGRES, _PROBE_SQL, no_binds, (), replay_safe=True
+            )
+            check_probe(rows, self._expected_login)
+        except ProbeMismatch as mismatch:
+            self._cleanup_result = self._settled(suspect=True)
+            route.refuse(mismatch)
+            raise _refused(mismatch)  # noqa: B904 - chained to the mismatch inside
+        except BaseException as exc:
+            self._cleanup_result = self._settled(suspect=True)
+            if not isinstance(exc, Exception):
+                raise
+            lost = isinstance(exc, psycopg.Error) and dial_reason(exc) == "unavailable"
+            raise ConnectionAcquisitionError(
+                _LOST_UNVERIFIED if lost else _UNVERIFIED,
+                reason="unavailable" if lost else "preparation_failed",
+            ) from exc
+        refusal = route.verified()
+        if refusal is not None:
+            self._cleanup_result = self._settled(suspect=False)
+            raise _refused(refusal)
+        try:
+            self._admit(self._deadline)
+        except BaseException:
+            self._cleanup_result = self._settled(suspect=False)
+            raise
 
     def __exit__(
         self,
@@ -401,7 +486,7 @@ class PostgresConnectionContext:
         self._resource = None
         if resource is None or isinstance(resource, Returned | Invalidated | ReleaseUnconfirmed):
             return resource
-        return release(self._pool, resource, suspect=suspect, restore_role=restore_role)
+        return release(self._route.pool, resource, suspect=suspect, restore_role=restore_role)
 
     def _current_native(self) -> psycopg.Connection[TupleRow]:
         resource = self._resource
@@ -478,7 +563,7 @@ class PostgresConnectionContext:
         if isinstance(disposed, ReleaseUnconfirmed):
             return False
         try:
-            self._resource = checkout(self._pool, self._deadline, self._establishment)
+            self._resource = checkout(self._route, self._deadline)
         except ConnectionAcquisitionError:
             return False
         try:

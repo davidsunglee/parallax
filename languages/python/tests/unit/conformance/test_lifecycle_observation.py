@@ -496,8 +496,10 @@ def test_a_failed_acquisitions_reason_is_projected_member_by_member() -> None:
         ("timeout", "timeout"),
         ("queue_rejected", "queue-rejected"),
         ("closed", "closed"),
+        ("unavailable", "unavailable"),
         ("preparation_failed", "preparation-failed"),
         ("authorization_failed", "authorization-failed"),
+        ("authentication_refused", "authentication-refused"),
         ("credentials_refused", "credentials-refused"),
     )
 

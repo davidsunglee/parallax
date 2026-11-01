@@ -558,7 +558,8 @@ class ScriptedAdapter:
     served on, so reusing it would read that as an outcome the script named.
     ``acquisitions``, ``cleanups``, ``closes``, and
     ``requested_policies`` record what actually happened. ``routes`` are the
-    routes the runtime declares, each serving every read-only level.
+    routes the runtime declares: named alone, each serves every read-only
+    level, and mapped, each serves the capabilities it is mapped to.
     ``metrics`` are the pool sources the runtime this opens publishes, none by
     default because a script describes statements rather than a pool.
     ``ordered`` gives every connection ordered write transport over
@@ -574,7 +575,7 @@ class ScriptedAdapter:
         acquisition_failures: Sequence[ConnectionAcquisitionError | None] = (),
         selections: Sequence[RouteSelection | None] = (),
         cleanup_results: Sequence[CleanupResult | None] = (),
-        routes: Sequence[Route] = ("writer",),
+        routes: Sequence[Route] | Mapping[Route, RouteCapabilities] = ("writer",),
         metrics: Sequence[PoolMetricsSource] = (),
         ordered: bool = False,
     ) -> None:
@@ -584,9 +585,11 @@ class ScriptedAdapter:
                 raise ValueError("one failure instance cannot be reported by two calls")
             seen[id(failure)] = failure
         self.dialect = dialect
-        self.routes: Mapping[Route, RouteCapabilities] = {
-            route: RouteCapabilities.every_level() for route in routes
-        }
+        self.routes: Mapping[Route, RouteCapabilities] = (
+            dict(routes)
+            if isinstance(routes, Mapping)
+            else {route: RouteCapabilities.every_level() for route in routes}
+        )
         self.metrics: tuple[PoolMetricsSource, ...] = tuple(metrics)
         self.requested_policies: list[RoutePolicy] = []
         self.ordered_write_transport: OrderedWriteTransport | None = (

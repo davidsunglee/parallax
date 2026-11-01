@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -68,7 +69,13 @@ if TYPE_CHECKING:
     from parallax.core.execution import ServingModel, TxnOptions
     from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
-    from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresRole
+    from parallax.postgres import (
+        OnDemandOptions,
+        PoolOptions,
+        PostgresAdapter,
+        PostgresEndpoint,
+        PostgresRole,
+    )
 
 __all__ = [
     "ContainerDatabase",
@@ -590,31 +597,43 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         conninfo_options: Mapping[str, str],
         acquire_timeout: float | None = None,
         startup_timeout: float | None = None,
+        reader: PostgresEndpoint | None = None,
+        reader_startup: str | None = None,
     ) -> PostgresAdapter:
         """The shipped configuration for this container, under ``conninfo_options``.
 
-        An omitted budget takes the adapter's own default.
+        An omitted budget or reader startup takes the adapter's own default.
         """
-        from psycopg.conninfo import make_conninfo
-
-        from parallax.postgres import PostgresEndpoint
-
-        budgets = {
+        chosen = {
             name: value
             for name, value in (
                 ("acquire_timeout", acquire_timeout),
                 ("startup_timeout", startup_timeout),
+                ("reader_startup", reader_startup),
             )
             if value is not None
         }
-        return self.adapter()(
-            writer=PostgresEndpoint(
-                make_conninfo(self._conninfo, **conninfo_options),
-                credentials=credentials,
-                pool=pool,
-            ),
+        configured = self.adapter()(
+            writer=self._endpoint(pool, credentials, conninfo_options),
+            reader=reader,
             prepare_threshold=prepare_threshold,
-            **budgets,
+        )
+        return dataclasses.replace(configured, **chosen) if chosen else configured
+
+    def _endpoint(
+        self,
+        pool: PoolOptions | OnDemandOptions,
+        credentials: CredentialSource | DriverManaged,
+        conninfo_options: Mapping[str, str],
+    ) -> PostgresEndpoint:
+        from psycopg.conninfo import make_conninfo
+
+        from parallax.postgres import PostgresEndpoint
+
+        return PostgresEndpoint(
+            make_conninfo(self._conninfo, **conninfo_options),
+            credentials=credentials,
+            pool=pool,
         )
 
     @property
@@ -722,6 +741,8 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         prepare_threshold: int | None = None,
         settings: Mapping[str, str] | None = None,
         credentials: CredentialSource | DriverManaged | None = None,
+        reader: PostgresEndpoint | None = None,
+        reader_startup: str | None = None,
     ) -> PostgresAdapter:
         """This container's configuration, tuned as a pool proof needs it.
 
@@ -740,21 +761,51 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         it: a counting or refusing source reaches the adapter through the same
         keyword a deployment uses. Omitting it takes this container's own test
         login secret.
+
+        ``reader`` adds a reader route — usually one of this container's own
+        :meth:`endpoint` values — and ``reader_startup`` says what opening does
+        when it cannot be reached.
         """
         from parallax.postgres import PoolOptions
 
-        options: Mapping[str, str] = (
-            {}
-            if not settings
-            else {"options": " ".join(f"-c {name}={value}" for name, value in settings.items())}
-        )
         return self._built(
             pool=pool if pool is not None else PoolOptions(),
             prepare_threshold=prepare_threshold,
             credentials=credentials if credentials is not None else self.credentials,
-            conninfo_options=options,
+            conninfo_options=self._session_options(settings),
             acquire_timeout=acquire_timeout,
             startup_timeout=startup_timeout,
+            reader=reader,
+            reader_startup=reader_startup,
+        )
+
+    @staticmethod
+    def _session_options(settings: Mapping[str, str] | None) -> Mapping[str, str]:
+        """``settings`` as the connection option that carries them to every session."""
+        if not settings:
+            return {}
+        return {"options": " ".join(f"-c {name}={value}" for name, value in settings.items())}
+
+    def endpoint(
+        self,
+        *,
+        pool: PoolOptions | OnDemandOptions | None = None,
+        settings: Mapping[str, str] | None = None,
+        credentials: CredentialSource | DriverManaged | None = None,
+    ) -> PostgresEndpoint:
+        """This container as one endpoint, for a proof composing several routes.
+
+        ``settings`` and ``credentials`` mean what they mean to
+        :meth:`configured`. Two endpoints over this one container are two routes
+        to the same server, which is what a routing proof needs where
+        replication does not matter.
+        """
+        from parallax.postgres import PoolOptions
+
+        return self._endpoint(
+            pool if pool is not None else PoolOptions(),
+            credentials if credentials is not None else self.credentials,
+            self._session_options(settings),
         )
 
     def adapter_for_session_default(self, level: str) -> DatabaseAdapter[PostgresRole]:

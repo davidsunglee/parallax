@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -19,7 +19,7 @@ from parallax.core._execution._publication import (
     read_projection,
     write_projection,
 )
-from parallax.core._execution._routing import OperationRouting
+from parallax.core._execution._routing import OperationRouting, read_only_policy
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._lifetime import ActiveBinding, TxnAttemptLifetime
 from parallax.core._execution._unit_work.clock import Clock
@@ -34,6 +34,8 @@ from parallax.core.db_port import (
     IsolationLevel,
     RollbackFailed,
     RolledBack,
+    Route,
+    RouteCapabilities,
     RoutePolicy,
     TransactionOutcome,
     isolation_level,
@@ -294,6 +296,7 @@ class TransactionRunner:
         authority: ExecutionAuthority,
         defaults: TxnOptions,
         read_policy: RoutePolicy,
+        routes: Mapping[Route, RouteCapabilities],
         max_retries: int | Omitted,
         isolation: IsolationLevel | Omitted,
     ) -> T:
@@ -304,7 +307,9 @@ class TransactionRunner:
         join admission, a :class:`ReadOnlyTxnOptions` record resolved from the
         retry bound and isolation alone, and a boundary every attempt asks the
         port to open read-only. An outer invocation's attempts request
-        ``read_policy``; a join never consults it.
+        ``read_policy``, refused before anything is observed or acquired where
+        its route declares no read-only transaction at the resolved isolation;
+        a join never consults it.
         """
         refuse_reentry(self._lifecycle)
         bound = max_retries if isinstance(max_retries, Omitted) else check_max_retries(max_retries)
@@ -319,6 +324,7 @@ class TransactionRunner:
             max_retries=defaults.max_retries if isinstance(bound, Omitted) else bound,
             isolation=defaults.isolation if isinstance(level, Omitted) else level,
         )
+        policy = read_only_policy(read_policy, options.isolation, routes)
         root = open_transaction_root(
             self._lifecycle,
             access_mode="read_only",
@@ -345,7 +351,7 @@ class TransactionRunner:
             attempt_for,
             root=root,
             authority=authority,
-            routing=OperationRouting(authority.source, read_policy),
+            routing=OperationRouting(authority.source, policy),
             retries=options.max_retries,
             isolation=options.isolation,
             access_mode="read_only",

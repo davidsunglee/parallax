@@ -273,6 +273,7 @@ class ExecutionScope:
             authority=self._authority,
             defaults=self._options,
             read_policy=self._read_policy,
+            routes=self._routes,
             max_retries=max_retries,
             isolation=isolation,
         )

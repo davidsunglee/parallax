@@ -27,6 +27,7 @@ from parallax.core.db_port import (
     PoolDetached,
     PoolMeasurements,
     PoolUnavailable,
+    RouteReadiness,
 )
 from parallax.postgres._pool_metrics import PostgresPoolMetrics
 from parallax.postgres._runtime import PostgresRuntime
@@ -77,14 +78,27 @@ class _StatsPool:
         self.closes += 1
 
 
-def _source(pool: _StatsPool) -> PostgresPoolMetrics:
-    return PostgresPoolMetrics(pool, "writer")
+def _source(pool: _StatsPool, readiness: RouteReadiness = "verified") -> PostgresPoolMetrics:
+    return PostgresPoolMetrics(pool, "writer", lambda: readiness)
 
 
 def _available(pool: _StatsPool) -> PoolMeasurements:
     sample = _source(pool).sample()
     assert isinstance(sample, PoolAvailable)
     return sample.measurements
+
+
+@pytest.mark.parametrize("readiness", ["verified", "pending", "refused"])
+def test_a_reading_reports_the_readiness_of_the_route_its_pool_serves(
+    readiness: RouteReadiness,
+) -> None:
+    # A pool whose route is pending or refused is still measurable: the
+    # measurements say what the pool did, and the readiness whether its route
+    # serves at all.
+    sample = _source(_StatsPool(dict(_GAUGES)), readiness).sample()
+
+    assert isinstance(sample, PoolAvailable)
+    assert sample.readiness == readiness
 
 
 # --------------------------------------------------------------------------- #
@@ -282,8 +296,11 @@ def test_a_sample_already_reading_when_detachment_happens_completes() -> None:
 
 def _runtime(pool: _StatsPool) -> PostgresRuntime:
     from parallax.postgres._connection import ConnectionEstablishment
+    from parallax.postgres._route import PostgresRoute
 
-    return PostgresRuntime(cast("Any", pool), ConnectionEstablishment(), acquire_timeout=15.0)
+    return PostgresRuntime(
+        PostgresRoute("writer", cast("Any", pool), ConnectionEstablishment()), acquire_timeout=15.0
+    )
 
 
 def test_a_runtime_publishes_one_writer_source_that_stays_the_same_object() -> None:

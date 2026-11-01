@@ -75,6 +75,12 @@ before publishing roots, so caller work between pages can use even a one-slot
 pool. A participating stream instead inherits its transaction attempt's
 connection for every page.
 
+A `reader=PostgresEndpoint(...)` beside the `writer` declares a reader route
+with its own credentials and retention. New reads then default to it, writable
+transactions stay on the writer, and both routes must authenticate the same
+login; `reader_startup="required"` makes an unreachable reader fail `connect`
+instead of leaving the reader pending.
+
 An endpoint's `pool=PoolOptions(...)` keeps connections between operations;
 `pool=OnDemandOptions(...)` keeps none, closing each on release unless a caller
 is already waiting for one. Omitting `pool` takes the retaining defaults. The
@@ -96,6 +102,8 @@ down:
 - process and application-server lifetime — post-fork construction, the ASGI
   lifespan, offloading complete operations, and why pool capacity is not HTTP
   concurrency;
+- writer and reader routes, deferred reader readiness, and what a reader read
+  does while the reader is unreachable;
 - connection budgeting across workers, replicas and runtimes;
 - observing the pool, and what its measurements do and do not mean;
 - which session settings are required, which are preserved;

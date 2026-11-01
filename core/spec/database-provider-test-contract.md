@@ -137,6 +137,20 @@ For every supported adapter, the smoke suite covers:
   surfaces as a credential refusal with fixed text and the original as its
   cause, with nothing the source put in its own message reaching what the
   driver's pool logs
+- where the adapter can declare a **reader route** (`m-db-port`): two endpoints
+  reaching one server, each with its own credential source and capacity, prove
+  that each strict policy leases only from its own route's pool, that each
+  route's source is asked only for its own route's physical connections, that
+  both routes authenticate the same login and install the bound authorization
+  the same way, and that the reader declares no read-only level the engine's
+  standby refuses. Readiness proves the writer and then the reader; an
+  unreachable reader fails the open where the reader is required and is left
+  pending where it may defer, and the open releases both routes whenever it
+  fails. A different login on the reader, refusal and recovery of a pending
+  reader, and concurrent proofs belong to the language's own internal suites,
+  because a server will not produce them on demand. No replication is involved:
+  what the reader route observes about the writer's changes is the subject of a
+  separate standby proof
 - a **connection that is idle between operations**: a standalone statement opens
   no implicit whole-operation transaction, so a connection comes back with no
   transaction of its own and the next scope over it starts clean
