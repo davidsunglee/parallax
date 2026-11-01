@@ -1075,16 +1075,28 @@ def test_a_preferred_acquisition_on_the_writer_without_a_fallback_is_flagged() -
     assert any("only by a fallback it reports" in p for p in problems)
 
 
-def test_a_writable_attempt_requesting_a_reader_is_flagged() -> None:
+@pytest.mark.parametrize(
+    "requested", [{"accessMode": "read-write"}, {}], ids=["read-write", "mode-omitted"]
+)
+def test_a_writable_attempt_requesting_a_reader_is_flagged(requested: dict[str, str]) -> None:
     root = _refused_root()
     root["events"][0]["transactionInvocationStarted"] = {
         **root["events"][0]["transactionInvocationStarted"],
-        "accessMode": "read-write",
+        **requested,
     }
     assert validate_execution(_retry_case(root)) == []
     root["events"][2]["acquisitionStarted"] = {"policy": "reader-only"}
     problems = validate_execution(_retry_case(root))
     assert any("a writable transaction always requests the writer" in p for p in problems)
+
+
+def test_a_read_only_attempt_may_request_a_reader() -> None:
+    root = _refused_root()
+    outer = dict(root["events"][0]["transactionInvocationStarted"])
+    del outer["concurrency"]
+    root["events"][0]["transactionInvocationStarted"] = {**outer, "accessMode": "read-only"}
+    root["events"][2]["acquisitionStarted"] = {"policy": "reader-only"}
+    assert validate_execution(_retry_case(root)) == []
 
 
 # --- indices that name something ---------------------------------------------
