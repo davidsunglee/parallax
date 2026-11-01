@@ -34,9 +34,11 @@ from parallax.core.db_port import (
     CleanupCode,
     CleanupIssue,
     CleanupPhase,
+    FallbackReason,
     Invalidated,
     ReleaseUnconfirmed,
     Returned,
+    RoutePolicy,
 )
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle import (
@@ -426,9 +428,13 @@ def test_a_stream_batch_names_no_page_of_its_own() -> None:
 
 
 def test_an_acquisition_names_what_it_granted_or_why_it_granted_nothing() -> None:
-    assert _transition(AcquisitionStarted(_EXECUTION, 1, 1, None)) == {"acquisitionStarted": {}}
-    granted = AcquisitionFinished(_EXECUTION, 2, 1, None, 11, ConnectionAcquired())
-    assert _transition(granted) == {"acquisitionFinished": {"outcome": "acquired"}}
+    assert _transition(AcquisitionStarted(_EXECUTION, 1, 1, None, "writer_only")) == {
+        "acquisitionStarted": {"policy": "writer-only"}
+    }
+    granted = AcquisitionFinished(_EXECUTION, 2, 1, None, 11, ConnectionAcquired("writer", None))
+    assert _transition(granted) == {
+        "acquisitionFinished": {"outcome": "acquired", "route": "writer"}
+    }
     # The monotonic duration is not portable and is absent, exactly as a
     # Database Call's is.
     refused = AcquisitionFinished(
@@ -437,14 +443,46 @@ def test_an_acquisition_names_what_it_granted_or_why_it_granted_nothing() -> Non
         1,
         None,
         12,
-        AcquisitionFailed("queue_rejected", DirectFailure(_diagnostic()), None),
+        AcquisitionFailed("queue_rejected", DirectFailure(_diagnostic()), None, "writer", None),
     )
     assert _transition(refused) == {
         "acquisitionFinished": {
             "outcome": "failed",
             "reason": "queue-rejected",
+            "route": "writer",
             "attribution": "direct",
         }
+    }
+
+
+def test_routing_vocabularies_are_projected_member_by_member() -> None:
+    policies = (
+        ("writer_only", "writer-only"),
+        ("reader_only", "reader-only"),
+        ("reader_preferred", "reader-preferred"),
+    )
+    fallbacks = (("unavailable", "unavailable"), ("connection_lost", "connection-lost"))
+
+    assert {member for member, _ in policies} == set(get_args(RoutePolicy))
+    assert {member for member, _ in fallbacks} == set(get_args(FallbackReason))
+    for member, token in policies:
+        started = AcquisitionStarted(_EXECUTION, 1, 1, None, member)  # pyright: ignore[reportArgumentType] - the loop parametrizes over the policies the literal spells one at a time
+        assert _transition(started) == {"acquisitionStarted": {"policy": token}}
+    for member, token in fallbacks:
+        granted = ConnectionAcquired("writer", member)  # pyright: ignore[reportArgumentType] - the loop parametrizes over the reasons the literal spells one at a time
+        finished = AcquisitionFinished(_EXECUTION, 1, 1, None, 1, granted)
+        assert _transition(finished)["acquisitionFinished"] == {
+            "outcome": "acquired",
+            "route": "writer",
+            "fallback": token,
+        }
+
+
+def test_a_failure_refused_before_any_route_names_none() -> None:
+    outcome = AcquisitionFailed("closed", DirectFailure(_diagnostic()), None, None, None)
+    finished = AcquisitionFinished(_EXECUTION, 1, 1, None, 1, outcome)
+    assert _transition(finished) == {
+        "acquisitionFinished": {"outcome": "failed", "reason": "closed", "attribution": "direct"}
     }
 
 
@@ -465,7 +503,7 @@ def test_a_failed_acquisitions_reason_is_projected_member_by_member() -> None:
 
     assert {member for member, _ in pairs} == set(get_args(AcquisitionReason.__value__))
     for member, token in pairs:
-        outcome = AcquisitionFailed(member, DirectFailure(_diagnostic()), None)  # pyright: ignore[reportArgumentType] - the loop parametrizes over the reasons the literal spells one at a time
+        outcome = AcquisitionFailed(member, DirectFailure(_diagnostic()), None, "writer", None)  # pyright: ignore[reportArgumentType] - the loop parametrizes over the reasons the literal spells one at a time
         finished = AcquisitionFinished(_EXECUTION, 1, 1, None, 1, outcome)
         assert _transition(finished)["acquisitionFinished"]["reason"] == token
 
@@ -476,12 +514,15 @@ def test_a_failed_acquisition_carries_the_partial_cleanup_it_ran() -> None:
     partial = Invalidated(
         (CleanupIssue(phase="inspect", code="not-idle", diagnostic=_diagnostic()),)
     )
-    outcome = AcquisitionFailed("preparation_failed", DirectFailure(_diagnostic()), partial)
+    outcome = AcquisitionFailed(
+        "preparation_failed", DirectFailure(_diagnostic()), partial, "writer", None
+    )
     finished = AcquisitionFinished(_EXECUTION, 1, 1, None, 1, outcome)
     assert _transition(finished) == {
         "acquisitionFinished": {
             "outcome": "failed",
             "reason": "preparation-failed",
+            "route": "writer",
             "attribution": "direct",
             "cleanup": "invalidated",
             "issues": [{"phase": "inspect", "code": "not-idle"}],

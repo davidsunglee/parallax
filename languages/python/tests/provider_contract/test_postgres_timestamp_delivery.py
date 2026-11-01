@@ -125,7 +125,7 @@ def _served(profile_run: Any, zone: str) -> tuple[ScopedDatabase, Any]:
 
 
 def _session_zone(runtime: Any) -> str:
-    with runtime.login_execution().new_context() as connection:
+    with runtime.login_source().new_context("writer_only") as connection:
         ((zone,),) = connection.execute("select current_setting('timezone')", [])
     return zone
 

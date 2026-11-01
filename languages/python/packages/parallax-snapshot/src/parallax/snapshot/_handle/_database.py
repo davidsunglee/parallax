@@ -8,10 +8,11 @@ from parallax.core._execution._options import OMITTED, Omitted, TxnOptions
 from parallax.core._execution._planning import prepare_model
 from parallax.core._execution._publication import ServingModel
 from parallax.core._execution._root import DatabaseRoot
+from parallax.core._execution._routing import check_read_policy
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._unit_work.clock import Clock
 from parallax.core._execution._unit_work.uow import Concurrency
-from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel
+from parallax.core.db_port import DatabaseAdapter, DatabaseRuntime, IsolationLevel, RoutePolicy
 from parallax.core.entity import DomainModel
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.object_query import ObjectQueryNode
@@ -93,6 +94,9 @@ class ScopedDatabase:
             )
         )
 
+    def with_routing(self, *, read_policy: RoutePolicy) -> ScopedDatabase:
+        return self.create(self._execution.with_routing(read_policy=read_policy))
+
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         return cast(
             "Snapshot[S]",
@@ -152,8 +156,9 @@ class ScopedDatabase:
 class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
     """Owns a runtime; close it explicitly or use it as a context manager.
 
-    Option aliases and execution scopes share that runtime. Closing any root
-    alias closes it for all of them; creating a scope acquires no connection.
+    Option and routing aliases and execution scopes share that runtime. Closing
+    any root alias closes it for all of them; creating a scope acquires no
+    connection.
     """
 
     __slots__ = ()
@@ -164,6 +169,7 @@ class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
         model: DomainModel | ServingModel,
         *,
         options: TxnOptions | None = None,
+        read_policy: RoutePolicy | None = None,
         read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
@@ -174,6 +180,7 @@ class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
             served_model(model, _CONSTRUCTOR_REFUSAL),
             scope_for=ScopedDatabase.create,
             options=options,
+            read_policy=read_policy,
             read_plan_cache_capacity=capacity,
             clock=clock,
             lifecycle_provider=lifecycle_provider,
@@ -186,6 +193,7 @@ class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
         model: DomainModel | ServingModel,
         *,
         options: TxnOptions | None = None,
+        read_policy: RoutePolicy | None = None,
         read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
@@ -193,12 +201,14 @@ class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
         capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
         serving = served_model(model, _CONNECT_REFUSAL)
         defaults = options if options is not None else TxnOptions()
+        policy = check_read_policy(read_policy)
         runtime = adapter.open()
         try:
             return Database(
                 runtime,
                 serving,
                 options=defaults,
+                read_policy=policy,
                 read_plan_cache_capacity=capacity,
                 clock=clock,
                 lifecycle_provider=lifecycle_provider,

@@ -45,6 +45,8 @@ from parallax.core.db_port import (
     PipelineStatement,
     ReleaseUnconfirmed,
     Returned,
+    RouteCapabilities,
+    RouteSelection,
     Row,
     StatementFailed,
     StatementNotExecuted,
@@ -285,7 +287,7 @@ def _db(adapter: DatabaseAdapter[Any], model: DomainModel = _ACCOUNT) -> ScopedD
 
 
 def _context(runtime: Any) -> Any:
-    return runtime.login_execution().new_context()
+    return runtime.login_source().new_context("writer_only")
 
 
 def test_run_boundary_actions_read_then_update() -> None:
@@ -961,6 +963,9 @@ def test_an_acquisition_fault_refuses_before_it_takes_anything() -> None:
         context.__enter__()
 
     assert refused.value.reason == "preparation_failed"
+    # It is refused on the writer route the shipped adapter's one endpoint
+    # serves, reported on the context and the failure alike.
+    assert refused.value.selection == context.selection == RouteSelection("writer")
     established = context.cleanup_result
     assert isinstance(established, Invalidated)
     assert [(issue.phase, issue.code) for issue in established.issues] == [("inspect", "not-idle")]
@@ -975,8 +980,11 @@ def test_a_one_shot_acquisition_fault_lets_the_next_acquisition_through() -> Non
 
     with pytest.raises(ConnectionAcquisitionError):
         _context(runtime).__enter__()
-    with _context(runtime) as scoped:
+    passed = _context(runtime)
+    with passed as scoped:
         assert scoped is inner
+    # A context the fault let through reports what the inner one selected.
+    assert passed.selection == RouteSelection("writer")
 
 
 def test_a_persistent_acquisition_fault_refuses_every_acquisition() -> None:
@@ -1030,10 +1038,13 @@ def test_a_resource_faulting_adapter_stands_in_for_the_configuration_it_decorate
 
     assert faulted.dialect is inner.dialect
     assert runtime.dialect is inner.dialect
-    assert runtime.pool_metrics is None
+    assert runtime.routes == {"writer": RouteCapabilities.every_level()}
+    assert runtime.pool_metrics == ()
     assert runtime.login_identity == "test-login"
-    assert isinstance(runtime.login_execution().new_context(), ResourceFaultingContext)
-    assert isinstance(runtime.principal_execution(object()).new_context(), ResourceFaultingContext)
+    assert isinstance(runtime.login_source().new_context("writer_only"), ResourceFaultingContext)
+    assert isinstance(
+        runtime.principal_source(object()).new_context("writer_only"), ResourceFaultingContext
+    )
     runtime.close()
 
 
@@ -1071,10 +1082,10 @@ def test_a_fault_injecting_adapter_stands_in_for_the_configuration_it_decorates(
 
     assert faulted.dialect is inner.dialect
     assert runtime.dialect is inner.dialect
-    assert runtime.pool_metrics is None
+    assert runtime.pool_metrics == ()
     assert runtime.login_identity == "test-login"
-    with runtime.login_execution().new_context() as scoped:
+    with runtime.login_source().new_context("writer_only") as scoped:
         assert isinstance(scoped, FaultInjectingPort)
-    with runtime.principal_execution(object()).new_context() as scoped:
+    with runtime.principal_source(object()).new_context("writer_only") as scoped:
         assert isinstance(scoped, FaultInjectingPort)
     runtime.close()

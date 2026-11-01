@@ -36,7 +36,7 @@ from parallax.core import (
     ValueObject,
     attr,
 )
-from parallax.core._execution import _read_policy as read_policy_module
+from parallax.core._execution import _read_pipeline as read_pipeline_module
 from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core.base import SQL_NULL, DocumentValue, FrozenMap, PresentDocument
 from parallax.core.db_port import JsonDocument, MappingRow
@@ -140,7 +140,7 @@ def test_a_standalone_find_collects_no_read_evidence() -> None:
     port = ScriptedAdapter(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_policy_module, "deliver_find", _recording_find(calls))
+        patch.setattr(read_pipeline_module, "deliver_find", _recording_find(calls))
         node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
     (call,) = calls
     assert call.participation is None
@@ -158,7 +158,7 @@ def test_a_participating_find_stamps_its_transactions_own_participation() -> Non
     )
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_policy_module, "deliver_find", _recording_find(calls))
+        patch.setattr(read_pipeline_module, "deliver_find", _recording_find(calls))
         db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     (call,) = calls
     (hint,) = call.result.origins.values()
@@ -192,7 +192,7 @@ def test_every_attached_level_row_retains_its_own_evidence() -> None:
     port = ScriptedAdapter(Transact(Read(rows=[policy_row]), Read(rows=[coverage_row])))
     db = db_for(POLICY_MODEL, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_policy_module, "deliver_find", _recording_find(calls))
+        patch.setattr(read_pipeline_module, "deliver_find", _recording_find(calls))
         db.transact(
             lambda tx: tx.find(
                 Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)

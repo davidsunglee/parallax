@@ -49,13 +49,13 @@ def test_the_documented_retention_forms_are_the_four_the_guide_distinguishes() -
         "postgresql://app@localhost/app", credentials
     )
 
-    assert forms.default.pool == PoolOptions()
-    assert forms.tuned.pool == PoolOptions(min_size=2, max_size=20)
-    assert forms.zero_minimum.pool == PoolOptions(min_size=0, max_size=20)
-    assert forms.on_demand.pool == OnDemandOptions(max_size=20)
+    assert forms.default.writer.pool == PoolOptions()
+    assert forms.tuned.writer.pool == PoolOptions(min_size=2, max_size=20)
+    assert forms.zero_minimum.writer.pool == PoolOptions(min_size=0, max_size=20)
+    assert forms.on_demand.writer.pool == OnDemandOptions(max_size=20)
     # The credential travels with every form: which policy retains connections
     # says nothing about how the login they carry authenticates.
-    assert {form.credentials for form in (forms.default, forms.tuned, forms.on_demand)} == {
+    assert {form.writer.credentials for form in (forms.default, forms.tuned, forms.on_demand)} == {
         credentials
     }
 
@@ -87,7 +87,7 @@ def test_two_handles_over_one_configuration_serve_independently() -> None:
 
 def test_the_pool_watch_is_offered_the_source_and_closed_with_the_handle() -> None:
     source = DetachableSource()
-    adapter = ScriptedAdapter(Read(rows=[_ROW]), Read(rows=[]), metrics=source)
+    adapter = ScriptedAdapter(Read(rows=[_ROW]), Read(rows=[]), metrics=(source,))
 
     reading = stories.the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
         adapter, ACCOUNT_MODEL

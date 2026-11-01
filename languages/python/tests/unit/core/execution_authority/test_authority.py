@@ -12,11 +12,11 @@ import pytest
 from parallax.core.db_port import InvalidAuthorizationError
 from parallax.core.execution_authority._authority import (
     InvalidPrincipalError,
-    LoginExecution,
-    PrincipalExecution,
+    LoginAuthority,
+    PrincipalAuthority,
     capture_database_login,
     capture_principal,
-    same_execution,
+    same_authority,
 )
 from tests._support.db_port import ScriptedAdapter
 
@@ -46,7 +46,7 @@ class _Principal:
 class _RefusingRuntime:
     login_identity = "runner"
 
-    def principal_execution(self, authorization: object) -> Any:
+    def principal_source(self, authorization: object) -> Any:
         del authorization
         raise InvalidAuthorizationError("unsupported authorization")
 
@@ -58,15 +58,15 @@ def test_capture_reads_properties_once_in_order_and_retains_only_values() -> Non
     principal = _Principal("alice", authorization, reads)
     retained = weakref.ref(principal)
 
-    capture = capture_principal(runtime, principal)
+    authority = capture_principal(runtime, principal)
     principal.current_subject = "bob"
     principal.current_authorization = _Authorization("role-b")
     del principal
     gc.collect()
 
     assert reads == ["subject", "authorization"]
-    assert capture.actor.value == "alice"
-    assert capture.authorization is authorization
+    assert authority.actor.value == "alice"
+    assert authority.authorization is authorization
     assert retained() is None
 
 
@@ -110,7 +110,7 @@ def test_property_and_unexpected_provider_errors_propagate_unchanged() -> None:
     class ProviderFailure:
         login_identity = "runner"
 
-        def principal_execution(self, authorization: object) -> Any:
+        def principal_source(self, authorization: object) -> Any:
             del authorization
             raise provider_error
 
@@ -122,7 +122,7 @@ def test_property_and_unexpected_provider_errors_propagate_unchanged() -> None:
     assert from_provider.value is provider_error
 
 
-def test_execution_equality_uses_captured_values_not_sources_or_identity() -> None:
+def test_authority_equality_uses_captured_values_not_sources_or_identity() -> None:
     runtime = ScriptedAdapter().open()
     first_subject = " alice"[1:]
     second_subject = "alice "[:-1]
@@ -141,12 +141,12 @@ def test_execution_equality_uses_captured_values_not_sources_or_identity() -> No
     assert first_subject == second_subject and first_subject is not second_subject
     assert first_authorization == second_authorization
     assert first_authorization is not second_authorization
-    assert isinstance(first, PrincipalExecution)
-    assert isinstance(login_a, LoginExecution)
+    assert isinstance(first, PrincipalAuthority)
+    assert isinstance(login_a, LoginAuthority)
     assert first.source is not second.source
     assert login_a.source is not login_b.source
-    assert same_execution(first, second)
-    assert not same_execution(first, different_subject)
-    assert not same_execution(first, different_authorization)
-    assert not same_execution(first, login_a)
-    assert same_execution(login_a, login_b)
+    assert same_authority(first, second)
+    assert not same_authority(first, different_subject)
+    assert not same_authority(first, different_authorization)
+    assert not same_authority(first, login_a)
+    assert same_authority(login_a, login_b)

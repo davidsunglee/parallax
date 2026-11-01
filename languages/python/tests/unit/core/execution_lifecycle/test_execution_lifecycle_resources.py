@@ -27,7 +27,7 @@ import logging
 from collections.abc import Iterator
 from decimal import Decimal
 from types import ModuleType
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import pytest
 
@@ -42,6 +42,8 @@ from parallax.core.db_port import (
     Invalidated,
     ReleaseUnconfirmed,
     Returned,
+    RouteCapabilities,
+    RouteSelection,
     report_resource_issues,
 )
 from parallax.core.diagnostics import diagnostic_for
@@ -279,6 +281,71 @@ def test_an_acquisition_that_owned_nothing_reports_no_cleanup_at_all() -> None:
     outcome = finished.outcome
     assert isinstance(outcome, AcquisitionFailed)
     assert (outcome.reason, outcome.cleanup_result) == ("closed", None)
+
+
+def test_an_acquisition_states_the_policy_it_requested_and_the_route_it_landed_on() -> None:
+    # Routing roles are portable facts about the acquisition, not connection
+    # identity: the requested policy rides on Started, and the selection the
+    # context reported rides on Finished.
+    recorder = RecordingLifecycleProvider()
+    adapter = ScriptedAdapter(
+        Read(rows=[NEW_ROW]),
+        Transact(),
+        selections=[RouteSelection("writer", "unavailable")],
+        routes=("writer", "reader"),
+    )
+
+    with _db(adapter, recorder) as _root_db:
+        db = _root_db.using_database_login().with_routing(read_policy="reader_preferred")
+        _read(db)
+        db.transact(lambda _tx: None)
+
+    read, transaction = recorder.roots
+    ((read_started,), (read_finished,)) = (
+        _of(read, AcquisitionStarted),
+        _of(read, AcquisitionFinished),
+    )
+    assert read_started.route_policy == "reader_preferred"
+    assert read_finished.outcome == ConnectionAcquired("writer", "unavailable")
+    (attempt_started,) = _of(transaction, AcquisitionStarted)
+    (attempt_finished,) = _of(transaction, AcquisitionFinished)
+    assert attempt_started.route_policy == "writer_only"
+    assert attempt_finished.outcome == ConnectionAcquired("writer", None)
+
+
+def test_a_failed_acquisition_names_the_route_its_failure_was_terminal_on() -> None:
+    recorder = RecordingLifecycleProvider()
+    refused = ConnectionAcquisitionError(
+        "no connection", reason="timeout", selection=RouteSelection("writer", "connection_lost")
+    )
+    adapter = ScriptedAdapter(acquisition_failures=[refused], routes=("writer", "reader"))
+
+    with _db(adapter, recorder) as _root_db, pytest.raises(ExecutionFailure):
+        _read(_root_db.using_database_login())
+
+    (root,) = recorder.roots
+    (finished,) = _of(root, AcquisitionFinished)
+    outcome = finished.outcome
+    assert isinstance(outcome, AcquisitionFailed)
+    assert (outcome.route, outcome.fallback) == ("writer", "connection_lost")
+
+
+def test_a_refusal_before_any_route_was_selected_names_none() -> None:
+    recorder = RecordingLifecycleProvider()
+    adapter = ScriptedAdapter()
+    database = _db(adapter, recorder)
+    db = database.using_database_login()
+    cast("Any", database)._resources.runtime.close()
+
+    with pytest.raises(ExecutionFailure):
+        _read(db)
+    database.close()
+
+    (root,) = recorder.roots
+    (finished,) = _of(root, AcquisitionFinished)
+    outcome = finished.outcome
+    assert isinstance(outcome, AcquisitionFailed)
+    assert (outcome.reason, outcome.route, outcome.fallback) == ("closed", None, None)
 
 
 def test_an_attempt_that_could_not_acquire_finishes_begin_failed_caused_by_it() -> None:
@@ -744,21 +811,25 @@ class _UnusableRuntime:
         return POSTGRES
 
     @property
-    def pool_metrics(self) -> None:
-        return None
+    def routes(self) -> Any:
+        return {"writer": RouteCapabilities.every_level()}
+
+    @property
+    def pool_metrics(self) -> tuple[()]:
+        return ()
 
     @property
     def login_identity(self) -> str:
         return "unusable-runtime"
 
-    def login_execution(self) -> _UnusableRuntime:
+    def login_source(self) -> _UnusableRuntime:
         return self
 
-    def principal_execution(self, authorization: object) -> _UnusableRuntime:
+    def principal_source(self, authorization: object) -> _UnusableRuntime:
         del authorization
         return self
 
-    def new_context(self) -> Any:
+    def new_context(self, policy: object, /) -> Any:
         return _UnusableContext(self._failure)
 
     def close(self) -> None:
@@ -771,6 +842,10 @@ class _UnusableContext:
 
     @property
     def cleanup_result(self) -> None:
+        return None
+
+    @property
+    def selection(self) -> None:
         return None
 
     def __enter__(self) -> Any:

@@ -44,6 +44,10 @@ from parallax.core.db_port import (
     OrderedWriteTransport,
     PipelineStatement,
     Returned,
+    Route,
+    RouteCapabilities,
+    RoutePolicy,
+    RouteSelection,
     Row,
     TransactionOutcome,
 )
@@ -56,7 +60,7 @@ from parallax.core.read_delivery._read_plan import (
     ReadPlan,
     ReadPlanCache,
 )
-from parallax.postgres import PostgresAdapter
+from parallax.postgres import PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import Database, ScopedDatabase
 from production_origins import ORIGINS_FIELD, loaded_origins, require_source_origins
 
@@ -154,20 +158,28 @@ def _item_row(row: Mapping[str, object]) -> MappingRow:
 
 _RETURNED: Final[CleanupResult] = Returned()
 _LOGIN: Final = "snapshot-delivery-report"
+_ROUTES: Final[Mapping[Route, RouteCapabilities]] = {"writer": RouteCapabilities.every_level()}
+_SERVED: Final = RouteSelection("writer")
 
 
 class _SoleScope:
-    __slots__ = ("_connection", "_left")
+    __slots__ = ("_connection", "_entered", "_left")
 
     def __init__(self, connection: DatabaseConnection) -> None:
         self._connection = connection
+        self._entered = False
         self._left = False
+
+    @property
+    def selection(self) -> RouteSelection | None:
+        return _SERVED if self._entered else None
 
     @property
     def cleanup_result(self) -> CleanupResult | None:
         return _RETURNED if self._left else None
 
     def __enter__(self) -> DatabaseConnection:
+        self._entered = True
         return self._connection
 
     def __exit__(
@@ -189,21 +201,26 @@ class _SoleRuntime:
         self._connection = connection
 
     @property
-    def pool_metrics(self) -> None:
-        return None
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        return _ROUTES
+
+    @property
+    def pool_metrics(self) -> tuple[()]:
+        return ()
 
     @property
     def login_identity(self) -> str:
         return _LOGIN
 
-    def login_execution(self) -> _SoleRuntime:
+    def login_source(self) -> _SoleRuntime:
         return self
 
-    def principal_execution(self, authorization: object) -> _SoleRuntime:
+    def principal_source(self, authorization: object) -> _SoleRuntime:
         del authorization
         return self
 
-    def new_context(self) -> _SoleScope:
+    def new_context(self, policy: RoutePolicy, /) -> _SoleScope:
+        del policy
         return _SoleScope(self._connection)
 
     def close(self) -> None:
@@ -365,7 +382,8 @@ def _live_timing(
     measured: int,
 ) -> tuple[float, str, tuple[float, ...]]:
     with Database.connect(
-        PostgresAdapter(connection_info, credentials=DRIVER_MANAGED), workload.domain_model
+        PostgresAdapter(writer=PostgresEndpoint(connection_info, credentials=DRIVER_MANAGED)),
+        workload.domain_model,
     ) as root:
         database = root.using_database_login()
         work: Callable[[], object]
@@ -439,7 +457,8 @@ def _live_memory(
         else None
     )
     with Database.connect(
-        PostgresAdapter(connection_info, credentials=DRIVER_MANAGED), workload.domain_model
+        PostgresAdapter(writer=PostgresEndpoint(connection_info, credentials=DRIVER_MANAGED)),
+        workload.domain_model,
     ) as root:
         database = root.using_database_login()
         if page_size is None:

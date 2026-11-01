@@ -15,7 +15,7 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.write_items import KeyedInsert
-from parallax.core.db_port import DatabaseAdapter
+from parallax.core.db_port import DatabaseAdapter, RoutePolicy
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ServingModel, TxnOptions, prepare_model
@@ -42,6 +42,7 @@ def root(
     model: DomainModel | ServingModel = ACCOUNT,
     *,
     options: TxnOptions | None = None,
+    read_policy: RoutePolicy | None = None,
     provider: ExecutionLifecycleProvider | None = None,
 ) -> DatabaseRoot[Any, ExecutionScope]:
     """A root over ``adapter`` the current test owns, serving ``model``."""
@@ -56,6 +57,7 @@ def root(
             serving,
             scope_for=itself,
             options=options,
+            read_policy=read_policy,
             clock=FixedClock(FIXED),
             lifecycle_provider=provider,
         )

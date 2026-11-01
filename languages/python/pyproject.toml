@@ -411,9 +411,9 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "parallax.core._execution._read_policy may import only its permitted dependencies"
+name = "parallax.core._execution._read_pipeline may import only its permitted dependencies"
 type = "forbidden"
-source_modules = ["parallax.core._execution._read_policy"]
+source_modules = ["parallax.core._execution._read_pipeline"]
 forbidden_modules = [
     "parallax.aws",
     "parallax.aws.postgres",

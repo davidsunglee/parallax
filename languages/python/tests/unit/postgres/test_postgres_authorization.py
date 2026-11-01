@@ -9,7 +9,7 @@ import pytest
 from psycopg.sql import Composed
 
 from parallax.core.db_port import InvalidAuthorizationError
-from parallax.postgres import PoolOptions, PostgresRole
+from parallax.postgres import PostgresRole
 from parallax.postgres._authorization import install_role, restore_role
 from parallax.postgres._connection import ConnectionEstablishment
 from parallax.postgres._runtime import PostgresRuntime
@@ -66,7 +66,9 @@ def test_role_commands_use_identifier_composition_and_fixed_restoration() -> Non
 
 
 def test_principal_binding_refuses_any_value_other_than_postgres_role() -> None:
-    runtime = PostgresRuntime(cast("Any", _UnusedPool()), PoolOptions(), ConnectionEstablishment())
+    runtime = PostgresRuntime(
+        cast("Any", _UnusedPool()), ConnectionEstablishment(), acquire_timeout=15.0
+    )
 
     with pytest.raises(InvalidAuthorizationError):
-        runtime.principal_execution(cast("Any", "tenant"))
+        runtime.principal_source(cast("Any", "tenant"))

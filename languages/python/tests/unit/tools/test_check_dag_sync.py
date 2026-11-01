@@ -603,7 +603,7 @@ def test_first_party_support_parity_fails_on_a_scope_only_the_spec_declares() ->
 
 def test_first_party_support_parity_fails_on_a_scope_only_the_tool_declares() -> None:
     declared = _spec_first_party_grants()
-    del declared["parallax.core._execution._read_policy"]
+    del declared["parallax.core._execution._read_pipeline"]
     with pytest.raises(ValueError, match="declared only in the tool"):
         dag.check_first_party_support_parity(declared)
 
@@ -736,11 +736,13 @@ def test_a_first_party_row_edited_in_the_spec_alone_fails_generation(
     _spec_with(
         tmp_path,
         monkeypatch,
-        "| `parallax.core._execution._read_policy` | `parallax.core.entity`, `m-read-delivery`, ",
-        "| `parallax.core._execution._read_policy` | `parallax.core.entity`, `m-batch-write`, "
+        "| `parallax.core._execution._read_pipeline` | `parallax.core.entity`, `m-read-delivery`, ",
+        "| `parallax.core._execution._read_pipeline` | `parallax.core.entity`, `m-batch-write`, "
         "`m-read-delivery`, ",
     )
-    with pytest.raises(ValueError, match=r"'parallax\.core\._execution\._read_policy' has drifted"):
+    with pytest.raises(
+        ValueError, match=r"'parallax\.core\._execution\._read_pipeline' has drifted"
+    ):
         dag.generate()
 
 
@@ -751,12 +753,12 @@ def test_a_first_party_row_dropped_from_the_spec_alone_fails_generation(
     row = next(
         line
         for line in original.splitlines()
-        if line.startswith("| `parallax.core._execution._read_policy` | `parallax.core.")
+        if line.startswith("| `parallax.core._execution._read_pipeline` | `parallax.core.")
     )
     _spec_with(tmp_path, monkeypatch, f"{row}\n", "")
     with pytest.raises(
         ValueError,
-        match=r"declared only in the tool \['parallax\.core\._execution\._read_policy'\]",
+        match=r"declared only in the tool \['parallax\.core\._execution\._read_pipeline'\]",
     ):
         dag.generate()
 
@@ -769,13 +771,15 @@ def test_a_first_party_grant_added_to_the_tool_alone_fails_generation(
         "PYTHON_FIRST_PARTY_GRANTS",
         {
             **dag.PYTHON_FIRST_PARTY_GRANTS,
-            "parallax.core._execution._read_policy": dag.PYTHON_FIRST_PARTY_GRANTS[
-                "parallax.core._execution._read_policy"
+            "parallax.core._execution._read_pipeline": dag.PYTHON_FIRST_PARTY_GRANTS[
+                "parallax.core._execution._read_pipeline"
             ]
             | {"parallax.core.batch_write"},
         },
     )
-    with pytest.raises(ValueError, match=r"'parallax\.core\._execution\._read_policy' has drifted"):
+    with pytest.raises(
+        ValueError, match=r"'parallax\.core\._execution\._read_pipeline' has drifted"
+    ):
         dag.generate()
 
 
@@ -788,12 +792,12 @@ def test_a_first_party_scope_dropped_by_the_tool_alone_fails_generation(
         {
             scope: grants
             for scope, grants in dag.PYTHON_FIRST_PARTY_GRANTS.items()
-            if scope != "parallax.core._execution._read_policy"
+            if scope != "parallax.core._execution._read_pipeline"
         },
     )
     with pytest.raises(
         ValueError,
-        match=r"declared only in the spec \['parallax\.core\._execution\._read_policy'\]",
+        match=r"declared only in the spec \['parallax\.core\._execution\._read_pipeline'\]",
     ):
         dag.generate()
 
@@ -813,8 +817,8 @@ def test_a_first_party_row_edited_alone_exits_one_at_the_command(tmp_path: Path)
     shutil.copy(dag.MODULES_MD, tmp_path / "core" / "spec" / dag.MODULES_MD.name)
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
-        "| `parallax.core._execution._read_policy` | `parallax.core.entity`, `m-read-delivery`, ",
-        "| `parallax.core._execution._read_policy` | `parallax.core.entity`, `m-batch-write`, "
+        "| `parallax.core._execution._read_pipeline` | `parallax.core.entity`, `m-read-delivery`, ",
+        "| `parallax.core._execution._read_pipeline` | `parallax.core.entity`, `m-batch-write`, "
         "`m-read-delivery`, ",
         1,
     )
@@ -829,7 +833,7 @@ def test_a_first_party_row_edited_alone_exits_one_at_the_command(tmp_path: Path)
     )
 
     assert result.returncode == 1, result.stdout
-    assert "first-party support scope 'parallax.core._execution._read_policy'" in result.stderr
+    assert "first-party support scope 'parallax.core._execution._read_pipeline'" in result.stderr
     assert "the spec grants" in result.stderr
 
 
@@ -846,13 +850,13 @@ def test_no_runtime_scope_reaches_primary_key_generation() -> None:
         assert "parallax.core.pk_gen" in forbidden[scope], scope
 
 
-def test_the_read_policy_row_forbids_the_write_policy_the_parent_reaches() -> None:
+def test_the_read_pipeline_row_forbids_the_write_policy_the_parent_reaches() -> None:
     # The exclusion the read policy scope exists for: a read ladder composes over
     # read delivery and reaches no write policy, which only a row narrower than
     # the parent's can state — model preparation gives the parent that edge.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    scope = "parallax.core._execution._read_policy"
+    scope = "parallax.core._execution._read_pipeline"
     policy = "parallax.core.batch_write"
     assert policy in adjacency["parallax.core._execution"]
     assert policy not in forbidden["parallax.core._execution"]
@@ -891,13 +895,13 @@ def test_the_keyed_write_ingress_row_inherits_the_port_rather_than_forbidding_it
     assert "parallax.core.db_port" not in dag.compute_forbidden(adjacency)[scope]
 
 
-def test_the_read_policy_row_inherits_retry_rather_than_forbidding_it() -> None:
+def test_the_read_pipeline_row_inherits_retry_rather_than_forbidding_it() -> None:
     # `modules.md` routes `m-auto-retry` through `m-execution-lifecycle`, which
     # the re-entry gate and the read roots both require, and a forbidden row is
     # the complement of a closure — so retry rides in and §7's prose records the
     # closure fact instead of claiming an exclusion no row could carry.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    scope = "parallax.core._execution._read_policy"
+    scope = "parallax.core._execution._read_pipeline"
     assert "parallax.core.execution_lifecycle" in adjacency[scope]
     assert "parallax.core.auto_retry" in dag.transitive_closure(adjacency, scope)
     assert "parallax.core.auto_retry" not in dag.compute_forbidden(adjacency)[scope]
@@ -1060,7 +1064,7 @@ def test_an_isolated_child_is_forbidden_to_a_scope_granted_its_parent() -> None:
 def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
     assert dag.scope_siblings("parallax.core._execution._read_query") == frozenset(
         {
-            "parallax.core._execution._read_policy",
+            "parallax.core._execution._read_pipeline",
             "parallax.core._execution._keyed_writes",
             "parallax.core._execution._family",
             "parallax.core._execution._keyed_sql",
@@ -1092,8 +1096,8 @@ def test_only_a_zero_grant_row_takes_its_siblings_as_targets() -> None:
 def test_a_child_row_omits_its_own_ancestors() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    assert "parallax.core._execution" not in forbidden["parallax.core._execution._read_policy"]
-    assert dag.scope_ancestors("parallax.core._execution._read_policy") == frozenset(
+    assert "parallax.core._execution" not in forbidden["parallax.core._execution._read_pipeline"]
+    assert dag.scope_ancestors("parallax.core._execution._read_pipeline") == frozenset(
         {"parallax.core._execution"}
     )
     assert dag.scope_ancestors("parallax.core._execution") == frozenset()
@@ -1113,12 +1117,12 @@ def test_runtime_child_rows_are_narrower_than_their_parent_rows() -> None:
     # still cannot reach batch writes; the lowering cluster may not reach the
     # read side; and value publication reaches the Page child alone, so read
     # planning's SQL generation and lifecycle stay outside it.
-    assert "parallax.core.db_port" not in forbidden["parallax.core._execution._read_policy"]
+    assert "parallax.core.db_port" not in forbidden["parallax.core._execution._read_pipeline"]
     assert (
         "parallax.core.execution_lifecycle"
-        not in forbidden["parallax.core._execution._read_policy"]
+        not in forbidden["parallax.core._execution._read_pipeline"]
     )
-    assert "parallax.core.batch_write" in forbidden["parallax.core._execution._read_policy"]
+    assert "parallax.core.batch_write" in forbidden["parallax.core._execution._read_pipeline"]
     assert "parallax.core.read_delivery" in forbidden["parallax.core._execution._keyed_sql"]
     assert "parallax.core.sql_gen" in forbidden["parallax.snapshot._publication"]
     assert "parallax.core.execution_lifecycle" in forbidden["parallax.snapshot._publication"]
@@ -1130,7 +1134,7 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
     assert dag.scope_descendants("parallax.core._execution") == frozenset(
         {
             "parallax.core._execution._read_query",
-            "parallax.core._execution._read_policy",
+            "parallax.core._execution._read_pipeline",
             "parallax.core._execution._keyed_writes",
             "parallax.core._execution._family",
             "parallax.core._execution._keyed_sql",
@@ -1209,7 +1213,7 @@ def test_execution_authority_is_a_top_level_scope_with_core_only_edges() -> None
     assert adjacency[scope] == frozenset(
         {"parallax.core.db_port", "parallax.core._execution._unit_work"}
     )
-    assert scope in adjacency["parallax.core._execution._read_policy"]
+    assert scope in adjacency["parallax.core._execution._read_pipeline"]
     # A top-level row forbids the public execution facade. The implementation
     # package holds the unit of work this scope is granted, so the row gives up
     # that package's name and reports every other execution module through the
@@ -1464,11 +1468,11 @@ def test_child_scope_contract_blocks_an_import_the_parent_permits(linted_copy: P
     assert "parallax.core.batch_write" in adjacency["parallax.core._execution"]
     reported = broken_by(
         linted_copy,
-        "parallax.core._execution._read_policy",
+        "parallax.core._execution._read_pipeline",
         "import parallax.core.batch_write  # deliberate child-scope violation",
     )
 
-    assert "parallax.core._execution._read_policy -> parallax.core.batch_write" in reported
+    assert "parallax.core._execution._read_pipeline -> parallax.core.batch_write" in reported
 
 
 # --------------------------------------------------------------------------

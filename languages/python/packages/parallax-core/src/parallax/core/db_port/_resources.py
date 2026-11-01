@@ -7,7 +7,15 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 from parallax.core.diagnostics import FailureDiagnostic
 
 if TYPE_CHECKING:
-    from parallax.core.db_port import DatabaseConnection
+    from collections.abc import Mapping
+
+    from parallax.core.db_port import (
+        DatabaseConnection,
+        Route,
+        RouteCapabilities,
+        RoutePolicy,
+        RouteSelection,
+    )
     from parallax.core.db_port._pool_metrics import PoolMetricsSource
     from parallax.core.dialect import Dialect
 
@@ -169,11 +177,22 @@ class ConnectionAcquisitionError(Exception):
 
     It is terminal for a transaction attempt: no callback ran and no boundary
     opened, so there is nothing to undo and nothing to replay.
+
+    ``selection`` is the route whose failure was terminal, with any fallback
+    taken on the way there, and ``None`` where the acquisition was refused
+    before any route was selected.
     """
 
-    def __init__(self, message: str, *, reason: AcquisitionReason) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: AcquisitionReason,
+        selection: RouteSelection | None = None,
+    ) -> None:
         super().__init__(message)
         self.reason: AcquisitionReason = reason
+        self.selection: RouteSelection | None = selection
 
 
 class InvalidAuthorizationError(ValueError):
@@ -254,6 +273,17 @@ class ConnectionContext(Protocol):
         """
         ...
 
+    @property
+    def selection(self) -> RouteSelection | None:
+        """The route this acquisition was served on, once entry selected one.
+
+        ``None`` before entry and after a failed entry that selected no route;
+        a failed entry that did select one reports it here as well as on its
+        :class:`ConnectionAcquisitionError`. Stable once entry has returned or
+        raised.
+        """
+        ...
+
     def __enter__(self) -> DatabaseConnection: ...
 
     def __exit__(
@@ -269,8 +299,13 @@ class ConnectionContext(Protocol):
 class ConnectionContextSource(Protocol):
     """A resource-free source of fresh single-use connection contexts."""
 
-    def new_context(self) -> ConnectionContext:
-        """Construct a context without acquiring a connection or performing I/O."""
+    def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
+        """Construct a context requesting ``policy`` without acquiring a
+        connection or performing I/O.
+
+        ``policy`` names only routes the runtime declares: core resolves it
+        against :attr:`DatabaseRuntime.routes` before asking.
+        """
         ...
 
 
@@ -302,20 +337,30 @@ class DatabaseRuntime[Authorization = object](Protocol):
         ...
 
     @property
-    def pool_metrics(self) -> PoolMetricsSource | None:
-        """This runtime's read-only pool measurements, where it keeps any.
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        """The routes this runtime serves and what each can serve.
 
-        ``None`` is an honest absence rather than a degraded source: a runtime
-        that manages no pool has no bookkeeping to report, and a caller composes
-        observation only where a source exists.
+        Always declares ``writer``; ``reader`` only where one is configured.
+        Immutable for the runtime's life, so a scope may validate a policy
+        against it without I/O.
         """
         ...
 
-    def login_execution(self) -> ConnectionContextSource:
+    @property
+    def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
+        """This runtime's read-only pool measurements, one source per pool it keeps.
+
+        Empty is an honest absence rather than a degraded source: a runtime
+        that manages no pool has no bookkeeping to report, and a caller composes
+        observation only over the sources that exist.
+        """
+        ...
+
+    def login_source(self) -> ConnectionContextSource:
         """Bind execution under the authenticated login without I/O."""
         ...
 
-    def principal_execution(self, authorization: Authorization) -> ConnectionContextSource:
+    def principal_source(self, authorization: Authorization) -> ConnectionContextSource:
         """Validate and bind one provider authorization without I/O."""
         ...
 

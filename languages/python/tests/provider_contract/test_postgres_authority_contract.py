@@ -43,11 +43,11 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
 
     runtime = profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)).open()
     try:
-        login_source = runtime.login_execution()
-        role_a_source = runtime.principal_execution(role_a)
-        role_b_source = runtime.principal_execution(role_b)
+        login_source = runtime.login_source()
+        role_a_source = runtime.principal_source(role_a)
+        role_b_source = runtime.principal_source(role_b)
 
-        with login_source.new_context() as login:
+        with login_source.new_context("writer_only") as login:
             login_pid, session_user, current_user = _identity(login)
             assert session_user == profile_run.login_identity == runtime.login_identity
             assert current_user == profile_run.default_role.name
@@ -55,7 +55,7 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
             with pytest.raises(DatabaseError):
                 login.execute("select value from authority_a", [])
 
-        with role_a_source.new_context() as authorized_a:
+        with role_a_source.new_context("writer_only") as authorized_a:
             pid_a, session_user_a, current_user_a = _identity(authorized_a)
             assert (pid_a, session_user_a, current_user_a) == (
                 login_pid,
@@ -67,7 +67,7 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
             with pytest.raises(DatabaseError):
                 authorized_a.execute("select value from authority_b", [])
 
-        with role_b_source.new_context() as authorized_b:
+        with role_b_source.new_context("writer_only") as authorized_b:
             pid_b, session_user_b, current_user_b = _identity(authorized_b)
             assert (pid_b, session_user_b, current_user_b) == (
                 login_pid,
@@ -79,7 +79,7 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
             with pytest.raises(DatabaseError):
                 authorized_b.execute("select value from authority_a", [])
 
-        with login_source.new_context() as restored_login:
+        with login_source.new_context("writer_only") as restored_login:
             restored_pid, restored_session, restored_current = _identity(restored_login)
             assert (restored_pid, restored_session, restored_current) == (
                 login_pid,
@@ -95,20 +95,20 @@ def test_reused_session_contains_roles_and_restores_the_configured_default(
 
 
 @pytest.mark.adapter_smoke
-def test_server_role_refusal_disposes_the_session_before_login_execution_resumes(
+def test_server_role_refusal_disposes_the_session_before_login_source_resumes(
     profile_run: Any,
 ) -> None:
     runtime = profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)).open()
     try:
-        with runtime.login_execution().new_context() as first:
+        with runtime.login_source().new_context("writer_only") as first:
             first_pid, _, default_role = _identity(first)
 
-        refused = runtime.principal_execution(PostgresRole("role_that_does_not_exist"))
+        refused = runtime.principal_source(PostgresRole("role_that_does_not_exist"))
         with pytest.raises(ConnectionAcquisitionError) as failure:
-            refused.new_context().__enter__()
+            refused.new_context("writer_only").__enter__()
 
         assert failure.value.reason == "authorization_failed"
-        with runtime.login_execution().new_context() as replacement:
+        with runtime.login_source().new_context("writer_only") as replacement:
             replacement_pid, session_user, current_user = _identity(replacement)
         assert replacement_pid != first_pid
         assert session_user == runtime.login_identity == profile_run.login_identity
@@ -118,7 +118,8 @@ def test_server_role_refusal_disposes_the_session_before_login_execution_resumes
 
 
 def _measurements(runtime: Any) -> Any:
-    sample = runtime.pool_metrics.sample()
+    (source,) = runtime.pool_metrics
+    sample = source.sample()
     assert isinstance(sample, PoolAvailable), sample
     return sample.measurements
 
@@ -134,12 +135,12 @@ def test_a_principal_s_first_role_installation_over_an_ended_session_runs_on_a_r
     role = profile_run.authorization("role-a")
     runtime = profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)).open()
     try:
-        with runtime.login_execution().new_context() as earlier:
+        with runtime.login_source().new_context("writer_only") as earlier:
             retained, _, _ = _identity(earlier)
         end_backend(profile_run, retained)
         before = _measurements(runtime)
 
-        with runtime.principal_execution(role).new_context() as authorized:
+        with runtime.principal_source(role).new_context("writer_only") as authorized:
             after = _measurements(runtime)
             pid, session_user, current_user = _identity(authorized)
 
@@ -148,7 +149,7 @@ def test_a_principal_s_first_role_installation_over_an_ended_session_runs_on_a_r
         assert after.returns_bad == before.returns_bad + 1
         assert after.connections_lost == before.connections_lost
         assert after.requests_num == before.requests_num + 2
-        with runtime.login_execution().new_context() as later:
+        with runtime.login_source().new_context("writer_only") as later:
             assert _identity(later) == (
                 pid,
                 profile_run.login_identity,
@@ -165,9 +166,9 @@ def test_a_session_lost_after_its_role_was_installed_is_not_replaced(profile_run
     role = profile_run.authorization("role-a")
     runtime = profile_run.configured(pool=PoolOptions(min_size=1, max_size=1)).open()
     try:
-        with runtime.login_execution().new_context() as earlier:
+        with runtime.login_source().new_context("writer_only") as earlier:
             retained, _, _ = _identity(earlier)
-        context = runtime.principal_execution(role).new_context()
+        context = runtime.principal_source(role).new_context("writer_only")
         authorized = context.__enter__()
         try:
             end_backend(profile_run, retained)

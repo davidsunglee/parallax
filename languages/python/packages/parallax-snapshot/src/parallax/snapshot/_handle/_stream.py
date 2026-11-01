@@ -6,7 +6,7 @@ from typing import Any, Final, Protocol, cast, overload
 
 from parallax.core import read_planning
 from parallax.core._execution._publication import SelectedReadModel
-from parallax.core._execution._read_policy import ReadQuery
+from parallax.core._execution._read_pipeline import ReadQuery
 from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.read_delivery import InvalidData, StreamStateError

@@ -93,11 +93,11 @@ then:
           - sequence: 3
             activity: 3
             parent: 2
-            acquisitionStarted: {}
+            acquisitionStarted: { policy: writer-only }
           - sequence: 4
             activity: 3
             parent: 2
-            acquisitionFinished: { outcome: acquired }
+            acquisitionFinished: { outcome: acquired, route: writer }
           - sequence: 5
             activity: 4
             parent: 2
@@ -139,11 +139,11 @@ then:
           - sequence: 13
             activity: 8
             parent: 7
-            acquisitionStarted: {}
+            acquisitionStarted: { policy: writer-only }
           - sequence: 14
             activity: 8
             parent: 7
-            acquisitionFinished: { outcome: acquired }
+            acquisitionFinished: { outcome: acquired, route: writer }
           - sequence: 15
             activity: 9
             parent: 7

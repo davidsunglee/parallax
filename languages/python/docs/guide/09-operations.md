@@ -14,7 +14,13 @@ import logging
 from parallax.core import DomainModel
 from parallax.core.db_port import CredentialSource
 from parallax.core.execution_lifecycle import LoggingLifecycleProvider
-from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresRole
+from parallax.postgres import (
+    OnDemandOptions,
+    PoolOptions,
+    PostgresAdapter,
+    PostgresEndpoint,
+    PostgresRole,
+)
 from parallax.snapshot import Database, connect
 ```
 <!-- /example -->
@@ -30,7 +36,9 @@ def open_the_shop_database(
     conninfo: str, credentials: CredentialSource, model: DomainModel
 ) -> Database[PostgresRole]:
     """The process's one root: a bounded pool, room for more read plans, and logging."""
-    adapter = PostgresAdapter(conninfo, credentials=credentials, pool=PoolOptions(max_size=20))
+    adapter = PostgresAdapter(
+        writer=PostgresEndpoint(conninfo, credentials=credentials, pool=PoolOptions(max_size=20))
+    )
     return connect(
         adapter,
         model,
@@ -44,10 +52,11 @@ def open_the_shop_database(
 time. `connect` opens the runtime, and the root it returns is what you share across the
 process and close at the end. Each setting here has a section of its own:
 
-- **The pool.** `PoolOptions` bounds how many connections the root keeps and opens,
-  and how long a caller waits for one; `max_size` is one of its fields, and the
-  lifecycle guide describes the rest. `OnDemandOptions` keeps no connection between
-  operations: pass `pool=OnDemandOptions()` to the adapter instead. See the lifecycle
+- **The pool.** `PoolOptions` bounds how many connections the root keeps and opens;
+  `max_size` is one of its fields, and the lifecycle guide describes the rest.
+  `OnDemandOptions` keeps no connection between operations: pass
+  `pool=OnDemandOptions()` to the endpoint instead. How long a caller waits for a
+  connection is the adapter's `acquire_timeout`. See the lifecycle
   guide on
   [what you build](../postgresql-lifecycle.md#what-you-build-and-what-owns-it),
   [retention](../postgresql-lifecycle.md#retention) and

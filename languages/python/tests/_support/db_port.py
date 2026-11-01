@@ -77,6 +77,10 @@ from parallax.core.db_port import (
     Returned,
     RollbackFailed,
     RolledBack,
+    Route,
+    RouteCapabilities,
+    RoutePolicy,
+    RouteSelection,
     Row,
     StatementFailed,
     TransactionOutcome,
@@ -395,28 +399,49 @@ class _ScriptedConnection:
         return adapter.transaction(body, isolation=isolation, access_mode=access_mode, on=self)
 
 
-class ScriptedContext:
-    """One scripted acquisition, single-use exactly as a real one is."""
+def _natural_route(policy: RoutePolicy) -> Route:
+    return "writer" if policy == "writer_only" else "reader"
 
-    def __init__(self, runtime: ScriptedRuntime) -> None:
+
+class ScriptedContext:
+    """One scripted acquisition, single-use exactly as a real one is.
+
+    It reports the selection the script names for this acquisition, or the
+    route its requested policy names where the script names none — a scripted
+    refusal carrying its own selection reports that one instead.
+    """
+
+    def __init__(self, runtime: ScriptedRuntime, policy: RoutePolicy) -> None:
         self._runtime = runtime
+        self._policy: RoutePolicy = policy
         self._connection: _ScriptedConnection | None = None
         self._spent = False
         self._cleanup_result: CleanupResult | None = None
+        self._selection: RouteSelection | None = None
 
     @property
     def cleanup_result(self) -> CleanupResult | None:
         return self._cleanup_result
+
+    @property
+    def selection(self) -> RouteSelection | None:
+        return self._selection
 
     def __enter__(self) -> DatabaseConnection:
         if self._spent:
             raise RuntimeError("a scripted connection context is entered exactly once")
         self._spent = True
         adapter = self._runtime.adapter
+        adapter.requested_policies.append(self._policy)
         # Closure first: a runtime that stopped admitting refuses whatever a
-        # script had planned for this acquisition, exactly as a real one does.
+        # script had planned for this acquisition, exactly as a real one does,
+        # and before any route was selected.
         if self._runtime.closed:
             raise ConnectionAcquisitionError("this scripted runtime is closed", reason="closed")
+        scripted = adapter.next_selection()
+        selection = (
+            scripted if scripted is not None else RouteSelection(_natural_route(self._policy))
+        )
         refusal = adapter.next_acquisition_failure()
         if refusal is not None:
             # A scripted acquisition failure reports cleanup facts only where the
@@ -424,7 +449,11 @@ class ScriptedContext:
             # never took anything has nothing to have cleaned up.
             self._cleanup_result = adapter.scripted_cleanup_result()
             adapter.cleanups.append(self._cleanup_result)
+            if refusal.selection is None:
+                refusal.selection = selection
+            self._selection = refusal.selection
             raise refusal
+        self._selection = selection
         adapter.acquisitions += 1
         connection = _ScriptedConnection(adapter)
         self._connection = connection
@@ -466,11 +495,15 @@ class ScriptedRuntime:
         return self.adapter.dialect
 
     @property
-    def pool_metrics(self) -> PoolMetricsSource | None:
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        return self.adapter.routes
+
+    @property
+    def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
         """Whatever the adapter was configured with, and nothing by default.
 
         A script says what statements answer, not what a pool holds, so a
-        suite proving pool observation supplies the source it wants observed
+        suite proving pool observation supplies the sources it wants observed
         and every other suite composes a runtime that publishes none.
         """
         return self.adapter.metrics
@@ -479,25 +512,27 @@ class ScriptedRuntime:
     def login_identity(self) -> str:
         return STAND_IN_LOGIN
 
-    def login_execution(self) -> ConnectionContextSource:
+    def login_source(self) -> ConnectionContextSource:
         return BoundContextSource(self)
 
-    def principal_execution(self, authorization: object) -> ConnectionContextSource:
+    def principal_source(self, authorization: object) -> ConnectionContextSource:
         return BoundContextSource(self, authorization)
 
-    def new_bound_context(self, authorization: object | None) -> ConnectionContext:
+    def new_bound_context(
+        self, authorization: object | None, policy: RoutePolicy
+    ) -> ConnectionContext:
         del authorization
-        return ScriptedContext(self)
+        return ScriptedContext(self, policy)
 
     def close(self) -> None:
-        """Close, detaching the metrics source first, as a real runtime does.
+        """Close, detaching the metrics sources first, as a real runtime does.
 
         The order is the contract's: detachment precedes the teardown rather
         than following it, so a sample begun after it reaches nothing.
         """
-        metrics = self.adapter.metrics
-        if isinstance(metrics, DetachableMetrics):
-            metrics.detach()
+        for metrics in self.adapter.metrics:
+            if isinstance(metrics, DetachableMetrics):
+                metrics.detach()
         self.closed = True
         self.adapter.closes += 1
 
@@ -509,14 +544,17 @@ class ScriptedAdapter:
     entry was reached: an unconsumed one means the code under test did less than
     the script said.
 
-    ``acquisition_failures`` and ``cleanup_results`` are consumed positionally by
-    successive acquisitions and releases, with anything past their end
-    succeeding — so a suite names the third acquisition's timeout without
-    writing the two before it. ``acquisitions``, ``cleanups``, and ``closes``
-    record what actually happened. ``metrics`` is the pool source the runtime
-    this opens publishes, absent by default because a script describes
-    statements rather than a pool. ``ordered`` gives every connection ordered
-    write transport over :class:`Ordered` entries.
+    ``acquisition_failures``, ``selections``, and ``cleanup_results`` are
+    consumed positionally by successive acquisitions and releases, with
+    anything past their end succeeding on the route the requested policy names
+    — so a suite names the third acquisition's timeout without writing the two
+    before it. ``acquisitions``, ``cleanups``, ``closes``, and
+    ``requested_policies`` record what actually happened. ``routes`` are the
+    routes the runtime declares, each serving every read-only level.
+    ``metrics`` are the pool sources the runtime this opens publishes, none by
+    default because a script describes statements rather than a pool.
+    ``ordered`` gives every connection ordered write transport over
+    :class:`Ordered` entries.
     """
 
     dialect: Dialect
@@ -526,8 +564,10 @@ class ScriptedAdapter:
         *script: ScriptEntry,
         dialect: Dialect = POSTGRES,
         acquisition_failures: Sequence[ConnectionAcquisitionError | None] = (),
+        selections: Sequence[RouteSelection | None] = (),
         cleanup_results: Sequence[CleanupResult | None] = (),
-        metrics: PoolMetricsSource | None = None,
+        routes: Sequence[Route] = ("writer",),
+        metrics: Sequence[PoolMetricsSource] = (),
         ordered: bool = False,
     ) -> None:
         seen: dict[int, BaseException] = {}
@@ -536,7 +576,11 @@ class ScriptedAdapter:
                 raise ValueError("one failure instance cannot be reported by two calls")
             seen[id(failure)] = failure
         self.dialect = dialect
-        self.metrics = metrics
+        self.routes: Mapping[Route, RouteCapabilities] = {
+            route: RouteCapabilities.every_level() for route in routes
+        }
+        self.metrics: tuple[PoolMetricsSource, ...] = tuple(metrics)
+        self.requested_policies: list[RoutePolicy] = []
         self.ordered_write_transport: OrderedWriteTransport | None = (
             self.execute_ordered if ordered else None
         )
@@ -545,6 +589,7 @@ class ScriptedAdapter:
         self.closes = 0
         self.cleanups: list[CleanupResult | None] = []
         self._acquisition_failures = list(acquisition_failures)
+        self._selections = list(selections)
         self._cleanup_results = list(cleanup_results)
         self._scopes = [_Scope(script)]
         self._unreached = False
@@ -556,6 +601,11 @@ class ScriptedAdapter:
         if not self._acquisition_failures:
             return None
         return self._acquisition_failures.pop(0)
+
+    def next_selection(self) -> RouteSelection | None:
+        if not self._selections:
+            return None
+        return self._selections.pop(0)
 
     def next_cleanup_result(self) -> CleanupResult:
         """What the next completed release reports, defaulting to a clean return."""
@@ -695,6 +745,11 @@ def projected_rows(
     return fold_mapping_rows(rows, document_reads, sql)
 
 
+_WRITER_ROUTES: Final[Mapping[Route, RouteCapabilities]] = {
+    "writer": RouteCapabilities.every_level()
+}
+
+
 class RefusingAdapter:
     """An adapter asserting that no database interaction is permitted.
 
@@ -715,21 +770,27 @@ class RefusingAdapter:
         return self
 
     @property
-    def pool_metrics(self) -> PoolMetricsSource | None:
-        return None
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        return _WRITER_ROUTES
+
+    @property
+    def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
+        return ()
 
     @property
     def login_identity(self) -> str:
         return STAND_IN_LOGIN
 
-    def login_execution(self) -> ConnectionContextSource:
+    def login_source(self) -> ConnectionContextSource:
         return BoundContextSource(self)
 
-    def principal_execution(self, authorization: object) -> ConnectionContextSource:
+    def principal_source(self, authorization: object) -> ConnectionContextSource:
         return BoundContextSource(self, authorization)
 
-    def new_bound_context(self, authorization: object | None) -> ConnectionContext:
-        del authorization
+    def new_bound_context(
+        self, authorization: object | None, policy: RoutePolicy
+    ) -> ConnectionContext:
+        del authorization, policy
         raise AssertionError("no acquisition expected — this adapter refuses the database")
 
     def close(self) -> None:

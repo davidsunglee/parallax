@@ -222,10 +222,10 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.core._execution._planning", "_model"): frozenset({"class_index", "model_of"}),
     ("parallax.core._execution._publication", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.core._execution._publication", "_model"): frozenset({"ClassIndex"}),
-    ("parallax.core._execution._read_policy", "_authored_resolver"): frozenset(
+    ("parallax.core._execution._read_pipeline", "_authored_resolver"): frozenset(
         {"typed_interpretation"}
     ),
-    ("parallax.core._execution._read_policy", "_expressions"): frozenset({"AuthoredQuery"}),
+    ("parallax.core._execution._read_pipeline", "_expressions"): frozenset({"AuthoredQuery"}),
     ("parallax.core._execution._retention", "_construction_input"): frozenset({"ABSENT"}),
     ("parallax.core._execution._retention", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.core.object_query._fluent", "_entity"): frozenset({"Entity"}),
@@ -409,7 +409,7 @@ ACCEPTED_PRIVATE_LIFECYCLE_REACHES: frozenset[tuple[str, str]] = frozenset(
             for module in (
                 "_connection_lifecycle",
                 "_keyed_writes",
-                "_read_policy",
+                "_read_pipeline",
                 "_root",
                 "_scope",
                 "_transaction._attempt",

@@ -67,3 +67,36 @@ def test_required_scope_arguments_are_positional_only() -> None:
 
     with pytest.raises(TypeError):
         cast("Any", scoped.transact)(fn=no_op)
+
+
+def test_routing_derives_on_the_root_and_on_the_scope_as_the_same_facades() -> None:
+    adapter = ScriptedAdapter(routes=("writer", "reader"))
+    root = Database.connect(adapter, ACCOUNT, clock=FixedClock(FIXED), read_policy="writer_only")
+    alias = root.with_routing(read_policy="reader_preferred")
+    scoped = alias.using_database_login().with_routing(read_policy="reader_only")
+
+    assert type(alias) is Database
+    assert type(scoped) is ScopedDatabase
+    assert cast("Any", scoped)._execution._read_policy == "reader_only"
+    assert cast("Any", root.using_database_login())._execution._read_policy == "writer_only"
+    assert adapter.acquisitions == 0
+    root.close()
+
+
+def test_a_misspelled_read_policy_is_refused_before_the_adapter_opens() -> None:
+    class _Unopenable(ScriptedAdapter):
+        def open(self) -> Any:
+            raise AssertionError("a misspelled policy must be refused before opening")
+
+    with pytest.raises(ValueError, match="read_policy must be one of"):
+        Database.connect(_Unopenable(), ACCOUNT, read_policy=cast("Any", "reader"))
+
+
+def test_a_reader_policy_over_a_writer_only_runtime_closes_what_connect_opened() -> None:
+    adapter = ScriptedAdapter()
+
+    with pytest.raises(ValueError, match="needs a reader route"):
+        Database.connect(adapter, ACCOUNT, read_policy="reader_only")
+
+    assert adapter.closes == 1
+    assert adapter.acquisitions == 0

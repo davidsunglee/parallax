@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 import socket
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -24,6 +24,9 @@ from parallax.core.db_port import (
     InvalidAuthorizationError,
     ReleaseUnconfirmed,
     Returned,
+    Route,
+    RouteCapabilities,
+    RouteSelection,
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES, Dialect
@@ -45,6 +48,7 @@ if TYPE_CHECKING:
         OrderedWriteTransport,
         PipelineStatement,
         PoolMetricsSource,
+        RoutePolicy,
         Row,
         TransactionOutcome,
     )
@@ -220,6 +224,12 @@ class PostgresControl:
             self._on_release(self)
 
 
+_ROUTES: Final[Mapping[Route, RouteCapabilities]] = {"writer": RouteCapabilities.every_level()}
+"""The dedicated session is the runtime's one route."""
+
+_SERVED: Final = RouteSelection("writer")
+
+
 class ControlledScope:
     """One acquisition of the dedicated session, and the identity of that scope.
 
@@ -240,10 +250,21 @@ class ControlledScope:
     def cleanup_result(self) -> CleanupResult | None:
         return self._cleanup_result
 
+    @property
+    def selection(self) -> RouteSelection | None:
+        return _SERVED if self._spent else None
+
     def __enter__(self) -> DatabaseConnection:
         if self._spent:
             raise RuntimeError("a controlled connection context is entered exactly once")
         self._spent = True
+        try:
+            return self._entered()
+        except ConnectionAcquisitionError as refused:
+            refused.selection = _SERVED
+            raise
+
+    def _entered(self) -> DatabaseConnection:
         execution = self._runtime.admit(self)
         role = self._role
         if role is not None:
@@ -327,11 +348,12 @@ class _RestorationBoundary:
 
 
 @dataclass(frozen=True, slots=True)
-class _ControlledExecutionSource:
+class _ControlledContextSource:
     runtime: ControlledRuntime
     role: PostgresRole | None
 
-    def new_context(self) -> ConnectionContext:
+    def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
+        del policy
         return ControlledScope(self.runtime, self.role)
 
 
@@ -390,8 +412,12 @@ class ControlledRuntime:
         self._on_retired: Callable[[], None] | None = None
 
     @property
-    def pool_metrics(self) -> PoolMetricsSource | None:
-        return None
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        return _ROUTES
+
+    @property
+    def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
+        return ()
 
     @property
     def login_identity(self) -> str:
@@ -407,15 +433,15 @@ class ControlledRuntime:
         """
         return self._connection
 
-    def login_execution(self) -> ConnectionContextSource:
-        return _ControlledExecutionSource(self, None)
+    def login_source(self) -> ConnectionContextSource:
+        return _ControlledContextSource(self, None)
 
-    def principal_execution(self, authorization: PostgresRole) -> ConnectionContextSource:
+    def principal_source(self, authorization: PostgresRole) -> ConnectionContextSource:
         if not isinstance(authorization, PostgresRole):  # pyright: ignore[reportUnnecessaryIsInstance] - validates untyped callers at the boundary
             raise InvalidAuthorizationError(
                 "PostgreSQL principal execution requires a PostgresRole"
             )
-        return _ControlledExecutionSource(self, authorization)
+        return _ControlledContextSource(self, authorization)
 
     def admit(self, scope: ControlledScope) -> PostgresConnection:
         with self._admission, self._state:

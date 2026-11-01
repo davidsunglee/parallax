@@ -2419,8 +2419,14 @@ Read, a Transaction Attempt, and a standalone Stream each carry an
 that acquisition granted a connection — a `releaseStarted`/`releaseFinished`
 pair as their LAST. They are siblings of the execution activities between them
 and contain nothing; work that inherits a connection carries neither pair.
-`acquisitionFinished` names the `m-db-port` `reason` it failed for and the
-partial cleanup it ran, and a failed acquisition is followed by no release.
+`acquisitionStarted` names the read `policy` it requested (`m-execution` *Read
+routing*). `acquisitionFinished` names the `route` it landed on and any
+`fallback` that put it there, the `m-db-port` `reason` it failed for, and the
+partial cleanup it ran, and a failed acquisition is followed by no release. A
+strict policy lands only on its own route, a preferred one reaches the writer
+only by a fallback it names, an attempt of a writable invocation requests
+`writer-only`, and once an acquisition of a root falls back every later one in
+that root requests `writer-only` — relations the harness checks across events.
 `releaseFinished` names the `m-db-port` disposition its cleanup established and
 the finite conditions it met, and never rewrites the outcome of the activity
 above it. Both omit their monotonic durations for the reason a Database Call

@@ -520,7 +520,7 @@ def test_the_shop_root_composes_through_the_shipped_surface(
     ) as root:
         assert type(root) is Database
 
-    assert [adapter.pool.max_size for adapter in opened] == [20]
+    assert [adapter.writer.pool.max_size for adapter in opened] == [20]
 
 
 def test_every_recipe_the_module_exports_has_a_driver() -> None:

@@ -361,7 +361,7 @@ def test_a_level_and_a_mode_open_every_boundary_under_immediate_preparation(
 
     try:
         for _ in range(3):
-            with runtime.login_execution().new_context() as connection:
+            with runtime.login_source().new_context("writer_only") as connection:
                 outcome = connection.transaction(
                     body, isolation="repeatable_read", access_mode="read_only"
                 )

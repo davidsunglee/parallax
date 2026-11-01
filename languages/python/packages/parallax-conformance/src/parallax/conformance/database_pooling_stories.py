@@ -25,7 +25,7 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleProvider,
     RootExecution,
 )
-from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
+from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import ScopedDatabase, connect
 
 __all__ = [
@@ -76,15 +76,21 @@ def every_retention_form_is_one_configuration_value(
     ``DRIVER_MANAGED`` where the driver and the server settle it themselves.
     """
     return RetentionForms(
-        default=PostgresAdapter(conninfo, credentials=credentials),
+        default=PostgresAdapter(writer=PostgresEndpoint(conninfo, credentials=credentials)),
         tuned=PostgresAdapter(
-            conninfo, credentials=credentials, pool=PoolOptions(min_size=2, max_size=20)
+            writer=PostgresEndpoint(
+                conninfo, credentials=credentials, pool=PoolOptions(min_size=2, max_size=20)
+            )
         ),
         zero_minimum=PostgresAdapter(
-            conninfo, credentials=credentials, pool=PoolOptions(min_size=0, max_size=20)
+            writer=PostgresEndpoint(
+                conninfo, credentials=credentials, pool=PoolOptions(min_size=0, max_size=20)
+            )
         ),
         on_demand=PostgresAdapter(
-            conninfo, credentials=credentials, pool=OnDemandOptions(max_size=20)
+            writer=PostgresEndpoint(
+                conninfo, credentials=credentials, pool=OnDemandOptions(max_size=20)
+            )
         ),
     )
 

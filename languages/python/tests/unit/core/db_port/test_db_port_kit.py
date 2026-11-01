@@ -113,7 +113,7 @@ def test_scripted_pipeline_returns_one_ordered_batch_per_statement() -> None:
 
 def test_the_recording_keeps_each_submissions_read_intent_through_a_scoped_connection() -> None:
     port = ScriptedAdapter(Read(), Read(), Read(), Read())
-    context = port.open().login_execution().new_context()
+    context = port.open().login_source().new_context("writer_only")
 
     with context as connection:
         connection.execute("select 1", (), read_only=True)

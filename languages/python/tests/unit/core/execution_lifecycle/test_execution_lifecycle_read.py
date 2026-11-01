@@ -24,7 +24,7 @@ import pytest
 from parallax.conformance import read_models
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.conformance.scripted_clock import FixedClock
-from parallax.core._execution import _read_policy as read_policy_module
+from parallax.core._execution import _read_pipeline as read_pipeline_module
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -622,7 +622,7 @@ class _Borrowing:
         self.calls.append((statement, kind, target))
         return self
 
-    def acquisition(self) -> _Borrowing:
+    def acquisition(self, route_policy: object, /) -> _Borrowing:
         return self
 
     def release(self, held_since_ns: int | None, /) -> _Borrowing:
@@ -638,7 +638,9 @@ class _Borrowing:
 
     def call_returned(self) -> None: ...
 
-    def unacquired(self, cleanup_result: object, /) -> None: ...
+    def acquired(self, selection: object, /) -> None: ...
+
+    def unacquired(self, cleanup_result: object, selection: object, /) -> None: ...
 
     def released(self, cleanup_result: object, /) -> None: ...
 
@@ -695,7 +697,7 @@ def _recorded_openings(
         recorded.append((target, interface))
         return open_read_root(installed, target=target, interface=interface, edition=edition)
 
-    monkeypatch.setattr(read_policy_module, "open_read_root", recording)
+    monkeypatch.setattr(read_pipeline_module, "open_read_root", recording)
     return recorded
 
 

@@ -24,18 +24,37 @@ The application prepares, makes the physical schema ready, and publishes.
 one opened runtime. The Domain Model shorthand uses a static Serving Model.
 `Database` is the resource root: close it explicitly or use its context manager;
 closing is idempotent and invalidates derived scopes. The root exposes authority
-selection and option derivation, not modeled execution verbs. `ScopedDatabase`
-owns those verbs and has no independent close or authority-reselection operation.
+selection and option and routing derivation, not modeled execution verbs.
+`ScopedDatabase` owns those verbs and has no independent close or
+authority-reselection operation.
 
-`PostgresAdapter` is frozen configuration: constructing one opens no connection,
-pool, or thread. Each `connect` opens an independent runtime; closing one root
-does not close another made from the same configuration. A connection string
-cannot contain a password. Required `credentials=` accepts `Password(...)`,
-a source with `resolve() -> Password`, or `DRIVER_MANAGED`, never `None`.
-Credential sources resolve when establishing connections, allowing credentials
-to expire before the pool does. `parallax-aws` supplies `RdsIamCredentials`;
-its optional `parallax.aws.postgres.rds_postgres` composer returns a configured
-adapter with the credential source and TLS mode required for IAM authentication.
+`connect(..., read_policy=...)` and `with_routing(read_policy=...)` on both
+`Database` and `ScopedDatabase` carry the read policy, spelled
+`"writer_only"`, `"reader_only"`, or `"reader_preferred"` (`RoutePolicy`).
+`read_policy` is keyword-only and omission resolves to the runtime's default;
+`with_routing` has no omitted form. A value outside the vocabulary raises
+`ValueError` before the adapter opens, and a policy the runtime's declared
+routes cannot honor raises `ValueError` from `connect` or `with_routing`
+without acquiring anything. `with_routing` returns a new alias root or scope
+sharing the same resources; it composes in any order with `using_principal`,
+`using_database_login`, and `with_options`.
+
+`PostgresAdapter(*, writer, acquire_timeout=15.0, startup_timeout=30.0,
+prepare_threshold=5)` and `PostgresEndpoint(connection_string, *, credentials,
+pool=PoolOptions())` are frozen configuration: constructing either opens no
+connection, pool, or thread. An endpoint holds where its connections go, how its
+login authenticates, and its retention; the adapter holds the topology and the
+budgets its runtime spends, which is why the two timeouts are adapter fields
+rather than retention options. Each `connect` opens an independent runtime;
+closing one root does not close another made from the same configuration. A
+connection string cannot contain a password. Required `credentials=` accepts
+`Password(...)`, a source with `resolve() -> Password`, or `DRIVER_MANAGED`,
+never `None`. Credential sources resolve when establishing connections,
+allowing credentials to expire before the pool does. `parallax-aws` supplies
+`RdsIamCredentials`; its optional `parallax.aws.postgres.rds_endpoint` composer
+returns a configured endpoint with the credential source and TLS mode required
+for IAM authentication, signing for its own host, which the application
+composes into an adapter.
 
 `read_plan_cache_capacity` controls per-root reuse of immutable read plans. It
 must be a nonnegative exact built-in `int`; invalid values raise `ValueError`

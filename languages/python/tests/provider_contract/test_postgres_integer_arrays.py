@@ -163,7 +163,7 @@ def test_every_connection_path_binds_an_integer_array_in_its_declared_binary_typ
     ]
     try:
         for runtime in runtimes:
-            with runtime.login_execution().new_context() as connection:
+            with runtime.login_source().new_context("writer_only") as connection:
                 for statement, array in zip(statements, arrays, strict=True):
                     assert connection.execute("select pg_typeof(%s)::text", [array]) == [
                         (array_type,)

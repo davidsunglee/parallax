@@ -11,13 +11,17 @@ from parallax.core.db_port import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
     from types import TracebackType
 
     from parallax.core.db_port import (
         CleanupResult,
         DatabaseRuntime,
         PoolMetricsSource,
+        Route,
+        RouteCapabilities,
+        RoutePolicy,
+        RouteSelection,
     )
     from parallax.core.dialect import Dialect
 
@@ -58,18 +62,22 @@ class _DecoratingRuntime[Authorization]:
         return self._inner.dialect
 
     @property
-    def pool_metrics(self) -> PoolMetricsSource | None:
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        return self._inner.routes
+
+    @property
+    def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
         return self._inner.pool_metrics
 
     @property
     def login_identity(self) -> str:
         return self._inner.login_identity
 
-    def login_execution(self) -> ConnectionContextSource:
-        return _DecoratingSource(self._inner.login_execution(), self._decorate)
+    def login_source(self) -> ConnectionContextSource:
+        return _DecoratingSource(self._inner.login_source(), self._decorate)
 
-    def principal_execution(self, authorization: Authorization) -> ConnectionContextSource:
-        return _DecoratingSource(self._inner.principal_execution(authorization), self._decorate)
+    def principal_source(self, authorization: Authorization) -> ConnectionContextSource:
+        return _DecoratingSource(self._inner.principal_source(authorization), self._decorate)
 
     def close(self) -> None:
         self._inner.close()
@@ -92,6 +100,10 @@ class _DecoratingContext:
     def cleanup_result(self) -> CleanupResult | None:
         return self._inner.cleanup_result
 
+    @property
+    def selection(self) -> RouteSelection | None:
+        return self._inner.selection
+
     def __enter__(self) -> DatabaseConnection:
         return self._decorate(self._inner.__enter__())
 
@@ -110,5 +122,5 @@ class _DecoratingSource:
     inner: ConnectionContextSource
     decorate: Decorate
 
-    def new_context(self) -> ConnectionContext:
-        return _DecoratingContext(self.inner.new_context(), self.decorate)
+    def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
+        return _DecoratingContext(self.inner.new_context(policy), self.decorate)

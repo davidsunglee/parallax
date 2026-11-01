@@ -28,7 +28,6 @@ from parallax.core.db_port import (
     PoolMeasurements,
     PoolUnavailable,
 )
-from parallax.postgres._options import PoolOptions
 from parallax.postgres._pool_metrics import PostgresPoolMetrics
 from parallax.postgres._runtime import PostgresRuntime
 
@@ -79,7 +78,7 @@ class _StatsPool:
 
 
 def _source(pool: _StatsPool) -> PostgresPoolMetrics:
-    return PostgresPoolMetrics(pool)
+    return PostgresPoolMetrics(pool, "writer")
 
 
 def _available(pool: _StatsPool) -> PoolMeasurements:
@@ -284,19 +283,20 @@ def test_a_sample_already_reading_when_detachment_happens_completes() -> None:
 def _runtime(pool: _StatsPool) -> PostgresRuntime:
     from parallax.postgres._connection import ConnectionEstablishment
 
-    return PostgresRuntime(cast("Any", pool), PoolOptions(), ConnectionEstablishment())
+    return PostgresRuntime(cast("Any", pool), ConnectionEstablishment(), acquire_timeout=15.0)
 
 
-def test_a_runtime_publishes_one_source_that_stays_the_same_object() -> None:
+def test_a_runtime_publishes_one_writer_source_that_stays_the_same_object() -> None:
     # Stable identity is what lets an exporter hold it: a close changes the
     # ANSWER rather than which object answers.
     runtime = _runtime(_StatsPool())
-    before = runtime.pool_metrics
+    (before,) = runtime.pool_metrics
 
     runtime.close()
 
-    assert before is not None
-    assert runtime.pool_metrics is before
+    assert before.route == "writer"
+    assert runtime.pool_metrics == (before,)
+    assert runtime.pool_metrics[0] is before
 
 
 def test_the_source_detaches_before_the_native_close_even_when_that_close_fails() -> None:
@@ -310,7 +310,7 @@ def test_the_source_detaches_before_the_native_close_even_when_that_close_fails(
         def close(self) -> None:
             super().close()
             seen.append(runtime_holder[0].pool_metrics)
-            seen.append(cast("Any", runtime_holder[0].pool_metrics).sample())
+            seen.append(runtime_holder[0].pool_metrics[0].sample())
             raise RuntimeError("the native pool would not close")
 
     runtime_holder: list[PostgresRuntime] = []
@@ -327,8 +327,7 @@ def test_the_source_detaches_before_the_native_close_even_when_that_close_fails(
 def test_a_closed_runtime_takes_no_measurement_however_often_it_is_asked() -> None:
     pool = _StatsPool()
     runtime = _runtime(pool)
-    source = runtime.pool_metrics
-    assert source is not None
+    (source,) = runtime.pool_metrics
     assert isinstance(source.sample(), PoolAvailable)
 
     runtime.close()

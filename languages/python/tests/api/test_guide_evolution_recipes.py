@@ -43,7 +43,7 @@ from parallax.evolution import (
     QueryResultMembershipChanged,
     UnilateralEvolution,
 )
-from parallax.postgres import PostgresAdapter
+from parallax.postgres import PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import Database, TxnContext
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root
@@ -58,7 +58,9 @@ _ADD_THE_GIFT_CARD_COLUMN = ("alter table payment add column card_number varchar
 
 def _release_one_root(profile_run: Any) -> tuple[Database[Any], ServingModel]:
     profile_run.reset(model_of(_RELEASE_1), {})
-    adapter = PostgresAdapter(profile_run.connection_info, credentials=profile_run.credentials)
+    adapter = PostgresAdapter(
+        writer=PostgresEndpoint(profile_run.connection_info, credentials=profile_run.credentials)
+    )
     root, serving = connect_serving(adapter, _RELEASE_1, "release-1")
     own_root(root)
     root.using_database_login().transact(
@@ -132,7 +134,11 @@ def test_an_earlier_edition_sets_aside_rows_a_later_edition_wrote(profile_run: A
     migrate(export_yaml(_RELEASE_1), _RELEASE_2, _run_on_the_database(profile_run))
     earlier = own_root(
         connect_serving(
-            PostgresAdapter(profile_run.connection_info, credentials=profile_run.credentials),
+            PostgresAdapter(
+                writer=PostgresEndpoint(
+                    profile_run.connection_info, credentials=profile_run.credentials
+                )
+            ),
             _RELEASE_1,
             "release-1",
         )[0]

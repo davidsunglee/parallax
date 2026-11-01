@@ -69,22 +69,22 @@ def test_module_path_folds_package_interfaces() -> None:
         own.module_path("parallax-core/src/parallax/core/base/__init__.py") == "parallax.core.base"
     )
     assert (
-        own.module_path("parallax-core/src/parallax/core/_execution/_read_policy.py")
-        == "parallax.core._execution._read_policy"
+        own.module_path("parallax-core/src/parallax/core/_execution/_read_pipeline.py")
+        == "parallax.core._execution._read_pipeline"
     )
 
 
 def test_owning_scopes_returns_the_chain_outermost_first() -> None:
     owners = own.owning_scopes(
-        "parallax.core._execution._read_policy", dag.declared_first_party_scopes()
+        "parallax.core._execution._read_pipeline", dag.declared_first_party_scopes()
     )
-    assert owners == ["parallax.core._execution", "parallax.core._execution._read_policy"]
+    assert owners == ["parallax.core._execution", "parallax.core._execution._read_pipeline"]
     # ...and the most specific scope is the file's owner.
-    assert owners[-1] == "parallax.core._execution._read_policy"
+    assert owners[-1] == "parallax.core._execution._read_pipeline"
 
 
 def test_a_declared_child_chain_is_not_an_overlap() -> None:
-    chain = ["parallax.core._execution", "parallax.core._execution._read_policy"]
+    chain = ["parallax.core._execution", "parallax.core._execution._read_pipeline"]
     assert own.is_declared_chain(chain, dag.CHILD_SCOPES)
     assert not own.is_declared_chain(chain, {})
 
@@ -235,11 +235,11 @@ def test_dropping_a_child_declaration_fails(
     tampered = {
         child: declared
         for child, declared in dag.CHILD_SCOPES.items()
-        if child != "parallax.core._execution._read_policy"
+        if child != "parallax.core._execution._read_pipeline"
     }
     monkeypatch.setattr(dag, "CHILD_SCOPES", tampered)
     assert own.main([]) == 1
-    assert "_read_policy.py" in capsys.readouterr().err
+    assert "_read_pipeline.py" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------
@@ -444,16 +444,16 @@ _INTRUDER = "parallax-aws/src/parallax/aws/_intruder.py"
 _ABSOLUTE = (
     '"""Written by a test: the provider reaching the slice that composes an adapter."""\n'
     "\n"
-    "from parallax.aws.postgres import rds_postgres\n"
+    "from parallax.aws.postgres import rds_endpoint\n"
     "\n"
-    "_ = rds_postgres\n"
+    "_ = rds_endpoint\n"
 )
 _RELATIVE = (
     '"""Written by a test: the same import, spelled relatively."""\n'
     "\n"
-    "from .postgres import rds_postgres\n"
+    "from .postgres import rds_endpoint\n"
     "\n"
-    "_ = rds_postgres\n"
+    "_ = rds_endpoint\n"
 )
 _ABSOLUTE_PACKAGE = (
     '"""Written by a test: the slice itself, by its dotted path."""\n'
@@ -697,7 +697,7 @@ def test_sealing_a_scope_that_reaches_its_parent_today_would_fail(
     "statement",
     [
         "from parallax.core._execution import _root",
-        "from parallax.core._execution._read_policy import StandaloneRead",
+        "from parallax.core._execution._read_pipeline import StandaloneRead",
     ],
 )
 def test_model_publication_seal_refuses_parent_and_sibling_imports(
@@ -750,12 +750,12 @@ def test_exemption_for_an_owned_file_fails(
 ) -> None:
     # An exemption kept alive after a scope grew to cover the file is dead weight
     # that hides which scope actually owns it.
-    owned = "parallax-core/src/parallax/core/_execution/_read_policy.py"
+    owned = "parallax-core/src/parallax/core/_execution/_read_pipeline.py"
     monkeypatch.setattr(own, "EXEMPTIONS", {**own.EXEMPTIONS, owned: "stale justification"})
     assert own.main([]) == 1
     err = capsys.readouterr().err
     assert "no longer describe the tree" in err
-    assert "now owned by parallax.core._execution._read_policy" in err
+    assert "now owned by parallax.core._execution._read_pipeline" in err
 
 
 # --------------------------------------------------------------------------

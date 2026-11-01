@@ -5,31 +5,33 @@ Parallax's AWS credential providers: the sole declarer of `botocore`. See
 
 ## Authenticating an RDS Postgres login with IAM
 
-Install the `postgres` extra — `pip install parallax-aws[postgres]` — and the
-whole story is one call:
+Install the `postgres` extra — `pip install parallax-aws[postgres]` — and each
+endpoint is one call:
 
 ```python
-from parallax.aws.postgres import rds_postgres
-from parallax.postgres import PoolOptions
+from parallax.aws.postgres import rds_endpoint
+from parallax.postgres import PoolOptions, PostgresAdapter
 from parallax.snapshot import connect
 
-adapter = rds_postgres(
+writer = rds_endpoint(
     host="orders.cluster-abc.us-east-1.rds.amazonaws.com",
     user="orders_service",
     database="orders",
     region="us-east-1",
     pool=PoolOptions(min_size=2, max_size=20),
 )
-with connect(adapter, model) as root:
+with connect(PostgresAdapter(writer=writer), model) as root:
     ...
 ```
 
-What comes back is the ordinary `PostgresAdapter`, configured — nothing sits
-between the application and the adapter at runtime, and nothing was resolved or
-opened to build it. The factory is where three things are stated once, so no
-deployment has to remember them: the connection is encrypted, the token is
-signed for the host, port and user the connection then uses, and the endpoint to
-sign for is the one the application connects through.
+What comes back is the ordinary `PostgresEndpoint`, configured, and the
+application composes the adapter around it — nothing sits between the
+application and the adapter at runtime, and nothing was resolved or opened to
+build it. The factory is where three things are stated once, so no deployment
+has to remember them: the connection is encrypted, the token is signed for the
+host, port and user the endpoint's connections then use, and the endpoint to
+sign for is the one the application connects through — so each endpoint signs
+for its own host.
 
 `params` keeps the rest of libpq's grammar open — `application_name`,
 `options`, `connect_timeout`, and `sslrootcert` with an `sslmode` of
@@ -51,14 +53,12 @@ directly, and a deployment on another engine installs this package without the
 
 ```python
 from parallax.aws import RdsIamCredentials
-from parallax.postgres import PostgresAdapter
+from parallax.postgres import PostgresEndpoint
 
-endpoint = "orders.cluster-abc.us-east-1.rds.amazonaws.com"
-adapter = PostgresAdapter(
-    f"postgresql://orders_service@{endpoint}:5432/orders?sslmode=require",
-    credentials=RdsIamCredentials(
-        host=endpoint, port=5432, user="orders_service", region="us-east-1"
-    ),
+host = "orders.cluster-abc.us-east-1.rds.amazonaws.com"
+writer = PostgresEndpoint(
+    f"postgresql://orders_service@{host}:5432/orders?sslmode=require",
+    credentials=RdsIamCredentials(host=host, port=5432, user="orders_service", region="us-east-1"),
 )
 ```
 

@@ -144,12 +144,16 @@ def test_a_startup_that_cannot_reach_a_server_publishes_no_handle(profile_run: A
     # at is a composition failure rather than a handle that fails later.
     del profile_run  # the fixture is what admits this test to the database lane
     from parallax.core.db_port import DRIVER_MANAGED, DatabaseStartupError
-    from parallax.postgres import PostgresAdapter
+    from parallax.postgres import PostgresAdapter, PostgresEndpoint
 
     unreachable = PostgresAdapter(
-        "host=127.0.0.1 port=1 dbname=absent connect_timeout=1",
-        credentials=DRIVER_MANAGED,
-        pool=PoolOptions(min_size=0, max_size=1, startup_timeout=5.0, acquire_timeout=2.0),
+        writer=PostgresEndpoint(
+            "host=127.0.0.1 port=1 dbname=absent connect_timeout=1",
+            credentials=DRIVER_MANAGED,
+            pool=PoolOptions(min_size=0, max_size=1),
+        ),
+        startup_timeout=5.0,
+        acquire_timeout=2.0,
     )
 
     with pytest.raises(DatabaseStartupError) as failed:
@@ -185,7 +189,7 @@ def test_an_exhausted_delivery_gives_its_slot_back_before_its_scope_ends(
     # exhausted delivery released where it ended.
     _seeded(profile_run)
     with connect(
-        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=2.0)),
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1), acquire_timeout=2.0),
         _ACCOUNT,
     ) as _root_db:
         db = _root_db.using_database_login()
@@ -199,7 +203,7 @@ def test_an_independent_read_uses_the_only_slot_between_delivery_pages(profile_r
     # the consuming loop can use the only slot before the next page asks for it.
     _seeded(profile_run)
     with connect(
-        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=1.0)),
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1), acquire_timeout=1.0),
         _ACCOUNT,
     ) as _root_db:
         db = _root_db.using_database_login()
@@ -255,7 +259,7 @@ def test_an_independent_transaction_needs_a_slot_of_its_own(profile_run: Any) ->
 def test_typed_and_wire_operations_have_the_same_lifetimes(profile_run: Any) -> None:
     _seeded(profile_run)
     with connect(
-        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=2.0)),
+        profile_run.configured(pool=PoolOptions(min_size=1, max_size=1), acquire_timeout=2.0),
         _ACCOUNT,
     ) as _root_db:
         db = _root_db.using_database_login()
@@ -575,7 +579,7 @@ def test_every_documented_retention_form_opens_against_a_real_server(profile_run
     _seeded(profile_run)
     configured = profile_run.configured()
     forms = database_pooling_stories.every_retention_form_is_one_configuration_value(
-        configured.connection_string, configured.credentials
+        configured.writer.connection_string, configured.writer.credentials
     )
 
     for adapter in (forms.default, forms.tuned, forms.zero_minimum, forms.on_demand):

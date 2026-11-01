@@ -242,7 +242,7 @@ def _attempt_failure_fields(
     return fields
 
 
-type _NoPayload = StreamBatchStarted | AcquisitionStarted | ReleaseStarted
+type _NoPayload = StreamBatchStarted | ReleaseStarted
 type _Completed = ReadCompleted | FlushCompleted | StreamBatchCompleted
 type _Committed = OuterInvocationCommitted | AttemptCommitted
 type _ActivityFailed = (
@@ -252,6 +252,12 @@ type _ActivityFailed = (
 
 def _no_fields(_event: _NoPayload, _detail: LifecycleLogDetail) -> dict[str, object]:
     return {}
+
+
+def _acquisition_started_fields(
+    event: AcquisitionStarted, _detail: LifecycleLogDetail
+) -> dict[str, object]:
+    return {"route_policy": event.route_policy}
 
 
 def _read_started_fields(event: ReadStarted, _detail: LifecycleLogDetail) -> dict[str, object]:
@@ -441,7 +447,13 @@ def _cleanup_fields(result: CleanupResult | None) -> dict[str, object]:
 
 
 def _acquired_fields(event: AcquisitionFinished, _detail: LifecycleLogDetail) -> dict[str, object]:
-    return {"outcome": "acquired", "duration_ns": event.duration_ns}
+    outcome = cast(ConnectionAcquired, event.outcome)
+    return {
+        "outcome": "acquired",
+        "route": outcome.route,
+        "fallback": outcome.fallback,
+        "duration_ns": event.duration_ns,
+    }
 
 
 def _acquisition_failed_fields(
@@ -451,6 +463,8 @@ def _acquisition_failed_fields(
     return {
         "outcome": "failed",
         "reason": outcome.reason,
+        "route": outcome.route,
+        "fallback": outcome.fallback,
         **_failure_fields(outcome.failure, detail),
         **_cleanup_fields(outcome.cleanup_result),
         "duration_ns": event.duration_ns,
@@ -767,7 +781,9 @@ def _started_projection(event: ActivityStarted) -> _Projected[Any]:
             projected = _Projected(logging.DEBUG, "streamBatchStarted", False, event, _no_fields)
             return projected
         case AcquisitionStarted():
-            projected = _Projected(logging.DEBUG, "acquisitionStarted", False, event, _no_fields)
+            projected = _Projected(
+                logging.DEBUG, "acquisitionStarted", False, event, _acquisition_started_fields
+            )
             return projected
         case ReleaseStarted():
             projected = _Projected(logging.DEBUG, "releaseStarted", False, event, _no_fields)

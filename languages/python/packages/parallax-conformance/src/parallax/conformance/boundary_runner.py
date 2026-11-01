@@ -35,6 +35,10 @@ from parallax.core.db_port import (
     PipelineStatement,
     PoolMetricsSource,
     ReleaseUnconfirmed,
+    Route,
+    RouteCapabilities,
+    RoutePolicy,
+    RouteSelection,
     Row,
     StatementFailed,
     StatementNotExecuted,
@@ -623,7 +627,8 @@ class ResourceFaultingContext:
     non-idle checkout reaches — a connection was taken, found unusable, disposed
     of deliberately, and then refused — so it answers ``Invalidated`` on
     :attr:`cleanup_result` and raises the ``preparation_failed`` acquisition
-    error the real path raises.
+    error the real path raises, on the writer route the shipped adapter's one
+    endpoint serves.
 
     A ``release`` fault lets the inner context do its whole job first, so the
     real connection genuinely goes back, and then reports ``ReleaseUnconfirmed``
@@ -646,11 +651,17 @@ class ResourceFaultingContext:
         self._persistent = persistent
         self._state = state
         self._injected: CleanupResult | None = None
+        self._refused: RouteSelection | None = None
 
     @property
     def cleanup_result(self) -> CleanupResult | None:
         injected = self._injected
         return self._inner.cleanup_result if injected is None else injected
+
+    @property
+    def selection(self) -> RouteSelection | None:
+        refused = self._refused
+        return self._inner.selection if refused is None else refused
 
     def __enter__(self) -> DatabaseConnection:
         if self._seam == "acquisition" and self._armed():
@@ -666,10 +677,12 @@ class ResourceFaultingContext:
                     ),
                 )
             )
+            self._refused = RouteSelection("writer")
             raise ConnectionAcquisitionError(
                 "the database runtime handed over a connection whose state is INTRANS rather "
                 "than idle, so no statement was run on it",
                 reason="preparation_failed",
+                selection=self._refused,
             )
         return self._inner.__enter__()
 
@@ -714,9 +727,9 @@ class _ResourceFaultingSource:
     persistent: bool
     state: _FaultState
 
-    def new_context(self) -> ConnectionContext:
+    def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
         return ResourceFaultingContext(
-            self.inner.new_context(),
+            self.inner.new_context(policy),
             seam=self.seam,
             persistent=self.persistent,
             state=self.state,
@@ -742,24 +755,28 @@ class _ResourceFaultingRuntime[Authorization]:
         return self._inner.dialect
 
     @property
-    def pool_metrics(self) -> PoolMetricsSource | None:
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        return self._inner.routes
+
+    @property
+    def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
         return self._inner.pool_metrics
 
     @property
     def login_identity(self) -> str:
         return self._inner.login_identity
 
-    def login_execution(self) -> ConnectionContextSource:
+    def login_source(self) -> ConnectionContextSource:
         return _ResourceFaultingSource(
-            self._inner.login_execution(),
+            self._inner.login_source(),
             seam=self._seam,
             persistent=self._persistent,
             state=self._state,
         )
 
-    def principal_execution(self, authorization: Authorization) -> ConnectionContextSource:
+    def principal_source(self, authorization: Authorization) -> ConnectionContextSource:
         return _ResourceFaultingSource(
-            self._inner.principal_execution(authorization),
+            self._inner.principal_source(authorization),
             seam=self._seam,
             persistent=self._persistent,
             state=self._state,

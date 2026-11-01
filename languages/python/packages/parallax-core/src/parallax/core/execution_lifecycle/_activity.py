@@ -22,6 +22,8 @@ from parallax.core.db_port import (
     OrderedWriteResult,
     OrderedWriteResultComplete,
     RollbackTrigger,
+    RoutePolicy,
+    RouteSelection,
     StatementFailed,
     StatementNotExecuted,
 )
@@ -429,10 +431,10 @@ class ConnectionAcquisitionActivity(Protocol):
     children, and what the operation asked the adapter for is one more thing it
     did. Nothing opens inside this scope.
 
-    Success is the default and needs no announcement — leaving the scope
-    normally is an acquisition that was granted. A failed one announces the
-    cleanup its own partial ownership already ran, which is the one fact the
-    scope cannot read off the exception.
+    Either ending announces the route the adapter selected, which the scope
+    cannot read off the way it is left. A failed acquisition also announces
+    the cleanup its own partial ownership already ran, which is the one other
+    fact the scope cannot read off the exception.
     """
 
     def __enter__(self) -> ConnectionAcquisitionActivity: ...
@@ -456,9 +458,16 @@ class ConnectionAcquisitionActivity(Protocol):
         """
         ...
 
-    def unacquired(self, cleanup_result: CleanupResult | None, /) -> None:
+    def acquired(self, selection: RouteSelection | None, /) -> None:
+        """The route a granted acquisition was served on."""
+        ...
+
+    def unacquired(
+        self, cleanup_result: CleanupResult | None, selection: RouteSelection | None, /
+    ) -> None:
         """What the cleanup a failed acquisition already ran ESTABLISHED, or
-        ``None`` where it never owned anything to clean up."""
+        ``None`` where it never owned anything to clean up, and the route whose
+        failure was terminal, or ``None`` where none was selected."""
         ...
 
     @property
@@ -532,8 +541,9 @@ class ConnectionOwnerActivity(Protocol):
     connection and owns no lease of its own.
     """
 
-    def acquisition(self) -> ConnectionAcquisitionActivity:
-        """The scope this activity's one acquisition runs inside."""
+    def acquisition(self, route_policy: RoutePolicy, /) -> ConnectionAcquisitionActivity:
+        """The scope this activity's one acquisition, requesting
+        ``route_policy``, runs inside."""
         ...
 
     def release(self, held_since_ns: int | None, /) -> ConnectionReleaseActivity:
@@ -835,7 +845,7 @@ class _InertActivity:
     def attempt(self, edition: str, /) -> _InertActivity:
         return self
 
-    def acquisition(self) -> _InertActivity:
+    def acquisition(self, route_policy: RoutePolicy, /) -> _InertActivity:
         return self
 
     def release(self, held_since_ns: int | None, /) -> _InertActivity:
@@ -859,7 +869,11 @@ class _InertActivity:
 
     def call_returned(self) -> None: ...
 
-    def unacquired(self, cleanup_result: CleanupResult | None, /) -> None: ...
+    def acquired(self, selection: RouteSelection | None, /) -> None: ...
+
+    def unacquired(
+        self, cleanup_result: CleanupResult | None, selection: RouteSelection | None, /
+    ) -> None: ...
 
     def released(self, cleanup_result: CleanupResult | None, /) -> None: ...
 
@@ -1231,8 +1245,8 @@ class _LiveConnectionOwner(_LiveActivity):
 
     __slots__ = ()
 
-    def acquisition(self) -> _LiveAcquisition:
-        return _LiveAcquisition(self._publisher, self)
+    def acquisition(self, route_policy: RoutePolicy, /) -> _LiveAcquisition:
+        return _LiveAcquisition(self._publisher, self, route_policy)
 
     def release(self, held_since_ns: int | None, /) -> ConnectionReleaseActivity:
         if held_since_ns is None:
@@ -1448,14 +1462,26 @@ class _LiveAcquisition(_LiveActivity):
     adapter ran over whatever it had taken.
     """
 
-    __slots__ = ("_cleanup_result", "_completed_ns", "_held_since_ns", "_reported", "_started_ns")
+    __slots__ = (
+        "_cleanup_result",
+        "_completed_ns",
+        "_held_since_ns",
+        "_reported",
+        "_route_policy",
+        "_selection",
+        "_started_ns",
+    )
 
-    def __init__(self, publisher: _Publisher, parent: _LiveActivity) -> None:
+    def __init__(
+        self, publisher: _Publisher, parent: _LiveActivity, route_policy: RoutePolicy
+    ) -> None:
         super().__init__(publisher, parent)
+        self._route_policy: RoutePolicy = route_policy
         self._started_ns = 0
         self._completed_ns = 0
         self._held_since_ns: int | None = None
         self._cleanup_result: CleanupResult | None = None
+        self._selection: RouteSelection | None = None
         self._reported = False
 
     @property
@@ -1470,8 +1496,14 @@ class _LiveAcquisition(_LiveActivity):
         if self._publisher.active:
             self._completed_ns = time.perf_counter_ns()
 
-    def unacquired(self, cleanup_result: CleanupResult | None, /) -> None:
+    def acquired(self, selection: RouteSelection | None, /) -> None:
+        self._selection = selection
+
+    def unacquired(
+        self, cleanup_result: CleanupResult | None, selection: RouteSelection | None, /
+    ) -> None:
         self._cleanup_result = cleanup_result
+        self._selection = selection
 
     def __enter__(self) -> _LiveAcquisition:
         publisher = self._publisher
@@ -1484,6 +1516,7 @@ class _LiveAcquisition(_LiveActivity):
                 publisher.take_sequence(),
                 self._activity_id,
                 self._parent_activity_id,
+                self._route_policy,
             )
         )
         if publisher.active:
@@ -1503,7 +1536,11 @@ class _LiveAcquisition(_LiveActivity):
         completed_ns = self._completed_ns
         self._held_since_ns = completed_ns
         duration_ns = completed_ns - self._started_ns
+        selection = self._selection
         if exc is None:
+            # A granted lease always landed on a route; a context reporting
+            # none served the only one every runtime declares.
+            granted = selection if selection is not None else RouteSelection("writer")
             publisher.deliver(
                 AcquisitionFinished(
                     publisher.execution_id,
@@ -1511,7 +1548,7 @@ class _LiveAcquisition(_LiveActivity):
                     self._activity_id,
                     self._parent_activity_id,
                     duration_ns,
-                    ConnectionAcquired(),
+                    ConnectionAcquired(granted.route, granted.fallback),
                 )
             )
             return
@@ -1527,7 +1564,13 @@ class _LiveAcquisition(_LiveActivity):
                 self._activity_id,
                 self._parent_activity_id,
                 duration_ns,
-                AcquisitionFailed(_acquisition_reason(exc), self._propagated(exc), cleanup_result),
+                AcquisitionFailed(
+                    _acquisition_reason(exc),
+                    self._propagated(exc),
+                    cleanup_result,
+                    None if selection is None else selection.route,
+                    None if selection is None else selection.fallback,
+                ),
             )
         )
         self._reported = delivered and cleanup_result is not None

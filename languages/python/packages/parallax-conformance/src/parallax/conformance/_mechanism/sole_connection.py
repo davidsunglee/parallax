@@ -8,7 +8,7 @@ what its statements and transactions mean.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Final, Protocol, cast
@@ -26,6 +26,10 @@ from parallax.core.db_port import (
     PoolMetricsSource,
     Returned,
     RolledBack,
+    Route,
+    RouteCapabilities,
+    RoutePolicy,
+    RouteSelection,
     Row,
     TransactionOutcome,
 )
@@ -46,9 +50,17 @@ _RETURNED: Final[CleanupResult] = Returned()
 STAND_IN_LOGIN: Final = "test-login"
 """The login identity every stand-in runtime reports."""
 
+_ROUTES: Final[Mapping[Route, RouteCapabilities]] = {"writer": RouteCapabilities.every_level()}
+"""The one route a stand-in serves, at every read-only level."""
+
+_SERVED: Final = RouteSelection("writer")
+"""Where every stand-in acquisition lands."""
+
 
 class _BindsContexts(Protocol):
-    def new_bound_context(self, authorization: object | None) -> ConnectionContext: ...
+    def new_bound_context(
+        self, authorization: object | None, policy: RoutePolicy
+    ) -> ConnectionContext: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +70,8 @@ class BoundContextSource:
     runtime: _BindsContexts
     authorization: object | None = None
 
-    def new_context(self) -> ConnectionContext:
-        return self.runtime.new_bound_context(self.authorization)
+    def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
+        return self.runtime.new_bound_context(self.authorization, policy)
 
 
 class SoleConnectionScope:
@@ -73,17 +85,23 @@ class SoleConnectionScope:
     the moment it is left, and nothing before that.
     """
 
-    __slots__ = ("_connection", "_left")
+    __slots__ = ("_connection", "_entered", "_left")
 
     def __init__(self, connection: DatabaseConnection) -> None:
         self._connection = connection
+        self._entered = False
         self._left = False
 
     @property
     def cleanup_result(self) -> CleanupResult | None:
         return _RETURNED if self._left else None
 
+    @property
+    def selection(self) -> RouteSelection | None:
+        return _SERVED if self._entered else None
+
     def __enter__(self) -> DatabaseConnection:
+        self._entered = True
         return self._connection
 
     def __exit__(
@@ -110,21 +128,27 @@ class SoleConnectionRuntime:
         return self._connection.dialect
 
     @property
-    def pool_metrics(self) -> PoolMetricsSource | None:
-        return None
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        return _ROUTES
+
+    @property
+    def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
+        return ()
 
     @property
     def login_identity(self) -> str:
         return STAND_IN_LOGIN
 
-    def login_execution(self) -> ConnectionContextSource:
+    def login_source(self) -> ConnectionContextSource:
         return BoundContextSource(self)
 
-    def principal_execution(self, authorization: object) -> ConnectionContextSource:
+    def principal_source(self, authorization: object) -> ConnectionContextSource:
         return BoundContextSource(self, authorization)
 
-    def new_bound_context(self, authorization: object | None) -> ConnectionContext:
-        del authorization
+    def new_bound_context(
+        self, authorization: object | None, policy: RoutePolicy
+    ) -> ConnectionContext:
+        del authorization, policy
         if self.closed:
             raise ConnectionAcquisitionError(
                 "this runtime is closed, so it opens no new connection", reason="closed"

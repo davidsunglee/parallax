@@ -31,11 +31,11 @@ then:
           - sequence: 2
             activity: 2
             parent: 1
-            acquisitionStarted: {}
+            acquisitionStarted: { policy: writer-only }
           - sequence: 3
             activity: 2
             parent: 1
-            acquisitionFinished: { outcome: acquired }
+            acquisitionFinished: { outcome: acquired, route: writer }
           - sequence: 4
             activity: 3
             parent: 1

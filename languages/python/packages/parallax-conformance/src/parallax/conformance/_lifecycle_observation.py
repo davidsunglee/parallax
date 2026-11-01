@@ -13,9 +13,12 @@ from parallax.core.db_port import (
     CleanupIssue,
     CleanupPhase,
     CleanupResult,
+    FallbackReason,
     Invalidated,
     ReleaseUnconfirmed,
     Returned,
+    Route,
+    RoutePolicy,
 )
 from parallax.core.execution_lifecycle import (
     AcquisitionFailed,
@@ -152,6 +155,17 @@ _ACQUISITION_REASON: Final[dict[AcquisitionReason, str]] = {
     "preparation_failed": "preparation-failed",
     "authorization_failed": "authorization-failed",
     "credentials_refused": "credentials-refused",
+}
+
+_ROUTE_POLICY: Final[dict[RoutePolicy, str]] = {
+    "writer_only": "writer-only",
+    "reader_only": "reader-only",
+    "reader_preferred": "reader-preferred",
+}
+
+_FALLBACK_REASON: Final[dict[FallbackReason, str]] = {
+    "unavailable": "unavailable",
+    "connection_lost": "connection-lost",
 }
 
 _CLEANUP_PHASE: Final[dict[CleanupPhase, str]] = {
@@ -567,8 +581,8 @@ def _started(event: ActivityStarted, indexer: _StatementIndexer) -> dict[str, ob
             }
         case StreamBatchStarted():
             return {"streamBatchStarted": {}}
-        case AcquisitionStarted():
-            return {"acquisitionStarted": {}}
+        case AcquisitionStarted(route_policy=route_policy):
+            return {"acquisitionStarted": {"policy": _ROUTE_POLICY[route_policy]}}
         case ReleaseStarted():
             return {"releaseStarted": {}}
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
@@ -780,18 +794,27 @@ def _acquisition_outcome(
 ) -> dict[str, object]:
     """An acquisition's own terminal outcome.
 
-    A failure names WHY no connection was granted and states its attribution,
+    Either ending names the route it landed on, and the fallback that put it
+    there where one did; a failure selected no route where it names none. A
+    failure names WHY no connection was granted and states its attribution,
     which is always direct: an acquisition opens no child, so it has none to
     name. The partial cleanup it may have run rides here rather than on a
     Release, because no hold was granted for a release to end.
     """
     match outcome:
-        case ConnectionAcquired():
-            return {"outcome": "acquired"}
-        case AcquisitionFailed(reason=reason, failure=failure, cleanup_result=cleanup_result):
+        case ConnectionAcquired(route=route, fallback=fallback):
+            return {"outcome": "acquired", **_routed(route, fallback)}
+        case AcquisitionFailed(
+            reason=reason,
+            failure=failure,
+            cleanup_result=cleanup_result,
+            route=route,
+            fallback=fallback,
+        ):
             failed: dict[str, object] = {
                 "outcome": "failed",
                 "reason": _ACQUISITION_REASON[reason],
+                **_routed(route, fallback),
                 **_activity_failure(failure),
             }
             if cleanup_result is not None:
@@ -799,6 +822,13 @@ def _acquisition_outcome(
             return failed
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
+
+
+def _routed(route: Route | None, fallback: FallbackReason | None) -> dict[str, object]:
+    return {
+        **_stated("route", route),
+        **_stated("fallback", None if fallback is None else _FALLBACK_REASON[fallback]),
+    }
 
 
 def _cleanup(result: CleanupResult | None) -> dict[str, object]:

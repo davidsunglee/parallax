@@ -580,15 +580,23 @@ def test_the_resource_records_state_the_classification_and_never_the_native_text
     started, acquired, failed, release_started, released, unheld = _records(
         caplog,
         [
-            AcquisitionStarted(EXECUTION.id, 1, 2, 1),
-            AcquisitionFinished(EXECUTION.id, 2, 2, 1, 11, ConnectionAcquired()),
+            AcquisitionStarted(EXECUTION.id, 1, 2, 1, "reader_preferred"),
+            AcquisitionFinished(
+                EXECUTION.id, 2, 2, 1, 11, ConnectionAcquired("writer", "unavailable")
+            ),
             AcquisitionFinished(
                 EXECUTION.id,
                 3,
                 3,
                 1,
                 12,
-                AcquisitionFailed("timeout", DirectFailure(_DATABASE_FAILURE.failure), partial),
+                AcquisitionFailed(
+                    "timeout",
+                    DirectFailure(_DATABASE_FAILURE.failure),
+                    partial,
+                    "reader",
+                    None,
+                ),
             ),
             ReleaseStarted(EXECUTION.id, 4, 4, 1),
             ReleaseFinished(EXECUTION.id, 5, 4, 1, 13, 14, release_unconfirmed),
@@ -597,10 +605,13 @@ def test_the_resource_records_state_the_classification_and_never_the_native_text
         detail="diagnostic",
     )
     assert started.fields["transition"] == "acquisitionStarted"
+    assert started.fields["route_policy"] == "reader_preferred"
     assert acquired.fields["outcome"] == "acquired"
+    assert (acquired.fields["route"], acquired.fields["fallback"]) == ("writer", "unavailable")
     assert acquired.fields["duration_ns"] == 11
     assert failed.fields["outcome"] == "failed"
     assert failed.fields["reason"] == "timeout"
+    assert (failed.fields["route"], failed.fields["fallback"]) == ("reader", None)
     assert failed.fields["cleanup"] == "invalidated"
     assert failed.fields["cleanup_issues"] == ("inspect/not-idle",)
     assert release_started.fields["transition"] == "releaseStarted"
@@ -855,8 +866,8 @@ def test_the_logger_answers_every_transition_the_algebra_admits(
         StreamFinished(EXECUTION.id, 12, 6, 1, StreamExhausted()),
         StreamBatchStarted(EXECUTION.id, 13, 7, 6),
         StreamBatchFinished(EXECUTION.id, 14, 7, 6, StreamBatchCompleted()),
-        AcquisitionStarted(EXECUTION.id, 15, 8, 1),
-        AcquisitionFinished(EXECUTION.id, 16, 8, 1, 11, ConnectionAcquired()),
+        AcquisitionStarted(EXECUTION.id, 15, 8, 1, "writer_only"),
+        AcquisitionFinished(EXECUTION.id, 16, 8, 1, 11, ConnectionAcquired("writer", None)),
         ReleaseStarted(EXECUTION.id, 17, 9, 1),
         ReleaseFinished(EXECUTION.id, 18, 9, 1, 12, 13, Returned()),
     ]

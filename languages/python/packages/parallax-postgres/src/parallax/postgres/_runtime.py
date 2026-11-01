@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import contextlib
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from time import monotonic
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 import psycopg_pool
@@ -21,6 +23,9 @@ from parallax.core.db_port import (
     InvalidAuthorizationError,
     PoolMetricsSource,
     ReleaseUnconfirmed,
+    Route,
+    RouteCapabilities,
+    RoutePolicy,
     Row,
     StartupPhase,
     report_resource_issues,
@@ -39,6 +44,8 @@ from parallax.postgres._pool_metrics import PostgresPoolMetrics
 
 if TYPE_CHECKING:
     from psycopg_pool.abc import KwargsParam
+
+    from parallax.postgres._endpoint import PostgresEndpoint
 
 __all__ = ["PostgresRuntime", "open_runtime"]
 
@@ -76,6 +83,10 @@ _ROUNDED_FLOATS = (
 
 _CLOSED = "this Database is closed, so it opens no new database connection"
 
+_WRITER_ROUTES: Final[Mapping[Route, RouteCapabilities]] = MappingProxyType(
+    {"writer": RouteCapabilities.every_level()}
+)
+
 
 class _ProbeMismatch(Exception):
     """The probe ran but read back something other than what it asked for."""
@@ -86,30 +97,32 @@ class PostgresRuntime:
 
     Two runtimes built from one configuration share nothing: closing either
     leaves the other working, which is what makes reusing configuration safe.
+    It serves its writer route through one pool.
     """
 
     dialect: Dialect = POSTGRES
 
     __slots__ = (
+        "_acquire_timeout",
         "_admission",
         "_closed",
         "_establishment",
         "_login_identity",
         "_metrics",
-        "_options",
         "_pool",
     )
 
     def __init__(
         self,
         pool: NativePool,
-        options: RetentionOptions,
         establishment: ConnectionEstablishment,
+        *,
+        acquire_timeout: float,
     ) -> None:
         self._pool = pool
-        self._options = options
+        self._acquire_timeout = acquire_timeout
         self._establishment = establishment
-        self._metrics = PostgresPoolMetrics(pool)
+        self._metrics = PostgresPoolMetrics(pool, "writer")
         self._closed = False
         self._login_identity: str | None = None
         # Held only across the two field reads that decide admission, never
@@ -118,15 +131,19 @@ class PostgresRuntime:
         self._admission = threading.Lock()
 
     @property
-    def pool_metrics(self) -> PoolMetricsSource | None:
-        """This runtime's one source, the same object for its whole life.
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        return _WRITER_ROUTES
+
+    @property
+    def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
+        """One source per pool, each the same object for the runtime's whole life.
 
         A pool is what this runtime manages, so there is always something to
-        measure and this is never absent. It stays the same object across the
-        close as well: an exporter holding it keeps a handle that answers
+        measure and this is never empty. Each source stays the same object across
+        the close as well: an exporter holding one keeps a handle that answers
         detached rather than a handle that has gone stale.
         """
-        return self._metrics
+        return (self._metrics,)
 
     @property
     def login_identity(self) -> str:
@@ -142,17 +159,17 @@ class PostgresRuntime:
             raise RuntimeError("the database runtime has already completed startup")
         self._login_identity = login
 
-    def login_execution(self) -> ConnectionContextSource:
+    def login_source(self) -> ConnectionContextSource:
         """Bind execution under the authenticated login without acquiring."""
-        return _PostgresExecutionSource(self, None)
+        return _PostgresContextSource(self, None)
 
-    def principal_execution(self, authorization: PostgresRole) -> ConnectionContextSource:
+    def principal_source(self, authorization: PostgresRole) -> ConnectionContextSource:
         """Bind execution under ``authorization`` without acquiring."""
         if not isinstance(authorization, PostgresRole):  # pyright: ignore[reportUnnecessaryIsInstance] - validates untyped callers at the public boundary
             raise InvalidAuthorizationError(
                 "PostgreSQL principal execution requires a PostgresRole"
             )
-        return _PostgresExecutionSource(self, authorization)
+        return _PostgresContextSource(self, authorization)
 
     def acquisition(self, deadline: float) -> PostgresConnectionContext:
         """A fresh acquisition bounded by ``deadline`` rather than by the ordinary budget.
@@ -162,16 +179,17 @@ class PostgresRuntime:
         acquisition timeout added to it.
         """
         return PostgresConnectionContext(
-            self._pool, self._admit, deadline, self._establishment, None
+            self._pool, self._admit, deadline, self._establishment, None, route="writer"
         )
 
     def _context(self, role: PostgresRole | None) -> PostgresConnectionContext:
         return PostgresConnectionContext(
             self._pool,
             self._admit,
-            monotonic() + self._options.acquire_timeout,
+            monotonic() + self._acquire_timeout,
             self._establishment,
             role,
+            route="writer",
         )
 
     def close(self) -> None:
@@ -226,21 +244,25 @@ class PostgresRuntime:
 
 
 @dataclass(frozen=True, slots=True)
-class _PostgresExecutionSource:
+class _PostgresContextSource:
     runtime: PostgresRuntime
     role: PostgresRole | None
 
-    def new_context(self) -> ConnectionContext:
+    def new_context(self, policy: RoutePolicy, /) -> ConnectionContext:
+        # The runtime declares only its writer, so the one policy core can
+        # resolve against it is `writer_only`.
+        del policy
         return self.runtime._context(self.role)  # pyright: ignore[reportPrivateUsage] - source is runtime-owned
 
 
 def open_runtime(
-    conninfo: str,
-    options: RetentionOptions,
+    writer: PostgresEndpoint,
+    *,
+    acquire_timeout: float,
+    startup_timeout: float,
     prepare_threshold: int | None,
-    credentials: CredentialSource | DriverManaged,
 ) -> PostgresRuntime:
-    """Open one ready runtime over ``conninfo``, or raise having released what it took.
+    """Open one ready runtime over ``writer``, or raise having released what it took.
 
     Every failure below publishes no runtime: the native pool is closed on the
     way out, and a startup connection that was already acquired is released
@@ -248,12 +270,12 @@ def open_runtime(
     what it established, so a disposal or handoff that itself failed is stated
     rather than assumed away.
     """
-    deadline = monotonic() + options.startup_timeout
+    deadline = monotonic() + startup_timeout
     establishment = ConnectionEstablishment()
-    pool = _build_pool(conninfo, options, prepare_threshold, establishment, credentials)
-    runtime = PostgresRuntime(pool, options, establishment)
+    pool = _build_pool(writer, acquire_timeout, prepare_threshold, establishment)
+    runtime = PostgresRuntime(pool, establishment, acquire_timeout=acquire_timeout)
     try:
-        _await_minimum(pool, options, deadline, establishment)
+        _await_minimum(pool, writer.pool, deadline, establishment)
         runtime._complete_startup(_probe(runtime, deadline))  # pyright: ignore[reportPrivateUsage] - module-owned startup transition
     except BaseException:
         with contextlib.suppress(Exception):
@@ -263,11 +285,10 @@ def open_runtime(
 
 
 def _build_pool(
-    conninfo: str,
-    options: RetentionOptions,
+    endpoint: PostgresEndpoint,
+    acquire_timeout: float,
     prepare_threshold: int | None,
     establishment: ConnectionEstablishment,
-    credentials: CredentialSource | DriverManaged,
 ) -> NativePool:
     """Create and open the native pool this runtime manages.
 
@@ -295,6 +316,9 @@ def _build_pool(
     submission instead, which the connection context replaces where that
     submission can be repeated.
     """
+    conninfo = endpoint.connection_string
+    options = endpoint.pool
+    credentials: CredentialSource | DriverManaged = endpoint.credentials
     base: dict[str, object] = {**CONNECT_KWARGS, "prepare_threshold": prepare_threshold}
     kwargs: KwargsParam = (
         base
@@ -310,7 +334,7 @@ def _build_pool(
             configure=establishment,
             min_size=options.min_size,
             max_size=options.max_size,
-            timeout=options.acquire_timeout,
+            timeout=acquire_timeout,
             max_waiting=options.max_waiting,
             max_idle=options.max_idle,
             max_lifetime=options.max_lifetime,
@@ -324,7 +348,7 @@ def _build_pool(
             open=False,
             configure=establishment,
             max_size=options.max_size,
-            timeout=options.acquire_timeout,
+            timeout=acquire_timeout,
             max_waiting=options.max_waiting,
             max_lifetime=options.max_lifetime,
             reconnect_timeout=options.reconnect_timeout,

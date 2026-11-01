@@ -31,10 +31,10 @@ class _NoRows(ConnectsAsItself):
 
 def test_a_closed_runtime_refuses_a_new_acquisition() -> None:
     runtime = _NoRows().open()
-    execution = runtime.login_execution()
+    execution = runtime.login_source()
     runtime.close()
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
-        execution.new_context()
+        execution.new_context("writer_only")
 
     assert refused.value.reason == "closed"

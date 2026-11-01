@@ -5,7 +5,15 @@ from typing import Literal
 from uuid import UUID
 
 from parallax.core._execution._unit_work.uow import Concurrency, FlushTrigger
-from parallax.core.db_port import AccessMode, AcquisitionReason, CleanupResult, IsolationLevel
+from parallax.core.db_port import (
+    AccessMode,
+    AcquisitionReason,
+    CleanupResult,
+    FallbackReason,
+    IsolationLevel,
+    Route,
+    RoutePolicy,
+)
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
@@ -536,9 +544,14 @@ class ConnectionAcquired:
     """Exclusive use of a connection was granted to the activity that asked.
 
     It names what was established rather than repeating the activity's name: an
-    acquisition that ends any other way ended without one. It carries nothing —
-    which connection, and what it is, are the adapter's own and never leave it.
+    acquisition that ends any other way ended without one. It carries the
+    portable routing role the lease landed on and the fallback that put it
+    there, never connection identity — which connection, where it is, and what
+    it is are the adapter's own and never leave it.
     """
+
+    route: Route
+    fallback: FallbackReason | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -554,11 +567,17 @@ class AcquisitionFailed:
     ran ESTABLISHED, and ``None`` where the attempt never reached ownership of
     anything to clean up. It rides here rather than on a Release, because no
     scope was granted: a Release would claim a hold that never existed.
+
+    ``route`` is the route whose failure was terminal and ``fallback`` any
+    fallback taken on the way to it; ``route`` is ``None`` where the
+    acquisition was refused before any route was selected.
     """
 
     reason: AcquisitionReason
     failure: ActivityFailure
     cleanup_result: CleanupResult | None
+    route: Route | None
+    fallback: FallbackReason | None
 
 
 type AcquisitionOutcome = ConnectionAcquired | AcquisitionFailed
@@ -569,11 +588,14 @@ type AcquisitionOutcome = ConnectionAcquired | AcquisitionFailed
 class AcquisitionStarted(_Event):
     """The activity that owns this operation's connection is asking for one.
 
-    It carries no field: which activity is asking reads off the correlation
-    envelope, and everything about the connection itself — its pool, its
-    identity, its configuration — belongs to the adapter and never becomes
-    observable here.
+    ``route_policy`` is the routing role the acquisition requested — the
+    operation's own, or ``writer_only`` once it has fallen back. Which activity
+    is asking reads off the correlation envelope, and everything about the
+    connection itself — its pool, its identity, its configuration — belongs to
+    the adapter and never becomes observable here.
     """
+
+    route_policy: RoutePolicy
 
 
 @dataclass(frozen=True, slots=True)

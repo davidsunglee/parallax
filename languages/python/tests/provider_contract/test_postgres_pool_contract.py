@@ -54,7 +54,7 @@ def _runtime(profile_run: Any, **options: Any) -> Any:
 
 
 def _context(runtime: Any) -> Any:
-    return runtime.login_execution().new_context()
+    return runtime.login_source().new_context("writer_only")
 
 
 # --------------------------------------------------------------------------- #
@@ -89,7 +89,7 @@ def test_a_retaining_runtime_reuses_the_connection_it_kept(profile_run: Any) -> 
 def test_capacity_bounds_how_many_scopes_are_open_at_once(profile_run: Any) -> None:
     # Two scopes at a capacity of two are two DIFFERENT sessions; the third
     # waits for one of them rather than opening a connection past the ceiling.
-    runtime = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=2, acquire_timeout=1.0))
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=2), acquire_timeout=1.0)
     try:
         with _context(runtime) as first, _context(runtime) as second:
             assert _backend_pid(first) != _backend_pid(second)
@@ -109,7 +109,8 @@ def test_a_bounded_queue_refuses_a_further_waiter_rather_than_holding_it(
 ) -> None:
     runtime = _runtime(
         profile_run,
-        pool=PoolOptions(min_size=0, max_size=1, max_waiting=1, acquire_timeout=2.0),
+        pool=PoolOptions(min_size=0, max_size=1, max_waiting=1),
+        acquire_timeout=2.0,
     )
     refusals: list[str] = []
 
@@ -189,7 +190,7 @@ def test_an_on_demand_runtime_keeps_no_idle_connection(profile_run: Any) -> None
 
 @pytest.mark.adapter_smoke
 def test_an_on_demand_runtime_still_bounds_concurrency(profile_run: Any) -> None:
-    runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=1, acquire_timeout=1.0))
+    runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=1), acquire_timeout=1.0)
     try:
         with _context(runtime), pytest.raises(ConnectionAcquisitionError) as refused:
             _context(runtime).__enter__()
@@ -212,8 +213,8 @@ def test_on_demand_establishment_takes_its_limit_from_the_acquisition_budget(
     # establishment against a real server.
     from psycopg.conninfo import conninfo_to_dict
 
-    configured = profile_run.configured(pool=OnDemandOptions(max_size=1, acquire_timeout=5.0))
-    assert "connect_timeout" not in conninfo_to_dict(configured.connection_string)
+    configured = profile_run.configured(pool=OnDemandOptions(max_size=1), acquire_timeout=5.0)
+    assert "connect_timeout" not in conninfo_to_dict(configured.writer.connection_string)
     runtime = configured.open()
     try:
         with _context(runtime) as scoped:
@@ -231,7 +232,7 @@ def test_an_on_demand_release_goes_straight_to_a_borrower_already_waiting(
     # What makes it deterministic is the ordering: capacity is released only
     # once the borrower is queued, so the connection it gets can only be the one
     # released rather than one established for it afterwards.
-    runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=1, acquire_timeout=10.0))
+    runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=1), acquire_timeout=10.0)
     handed: list[int] = []
 
     def wait_for_the_handoff() -> None:
@@ -265,8 +266,8 @@ def _wait_until_queued(runtime: Any) -> None:
     neutral publication of exactly this: queue depth, taken without a
     connection and without a statement.
     """
-    source = runtime.pool_metrics
-    assert source is not None
+    (source,) = runtime.pool_metrics
+    assert source.route == "writer"
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
         sample = source.sample()
@@ -468,7 +469,7 @@ def test_the_driver_managed_declaration_asks_nothing_and_lets_libpq_authenticate
     configured = profile_run.configured(
         credentials=DRIVER_MANAGED, pool=OnDemandOptions(max_size=1)
     )
-    assert "password" not in conninfo_to_dict(configured.connection_string)
+    assert "password" not in conninfo_to_dict(configured.writer.connection_string)
 
     runtime = configured.open()
     try:
@@ -526,7 +527,7 @@ def test_a_retained_runtime_whose_source_refuses_fails_startup_naming_the_refusa
         profile_run.credentials, error=RuntimeError(f"could not sign for {_SIGNING_SECRET}")
     )
     configured = profile_run.configured(
-        credentials=source, pool=PoolOptions(min_size=1, max_size=1, startup_timeout=2.0)
+        credentials=source, pool=PoolOptions(min_size=1, max_size=1), startup_timeout=2.0
     )
 
     with (
@@ -560,7 +561,8 @@ def test_a_retained_runtime_that_cannot_replace_a_connection_reports_the_refusal
     source = _RefusingAfter(profile_run.credentials, successes=1)
     runtime = profile_run.configured(
         credentials=source,
-        pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=2.0),
+        pool=PoolOptions(min_size=1, max_size=1),
+        acquire_timeout=2.0,
     ).open()
     try:
         _over_an_ended_session(profile_run, runtime)
@@ -1012,8 +1014,8 @@ def _grade_model() -> tuple[Any, Any]:
 
 
 def _measurements(runtime: Any) -> Any:
-    source = runtime.pool_metrics
-    assert source is not None
+    (source,) = runtime.pool_metrics
+    assert source.route == "writer"
     sample = source.sample()
     assert isinstance(sample, PoolAvailable), sample
     return sample.measurements
@@ -1045,7 +1047,7 @@ def test_sampling_takes_no_connection_and_runs_no_statement(profile_run: Any) ->
     # slot HELD, still answers — so the reading took no connection, since there
     # was none to take. And the checkout counter is unchanged across the
     # reading — so the reading was not itself a caller.
-    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=1.0))
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1), acquire_timeout=1.0)
     try:
         with _context(runtime) as held:
             assert _backend_pid(held)
@@ -1096,13 +1098,13 @@ def test_an_on_demand_runtime_keeps_no_idle_inventory_to_report(profile_run: Any
 @pytest.mark.adapter_smoke
 def test_a_closed_runtime_answers_detached_through_the_same_source(profile_run: Any) -> None:
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
-    source = runtime.pool_metrics
-    assert source is not None
+    (source,) = runtime.pool_metrics
+    assert source.route == "writer"
     assert isinstance(source.sample(), PoolAvailable)
 
     runtime.close()
 
-    assert runtime.pool_metrics is source
+    assert runtime.pool_metrics[0] is source
     assert isinstance(source.sample(), PoolDetached)
 
 
@@ -1110,7 +1112,7 @@ def test_a_closed_runtime_answers_detached_through_the_same_source(profile_run: 
 def test_a_queued_borrower_is_visible_as_queue_depth(profile_run: Any) -> None:
     # The gauge an operator watches for saturation, read from a real queue: one
     # slot, one holder, and one contender that has actually reached the queue.
-    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=5.0))
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1), acquire_timeout=5.0)
     contended: list[str] = []
     try:
         with _context(runtime) as held:
@@ -1140,8 +1142,8 @@ def test_a_sample_is_unavailable_rather_than_raising_when_the_pool_will_not_answ
     # than an exception it has to defend against, and the source stays attached.
     runtime = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=1))
     try:
-        source = runtime.pool_metrics
-        assert source is not None
+        (source,) = runtime.pool_metrics
+        assert source.route == "writer"
 
         def refuse() -> dict[str, int]:
             raise RuntimeError("the pool refuses to be measured")

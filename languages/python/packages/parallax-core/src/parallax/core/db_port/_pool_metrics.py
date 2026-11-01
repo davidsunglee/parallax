@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from parallax.core.diagnostics import FailureDiagnostic
+
+if TYPE_CHECKING:
+    from parallax.core.db_port import Route
 
 __all__ = [
     "PoolAvailable",
@@ -106,7 +109,7 @@ degraded form of another.
 
 
 class PoolMetricsSource(Protocol):
-    """A stable, read-only handle on one runtime's pool bookkeeping.
+    """A stable, read-only handle on the bookkeeping of one pool a runtime keeps.
 
     Stable means its identity does not change for the runtime's life, shutdown
     included: a holder keeps the same object throughout, and what changes when
@@ -117,6 +120,11 @@ class PoolMetricsSource(Protocol):
     exposes a credential or a native connection: it reads bookkeeping the
     runtime already maintains.
     """
+
+    @property
+    def route(self) -> Route:
+        """The route whose pool this source reads, fixed for the source's life."""
+        ...
 
     def sample(self) -> PoolSample:
         """Take one reading now, and answer with one of the three outcomes.

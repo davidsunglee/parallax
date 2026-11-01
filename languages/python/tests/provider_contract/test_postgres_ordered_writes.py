@@ -116,7 +116,7 @@ def _runtime(profile_run: Any, **options: Any) -> Any:
 
 
 def _acquired(runtime: Any) -> ConnectionContext:
-    return runtime.login_execution().new_context()
+    return runtime.login_source().new_context("writer_only")
 
 
 def _pid(connection: Any) -> int:

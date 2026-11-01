@@ -1766,13 +1766,13 @@ def test_a_case_authoring_the_oracle_gets_the_stream_its_run_delivered() -> None
                         "sequence": 2,
                         "activity": 2,
                         "parent": 1,
-                        "acquisitionStarted": {},
+                        "acquisitionStarted": {"policy": "writer-only"},
                     },
                     {
                         "sequence": 3,
                         "activity": 2,
                         "parent": 1,
-                        "acquisitionFinished": {"outcome": "acquired"},
+                        "acquisitionFinished": {"outcome": "acquired", "route": "writer"},
                     },
                     {
                         "sequence": 4,

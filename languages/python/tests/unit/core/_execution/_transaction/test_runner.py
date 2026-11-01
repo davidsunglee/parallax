@@ -47,6 +47,7 @@ from parallax.core.db_port import (
     IsolationLevel,
     RollbackFailed,
     RolledBack,
+    RoutePolicy,
     TransactionOutcome,
 )
 from parallax.core.entity._authored_resolver import object_query_node
@@ -301,7 +302,7 @@ def test_write_planning_receives_the_original_captured_actor(
         if mode == "principal"
         else root.using_database_login()
     )
-    captured_actor = cast("Any", scoped)._capture.actor
+    captured_actor = cast("Any", scoped)._authority.actor
 
     scoped.transact(
         lambda tx: tx.uow.buffer_insert(account_insert(), insertion_advice=None), itself
@@ -1081,16 +1082,20 @@ class _ReleaseObservingAdapter(ScriptedAdapter):
         adapter = self
 
         class _Runtime(ScriptedRuntime):
-            def new_bound_context(self, authorization: object | None) -> ConnectionContext:
+            def new_bound_context(
+                self, authorization: object | None, policy: RoutePolicy
+            ) -> ConnectionContext:
                 del authorization
-                return _ObservedContext(self, adapter)
+                return _ObservedContext(self, adapter, policy)
 
         return _Runtime(self)
 
 
 class _ObservedContext(ScriptedContext):
-    def __init__(self, runtime: ScriptedRuntime, adapter: _ReleaseObservingAdapter) -> None:
-        super().__init__(runtime)
+    def __init__(
+        self, runtime: ScriptedRuntime, adapter: _ReleaseObservingAdapter, policy: RoutePolicy
+    ) -> None:
+        super().__init__(runtime, policy)
         self._adapter = adapter
 
     def __exit__(
