@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Final, Protocol
 
 from parallax.core.db_port import (
@@ -10,6 +10,7 @@ from parallax.core.db_port import (
     PoolSample,
     PoolUnavailable,
     Route,
+    RouteReadiness,
 )
 from parallax.core.diagnostics import diagnostic_for
 
@@ -84,11 +85,14 @@ class PostgresPoolMetrics:
     for the teardown nor delays it — which is why this holds none either.
     """
 
-    __slots__ = ("_pool", "_route")
+    __slots__ = ("_pool", "_readiness", "_route")
 
-    def __init__(self, pool: NativeStatistics, route: Route) -> None:
+    def __init__(
+        self, pool: NativeStatistics, route: Route, readiness: Callable[[], RouteReadiness]
+    ) -> None:
         self._pool: NativeStatistics | None = pool
         self._route: Route = route
+        self._readiness = readiness
 
     @property
     def route(self) -> Route:
@@ -122,7 +126,7 @@ class PostgresPoolMetrics:
                     )
                 )
             )
-        return PoolAvailable(measurements)
+        return PoolAvailable(measurements, self._readiness())
 
 
 def _measurements(stats: Mapping[str, object]) -> PoolMeasurements | None:

@@ -8,6 +8,7 @@ from parallax.core.db_port import (
     PoolMeasurements,
     PoolSample,
     Route,
+    RouteReadiness,
 )
 
 __all__ = ["DetachableSource"]
@@ -24,9 +25,14 @@ class DetachableSource:
     """
 
     def __init__(
-        self, measurements: PoolMeasurements | None = None, *, route: Route = "writer"
+        self,
+        measurements: PoolMeasurements | None = None,
+        *,
+        route: Route = "writer",
+        readiness: RouteReadiness = "verified",
     ) -> None:
         self.route: Route = route
+        self.readiness: RouteReadiness = readiness
         self.measurements = (
             measurements
             if measurements is not None
@@ -39,7 +45,7 @@ class DetachableSource:
 
     def sample(self) -> PoolSample:
         self.samples += 1
-        return PoolAvailable(self.measurements) if self.attached else PoolDetached()
+        return PoolAvailable(self.measurements, self.readiness) if self.attached else PoolDetached()
 
     def detach(self) -> None:
         self.attached = False

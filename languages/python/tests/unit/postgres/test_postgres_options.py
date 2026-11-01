@@ -160,6 +160,41 @@ def test_the_writer_is_a_required_endpoint() -> None:
         PostgresAdapter(PostgresEndpoint("", credentials=DRIVER_MANAGED))  # pyright: ignore[reportCallIssue] - every adapter field is keyword-only, which is what this proves
 
 
+def test_a_reader_is_an_optional_endpoint_of_its_own() -> None:
+    writer = PostgresEndpoint("host=writer", credentials=DRIVER_MANAGED)
+    reader = PostgresEndpoint(
+        "host=reader", credentials=Password("hunter2"), pool=OnDemandOptions(max_size=20)
+    )
+
+    assert PostgresAdapter(writer=writer).reader is None
+    routed = PostgresAdapter(writer=writer, reader=reader)
+    assert (routed.writer, routed.reader) == (writer, reader)
+    with pytest.raises(TypeError) as refused:
+        PostgresAdapter(writer=writer, reader=cast("Any", "host=reader"))
+    assert str(refused.value) == "reader takes a PostgresEndpoint"
+
+
+def test_reader_startup_is_omitted_unless_a_reader_decision_is_spelled() -> None:
+    # Omission and a choice promise different things: omitted, a configured
+    # reader defers and no reader is no contradiction; chosen without a reader,
+    # it is a decision about nothing and is refused.
+    writer = PostgresEndpoint("host=writer", credentials=DRIVER_MANAGED)
+    reader = PostgresEndpoint("host=reader", credentials=DRIVER_MANAGED)
+
+    omitted = PostgresAdapter(writer=writer, reader=reader)
+    assert repr(omitted.reader_startup) == "OMITTED"
+    assert repr(PostgresAdapter(writer=writer).reader_startup) == "OMITTED"
+    for startup in ("deferrable", "required"):
+        chosen = PostgresAdapter(writer=writer, reader=reader, reader_startup=cast("Any", startup))
+        assert chosen.reader_startup == startup
+        with pytest.raises(ValueError, match="no reader is configured"):
+            PostgresAdapter(writer=writer, reader_startup=cast("Any", startup))
+    with pytest.raises(ValueError, match="reader_startup must be one of"):
+        PostgresAdapter(writer=writer, reader=reader, reader_startup=cast("Any", "eventually"))
+    # Dropping the reader from a configuration that only omitted the choice stays valid.
+    assert dataclasses.replace(omitted, reader=None).reader is None
+
+
 def test_on_demand_validates_the_controls_it_keeps() -> None:
     assert OnDemandOptions(max_lifetime=60).max_lifetime == 60.0
     with pytest.raises(ValueError, match="reconnect_timeout"):

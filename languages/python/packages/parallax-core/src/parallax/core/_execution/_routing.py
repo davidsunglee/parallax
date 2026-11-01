@@ -6,13 +6,14 @@ from typing import Final, cast, get_args
 from parallax.core.db_port import (
     ConnectionContext,
     ConnectionContextSource,
+    IsolationLevel,
     Route,
     RouteCapabilities,
     RoutePolicy,
     RouteSelection,
 )
 
-__all__ = ["OperationRouting", "check_read_policy", "resolved_read_policy"]
+__all__ = ["OperationRouting", "check_read_policy", "read_only_policy", "resolved_read_policy"]
 
 _POLICIES: Final = cast("tuple[RoutePolicy, ...]", get_args(RoutePolicy))
 
@@ -36,6 +37,31 @@ def resolved_read_policy(
             f"a writer; configure a reader or use with_routing(read_policy='writer_only')"
         )
     return policy
+
+
+def read_only_policy(
+    policy: RoutePolicy, isolation: IsolationLevel, routes: Mapping[Route, RouteCapabilities]
+) -> RoutePolicy:
+    """The policy a new read-only invocation at ``isolation`` requests.
+
+    A strict policy's one route must begin a read-only transaction at that
+    level, so one that cannot is refused here, before anything acquires: the
+    native refusal would otherwise arrive only after a connection was taken
+    and set up, and every retry would meet it again.
+    """
+    route: Route | None = (
+        "reader" if policy == "reader_only" else "writer" if policy == "writer_only" else None
+    )
+    if route is None or isolation in routes[route].read_only_isolation:
+        return policy
+    if route == "reader":
+        raise ValueError(
+            f"the reader route cannot begin a read-only transaction at isolation={isolation!r}; "
+            f"use with_routing(read_policy='writer_only') for it"
+        )
+    raise ValueError(
+        f"the writer route cannot begin a read-only transaction at isolation={isolation!r}"
+    )
 
 
 def check_read_policy(value: object) -> RoutePolicy | None:

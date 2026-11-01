@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, Self, cast
 from uuid import uuid4
 
 from parallax.core._execution._options import OMITTED, Omitted, TxnOptions
@@ -50,6 +50,25 @@ _CONSTRUCTOR_REFUSAL = (
 )
 
 
+_PREFERRED_REFUSAL = (
+    "read_policy='reader_preferred' is not served by this Database; use 'reader_only' to "
+    "require the reader or 'writer_only' to use the writer"
+)
+
+
+def _public_read_policy(value: object) -> RoutePolicy | None:
+    """``value`` as a policy this facade serves, or ``None`` for an omitted one.
+
+    The spelling is checked first, so a misspelling reads as one. Writer
+    fallback for ``reader_preferred`` is not provided, so asking for it is
+    refused rather than quietly served as ``reader_only``.
+    """
+    policy = check_read_policy(value)
+    if policy == "reader_preferred":
+        raise ValueError(_PREFERRED_REFUSAL)
+    return policy
+
+
 def served_model(model: DomainModel | ServingModel, refusal: str) -> ServingModel:
     """Return the Serving Model a root will own, preparing static models once."""
     if isinstance(model, ServingModel):
@@ -95,6 +114,7 @@ class ScopedDatabase:
         )
 
     def with_routing(self, *, read_policy: RoutePolicy) -> ScopedDatabase:
+        _public_read_policy(read_policy)
         return self.create(self._execution.with_routing(read_policy=read_policy))
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
@@ -180,11 +200,15 @@ class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
             served_model(model, _CONSTRUCTOR_REFUSAL),
             scope_for=ScopedDatabase.create,
             options=options,
-            read_policy=read_policy,
+            read_policy=_public_read_policy(read_policy),
             read_plan_cache_capacity=capacity,
             clock=clock,
             lifecycle_provider=lifecycle_provider,
         )
+
+    def with_routing(self, *, read_policy: RoutePolicy) -> Self:
+        _public_read_policy(read_policy)
+        return super().with_routing(read_policy=read_policy)
 
     @classmethod
     def connect[Auth](
@@ -201,7 +225,7 @@ class Database[Authorization](DatabaseRoot[Authorization, ScopedDatabase]):
         capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
         serving = served_model(model, _CONNECT_REFUSAL)
         defaults = options if options is not None else TxnOptions()
-        policy = check_read_policy(read_policy)
+        policy = _public_read_policy(read_policy)
         runtime = adapter.open()
         try:
             return Database(

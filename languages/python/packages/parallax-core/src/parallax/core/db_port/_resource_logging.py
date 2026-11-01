@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import logging
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from parallax.core.db_port._resources import CleanupCode, CleanupIssue, CleanupResult
 from parallax.core.diagnostics import guarded
+
+if TYPE_CHECKING:
+    from parallax.core.db_port import Route, RouteReadiness
 
 __all__ = [
     "RESOURCE_LOGGER_NAME",
     "ResourceCondition",
     "report_resource_issues",
+    "report_route_readiness",
     "report_unregistration_failure",
 ]
 
@@ -92,6 +96,33 @@ def report_unregistration_failure() -> None:
     that registered it.
     """
     guarded(lambda: _LOGGER.warning("%s", _CONDITIONS["unregistration"]), None)
+
+
+_READINESS: Final[dict[RouteReadiness, tuple[int, str]]] = {
+    "pending": (
+        logging.WARNING,
+        "route started unverified because it could not be reached; work that requires "
+        "it fails until one of its connections is verified",
+    ),
+    "verified": (logging.INFO, "route was verified and now serves its work"),
+    "refused": (
+        logging.WARNING,
+        "route was refused when one of its connections was verified; work that requires "
+        "it fails for the rest of the runtime's life",
+    ),
+}
+"""The one fixed sentence, and its level, for each readiness a route reaches."""
+
+
+def report_route_readiness(route: Route, readiness: RouteReadiness) -> None:
+    """Report that ``route`` reached ``readiness``, and never raise.
+
+    Said once per transition and in fixed text alone: a route is a portable
+    role rather than an endpoint, and what made a dial or a verification fail
+    is native text that stays on the failures an operation raises.
+    """
+    level, sentence = _READINESS[readiness]
+    guarded(lambda: _LOGGER.log(level, "the database runtime's %s %s", route, sentence), None)
 
 
 def _emit(condition: ResourceCondition, result: CleanupResult) -> None:

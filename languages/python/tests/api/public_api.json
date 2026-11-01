@@ -226,6 +226,7 @@
     "Route",
     "RouteCapabilities",
     "RoutePolicy",
+    "RouteReadiness",
     "RouteSelection",
     "Row",
     "StartupPhase",
@@ -235,6 +236,7 @@
     "WriteResultIntegrityError",
     "isolation_level",
     "report_resource_issues",
+    "report_route_readiness",
     "report_unregistration_failure"
   ],
   "parallax.core.db_error": [

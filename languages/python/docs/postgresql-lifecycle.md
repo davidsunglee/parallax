@@ -345,6 +345,46 @@ connections go: nothing is inferred from the string, startup adds no
 physical-writer check, and writes through it fail natively. Every operation of
 such a root requests the writer route, which is the only one it declares.
 
+## Writer and reader routes
+
+Giving the adapter a `reader=PostgresEndpoint(...)` as well as its `writer`
+declares a second route with its own pool, credentials and retention. The root
+still opens one runtime and closes both pools with it, and both share one
+`acquire_timeout` and one `startup_timeout`. Each pool keeps its own capacity,
+so a root with both routes at the default `max_size=10` can hold twenty
+connections, multiplied by every process that opens one.
+
+With a reader declared, new reads default to it: an eager read, each standalone
+delivery page, and every attempt of a `read_only` transaction request
+`reader_only`, while `transact` always requests the writer. Work inside a
+transaction runs on that attempt's connection whatever the scope's routing says.
+`with_routing(read_policy="writer_only")` sends a scope's new reads to the
+writer, which is how a caller avoids replica lag; nothing fences reads behind
+writes automatically. A reader endpoint promises no physical replica: an Aurora
+reader endpoint reaches the writer when the cluster has no replicas. A hot
+standby cannot begin a Serializable read-only transaction, so the reader route
+does not declare it, and a `read_only(..., isolation="serializable")` under
+`reader_only` is refused before anything is acquired.
+
+Readiness proves the writer first and then the reader, within what remains of
+the one `startup_timeout`, and the reader must authenticate the same login as
+the writer however its credentials differ — an endpoint-specific IAM token
+included. A reader that cannot be reached leaves the root opening anyway with
+the reader's readiness pending, unless the adapter says `reader_startup="required"`;
+a refused credential, an unusable session, or another login fails the open
+either way. While the reader is pending, every connection it hands over is
+proved before any of your work runs on it, and the first proof that succeeds
+makes the reader serve. A reader read meanwhile waits up to its
+`acquire_timeout` and then fails with `reason="unavailable"`. A deferral, the
+reader becoming verified, and the reader being refused are each reported once
+on `parallax.resources`, and each pool sample carries its route's readiness.
+
+The driver reports a login the server rejected while connecting with no
+SQLSTATE, so such a rejection reaches Parallax looking exactly like an
+unreachable server, as does a mistyped host. Under the default deferrable
+startup either one leaves the reader pending rather than failing the open; a
+deployment that wants them to fail its rollout says `reader_startup="required"`.
+
 ## Timeouts
 
 Five controls are often confused and are genuinely distinct:
@@ -612,7 +652,7 @@ is why a reading succeeds even while every slot is held. It answers one of three
 
 | Sample | Meaning |
 |---|---|
-| `PoolAvailable(measurements)` | This is the reading |
+| `PoolAvailable(measurements, readiness)` | This is the reading, and whether its route has proved it can serve: `verified`, `pending`, or `refused` |
 | `PoolUnavailable(diagnostic)` | This reading did not happen; the runtime is still alive and the next one may |
 | `PoolDetached()` | The handle has closed; there is nothing to read |
 
@@ -919,7 +959,7 @@ interchangeable and only one of them is yours to redact.
 | Path | Carries | Policy |
 |---|---|---|
 | Lifecycle events (a Handler you installed) | Rich detached diagnostics: bounded message and stack, error type and code, the cleanup a release established | **Yours.** You decide what is exported and what is redacted. Detaching and truncating a native message does not sanitize it |
-| `parallax.resources` (standard `logging`) | One fixed sentence per occasion, and — where a cleanup is what failed — the cleanup phase, the cleanup code, and the one fixed sentence that code stands for. Nothing else. No credential, SQL, bind, native message, stack, structured extra, or `exc_info`. A pool observation that would not close is the one record carrying no phase and no code, because no connection release occurred | Parallax's, and deliberately thin: it must be safe to leave on in a deployment that has redacted nothing. It speaks only when something went wrong AND no Handler received it |
+| `parallax.resources` (standard `logging`) | One fixed sentence per occasion, and — where a cleanup is what failed — the cleanup phase, the cleanup code, and the one fixed sentence that code stands for. Nothing else. No credential, SQL, bind, native message, stack, structured extra, or `exc_info`. A pool observation that would not close is the one record carrying no phase and no code, because no connection release occurred | Parallax's, and deliberately thin: it must be safe to leave on in a deployment that has redacted nothing. It speaks when something went wrong AND no Handler received it, and when a reader route's readiness is deferred, verified, or refused |
 | `psycopg.pool` (the driver's own logger) | Whatever the driver logs, exception text included | **The driver's.** Parallax's restriction does not reach it. Configure it yourself |
 
 `parallax.resources` is a fixed logger name so an operator silences or routes

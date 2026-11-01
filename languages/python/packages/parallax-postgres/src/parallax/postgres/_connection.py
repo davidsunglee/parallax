@@ -3,9 +3,10 @@ from __future__ import annotations
 import contextlib
 import struct
 import sys
+import threading
 from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, Self, cast
 
 import psycopg
 from psycopg import postgres
@@ -77,8 +78,11 @@ if TYPE_CHECKING:
 __all__ = [
     "CONNECT_KWARGS",
     "ConnectionEstablishment",
+    "DialFailure",
+    "DialReason",
     "IncompatibleSessionError",
     "PostgresConnection",
+    "dial_reason",
     "initialize_connection",
 ]
 
@@ -620,48 +624,112 @@ def _require_supported_session(connection: psycopg.Connection[TupleRow]) -> None
         )
 
 
-class ConnectionEstablishment:
-    """Everything a native pool needs to bring one connection into existence, and
-    the last refusal met doing it.
+type DialReason = Literal[
+    "unavailable", "authentication_refused", "credentials_refused", "preparation_failed"
+]
+"""The acquisition reasons establishing a connection can meet."""
 
-    Two callbacks and one record. :meth:`connect_kwargs` produces the driver
+
+def dial_reason(failure: BaseException) -> DialReason:
+    """Classify one failure met while establishing a connection.
+
+    A driver connection failure that carries no SQLSTATE, a connection-class
+    SQLSTATE, a server that is not accepting connections yet, and a connect
+    timeout all mean the route could not be reached. The driver reports a
+    refusal the server sent while connecting without its SQLSTATE, so a
+    rejected login usually reaches this as unreachable too; only one that does
+    carry an authorization-class SQLSTATE reads as an authentication refusal.
+    A credential the source would not produce is its own reason, and anything
+    else — a SQLSTATE nothing here names, a session the codecs cannot run
+    under — is a preparation failure.
+    """
+    if isinstance(failure, CredentialResolutionError):
+        return "credentials_refused"
+    if isinstance(failure, psycopg.OperationalError):
+        state = failure.sqlstate
+        if state is None or state.startswith("08") or state == _CANNOT_CONNECT_NOW:
+            return "unavailable"
+        if state.startswith("28"):
+            return "authentication_refused"
+    return "preparation_failed"
+
+
+_CANNOT_CONNECT_NOW: Final = "57P03"
+
+
+@dataclass(frozen=True, slots=True)
+class DialFailure:
+    """The latest establishment failure on one route: its reason, what raised
+    it, and the generation it was recorded at."""
+
+    reason: DialReason
+    cause: BaseException
+    generation: int
+
+
+class ConnectionEstablishment:
+    """Everything one route's native pool needs to bring a connection into
+    existence, and the latest failure met doing it.
+
+    Three hooks and one record. :meth:`connect_kwargs` produces the driver
     keywords each physical connection is dialed with, resolving the credential
-    source as it goes; ``__call__`` is the pool's ``configure``, initializing
-    the connection that resulted. Both write the one record, which is why they
-    live together: the write discipline is stated once rather than agreed on by
-    two modules.
+    source as it goes; :attr:`connection_class` is the class the pool dials
+    through, observing the socket and authentication step itself; and
+    ``__call__`` is the pool's ``configure``, initializing the connection that
+    resulted. All three write the one record, which is why they live together:
+    the write discipline is stated once rather than agreed on by three modules.
 
     The record exists because a pool creates most of its connections on its own
-    background path: a refusal there is retried and logged where a caller
+    background path: a failure there is retried and logged where a caller
     waiting for a connection never sees it, and what that caller eventually gets
-    is a bare timeout naming nothing to fix. Keeping the last refusal lets the
-    timeout say what is actually wrong.
+    is a bare timeout naming nothing to fix. Keeping the latest failure lets the
+    timeout say what is actually wrong, and its generation lets a waiter tell a
+    failure met during its own wait from one that was already history when the
+    wait began.
 
-    One record serves every attempt, because a pool dials several at once on
-    several workers and the caller it answers is waiting on the pool rather than
-    on any one of them. Two rules arbitrate the writes. The most recent refusal
-    wins, so a caller is told the last thing establishment actually met rather
-    than the first. Only a connection that became USABLE clears the record, so
-    what ends a refusal is the outcome a caller could have been handed — a
-    resolved credential is not one, since the connection it was resolved for may
-    still fail to dial or to initialize, and clearing there would let one
-    attempt's partial progress erase another's completed refusal and leave a
-    bare timeout in its place. The record therefore reads: the last refusal met
-    since the last connection became usable, or nothing if one has since.
+    One record serves every attempt on the route, because a pool dials several
+    at once on several workers and the caller it answers is waiting on the pool
+    rather than on any one of them. Two rules arbitrate the writes. The most
+    recent failure wins, so a caller is told the last thing establishment
+    actually met rather than the first. Only a connection that became USABLE
+    clears the record, so what ends a failure is the outcome a caller could
+    have been handed — a resolved credential or a completed dial is not one,
+    since that connection may still fail to dial or to initialize, and
+    clearing there would let one attempt's partial progress erase another's
+    completed failure and leave a bare timeout in its place.
     """
 
-    __slots__ = ("last_refusal",)
+    __slots__ = ("_generation", "_lock", "connection_class", "last_failure")
 
     def __init__(self) -> None:
-        self.last_refusal: IncompatibleSessionError | CredentialResolutionError | None = None
+        self.last_failure: DialFailure | None = None
+        self._generation = 0
+        self._lock = threading.Lock()
+        self.connection_class: type[psycopg.Connection[TupleRow]] = _observed_connections(self)
+
+    def generation(self) -> int:
+        """The count of outcomes recorded so far, to compare a later failure against."""
+        return self._generation
+
+    def failed(self, failure: BaseException) -> None:
+        """Record ``failure`` as the route's latest establishment outcome."""
+        reason = dial_reason(failure)
+        with self._lock:
+            self._generation += 1
+            self.last_failure = DialFailure(reason, failure, self._generation)
+
+    def _usable(self) -> None:
+        with self._lock:
+            self._generation += 1
+            self.last_failure = None
 
     def __call__(self, connection: psycopg.Connection[TupleRow]) -> None:
         try:
             initialize_connection(connection)
         except IncompatibleSessionError as refusal:
-            self.last_refusal = refusal
+            self.failed(refusal)
             raise
-        self.last_refusal = None
+        self._usable()
 
     def connect_kwargs(
         self, base: dict[str, object], source: CredentialSource
@@ -691,15 +759,40 @@ class ConnectionEstablishment:
             try:
                 credential = source.resolve()
             except CredentialResolutionError as refusal:
-                self.last_refusal = refusal
+                self.failed(refusal)
                 raise
             except Exception as exc:
                 refusal = CredentialResolutionError(_CREDENTIAL_REFUSAL)
-                self.last_refusal = refusal
+                self.failed(refusal)
                 raise refusal from exc
             return {**base, "password": credential.secret}
 
         return resolve
+
+
+def _observed_connections(
+    establishment: ConnectionEstablishment,
+) -> type[psycopg.Connection[TupleRow]]:
+    """A connection class whose dials record their failures on ``establishment``.
+
+    The pool sends every dial through its ``connection_class``, on its own
+    workers and on an acquiring caller's thread alike, so this is the one place
+    that sees the socket and authentication step whoever made it. One class per
+    establishment keeps each route's record its own. A dial that completes
+    records nothing: the connection it produced is not usable until it has been
+    initialized.
+    """
+
+    class _ObservedConnection(psycopg.Connection[TupleRow]):
+        @classmethod
+        def connect(cls, conninfo: str = "", **kwargs: Any) -> Self:
+            try:
+                return super().connect(conninfo, **kwargs)
+            except Exception as failure:
+                establishment.failed(failure)
+                raise
+
+    return _ObservedConnection
 
 
 _COMMAND_OK = ExecStatus.COMMAND_OK

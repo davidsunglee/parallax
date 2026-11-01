@@ -520,8 +520,9 @@ endpoint, host, pool, or credential is observable here, so the redaction rule of
 `m-execution-authority` holds unchanged.
 
 `reason` is the `m-db-port` acquisition-failure vocabulary — `timeout`,
-`queue-rejected`, `closed`, `preparation-failed`, `authorization-failed`,
-`credentials-refused` — and is outside the
+`queue-rejected`, `closed`, `unavailable`, `preparation-failed`,
+`authorization-failed`, `authentication-refused`, `credentials-refused` — and
+is outside the
 `m-db-error` categories, because no modeled statement ran to be classified.
 `failure` is an ordinary Activity Failure and is always `direct`: an Acquisition
 opens no child, so it has none to name. The owner holds it afterwards under the

@@ -144,23 +144,31 @@ type AcquisitionReason = Literal[
     "timeout",
     "queue_rejected",
     "closed",
+    "unavailable",
     "preparation_failed",
     "authorization_failed",
+    "authentication_refused",
     "credentials_refused",
 ]
 """Why an acquisition did not produce a usable connection.
 
-``timeout`` is the cooperative acquisition budget running out — including a
-native success that arrived after it. ``queue_rejected`` is a bounded waiting
+``timeout`` is the cooperative acquisition budget running out with no failure
+on record that explains it — including a native success that arrived after it,
+and a pool that was merely saturated. ``queue_rejected`` is a bounded waiting
 queue refusing to hold another waiter. ``closed`` is the runtime no longer
-admitting work. ``preparation_failed`` covers establishing or preparing
-execution access: a direct connection attempt that failed, a session
-configuration the codecs cannot execute under, and a checkout that handed over a
-connection which was not idle. ``authorization_failed`` means the provider could
-not establish the bound authorization before admitting modeled work.
-``credentials_refused`` means the configured Credential Source produced no
-credential, so nothing was ever offered to the server — which is a different
-thing to fix from a connection the server itself rejected.
+admitting work. ``unavailable`` is a route that could not be reached: a dial
+that met no server, a server not accepting connections yet, a connection lost
+while the lease was being set up, or a budget spent while a dial failure
+recorded during the wait was still the latest outcome. ``preparation_failed``
+covers establishing or preparing execution access otherwise: a dial the server
+refused for another reason, a session configuration the codecs cannot execute
+under, a checkout that handed over a connection which was not idle, and a
+route refused when its connection was verified. ``authorization_failed`` means
+the provider could not establish the bound authorization before admitting
+modeled work. ``authentication_refused`` means the server rejected the login
+it was offered. ``credentials_refused`` means the configured Credential Source
+produced no credential, so nothing was ever offered to the server — which is a
+different thing to fix from a login the server itself rejected.
 
 These are separate from `m-db-error`'s SQL categories on purpose. No modeled
 statement ran, so nothing was classified, and no retry rule reads them.
@@ -212,7 +220,9 @@ back. All five share one budget, which is never restarted between them.
 class DatabaseStartupError(Exception):
     """A runtime did not become ready, so no ``Database`` was published.
 
-    ``phase`` names where readiness stopped and ``cleanup_result`` carries what
+    ``route`` names whose readiness failed, so a reader that refused its login
+    is never read as a writer outage. ``phase`` names where that route's
+    readiness stopped and ``cleanup_result`` carries what
     is known about a startup connection that had already been acquired — which
     is how a successful probe followed by an unconfirmed release is
     reported without fabricating an exception that never existed.
@@ -225,10 +235,12 @@ class DatabaseStartupError(Exception):
         self,
         message: str,
         *,
+        route: Route,
         phase: StartupPhase,
         cleanup_result: CleanupResult | None = None,
     ) -> None:
         super().__init__(message)
+        self.route: Route = route
         self.phase: StartupPhase = phase
         self.cleanup_result: CleanupResult | None = cleanup_result
 

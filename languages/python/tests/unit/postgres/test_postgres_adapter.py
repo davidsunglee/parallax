@@ -108,6 +108,7 @@ from parallax.postgres._connection import (
     translating_driver_errors,
 )
 from parallax.postgres._context import PostgresConnectionContext
+from parallax.postgres._route import PostgresRoute
 from tests.unit.postgres._native_pipeline_support import (
     Result,
     Server,
@@ -1705,12 +1706,11 @@ def _leased(*connections: _FakeConnection) -> tuple[PostgresConnectionContext, _
         initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
     pool = _FakePool(*connections)
     context = PostgresConnectionContext(
-        cast("Any", pool),
+        PostgresRoute("writer", cast("Any", pool), ConnectionEstablishment()),
         _admitted,
         monotonic() + 5.0,
-        ConnectionEstablishment(),
         None,
-        route="writer",
+        expected_login=None,
     )
     return context, pool
 
@@ -2500,6 +2500,8 @@ def test_the_per_connection_setup_records_a_refusal_and_reraises_it() -> None:
     with pytest.raises(IncompatibleSessionError) as raised:
         establishment(cast("psycopg.Connection[TupleRow]", refused))
 
-    assert establishment.last_refusal is raised.value
+    failure = establishment.last_failure
+    assert failure is not None
+    assert (failure.reason, failure.cause) == ("preparation_failed", raised.value)
     establishment(cast("psycopg.Connection[TupleRow]", _FakeConnection()))
-    assert establishment.last_refusal is None
+    assert establishment.last_failure is None

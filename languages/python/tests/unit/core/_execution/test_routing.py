@@ -16,6 +16,7 @@ import pytest
 from parallax.core._execution._routing import (
     OperationRouting,
     check_read_policy,
+    read_only_policy,
     resolved_read_policy,
 )
 from parallax.core._execution._scope import ExecutionScope
@@ -27,7 +28,7 @@ from parallax.core.db_port import (
     RoutePolicy,
     RouteSelection,
 )
-from parallax.core.execution import ExecutionFailure
+from parallax.core.execution import ExecutionFailure, TxnOptions
 from parallax.core.execution_lifecycle._activity import ActivityTarget
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests.unit.core._execution._execution_support import itself, root
@@ -279,3 +280,84 @@ def test_a_failed_acquisition_s_selection_is_recorded_too() -> None:
         read.paged(stream.batch(), lambda _calls, _inputs: None)
 
     assert adapter.requested_policies == ["reader_preferred", "writer_only"]
+
+
+# --------------------------------------------------------------------------- #
+# What a new read-only invocation's route can begin.                           #
+# --------------------------------------------------------------------------- #
+
+_STANDBY: Final[Mapping[Route, RouteCapabilities]] = {
+    "writer": RouteCapabilities.every_level(),
+    "reader": RouteCapabilities(frozenset({"read_committed", "repeatable_read"})),
+}
+
+
+@pytest.mark.parametrize(
+    ("policy", "isolation"),
+    [
+        ("reader_only", "read_committed"),
+        ("reader_only", "repeatable_read"),
+        ("writer_only", "serializable"),
+    ],
+)
+def test_a_level_the_policy_s_route_serves_keeps_the_policy(
+    policy: RoutePolicy, isolation: Any
+) -> None:
+    assert read_only_policy(policy, isolation, _STANDBY) == policy
+
+
+def test_a_reader_that_cannot_begin_the_level_refuses_it_naming_the_writer() -> None:
+    with pytest.raises(ValueError, match=r"with_routing\(read_policy='writer_only'\)"):
+        read_only_policy("reader_only", "serializable", _STANDBY)
+
+
+def test_a_writer_that_cannot_begin_the_level_refuses_it_too() -> None:
+    limited: Mapping[Route, RouteCapabilities] = {
+        "writer": RouteCapabilities(frozenset({"read_committed"}))
+    }
+
+    with pytest.raises(ValueError, match="the writer route cannot begin"):
+        read_only_policy("writer_only", "serializable", limited)
+
+
+def test_an_unserved_read_only_level_is_refused_before_anything_is_observed_or_acquired() -> None:
+    adapter = ScriptedAdapter(routes=_STANDBY)
+    scope = root(adapter).using_database_login()
+
+    with pytest.raises(ValueError, match="the reader route cannot begin"):
+        scope.read_only(lambda _attempt: None, itself, isolation="serializable")
+    with pytest.raises(ValueError, match="the reader route cannot begin"):
+        root(
+            adapter, options=TxnOptions(isolation="serializable")
+        ).using_database_login().read_only(lambda _attempt: None, itself)
+
+    assert adapter.acquisitions == 0
+    assert adapter.requested_policies == []
+
+
+def test_the_writer_or_a_served_level_begins_where_the_reader_cannot() -> None:
+    adapter = ScriptedAdapter(Transact(), Transact(), routes=_STANDBY)
+    database = root(adapter)
+    reader_scope = database.using_database_login()
+    writer_scope = database.with_routing(read_policy="writer_only").using_database_login()
+
+    writer_scope.read_only(lambda _attempt: None, itself, isolation="serializable")
+    reader_scope.read_only(lambda _attempt: None, itself, isolation="repeatable_read")
+
+    assert adapter.requested_policies == ["writer_only", "reader_only"]
+
+
+def test_a_join_never_reaches_the_read_only_capability_check() -> None:
+    adapter = ScriptedAdapter(Transact(), routes=_STANDBY)
+    database = root(adapter)
+    outer = database.with_routing(read_policy="writer_only").using_database_login()
+    joining = database.using_database_login()
+
+    joined = outer.read_only(
+        lambda _attempt: joining.read_only(lambda _joined: "joined", itself),
+        itself,
+        isolation="serializable",
+    )
+
+    assert joined == "joined"
+    assert adapter.requested_policies == ["writer_only"]
