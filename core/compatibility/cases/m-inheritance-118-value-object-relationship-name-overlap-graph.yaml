@@ -3,7 +3,7 @@
 # occurrence name `profile` while the independently deep-fetched `details` edge attaches
 # under its relationship name; the two values must coexist after two Database Calls.
 model: models/materialization-key-compatibility.yaml
-tags: [m-inheritance, m-object-query, m-deep-fetch, m-value-object, m-relationship, m-sql, m-api-conformance, graph, instance-form, materialization-key, positive, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-object-query, m-read-planning, m-value-object, m-relationship, m-sql, m-api-conformance, graph, instance-form, materialization-key, positive, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

@@ -22,9 +22,9 @@ from collections.abc import Callable
 
 import pytest
 
-from parallax.core import deep_fetch
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
+from parallax.core import read_planning
 from parallax.core.base import (
     INT64,
     STRING,
@@ -479,10 +479,10 @@ def test_an_include_child_binds_its_retained_perspective_after_its_keys() -> Non
         ),
         _FLEETS,
     )
-    (step,) = deep_fetch.plan(
-        query, _FLEETS, projection=deep_fetch.ReadProjectionRequest("all", True)
+    (step,) = read_planning.plan(
+        query, _FLEETS, projection=read_planning.ReadProjectionRequest("all", True)
     ).fetch_steps
-    assert isinstance(step, deep_fetch.QueryFetchStep)
+    assert isinstance(step, read_planning.QueryFetchStep)
 
     statement = (
         compile_template(step.query, _FLEETS, POSTGRES, result_form="instance")

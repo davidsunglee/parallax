@@ -171,7 +171,7 @@ def _action_scenario_case() -> dict[str, Any]:
     """
     return {
         "model": "models/orders.yaml",
-        "tags": ["m-deep-fetch", "m-op-list"],
+        "tags": ["m-read-planning", "m-op-list"],
         "shape": "scenario",
         "when": {
             "scenario": [
@@ -249,7 +249,7 @@ def _read_expect_graph_case() -> dict[str, Any]:
     """
     return {
         "model": "models/orders.yaml",
-        "tags": ["m-unit-work", "m-deep-fetch"],
+        "tags": ["m-unit-work", "m-read-planning"],
         "shape": "scenario",
         "when": {
             "scenario": [
@@ -718,7 +718,7 @@ def _action_boundary_no_on_case() -> dict[str, Any]:
     """
     return {
         "model": "models/orders.yaml",
-        "tags": ["m-deep-fetch", "m-unit-work"],
+        "tags": ["m-read-planning", "m-unit-work"],
         "shape": "scenario",
         "when": {
             "scenario": [
@@ -765,7 +765,7 @@ def _graphs_read_case() -> dict[str, Any]:
     """
     return {
         "model": "models/invoice.yaml",
-        "tags": ["m-snapshot-read", "m-deep-fetch"],
+        "tags": ["m-snapshot-read", "m-read-planning"],
         "shape": "read",
         "when": {
             "objectQuery": {
@@ -808,7 +808,7 @@ def _stored_data_issues_read_case() -> dict[str, Any]:
     """
     return {
         "model": "models/orders.yaml",
-        "tags": ["m-snapshot-read", "m-deep-fetch"],
+        "tags": ["m-snapshot-read", "m-read-planning"],
         "shape": "read",
         "when": {
             "objectQuery": {

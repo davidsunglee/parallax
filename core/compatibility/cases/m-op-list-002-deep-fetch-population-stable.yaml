@@ -1,8 +1,8 @@
 # Deep fetch populates query-backed relationship lists, stably (m-op-list,
-# m-deep-fetch): once a deep fetch has populated a relationship list, accessing it
+# m-read-planning): once a deep fetch has populated a relationship list, accessing it
 # again does not re-query.
 model: models/orders.yaml
-tags: [m-op-list, m-deep-fetch, relationship, slice-managed-1]
+tags: [m-op-list, m-read-planning, relationship, slice-managed-1]
 shape: scenario
 when:
   scenario:

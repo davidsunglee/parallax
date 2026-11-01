@@ -17,17 +17,17 @@ from typing import Any, Literal
 
 import pytest
 
-from parallax.core import continuation, deep_fetch, inheritance, storage_layout
+from parallax.core import continuation, inheritance, read_planning, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import PresentDocument
-from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
 from parallax.core.object_query._nodes import TemporalDimension
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.read_delivery._page import MISSING_STORED_VALUE
+from parallax.core.read_planning import ResolvedReadProjection
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._inheritance import (
@@ -2304,10 +2304,10 @@ def test_a_fixed_identity_refuses_an_identity_carrier() -> None:
         ANIMAL,
     )
     paged = sql_compile.compile_read(
-        deep_fetch.plan(
+        read_planning.plan(
             plan.first(limit=2),
             ANIMAL,
-            projection=deep_fetch.ReadProjectionRequest("none", False),
+            projection=read_planning.ReadProjectionRequest("none", False),
         ).root,
         ANIMAL,
         POSTGRES,

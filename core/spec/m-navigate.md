@@ -9,7 +9,7 @@ target-local narrowings it gives behavior **are** algebra vocabulary), `m-unit-w
 work), and `m-temporal-read` (a pinned as-of value propagates per hop). The
 **SQL emission** for these nodes is `m-sql`; this module ties the algebra to
 observable behavior. Deep fetch — eagerly populating an object graph while
-eliminating N+1 — builds on navigation and is `m-deep-fetch`.
+eliminating N+1 — builds on navigation and is `m-read-planning`.
 
 ## Navigation → join semantics
 
@@ -49,7 +49,7 @@ still single-valued traversal. No form fetches the related object or marks a
 relationship loaded.
 
 An Include path segment names a **relationship**; a **value-object segment is
-invalid** there and MUST be rejected (`m-deep-fetch`). A value object has no
+invalid** there and MUST be rejected (`m-read-planning`). A value object has no
 identity to correlate on — its inner fields are read *through* the owner by a
 dotted predicate path, never navigated to (`m-value-object`, "Materialization and
 navigation contract").
@@ -64,7 +64,7 @@ different formulation that the harness asserts returns the same rows
 `m-navigate` owns cross-entity as-of propagation. When a read pins an as-of value
 on a temporal source entity (`m-temporal-read`), relationship predicates — the
 quantifiers, presence tests and matches, dotted to-one paths, and target-local
-narrowings that reach a related entity — and eager-loading paths (`m-deep-fetch`) **MUST propagate
+narrowings that reach a related entity — and eager-loading paths (`m-read-planning`) **MUST propagate
 that value per hop, matched by axis, to every temporal entity reached along the
 path.** The propagated value is auto-injected from the as-of model and **never
 written by the user**. It is part of the SQL for that hop: inside the correlated
@@ -93,7 +93,7 @@ binds, Valid Time first and Transaction Time second).
 
 The rule extends from the query algebra to **object graphs**: every relationship
 dereference from an already-materialized object — a deferred relationship load
-on a managed object (`m-deep-fetch`), a hard pointer inside a plain value graph
+on a managed object (`m-read-planning`), a hard pointer inside a plain value graph
 (`m-snapshot-read`) — resolves the target timeline **at the source object's own
 pinned coordinates**, matched by axis. An object's coordinates are part of its
 identity (`m-identity-map`), so a dereference never has to guess which instant
@@ -180,4 +180,4 @@ asserts the standard read layers: the golden SQL returns exactly `then.rows`, an
 the naive `key in (select fk …)` oracle returns the same rows. A to-one hop's
 refusal of several candidates is asserted against each provider's native error.
 The Database Call and object-graph assertions specific to eager loading are
-`m-deep-fetch`.
+`m-read-planning`.

@@ -9,7 +9,6 @@ from parallax.core.base import (
     NeutralType,
     UnknownFamilyTag,
 )
-from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import LockMode, ScalarResult
 from parallax.core.document_codec import MemberShape
 from parallax.core.inheritance import (
@@ -33,6 +32,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
+from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.sql_gen._context import ColumnScope as _ColumnScope
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout

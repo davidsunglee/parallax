@@ -16,7 +16,7 @@ its semantic elaboration), on `m-wire` (serialized typed-literal conversion
 reached through that elaboration), on `m-metamodel` (each clause names canonical
 Identities), and on `m-inheritance` (the shared Subtype Selection resolves against
 a family's effective concrete-subtype set). The three modules that **realize** a
-clause — `m-temporal-read` for Temporal Selection, `m-deep-fetch` for Includes,
+clause — `m-temporal-read` for Temporal Selection, `m-read-planning` for Includes,
 `m-sql` for ordering and the cap — depend on this module and never the reverse: a
 clause's *value* belongs to the query, and the *behavior* realizing it belongs to
 its own module.
@@ -191,7 +191,7 @@ chosen by the query.
 ## `includes` — the requested graph shape
 
 `includes` is the **Includes** clause: the graph shape a read asks for. **Deep
-Fetch** (`m-deep-fetch`) is the execution behavior that realizes it — one SQL
+Fetch** (`m-read-planning`) is the execution behavior that realizes it — one SQL
 statement per relationship level — and never a query tag of its own.
 
 ```yaml
@@ -214,7 +214,7 @@ qualifies one hop.
 
 An Include Path requests the **complete relationship view**. It carries no
 predicate, no Sort Keys, no limit, no pagination, and no nested Object Query;
-child ordering comes from Relationship Metadata (`m-deep-fetch`). Filtered,
+child ordering comes from Relationship Metadata (`m-read-planning`). Filtered,
 sorted, or paginated relationship views are a separate future feature.
 
 ### The two selection positions narrow opposite things
@@ -248,7 +248,7 @@ includes:
 The normative execution guarantee is **one SQL statement per relationship level**
 (N+1 elimination): the root query plus one statement per distinct hop, where hop
 identity is the triple **(relationship, whether a selection was authored, effective
-concrete set)**. Paths sharing a hop fetch it **once**. `m-deep-fetch` specifies
+concrete set)**. Paths sharing a hop fetch it **once**. `m-read-planning` specifies
 this in full, and the Database Call count layer of the compatibility harness
 (`m-case-format`) proves it.
 
@@ -360,7 +360,7 @@ The lexicographic expansion of a seek into comparisons is NOT part of this
 product. It cannot be settled without knowing where the dialect placed a NULL in
 the ordering clause that was emitted, which is `m-sql`'s own answer.
 
-`m-deep-fetch` is the mandatory next phase. It consumes
+`m-read-planning` is the mandatory next phase. It consumes
 `ResolvedObjectQuery` and produces the resolved flat-read products for the root
 and each non-empty child level. Each such private `PlannedEntityQuery` may
 exist without an authored Object Query behind it, but consumers never substitute

@@ -6,7 +6,7 @@ pointers, pinned whole-graph at one set of as-of coordinates, and **closed
 world**. Per the dependency graph, `m-snapshot-read` depends on `m-execution`
 (a snapshot read runs under its adopted model, options, and connection policy),
 `m-read-delivery` (whose judged Page a snapshot graph is published from),
-`m-deep-fetch` (graph population is deep fetch; navigation, as-of propagation,
+`m-read-planning` (graph population is deep fetch; navigation, as-of propagation,
 and lists are reached transitively), and `m-edit` (derivation carries a
 materialized value's state by complement). It is the **plain-value** read
 surface; a managed-object surface materializes managed objects through
@@ -181,7 +181,7 @@ Within **one Root View**, one row key is **one node**:
 
 A snapshot graph is **point-consistent**: the root query's lowered as-of
 coordinates propagate per hop, matched by axis, to every temporal entity in the
-graph (`m-navigate` as-of propagation, applied inside each `m-deep-fetch` child
+graph (`m-navigate` as-of propagation, applied inside each `m-read-planning` child
 level). Every temporal node is pinned at the propagated coordinates; an axis
 unpinned at the root defaults to latest; a non-temporal node carries no
 coordinate. Hard pointers are safe *because* of this rule — every node in one
@@ -209,7 +209,7 @@ After materialization a snapshot graph **never issues SQL**:
   absence surfaces (a missing property, a typed empty marker, an error on
   access) is per-language, but issuing a load is **not** a legal surfacing.
   There is no lazy loading and no deferred-load trigger of any kind — the
-  deferred relationship load (`m-deep-fetch`) belongs to the managed-object
+  deferred relationship load (`m-read-planning`) belongs to the managed-object
   surface and requires a live unit of work, which a snapshot graph never has.
 - A snapshot graph is never enrolled in a unit of work: mutating a node is a
   plain in-memory change with no persistence meaning. Persisting a change means

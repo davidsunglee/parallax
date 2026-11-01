@@ -2,7 +2,7 @@
 # rows, and the snapshot graph materializes them in 1 + L statements — one node
 # per row, referenced from both positions.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, to-many, relationship, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, to-many, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

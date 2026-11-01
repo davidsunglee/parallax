@@ -87,7 +87,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-conformance-adapter",
         "m-core",
         "m-db-error",
-        "m-deep-fetch",
+        "m-read-planning",
         "m-descriptor",
         "m-dialect",
         "m-document-codec",

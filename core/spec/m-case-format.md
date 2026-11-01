@@ -550,7 +550,7 @@ two — whether a child level's polymorphic relationship set should narrow the
 same way — is left open for a follow-up.
 
 A **deep-fetch `then.graph`** keys each eager-fetched related set under the
-**relationship name** — or, for a **narrowed polymorphic hop** (`m-deep-fetch`,
+**relationship name** — or, for a **narrowed polymorphic hop** (`m-read-planning`,
 `m-inheritance`), under the **derived narrowed view key** `<rel>[<Concrete>,
 <Concrete>]` (the local relationship name, the effective concrete-subtype set in
 canonical alphabetical order by entity name, no spaces). Equivalent authored
@@ -1104,7 +1104,7 @@ And per-path statement counts follow the guard's **resolved source set**, so
 two paths whose guards resolve to the same set are **one** hop, while every other
 relation between two guards — disjoint, overlapping, or one containing the other
 — is two, even where the second fetches nothing the first did not
-(`m-deep-fetch`). Since a guard creates no view key, a case whose extra hop is
+(`m-read-planning`). Since a guard creates no view key, a case whose extra hop is
 subsumed observes it in `databaseCalls` and nowhere else: its `then.graph` is
 identical to the covering path's alone, and a root object outside every guard
 carries **no** entry for that path's relationship rather than an empty one.
@@ -1846,7 +1846,7 @@ always has.
 Beyond read and write steps, a scenario carries a third step kind — the **action
 step** — that names a managed-object lifecycle verb the client performs against
 an earlier step's result. This is the vocabulary the object-lifecycle modules
-(`m-identity-map`, `m-deep-fetch`, `m-op-list`) need but the
+(`m-identity-map`, `m-read-planning`, `m-op-list`) need but the
 SQL-oriented read/write steps cannot express. An action step carries an
 **`action`** verb, an **`on`** source (the earlier step's index, or an array of
 indices when the verb spans sources at different lowered coordinates), its own
@@ -1858,7 +1858,7 @@ prior step's result (so `on` is REQUIRED) or on the unit of work as a whole (so
 | Verb | Meaning | Targets | Module |
 |---|---|---|---|
 | `mutate` | derive an edited copy by assigning the members in `set` (no SQL for a snapshot object) | prior object (`on` required) | `m-edit` |
-| `load` | explicitly trigger a deferred relationship load (the portable, mandatory load trigger) | prior object(s) (`on` required) | `m-deep-fetch` |
+| `load` | explicitly trigger a deferred relationship load (the portable, mandatory load trigger) | prior object(s) (`on` required) | `m-read-planning` |
 | `access` | read an already-loaded relationship / query-backed list (no SQL when already populated) | prior object (`on` required) | `m-op-list` |
 | `flush` | emit the unit of work's buffered DML | unit of work (`on` optional) | `m-unit-work` |
 | `commit` / `abort` | end the unit of work, committing or discarding it | unit of work (`on` optional) | `m-unit-work` |
@@ -2125,7 +2125,7 @@ rows and no relationship, which is exactly what `expectRows` already states.
 
 An access's multi-hop `path` is walked hop by hop over the materialized view, and a branch
 that reached **no row** contributes what the fetch left behind: such a branch
-hands its deeper levels an **empty parent set** (`m-deep-fetch`), so nothing
+hands its deeper levels an **empty parent set** (`m-read-planning`), so nothing
 below it was ever materialized to state. A path with **any to-many hop** reaches
 a set of terminals, and the contents are its **non-null** ones — a null or empty
 branch drops out at the hop it appears on, the **terminal** hop included, because
@@ -2559,7 +2559,7 @@ rules:
   portable `string` literal and so satisfies the typed-literal check — is named
   here rather than silently accepted.
 - `deep-fetch-value-object-segment` — an Include Path segment names a value
-  object (`m-value-object` contract 4, `m-deep-fetch`).
+  object (`m-value-object` contract 4, `m-read-planning`).
 - `find-root-value-object` — a `find()` is rooted at a value object
   (`m-value-object` contract 5).
 - `subtype-selection-duplicate-alternative` — one Subtype Selection repeats the
@@ -2605,7 +2605,7 @@ rules:
   concrete-subtype set that is **not a subset** of the relationship target's
   effective concrete set — narrowing a
   polymorphic relationship to a concrete outside its reachable set, even a **sibling**
-  sharing the family root (`m-navigate` / `m-deep-fetch` × `m-inheritance`,
+  sharing the family root (`m-navigate` / `m-read-planning` × `m-inheritance`,
   resolved Q10).
 
 **Write** rules (`m-value-object` write validation — a value object is written

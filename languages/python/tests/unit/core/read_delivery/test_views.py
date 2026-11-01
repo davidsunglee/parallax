@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity
 from parallax.core.read_delivery._page import ROOT_LEVEL, ChildSlot, ViewSchema
+from parallax.core.read_planning import RelationshipViewKey
 from tests.unit._corpus_model_support import model as corpus_model
 
 _NAMESPACE = "parallax.compatibility"

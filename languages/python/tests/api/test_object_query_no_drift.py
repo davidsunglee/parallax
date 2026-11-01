@@ -78,7 +78,7 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     # read examples: derived from the SAME `build()` the real-database runner
     # executes (`read_stories.READ_STORIES`) — see this file's own docstring.
     **{story.case_id: story.build for story in READ_STORIES},
-    # Deep-fetch include paths (m-deep-fetch) that also drive an executable graph
+    # Deep-fetch include paths (m-read-planning) that also drive an executable graph
     # story (`parallax.conformance.graph_stories`) — the SAME query expression;
     # this entry is the query-shape no-drift half, the story is the execution half.
     "m-snapshot-read-001": lambda: Order.where(Order.id == 1).include(
@@ -122,7 +122,7 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     ),
     "m-value-object-023": lambda: Customer.where(Customer.all),
     "m-value-object-024": lambda: Customer.where(Customer.address.city == "Oslo"),
-    "m-deep-fetch-018": lambda: Customer.where(Customer.all).include(Customer.locations),
+    "m-read-planning-018": lambda: Customer.where(Customer.all).include(Customer.locations),
     # Deep-fetch include paths over the installed Person/Passport and
     # animal-owner mirrors — the query-shape no-drift
     # half of the executable graph stories in `graph_stories.py`.

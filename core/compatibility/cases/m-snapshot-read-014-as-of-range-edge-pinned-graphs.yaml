@@ -1,7 +1,7 @@
 # asOfRange returns one Continuation-ordered root sequence over the overlapping
 # milestones; the compatibility projection remains edge-keyed.
 model: models/invoice.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, m-temporal-read, temporal, as-of-range, edge-pinned, graph, audit-only, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, m-temporal-read, temporal, as-of-range, edge-pinned, graph, audit-only, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

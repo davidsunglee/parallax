@@ -155,7 +155,7 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │ ReadPlanner.plan(edition, model, dialect, query, result_form="instance", preference)
    ▼
  ReadPlanCache: hit → reuse; miss → build below, once per key            _read_plan
-   ├ deep_fetch.plan → ObjectQueryPlan
+   ├ read_planning.plan → ObjectQueryPlan
    │     root: PlannedEntityQuery
    │     includes: IncludeTree
    │     fetch_steps: QueryFetchStep | BackReferenceFetchStep
@@ -263,16 +263,16 @@ admission stay outside the cache.
 - `parallax.core.read_delivery._read_plan:ReadPlanner.plan`
 - `parallax.core.read_delivery._read_plan:ReadPlanCache`
 - `parallax.core.read_delivery._read_plan:UNCACHED_READ_PLANNER`
-- `parallax.core.deep_fetch:plan`
-- `parallax.core.deep_fetch:ObjectQueryPlan`
-- `parallax.core.deep_fetch:ObjectQueryPlan.root`
-- `parallax.core.deep_fetch:ObjectQueryPlan.includes`
-- `parallax.core.deep_fetch:ObjectQueryPlan.fetch_steps`
-- `parallax.core.deep_fetch:PlannedEntityQuery`
-- `parallax.core.deep_fetch._include_tree:IncludeTree`
-- `parallax.core.deep_fetch:QueryFetchStep`
-- `parallax.core.deep_fetch:BackReferenceFetchStep`
-- `parallax.core.deep_fetch:ResolvedReadProjection`
+- `parallax.core.read_planning:plan`
+- `parallax.core.read_planning:ObjectQueryPlan`
+- `parallax.core.read_planning:ObjectQueryPlan.root`
+- `parallax.core.read_planning:ObjectQueryPlan.includes`
+- `parallax.core.read_planning:ObjectQueryPlan.fetch_steps`
+- `parallax.core.read_planning:PlannedEntityQuery`
+- `parallax.core.read_planning._include_tree:IncludeTree`
+- `parallax.core.read_planning:QueryFetchStep`
+- `parallax.core.read_planning:BackReferenceFetchStep`
+- `parallax.core.read_planning:ResolvedReadProjection`
 - `parallax.core.read_delivery._fetch:entity_read_lock`
 - `parallax.core.sql_gen._compile:compile_read`
 - `parallax.core.sql_gen._compile:compile_template`
@@ -532,7 +532,7 @@ exhausted, failed or stopped early.
 | -- | -- |
 | Entry points, lanes, adoption, connections | [`m-execution`](../../../../core/spec/m-execution.md), [Python execution binding](../../spec/execution.md) |
 | Query value and its resolution | [`m-object-query`](../../../../core/spec/m-object-query.md) |
-| Levels and `1 + L` | [`m-deep-fetch`](../../../../core/spec/m-deep-fetch.md) |
+| Levels and `1 + L` | [`m-read-planning`](../../../../core/spec/m-read-planning.md) |
 | Statements, seeks, locks | [`m-sql`](../../../../core/spec/m-sql.md), [`m-read-lock`](../../../../core/spec/m-read-lock.md) |
 | Storage layout | [`m-storage-layout`](../../../../core/spec/m-storage-layout.md#storage-layout-transparency) |
 | Plan cache, Page, delivery, streams | [`m-read-delivery`](../../../../core/spec/m-read-delivery.md) |

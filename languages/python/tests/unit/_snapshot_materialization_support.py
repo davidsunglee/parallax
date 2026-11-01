@@ -65,7 +65,7 @@ from parallax.core import (
     TablePerHierarchy,
     ValueObject,
     attr,
-    deep_fetch,
+    read_planning,
     rel,
 )
 from parallax.core._execution._read_query import resolve_read_query
@@ -296,7 +296,7 @@ def compiled_levels(layout: Layout, plan: ReadPlan) -> tuple[CompiledRead | None
     return tuple(reads)
 
 
-def _attach_key(plan: ReadPlan, step: deep_fetch.FetchStep) -> str:
+def _attach_key(plan: ReadPlan, step: read_planning.FetchStep) -> str:
     view = plan.include_tree().position(step.position).view
     assert view is not None
     return view.narrowed_view or view.relationship.name

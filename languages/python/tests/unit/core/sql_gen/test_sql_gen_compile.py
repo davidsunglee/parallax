@@ -24,7 +24,7 @@ from typing import Any, Literal, cast
 
 import pytest
 
-from parallax.core import deep_fetch, inheritance, relationship, storage_layout, temporal_read
+from parallax.core import inheritance, read_planning, relationship, storage_layout, temporal_read
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core._execution._read_query import resolve_read_query
@@ -106,12 +106,12 @@ def _compile_resolved_product(
     product: ResolvedPredicate, meta: Metamodel = ACCOUNT
 ) -> CompiledRead:
     entity = target(meta, "Account") if meta is ACCOUNT else target(meta, "Customer")
-    query = deep_fetch.PlannedEntityQuery(
+    query = read_planning.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         position=read_position(meta, entity),
         predicate=resolved_as_stated(product, meta, entity),
-        projection=deep_fetch.ResolvedReadProjection((), False),
+        projection=read_planning.ResolvedReadProjection((), False),
     )
     return compile_entity_query(query, meta, POSTGRES)
 
@@ -547,12 +547,12 @@ def _child_template(
     entity = target(meta, name)
     member = entity.attribute(attr)
     assert member is not None
-    query = deep_fetch.PlannedEntityQuery(
+    query = read_planning.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         position=read_position(meta, entity),
         predicate=resolved_as_stated(deferred_membership(member=member), meta, entity),
-        projection=deep_fetch.ResolvedReadProjection((), False),
+        projection=read_planning.ResolvedReadProjection((), False),
     )
     return sql_compile.compile_template(query, meta, dialect)
 
@@ -657,12 +657,12 @@ def test_a_template_deferring_nothing_renders_its_compiled_read_without_inputs(
     dialect: Dialect,
 ) -> None:
     entity = target(ACCOUNT, "Account")
-    query = deep_fetch.PlannedEntityQuery(
+    query = read_planning.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         position=read_position(ACCOUNT, entity),
         predicate=resolved_as_stated(ResolvedConstant(True), ACCOUNT, entity),
-        projection=deep_fetch.ResolvedReadProjection((), False),
+        projection=read_planning.ResolvedReadProjection((), False),
     )
 
     template = sql_compile.compile_template(query, ACCOUNT, dialect)
@@ -692,12 +692,12 @@ def test_a_template_discovers_no_expanding_placeholder_in_identifier_text(
     table = "item__parallax_deferred_keys__"
     meta = _orders_with_item_table(table)
     entity = target(meta, "OrderItem")
-    root = deep_fetch.PlannedEntityQuery(
+    root = read_planning.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         position=read_position(meta, entity),
         predicate=resolved_as_stated(ResolvedConstant(True), meta, entity),
-        projection=deep_fetch.ResolvedReadProjection((), False),
+        projection=read_planning.ResolvedReadProjection((), False),
     )
 
     root_template = sql_compile.compile_template(root, meta, dialect)
@@ -709,11 +709,11 @@ def test_a_template_discovers_no_expanding_placeholder_in_identifier_text(
     assert child.sql.endswith(f"where t0.order_id {membership}")
 
 
-def _two_key_sets(members: tuple[str, str]) -> deep_fetch.PlannedEntityQuery:
+def _two_key_sets(members: tuple[str, str]) -> read_planning.PlannedEntityQuery:
     entity = target(ORDERS, "OrderItem")
     first, second = (entity.attribute(name) for name in members)
     assert first is not None and second is not None
-    return deep_fetch.PlannedEntityQuery(
+    return read_planning.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         position=read_position(ORDERS, entity),
@@ -722,7 +722,7 @@ def _two_key_sets(members: tuple[str, str]) -> deep_fetch.PlannedEntityQuery:
             ORDERS,
             entity,
         ),
-        projection=deep_fetch.ResolvedReadProjection((), False),
+        projection=read_planning.ResolvedReadProjection((), False),
     )
 
 
@@ -763,7 +763,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
     title = entity.attribute("title")
     assert member is not None and title is not None
     narrow_to = (target(meta, "Invoice").identity,) if narrow else None
-    query = deep_fetch.PlannedEntityQuery(
+    query = read_planning.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         position=read_position(meta, entity, narrow_to),
@@ -778,7 +778,7 @@ def test_tpcs_child_template_renders_each_occurrence_without_recompilation(
         ),
         narrow_to=narrow_to,
         limit=7,
-        projection=deep_fetch.ResolvedReadProjection((), False),
+        projection=read_planning.ResolvedReadProjection((), False),
     )
     reuse = record_plan_reuse(monkeypatch)
     template = sql_compile.compile_template(query, meta, dialect, result_form="instance")
@@ -1012,7 +1012,7 @@ def _guarded_read(
         "propagated": PropagatedRootSelections(selections),
         "none": NoRootSelections(),
     }
-    query = deep_fetch.PlannedEntityQuery(
+    query = read_planning.PlannedEntityQuery(
         target=entity.identity,
         entity=entity,
         position=read_position(meta, entity),
@@ -1022,7 +1022,7 @@ def _guarded_read(
             model=meta,
             resolution=modes[resolution],
         ),
-        projection=deep_fetch.ResolvedReadProjection((), False),
+        projection=read_planning.ResolvedReadProjection((), False),
     )
     return compile_entity_query(query, meta, POSTGRES)
 
@@ -1087,11 +1087,11 @@ def _traveler_predicate(display: str, score: int, note: str) -> Mapping[str, obj
     }
 
 
-def _sourced_root(query: ResolvedObjectQuery) -> deep_fetch.PlannedEntityQuery:
-    return deep_fetch.plan_root(
+def _sourced_root(query: ResolvedObjectQuery) -> read_planning.PlannedEntityQuery:
+    return read_planning.plan_root(
         query,
         _TRAVELERS,
-        projection=deep_fetch.ReadProjectionRequest("none", False),
+        projection=read_planning.ReadProjectionRequest("none", False),
         defer_execution_values=True,
     )
 
@@ -1112,7 +1112,7 @@ def test_a_deferred_root_binds_each_authored_operand_under_the_form_its_subject_
 
 
 def test_deferred_operands_of_one_classification_share_one_form_across_templates() -> None:
-    def operands(low: int, high: int) -> deep_fetch.PlannedEntityQuery:
+    def operands(low: int, high: int) -> read_planning.PlannedEntityQuery:
         predicate = {
             "and": {
                 "operands": [
@@ -1149,8 +1149,8 @@ def test_a_deferred_root_renders_the_current_operands_as_direct_compilation_bind
     rendered = template.render(query=current)
 
     concrete = sql_compile.compile_read(
-        deep_fetch.plan_root(
-            current, _TRAVELERS, projection=deep_fetch.ReadProjectionRequest("none", False)
+        read_planning.plan_root(
+            current, _TRAVELERS, projection=read_planning.ReadProjectionRequest("none", False)
         ),
         _TRAVELERS,
         POSTGRES,

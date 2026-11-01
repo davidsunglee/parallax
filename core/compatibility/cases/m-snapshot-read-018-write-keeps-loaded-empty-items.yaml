@@ -8,7 +8,7 @@
 # fixture row, the SAME relationship and the SAME write, differing in exactly one
 # authored fact — whether step 0 included `items` at all.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, loaded-empty, insert, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-read-planning, m-unit-work, closed-world, relationship, loaded-empty, insert, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

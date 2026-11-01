@@ -5,9 +5,9 @@ from typing import Any, Final, cast
 
 from parallax.core import temporal_read
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, NeutralType, TemporalBound
-from parallax.core.deep_fetch import IncludeTree, PositionId, RelationshipViewKey, RenderToken
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.read_delivery._page import ABSENT, InvalidData, VersionAttributes
+from parallax.core.read_planning import IncludeTree, PositionId, RelationshipViewKey, RenderToken
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.core.wire._facts import (
     ENCODE,

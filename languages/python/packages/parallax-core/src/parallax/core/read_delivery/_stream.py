@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Generator, Iterator
 from typing import Any, Final, Literal, Protocol, cast
 
-from parallax.core import continuation, deep_fetch
+from parallax.core import continuation, read_planning
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -260,7 +260,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
         build_publication: Callable[[Any], P],
         *,
         batch_size: int,
-        on_page_start: Callable[[deep_fetch.IncludeTree], None],
+        on_page_start: Callable[[read_planning.IncludeTree], None],
         on_release: Callable[[], None],
     ) -> None:
         self._query = query
@@ -278,7 +278,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
         self._milestones: TemporalShape | None = None
         self._activity: StreamActivity = INERT
         self._failure: BaseException | None = None
-        self._paused_includes: deep_fetch.IncludeTree | None = None
+        self._paused_includes: read_planning.IncludeTree | None = None
 
     def enter(self) -> P:
         """Open the delivery's scope: begin its read, build its publication,
@@ -373,7 +373,7 @@ class StreamDelivery[R: StreamRead[Any], Q: QueryClauses, P: Publication[Any, An
         return self._query.target.canonical
 
     @property
-    def paused_includes(self) -> deep_fetch.IncludeTree | None:
+    def paused_includes(self) -> read_planning.IncludeTree | None:
         """The current Page's include tree while the delivery is paused at a
         root it yielded, and ``None`` at every other moment."""
         return self._paused_includes

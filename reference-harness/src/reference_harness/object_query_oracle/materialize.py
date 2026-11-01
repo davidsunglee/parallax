@@ -828,7 +828,7 @@ def _materialize_navigated_family_variant(
     carries no branch carrier at all; a multi-concrete one is polymorphic under both
     strategies, publishing ``familyVariant`` from a table-per-hierarchy tag or from
     the ``union all`` branch literal a table-per-concrete-subtype hop projects
-    (`m-deep-fetch`). Navigating is instance-form, so the branch superset that hop
+    (`m-read-planning`). Navigating is instance-form, so the branch superset that hop
     aligns to is the instance-form one.
 
     A row carrying no branch carrier stands somewhere else — a multi-hop load

@@ -23,7 +23,6 @@ import pytest
 from parallax.conformance import models
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
-from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.inheritance import InheritancePositionView
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
@@ -66,6 +65,7 @@ from parallax.core.predicate._resolved import (
     ResolvedStringMatch,
     SubjectPosition,
 )
+from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.sql_gen._compile import compile_write_predicate
 from parallax.core.temporal_read import Bitemporal, TransactionTimeOnly
 from parallax.core.temporal_read import view as temporal_view

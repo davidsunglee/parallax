@@ -970,7 +970,7 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         customer_owner_materializes_its_composite_under_a_filter,
     ),
     GraphStory(
-        "m-deep-fetch-018",
+        "m-read-planning-018",
         "A deep fetch materializes the child's own value-object document too",
         "customer",
         customer_locations_deep_fetch_materializes_the_child_document_too,

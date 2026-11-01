@@ -2,7 +2,7 @@
 # around the executor adds nothing to the ceiling, and a final page short of what
 # it asked for ends the delivery without a further statement.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, stream, streamed-delivery, to-many, relationship, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, stream, streamed-delivery, to-many, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

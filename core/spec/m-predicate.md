@@ -703,7 +703,7 @@ deferred key set bound after compilation. Neither operation encodes or decodes a
 literal. Consumers compose and rewrite only already-resolved occurrences; none
 resolves a member or admits an operand again.
 
-`m-object-query` stores this elaborated product. `m-sql` and `m-deep-fetch`
+`m-object-query` stores this elaborated product. `m-sql` and `m-read-planning`
 compile it without resolving paths, inferring types, decoding literals, or
 repeating validation. Programmatic fluent predicates instead use
 `m-core.coerceNeutralInput` followed by managed membership and retain their

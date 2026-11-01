@@ -46,7 +46,6 @@ from parallax.core import (
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import INFINITY, SQL_NULL, PresentDocument
 from parallax.core.db_port import Row
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import GraphConstructionError, IncludePath
 from parallax.core.entity._expressions import IncludeTraversal
 from parallax.core.entity._layout import CatalogedModel
@@ -81,6 +80,7 @@ from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.read_delivery._row_lane import (
     _published_rows,  # pyright: ignore[reportPrivateUsage]
 )
+from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.write_plan import ObjectKey
 from parallax.snapshot import (

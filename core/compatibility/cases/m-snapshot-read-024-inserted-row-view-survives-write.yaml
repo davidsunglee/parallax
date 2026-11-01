@@ -8,7 +8,7 @@
 # graph already materialized" held over rows this scenario itself created;
 # m-snapshot-read-017 holds it over rows the fixtures supplied.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, to-many, insert, update, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-read-planning, m-unit-work, closed-world, relationship, to-many, insert, update, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

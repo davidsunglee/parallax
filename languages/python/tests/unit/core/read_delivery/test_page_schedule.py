@@ -20,7 +20,6 @@ from parallax.core import (
     rel,
 )
 from parallax.core.base import INFINITY
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import model_of
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import (
@@ -45,6 +44,7 @@ from parallax.core.read_delivery._page import (
     reach_into,
     release_finished_rows,
 )
+from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.temporal_read import Pin
 from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit._prepared_read_support import compiled_read, convert_cells

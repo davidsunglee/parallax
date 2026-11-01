@@ -1016,7 +1016,7 @@ def step_query(step: Mapping[str, object], model: AcceptedMetamodel) -> ObjectQu
     """A scenario or coherence read step's own canonical Object Query.
 
     The query travels as authored. Root as-of injection and per-hop temporal
-    propagation are `deep_fetch.plan`'s own first step on every production
+    propagation are `read_planning.plan`'s own first step on every production
     read path, the compile lane's :func:`_compile_find` included, so applying
     them here would apply them twice.
     """

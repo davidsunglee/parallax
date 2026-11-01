@@ -3,7 +3,7 @@
 `m-op-list` specifies **query-backed list results** — the collection an
 implementation returns from a set-based query. Per the dependency graph,
 `m-op-list` depends on `m-object-query` (a list is backed by an Object Query),
-`m-unit-work` (it resolves within a unit of work), and `m-deep-fetch` (a lazy
+`m-unit-work` (it resolves within a unit of work), and `m-read-planning` (a lazy
 list is *populated by* deep fetch — the same relationship `m-snapshot-read`
 has with deep fetch). Lists sit *above* the shared fetch algorithm, not
 underneath it: a relationship predicate is a correlated sub-select and yields
@@ -31,7 +31,7 @@ coalesce. Repeated-equal-query Database Call *elimination* (a query cache) is
 of both.
 
 This laziness is what makes the deep-fetch Database Call guarantees
-(`m-deep-fetch`) observable: because a list defers resolution and a deep fetch
+(`m-read-planning`) observable: because a list defers resolution and a deep fetch
 issues one statement per relationship level, the harness can count statements and
 prove that populating an already-fetched relationship does not fan out. (A
 plain-value read is **not** a query-backed list — for snapshot graphs the same
@@ -45,7 +45,7 @@ materialization.)
 | Construction | side-effect-free; no SQL |
 | First access | resolves once within the unit of work |
 | Re-access | no re-query (stable result) |
-| Deep-fetch population | a deep fetch (`m-deep-fetch`) populates the relationship lists in `1 + L` statements |
+| Deep-fetch population | a deep fetch (`m-read-planning`) populates the relationship lists in `1 + L` statements |
 
 The compatibility suite expresses the list-core contract through the deep-fetch
 cases: the assembled object graph **is** the populated list result, and the

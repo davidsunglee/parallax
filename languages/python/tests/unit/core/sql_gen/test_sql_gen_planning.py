@@ -12,7 +12,6 @@ import pytest
 from parallax.conformance.models import accepted_model
 from parallax.core import inheritance, storage_layout
 from parallax.core import predicate as oa
-from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.navigate import _closed  # pyright: ignore[reportPrivateUsage]
@@ -28,6 +27,7 @@ from parallax.core.predicate._resolved import (
     ResolvedQuantifier,
     ResolvedRelationship,
 )
+from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen import _context, _planning
 from parallax.core.sql_gen._inheritance import (

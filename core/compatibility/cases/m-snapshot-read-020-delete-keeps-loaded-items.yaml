@@ -1,7 +1,7 @@
 # Deletion distinguishes a captured relationship value from a view that
 # retains keys and resolves them again after the write.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, delete, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-read-planning, m-unit-work, closed-world, relationship, delete, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

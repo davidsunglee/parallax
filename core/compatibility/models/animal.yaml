@@ -29,7 +29,7 @@
 #   Person.animals -> Animal (abstract ROOT)     — reaches any concrete { Dog,Cat,WildBoar }
 #   Person.pets    -> Pet    (abstract SUBTYPE)   — reaches only { Dog,Cat }
 # A narrowed include/navigation over either derives a distinct narrowed view keyed
-# `pets[Dog,Cat]` etc. (m-navigate / m-deep-fetch).
+# `pets[Dog,Cat]` etc. (m-navigate / m-read-planning).
 #
 # `Animal.owner` reverses `Person.animals` on the abstract ROOT, so the to-one is
 # INHERITED: every concrete subtype reaches its owner under the one relationship
@@ -65,7 +65,7 @@ entities:
       # every concrete subtype reaches it under the SAME relationship identity
       # `Animal.owner`. It is what a deep-fetch path ROOTED at a subtype traverses:
       # `Dog.owner` and `Cat.owner` are one relationship guarded to disjoint source
-      # objects, never two relationships (m-deep-fetch / m-inheritance).
+      # objects, never two relationships (m-read-planning / m-inheritance).
       - name: owner
         reverseOf: parallax.compatibility.Person.animals
   - name: Pet

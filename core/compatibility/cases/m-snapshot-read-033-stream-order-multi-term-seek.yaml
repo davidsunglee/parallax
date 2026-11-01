@@ -2,7 +2,7 @@
 # (m-snapshot-read), and a multi-term seek interleaves with the deep-fetch levels
 # a page pays `1 + L` for.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, stream, streamed-delivery, orderBy, ordering, to-many, relationship, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, stream, streamed-delivery, orderBy, ordering, to-many, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

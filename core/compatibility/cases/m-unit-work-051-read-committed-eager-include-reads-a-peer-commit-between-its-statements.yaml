@@ -2,7 +2,7 @@
 # Committed each statement reads the latest committed state, so the peer's commit
 # between them yields an item from before it beside an order from after it.
 model: models/orders.yaml
-tags: [m-unit-work, m-deep-fetch, m-db-error, isolation, concurrency, deep-fetch, read-committed, slice-snapshot-1]
+tags: [m-unit-work, m-read-planning, m-db-error, isolation, concurrency, deep-fetch, read-committed, slice-snapshot-1]
 shape: concurrencySuccess
 compileEligibility:
   mode: run-only

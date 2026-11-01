@@ -118,7 +118,7 @@ def _resolve_rel_ref(model: Model, rel_ref: str) -> tuple[Entity, dict[str, Any]
 
 
 class HopKey(NamedTuple):
-    """The dedup identity of one deep-fetch hop (m-deep-fetch).
+    """The dedup identity of one deep-fetch hop (m-read-planning).
 
     ``parent`` is the key of the hop this one descends from, absent at a path's
     first segment: it is what keeps two branches that reach the same relationship
@@ -200,7 +200,7 @@ class FetchStep:
     paths guarded to different root sources, and two branches reaching one
     relationship from different parents are all DISTINCT levels (each counts toward
     ``L`` in ``1 + L``), while equivalent authored narrowings that resolve to the
-    same set DEDUPLICATE (m-deep-fetch). :attr:`parent_hop` names the hop whose
+    same set DEDUPLICATE (m-read-planning). :attr:`parent_hop` names the hop whose
     fetched rows this one gathers its parent keys from, absent when those are the
     root query's own rows. Its graph attach key is :attr:`view_key` — the ordinary
     relationship name for a broad hop, the derived ``<rel>[<Concrete>,<Concrete>]``
@@ -389,7 +389,7 @@ def _hop_tag_binds(family: Family, effective_set: list[str]) -> list[Any]:
 def guarded_parents(
     case: Case, step: FetchStep, parents: Sequence[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """The parent rows a path-root guard admits into *step* (m-deep-fetch).
+    """The parent rows a path-root guard admits into *step* (m-read-planning).
 
     A root guard changes no statement of its own and populates no view of its own:
     it selects which already-fetched ROOT objects the hop starts from, so the hop's
@@ -407,7 +407,7 @@ def guarded_parents(
                 f"{case.path.name}: the path-root guard {list(step.root_guard)!r} on "
                 f"{step.rel_ref} cannot select root objects — the root read carries no "
                 f"`familyVariant`, so its own position is not polymorphic "
-                f"(m-inheritance / m-deep-fetch)."
+                f"(m-inheritance / m-read-planning)."
             )
     return [row for row in parents if row["familyVariant"] in admitted]
 
@@ -422,7 +422,7 @@ def _sorted_by_order_keys(
     """Return *rows* sorted by *sort_spec* — a list of
     ``(column, descending, nulls_first)`` triples evaluated left to right. Stable:
     rows tied on every key keep input order. A key's Null Placement is
-    independent of its direction (m-deep-fetch), so ``nulls_first`` is not derived
+    independent of its direction (m-read-planning), so ``nulls_first`` is not derived
     from ``descending``; an authored placement is what the caller passes and an
     omitted one arrives already defaulted to nulls-last.
     """
@@ -458,7 +458,7 @@ def _assert_child_ordering(
     the authored ``then.graph`` order. A relationship with no ``orderBy`` is
     skipped (its order is unspecified). NULL values sort where the key's authored
     ``nulls`` asks, and where it is omitted they sort LAST — the canonical
-    placement in either direction (m-deep-fetch); two NULLs are equal and fall
+    placement in either direction (m-read-planning); two NULLs are equal and fall
     through to the next key. Residual ties beyond the declared keys keep
     their DB order (the sort is stable), which the contract permits. Every
     declared ``orderBy`` key MUST be present in the child query's projection; a

@@ -20,7 +20,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 | `m-core` | `core` |
 | `m-db-error` | `db-error` |
 | `m-db-port` | `db-port` |
-| `m-deep-fetch` | `deep-fetch` |
+| `m-read-planning` | `deep-fetch` |
 | `m-descriptor` | `descriptor` |
 | `m-dialect` | `dialect` |
 | `m-document-codec` | `document-codec` |

@@ -2,7 +2,7 @@
 # inside the unit of work observes its own buffered writes in the relationship it
 # deep-fetches, not only in the row it keys on.
 model: models/orders.yaml
-tags: [m-unit-work, m-deep-fetch, read-your-own-writes, relationship, to-many, insert, update, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, m-read-planning, read-your-own-writes, relationship, to-many, insert, update, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

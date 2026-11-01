@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, cast
 
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import EntityIdentity
+from parallax.core.read_planning import RelationshipViewKey
 
 __all__ = [
     "ROOT_LEVEL",

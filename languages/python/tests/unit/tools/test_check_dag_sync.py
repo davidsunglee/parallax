@@ -146,7 +146,7 @@ def _spec_with(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, old: str, new: s
 def test_parse_dependency_graph_reads_core_edges() -> None:
     edges = dag.parse_dependency_graph(dag.MODULES_MD.read_text())
     assert ("m-descriptor", "m-core") in edges
-    assert ("m-snapshot-read", "m-deep-fetch") in edges
+    assert ("m-snapshot-read", "m-read-planning") in edges
     # No malformed pairs slipped through.
     assert all(a and b for a, b in edges)
 

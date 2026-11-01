@@ -1,7 +1,7 @@
 # An ORDER KEY resolves at the position `narrowTo` moved the returned rows to, beside
-# Includes (m-object-query positional rule, m-inheritance, m-deep-fetch).
+# Includes (m-object-query positional rule, m-inheritance, m-read-planning).
 model: models/animal.yaml
-tags: [m-object-query, m-predicate, m-deep-fetch, m-inheritance, m-sql, table-per-hierarchy, narrow, orderBy, limit, directive, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, m-predicate, m-read-planning, m-inheritance, m-sql, table-per-hierarchy, narrow, orderBy, limit, directive, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

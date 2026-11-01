@@ -767,7 +767,7 @@ An ordering key carries an authored **Null Placement** alongside its direction �
 the Object Query Sort Key's `nulls` member (`m-object-query`) and the relationship
 declaration's (`m-relationship`), which lower through this one seam; an omitted
 placement is `last`,
-the canonical dialect-independent default in both directions (`m-deep-fetch`). The two
+the canonical dialect-independent default in both directions (`m-read-planning`). The two
 dialects reach a requested placement differently, because their native `ORDER BY`
 `NULL` placement diverges:
 
@@ -817,12 +817,12 @@ every Continuation Order — a price paid to relocate a `NULL` conforming storag
 cannot hold, and one this seam declines rather than pays.
 
 The compatibility suite proves the compensating and native
-forms yield the identical observable order (case `m-deep-fetch-012` for the
+forms yield the identical observable order (case `m-read-planning-012` for the
 `asc`/`last` default; `m-object-query-004` through `-007` for all four combinations on
-an Object Query Sort Key, and `m-deep-fetch-021` through `-023` for the three a canonical
+an Object Query Sort Key, and `m-read-planning-021` through `-023` for the three a canonical
 relationship declaration spells distinctly — canonical descriptor form omits a `nulls`
 equal to the default, so an explicit `asc`/`last` on a declaration canonicalizes to the
-placement-free spelling `m-deep-fetch-012` already witnesses).
+placement-free spelling `m-read-planning-012` already witnesses).
 
 ## Decision points needed now
 

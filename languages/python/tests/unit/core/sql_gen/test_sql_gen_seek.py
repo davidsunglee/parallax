@@ -17,7 +17,7 @@ from typing import Final
 
 import pytest
 
-from parallax.core import continuation, deep_fetch
+from parallax.core import continuation, read_planning
 from parallax.core.base import INFINITY, INFINITY_LITERAL, PresentDocument
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
 from parallax.core.metamodel import Metamodel
@@ -65,7 +65,7 @@ _ORDER_SKU = "parallax.compatibility.Order.sku"
 _POSITION_VALID_END = "parallax.compatibility.Position.validEnd"
 _ORDER_ACTIVE = "parallax.compatibility.Order.active"
 
-_PROJECTION = deep_fetch.ReadProjectionRequest("none", False)
+_PROJECTION = read_planning.ReadProjectionRequest("none", False)
 
 
 def _planned(model: Metamodel, target: str, *keys: OrderKey) -> continuation.ContinuationPlan:
@@ -88,7 +88,7 @@ def _lowered(
     model: Metamodel, node: ResolvedObjectQuery, *, lock: LockMode | None = None
 ) -> LoweredStatement:
     return compile_entity_query(
-        deep_fetch.plan(node, model, projection=_PROJECTION).root,
+        read_planning.plan(node, model, projection=_PROJECTION).root,
         model,
         POSTGRES,
         lock=lock,
@@ -194,7 +194,7 @@ def test_the_appended_key_still_captures_a_cell_of_its_own() -> None:
     # both the same expression and the same carrier as the ordering term holds
     # for too thin a slice to be worth being wrong about.
     compiled = compile_entity_query(
-        deep_fetch.plan(
+        read_planning.plan(
             _planned(ORDERS, "Order").first(limit=2), ORDERS, projection=_PROJECTION
         ).root,
         ORDERS,
@@ -357,10 +357,10 @@ def test_a_null_tail_wrapper_preserves_structured_document_presence() -> None:
     plan = _planned(DOCUMENT_LAYOUT, "Charter")
     node = plan.after(ContinuationCoordinate((1,)), limit=2)
     compiled = compile_entity_query(
-        deep_fetch.plan(
+        read_planning.plan(
             node,
             DOCUMENT_LAYOUT,
-            projection=deep_fetch.ReadProjectionRequest("all", True),
+            projection=read_planning.ReadProjectionRequest("all", True),
         ).root,
         DOCUMENT_LAYOUT,
         POSTGRES,
@@ -422,7 +422,7 @@ def test_a_postgres_locking_single_concrete_continuation_keeps_its_result_contra
     node = continuation.plan(validate_object_query(entity, query, TRAVERSAL), TRAVERSAL).after(
         ContinuationCoordinate((3, 1)), limit=2
     )
-    planned = deep_fetch.plan(node, TRAVERSAL, projection=_PROJECTION).root
+    planned = read_planning.plan(node, TRAVERSAL, projection=_PROJECTION).root
     compiled = compile_entity_query(planned, TRAVERSAL, POSTGRES, lock="locking")
     unlocked = compile_entity_query(planned, TRAVERSAL, POSTGRES)
     statement = compiled.statement
@@ -609,10 +609,10 @@ def test_a_null_tail_wrapper_delivers_its_rows_with_or_without_the_base_row_lock
         projection_support.MATRIX_META,
     )
     compiled = compile_entity_query(
-        deep_fetch.plan(
+        read_planning.plan(
             plan.after(ContinuationCoordinate((10, 1)), limit=3),
             projection_support.MATRIX_META,
-            projection=deep_fetch.ReadProjectionRequest("all" if instance else "none", False),
+            projection=read_planning.ReadProjectionRequest("all" if instance else "none", False),
         ).root,
         projection_support.MATRIX_META,
         POSTGRES,
@@ -719,7 +719,7 @@ def test_a_document_resident_leading_term_hoists_no_range() -> None:
 
 def test_a_coordinate_is_read_off_the_capture_cell_projected_last() -> None:
     compiled = compile_entity_query(
-        deep_fetch.plan(
+        read_planning.plan(
             _planned(ORDERS, "Order").first(limit=2), ORDERS, projection=_PROJECTION
         ).root,
         ORDERS,
@@ -740,7 +740,7 @@ def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -
     # Column spellings alone.
     model = formed(_SEEK_SPELLED_MEMBER)
     compiled = compile_entity_query(
-        deep_fetch.plan(
+        read_planning.plan(
             _planned(model, "Beacon", OrderKey(attr="Beacon.parallax_seek_0")).first(limit=2),
             model,
             projection=_PROJECTION,
@@ -807,7 +807,10 @@ def test_each_continuing_branch_joins_its_own_shared_sources_beneath_the_root_lo
     )
     reuse = record_plan_reuse(monkeypatch)
     compiled = compile_entity_query(
-        deep_fetch.plan(node, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES, lock="locking"
+        read_planning.plan(node, ORDERS, projection=_PROJECTION).root,
+        ORDERS,
+        POSTGRES,
+        lock="locking",
     )
     statement = compiled.statement
     joined = "from order_item t0 left join orders t1 on t1.id = t0.order_id where t1.name = ? and "
@@ -1047,10 +1050,10 @@ def test_a_page_template_renders_what_direct_compilation_of_the_current_page_bin
     # branches, the open bound's framework bind, and every typed span and
     # override stay those direct compilation of the current page derives.
     template = compile_template(
-        deep_fetch.plan(cold, model, projection=_PROJECTION).root, model, dialect, lock=lock
+        read_planning.plan(cold, model, projection=_PROJECTION).root, model, dialect, lock=lock
     )
     direct = compile_entity_query(
-        deep_fetch.plan(current, model, projection=_PROJECTION).root, model, dialect, lock=lock
+        read_planning.plan(current, model, projection=_PROJECTION).root, model, dialect, lock=lock
     )
 
     rendered = template.render(query=current)
@@ -1072,7 +1075,7 @@ def test_a_page_template_renders_what_direct_compilation_of_the_current_page_bin
     assert (
         template.render(query=cold).statement
         == compile_entity_query(
-            deep_fetch.plan(cold, model, projection=_PROJECTION).root, model, dialect, lock=lock
+            read_planning.plan(cold, model, projection=_PROJECTION).root, model, dialect, lock=lock
         ).statement
     )
 
@@ -1084,7 +1087,7 @@ def test_an_unpaged_template_renders_its_compiled_read_without_inputs() -> None:
         ORDERS,
     )
     template = compile_template(
-        deep_fetch.plan(node, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
+        read_planning.plan(node, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
     )
 
     assert template.render() is template.compiled
@@ -1095,10 +1098,12 @@ def test_a_page_template_refuses_missing_or_mismatched_current_inputs() -> None:
     plan = _planned(ORDERS, "Order")
     continued = plan.after(ContinuationCoordinate((1,)), limit=2)
     first = compile_template(
-        deep_fetch.plan(plan.first(limit=2), ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
+        read_planning.plan(plan.first(limit=2), ORDERS, projection=_PROJECTION).root,
+        ORDERS,
+        POSTGRES,
     )
     after = compile_template(
-        deep_fetch.plan(continued, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
+        read_planning.plan(continued, ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
     )
 
     with pytest.raises(SqlGenError, match="current page cap"):

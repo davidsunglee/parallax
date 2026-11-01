@@ -48,7 +48,7 @@ def test_a_root_result_set_compares_as_a_multiset() -> None:
 
 
 def test_a_relationship_collection_compares_as_a_multiset() -> None:
-    expected, kinds = _authored_graph("m-deep-fetch-018")
+    expected, kinds = _authored_graph("m-read-planning-018")
     observed = copy.deepcopy(expected)
     customer = cast("dict[str, Any]", observed["Customer"][0])
     customer["locations"] = list(reversed(cast("list[Any]", customer["locations"])))
@@ -56,7 +56,7 @@ def test_a_relationship_collection_compares_as_a_multiset() -> None:
 
 
 def test_a_child_level_value_object_many_compares_positionally() -> None:
-    expected, kinds = _authored_graph("m-deep-fetch-018")
+    expected, kinds = _authored_graph("m-read-planning-018")
     observed = copy.deepcopy(expected)
     address = cast("dict[str, Any]", observed["Customer"][0]["address"])
     address["phones"] = list(reversed(cast("list[Any]", address["phones"])))

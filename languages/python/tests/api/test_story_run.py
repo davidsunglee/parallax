@@ -1294,7 +1294,7 @@ def _assert_customer_locations_graph(case_id: str, snapshot: Any) -> None:
 def test_customer_locations_deep_fetch_materializes_the_child_document_too(
     profile_run: Any,
 ) -> None:
-    story = _GRAPH_STORIES_BY_ID["m-deep-fetch-018"]
+    story = _GRAPH_STORIES_BY_ID["m-read-planning-018"]
     meta = _reset_for(story.case_id, profile_run)
     db = _counting_connect(profile_run.port, meta)
     snapshot = story.run(db)

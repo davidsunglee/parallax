@@ -41,7 +41,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-write-payload",
         "m-temporal-write",
         "m-navigate",
-        "m-deep-fetch",
+        "m-read-planning",
         "m-read-delivery",
         "m-snapshot-read",
         "m-opt-lock",

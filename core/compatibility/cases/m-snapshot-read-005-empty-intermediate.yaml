@@ -1,7 +1,7 @@
 # Snapshot graph, EMPTY intermediate level (m-snapshot-read): a multi-hop snapshot
 # stops when an intermediate level yields no keys.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, empty-intermediate, relationship, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, empty-intermediate, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

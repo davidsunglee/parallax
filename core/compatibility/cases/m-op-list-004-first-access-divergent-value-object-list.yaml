@@ -1,6 +1,6 @@
 # Query-backed list x DIVERGENT value object: the first-access materialization
 # witness (m-op-list + m-value-object) — the query-backed-list analogue of
-# m-deep-fetch-020, resolving the VO-bearing child via a FIRST `action: access`
+# m-read-planning-020, resolving the VO-bearing child via a FIRST `action: access`
 # instead of a relationship load (the other instance-form step read m-sql "Read
 # result form" classifies: the first access of a query-backed list is INSTANCE-FORM,
 # object lane).

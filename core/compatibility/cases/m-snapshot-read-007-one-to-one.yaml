@@ -1,7 +1,7 @@
 # Snapshot graph over a ONE-TO-ONE relationship (m-snapshot-read): a one-to-one peer
 # materializes as one hard pointer, not a collection.
 model: models/person.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, one-to-one, relationship, nullable, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, one-to-one, relationship, nullable, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

@@ -1,5 +1,5 @@
 model: models/composed-beast-reader.yaml
-tags: [m-inheritance, m-deep-fetch, m-sql, m-object-query, table-per-hierarchy, narrow, deep-fetch, graph, partial-composition, slice-snapshot-1]
+tags: [m-inheritance, m-read-planning, m-sql, m-object-query, table-per-hierarchy, narrow, deep-fetch, graph, partial-composition, slice-snapshot-1]
 shape: read
 given:
   provisioningModel: models/composed-beast-provisioning.yaml

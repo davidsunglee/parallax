@@ -40,7 +40,6 @@ from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
 from parallax.core._execution._unit_work.write_items import ComposedWrite
-from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
@@ -48,6 +47,7 @@ from parallax.core.metamodel import AttributeMetadata, EntityIdentity, Metamodel
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.read_delivery import InvalidData
+from parallax.core.read_planning._include_tree import build_include_tree
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (

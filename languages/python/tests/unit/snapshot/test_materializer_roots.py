@@ -9,7 +9,6 @@ import pytest
 
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.core.base import SQL_NULL
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
@@ -26,6 +25,7 @@ from parallax.core.read_delivery._page import (
     reach_into,
     release_finished_rows,
 )
+from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.temporal_read import Pin
 from parallax.snapshot._publication._root import RootView
 from parallax.snapshot._publication._root_publication import publish_roots

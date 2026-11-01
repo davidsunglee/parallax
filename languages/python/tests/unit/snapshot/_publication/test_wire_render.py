@@ -9,10 +9,10 @@ import pytest
 from parallax.core._execution import _planning as planning_module
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import DATE, STRING
-from parallax.core.deep_fetch import IncludeTree
 from parallax.core.document_codec import _occurrence as occurrence_codec
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.read_delivery._page import ABSENT
+from parallax.core.read_planning import IncludeTree
 from parallax.core.temporal_read import Pin
 from parallax.core.wire import _facts as facts_module
 from parallax.core.wire._codec import encode_managed_wire

@@ -51,13 +51,12 @@ from parallax.core import (
     Rel,
     ValueObject,
     attr,
-    deep_fetch,
+    read_planning,
     rel,
 )
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import Row
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES, scalar_result
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.entity._model import model_of
@@ -83,6 +82,7 @@ from parallax.core.read_delivery._page import (
 )
 from parallax.core.read_delivery._row_converter import ReadRowConverter
 from parallax.core.read_delivery._row_decoding import row_identity
+from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.temporal_read import (
@@ -782,12 +782,12 @@ def test_a_sibling_occurrence_of_the_same_spelling_is_not_bound_by_that_spelling
     (left_home,) = projection_support.matrix_entity(
         strategy, "document", "Left"
     ).declared_value_objects
-    planned = deep_fetch.plan_root(
+    planned = read_planning.plan_root(
         projection_support.resolved(root.where(root.all)),
         projection_support.MATRIX_META,
-        projection=deep_fetch.ReadProjectionRequest("all", True),
+        projection=read_planning.ReadProjectionRequest("all", True),
     )
-    query = replace(planned, projection=deep_fetch.ResolvedReadProjection((left_home,), True))
+    query = replace(planned, projection=read_planning.ResolvedReadProjection((left_home,), True))
     compiled = compile_entity_query(
         query, projection_support.MATRIX_META, POSTGRES, result_form="instance"
     )

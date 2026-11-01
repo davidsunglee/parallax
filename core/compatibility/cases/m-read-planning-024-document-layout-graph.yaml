@@ -1,0 +1,65 @@
+# A deep fetch across two document-mapped Entities projects each level's Structured
+# Column exactly once (m-read-planning x m-storage-layout x m-sql *Read projection*), on
+# Postgres AND MariaDB.
+model: models/document-layout.yaml
+tags: [m-read-planning, m-object-query, m-storage-layout, m-relationship, m-sql, m-value-object, read, json, to-many, relationship, document-layout, graph, materialization, slice-snapshot-1, slice-managed-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Traveler.trips IN-list binds are the distinct parent keys gathered from the root query result, so the child emissions depend on a query result"
+when:
+  objectQuery:
+    target: parallax.compatibility.Traveler
+    predicate:
+      "true": {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Traveler.trips
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, not t0.payload is null, t0.payload from traveler t0
+        mariadb: select t0.id, not t0.payload is null, t0.payload from traveler t0
+    - sql:
+        postgres: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 where t0.traveler_id = any(cast(? as bigint[])) order by t0.id asc
+        mariadb: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload from trip t0 where t0.traveler_id in (?, ?, ?) order by t0.id asc
+      binds: { postgres: [[1, 2, 3]], mariadb: [1, 2, 3] }
+  graph:
+    Traveler:
+      - id: 1
+        displayName: Ada
+        score: 7
+        joinedOn: '2026-01-15'
+        note: north wing
+        address:
+          city: Oslo
+          geo:
+            country: "NO"
+        tags:
+          - { label: founder }
+          - { label: staff }
+        trips:
+          - { id: 51, travelerId: 1, destination: Oslo, nights: 3 }
+          - { id: 52, travelerId: 1, destination: Bergen, nights: 1 }
+      - id: 2
+        displayName: Bo
+        score: 30
+        joinedOn: '2025-12-31'
+        note: null
+        address:
+          city: Bergen
+          geo:
+            country: "NO"
+        tags: []
+        trips:
+          - { id: 53, travelerId: 2, destination: Bergen, nights: 7 }
+      - id: 3
+        displayName: Cyd
+        score: null
+        joinedOn: null
+        note: null
+        address: null
+        tags: []
+        trips: []
+  databaseCalls: 2

@@ -2,7 +2,7 @@
 # materializes a point-consistent snapshot graph — every temporal node at the
 # propagated pin, including now-superseded milestones.
 model: models/invoice.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, m-temporal-read, temporal, as-of, past, propagation, graph, audit-only, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, m-temporal-read, temporal, as-of, past, propagation, graph, audit-only, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

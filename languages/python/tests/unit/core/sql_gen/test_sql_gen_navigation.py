@@ -20,7 +20,7 @@ from typing import Literal
 
 import pytest
 
-from parallax.core import deep_fetch, inheritance, storage_layout
+from parallax.core import inheritance, read_planning, storage_layout
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY, STRING
 from parallax.core.db_port import ArrayBind
@@ -1746,12 +1746,12 @@ def test_one_quantifier_object_in_two_predicate_slots_reads_each_slot_s_own_cell
         oa.validate_predicate(basket, authored, family), family, basket
     ).predicate
     compiled = sql_compile.compile_read(
-        deep_fetch.PlannedEntityQuery(
+        read_planning.PlannedEntityQuery(
             target=basket.identity,
             entity=basket,
             position=read_position(family, basket),
             predicate=_closed(ResolvedAnd((quantifier, quantifier))),
-            projection=deep_fetch.ResolvedReadProjection((), False),
+            projection=read_planning.ResolvedReadProjection((), False),
         ),
         family,
         POSTGRES,

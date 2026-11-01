@@ -13,7 +13,6 @@ from parallax.core.base import (
     UnknownFamilyTag,
     check_stored_scalar,
 )
-from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.document_codec import (
     UNAVAILABLE,
     DecodeOutput,
@@ -41,6 +40,7 @@ from parallax.core.read_delivery._page import (
     StoredDataIssueCode,
     StoredDataIssueInput,
 )
+from parallax.core.read_planning import ResolvedReadProjection
 from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 
 __all__ = [

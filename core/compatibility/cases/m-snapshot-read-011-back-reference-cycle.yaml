@@ -1,7 +1,7 @@
 # Back-reference cycle in a snapshot graph (m-snapshot-read): an included
 # back-reference points to the ORIGINAL node, a legal in-memory cycle.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, back-reference, cycle, relationship, graph, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, back-reference, cycle, relationship, graph, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

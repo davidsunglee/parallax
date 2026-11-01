@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Final, Never, Protocol, cast, overload
 
-from parallax.core import deep_fetch
+from parallax.core import read_planning
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.db_port import DatabaseConnection, PipelineStatement, Row
 from parallax.core.entity._layout import CatalogedModel
@@ -130,7 +130,7 @@ class EagerPageResult[Origin]:
     """
 
     page: Page
-    includes: deep_fetch.IncludeTree
+    includes: read_planning.IncludeTree
     origins: Mapping[int, Origin] = MappingProxyType({})
 
 
@@ -144,7 +144,7 @@ class HistoryPageResult:
 
     page: Page
     milestones: TemporalShape
-    includes: deep_fetch.IncludeTree
+    includes: read_planning.IncludeTree
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,7 +203,7 @@ class StreamPageResult[Origin]:
     """One streamed Page and the minimal state needed to continue its delivery."""
 
     page: Page
-    includes: deep_fetch.IncludeTree
+    includes: read_planning.IncludeTree
     origins: Mapping[int, Origin]
     delivered: int
     resume_from: ContinuationCoordinate | None
@@ -237,7 +237,7 @@ def _drain_rows(rows: list[Row]) -> Iterator[Row]:
 @dataclass(frozen=True, slots=True)
 class _PendingFetch:
     index: int
-    step: deep_fetch.QueryFetchStep
+    step: read_planning.QueryFetchStep
     parents: tuple[int, ...]
     compiled: CompiledRead
     converter: ReadRowConverter
@@ -512,10 +512,10 @@ class PageReader:
                     attach_empty(builder, includes, step, parents)
                     continue
                 if prepared is None:
-                    assert isinstance(step, deep_fetch.BackReferenceFetchStep)
+                    assert isinstance(step, read_planning.BackReferenceFetchStep)
                     attach_back_reference(builder, meta, includes, step, parents)
                     continue
-                assert isinstance(step, deep_fetch.QueryFetchStep)
+                assert isinstance(step, read_planning.QueryFetchStep)
                 keys = gather_keys(
                     builder,
                     parents,

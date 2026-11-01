@@ -7,7 +7,7 @@ from typing import Final
 import pytest
 
 from parallax.conformance.story_models import ORDERS_MODEL
-from parallax.core import DomainModel, deep_fetch
+from parallax.core import DomainModel, read_planning
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.dialect import POSTGRES
@@ -83,7 +83,9 @@ def _order_read() -> tuple[Metamodel, CatalogedModel, CompiledRead]:
         model=meta,
         form="graph",
     )
-    plan = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
+    plan = read_planning.plan(
+        query, meta, projection=read_planning.ReadProjectionRequest("all", True)
+    )
     return (
         meta,
         CatalogedModel(meta),

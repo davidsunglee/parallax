@@ -27,7 +27,6 @@ import pytest
 
 from parallax.conformance import class_models, models
 from parallax.core.base import SQL_NULL
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.entity import _layout as layout_module
 from parallax.core.entity._layout import (
     CatalogedModel,
@@ -56,6 +55,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema, page_rows
+from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
 from tests._support.document_reads import folded_names

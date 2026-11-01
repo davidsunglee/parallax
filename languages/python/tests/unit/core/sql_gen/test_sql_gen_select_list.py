@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from parallax.core import continuation, deep_fetch
+from parallax.core import continuation, read_planning
 from parallax.core import predicate as oa
 from parallax.core.base import STRING
 from parallax.core.dialect import POSTGRES
@@ -153,10 +153,10 @@ def _continuing(limit: int = 2) -> CompiledRead:
         ORDERS,
     )
     return compile_entity_query(
-        deep_fetch.plan(
+        read_planning.plan(
             plan.after(ContinuationCoordinate((1,)), limit=limit),
             ORDERS,
-            projection=deep_fetch.ReadProjectionRequest("none", False),
+            projection=read_planning.ReadProjectionRequest("none", False),
         ).root,
         ORDERS,
         POSTGRES,

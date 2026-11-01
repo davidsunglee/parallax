@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import Any, Final, Protocol, cast, overload
 
-from parallax.core import deep_fetch
+from parallax.core import read_planning
 from parallax.core._execution._publication import SelectedReadModel
 from parallax.core._execution._read_policy import ReadQuery
 from parallax.core.base import ManagedValue, NeutralType
@@ -49,7 +49,7 @@ class StreamExecution(Protocol):
         *,
         convert_query: Callable[[Q], ReadQuery],
         build_publication: Callable[[SelectedReadModel], SnapshotPublication],
-        on_page_start: Callable[[deep_fetch.IncludeTree], None],
+        on_page_start: Callable[[read_planning.IncludeTree], None],
         on_release: Callable[[], None],
     ) -> StreamDelivery[Any, Any, SnapshotPublication]: ...
 
@@ -66,7 +66,7 @@ class _StreamWireProjection:
         self,
         construction: EntityGraphConstruction,
         wire: WireModelFacts,
-        includes: deep_fetch.IncludeTree,
+        includes: read_planning.IncludeTree,
     ) -> None:
         self._construction = construction
         self._wire = wire
@@ -75,7 +75,7 @@ class _StreamWireProjection:
         self._renderer: WireRenderer[object] | None = None
         self._encoder: _PageWireEncoder | None = None
 
-    def begin_page(self, includes: deep_fetch.IncludeTree) -> None:
+    def begin_page(self, includes: read_planning.IncludeTree) -> None:
         self._clear_entities()
         self._includes = includes
         if self._encoder is not None:
@@ -294,7 +294,7 @@ class SnapshotStream[T]:
     def __repr__(self) -> str:
         return f"SnapshotStream(target={self._delivery.target!r}, state={self._delivery.state!r})"
 
-    def _begin_projection_page(self, includes: deep_fetch.IncludeTree) -> None:
+    def _begin_projection_page(self, includes: read_planning.IncludeTree) -> None:
         if self._projection_state is not None:
             self._projection_state.begin_page(includes)
 

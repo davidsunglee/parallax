@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, Self, cast
 
-from parallax.core import deep_fetch
+from parallax.core import read_planning
 from parallax.core._execution._family import entity_layout
 from parallax.core._execution._keyed_writes import (
     KeyedInsertSource,
@@ -56,7 +56,6 @@ from parallax.core._execution._unit_work.uow import (
 from parallax.core._execution._write_step_executor import WriteStepExecutor
 from parallax.core.base import ManagedValue
 from parallax.core.db_port import DatabaseConnection
-from parallax.core.deep_fetch import PlannedEntityQuery
 from parallax.core.dialect import LockMode
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
@@ -89,6 +88,7 @@ from parallax.core.read_delivery._row_lane import (
     publishable_member_rows,
 )
 from parallax.core.read_delivery._stream import StreamDelivery, check_batch_size
+from parallax.core.read_planning import PlannedEntityQuery
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.temporal_read import Pin
 from parallax.core.write_plan.payload import PatchedDocument
@@ -294,7 +294,7 @@ class _TxnAttemptBase:
         *,
         convert_query: Callable[[Q], ReadQuery],
         build_publication: Callable[[SelectedReadModel], P],
-        on_page_start: Callable[[deep_fetch.IncludeTree], None],
+        on_page_start: Callable[[read_planning.IncludeTree], None],
         on_release: Callable[[], None],
     ) -> StreamDelivery[Self, ReadQuery, P]:
         """One participating streamed delivery, constructed and not yet entered.
@@ -775,7 +775,7 @@ class TxnAttempt(_TxnAttemptBase):
         meta = self._write.model.meta
         entity = request.entity
         ((name, value),) = request.key.primary_key
-        query = deep_fetch.plan_target_read(
+        query = read_planning.plan_target_read(
             entity,
             model=meta,
             key=name,
@@ -786,7 +786,7 @@ class TxnAttempt(_TxnAttemptBase):
         return self._row_read(query, entity_read_lock(meta, entity.identity, self._preference))
 
     def _coverage_read(self, request: CoverageReadRequest) -> CompiledRead:
-        query = deep_fetch.plan_coverage_read(
+        query = read_planning.plan_coverage_read(
             request.entity,
             model=self._write.model.meta,
             key=request.key_attribute.name,

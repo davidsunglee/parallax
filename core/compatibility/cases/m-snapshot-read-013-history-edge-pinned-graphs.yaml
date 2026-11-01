@@ -1,7 +1,7 @@
 # History returns one Continuation-ordered root sequence whose compatibility
 # projection remains one edge-pinned graph per milestone (m-snapshot-read).
 model: models/invoice.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, m-temporal-read, temporal, history, edge-pinned, graph, audit-only, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, m-temporal-read, temporal, history, edge-pinned, graph, audit-only, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

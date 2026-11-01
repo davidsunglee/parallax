@@ -132,7 +132,7 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 
 # Modules with NO broad SKIP_REASONS bucket: every one of their active cases is
 # covered case-scoped only (a real example or its own CASE_SKIP_REASONS entry),
-# never a generic module-wide reason — m-unit-work, m-navigate/m-deep-fetch/
+# never a generic module-wide reason — m-unit-work, m-navigate/m-read-planning/
 # m-snapshot-read/m-value-object/m-inheritance (each a reasoned, case-scoped
 # entry rather than a blanket module bucket),
 # m-edit (every currently active case is a native runner-backed example),
@@ -156,7 +156,7 @@ _BUCKET_FREE_MODULES: frozenset[str] = frozenset(
         "m-edit",
         "m-unit-work",
         "m-navigate",
-        "m-deep-fetch",
+        "m-read-planning",
         "m-snapshot-read",
         "m-value-object",
         "m-inheritance",

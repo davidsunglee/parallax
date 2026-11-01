@@ -7,7 +7,7 @@ bare name two namespaces share is a miss rather than a silent first match. The
 ``predicate.validate``, snapshot materialize, unit-of-work, and write-lowering
 seams resolve through the same ``entity_by_name`` helper, and so — the second
 suite below — do the three lowering seams an accepted query reaches next:
-``m-sql``'s family reads and hops, ``m-deep-fetch``'s levels, and
+``m-sql``'s family reads and hops, ``m-read-planning``'s levels, and
 ``m-navigate``'s temporal resolution. One rule across validation and lowering is
 what makes "preflight accepted this reference" imply "lowering resolves it".
 """
@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from parallax.core import deep_fetch
 from parallax.core import predicate as oa
+from parallax.core import read_planning
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._unit_work import instructions
 from parallax.core._formation_profile import form_metamodel
@@ -305,8 +305,8 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
         ),
     )
     validated_segment = validate_object_query(den, segment_narrow, model)
-    segment_plan = deep_fetch.plan(
-        validated_segment, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+    segment_plan = read_planning.plan(
+        validated_segment, model, projection=read_planning.ReadProjectionRequest("all", True)
     )
     assert [
         (position.view.narrowed_view or position.view.relationship.name)
@@ -321,8 +321,8 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
         ),
     )
     validated_guard = validate_object_query(beast, root_guard, model)
-    guarded = deep_fetch.plan(
-        validated_guard, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+    guarded = read_planning.plan(
+        validated_guard, model, projection=read_planning.ReadProjectionRequest("all", True)
     )
     assert [guarded.includes.position(step.position).source for step in guarded.fetch_steps] == [
         (wolf.identity,)
@@ -330,8 +330,8 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
 
     from_subtype = _query("Wolf", (IncludePathNode(segments=(IncludeSegment(rel="Beast.den"),)),))
     validated_subtype = validate_object_query(wolf, from_subtype, model)
-    subtype_plan = deep_fetch.plan(
-        validated_subtype, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+    subtype_plan = read_planning.plan(
+        validated_subtype, model, projection=read_planning.ReadProjectionRequest("all", True)
     )
     assert [
         (position.view.narrowed_view or position.view.relationship.name)
@@ -397,8 +397,8 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
         (IncludePathNode(applies_to=("Wolf",), segments=(IncludeSegment(rel="zoo.Beast.den"),)),),
     )
     validated_guard = validate_object_query(beast, root_guard, model)
-    guarded = deep_fetch.plan(
-        validated_guard, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+    guarded = read_planning.plan(
+        validated_guard, model, projection=read_planning.ReadProjectionRequest("all", True)
     )
     assert [guarded.includes.position(step.position).source for step in guarded.fetch_steps] == [
         (wolf.identity,)

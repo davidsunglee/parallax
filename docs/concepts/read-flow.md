@@ -76,7 +76,7 @@ redirected into the active attempt.
 
 ### Planning and SQL
 
-[Deep fetch](../../core/spec/m-deep-fetch.md) plans the root query and one level for
+[Deep fetch](../../core/spec/m-read-planning.md) plans the root query and one level for
 each relationship hop the Include Paths name. Each non-empty level is one statement
 over the keys the level above gathered, so a read issues at most `1 + L` statements for
 `L` hops however many rows come back. [SQL generation](../../core/spec/m-sql.md)

@@ -41,8 +41,6 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.deep_fetch import IncludeTree
-from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import _layout as entity_layout
 from parallax.core.entity._expressions import AuthoredQuery
@@ -67,6 +65,8 @@ from parallax.core.object_query._fluent import typed_read_query
 from parallax.core.predicate import TrueNode
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import ABSENT, ROOT_LEVEL, Page, PageBuilder, ViewSchema
+from parallax.core.read_planning import IncludeTree
+from parallax.core.read_planning._include_tree import build_include_tree
 from parallax.core.temporal_read import Edge, Pin
 from parallax.snapshot import (
     Database,

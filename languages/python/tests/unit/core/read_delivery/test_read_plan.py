@@ -19,7 +19,7 @@ import pytest
 
 from parallax.conformance.dormant_position_models import DORMANT_POSITION_COLUMNS
 from parallax.conformance.story_models import ORDERS_MODEL, Order
-from parallax.core import continuation, deep_fetch
+from parallax.core import continuation, read_planning
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import INFINITY, INT64, TemporalBound
 from parallax.core.db_port import ArrayBind
@@ -1423,7 +1423,7 @@ def test_a_warm_hit_repeats_no_planning_compilation_or_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = {"plan": 0, "compile": 0, "bind": 0}
-    deep_fetch_module = vars(_read_plan)["deep_fetch"]
+    deep_fetch_module = vars(_read_plan)["read_planning"]
     plan = cast("Callable[..., Any]", deep_fetch_module.plan)
     compile_template = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
     bind = cast("Callable[..., Any]", vars(_read_plan)["bind"])
@@ -1489,7 +1489,7 @@ def test_each_compiled_read_is_bound_under_the_projection_its_query_resolved(
         ),
     )
     assert sorted(map(id, bound)) == sorted(id(read.projection) for read in compiled)
-    assert root.projection == deep_fetch.ResolvedReadProjection((), result_form == "instance")
+    assert root.projection == read_planning.ResolvedReadProjection((), result_form == "instance")
     if result_form == "instance":
         (child,) = compiled[1:]
         assert [
@@ -1525,16 +1525,16 @@ def test_retained_child_work_is_resolved_and_compiled_once_per_plan_family(
     calls = {"root": 0, "child": 0, "compile": 0}
     compile_template = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
     for name in ("resolve_temporal_visibility", "resolve_sourced_temporal_visibility"):
-        resolve = cast("Callable[..., Any]", vars(deep_fetch)[name])
+        resolve = cast("Callable[..., Any]", vars(read_planning)[name])
 
         def counting_resolve(*args: Any, _resolve: Any = resolve, **kwargs: Any) -> Any:
             propagated = isinstance(kwargs["resolution"], PropagatedRootSelections)
             calls["child" if propagated else "root"] += 1
             return _resolve(*args, **kwargs)
 
-        monkeypatch.setattr(deep_fetch, name, counting_resolve)
+        monkeypatch.setattr(read_planning, name, counting_resolve)
 
-    def counting_child(query: deep_fetch.PlannedEntityQuery, *args: Any, **kwargs: Any) -> Any:
+    def counting_child(query: read_planning.PlannedEntityQuery, *args: Any, **kwargs: Any) -> Any:
         if query.entity.identity.name == "OrderItem":
             calls["compile"] += 1
         return compile_template(query, *args, **kwargs)
@@ -1829,7 +1829,7 @@ def test_a_dormant_root_prepares_no_statement_converter_or_child_work(
         EMPTY_READ,
         EMPTY_READ,
     ]
-    assert isinstance(plan.fetch_step(1), deep_fetch.BackReferenceFetchStep)
+    assert isinstance(plan.fetch_step(1), read_planning.BackReferenceFetchStep)
     assert plan._correlations == ((), (), ())
     assert prepared == []
 
@@ -2451,12 +2451,12 @@ def test_direct_compilation_and_write_reads_prepare_no_template(
     ).after(ContinuationCoordinate((1,)), limit=2)
 
     direct = compile_read(
-        deep_fetch.plan(paged, _CORPUS_ORDERS, projection=_ROW_PROJECTION).root,
+        read_planning.plan(paged, _CORPUS_ORDERS, projection=_ROW_PROJECTION).root,
         _CORPUS_ORDERS,
         POSTGRES,
     )
     target = compile_read(
-        deep_fetch.plan_target_read(order, model=_CORPUS_ORDERS, key="id", key_value=7),
+        read_planning.plan_target_read(order, model=_CORPUS_ORDERS, key="id", key_value=7),
         _CORPUS_ORDERS,
         POSTGRES,
         result_form="row",
@@ -2481,7 +2481,7 @@ def test_direct_compilation_and_write_reads_prepare_no_template(
 
 
 _CORPUS_ORDERS = corpus_model("orders")
-_ROW_PROJECTION = deep_fetch.ReadProjectionRequest("none", False)
+_ROW_PROJECTION = read_planning.ReadProjectionRequest("none", False)
 
 
 def _corpus_query(

@@ -2,7 +2,7 @@
 # and a leaf-typed include path reaching ONE inheritance row share a node; the
 # differing fetched projections do not fork identity.
 model: models/animal.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, m-inheritance, table-per-hierarchy, diamond, familyVariant, graph, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, m-inheritance, table-per-hierarchy, diamond, familyVariant, graph, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

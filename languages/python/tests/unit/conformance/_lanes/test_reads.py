@@ -240,7 +240,7 @@ def test_compile_read_case_reports_missing_fields(
 
 
 # --------------------------------------------------------------------------- #
-# Graph reads (m-deep-fetch / m-snapshot-read): the                            #
+# Graph reads (m-read-planning / m-snapshot-read): the                            #
 # `run_graph_case` / `run_graphs_case` envelope lane. What a root LOOKS like   #
 # is the wire materializer's own contract (`test_wire_reads.py`); what is left #
 # here is the envelope.                                                        #

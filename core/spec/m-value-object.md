@@ -283,7 +283,7 @@ rather than left true by omission:
    statement projects the whole structured-document column, and every nested
    to-one and to-many value is decoded from that one column. Invoking a getter
    MUST NOT take a lock, populate an identity cache, or emit **any** statement —
-   there is no per-value-object fetch, and `m-deep-fetch` never applies. This
+   there is no per-value-object fetch, and `m-read-planning` never applies. This
    whole-document projection is the owner's applicable Storage Layout
    `Document` slot (`m-sql`, *Read projection*): it is selected on every
    **instance-form read** — one that materializes instances (`then.graph` /
@@ -295,7 +295,7 @@ rather than left true by omission:
    the whole predecessor row (`m-write-plan`).
 3. **No reverse getters.** A value object has no identity and holds no reference
    back to its owner; a reverse (value-object → owner) getter MUST NOT exist.
-4. **Not a navigation or deep-fetch target.** An Include Path (`m-deep-fetch`)
+4. **Not a navigation or deep-fetch target.** An Include Path (`m-read-planning`)
    traverses relationships **between identity-bearing entities**; a value-object
    segment is invalid there and MUST be rejected. Value objects carry no
    correlation columns, no portal, and no reverse relationship to navigate: a

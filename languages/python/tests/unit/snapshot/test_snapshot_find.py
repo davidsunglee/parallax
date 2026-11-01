@@ -3,7 +3,7 @@
 Exercises the ONE per-level loop against a fake, canned-response `m-db-port`
 (no Docker): Database Call accounting (one statement per non-empty level), the
 empty-level short-circuit (no child statement issued, gathered from `then`'s
-own contract in `m-deep-fetch`), a back-reference level's zero-statement
+own contract in `m-read-planning`), a back-reference level's zero-statement
 resolution, `familyVariant` materialization flowing through the executor
 (`m-sql` applied to child-level rows), and the milestone-set `find_history`
 edge-grouping/ordering.
@@ -42,7 +42,7 @@ from parallax.core import (
     TablePerHierarchy,
     ValueObject,
     attr,
-    deep_fetch,
+    read_planning,
     rel,
 )
 from parallax.core._execution._concurrency import CONCURRENCY
@@ -57,7 +57,6 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._authored_resolver import object_query_node
 from parallax.core.entity._expressions import AuthoredQuery
@@ -107,6 +106,7 @@ from parallax.core.read_delivery._page_reader import (
 )
 from parallax.core.read_delivery._read_plan import UNCACHED_READ_PLANNER, ReadPlanCache, ReadPlanner
 from parallax.core.read_delivery._row_lane import find_rows
+from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.temporal_read import Pin, valid_time_coverage
@@ -1750,7 +1750,7 @@ def test_snapshot_pin_and_repr() -> None:
 
 
 def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> None:
-    # m-deep-fetch: an empty gathered parent-key set issues NO child query at all,
+    # m-read-planning: an empty gathered parent-key set issues NO child query at all,
     # and every admitted parent still gets a LOADED view rather than an unset one.
     # The root's own `ownerId` is null, so there is no key to gather at all.
     port = QueuePort(
@@ -2186,7 +2186,9 @@ def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[Ch
     assert entity is not None
     validated = resolve_read_query(query, model=model, form="graph")
     return slot_table(
-        deep_fetch.plan(validated, model, projection=deep_fetch.ReadProjectionRequest("all", True))
+        read_planning.plan(
+            validated, model, projection=read_planning.ReadProjectionRequest("all", True)
+        )
     )
 
 
@@ -2475,18 +2477,18 @@ def test_typed_and_wire_reads_share_resolved_include_work_within_each_delivery_m
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     resolutions: list[object] = []
-    child_compiles: list[deep_fetch.PlannedEntityQuery] = []
+    child_compiles: list[read_planning.PlannedEntityQuery] = []
     compile_child = cast("Callable[..., Any]", vars(_read_plan)["compile_template"])
     for name in ("resolve_temporal_visibility", "resolve_sourced_temporal_visibility"):
-        resolve = cast("Callable[..., Any]", vars(deep_fetch)[name])
+        resolve = cast("Callable[..., Any]", vars(read_planning)[name])
 
         def counting_resolution(*args: Any, _resolve: Any = resolve, **kwargs: Any) -> Any:
             resolutions.append(kwargs["resolution"])
             return _resolve(*args, **kwargs)
 
-        monkeypatch.setattr(deep_fetch, name, counting_resolution)
+        monkeypatch.setattr(read_planning, name, counting_resolution)
 
-    def counting_child(query: deep_fetch.PlannedEntityQuery, *args: Any, **kwargs: Any) -> Any:
+    def counting_child(query: read_planning.PlannedEntityQuery, *args: Any, **kwargs: Any) -> Any:
         if query.entity.identity.name == "OrderItem":
             child_compiles.append(query)
         return compile_child(query, *args, **kwargs)
@@ -2586,8 +2588,8 @@ def test_temporal_reads_reuse_one_preparation_and_render_their_own_coordinates(
         (_read_plan, "compile_read"),
         (_read_plan, "compile_template"),
         (_read_plan, "bind"),
-        (deep_fetch, "plan"),
-        (deep_fetch, "plan_root"),
+        (read_planning, "plan"),
+        (read_planning, "plan_root"),
     ):
         monkeypatch.setattr(owner, name, forbidden)
     traversed: list[object] = []
