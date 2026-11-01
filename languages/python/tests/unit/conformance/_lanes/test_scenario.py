@@ -1632,16 +1632,22 @@ def test_a_write_its_simulated_unit_of_work_refuses_to_admit_is_an_engine_error(
 
 
 @pytest.mark.parametrize(
-    ("failure", "translated"),
+    ("raised_failure", "translated"),
     [
-        pytest.param(SimulatedStoreError("no one stored row"), True, id="store-diagnostic"),
-        pytest.param(RuntimeError("a defect"), False, id="defect"),
-        pytest.param(KeyboardInterrupt(), False, id="interruption"),
+        pytest.param(lambda: SimulatedStoreError("no one stored row"), True, id="store-diagnostic"),
+        pytest.param(lambda: RuntimeError("a defect"), False, id="defect"),
+        pytest.param(KeyboardInterrupt, False, id="interruption"),
     ],
 )
 def test_only_a_simulated_store_diagnostic_becomes_an_engine_error(
-    failure: BaseException, translated: bool, monkeypatch: pytest.MonkeyPatch
+    raised_failure: Callable[[], BaseException],
+    translated: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Built per run: raising attaches a traceback, through which a parameter
+    # instance would keep this run's frames alive for the rest of the session.
+    failure = raised_failure()
+
     def failing(store: SimulatedTemporalStore, model: object, step: object) -> None:
         raise failure
 
