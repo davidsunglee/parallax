@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import cast
 
-from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
+from parallax.core import inheritance, opt_lock, read_lock, read_planning
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.base import ManagedValue
 from parallax.core.db_port import DatabaseConnection, Row
@@ -54,7 +54,7 @@ def entity_read_lock(
 
 
 def correlation_table(
-    plan: deep_fetch.ObjectQueryPlan, meta: Metamodel, demanded: Iterable[int]
+    plan: read_planning.ObjectQueryPlan, meta: Metamodel, demanded: Iterable[int]
 ) -> tuple[tuple[AttributeIdentity, ...], ...]:
     """Correlation members decoded during the identity pass for each source level.
 
@@ -68,15 +68,15 @@ def correlation_table(
     for index in demanded:
         step = plan.fetch_steps[index]
         parent_source = (
-            ROOT_LEVEL if isinstance(step.parent, deep_fetch.RootRef) else step.parent.index + 1
+            ROOT_LEVEL if isinstance(step.parent, read_planning.RootRef) else step.parent.index + 1
         )
         table[parent_source].append(correlation_member(meta, step.owner.identity))
-        if isinstance(step, deep_fetch.QueryFetchStep):
+        if isinstance(step, read_planning.QueryFetchStep):
             table[index + 1].append(correlation_member(meta, step.related.identity))
     return tuple(tuple(dict.fromkeys(members)) for members in table)
 
 
-def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...], ...]:
+def slot_table(plan: read_planning.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...], ...]:
     """Which view slots each source level's parents can receive, indexed by
     source position: the root is 0 and fetch step ``i`` is ``i + 1``.
 
@@ -96,7 +96,7 @@ def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...],
         position = plan.includes.position(step.position)
         assert position.view is not None
         parent = (
-            ROOT_LEVEL if isinstance(step.parent, deep_fetch.RootRef) else step.parent.index + 1
+            ROOT_LEVEL if isinstance(step.parent, read_planning.RootRef) else step.parent.index + 1
         )
         parent_position = plan.includes.position(position.parent or plan.includes.root)
         table[parent].append(
@@ -104,7 +104,7 @@ def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...],
                 position.view,
                 None if position.source == parent_position.target else frozenset(position.source),
                 frozenset(position.target)
-                if isinstance(step, deep_fetch.BackReferenceFetchStep)
+                if isinstance(step, read_planning.BackReferenceFetchStep)
                 else None,
             )
         )
@@ -114,8 +114,8 @@ def slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...],
 def attach_children(
     builder: PageBuilder,
     meta: Metamodel,
-    tree: deep_fetch.IncludeTree,
-    step: deep_fetch.QueryFetchStep,
+    tree: read_planning.IncludeTree,
+    step: read_planning.QueryFetchStep,
     parents: tuple[int, ...],
     children: tuple[int, ...],
 ) -> None:
@@ -138,13 +138,13 @@ def attach_children(
 
 def attach_empty(
     builder: PageBuilder,
-    tree: deep_fetch.IncludeTree,
-    step: deep_fetch.FetchStep,
+    tree: read_planning.IncludeTree,
+    step: read_planning.FetchStep,
     parents: tuple[int, ...],
 ) -> None:
     """Attach the empty/null relationship result to every admitted parent.
 
-    m-deep-fetch: a level that can fetch no child — its target position is
+    m-read-planning: a level that can fetch no child — its target position is
     empty, or its admitted parents gathered no key — issues no child query at
     all, and every admitted parent still gets a LOADED view — empty or null —
     rather than an unset one.
@@ -159,8 +159,8 @@ def attach_empty(
 def attach_back_reference(
     builder: PageBuilder,
     meta: Metamodel,
-    tree: deep_fetch.IncludeTree,
-    step: deep_fetch.BackReferenceFetchStep,
+    tree: read_planning.IncludeTree,
+    step: read_planning.BackReferenceFetchStep,
     parents: tuple[int, ...],
 ) -> None:
     """Record an ancestor-revisit level for root-local identity resolution.
@@ -234,23 +234,23 @@ def execute_read(
 
 
 def parent_refs(
-    parent: deep_fetch.ParentRef,
+    parent: read_planning.ParentRef,
     root_refs: tuple[int, ...],
     level_refs: Sequence[tuple[int, ...]],
 ) -> tuple[int, ...]:
-    if isinstance(parent, deep_fetch.RootRef):
+    if isinstance(parent, read_planning.RootRef):
         return root_refs
     return level_refs[parent.index]
 
 
 def guarded_parents(
     builder: PageBuilder,
-    tree: deep_fetch.IncludeTree,
-    step: deep_fetch.FetchStep,
+    tree: read_planning.IncludeTree,
+    step: read_planning.FetchStep,
     parents: tuple[int, ...],
 ) -> tuple[int, ...]:
     """The parent nodes a path-root guard admits into ``level``
-    (m-deep-fetch "Path-root guards").
+    (m-read-planning "Path-root guards").
 
     A guard is a SOURCE filter, not a view: it selects which already-converted
     parents this level gathers keys from and attaches to, so an excluded parent

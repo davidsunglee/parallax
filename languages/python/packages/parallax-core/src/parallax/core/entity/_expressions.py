@@ -1150,7 +1150,7 @@ def judged_edit_violation(
 class IncludeTraversal:
     """The canonical Include facts one Include source derives.
 
-    ``segments`` is the traversal in ``m-deep-fetch``'s own ``IncludeSegment``
+    ``segments`` is the traversal in ``m-read-planning``'s own ``IncludeSegment``
     shape; ``target`` is the canonical Entity spelling the traversal currently
     points at, absent once it continued past the hop its descriptor seeded;
     ``source`` is the Entity the seeding class access reached the first hop

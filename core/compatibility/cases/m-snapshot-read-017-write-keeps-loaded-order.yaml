@@ -8,7 +8,7 @@
 # across a derived copy instead, and the two together are the populated half of
 # the composition rule for both cardinalities.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, to-one, update, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-read-planning, m-unit-work, closed-world, relationship, to-one, update, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

@@ -458,7 +458,7 @@ def _navigate_step_view(
     materialization of it. A key the node does not carry is the unloaded state
     itself (`m-snapshot-read`), which an access asserting contents cannot be
     authored over; a key carrying ``None`` is the LOADED-null branch instead,
-    whose deeper levels see an empty parent set (`m-deep-fetch`) rather than an
+    whose deeper levels see an empty parent set (`m-read-planning`) rather than an
     unloaded view.
 
     A null or empty branch therefore contributes no terminal value once any hop

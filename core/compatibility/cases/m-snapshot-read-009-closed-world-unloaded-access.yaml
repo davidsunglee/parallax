@@ -1,7 +1,7 @@
 # Closed-world snapshot access (m-snapshot-read): accessing a relationship the
 # snapshot did NOT include issues ZERO SQL — there is no lazy load.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, closed-world, relationship, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-read-planning, closed-world, relationship, scenario, slice-snapshot-1]
 shape: scenario
 lane: api-conformance
 when:

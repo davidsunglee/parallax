@@ -49,7 +49,7 @@ def test_real_dependency_graph_is_a_legal_dag() -> None:
     edges = parse_edges(markdown)
     assert ("m-sql", "m-predicate") in edges  # sanity: a known edge is present
     assert ("m-sql", "m-storage-layout") in edges
-    assert ("m-deep-fetch", "m-navigate") in edges  # the "surprising" direction is declared
+    assert ("m-read-planning", "m-navigate") in edges  # the "surprising" direction is declared
     assert ("m-coherence", "m-process-cache") in edges  # coherence keeps caches coherent
     assert {dependency for owner, dependency in edges if owner == "m-execution-authority"} == {
         "m-db-port",

@@ -11,7 +11,7 @@ acquiring the rows a write needs to read. Per the dependency graph it depends on
 for admission, evidence, finalization, and effects; `m-read-delivery` for every
 read it executes; `m-write-plan` for the Planned Steps it runs;
 `m-write-payload` for the payload preparer model preparation wires into the
-Write Planner and every statement stores; `m-sql` for the statements it lowers; `m-deep-fetch` for the row reads acquisition plans;
+Write Planner and every statement stores; `m-sql` for the statements it lowers; `m-read-planning` for the row reads acquisition plans;
 `m-execution-authority` for the authority a scope captures; `m-auto-retry` for
 the attempt loop's bound and classification; `m-read-lock` for the lock an
 acquisition takes; `m-execution-lifecycle` for the activities it opens;

@@ -51,7 +51,6 @@ from parallax.core.base import (
     PresentDocument,
 )
 from parallax.core.db_port import Row
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import encode_leaf
 from parallax.core.entity._layout import CatalogedModel, EntityLayout
@@ -76,6 +75,7 @@ from parallax.core.read_delivery._page import (
     page_rows,
 )
 from parallax.core.read_delivery._row_converter import ReadRowConverter
+from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.descriptor._records import (

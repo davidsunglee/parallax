@@ -1,7 +1,7 @@
 # Embedded documents exercise graph isolation beyond scalar fields; phone
 # order also detects reconstruction that preserves members but reorders them.
 model: models/customer.yaml
-tags: [m-snapshot-read, m-deep-fetch, m-value-object, m-unit-work, closed-world, relationship, to-one, json, update, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-read-planning, m-value-object, m-unit-work, closed-world, relationship, to-one, json, update, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

@@ -39,8 +39,8 @@ from time import perf_counter
 from typing import Any, Final, cast
 
 from parallax.core._execution._concurrency import CONCURRENCY
-from parallax.core.deep_fetch._include_tree import build_include_tree
 from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, RowKey, ViewSchema
+from parallax.core.read_planning._include_tree import build_include_tree
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import Snapshot
 from parallax.snapshot._publication._root_publication import publish_roots

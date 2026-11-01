@@ -47,7 +47,7 @@ that mirrors these edges is re-pinned mechanically, not redesigned.
 The normative edges and their rationale are recorded in
 [`core/spec/modules.md`](../../core/spec/modules.md); the header prose of
 [`core/spec/m-navigate.md`](../../core/spec/m-navigate.md),
-[`core/spec/m-deep-fetch.md`](../../core/spec/m-deep-fetch.md), and
+[`core/spec/m-read-planning.md`](../../core/spec/m-read-planning.md), and
 [`core/spec/m-op-list.md`](../../core/spec/m-op-list.md) restate the inverted
 direction consistently. The Python side is
 [`languages/python/spec/python.md`](../../languages/python/spec/python.md).

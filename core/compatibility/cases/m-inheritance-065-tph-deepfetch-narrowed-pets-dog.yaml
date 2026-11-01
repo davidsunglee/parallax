@@ -1,6 +1,6 @@
-# Deep fetch of ONE narrowed subtype view `pets[Dog]` (m-deep-fetch, m-inheritance).
+# Deep fetch of ONE narrowed subtype view `pets[Dog]` (m-read-planning, m-inheritance).
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
+tags: [m-read-planning, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

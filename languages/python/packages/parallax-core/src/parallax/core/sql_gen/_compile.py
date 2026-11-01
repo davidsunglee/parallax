@@ -12,7 +12,6 @@ from parallax.core.base import (
     ManagedValue,
 )
 from parallax.core.db_port import ArrayBind
-from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.document_codec import is_text_compared
 from parallax.core.inheritance import InheritanceFacet
@@ -35,6 +34,7 @@ from parallax.core.object_query._resolved import (
 )
 from parallax.core.predicate._execution_values import predicate_operands
 from parallax.core.predicate._resolved import disjunctive
+from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.sql_gen._context import (
     EXPANDING_PLACEHOLDER,
     PAGE_CAP,

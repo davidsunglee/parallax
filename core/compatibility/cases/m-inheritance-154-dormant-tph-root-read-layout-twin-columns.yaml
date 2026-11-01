@@ -1,5 +1,5 @@
 model: models/dormant-position-layout-twin-columns.yaml
-tags: [m-inheritance, m-sql, m-deep-fetch, m-read-delivery, m-snapshot-read, table-per-hierarchy, dormant-position, deep-fetch, back-reference, graph, layout-twin, columns, slice-snapshot-1]
+tags: [m-inheritance, m-sql, m-read-planning, m-read-delivery, m-snapshot-read, table-per-hierarchy, dormant-position, deep-fetch, back-reference, graph, layout-twin, columns, slice-snapshot-1]
 shape: read
 when:
   objectQuery:

@@ -3,10 +3,10 @@
 `m-read-delivery` turns a validated, adopted read into a judged, identity-first
 **Page** of Entity States and delivers it — whole, or streamed one bounded Page
 at a time — to the lifecycle **Publication** that turns Page states into that
-lifecycle's values. It owns read planning and the reusable plan cache, effective
-read-lock derivation, statement execution and Page assembly, stored-data
+lifecycle's values. It owns preparation and caching of reusable execution plans,
+effective read-lock derivation, statement execution and Page assembly, stored-data
 judgement, and whole-result and streamed delivery. Per the dependency graph it
-depends on `m-deep-fetch` for the fetch it plans, `m-sql` for the statements it
+depends on `m-read-planning` for pure flat-read and include planning, `m-sql` for the statements it
 executes, `m-document-codec` for stored-document judgement, `m-db-port` for the
 calls it makes, `m-temporal-read` for the pins a fetch propagates, `m-read-lock`
 and `m-opt-lock` for the lock each fetch takes, and `m-execution-lifecycle` for
@@ -394,7 +394,7 @@ first page large enough to reach it and is skipped once a smaller page puts a bo
 in front of it. That is the same skip, observed through the dial, rather than a second
 one.
 
-Each page is an ordinary read of a bounded root query, so `m-deep-fetch`'s
+Each page is an ordinary read of a bounded root query, so `m-read-planning`'s
 **`1 + L` ceiling applies once per page** and a page's child levels are the same
 `IN (gathered keys)` lookups any read issues.
 
@@ -692,7 +692,7 @@ statement is not connection-free execution.
 
 ## Database Calls
 
-Delivery is `m-deep-fetch`'s contract observed through the Page: **at most
+Delivery is `m-read-planning`'s contract observed through the Page: **at most
 `1 + L` statements** for `L` distinct relationship hops, one statement per
 non-empty level, empty parent-key levels and levels at a position with no
 concrete subtype issuing no child SQL. A read whose root position has no concrete

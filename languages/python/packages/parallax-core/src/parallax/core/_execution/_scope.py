@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from parallax.core import deep_fetch
+from parallax.core import read_planning
 from parallax.core._execution._adoption import AdoptedExecution
 from parallax.core._execution._options import OMITTED, Omitted, TxnOptions, patch_options
 from parallax.core._execution._publication import (
@@ -136,7 +136,7 @@ class ExecutionScope:
         *,
         convert_query: Callable[[Q], ReadQuery],
         build_publication: Callable[[SelectedReadModel], P],
-        on_page_start: Callable[[deep_fetch.IncludeTree], None],
+        on_page_start: Callable[[read_planning.IncludeTree], None],
         on_release: Callable[[], None],
     ) -> StreamDelivery[StandaloneRead, ReadQuery, P]:
         """One standalone streamed delivery, constructed and not yet entered.

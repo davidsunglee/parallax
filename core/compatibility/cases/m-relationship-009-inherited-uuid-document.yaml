@@ -1,5 +1,5 @@
 model: models/identifier-tpcs-document.yaml
-tags: [m-relationship, m-inheritance, m-storage-layout, m-deep-fetch, m-sql, m-wire, relationship, graph, slice-snapshot-1]
+tags: [m-relationship, m-inheritance, m-storage-layout, m-read-planning, m-sql, m-wire, relationship, graph, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

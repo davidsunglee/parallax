@@ -54,7 +54,7 @@ _ONE_OBJECT_TWO_FINDS = "m-identity-map-001-same-transaction-identity.yaml"
 _TPCS_ROW_FORM_READ = "m-inheritance-050-tpcs-abstract-root-read.yaml"
 _TPCS_INSTANCE_FORM_READ = "m-inheritance-137-tpcs-union-vo-placeholder.yaml"
 _POLYMORPHIC_OWNER = "m-identity-map-005-family-root-vs-leaf.yaml"
-_DOCUMENT_LAYOUT_DEEP_FETCH = "m-deep-fetch-024-document-layout-graph.yaml"
+_DOCUMENT_LAYOUT_DEEP_FETCH = "m-read-planning-024-document-layout-graph.yaml"
 _DOCUMENT_LAYOUT_TPH_READ = "m-inheritance-123-document-layout-tph-broad-read.yaml"
 
 
@@ -573,7 +573,7 @@ def _keyed_by_folder(union_all: str) -> str:
     """m-inheritance-137's `union all`, each branch keyed by the parent `IN` list.
 
     A polymorphic table-per-concrete-subtype hop is ONE `union all` whose branches
-    share the parent-id list (m-deep-fetch), so the level projects the same aligned
+    share the parent-id list (m-read-planning), so the level projects the same aligned
     superset the abstract root read projects and differs from it only by that key.
     """
     return " union all ".join(

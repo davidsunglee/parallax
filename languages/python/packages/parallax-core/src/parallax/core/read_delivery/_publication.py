@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from typing import Protocol
 
-from parallax.core import deep_fetch
+from parallax.core import read_planning
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.read_delivery._page import Page
 from parallax.core.read_delivery._page_reader import EagerPageResult, HistoryPageResult
@@ -27,7 +27,7 @@ class RootsOf[Origin](Protocol):
     def __call__(
         self,
         page: Page,
-        includes: deep_fetch.IncludeTree,
+        includes: read_planning.IncludeTree,
         /,
         *,
         atomic: bool = False,

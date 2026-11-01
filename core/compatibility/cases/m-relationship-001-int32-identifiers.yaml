@@ -1,5 +1,5 @@
 model: models/identifier-types.yaml
-tags: [m-relationship, m-object-query, m-deep-fetch, m-sql, m-wire, relationship, graph, slice-snapshot-1]
+tags: [m-relationship, m-object-query, m-read-planning, m-sql, m-wire, relationship, graph, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

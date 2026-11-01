@@ -1,7 +1,7 @@
 # Streamed delivery (m-execution-lifecycle): a Stream is a Root
 # Execution of its own, and each page it reads is a Stream Batch under it.
 model: models/orders.yaml
-tags: [m-execution-lifecycle, m-snapshot-read, m-deep-fetch, stream, streamed-delivery, to-many, relationship, graph, slice-snapshot-1]
+tags: [m-execution-lifecycle, m-snapshot-read, m-read-planning, stream, streamed-delivery, to-many, relationship, graph, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

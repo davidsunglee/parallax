@@ -1,6 +1,6 @@
 # Snapshot graph, EMPTY root (m-snapshot-read): an empty root emits no child SQL.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, empty-root, relationship, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, empty-root, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

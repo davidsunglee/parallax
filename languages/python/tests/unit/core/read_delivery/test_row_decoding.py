@@ -13,7 +13,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from parallax.core import continuation, deep_fetch
+from parallax.core import continuation, read_planning
 from parallax.core import predicate as oa
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.dialect import POSTGRES
@@ -70,10 +70,10 @@ def test_a_coordinate_is_read_only_off_a_row_of_the_contracts_width() -> None:
         ORDERS,
     )
     compiled = compile_entity_query(
-        deep_fetch.plan(
+        read_planning.plan(
             plan.first(limit=2),
             ORDERS,
-            projection=deep_fetch.ReadProjectionRequest("none", False),
+            projection=read_planning.ReadProjectionRequest("none", False),
         ).root,
         ORDERS,
         POSTGRES,

@@ -1,5 +1,5 @@
 model: models/dormant-position-layout-twin-document.yaml
-tags: [m-inheritance, m-deep-fetch, m-sql, m-read-delivery, m-snapshot-read, table-per-concrete-subtype, dormant-position, deep-fetch, to-one, to-many, graph, layout-twin, document-layout, slice-snapshot-1]
+tags: [m-inheritance, m-read-planning, m-sql, m-read-delivery, m-snapshot-read, table-per-concrete-subtype, dormant-position, deep-fetch, to-one, to-many, graph, layout-twin, document-layout, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

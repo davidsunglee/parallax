@@ -141,7 +141,7 @@ def assemble_classified_graph(
 
     Each path is walked hop by hop; at each hop the child rows for a given parent are
     attached under the hop's VIEW KEY — the ordinary relationship name for a broad
-    hop, the derived ``<rel>[<Concrete>,<Concrete>]`` for a narrowed one (m-deep-fetch).
+    hop, the derived ``<rel>[<Concrete>,<Concrete>]`` for a narrowed one (m-read-planning).
     A path-root guard contributes no key of its own: it withholds the path's whole
     attachment from the root objects it excludes, so an unguarded object's view stays
     UNSET rather than empty — the observable difference between "no such related row"

@@ -1,0 +1,62 @@
+# Deferred load batches BY lowered coordinate (m-read-planning): when the source
+# objects are pinned at different as-of coordinates, the deferred load emits one
+# child statement PER coordinate group, each carrying that group's propagated
+# as-of binds.
+model: models/invoice.yaml
+tags: [m-read-planning, m-temporal-read, m-navigate, temporal, propagation, audit-only, deferred-load, relationship, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Invoice
+        predicate:
+          eq:
+            path: parallax.compatibility.Invoice.id
+            value: 100
+        temporal:
+          transaction-time:
+            asOf: latest
+      databaseCalls: 1
+      note: source A -> invoice 100 pinned at Transaction-Time-latest (out_z = infinity)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.in_z, t0.out_z from invoice t0 where t0.id = ? and t0.out_z = ?
+          binds: [100, infinity]
+      expectRows:
+        - { id: 100, name: INV-100, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+    - objectQuery:
+        target: parallax.compatibility.Invoice
+        predicate:
+          eq:
+            path: parallax.compatibility.Invoice.id
+            value: 100
+        temporal:
+          transaction-time:
+            asOf: "2024-02-01T00:00:00.000000Z"
+      databaseCalls: 1
+      note: source B -> the SAME primary key pinned at instant 2024-02-01 (a distinct pinned view)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.in_z, t0.out_z from invoice t0 where t0.id = ? and t0.in_z <= ? and t0.out_z > ?
+          binds: [100, "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
+      expectRows:
+        - { id: 100, name: INV-100, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+    - action: load
+      "on": [0, 1]
+      path: lines
+      databaseCalls: 2
+      note: load lines over BOTH pinned views -> one child statement per lowered coordinate group
+      statements:
+        - sql:
+            postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id in (?) and t0.out_z = ?
+          binds: [100, infinity]
+        - sql:
+            postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id in (?) and t0.in_z <= ? and t0.out_z > ?
+          binds: [100, "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
+      expectRows:
+        - { id: 1000, invoice_id: 100, amount: "75.00", in_z: "2024-04-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 1001, invoice_id: 100, amount: "25.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+        - { id: 1000, invoice_id: 100, amount: "50.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-04-01T00:00:00.000000Z" }
+        - { id: 1001, invoice_id: 100, amount: "25.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
+then:
+  databaseCalls: 4

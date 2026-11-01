@@ -1,7 +1,7 @@
 """Continuation pure page-plan unit tests (`m-snapshot-read` streaming).
 
 Exercises `parallax.core.continuation.plan` with no port and no database, the
-way `test_deep_fetch.py` exercises its neighbour: the Continuation Order a page
+way `test_read_planning.py` exercises its neighbour: the Continuation Order a page
 node carries, the seek `after` composes onto the caller's own predicate, and the
 query shape a page plan refuses outright. Most assertions here are over the
 returned resolved page query alone.
@@ -33,7 +33,7 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.core import continuation, deep_fetch, temporal_read
+from parallax.core import continuation, read_planning, temporal_read
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
@@ -420,13 +420,13 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
     ),
 )
 
-_PROJECTION: Final = deep_fetch.ReadProjectionRequest("none", False)
+_PROJECTION: Final = read_planning.ReadProjectionRequest("none", False)
 
 
 def _lowered(model: Metamodel, node: ResolvedObjectQuery) -> LoweredStatement:
     """One page node as m-sql lowers it: the statement, and its binds in order."""
     return compile_entity_query(
-        deep_fetch.plan(node, model, projection=_PROJECTION).root, model, POSTGRES
+        read_planning.plan(node, model, projection=_PROJECTION).root, model, POSTGRES
     ).statement
 
 
@@ -493,7 +493,9 @@ def test_a_page_captures_one_hidden_cell_per_continuation_order_term() -> None:
     # identical: `t0.id` is both projected and captured.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU),))
     compiled = compile_entity_query(
-        deep_fetch.plan(plan.first(limit=2), ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
+        read_planning.plan(plan.first(limit=2), ORDERS, projection=_PROJECTION).root,
+        ORDERS,
+        POSTGRES,
     )
     assert compiled.result_contract.coordinate_ordinals == (7, 8)
     assert compiled.statement.sql.startswith(
@@ -511,7 +513,7 @@ def test_an_eager_read_of_the_same_query_captures_nothing() -> None:
         entity.identity, TrueNode(), order_by=(OrderKey(attr=_ORDER_SKU),), limit=2
     )
     compiled = compile_entity_query(
-        deep_fetch.plan(
+        read_planning.plan(
             validate_object_query(entity, query, ORDERS), ORDERS, projection=_PROJECTION
         ).root,
         ORDERS,

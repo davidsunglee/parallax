@@ -27,7 +27,7 @@ from parallax.conformance.workloads import (
     structural_digest,
     workload_digest,
 )
-from parallax.core import deep_fetch, inheritance
+from parallax.core import inheritance, read_planning
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
@@ -39,14 +39,14 @@ def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> Non
         assert workload.model.entity(workload.query.target) is not None
         assert workload.page_sizes == tuple(sorted(set(workload.page_sizes)))
         validated = resolve_read_query(workload.query, model=workload.model, form="graph")
-        plan = deep_fetch.plan(
+        plan = read_planning.plan(
             validated,
             workload.model,
-            projection=deep_fetch.ReadProjectionRequest("all", True),
+            projection=read_planning.ReadProjectionRequest("all", True),
         )
         compile_read(plan.root, workload.model, POSTGRES, result_form="instance")
         for step in plan.fetch_steps:
-            if isinstance(step, deep_fetch.BackReferenceFetchStep):
+            if isinstance(step, read_planning.BackReferenceFetchStep):
                 continue
             compile_template(step.query, workload.model, POSTGRES, result_form="instance").render(
                 [0]

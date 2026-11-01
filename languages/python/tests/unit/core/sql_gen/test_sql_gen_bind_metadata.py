@@ -10,7 +10,7 @@ from typing import cast
 
 import pytest
 
-from parallax.core import deep_fetch, inheritance, storage_layout
+from parallax.core import inheritance, read_planning, storage_layout
 from parallax.core import predicate as oa
 from parallax.core.base import (
     DATE,
@@ -26,12 +26,12 @@ from parallax.core.base import (
 )
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import JSON_NULL, ArrayBind, JsonDocument
-from parallax.core.deep_fetch import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query._resolved import ResolvedObjectQuery
 from parallax.core.predicate._execution_values import ExecutionValueSource
 from parallax.core.predicate._resolved import ResolvedAnd, ResolvedConstant, ResolvedMembership
+from parallax.core.read_planning import PlannedEntityQuery, ResolvedReadProjection
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import CompiledTemplate, compile_read
 from parallax.core.sql_gen._context import (
@@ -84,12 +84,12 @@ def _builder() -> StatementBuilder:
 def _template(statement: LoweredStatement) -> CompiledTemplate:
     entity = WALLET.entities[0]
     compiled = compile_read(
-        deep_fetch.PlannedEntityQuery(
+        read_planning.PlannedEntityQuery(
             target=entity.identity,
             entity=entity,
             position=read_position(WALLET, entity),
             predicate=resolved_as_stated(ResolvedConstant(True), WALLET, entity),
-            projection=deep_fetch.ResolvedReadProjection((), False),
+            projection=read_planning.ResolvedReadProjection((), False),
         ),
         WALLET,
         POSTGRES,

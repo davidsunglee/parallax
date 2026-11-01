@@ -1,7 +1,7 @@
 # Two DISJOINT path-root guards over one relationship stay two hops filling ONE view
-# (m-deep-fetch, m-inheritance).
+# (m-read-planning, m-inheritance).
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-read-planning, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

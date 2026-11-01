@@ -20,7 +20,7 @@ from typing import Any, Final, cast
 import pytest
 
 from parallax.conformance import models
-from parallax.core import Edge, Pin, UndeclaredAxisError, deep_fetch
+from parallax.core import Edge, Pin, UndeclaredAxisError, read_planning
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import INFINITY
@@ -142,8 +142,8 @@ def _where(
     """Inject the as-of predicate, compile through m-sql, return the WHERE + binds."""
     model = _ACCEPTED[entity.identity.name]
     query = _validated(entity, temporal, predicate)
-    root = deep_fetch.plan(
-        query, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+    root = read_planning.plan(
+        query, model, projection=read_planning.ReadProjectionRequest("all", True)
     ).root
     statement = compile_read(root, model, POSTGRES).statement
     _, _, where = statement.sql.partition(" where ")
@@ -224,7 +224,9 @@ def test_result_narrowing_survives_temporal_selection_lowering() -> None:
         _query(BALANCE, {"transaction-time": oq.AsOf("latest")}, narrow_to=("Balance",)),
         model,
     )
-    plan = deep_fetch.plan(query, model, projection=deep_fetch.ReadProjectionRequest("all", True))
+    plan = read_planning.plan(
+        query, model, projection=read_planning.ReadProjectionRequest("all", True)
+    )
     assert plan.root.narrow_to == (BALANCE.identity,)
     assert plan.root.predicate.predicate == ResolvedComparison(
         "eq", _attribute(BALANCE, "txEnd"), INFINITY, framework=True
@@ -322,8 +324,8 @@ def test_latest_terms_bind_managed_infinity_and_publish_its_canonical_literal() 
         assert term.framework
         assert term.value is INFINITY
 
-    root = deep_fetch.plan(
-        query, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+    root = read_planning.plan(
+        query, model, projection=read_planning.ReadProjectionRequest("all", True)
     ).root
     statement = compile_read(root, model, POSTGRES).statement
     assert statement.binds == (INFINITY, INFINITY)
@@ -381,10 +383,10 @@ def test_result_directives_survive_injection() -> None:
         limit=2,
     )
     model = _ACCEPTED["Balance"]
-    root = deep_fetch.plan(
+    root = read_planning.plan(
         oq.validate_object_query(BALANCE, query, model),
         model,
-        projection=deep_fetch.ReadProjectionRequest("all", True),
+        projection=read_planning.ReadProjectionRequest("all", True),
     ).root
     assert root.limit == 2
     assert root.order_by[0].member.identity.name == "id"

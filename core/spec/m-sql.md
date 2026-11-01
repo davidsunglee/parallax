@@ -2,7 +2,7 @@
 
 `m-sql` is the contract that turns resolved read and planned-step products
 into per-dialect SQL, and the rules that make "equivalent SQL per database"
-**testable**. `m-sql` depends on `m-object-query` and `m-deep-fetch` (resolved
+**testable**. `m-sql` depends on `m-object-query` and `m-read-planning` (resolved
 flat reads), `m-predicate` (elaborated selections), `m-write-plan` (Planned
 Steps), `m-document-codec` and `m-wire` (canonical document values), and
 `m-dialect` (the dialect that decides concrete SQL).
@@ -1098,7 +1098,7 @@ the child entity's full scalar set; this **subsumes** the join key columns the h
 needs to fan results back to their parents (the FK that correlates to the parent, and
 the child's own key when it is itself a parent of a deeper level).
 The temp-table variant for very large parent key sets is a **fast-follow**
-(`m-deep-fetch`); round 1 uses the simplified `IN` form only.
+(`m-read-planning`); round 1 uses the simplified `IN` form only.
 
 A **path-root guard** (`m-object-query`'s `appliesTo` beside `segments`) emits
 **no statement and no clause of its own**. It restricts which already-fetched root
@@ -1121,7 +1121,7 @@ objectQuery(Animal, all, includes = [ { appliesTo: [Dog],
 ```
 
 A **polymorphic** hop (relationship target abstract, optionally narrowed by a
-segment's `narrowTo`, `m-object-query` / `m-deep-fetch`) stays **one statement
+segment's `narrowTo`, `m-object-query` / `m-read-planning`) stays **one statement
 per level**. Under
 `table-per-hierarchy` the child level is the shared-table `IN` read with the
 effective set's tag predicate appended after the `IN` list (`… where t0.owner_id in
@@ -1963,7 +1963,7 @@ statement with an empty select list or an empty `in ()`.
   ends the delivery without a page statement.
 - An Include level whose target position is empty issues no child statement
   even when its admitted parents gathered non-null keys, and attaches the
-  loaded-empty or loaded-null view instead (`m-deep-fetch`). A level beneath it
+  loaded-empty or loaded-null view instead (`m-read-planning`). A level beneath it
   has no parent rows and issues none. Every other level issues its statement
   exactly as it would without the empty one.
 

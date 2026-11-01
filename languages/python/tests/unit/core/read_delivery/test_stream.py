@@ -15,7 +15,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.core import deep_fetch
+from parallax.core import read_planning
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -42,7 +42,7 @@ from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
 ORDERS: Metamodel = accepted_model("orders")
-_INCLUDES = cast("deep_fetch.IncludeTree", object())
+_INCLUDES = cast("read_planning.IncludeTree", object())
 
 
 class _CallbackFailed(Exception):
@@ -170,7 +170,7 @@ class _Publication:
 
         def roots_of(
             page: Page,
-            includes: deep_fetch.IncludeTree,
+            includes: read_planning.IncludeTree,
             /,
             *,
             atomic: bool = False,
@@ -205,7 +205,7 @@ def _node() -> ObjectQueryNode:
 def _delivery(
     pages: list[int],
     *,
-    on_page_start: Callable[[deep_fetch.IncludeTree], None],
+    on_page_start: Callable[[read_planning.IncludeTree], None],
     on_release: Callable[[], None],
     invalid: Mapping[int, object] | None = None,
 ) -> tuple[StreamDelivery[Any, ObjectQueryNode, _Publication], _Read, _Publication]:
@@ -225,7 +225,7 @@ def _delivery(
 def test_every_page_starts_before_it_publishes_including_one_that_publishes_nothing() -> None:
     events: list[object] = []
 
-    def on_page_start(includes: deep_fetch.IncludeTree) -> None:
+    def on_page_start(includes: read_planning.IncludeTree) -> None:
         assert includes is _INCLUDES
         events.append("page")
 

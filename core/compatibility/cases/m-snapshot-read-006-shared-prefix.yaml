@@ -1,7 +1,7 @@
 # Snapshot graph, SHARED-PREFIX levels (m-snapshot-read): the canonical maximal
 # include path materializes its prefix ONCE.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, shared-prefix, relationship, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, shared-prefix, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

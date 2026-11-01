@@ -32,8 +32,8 @@ from .conftest import ScriptedReads
 
 CaseLoader = Callable[[str], Case]
 
-_ORDERED_ITEMS = "m-deep-fetch-009-ordered-items-desc.yaml"
-_EMPTY_ROOT = "m-deep-fetch-006-empty-root.yaml"
+_ORDERED_ITEMS = "m-read-planning-009-ordered-items-desc.yaml"
+_EMPTY_ROOT = "m-read-planning-006-empty-root.yaml"
 _NARROWED_PETS = "m-inheritance-065-tph-deepfetch-narrowed-pets-dog.yaml"
 _BROAD_AND_NARROWED_PETS = "m-inheritance-068-tph-deepfetch-broad-and-redundant-narrow.yaml"
 _PARTIAL_TPH_INCLUDE = "m-inheritance-148-partial-tph-broad-singleton-include-unknown-tag.yaml"
@@ -501,7 +501,7 @@ def test_two_parent_branches_reaching_one_relationship_are_two_levels(
     """One relationship reached from two DIFFERENT parents is two hops.
 
     Each gathers its keys from its own branch's rows, so the two can share neither
-    a statement nor a bucket of fetched children (`m-deep-fetch` branch
+    a statement nor a bucket of fetched children (`m-read-planning` branch
     provenance). The `pets` hop under the WildBoar branch's owner asks for Carol's
     pets alone and the one under the Dog branch's owners asks for Alice's and
     Bob's; a level identified without its parent would issue one statement for

@@ -8,7 +8,7 @@
 # the same relationship — is not observable on this lane at all, and the last
 # paragraph says both why and where it is held instead.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-edit, m-deep-fetch, closed-world, relationship, mutation, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-edit, m-read-planning, closed-world, relationship, mutation, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

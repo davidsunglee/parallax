@@ -7,7 +7,6 @@ from typing import Protocol, cast
 
 from parallax.core.base import ManagedValue, NeutralType
 from parallax.core.db_port import Row
-from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -31,6 +30,7 @@ from parallax.core.read_delivery._row_recording import (
     record_trusted,
     record_trusted_singleton,
 )
+from parallax.core.read_planning import ResolvedReadProjection
 from parallax.core.sql_gen._inheritance import ReadResultContract
 from parallax.core.wire import encode_wire
 from parallax.core.write_plan.observe import occurrence_value

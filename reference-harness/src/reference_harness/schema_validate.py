@@ -787,7 +787,7 @@ def _source_index(step: dict[str, Any], *, grouped: bool) -> int | None:
     """The earlier step this action's ``on`` names, or ``None`` for no single one.
 
     A `load` spanning sources at DIFFERENT lowered coordinates names them as an
-    ARRAY (`m-deep-fetch`); those sources are one position pinned several ways, so
+    ARRAY (`m-read-planning`); those sources are one position pinned several ways, so
     the first of them stands for the position they all stand at. Every other verb
     acts on a single object, where an array names no one node to resolve.
     """

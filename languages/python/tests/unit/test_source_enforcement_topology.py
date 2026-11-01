@@ -46,10 +46,10 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core.deep_fetch import PlannedEntityQuery
-from parallax.core.deep_fetch import plan as plan_deep_fetch
 from parallax.core.navigate import TemporallyResolvedPredicate
 from parallax.core.object_query._resolved import ResolvedObjectQuery
+from parallax.core.read_planning import PlannedEntityQuery
+from parallax.core.read_planning import plan as plan_deep_fetch
 from parallax.core.sql_gen._compile import compile_read, compile_write_predicate
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import WritePlanner

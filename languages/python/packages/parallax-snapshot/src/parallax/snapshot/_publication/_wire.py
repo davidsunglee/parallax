@@ -13,7 +13,6 @@ from parallax.core.base import (
     NeutralType,
     TemporalBound,
 )
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.document_codec import (
     MemberShape,
     OccurrenceCarrier,
@@ -43,6 +42,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel._temporal_structure import TEMPORAL_MEMBERS
 from parallax.core.read_delivery._page import ABSENT
+from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.temporal_read import Edge, Pin, TemporalFacet
 from parallax.core.wire import decode_canonical_wire
 from parallax.core.wire._codec import encode_managed_wire

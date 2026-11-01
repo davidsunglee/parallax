@@ -7,7 +7,7 @@ import pytest
 from parallax.conformance import concurrency_runner, provision
 from parallax.conformance.concurrency_runner import ConcurrencyStep
 from parallax.conformance.profile import ProvisionedRun
-from parallax.core import continuation, deep_fetch
+from parallax.core import continuation, read_planning
 from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import OrderKey, object_query, validate_object_query
 from parallax.core.object_query._resolved import ContinuationCoordinate
@@ -32,8 +32,8 @@ def test_a_narrowed_abstract_continuation_locks_its_concrete_rows(
         ContinuationCoordinate((3, 1)), limit=2
     )
     compiled = compile_read(
-        deep_fetch.plan(
-            page, metamodel, projection=deep_fetch.ReadProjectionRequest("none", False)
+        read_planning.plan(
+            page, metamodel, projection=read_planning.ReadProjectionRequest("none", False)
         ).root,
         metamodel,
         POSTGRES,

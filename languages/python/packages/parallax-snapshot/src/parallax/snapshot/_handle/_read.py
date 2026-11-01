@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 
-from parallax.core import deep_fetch
+from parallax.core import read_planning
 from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._expressions import include_traversal
@@ -121,7 +121,7 @@ class Snapshot[T]:
     _invalid: tuple[InvalidData[object], ...]
     _pin: Pin
     _edition: str
-    _includes: deep_fetch.IncludeTree | None
+    _includes: read_planning.IncludeTree | None
     _construction: EntityGraphConstruction | None
     _wire: WireModelFacts | None
 
@@ -130,7 +130,7 @@ class Snapshot[T]:
         roots: tuple[T | InvalidData[T], ...],
         pin: Pin,
         edition: str,
-        includes: deep_fetch.IncludeTree | None = None,
+        includes: read_planning.IncludeTree | None = None,
         construction: EntityGraphConstruction | None = None,
         wire: WireModelFacts | None = None,
     ) -> None:
@@ -285,12 +285,12 @@ def _require_projection_inputs(
 
 
 def wire_position(
-    includes: deep_fetch.IncludeTree,
+    includes: read_planning.IncludeTree,
     model: CatalogedModel,
     path: IncludePath[Entity, Any] | None,
     *,
     operation: str = "Snapshot.wire",
-) -> deep_fetch.PositionId:
+) -> read_planning.PositionId:
     if path is None:
         return includes.root
     root = model.meta.entity(includes.queried)
@@ -327,10 +327,10 @@ def wire_position(
 
 def _project_eager_values(
     values: tuple[object, ...],
-    includes: deep_fetch.IncludeTree,
+    includes: read_planning.IncludeTree,
     projection: EntityGraphConstruction,
     wire: WireModelFacts,
-    position: deep_fetch.PositionId,
+    position: read_planning.PositionId,
     *,
     reader: InstanceReader | None = None,
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
@@ -585,7 +585,7 @@ def typed_publication(
 
     def roots_of(
         page: Page,
-        includes: deep_fetch.IncludeTree,
+        includes: read_planning.IncludeTree,
         /,
         *,
         atomic: bool = False,
@@ -649,7 +649,7 @@ def wire_publication(
 
     def roots_of(
         page: Page,
-        includes: deep_fetch.IncludeTree,
+        includes: read_planning.IncludeTree,
         /,
         *,
         atomic: bool = False,

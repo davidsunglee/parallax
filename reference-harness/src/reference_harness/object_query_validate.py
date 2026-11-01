@@ -9,7 +9,7 @@ violated rule:
 
 * an **Include Path** segment aimed at a value object — value objects are
   reached only by value through their owner, never navigated to
-  (m-value-object contract 4, m-deep-fetch);
+  (m-value-object contract 4, m-read-planning);
 * a **Sort Key** or a **Subtype Selection** at the queried position rooted at a
   value object — a value object is not a queryable root entity (m-value-object
   contract 5);

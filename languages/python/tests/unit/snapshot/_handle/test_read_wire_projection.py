@@ -38,7 +38,7 @@ from parallax.core import (
     attr,
 )
 from parallax.core import (
-    deep_fetch as deep_fetch_module,
+    read_planning as deep_fetch_module,
 )
 from parallax.core._execution import _read_query as read_query_module
 from parallax.core.base import INFINITY, TIMESTAMP

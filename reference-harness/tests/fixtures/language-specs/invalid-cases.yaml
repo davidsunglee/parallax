@@ -101,8 +101,8 @@
   base: valid-snapshot.md
   old: |-
     | `m-db-port` | `db-port` |
-    | `m-deep-fetch` | `deep-fetch` |
-  new: "| `m-deep-fetch` | `deep-fetch` |"
+    | `m-read-planning` | `deep-fetch` |
+  new: "| `m-read-planning` | `deep-fetch` |"
   code: missing-source-module
   message: "source-enforcement topology has no row for m-db-port"
 

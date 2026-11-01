@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Final, Literal, NamedTuple, Protocol, assert_never
 
-from parallax.core import deep_fetch, inheritance
+from parallax.core import inheritance, read_planning
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
@@ -103,7 +103,7 @@ type _FetchWork = CompiledTemplate | EmptyRead | None
 class ReadPlan:
     """An immutable read plan consumed through behavioral accessors."""
 
-    _query_plan: deep_fetch.ObjectQueryPlan
+    _query_plan: read_planning.ObjectQueryPlan
     _root: CompiledRead | EmptyRead
     _root_rows: ReadRowConverter | None
     _schema: ViewSchema
@@ -130,10 +130,10 @@ class ReadPlan:
             index
             for index, step in enumerate(self._query_plan.fetch_steps)
             if index not in completed
-            and (isinstance(step.parent, deep_fetch.RootRef) or step.parent.index in completed)
+            and (isinstance(step.parent, read_planning.RootRef) or step.parent.index in completed)
         )
 
-    def fetch_step(self, index: int) -> deep_fetch.FetchStep:
+    def fetch_step(self, index: int) -> read_planning.FetchStep:
         return self._query_plan.fetch_steps[index]
 
     def prepared_fetch(
@@ -150,7 +150,7 @@ class ReadPlan:
         assert rows is not None
         return fetch, rows
 
-    def include_tree(self) -> deep_fetch.IncludeTree:
+    def include_tree(self) -> read_planning.IncludeTree:
         return self._query_plan.includes
 
     def with_root(
@@ -478,16 +478,18 @@ def _plan_uncached(
     """Plan ``query``; a ``templated`` plan's root is the unrendered read of a
     template every cached delivery renders."""
     empty_root = _empty_root(model, query)
-    projection = deep_fetch.ReadProjectionRequest(
+    projection = read_planning.ReadProjectionRequest(
         "none" if result_form == "row" else "all",
         result_form == "instance",
     )
     planned = (
-        deep_fetch.plan(query, model.meta, projection=projection, defer_execution_values=templated)
+        read_planning.plan(
+            query, model.meta, projection=projection, defer_execution_values=templated
+        )
         if reusable is None
         else replace(
             reusable._query_plan,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
-            root=deep_fetch.plan_root(
+            root=read_planning.plan_root(
                 query, model.meta, projection=projection, defer_execution_values=templated
             ),
         )
@@ -530,7 +532,7 @@ def _plan_uncached(
             (
                 step.family
                 for step, work in zip(planned.fetch_steps, fetches, strict=True)
-                if isinstance(step, deep_fetch.BackReferenceFetchStep) and work is None
+                if isinstance(step, read_planning.BackReferenceFetchStep) and work is None
             ),
         )
         fetch_rows = tuple(
@@ -562,7 +564,7 @@ def _plan_uncached(
             reusable._schema,  # pyright: ignore[reportPrivateUsage] - same-module plan reuse
         )
     prepared = ReadPlan(
-        deep_fetch.release_execution_value_sources(planned),
+        read_planning.release_execution_value_sources(planned),
         root,
         None
         if isinstance(root, EmptyRead)
@@ -596,7 +598,7 @@ def _empty_root(model: CatalogedModel, query: ResolvedObjectQuery) -> bool:
 
 
 def _fetch_work(
-    planned: deep_fetch.ObjectQueryPlan,
+    planned: read_planning.ObjectQueryPlan,
     model: CatalogedModel,
     dialect: Dialect,
     result_form: ResultForm,
@@ -611,12 +613,12 @@ def _fetch_work(
     for step in planned.fetch_steps:
         parent_empty = (
             empty_root
-            if isinstance(step.parent, deep_fetch.RootRef)
+            if isinstance(step.parent, read_planning.RootRef)
             else isinstance(work[step.parent.index], EmptyRead)
         )
         if parent_empty or not planned.includes.position(step.position).target:
             work.append(EMPTY_READ)
-        elif isinstance(step, deep_fetch.BackReferenceFetchStep):
+        elif isinstance(step, read_planning.BackReferenceFetchStep):
             work.append(None)
         else:
             work.append(

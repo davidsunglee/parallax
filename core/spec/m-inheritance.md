@@ -406,7 +406,7 @@ unnarrowed root. Under `table-per-concrete-subtype` a read selects the composed
 concrete subtypes' own tables, and an omitted leaf's table is never read.
 
 The same eligibility holds wherever a read reaches the family: a query's own
-target, an Include hop's target (`m-deep-fetch`), and a relationship candidate in
+target, an Include hop's target (`m-read-planning`), and a relationship candidate in
 a predicate (`m-navigate`). Eligibility decides which rows a position admits;
 diagnosis happens only where an admitted row reaches delivery. A query target or
 Include hop that delivers such a row diagnoses it, so introducing a concrete
@@ -456,7 +456,7 @@ are exactly what they would be with no path authored at all. Relationship
 identity is likewise unchanged: a relationship declared on an ancestor is
 inherited by every concrete descendant under the **ancestor's** identity, so a
 guarded path names that one relationship and adds only the source restriction —
-never a per-subtype relationship. `m-deep-fetch` owns what the guard means for
+never a per-subtype relationship. `m-read-planning` owns what the guard means for
 hop identity and views.
 
 ## Concrete-subtype writes
@@ -535,7 +535,7 @@ enumerate a family's concretes:
 - the grouped-`OR` per-branch `EXISTS` **branch order** of a polymorphic
   relationship quantifier, and the `union all` branch order of a to-one hop
   (`m-navigate`, `m-sql`);
-- the derived **narrowed view key** `<rel>[<Concrete>,<Concrete>]` (`m-deep-fetch`);
+- the derived **narrowed view key** `<rel>[<Concrete>,<Concrete>]` (`m-read-planning`);
 - the per-subtype contributor visitation order used by Storage Layout's shared
   Table and cross-table position composition (`m-storage-layout`).
 

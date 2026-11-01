@@ -1,13 +1,13 @@
 # A MULTI-HOP access over a FANNED-OUT path states its non-null terminals alone
 # (m-case-format *Relationship contents at a step*): the walk follows the
 # materialized view hop by hop, and a branch that reached no row hands its deeper
-# levels an empty parent set (m-deep-fetch), so it contributes no terminal — the
+# levels an empty parent set (m-read-planning), so it contributes no terminal — the
 # null drops out at the hop it appears on, the terminal hop included. This is the
 # only corpus case that states the FANNED-OUT MULTI-HOP form of that walk: every
 # other `expectGraph` names a single hop, where there is no intermediate branch
 # to drop and a to-many arm holds only the rows the fetch attached.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-case-format, m-deep-fetch, closed-world, relationship, to-many, multi-hop, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-case-format, m-read-planning, closed-world, relationship, to-many, multi-hop, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

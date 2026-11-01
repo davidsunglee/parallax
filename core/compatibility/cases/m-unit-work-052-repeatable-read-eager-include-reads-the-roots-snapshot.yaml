@@ -2,7 +2,7 @@
 # Repeatable Read the include reads the snapshot the root statement took, so the
 # peer's commit between them reaches neither.
 model: models/orders.yaml
-tags: [m-unit-work, m-deep-fetch, m-db-error, isolation, concurrency, deep-fetch, repeatable-read, slice-snapshot-1]
+tags: [m-unit-work, m-read-planning, m-db-error, isolation, concurrency, deep-fetch, repeatable-read, slice-snapshot-1]
 shape: concurrencySuccess
 compileEligibility:
   mode: run-only

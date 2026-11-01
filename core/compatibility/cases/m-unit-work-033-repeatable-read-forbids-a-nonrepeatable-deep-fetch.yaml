@@ -1,5 +1,5 @@
 model: models/orders-versioned.yaml
-tags: [m-unit-work, m-deep-fetch, isolation, repeatable-read, nonrepeatable-read, relationship, scenario, slice-managed-1]
+tags: [m-unit-work, m-read-planning, isolation, repeatable-read, nonrepeatable-read, relationship, scenario, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

@@ -1,7 +1,7 @@
 # Snapshot graph, nullable to-one (m-snapshot-read): a materialized snapshot graph
 # attaches an included nullable to-one as absent/null, in 1 + L statements.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, to-one, nullable, relationship, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, to-one, nullable, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

@@ -137,7 +137,7 @@ much as about the ones they do not.
 opposite reason: it needs a WIDER grant than its parent. The typed Object Query is
 generic over Entity Classes, so it reaches the Entity frontend for the descriptor
 values a clause call is written with, while `m-object-query` itself must stay
-reachable by `m-temporal-read`, `m-deep-fetch`, `m-sql`, and the read-query
+reachable by `m-temporal-read`, `m-read-planning`, `m-sql`, and the read-query
 resolution seam — none of which may reach that frontend. The parent package's own
 interface therefore does not import this module: a consumer of the canonical query
 value never pulls the typed surface in, and one that wants the typed surface names
@@ -168,7 +168,7 @@ addresses a row its caller already holds, so it resolves nothing from the store,
 and the read half of the parent's reach falls outside this closure — read
 delivery, the continuation, and the read lock are each forbidden here and each
 reached by the parent. So is batch writing, which model preparation alone wires
-in. `m-db-port`, `m-deep-fetch`, and `m-navigate` are deliberately NOT among
+in. `m-db-port`, `m-read-planning`, and `m-navigate` are deliberately NOT among
 those exclusions, and the row does not claim them: `modules.md` routes the port
 through `m-execution-lifecycle`, which the re-entry gate requires, and the two
 traversal modules through `parallax.core.entity`, whose values every Typed write
@@ -317,7 +317,7 @@ tree fails the sync check.
 | `m-core` | `parallax.core.base` |
 | `m-db-error` | `parallax.core.db_error` |
 | `m-db-port` | `parallax.core.db_port` |
-| `m-deep-fetch` | `parallax.core.deep_fetch` |
+| `m-read-planning` | `parallax.core.read_planning` |
 | `m-descriptor` | `parallax.descriptor` |
 | `m-dialect` | `parallax.core.dialect` |
 | `m-document-codec` | `parallax.core.document_codec` |
@@ -400,13 +400,13 @@ come from `core/spec/modules.md`.
 | `parallax.core.execution_lifecycle` | `parallax.core.diagnostics` |
 | `parallax.core.object_query._fluent` | `m-core`, `m-metamodel`, `m-predicate`, `parallax.core.entity` |
 | `parallax.core.read_delivery` | `parallax.core.continuation`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout` |
-| `parallax.core.read_delivery._page` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-deep-fetch`, `m-document-codec`, `m-temporal-read`, `m-write-plan` |
+| `parallax.core.read_delivery._page` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-core`, `m-metamodel`, `m-read-planning`, `m-document-codec`, `m-temporal-read`, `m-write-plan` |
 | `parallax.core.unit_work` | `m-unit-work` |
 | `parallax.descriptor._hub` | `parallax.core.entity` |
 | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect` |
 | `parallax.snapshot` | `parallax.core.entity` |
 | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` |
-| `parallax.snapshot._publication` | `parallax.core.entity`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `parallax.core.read_delivery._page`, `parallax.snapshot._inspection`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` |
+| `parallax.snapshot._publication` | `parallax.core.entity`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `parallax.core.read_delivery._page`, `parallax.snapshot._inspection`, `m-read-planning`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` |
 
 Third-party packages are outside every scope, and a first-party grant says
 nothing about them. A **restricted external package** is one the framework

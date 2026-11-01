@@ -103,7 +103,7 @@ def _valid_run(observations: dict) -> dict:
             "name": "parallax-core",
             "version": "0.1.0",
         },
-        "case": "core/compatibility/cases/m-deep-fetch-013-deferred-load-batches-latest.yaml",
+        "case": "core/compatibility/cases/m-read-planning-013-deferred-load-batches-latest.yaml",
         "profile": "pg-full",
         "dialect": "postgres",
         "caseShape": "scenario",

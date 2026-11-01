@@ -6,10 +6,10 @@ from types import MappingProxyType
 from typing import Final, NamedTuple
 
 from parallax.core.base import JSON, DocumentReadOrdinals, NeutralType
-from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import Dialect, RenderedScalarCell, ScalarResult, scalar_result
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import AttributeMetadata, EntityIdentity, ValueObjectMetadata
+from parallax.core.read_planning import ResolvedReadProjection
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._inheritance import (
     CellSource,

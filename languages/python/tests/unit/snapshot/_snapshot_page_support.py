@@ -37,8 +37,6 @@ from parallax.core.base import (
     StoredScalarVerdict,
     check_stored_scalar,
 )
-from parallax.core.deep_fetch import IncludeTree, RelationshipViewKey
-from parallax.core.deep_fetch._include_tree import PositionSeed, build_include_tree
 from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
@@ -62,6 +60,8 @@ from parallax.core.read_delivery._page import (
     ViewSchema,
 )
 from parallax.core.read_delivery._row_converter import ReadRowConverter, bind
+from parallax.core.read_planning import IncludeTree, RelationshipViewKey
+from parallax.core.read_planning._include_tree import PositionSeed, build_include_tree
 from parallax.core.sql_gen._compile import CompiledRead
 from parallax.core.temporal_read import Pin
 from parallax.core.wire import WireValue, decode_canonical_wire

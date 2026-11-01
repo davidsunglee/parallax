@@ -6,7 +6,7 @@
 # trigger; composition never turns absence into emptiness. This is the clause "the
 # unloaded / loaded-empty distinction is preserved", held on the UNLOADED side.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, m-unit-work, closed-world, relationship, unloaded, insert, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-read-planning, m-unit-work, closed-world, relationship, unloaded, insert, scenario, slice-snapshot-1]
 shape: scenario
 lane: api-conformance
 when:

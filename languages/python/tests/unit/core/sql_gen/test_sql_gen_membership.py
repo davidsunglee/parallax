@@ -14,7 +14,7 @@ from typing import Final
 
 import pytest
 
-from parallax.core import base, continuation, deep_fetch
+from parallax.core import base, continuation, read_planning
 from parallax.core import object_query as oq
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import INT32, INT64, STRING
@@ -44,7 +44,7 @@ _MARIADB: Final = dataclasses.replace(POSTGRES, name="mariadb", binds_arrays=Fal
 _DIALECTS: Final = pytest.mark.parametrize(
     "dialect", [POSTGRES, _MARIADB], ids=["postgres", "mariadb"]
 )
-_PROJECTION: Final = deep_fetch.ReadProjectionRequest("none", False)
+_PROJECTION: Final = read_planning.ReadProjectionRequest("none", False)
 
 
 def _query(
@@ -61,7 +61,7 @@ def _membership(op: str, path: str, values: Sequence[object]) -> dict[str, objec
 def _template(
     cold: ResolvedObjectQuery, meta: Metamodel, dialect: Dialect, lock: LockMode | None = None
 ) -> CompiledTemplate:
-    planned = deep_fetch.plan(cold, meta, projection=_PROJECTION, defer_execution_values=True)
+    planned = read_planning.plan(cold, meta, projection=_PROJECTION, defer_execution_values=True)
     return compile_template(planned.root, meta, dialect, lock=lock)
 
 
@@ -69,7 +69,7 @@ def _direct(
     query: ResolvedObjectQuery, meta: Metamodel, dialect: Dialect, lock: LockMode | None = None
 ) -> CompiledRead:
     return compile_read(
-        deep_fetch.plan(query, meta, projection=_PROJECTION).root, meta, dialect, lock=lock
+        read_planning.plan(query, meta, projection=_PROJECTION).root, meta, dialect, lock=lock
     )
 
 

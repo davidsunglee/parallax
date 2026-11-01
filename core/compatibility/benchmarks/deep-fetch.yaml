@@ -1,13 +1,13 @@
 # Benchmark fixture (m-perf-bench): the deep-fetch shapes workload.
 #
-# Prices, at scale, the statement shape m-deep-fetch's N+1 elimination produces.
+# Prices, at scale, the statement shape m-read-planning's N+1 elimination produces.
 # The headline property is that a deep fetch costs `1 + levels` Database Calls
 # regardless of fan-out: a 1 -> N -> N fetch over P parents is THREE statements
 # (root + items + statuses), never 1 + N + N. This fixture authors that shape and
 # times it: a run executes the statements below and reports how many it issued, so
 # `expectDatabaseCalls` keeps the declared arithmetic consistent with the statement
 # list rather than catching a target that fell back to N+1. What refuses THAT is
-# the compatibility corpus's golden statements for m-deep-fetch.
+# the compatibility corpus's golden statements for m-read-planning.
 #
 # A multi-statement workload lists its golden SQL as an ORDERED list per dialect
 # (one per relationship level) with one bind list per statement — the child levels

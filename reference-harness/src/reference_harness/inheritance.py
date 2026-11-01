@@ -1107,7 +1107,7 @@ def _check_table_per_hierarchy_family(
 
 
 def narrowed_view_key(family: Family, rel_ref: str, effective_set: list[str]) -> str:
-    """The deterministic graph key of a NARROWED deep-fetch hop (m-deep-fetch).
+    """The deterministic graph key of a NARROWED deep-fetch hop (m-read-planning).
 
     ``<relationshipName>[<Concrete>,<Concrete>]`` — the LOCAL relationship name
     (never the qualified ref), the effective concrete-subtype set in the family's
@@ -1262,7 +1262,7 @@ def resolve_root_source_set(
     source set to distinguish hops by. The returned set is in the family's
     canonical sibling-set order, so two guards resolving to the same concretes
     yield the SAME tuple and therefore the same hop — which is what makes a
-    full-set guard indistinguishable from a broad path (m-deep-fetch).
+    full-set guard indistinguishable from a broad path (m-read-planning).
     """
     if position is None or inheritance_of(family.defs.get(position, {})) is None:
         return None

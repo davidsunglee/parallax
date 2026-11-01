@@ -596,7 +596,7 @@ def _assert_coordinate_batching(
 
     A coordinate-grouped ``load`` emits one child statement per lowered-coordinate
     group, so it MUST NOT execute MORE statement groups than it references sources
-    — every executed group is accounted for by a referenced source (m-deep-fetch
+    — every executed group is accounted for by a referenced source (m-read-planning
     batching contract). That those sources are real earlier steps is settled when
     the Scenario is compiled; what is read-verb-only is this count, and it is
     dialect-keyed because the groups it counts are the golden's own.

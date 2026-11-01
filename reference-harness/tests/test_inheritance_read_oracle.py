@@ -1250,7 +1250,7 @@ def test_tpcs_family_variant_column_requires_a_hygienic_internal_alias() -> None
 # --- polymorphic navigation + narrowed deep-fetch view keys -------------------
 #
 # The relationship-target narrowing (resolved Q10) and the deterministic narrowed
-# view key `<rel>[<Concrete>,<Concrete>]` (m-deep-fetch), derived from the descriptor
+# view key `<rel>[<Concrete>,<Concrete>]` (m-read-planning), derived from the descriptor
 # alone.
 
 from reference_harness.inheritance import (  # noqa: E402
@@ -1323,7 +1323,7 @@ def test_a_redundant_narrow_resolves_the_broad_set_and_still_declares_itself() -
     # already reaches. What separates the two is the AUTHORED flag beside the
     # resolved set, not the set — which is why the resolution reports both, and why
     # two equivalent spellings of the same narrow converge on one view key
-    # (m-deep-fetch; the two levels it makes are pinned at the read seam by
+    # (m-read-planning; the two levels it makes are pinned at the read seam by
     # `m-inheritance-068`).
     family = Family(_animal_defs())
     broad_set, broad_narrowed = resolve_hop_effective_set(family, "Person.pets", None)
@@ -1353,7 +1353,7 @@ def test_root_source_set_resolves_a_guard_against_the_queried_position() -> None
 
 
 def test_a_root_guard_is_identified_by_the_source_set_it_resolves() -> None:
-    # The four relations two guards can stand in (m-deep-fetch "Path-root guards").
+    # The four relations two guards can stand in (m-read-planning "Path-root guards").
     # A path root is identified by the RESOLVED source set — deliberately unlike a
     # segment's narrow, which is identified by whether one was AUTHORED — so a guard
     # admitting every root object collapses onto the broad path and every proper

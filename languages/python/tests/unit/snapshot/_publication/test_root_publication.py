@@ -17,11 +17,11 @@ import pytest
 
 from parallax.core._execution._concurrency import CONCURRENCY
 from parallax.core.base import NeutralType, PresentDocument
-from parallax.core.deep_fetch import IncludeTree
 from parallax.core.entity import UNLOADED
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.read_delivery import InvalidData
 from parallax.core.read_delivery._page import Page, page_rows, shared_entity_state
+from parallax.core.read_planning import IncludeTree
 from parallax.core.wire._codec import encode_managed_wire
 from parallax.snapshot import (
     SnapshotConsistencyError,

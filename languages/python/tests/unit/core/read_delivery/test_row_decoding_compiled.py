@@ -15,7 +15,6 @@ import pytest
 
 from parallax.core import predicate as oa
 from parallax.core.base import DocumentValue, PresentDocument
-from parallax.core.deep_fetch import ResolvedReadProjection
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import locate_raw_entity_member
 from parallax.core.entity._layout import CatalogedModel
@@ -23,6 +22,7 @@ from parallax.core.metamodel import AttributeMetadata, Metamodel, ValueObjectIde
 from parallax.core.read_delivery._page import ROOT_LEVEL, PageBuilder, ViewSchema
 from parallax.core.read_delivery._row_converter import bind
 from parallax.core.read_delivery._row_decoding import member_classifiers, row_identity
+from parallax.core.read_planning import ResolvedReadProjection
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
 from tests._support.sql import compile_read

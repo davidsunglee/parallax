@@ -13,8 +13,8 @@ from parallax.core import (
     Entity,
     Rel,
     attr,
-    deep_fetch,
     opt_lock,
+    read_planning,
     rel,
 )
 from parallax.core.entity import model_of
@@ -37,7 +37,7 @@ def _concrete(row: Mapping[str, object]) -> dict[str, object]:
     return {key: value for key, value in row.items() if key != "family_variant"}
 
 
-def _forward_plan(target: str, relationship: str) -> deep_fetch.ObjectQueryPlan:
+def _forward_plan(target: str, relationship: str) -> read_planning.ObjectQueryPlan:
     meta = model_of(INVERSE_MODEL)
     query = deserialize(
         {
@@ -48,10 +48,10 @@ def _forward_plan(target: str, relationship: str) -> deep_fetch.ObjectQueryPlan:
     )
     entity = meta.entity(query.target)
     assert entity is not None
-    return deep_fetch.plan(
+    return read_planning.plan(
         validate_object_query(entity, query, meta),
         meta,
-        projection=deep_fetch.ReadProjectionRequest("all", True),
+        projection=read_planning.ReadProjectionRequest("all", True),
     )
 
 
@@ -65,7 +65,7 @@ def test_forward_fanback_preserves_same_logical_concrete_witnesses(
     meta = model_of(INVERSE_MODEL)
     plan = _forward_plan(target, relationship)
     (step,) = plan.fetch_steps
-    assert isinstance(step, deep_fetch.QueryFetchStep)
+    assert isinstance(step, read_planning.QueryFetchStep)
     fixture = PageFixture(INVERSE_MODEL, relationship)
     root = fixture.node(target, LINK_ROW if to_one else {"id": 10})
     rows = list(reversed(PARENT_ROWS)) if reverse else PARENT_ROWS

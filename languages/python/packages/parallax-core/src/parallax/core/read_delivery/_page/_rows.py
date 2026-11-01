@@ -9,7 +9,6 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Final, Literal, NamedTuple, Protocol, cast
 
 from parallax.core.base import UnknownFamilyTag
-from parallax.core.deep_fetch import RelationshipViewKey
 from parallax.core.document_codec import DocumentPathSegment
 from parallax.core.entity._construction_input import ABSENT
 from parallax.core.entity._layout import EntityLayout
@@ -21,6 +20,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.read_delivery._page._views import SourceLevel, SourceViewLayout, ViewSchema
+from parallax.core.read_planning import RelationshipViewKey
 from parallax.core.temporal_read import Edge, Pin, TemporalReadError, TemporalShape, milestone_edge
 
 __all__ = [

@@ -1,5 +1,5 @@
 model: models/composed-beast-document-reader.yaml
-tags: [m-inheritance, m-deep-fetch, m-storage-layout, m-sql, m-read-delivery, m-document-codec, m-predicate, table-per-hierarchy, document-layout, stored-data, narrow, predicate, deep-fetch, graph, partial-composition, slice-snapshot-1]
+tags: [m-inheritance, m-read-planning, m-storage-layout, m-sql, m-read-delivery, m-document-codec, m-predicate, table-per-hierarchy, document-layout, stored-data, narrow, predicate, deep-fetch, graph, partial-composition, slice-snapshot-1]
 shape: read
 given:
   provisioningModel: models/composed-beast-document-provisioning.yaml

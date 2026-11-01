@@ -7,7 +7,7 @@ from dataclasses import replace
 
 import pytest
 
-from parallax.core import deep_fetch, inheritance
+from parallax.core import inheritance, read_planning
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import EntityIdentity, Metamodel, TablePerConcreteSubtype
@@ -77,7 +77,7 @@ def _assert_children_render_as_fresh_reads(
             continue
         assert isinstance(fresh, tuple)
         step = plan.fetch_step(index)
-        assert isinstance(step, deep_fetch.QueryFetchStep)
+        assert isinstance(step, read_planning.QueryFetchStep)
         for keys in key_sets(step.related.member.type):
             rendered = prepared[0].render(list(keys), query=query)
             assert observed(rendered) == observed(fresh[0].render(list(keys), query=query))
@@ -146,7 +146,7 @@ def _expected_repeating(plan: ReadPlan, meta: Metamodel) -> frozenset[int]:
     named = {
         step.family
         for index in range(plan.fetch_count)
-        if isinstance(step := plan.fetch_step(index), deep_fetch.BackReferenceFetchStep)
+        if isinstance(step := plan.fetch_step(index), read_planning.BackReferenceFetchStep)
         and plan.prepared_fetch(index) is None
     }
     return frozenset(

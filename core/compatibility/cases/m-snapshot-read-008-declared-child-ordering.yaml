@@ -1,7 +1,7 @@
 # Snapshot graph, DECLARED child ordering (m-snapshot-read): a materialized snapshot
 # preserves descending, multi-key, and nullable/nulls-last relationship ordering.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-object-query, m-deep-fetch, orderBy, ordering, multi-key, nullable, relationship, graph, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-read-planning, orderBy, ordering, multi-key, nullable, relationship, graph, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only

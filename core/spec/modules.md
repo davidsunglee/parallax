@@ -118,8 +118,8 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-db-port` | Database execution port | active | contract |
 | `m-db-error` | Database error classification | active | cases |
 | `m-navigate` | Relationship navigation: quantified and single-valued traversal (incl. polymorphic targets) | active | cases |
-| `m-deep-fetch` | Deep fetch (N+1 elimination) & narrowed relationship views | active | cases |
-| `m-read-delivery` | Read planning, Page assembly, stored-data judgement, and whole or streamed delivery | active | cases |
+| `m-read-planning` | Flat and write-acquisition read planning, include graphs, and N+1 elimination | active | cases |
+| `m-read-delivery` | Execution-plan preparation and caching, Page assembly, stored-data judgement, and delivery | active | cases |
 | `m-snapshot-read` | Snapshot graph publication (plain value graphs) | active | cases |
 | `m-op-list` | Query-backed list results | active | cases |
 | `m-batch-write` | Set-based / batched writes | active | cases |
@@ -201,7 +201,7 @@ m-sql --> m-relationship
 m-sql --> m-document-codec
 m-sql --> m-wire
 m-sql --> m-write-plan
-m-sql --> m-deep-fetch
+m-sql --> m-read-planning
 m-sql-agg --> m-agg
 m-sql-agg --> m-sql
 m-dialect --> m-core
@@ -260,15 +260,15 @@ m-navigate --> m-unit-work
 m-navigate --> m-temporal-read
 m-navigate --> m-inheritance
 m-navigate --> m-relationship
-m-deep-fetch --> m-navigate
-m-deep-fetch --> m-relationship
-m-deep-fetch --> m-object-query
-m-deep-fetch --> m-inheritance
-m-deep-fetch --> m-predicate
-m-deep-fetch --> m-unit-work
-m-deep-fetch --> m-wire
-m-op-list --> m-deep-fetch
-m-snapshot-read --> m-deep-fetch
+m-read-planning --> m-navigate
+m-read-planning --> m-relationship
+m-read-planning --> m-object-query
+m-read-planning --> m-inheritance
+m-read-planning --> m-predicate
+m-read-planning --> m-unit-work
+m-read-planning --> m-wire
+m-op-list --> m-read-planning
+m-snapshot-read --> m-read-planning
 m-snapshot-read --> m-document-codec
 m-snapshot-read --> m-metamodel
 m-snapshot-read --> m-inheritance
@@ -279,7 +279,7 @@ m-snapshot-read --> m-wire
 m-snapshot-read --> m-edit
 m-snapshot-read --> m-execution
 m-snapshot-read --> m-read-delivery
-m-read-delivery --> m-deep-fetch
+m-read-delivery --> m-read-planning
 m-read-delivery --> m-sql
 m-read-delivery --> m-document-codec
 m-read-delivery --> m-db-port
@@ -292,7 +292,7 @@ m-execution --> m-read-delivery
 m-execution --> m-write-plan
 m-execution --> m-write-payload
 m-execution --> m-sql
-m-execution --> m-deep-fetch
+m-execution --> m-read-planning
 m-execution --> m-execution-authority
 m-execution --> m-auto-retry
 m-execution --> m-read-lock
@@ -351,13 +351,13 @@ construction it may reference any behavioral module it harnesses.
   Selection through the effective-concrete-set rules `m-inheritance` owns.
   Predicate elaboration decodes serialized typed literals exactly once through
   `m-wire`, and Object Query owns the mandatory resolved-product boundary.
-- **`m-temporal-read --> m-object-query`, `m-deep-fetch --> m-object-query`,
+- **`m-temporal-read --> m-object-query`, `m-read-planning --> m-object-query`,
   `m-sql --> m-object-query`.** The three modules that REALIZE a clause depend on
   the query that states it, never the reverse: **a clause's value belongs to the
   query; the behavior realizing it belongs to its own module.** Temporal Selection
   is a query clause while injection, `Pin`/`Edge`, and per-hop propagation are
   `m-temporal-read`'s; Includes is a query clause while trie and level planning
-  are `m-deep-fetch`'s; ordering, the row cap, and the normalized per-Entity query
+  are `m-read-planning`'s; ordering, the row cap, and the normalized per-Entity query
   value are query-owned while their SQL is `m-sql`'s. Reversing any of these would
   make the canonical wire contract depend on an execution module.
 - **`m-predicate --> m-inheritance`.** The `narrow` node constrains a
@@ -417,12 +417,12 @@ construction it may reference any behavioral module it harnesses.
   Relationship Facet is the one place a reverse direction's swapped join exists,
   so SQL lowering reads the compiled direction rather than re-pairing a reverse
   declaration with its defining peer and exchanging the sides itself.
-- **`m-op-list --> m-deep-fetch`.** A relationship predicate is a *predicate*
+- **`m-op-list --> m-read-planning`.** A relationship predicate is a *predicate*
   and yields no list; deep fetch is a pure per-level fetch
   algorithm. The lifecycle result surfaces — query-backed lists for the
   managed lifecycle, snapshot graphs for the plain-value lifecycle — sit
   *above* it and are populated by it, mirroring the documented
-  `m-snapshot-read --> m-deep-fetch` bullet below: the two are peers, and
+  `m-snapshot-read --> m-read-planning` bullet below: the two are peers, and
   neither depends on the other.
 - **`m-navigate --> m-predicate`.** The quantifiers, presence tests, and dotted
   to-one paths navigation gives behavior are algebra vocabulary, so navigation
@@ -435,15 +435,15 @@ construction it may reference any behavioral module it harnesses.
   table-per-hierarchy, grouped-`OR` per-branch `EXISTS` under
   table-per-concrete-subtype, and every declared candidate for a to-one hop), and a
   relationship-scope `narrow` must stay within it. Navigation therefore references the inheritance family model directly.
-- **`m-deep-fetch --> m-inheritance`.** Deep fetch owns narrowed relationship
+- **`m-read-planning --> m-inheritance`.** Deep fetch owns narrowed relationship
   views and their derived keys, so it resolves an Include Segment's Subtype
   Selection to its effective concrete set and orders that set canonically —
   directly, rather than leaving the reach to the transitive closure through
   `m-navigate`.
-- **`m-deep-fetch --> m-relationship`.** Deep fetch resolves and lowers the
+- **`m-read-planning --> m-relationship`.** Deep fetch resolves and lowers the
   relationship facet it fetches through (join shape, symmetric reverse) directly,
   rather than leaving that reach to the transitive closure through `m-navigate`.
-- **`m-deep-fetch --> m-predicate`, `--> m-unit-work`, `--> m-wire`.** Deep-fetch
+- **`m-read-planning --> m-predicate`, `--> m-unit-work`, `--> m-wire`.** Deep-fetch
   levels are resolved flat reads within the owning transaction. Their authored
   selections arrive elaborated, while generated child-key membership consumes
   managed values directly rather than creating public literals for another Wire
@@ -537,7 +537,7 @@ construction it may reference any behavioral module it harnesses.
   predicate-selected writes decode resolved scalar leaves once before they become
   buffered prepared-write products. Managed-object mutation remains developer
   input governed by `m-core`.
-- **`m-sql --> m-deep-fetch`, `--> m-write-plan`, `--> m-wire`.** SQL's private
+- **`m-sql --> m-read-planning`, `--> m-write-plan`, `--> m-wire`.** SQL's private
   compilers consume resolved flat reads and planned steps. The Wire edge exists
   for canonical document values and carrier contracts, not to authorize SQL to
   decode an authored literal; resolution and conversion have already happened.
@@ -558,7 +558,7 @@ construction it may reference any behavioral module it harnesses.
   includes its **lowered as-of coordinates** — a managed temporal object is a
   view pinned at a coordinate, so the identity module references the as-of read
   model, not just the unit of work that owns the map.
-- **`m-snapshot-read --> m-deep-fetch`.** A snapshot graph is *populated by*
+- **`m-snapshot-read --> m-read-planning`.** A snapshot graph is *populated by*
   deep fetch; navigation, as-of propagation, and lists are reached transitively.
   Snapshot reads and managed reads (`m-identity-map`) are alternative
   materializations over the same query stack — neither depends on the other.
@@ -574,7 +574,7 @@ construction it may reference any behavioral module it harnesses.
   a node's views by accepted relationship declaration order (`m-relationship`),
   and carries the whole-graph pin and each node's milestone edge
   (`m-temporal-read`). All four were previously reachable only through
-  `m-deep-fetch`; naming them directly is what makes the vocabulary a snapshot
+  `m-read-planning`; naming them directly is what makes the vocabulary a snapshot
   graph is built from legible to every language target rather than an accident of
   the planner's own closure.
 - **`m-snapshot-read --> m-execution-lifecycle`.** Snapshot's write doors refuse
@@ -592,10 +592,10 @@ construction it may reference any behavioral module it harnesses.
   rather than an accident of the runtime's closure. Neither runtime module
   depends on a lifecycle, which is what lets a managed-object surface reuse both
   unchanged.
-- **`m-read-delivery --> m-deep-fetch`, `--> m-sql`, `--> m-db-port`,
+- **`m-read-delivery --> m-read-planning`, `--> m-sql`, `--> m-db-port`,
   `--> m-document-codec`, `--> m-temporal-read`, `--> m-execution-lifecycle`.**
-  Read delivery turns a validated read into a judged Page: it plans the deep
-  fetch, executes the statements `m-sql` compiles over the port, judges stored
+  Read delivery turns a validated read into a judged Page: it requests flat-read
+  and include plans from `m-read-planning`, executes the statements `m-sql` compiles over the port, judges stored
   documents through the codec, propagates the read's pins, and opens the
   Database Calls and Stream Batches it executes. It holds no transaction, model
   selection, or authority — those are the conditions `m-execution` establishes
@@ -603,10 +603,10 @@ construction it may reference any behavioral module it harnesses.
 - **`m-read-delivery --> m-read-lock`, `--> m-opt-lock`.** The lock a fetch takes
   is derived where the fetch is planned: the effective read lock of each level
   comes from the read-lock suffix rule and the target's optimistic facet, so
-  read planning, not its caller, decides it. Neither lock module is reachable
+  delivery's execution-plan preparation, not its caller, decides it. Neither lock module is reachable
   through delivery's other edges.
 - **`m-execution --> m-unit-work`, `--> m-read-delivery`, `--> m-write-plan`,
-  `--> m-sql`, `--> m-deep-fetch`, `--> m-execution-authority`, `--> m-auto-retry`,
+  `--> m-sql`, `--> m-read-planning`, `--> m-execution-authority`, `--> m-auto-retry`,
   `--> m-read-lock`, `--> m-execution-lifecycle`, `--> m-db-port`.** The
   execution runtime is the behavioral module the unit of work's ports are
   implemented in: it runs attempts under the retry loop and the authority a

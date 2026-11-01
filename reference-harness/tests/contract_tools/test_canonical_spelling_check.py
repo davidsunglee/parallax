@@ -210,7 +210,7 @@ def test_a_bare_inheritance_parent_is_reported_against_the_childs_namespace(
 def test_a_de_canonicalized_copy_of_the_real_corpus_fails(tmp_path: Path) -> None:
     root = tmp_path / "compatibility"
     shutil.copytree(_COMPAT_DIR, root)
-    case = root / "cases" / "m-deep-fetch-001-to-one.yaml"
+    case = root / "cases" / "m-read-planning-001-to-one.yaml"
     case.write_text(
         case.read_text(encoding="utf-8").replace(
             "target: parallax.compatibility.OrderItem", "target: OrderItem"

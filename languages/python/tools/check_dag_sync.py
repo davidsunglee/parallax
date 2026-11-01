@@ -128,7 +128,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-temporal-write": "parallax.core.temporal_write",
     "m-batch-write": "parallax.core.batch_write",
     "m-navigate": "parallax.core.navigate",
-    "m-deep-fetch": "parallax.core.deep_fetch",
+    "m-read-planning": "parallax.core.read_planning",
     "m-snapshot-read": "parallax.snapshot",
     "m-case-format": "parallax.conformance.case_format",
     "m-conformance-adapter": "parallax.conformance.cli",
@@ -147,7 +147,7 @@ PYTEST_BOUNDED_SCOPES: Mapping[str, str] = {"m-api-conformance": "tests.api"}
 # move between the cluster's modules as the lowering pipeline evolves, and a
 # per-module row would turn every such internal move into a spec edit. The
 # group boundary is what carries the enforcement value: none of the three may
-# reach the read side (`m-read-delivery`, `m-snapshot-read`, `m-deep-fetch`,
+# reach the read side (`m-read-delivery`, `m-snapshot-read`, `m-read-planning`,
 # `m-navigate`, `parallax.core.entity`).
 _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
     {
@@ -357,7 +357,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.entity._layout",
             "parallax.core.base",
             "parallax.core.metamodel",
-            "parallax.core.deep_fetch",
+            "parallax.core.read_planning",
             "parallax.core.document_codec",
             "parallax.core.temporal_read",
             "parallax.core.write_plan",
@@ -429,7 +429,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # forbidden here and each reached by the parent — and so does batch writing,
     # which model preparation alone wires in.
     #
-    # `m-db-port`, `m-deep-fetch` and `m-navigate` are deliberately NOT among
+    # `m-db-port`, `m-read-planning` and `m-navigate` are deliberately NOT among
     # those exclusions, and the row does not claim them: `modules.md` routes the
     # port through `m-execution-lifecycle` and the two traversal modules through
     # `parallax.core.entity`, and a forbidden row is the complement of a
@@ -523,7 +523,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
             "parallax.core.entity._construction_input",
             "parallax.core.entity._layout",
             "parallax.core.read_delivery._page",
-            "parallax.core.deep_fetch",
+            "parallax.core.read_planning",
             "parallax.core.document_codec",
             "parallax.core.metamodel",
             "parallax.core.inheritance",

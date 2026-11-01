@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal
 
-from parallax.core import deep_fetch, inheritance
+from parallax.core import inheritance, read_planning
 from parallax.core.dialect import Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.inheritance import InheritancePositionView
@@ -85,9 +85,9 @@ def compile_projected_read(
     planned as deep fetch plans the root and published in ``result_form``,
     neither of which widens the other: every declared member, as a predecessor
     read takes it, a named subset, or none."""
-    projection = deep_fetch.ReadProjectionRequest(value_objects, observe_structured_document)
+    projection = read_planning.ReadProjectionRequest(value_objects, observe_structured_document)
     return compile_entity_query(
-        deep_fetch.plan_root(
+        read_planning.plan_root(
             _validated(predicate, model, target, narrow_to=narrow_to, temporal=temporal),
             model,
             projection=projection,
