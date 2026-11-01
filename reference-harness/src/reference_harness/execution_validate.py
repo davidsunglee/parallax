@@ -719,7 +719,11 @@ def _writable_attempt(acquisition: _Activity, activities: dict[int, _Activity]) 
     if owner is None or owner.started != "transactionAttemptStarted" or owner.parent is None:
         return False
     invocation = activities.get(owner.parent)
-    return invocation is not None and invocation.started_payload.get("accessMode") == "read-write"
+    return (
+        invocation is not None
+        and invocation.started_payload.get("invocation") == "outer"
+        and invocation.started_payload.get("accessMode") != "read-only"
+    )
 
 
 def _granted(acquisitions: list[_Activity]) -> bool:

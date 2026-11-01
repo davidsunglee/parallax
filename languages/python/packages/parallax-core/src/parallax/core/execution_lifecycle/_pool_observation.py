@@ -106,10 +106,18 @@ def close_pool_observations(observations: Sequence[PoolObservation]) -> None:
     A contained failure reports through the restricted resource log, which
     states that a registration would not close and nothing about why: what
     raised is application code holding application state, and this is the one
-    reporting path that runs with no Handler left to receive anything.
+    reporting path that runs with no Handler left to receive anything. An
+    interrupt is not contained: the first one propagates, but only once every
+    registration has been attempted.
     """
+    interrupted: BaseException | None = None
     for observation in observations:
         try:
             observation.close()
         except Exception:
             report_unregistration_failure()
+        except BaseException as failure:
+            if interrupted is None:
+                interrupted = failure
+    if interrupted is not None:
+        raise interrupted

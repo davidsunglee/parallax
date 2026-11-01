@@ -41,7 +41,7 @@ from tests.unit._pool_source_support import DetachableSource
 
 
 class _Registration:
-    def __init__(self, *, refuses: Exception | None = None) -> None:
+    def __init__(self, *, refuses: BaseException | None = None) -> None:
         self.closes = 0
         self._refuses = refuses
 
@@ -459,6 +459,34 @@ def test_a_registration_that_will_not_close_is_contained_and_reported_thinly(
     assert "10.0.0.4" not in record.getMessage()
 
 
+class _ObservesEach(_Executions):
+    """A Provider answering each source it is offered with its own registration."""
+
+    def __init__(self, *registrations: _Registration) -> None:
+        super().__init__()
+        self._registrations = list(registrations)
+
+    def observe_pool(self, source: Any, /) -> PoolObservation | None:
+        del source
+        return self._registrations.pop(0)
+
+
+def test_an_interrupted_close_still_gives_up_every_later_registration() -> None:
+    interrupt = KeyboardInterrupt()
+    interrupted, later = _Registration(refuses=interrupt), _Registration()
+    db = _connected(
+        _ObservesEach(interrupted, later),
+        metrics=(DetachableSource(), DetachableSource(route="reader")),
+    )
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        db.close()
+
+    assert raised.value is interrupt
+    assert interrupted.closes == 1
+    assert later.closes == 1
+
+
 # --------------------------------------------------------------------------- #
 # Fan-out.                                                                     #
 # --------------------------------------------------------------------------- #
@@ -541,6 +569,35 @@ def test_an_unwind_attempts_every_close_even_where_one_of_them_fails() -> None:
 
     assert raised.value is refusal
     assert stubborn.registration.closes == 1
+    assert willing.registration.closes == 1
+
+
+def test_an_interrupted_child_close_still_gives_up_its_siblings() -> None:
+    interrupt = KeyboardInterrupt()
+    first = _Observes(registration=_Registration(refuses=interrupt))
+    second = _Observes()
+    registered = FanoutLifecycleProvider([first, second]).observe_pool(DetachableSource())
+    assert registered is not None
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        registered.close()
+
+    assert raised.value is interrupt
+    assert second.registration.closes == 1
+
+
+def test_an_unwind_interrupted_by_a_close_attempts_every_close_first() -> None:
+    refusal = RuntimeError("the third exporter refuses this pool")
+    interrupt = KeyboardInterrupt()
+    interrupted = _Observes(registration=_Registration(refuses=interrupt))
+    willing = _Observes()
+    fanout = FanoutLifecycleProvider([interrupted, willing, _Observes(raises=refusal)])
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        fanout.observe_pool(DetachableSource())
+
+    assert raised.value is interrupt
+    assert raised.value.__context__ is refusal
     assert willing.registration.closes == 1
 
 

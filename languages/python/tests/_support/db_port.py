@@ -36,6 +36,7 @@ a suite pin behavior no adapter can produce.
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
@@ -537,6 +538,10 @@ class ScriptedRuntime:
         self.adapter.closes += 1
 
 
+_SCRIPTED_REFUSALS: weakref.WeakSet[ConnectionAcquisitionError] = weakref.WeakSet()
+"""Every acquisition failure any adapter was scripted with, across adapters."""
+
+
 class ScriptedAdapter:
     """An ``m-db-port`` adapter answering each call with the next script entry.
 
@@ -548,7 +553,10 @@ class ScriptedAdapter:
     consumed positionally by successive acquisitions and releases, with
     anything past their end succeeding on the route the requested policy names
     — so a suite names the third acquisition's timeout without writing the two
-    before it. ``acquisitions``, ``cleanups``, ``closes``, and
+    before it. Each acquisition failure is a distinct instance no adapter has
+    scripted before: one that reports no selection is given the one it was
+    served on, so reusing it would read that as an outcome the script named.
+    ``acquisitions``, ``cleanups``, ``closes``, and
     ``requested_policies`` record what actually happened. ``routes`` are the
     routes the runtime declares, each serving every read-only level.
     ``metrics`` are the pool sources the runtime this opens publishes, none by
@@ -588,6 +596,12 @@ class ScriptedAdapter:
         self.acquisitions = 0
         self.closes = 0
         self.cleanups: list[CleanupResult | None] = []
+        for refusal in acquisition_failures:
+            if refusal is None:
+                continue
+            if refusal in _SCRIPTED_REFUSALS:
+                raise ValueError("one acquisition failure instance scripts one acquisition")
+            _SCRIPTED_REFUSALS.add(refusal)
         self._acquisition_failures = list(acquisition_failures)
         self._selections = list(selections)
         self._cleanup_results = list(cleanup_results)
