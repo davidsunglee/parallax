@@ -1,4 +1,4 @@
-"""Immutable Postgres configuration: the two retention policies and the adapter (Docker-free).
+"""Immutable Postgres configuration: retention policies, endpoints, and the adapter (Docker-free).
 
 Configuration is the half of the adapter that owns nothing. Constructing it
 opens no connection, no pool, and no thread, which is what makes it safe to
@@ -21,7 +21,7 @@ import psycopg
 import pytest
 
 from parallax.core.db_port import DRIVER_MANAGED, Password
-from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
+from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
 
 _SECRET = Password("hunter2")
 
@@ -33,7 +33,6 @@ _SECRET = Password("hunter2")
 def test_the_retaining_defaults_are_the_documented_starting_point() -> None:
     options = PoolOptions()
     assert (options.min_size, options.max_size) == (1, 10)
-    assert (options.acquire_timeout, options.startup_timeout) == (15.0, 30.0)
     assert (options.max_waiting, options.max_idle) == (0, 600.0)
     assert options.max_lifetime == 3600.0
     assert (options.reconnect_timeout, options.num_workers) == (300.0, 3)
@@ -44,13 +43,23 @@ def test_on_demand_exposes_no_setting_for_inventory_it_does_not_keep() -> None:
     # retains none has no spelling for either rather than a spelling that means
     # nothing.
     options = OnDemandOptions()
-    assert (options.max_size, options.acquire_timeout) == (10, 15.0)
+    assert options.max_size == 10
     assert not hasattr(options, "min_size")
     assert not hasattr(options, "max_idle")
 
 
 def test_omitting_the_policy_selects_the_retaining_defaults() -> None:
-    assert PostgresAdapter("", credentials=DRIVER_MANAGED).pool == PoolOptions()
+    assert PostgresEndpoint("", credentials=DRIVER_MANAGED).pool == PoolOptions()
+
+
+def test_the_runtime_budgets_are_the_adapter_s_and_default_to_the_documented_values() -> None:
+    # One acquisition budget and one startup budget for the whole runtime, so
+    # they live on the adapter rather than on a pool's retention.
+    adapter = PostgresAdapter(writer=PostgresEndpoint("", credentials=DRIVER_MANAGED))
+    assert (adapter.acquire_timeout, adapter.startup_timeout) == (15.0, 30.0)
+    assert adapter.prepare_threshold == 5
+    assert not hasattr(PoolOptions(), "acquire_timeout")
+    assert not hasattr(OnDemandOptions(), "startup_timeout")
 
 
 # --------------------------------------------------------------------------- #
@@ -111,9 +120,7 @@ def _options(**overrides: object) -> PoolOptions:
     return PoolOptions(**cast("Any", overrides))
 
 
-@pytest.mark.parametrize(
-    "field", ["acquire_timeout", "startup_timeout", "max_idle", "max_lifetime", "reconnect_timeout"]
-)
+@pytest.mark.parametrize("field", ["max_idle", "max_lifetime", "reconnect_timeout"])
 def test_a_duration_takes_finite_positive_seconds(field: str) -> None:
     # Zero and infinity would be sentinels for "disabled" and "unlimited", and
     # neither is a control this configuration offers.
@@ -124,6 +131,33 @@ def test_a_duration_takes_finite_positive_seconds(field: str) -> None:
     for outside in (0, -1.0, float("inf")):
         with pytest.raises(ValueError, match=field):
             _options(**{field: outside})
+
+
+def _adapter(**overrides: object) -> PostgresAdapter:
+    return PostgresAdapter(
+        writer=PostgresEndpoint("", credentials=DRIVER_MANAGED), **cast("Any", overrides)
+    )
+
+
+@pytest.mark.parametrize("field", ["acquire_timeout", "startup_timeout"])
+def test_a_runtime_budget_takes_finite_positive_seconds(field: str) -> None:
+    assert getattr(_adapter(**{field: 5}), field) == 5.0
+    for refused in (True, "5"):
+        with pytest.raises(TypeError, match=field):
+            _adapter(**{field: refused})
+    for outside in (0, -1.0, float("inf")):
+        with pytest.raises(ValueError, match=field):
+            _adapter(**{field: outside})
+
+
+def test_the_writer_is_a_required_endpoint() -> None:
+    with pytest.raises(TypeError, match="writer"):
+        PostgresAdapter()  # pyright: ignore[reportCallIssue] - the missing keyword's runtime refusal is what this proves
+    with pytest.raises(TypeError) as refused:
+        PostgresAdapter(writer=cast("Any", "postgresql://app:hunter2@localhost/app"))
+    assert str(refused.value) == "writer takes a PostgresEndpoint"
+    with pytest.raises(TypeError):
+        PostgresAdapter(PostgresEndpoint("", credentials=DRIVER_MANAGED))  # pyright: ignore[reportCallIssue] - every adapter field is keyword-only, which is what this proves
 
 
 def test_on_demand_validates_the_controls_it_keeps() -> None:
@@ -148,29 +182,24 @@ def test_no_relationship_is_invented_between_independent_controls() -> None:
     # An acquisition budget longer than the startup budget, and an idle
     # retirement longer than a lifetime, are odd rather than invalid: they are
     # separate controls and Parallax states no ordering between them.
-    assert PoolOptions(acquire_timeout=60.0, startup_timeout=1.0).acquire_timeout == 60.0
+    assert _adapter(acquire_timeout=60.0, startup_timeout=1.0).acquire_timeout == 60.0
     assert PoolOptions(max_idle=7200.0, max_lifetime=60.0).max_idle == 7200.0
 
 
 def test_the_policy_itself_is_typed_and_a_bare_flag_is_not_one() -> None:
     with pytest.raises(TypeError, match="PoolOptions or OnDemandOptions"):
-        PostgresAdapter("", credentials=DRIVER_MANAGED, pool=cast("Any", False))
+        PostgresEndpoint("", credentials=DRIVER_MANAGED, pool=cast("Any", False))
     with pytest.raises(TypeError, match="PoolOptions or OnDemandOptions"):
-        PostgresAdapter("", credentials=DRIVER_MANAGED, pool=cast("Any", None))
+        PostgresEndpoint("", credentials=DRIVER_MANAGED, pool=cast("Any", None))
 
 
 def test_prepared_statement_tuning_is_a_nonnegative_int_or_none() -> None:
-    assert (
-        PostgresAdapter("", credentials=DRIVER_MANAGED, prepare_threshold=None).prepare_threshold
-        is None
-    )
-    assert (
-        PostgresAdapter("", credentials=DRIVER_MANAGED, prepare_threshold=0).prepare_threshold == 0
-    )
+    assert _adapter(prepare_threshold=None).prepare_threshold is None
+    assert _adapter(prepare_threshold=0).prepare_threshold == 0
     with pytest.raises(TypeError, match="prepare_threshold"):
-        PostgresAdapter("", credentials=DRIVER_MANAGED, prepare_threshold=cast("Any", True))
+        _adapter(prepare_threshold=True)
     with pytest.raises(ValueError, match="prepare_threshold"):
-        PostgresAdapter("", credentials=DRIVER_MANAGED, prepare_threshold=-1)
+        _adapter(prepare_threshold=-1)
 
 
 # --------------------------------------------------------------------------- #
@@ -189,28 +218,33 @@ def test_configuration_is_frozen_and_changed_by_constructing_another() -> None:
         dataclasses.replace(options, max_size=0)
 
 
-def test_an_adapter_is_frozen_and_equal_by_value() -> None:
-    adapter = PostgresAdapter(
+def test_an_endpoint_and_an_adapter_are_frozen_and_equal_by_value() -> None:
+    endpoint = PostgresEndpoint(
         "host=localhost dbname=app", credentials=_SECRET, pool=PoolOptions(max_size=4)
     )
+    adapter = PostgresAdapter(writer=endpoint, acquire_timeout=3.0)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        adapter.connection_string = "host=other"  # pyright: ignore[reportAttributeAccessIssue] - the frozen record's refusal at runtime is what this proves
-    assert adapter == PostgresAdapter(
+        endpoint.connection_string = "host=other"  # pyright: ignore[reportAttributeAccessIssue] - the frozen record's refusal at runtime is what this proves
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        adapter.acquire_timeout = 4.0  # pyright: ignore[reportAttributeAccessIssue] - the frozen record's refusal at runtime is what this proves
+    assert endpoint == PostgresEndpoint(
         "host=localhost dbname=app", credentials=_SECRET, pool=PoolOptions(max_size=4)
     )
+    assert adapter == PostgresAdapter(writer=endpoint, acquire_timeout=3)
 
 
 def test_neither_half_of_the_destination_reaches_the_representation() -> None:
     # A repr is a place values get logged. The string can still carry a secret
     # other than the password, and the credential IS one.
-    adapter = PostgresAdapter(
+    endpoint = PostgresEndpoint(
         "postgresql://user@localhost/app?options=-c%20application_name%3Dhunter2",
         credentials=_SECRET,
     )
 
-    assert "hunter2" not in repr(adapter)
-    assert adapter.connection_string.endswith("application_name%3Dhunter2")
-    assert adapter.credentials is _SECRET
+    assert "hunter2" not in repr(endpoint)
+    assert "hunter2" not in repr(PostgresAdapter(writer=endpoint))
+    assert endpoint.connection_string.endswith("application_name%3Dhunter2")
+    assert endpoint.credentials is _SECRET
 
 
 def test_a_provider_s_own_source_is_held_out_of_the_representation_too() -> None:
@@ -227,10 +261,10 @@ def test_a_provider_s_own_source_is_held_out_of_the_representation_too() -> None
 
     source = Broker("hunter2")
 
-    adapter = PostgresAdapter("dbname=app", credentials=source)
+    endpoint = PostgresEndpoint("dbname=app", credentials=source)
 
-    assert "hunter2" not in repr(adapter)
-    assert adapter.credentials is source
+    assert "hunter2" not in repr(endpoint)
+    assert endpoint.credentials is source
 
 
 def test_configuration_reaches_no_driver_and_starts_no_thread(
@@ -245,7 +279,11 @@ def test_configuration_reaches_no_driver_and_starts_no_thread(
     before = threading.active_count()
 
     PostgresAdapter(
-        "host=localhost dbname=app", credentials=DRIVER_MANAGED, pool=OnDemandOptions(max_size=3)
+        writer=PostgresEndpoint(
+            "host=localhost dbname=app",
+            credentials=DRIVER_MANAGED,
+            pool=OnDemandOptions(max_size=3),
+        )
     )
 
     assert threading.active_count() == before
@@ -254,7 +292,7 @@ def test_configuration_reaches_no_driver_and_starts_no_thread(
 def test_the_dialect_is_readable_without_configuring_anything() -> None:
     # A composition root selects an adapter and lowers SQL in the spelling it
     # will execute in before any configuration, let alone any resource, exists.
-    assert PostgresAdapter.dialect is PostgresAdapter("", credentials=DRIVER_MANAGED).dialect
+    assert PostgresAdapter.dialect is _adapter().dialect
 
 
 # --------------------------------------------------------------------------- #
@@ -276,21 +314,21 @@ def test_every_libpq_form_is_accepted_including_the_empty_string(connection_stri
     # The empty string asks libpq to take everything from the environment, which
     # is a deployment's choice rather than a missing value.
     assert (
-        PostgresAdapter(connection_string, credentials=_SECRET).connection_string
+        PostgresEndpoint(connection_string, credentials=_SECRET).connection_string
         == connection_string
     )
 
 
 def test_a_non_string_is_refused_by_type() -> None:
     with pytest.raises(TypeError, match=r"connection_string must be a string\."):
-        PostgresAdapter(cast("Any", 5432), credentials=DRIVER_MANAGED)
+        PostgresEndpoint(cast("Any", 5432), credentials=DRIVER_MANAGED)
 
 
 def test_malformed_syntax_is_refused_without_quoting_the_input_back() -> None:
     # The refusal is fixed text: a parser's own message can quote the input it
     # rejected, and the input is a connection string.
     with pytest.raises(ValueError) as refused:
-        PostgresAdapter("host=localhost dbname", credentials=DRIVER_MANAGED)
+        PostgresEndpoint("host=localhost dbname", credentials=DRIVER_MANAGED)
 
     assert str(refused.value) == (
         "Invalid PostgreSQL connection string; expected libpq keyword/value syntax "
@@ -309,20 +347,20 @@ def test_malformed_syntax_is_refused_without_quoting_the_input_back() -> None:
 
 
 def test_a_credential_declaration_is_required_with_no_default_and_no_none() -> None:
-    # A bare `PostgresAdapter(conninfo)` used to mean "the password is in the
+    # A bare `PostgresEndpoint(conninfo)` would mean "the password is in the
     # string, or the driver finds it". With the refusal below it could only mean
     # the latter, so the choice is spelled rather than defaulted.
     with pytest.raises(TypeError, match="credentials"):
-        PostgresAdapter("host=localhost dbname=app")  # pyright: ignore[reportCallIssue] - the missing keyword's runtime refusal is what this proves
+        PostgresEndpoint("host=localhost dbname=app")  # pyright: ignore[reportCallIssue] - the missing keyword's runtime refusal is what this proves
     with pytest.raises(TypeError, match=r"CredentialSource or DRIVER_MANAGED\."):
-        PostgresAdapter("host=localhost dbname=app", credentials=cast("Any", None))
+        PostgresEndpoint("host=localhost dbname=app", credentials=cast("Any", None))
 
 
 def test_a_value_that_is_neither_declaration_nor_source_is_refused_without_quoting_it() -> None:
     # A bare string in this position is most likely the password itself, so the
     # refusal names the two kinds it takes and never the value it got.
     with pytest.raises(TypeError) as refused:
-        PostgresAdapter("host=localhost dbname=app", credentials=cast("Any", "hunter2"))
+        PostgresEndpoint("host=localhost dbname=app", credentials=cast("Any", "hunter2"))
 
     assert str(refused.value) == "credentials takes a CredentialSource or DRIVER_MANAGED."
     assert "hunter2" not in str(refused.value)
@@ -337,7 +375,7 @@ def test_any_object_that_resolves_a_credential_is_accepted_structurally() -> Non
 
     source = Minted()
 
-    assert PostgresAdapter("dbname=app", credentials=source).credentials is source
+    assert PostgresEndpoint("dbname=app", credentials=source).credentials is source
 
 
 def test_a_source_class_passed_where_one_of_its_instances_was_meant_is_refused() -> None:
@@ -346,7 +384,7 @@ def test_a_source_class_passed_where_one_of_its_instances_was_meant_is_refused()
     # here rather than a credential failure a retaining pool retries per
     # connection until a caller's budget runs out.
     with pytest.raises(TypeError, match="CredentialSource or DRIVER_MANAGED"):
-        PostgresAdapter("dbname=app", credentials=cast("Any", Password))
+        PostgresEndpoint("dbname=app", credentials=cast("Any", Password))
 
 
 def test_an_object_whose_resolve_is_not_callable_is_refused() -> None:
@@ -356,7 +394,7 @@ def test_an_object_whose_resolve_is_not_callable_is_refused() -> None:
         resolve = "hunter2"
 
     with pytest.raises(TypeError) as refused:
-        PostgresAdapter("dbname=app", credentials=cast("Any", NotASource()))
+        PostgresEndpoint("dbname=app", credentials=cast("Any", NotASource()))
 
     assert str(refused.value) == "credentials takes a CredentialSource or DRIVER_MANAGED."
 
@@ -372,7 +410,7 @@ def test_a_connection_string_carrying_a_password_is_refused_either_spelling(
     # syntax refusal is: the string can carry other secrets, so it is never
     # quoted back, and nothing native is chained that would quote it instead.
     with pytest.raises(ValueError) as refused:
-        PostgresAdapter(carrying, credentials=_SECRET)
+        PostgresEndpoint(carrying, credentials=_SECRET)
 
     assert str(refused.value) == (
         "connection_string must not carry a password; supply it through credentials."
@@ -385,28 +423,31 @@ def test_a_password_in_the_string_is_refused_under_the_driver_managed_declaratio
     # The refusal is about where a secret may live, not about which credential
     # was declared beside it.
     with pytest.raises(ValueError, match="must not carry a password"):
-        PostgresAdapter("dbname=app password=hunter2", credentials=DRIVER_MANAGED)
+        PostgresEndpoint("dbname=app password=hunter2", credentials=DRIVER_MANAGED)
 
 
 def test_deriving_a_configuration_revalidates_every_rule() -> None:
     # `replace` reconstructs through the constructor, so a derived configuration
     # cannot hold a credential or a string the original would have refused.
-    adapter = PostgresAdapter("dbname=app", credentials=_SECRET)
+    endpoint = PostgresEndpoint("dbname=app", credentials=_SECRET)
+    adapter = PostgresAdapter(writer=endpoint)
 
-    assert dataclasses.replace(adapter, credentials=DRIVER_MANAGED).credentials is DRIVER_MANAGED
+    assert dataclasses.replace(endpoint, credentials=DRIVER_MANAGED).credentials is DRIVER_MANAGED
     with pytest.raises(TypeError, match="CredentialSource or DRIVER_MANAGED"):
-        dataclasses.replace(adapter, credentials=cast("Any", "hunter2"))
+        dataclasses.replace(endpoint, credentials=cast("Any", "hunter2"))
     with pytest.raises(ValueError, match="must not carry a password"):
-        dataclasses.replace(adapter, connection_string="dbname=app password=hunter2")
+        dataclasses.replace(endpoint, connection_string="dbname=app password=hunter2")
+    with pytest.raises(ValueError, match="acquire_timeout"):
+        dataclasses.replace(adapter, acquire_timeout=0)
 
 
 def test_local_parsing_proves_nothing_about_what_the_string_names() -> None:
     # Environment, service files, credentials and server settings resolve when a
     # physical connection is created, so immutable configuration does not freeze
     # inputs a deployment expects to change underneath it.
-    assert PostgresAdapter(
+    assert PostgresEndpoint(
         "host=nowhere.invalid port=1 dbname=absent", credentials=DRIVER_MANAGED
     ).connection_string
-    assert PostgresAdapter(
+    assert PostgresEndpoint(
         "service=one-that-does-not-exist", credentials=DRIVER_MANAGED
     ).connection_string

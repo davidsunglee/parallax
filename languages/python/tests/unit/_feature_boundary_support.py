@@ -22,7 +22,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core._execution._publication import SelectedReadModel, read_projection
-from parallax.core._execution._read_policy import interpreted
+from parallax.core._execution._read_pipeline import interpreted
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.base import INT64, STRING, DocumentValue, NeutralType, PresentDocument
 from parallax.core.base import Decimal as DecimalType

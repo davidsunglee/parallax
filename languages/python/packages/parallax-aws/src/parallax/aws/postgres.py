@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypedDict, Unpack
+from typing import TYPE_CHECKING
 
 import psycopg.conninfo
 
 from parallax.aws._rds import RdsIamCredentials
-from parallax.postgres import PostgresAdapter
+from parallax.postgres import PoolOptions, PostgresEndpoint
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from botocore.session import Session
 
-    from parallax.postgres import OnDemandOptions, PoolOptions
+    from parallax.postgres import OnDemandOptions
 
-__all__ = ["rds_postgres"]
+__all__ = ["rds_endpoint"]
 
 # What the token is signed for, plus the secret it stands in for. A connection
 # that used any other value for one of these would present a token signed for
@@ -36,14 +36,7 @@ _SSLMODE_REFUSAL = (
 _GSSENCMODE_REFUSAL = "params must not enable gssencmode; an IAM token travels only over TLS."
 
 
-class _AdapterOptions(TypedDict, total=False):
-    """Everything about the adapter that is none of this factory's business."""
-
-    pool: PoolOptions | OnDemandOptions
-    prepare_threshold: int | None
-
-
-def rds_postgres(
+def rds_endpoint(
     *,
     host: str,
     user: str,
@@ -52,16 +45,17 @@ def rds_postgres(
     port: int = 5432,
     params: Mapping[str, str] | None = None,
     session: Session | None = None,
-    **adapter_options: Unpack[_AdapterOptions],
-) -> PostgresAdapter:
-    """Configure a Postgres adapter whose login authenticates with an RDS IAM token.
+    pool: PoolOptions | OnDemandOptions | None = None,
+) -> PostgresEndpoint:
+    """Configure a Postgres endpoint whose login authenticates with an RDS IAM token.
 
-    ``host`` is the endpoint the application connects through — a cluster's own
-    endpoint for Aurora — and, with ``port`` and ``user``, what each token is
-    signed for. It names one endpoint: libpq reads a comma-separated ``host`` as
-    a list to try in turn, and a token signed for that whole list authenticates
-    at none of them. ``region`` is the token's credential scope and ``session``
-    an optional botocore session to resolve AWS credentials through.
+    ``host`` is the endpoint the application connects through — a cluster's
+    writer or reader endpoint for Aurora — and, with ``port`` and ``user``, what
+    each token is signed for, so every endpoint signs for its own host. It names
+    one endpoint: libpq reads a comma-separated ``host`` as a list to try in
+    turn, and a token signed for that whole list authenticates at none of them.
+    ``region`` is the token's credential scope and ``session`` an optional
+    botocore session to resolve AWS credentials through.
 
     ``params`` carries the rest of libpq's grammar — ``application_name``,
     ``options``, ``connect_timeout``, ``sslrootcert`` — so this factory never
@@ -69,10 +63,12 @@ def rds_postgres(
     ``sslmode`` to ``verify-ca`` or ``verify-full``; it may not weaken it, it
     may not ask for the GSS encryption libpq would carry the token over
     instead, and it may not name what the token is bound to. Every refusal is
-    fixed text, because ``params`` is a place other secrets live.
+    fixed text, because ``params`` is a place other secrets live. ``pool`` is
+    the endpoint's retention, :class:`~parallax.postgres.PoolOptions`' defaults
+    where omitted.
 
     Nothing here resolves a token, reaches AWS, or opens anything: the result is
-    configuration, exactly as a directly constructed adapter is.
+    configuration, exactly as a directly constructed endpoint is.
     """
     if "," in host:
         raise ValueError(_HOST_REFUSAL)
@@ -90,10 +86,10 @@ def rds_postgres(
         dbname=database,
         **{"sslmode": "require", "gssencmode": "disable", **requested},
     )
-    return PostgresAdapter(
+    return PostgresEndpoint(
         conninfo,
         credentials=RdsIamCredentials(
             host=host, port=port, user=user, region=region, session=session
         ),
-        **adapter_options,
+        pool=PoolOptions() if pool is None else pool,
     )

@@ -50,9 +50,11 @@ from parallax.core.db_port import (
     PipelineStatement,
     ReleaseUnconfirmed,
     Returned,
+    RouteCapabilities,
+    RouteSelection,
     Row,
 )
-from parallax.postgres import OnDemandOptions, PoolOptions, PostgresRole
+from parallax.postgres import OnDemandOptions, PoolOptions, PostgresEndpoint, PostgresRole
 from parallax.postgres._connection import ConnectionEstablishment, IncompatibleSessionError
 from parallax.postgres._context import PostgresConnectionContext, release
 from parallax.postgres._runtime import PROBE_SQL, PostgresRuntime, open_runtime
@@ -290,9 +292,18 @@ def _pool(*connections: _FakeConnection, **kwargs: Any) -> Any:
     return cast("Any", _FakePool(*connections, **kwargs))
 
 
-def _runtime(pool: Any, options: Any = None) -> PostgresRuntime:
-    return PostgresRuntime(
-        pool, options if options is not None else PoolOptions(), _establishment()
+def _runtime(pool: Any, *, acquire_timeout: float = 15.0) -> PostgresRuntime:
+    return PostgresRuntime(pool, _establishment(), acquire_timeout=acquire_timeout)
+
+
+def _open_runtime(
+    options: PoolOptions | OnDemandOptions, credentials: Any = DRIVER_MANAGED
+) -> PostgresRuntime:
+    return open_runtime(
+        PostgresEndpoint("", credentials=credentials, pool=options),
+        acquire_timeout=15.0,
+        startup_timeout=30.0,
+        prepare_threshold=5,
     )
 
 
@@ -314,11 +325,12 @@ def _context(
         deadline if deadline is not None else monotonic() + 5.0,
         _establishment(),
         role,
+        route="writer",
     )
 
 
 def _login_context(runtime: PostgresRuntime) -> Any:
-    return runtime.login_execution().new_context()
+    return runtime.login_source().new_context("writer_only")
 
 
 # --------------------------------------------------------------------------- #
@@ -346,13 +358,13 @@ def test_startup_probes_a_real_connection_and_gives_it_back(
     # authenticated login through the same initialized execution an application
     # gets.
     pool = _opened(monkeypatch, _pool())
-    runtime = open_runtime("", PoolOptions(min_size=1), 5, DRIVER_MANAGED)
+    runtime = _open_runtime(PoolOptions(min_size=1))
 
     assert pool.waits and pool.checkouts
     assert pool.returned and pool.returned[0].statements == [PROBE_SQL]
-    # A ready runtime publishes its measurements; what one answers is
-    # `test_pool_metrics.py`'s.
-    assert runtime.pool_metrics is not None
+    # A ready runtime publishes its writer pool's measurements; what one
+    # answers is `test_pool_metrics.py`'s.
+    assert [source.route for source in runtime.pool_metrics] == ["writer"]
     assert runtime.login_identity == "runtime-login"
 
 
@@ -378,7 +390,7 @@ def test_the_startup_probe_is_submitted_as_a_designated_read(
     monkeypatch.setattr(connection_module.PostgresConnection, "execute", recording)
     _opened(monkeypatch, _pool())
 
-    open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+    _open_runtime(PoolOptions(min_size=0))
 
     assert intents == [True]
 
@@ -390,7 +402,7 @@ def test_a_zero_minimum_and_on_demand_wait_for_nothing_and_still_probe(
     # proved nothing or establish a connection of its own and throw it away.
     for options in (PoolOptions(min_size=0), OnDemandOptions()):
         pool = _opened(monkeypatch, _pool())
-        open_runtime("", options, 5, DRIVER_MANAGED)
+        _open_runtime(options)
         assert pool.waits == []
         assert len(pool.checkouts) == 1
         assert pool.returned
@@ -412,7 +424,7 @@ def test_a_pool_that_will_not_open_fails_startup_at_the_open_phase(
     monkeypatch.setattr(psycopg_pool, "ConnectionPool", _Refusing)
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions())
 
     assert failed.value.phase == "open"
     assert isinstance(failed.value.__cause__, psycopg_pool.PoolTimeout)
@@ -424,7 +436,7 @@ def test_a_minimum_that_is_not_reached_fails_at_its_own_phase(
     pool = _opened(monkeypatch, _pool(wait_error=psycopg_pool.PoolTimeout("not filled")))
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=2), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=2))
 
     assert failed.value.phase == "minimum_ready"
     assert pool.closes == 1
@@ -450,7 +462,7 @@ def test_a_configuration_every_connection_is_refused_under_is_named_rather_than_
     monkeypatch.setattr(runtime_module, "ConnectionEstablishment", lambda: establishment)
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=1), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=1))
 
     assert failed.value.phase == "minimum_ready"
     assert failed.value.__cause__ is refusal
@@ -479,7 +491,7 @@ def test_a_source_that_authenticates_nothing_is_named_rather_than_timed_out(
     monkeypatch.setattr(runtime_module, "ConnectionEstablishment", lambda: establishment)
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=1), 5, Password("hunter2"))
+        _open_runtime(PoolOptions(min_size=1), Password("hunter2"))
 
     assert failed.value.phase == "minimum_ready"
     assert failed.value.__cause__ is refusal
@@ -494,7 +506,7 @@ def test_a_startup_acquisition_that_fails_carries_its_phase_and_cleanup(
     )
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=0))
 
     assert failed.value.phase == "acquire"
     assert isinstance(failed.value.__cause__, ConnectionAcquisitionError)
@@ -519,7 +531,7 @@ def test_a_probe_that_does_not_read_back_what_it_asked_for_fails_startup(
     pool = _opened(monkeypatch, _pool(connection))
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=0))
 
     assert failed.value.phase == "probe"
     # The probe scope is released on the way out rather than leaked.
@@ -544,7 +556,7 @@ def test_a_probe_that_reads_a_float_back_inexactly_names_what_rounds_it(
     _opened(monkeypatch, _pool(connection))
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=0))
 
     assert failed.value.phase == "probe"
     reason = str(failed.value)
@@ -561,7 +573,7 @@ def test_a_probe_scope_whose_release_cannot_be_confirmed_fails_startup(
     pool = _opened(monkeypatch, _pool(putconn_error=RuntimeError("the return failed")))
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=0))
 
     assert failed.value.phase == "release"
     assert isinstance(failed.value.cleanup_result, ReleaseUnconfirmed)
@@ -581,7 +593,7 @@ def test_readiness_shares_one_budget_that_is_never_restarted(
     _opened(monkeypatch, _pool())
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=1), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=1))
 
     assert failed.value.phase in {"acquire", "minimum_ready"}
 
@@ -597,7 +609,7 @@ def test_a_broken_startup_probe_is_replaced_within_the_one_startup_budget(
     fresh = _FakeConnection()
     pool = _opened(monkeypatch, _pool(broken, fresh))
 
-    runtime = open_runtime("", PoolOptions(min_size=0, startup_timeout=30.0), 5, DRIVER_MANAGED)
+    runtime = _open_runtime(PoolOptions(min_size=0))
 
     assert runtime.login_identity == "runtime-login"
     assert pool.checkouts == [30.0, 20.0]
@@ -614,7 +626,7 @@ def test_a_broken_startup_probe_past_its_budget_takes_no_replacement_and_publish
     pool = _opened(monkeypatch, _pool(broken, _FakeConnection()))
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=0, startup_timeout=30.0), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=0))
 
     assert failed.value.phase == "probe"
     cause = failed.value.__cause__
@@ -682,6 +694,7 @@ def test_a_timeout_names_the_initialization_refusal_on_record() -> None:
         monotonic() + 5.0,
         establishment,
         None,
+        route="writer",
     )
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
@@ -707,6 +720,7 @@ def test_a_timeout_names_the_credential_refusal_on_record() -> None:
         monotonic() + 5.0,
         establishment,
         None,
+        route="writer",
     )
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
@@ -784,6 +798,7 @@ def test_a_late_native_success_is_released_rather_than_admitted(
         monotonic() + 5.0,
         _establishment(),
         None,
+        route="writer",
     )
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
@@ -870,13 +885,47 @@ def test_each_acquisition_yields_fresh_execution_access() -> None:
         assert one is not two
 
 
+def test_the_runtime_declares_one_writer_route_serving_every_read_only_level() -> None:
+    runtime = _runtime(_pool())
+
+    assert dict(runtime.routes) == {"writer": RouteCapabilities.every_level()}
+    assert runtime.routes["writer"].read_only_isolation == frozenset(
+        {"read_committed", "repeatable_read", "serializable"}
+    )
+    with pytest.raises(TypeError):
+        cast("Any", runtime.routes)["reader"] = RouteCapabilities(frozenset())
+
+
+@pytest.mark.parametrize("policy", ["writer_only", "reader_only", "reader_preferred"])
+def test_every_acquisition_selects_the_writer_once_entered(policy: str) -> None:
+    pool = _pool()
+    resource = _runtime(pool).login_source().new_context(cast("Any", policy))
+
+    assert resource.selection is None
+    with resource:
+        assert resource.selection == RouteSelection("writer")
+    assert resource.selection == RouteSelection("writer")
+
+
+def test_a_refused_entry_reports_the_writer_on_the_context_and_the_failure_alike() -> None:
+    pool = _pool(checkout_error=psycopg_pool.PoolTimeout("waited"))
+    resource = _login_context(_runtime(pool))
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "timeout"
+    assert refused.value.selection == RouteSelection("writer")
+    assert resource.selection == RouteSelection("writer")
+
+
 def test_authority_binding_and_context_creation_acquire_nothing() -> None:
     pool = _pool()
     runtime = _runtime(pool)
 
-    source = runtime.principal_execution(PostgresRole("tenant_reader"))
-    first = source.new_context()
-    second = source.new_context()
+    source = runtime.principal_source(PostgresRole("tenant_reader"))
+    first = source.new_context("writer_only")
+    second = source.new_context("writer_only")
 
     assert first is not second
     assert pool.checkouts == []
@@ -886,7 +935,7 @@ def test_authority_binding_and_context_creation_acquire_nothing() -> None:
 def test_principal_acquisition_installs_the_role_before_execution_and_resets_it_on_exit() -> None:
     connection = _FakeConnection()
     runtime = _runtime(_pool(connection))
-    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    resource = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
 
     with resource as scoped:
         scoped.execute("select current_user", [])
@@ -969,11 +1018,11 @@ def test_reused_session_does_not_bleed_principal_authority_into_later_acquisitio
     connection = _FakeConnection()
     runtime = _runtime(_pool(connection))
 
-    with runtime.principal_execution(PostgresRole("reader_a")).new_context():
+    with runtime.principal_source(PostgresRole("reader_a")).new_context("writer_only"):
         pass
-    with runtime.principal_execution(PostgresRole("reader_b")).new_context():
+    with runtime.principal_source(PostgresRole("reader_b")).new_context("writer_only"):
         pass
-    with runtime.login_execution().new_context():
+    with runtime.login_source().new_context("writer_only"):
         pass
 
     assert (
@@ -1512,7 +1561,7 @@ def test_each_new_owner_has_a_budget_of_its_own(monkeypatch: pytest.MonkeyPatch)
     clock = _Clock(monkeypatch)
     broken = _FakeConnection(lost=_lost())
     pool = _pool(_FakeConnection(), broken, _FakeConnection(rows=[]))
-    runtime = _runtime(pool, PoolOptions(acquire_timeout=3.0))
+    runtime = _runtime(pool, acquire_timeout=3.0)
 
     with _login_context(runtime):
         clock.now = 50.0
@@ -1887,7 +1936,7 @@ def test_a_native_close_problem_is_reported_rather_than_raised(
 
 def test_the_ordinary_acquisition_budget_comes_from_the_configured_timeout() -> None:
     pool = _pool()
-    runtime = _runtime(pool, PoolOptions(acquire_timeout=3.0))
+    runtime = _runtime(pool, acquire_timeout=3.0)
     with _login_context(runtime):
         pass
     (given,) = pool.checkouts
@@ -1951,7 +2000,10 @@ def test_the_on_demand_policy_selects_the_native_null_pool(
 
     monkeypatch.setattr(psycopg_pool, "NullConnectionPool", _Null)
     runtime_module._build_pool(  # pyright: ignore[reportPrivateUsage] - the module-private pool builder is this test's subject
-        "", OnDemandOptions(), 5, _establishment(), DRIVER_MANAGED
+        PostgresEndpoint("", credentials=DRIVER_MANAGED, pool=OnDemandOptions()),
+        15.0,
+        5,
+        _establishment(),
     )
     assert built == ["_Null"]
 
@@ -1980,7 +2032,7 @@ def test_neither_native_pool_is_given_a_check_to_run_at_checkout(
 
     monkeypatch.setattr(psycopg_pool, native, _Recording)
     runtime_module._build_pool(  # pyright: ignore[reportPrivateUsage] - the module-private pool builder is this test's subject
-        "", options, 5, _establishment(), DRIVER_MANAGED
+        PostgresEndpoint("", credentials=DRIVER_MANAGED, pool=options), 15.0, 5, _establishment()
     )
     (kwargs,) = configured
     assert "check" not in kwargs
@@ -1994,7 +2046,7 @@ def test_a_probe_that_answers_more_than_one_row_fails_startup(
     _opened(monkeypatch, _pool(connection))
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=0))
 
     assert failed.value.phase == "probe"
     assert str(failed.value) == "the startup probe returned 2 rows rather than one"
@@ -2007,7 +2059,7 @@ def test_a_probe_that_cannot_run_fails_startup_with_the_failure_as_its_cause(
     _opened(monkeypatch, _pool(_FakeConnection(execute_error=failure)))
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=0))
 
     assert failed.value.phase == "probe"
     assert str(failed.value) == (
@@ -2028,7 +2080,7 @@ def test_a_control_flow_exception_in_the_probe_keeps_its_own_propagation(
     pool = _opened(monkeypatch, _pool(connection))
 
     with pytest.raises(KeyboardInterrupt):
-        open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=0))
 
     assert pool.returned == [connection]
     assert pool.closes == 1
@@ -2068,7 +2120,7 @@ def test_a_budget_already_spent_refuses_to_begin_the_next_phase(
     monkeypatch.setattr(runtime_module, "monotonic", lambda: 1e18)
 
     with pytest.raises(DatabaseStartupError) as failed:
-        open_runtime("", PoolOptions(min_size=0), 5, DRIVER_MANAGED)
+        _open_runtime(PoolOptions(min_size=0))
 
     assert failed.value.phase == "acquire"
 
@@ -2079,22 +2131,26 @@ def test_configuration_opens_the_runtime_it_describes(monkeypatch: pytest.Monkey
     # exists to refuse — over a stub, reaching no server.
     from parallax.postgres import adapter as adapter_module
 
-    opened: list[tuple[str, object, object, object]] = []
+    opened: list[tuple[object, object, object, object]] = []
 
     def open_runtime_stub(
-        conninfo: str, options: object, prepare_threshold: object, credentials: object
+        writer: object,
+        *,
+        acquire_timeout: object,
+        startup_timeout: object,
+        prepare_threshold: object,
     ) -> object:
-        opened.append((conninfo, options, prepare_threshold, credentials))
+        opened.append((writer, acquire_timeout, startup_timeout, prepare_threshold))
         return "the runtime"
 
     monkeypatch.setattr(adapter_module, "open_runtime", open_runtime_stub)
-    source = Password("hunter2")
+    writer = PostgresEndpoint("host=localhost", credentials=Password("hunter2"))
     configured = adapter_module.PostgresAdapter(
-        "host=localhost", credentials=source, prepare_threshold=None
+        writer=writer, acquire_timeout=2.0, startup_timeout=4.0, prepare_threshold=None
     )
 
     assert configured.open() == "the runtime"  # database-access: open_runtime is stubbed above
-    assert opened == [("host=localhost", configured.pool, None, source)]
+    assert opened == [(writer, 2.0, 4.0, None)]
 
 
 def test_leaving_a_context_that_was_never_entered_does_nothing() -> None:
@@ -2155,7 +2211,7 @@ def _built_kwargs(monkeypatch: pytest.MonkeyPatch, credentials: Any) -> Any:
 
     monkeypatch.setattr(psycopg_pool, "ConnectionPool", _Recording)
     runtime_module._build_pool(  # pyright: ignore[reportPrivateUsage] - the module-private pool builder is this test's subject
-        "", PoolOptions(), 5, _establishment(), credentials
+        PostgresEndpoint("", credentials=credentials, pool=PoolOptions()), 15.0, 5, _establishment()
     )
     (kwargs,) = recorded
     return kwargs

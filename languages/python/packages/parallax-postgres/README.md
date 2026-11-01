@@ -7,20 +7,25 @@ Parallax's Postgres database adapter over `psycopg` and its companion
 
 ```python
 from parallax.core.db_port import Password
-from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
+from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import connect
 
-adapter = PostgresAdapter("postgresql://app@localhost/app", credentials=Password("s3cret"))
+writer = PostgresEndpoint("postgresql://app@localhost/app", credentials=Password("s3cret"))
+adapter = PostgresAdapter(writer=writer)
 with connect(adapter, model) as root:
     db = root.using_database_login()
     ...
 ```
 
-`PostgresAdapter` is **configuration**. Constructing one opens no connection, no
-pool, and no thread: it parses the connection string, validates the credential
-declaration and the retention policy, and stores them. That is what makes it
-safe to build at import time, hold as a module constant, share between threads,
-and — for a forking server — build before the fork and open after it.
+`PostgresEndpoint` and `PostgresAdapter` are **configuration**. Constructing
+either opens no connection, no pool, and no thread: an endpoint parses its
+connection string and validates its credential declaration and retention
+policy, and the adapter validates the acquisition and startup budgets its
+runtime spends. That is what makes them safe to build at import time, hold as
+module constants, share between threads, and — for a forking server — build
+before the fork and open after it. The adapter's `writer` is the endpoint that
+transactions and every read of a single-endpoint deployment use; nothing about
+its role is inferred from its connection string.
 
 ## Where the password lives
 
@@ -29,7 +34,7 @@ carrying a password is refused at construction, whatever `credentials` is, and
 the refusal never quotes the string back:
 
 ```text
-PostgresAdapter("postgresql://app:<password>@db.internal/app", credentials=Password("<password>"))
+PostgresEndpoint("postgresql://app:<password>@db.internal/app", credentials=Password("<password>"))
 ValueError: connection_string must not carry a password; supply it through credentials.
 ```
 
@@ -39,14 +44,14 @@ There are three spellings, all exported from `parallax.core.db_port`:
 from parallax.core.db_port import DRIVER_MANAGED, Password
 
 # a constant secret; `Password` is its own source and keeps it out of every repr
-PostgresAdapter("postgresql://app@db.internal:5432/app", credentials=Password("s3cret"))
+PostgresEndpoint("postgresql://app@db.internal:5432/app", credentials=Password("s3cret"))
 
 # any object with `resolve() -> Password`, asked as connections are established
-PostgresAdapter("postgresql://app@db.internal/app", credentials=my_source)
+PostgresEndpoint("postgresql://app@db.internal/app", credentials=my_source)
 
 # Parallax supplies none: peer, trust, a client certificate, Kerberos, or
 # libpq's own PGPASSWORD, .pgpass and service files
-PostgresAdapter("host=/var/run/postgresql dbname=app", credentials=DRIVER_MANAGED)
+PostgresEndpoint("host=/var/run/postgresql dbname=app", credentials=DRIVER_MANAGED)
 ```
 
 A source is asked where the driver establishes a **physical** connection, and
@@ -70,9 +75,11 @@ before publishing roots, so caller work between pages can use even a one-slot
 pool. A participating stream instead inherits its transaction attempt's
 connection for every page.
 
-`pool=PoolOptions(...)` keeps connections between operations;
+An endpoint's `pool=PoolOptions(...)` keeps connections between operations;
 `pool=OnDemandOptions(...)` keeps none, closing each on release unless a caller
-is already waiting for one. Omitting `pool` takes the retaining defaults.
+is already waiting for one. Omitting `pool` takes the retaining defaults. The
+adapter's `acquire_timeout` and `startup_timeout` budget the whole runtime
+rather than one pool.
 
 ## Everything else
 

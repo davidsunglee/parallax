@@ -102,6 +102,10 @@ from parallax.core.db_port import (
     PipelineStatement,
     Returned,
     RolledBack,
+    Route,
+    RouteCapabilities,
+    RoutePolicy,
+    RouteSelection,
     Row,
     TransactionOutcome,
 )
@@ -194,6 +198,8 @@ COMPARED_CELLS: Final = (
 """The configuration cells each compared at most against its ceiling."""
 
 _LOGIN: Final = "lifecycle-overhead"
+_ROUTES: Final[Mapping[Route, RouteCapabilities]] = {"writer": RouteCapabilities.every_level()}
+_SERVED: Final = RouteSelection("writer")
 
 
 class _SoleRuntime:
@@ -214,21 +220,26 @@ class _SoleRuntime:
         self._connection = connection
 
     @property
-    def pool_metrics(self) -> None:
-        return None
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        return _ROUTES
+
+    @property
+    def pool_metrics(self) -> tuple[()]:
+        return ()
 
     @property
     def login_identity(self) -> str:
         return _LOGIN
 
-    def login_execution(self) -> _SoleRuntime:
+    def login_source(self) -> _SoleRuntime:
         return self
 
-    def principal_execution(self, authorization: object) -> _SoleRuntime:
+    def principal_source(self, authorization: object) -> _SoleRuntime:
         del authorization
         return self
 
-    def new_context(self) -> _SoleScope:
+    def new_context(self, policy: RoutePolicy, /) -> _SoleScope:
+        del policy
         return _SoleScope(self._connection)
 
     def close(self) -> None:
@@ -246,11 +257,16 @@ allocated a result per acquisition would be measuring itself.
 class _SoleScope:
     """One acquisition of the sole connection, which reclaims nothing."""
 
-    __slots__ = ("_connection", "_left")
+    __slots__ = ("_connection", "_entered", "_left")
 
     def __init__(self, connection: DatabaseConnection) -> None:
         self._connection = connection
+        self._entered = False
         self._left = False
+
+    @property
+    def selection(self) -> RouteSelection | None:
+        return _SERVED if self._entered else None
 
     @property
     def cleanup_result(self) -> CleanupResult | None:
@@ -264,6 +280,7 @@ class _SoleScope:
         return _RELEASED if self._left else None
 
     def __enter__(self) -> DatabaseConnection:
+        self._entered = True
         return self._connection
 
     def __exit__(

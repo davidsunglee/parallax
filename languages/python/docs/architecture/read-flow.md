@@ -84,8 +84,8 @@ derives for each Entity from the contract's publication slots dies with that Pag
 - `parallax.core._execution._transaction._runner:TransactionRunner.transact`
 - `parallax.core._execution._transaction._runner:TransactionRunner.read_only`
 - `parallax.core._execution._scope:ExecutionScope`
-- `parallax.core._execution._read_policy:StandaloneRead`
-- `parallax.core._execution._read_policy:BegunRead`
+- `parallax.core._execution._read_pipeline:StandaloneRead`
+- `parallax.core._execution._read_pipeline:BegunRead`
 - `parallax.core._execution._transaction._attempt:ReadOnlyTxnAttempt`
 - `parallax.core._execution._transaction._attempt:TxnAttempt`
 - `parallax.snapshot._handle._transaction:ReadOnlyTxnContext`
@@ -112,8 +112,8 @@ derives for each Entity from the contract's publication slots dies with that Pag
 - `parallax.core.object_query.serde:deserialize`
 - `parallax.snapshot._handle._read:typed_publication_for`
 - `parallax.snapshot._handle._read:wire_publication_for`
-- `parallax.core._execution._read_policy:read_graph`
-- `parallax.core._execution._read_policy:read_rows`
+- `parallax.core._execution._read_pipeline:read_graph`
+- `parallax.core._execution._read_pipeline:read_rows`
 - `parallax.core.read_delivery._row_lane:find_rows`
 - `parallax.core.read_delivery._row_converter:ReadRowConverter.row_publisher`
 - `parallax.core.read_delivery._row_converter:RowPublisher`
@@ -132,7 +132,7 @@ An eager graph read, from the lane's entry point to the sealed Page:
    │   (typed_publication_for refuses a selection with no EntityGraphConstruction)
    │ convert_query(query) → ReadQuery: AuthoredQuery | ObjectQueryNode
    ▼
- read_graph(read, query, publication, planner)                          _read_policy
+ read_graph(read, query, publication, planner)                        _read_pipeline
    │ interpreted(selected, query)
    │   ObjectQueryNode → itself
    │   AuthoredQuery   → InterpretedQuery + typed_interpretation
@@ -241,21 +241,21 @@ admission stay outside the cache.
 - `parallax.core._execution._publication:SelectedReadModel`
 - `parallax.snapshot._handle._read:SnapshotPublication`
 - `parallax.core.entity._graph_construction:EntityGraphConstruction`
-- `parallax.core._execution._read_policy:ReadQuery`
-- `parallax.core._execution._read_policy:interpreted`
+- `parallax.core._execution._read_pipeline:ReadQuery`
+- `parallax.core._execution._read_pipeline:interpreted`
 - `parallax.core.object_query._nodes:InterpretedQuery`
 - `parallax.core.entity._authored_resolver:typed_interpretation`
 - `parallax.core._execution._read_query:resolve_read_query`
 - `parallax.core.object_query.validate:validate_object_query`
 - `parallax.core._execution._features:deferred_features`
 - `parallax.core.object_query._resolved:ResolvedObjectQuery`
-- `parallax.core._execution._read_policy:BegunRead.eager`
+- `parallax.core._execution._read_pipeline:BegunRead.eager`
 - `parallax.core._execution._transaction._lifetime:TxnAttemptLifetime.ensure_open`
 - `parallax.core._execution._unit_work.uow:UnitOfWork.read`
-- `parallax.core._execution._read_policy:ReadInputs`
-- `parallax.core._execution._read_policy:ReadInputs.connection`
-- `parallax.core._execution._read_policy:ReadInputs.preference`
-- `parallax.core._execution._read_policy:ReadInputs.evidence_context`
+- `parallax.core._execution._read_pipeline:ReadInputs`
+- `parallax.core._execution._read_pipeline:ReadInputs.connection`
+- `parallax.core._execution._read_pipeline:ReadInputs.preference`
+- `parallax.core._execution._read_pipeline:ReadInputs.evidence_context`
 - `parallax.core.read_delivery._delivery:deliver_find`
 - `parallax.core.read_delivery._delivery:deliver_history`
 - `parallax.core.read_delivery._page_reader:EagerPageRequest`
@@ -459,7 +459,7 @@ The `ReadInputs` a lane passes decide most of this. A standalone read passes its
 connection, no Concurrency Preference and no evidence context; a read-only attempt
 passes its connection and neither of the others; a writable attempt passes its
 connection, its unit of work's preference and that unit of work's `SourceAuthority` as
-the evidence context. `_page_origin_collector` in `_read_policy` turns "no evidence
+the evidence context. `_page_origin_collector` in `_read_pipeline` turns "no evidence
 context, or a scanned axis" into `EMPTY_PAGE_ORIGIN_COLLECTOR`.
 
 Read Evidence is not authority. The `SourceAuthority` is the attempt's one judge of
@@ -502,7 +502,7 @@ exhausted, failed or stopped early.
 - `parallax.core.read_delivery._page_reader:StreamPageResult.tie`
 - `parallax.snapshot._handle._stream:SnapshotStream`
 - `parallax.core.read_delivery._read_plan:ReadPlanner.plan`
-- `parallax.core._execution._read_policy:ReadInputs`
+- `parallax.core._execution._read_pipeline:ReadInputs`
 - `parallax.core._execution._scope:ExecutionScope.stream`
 - `parallax.core._execution._transaction._attempt:_TxnAttemptBase.stream`
 - `parallax.core.read_delivery._stream:check_batch_size`
@@ -512,9 +512,9 @@ exhausted, failed or stopped early.
 - `parallax.core.read_delivery._paging:At`
 - `parallax.core.read_delivery._paging:page_decision`
 - `parallax.core.read_delivery._row_decoding:row_coordinates`
-- `parallax.core._execution._read_policy:read_page`
-- `parallax.core._execution._read_policy:BegunRead.paged`
-- `parallax.core._execution._read_policy:_page_origin_collector`
+- `parallax.core._execution._read_pipeline:read_page`
+- `parallax.core._execution._read_pipeline:BegunRead.paged`
+- `parallax.core._execution._read_pipeline:_page_origin_collector`
 - `parallax.core._execution._page_origins:ReadEvidenceCollector`
 - `parallax.core.read_delivery._page_reader:EMPTY_PAGE_ORIGIN_COLLECTOR`
 - `parallax.core._execution._unit_work.retain:ReadEvidence`

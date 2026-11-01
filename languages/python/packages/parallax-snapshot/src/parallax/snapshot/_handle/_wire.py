@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from parallax.core._execution._options import OMITTED, Omitted
-from parallax.core._execution._read_policy import ReadQuery
+from parallax.core._execution._read_pipeline import ReadQuery
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core.object_query import ObjectQueryNode, deserialize

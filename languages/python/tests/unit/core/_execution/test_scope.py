@@ -57,7 +57,7 @@ def test_an_option_derived_scope_shares_its_authority_runner_and_root_resources(
     unchanged = cast("Any", scoped.with_options())
     private = cast("Any", scoped)
 
-    assert derived._capture is private._capture
+    assert derived._authority is private._authority
     assert derived._runner is private._runner
     assert derived._planner is private._planner
     assert derived._serving is private._serving

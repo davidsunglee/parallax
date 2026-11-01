@@ -56,7 +56,7 @@ Infrastructure callers MAY explicitly select database-login mode when deriving a
 
 Omitting a subject does not implicitly mean database-login mode in production. A caller must choose a scope-creation operation or argument that makes the mode explicit. Compatibility case documents may omit their outer selector for historical cases; the language runner interprets that absence by explicitly selecting database-login mode before invoking production code.
 
-An Execution Scope is affine to the opened Database runtime that created it. Using it with another runtime MUST be refused before checkout or callback entry. A scope captures immutable values at creation and MUST NOT observe later mutation of caller-owned inputs.
+An Execution Scope is affine to the opened Database runtime that created it. Using it with another runtime MUST be refused before checkout or callback entry. A scope captures immutable values at creation and MUST NOT observe later mutation of caller-owned inputs. Deriving a scope's transaction options or read policy (`m-execution` *Read routing*) preserves its captured authority and acquires nothing.
 
 Closing a Database runtime invalidates its scopes according to the database lifecycle contract. Scope existence does not extend runtime lifetime.
 
@@ -93,7 +93,7 @@ Switching Principal or Database Authorization inside an active transaction is fo
 
 ## Provider binding and revocation
 
-A provider MUST apply subject authorization after checkout and before transaction begin or standalone application work. It MUST scope that authorization to the single acquisition.
+A provider MUST apply subject authorization after checkout and before transaction begin or standalone application work, whichever Route (`m-db-port`) serves the acquisition. It MUST scope that authorization to the single acquisition.
 
 On every exit path, the provider MUST attempt to revoke subject authorization before releasing the connection. This includes successful commit, rollback, callback failure, retry, begin failure after authorization setup, cancellation, and standalone-operation completion.
 
@@ -109,7 +109,7 @@ The verbs **release** and **released** name the operation and lifecycle observat
 
 ## Diagnostics and confidentiality
 
-Lifecycle diagnostics MAY identify Principal mode and a safe Principal representation. They MUST NOT serialize Database Authorization values, provider credentials, role-setting SQL, authentication tokens, or secrets.
+Lifecycle diagnostics MAY identify Principal mode and a safe Principal representation, and the portable routing roles an acquisition requested and landed on (`m-execution-lifecycle` *Resource events*). They MUST NOT serialize endpoints, hosts, Database Authorization values, provider credentials, role-setting SQL, authentication tokens, or secrets.
 
 Providers SHOULD expose stable, non-secret reason categories for authorization setup and revocation failures. Diagnostic rendering MUST NOT be used for Execution Actor equality.
 

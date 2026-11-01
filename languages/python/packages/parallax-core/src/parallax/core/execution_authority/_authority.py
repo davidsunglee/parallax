@@ -11,12 +11,12 @@ from parallax.core.db_port import (
 )
 
 __all__ = [
-    "ExecutionCapture",
+    "ExecutionAuthority",
     "InvalidPrincipalError",
     "Principal",
     "capture_database_login",
     "capture_principal",
-    "same_execution",
+    "same_authority",
 ]
 
 
@@ -35,24 +35,24 @@ class InvalidPrincipalError(ValueError):
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class PrincipalExecution:
+class PrincipalAuthority:
     actor: SubjectActor
     authorization: object
     source: ConnectionContextSource
 
 
 @dataclass(frozen=True, slots=True, eq=False)
-class LoginExecution:
+class LoginAuthority:
     actor: DatabaseLoginActor
     source: ConnectionContextSource
 
 
-type ExecutionCapture = PrincipalExecution | LoginExecution
+type ExecutionAuthority = PrincipalAuthority | LoginAuthority
 
 
 def capture_principal[Authorization](
     runtime: DatabaseRuntime[Authorization], principal: Principal[Authorization]
-) -> PrincipalExecution:
+) -> PrincipalAuthority:
     subject = principal.subject
     try:
         actor = SubjectActor(subject)
@@ -61,23 +61,23 @@ def capture_principal[Authorization](
 
     authorization = principal.database_authorization
     try:
-        source = runtime.principal_execution(authorization)
+        source = runtime.principal_source(authorization)
     except InvalidAuthorizationError as error:
         raise InvalidPrincipalError(str(error)) from error
-    return PrincipalExecution(actor, authorization, source)
+    return PrincipalAuthority(actor, authorization, source)
 
 
 def capture_database_login[Authorization](
     runtime: DatabaseRuntime[Authorization],
-) -> LoginExecution:
-    return LoginExecution(DatabaseLoginActor(runtime.login_identity), runtime.login_execution())
+) -> LoginAuthority:
+    return LoginAuthority(DatabaseLoginActor(runtime.login_identity), runtime.login_source())
 
 
-def same_execution(left: ExecutionCapture, right: ExecutionCapture) -> bool:
+def same_authority(left: ExecutionAuthority, right: ExecutionAuthority) -> bool:
     match left, right:
-        case LoginExecution(), LoginExecution():
+        case LoginAuthority(), LoginAuthority():
             return True
-        case PrincipalExecution(), PrincipalExecution():
+        case PrincipalAuthority(), PrincipalAuthority():
             return left.actor == right.actor and left.authorization == right.authorization
         case _:
             return False

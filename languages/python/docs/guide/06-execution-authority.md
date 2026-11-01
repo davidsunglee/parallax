@@ -22,7 +22,7 @@ from parallax.core.db_port import (
     Password,
 )
 from parallax.core.execution import InvalidPrincipalError, TransactionAuthorityError
-from parallax.postgres import PostgresAdapter, PostgresRole
+from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 ```
 <!-- /example -->
@@ -137,7 +137,7 @@ class SecretFile:
 
 def configure_with_a_secret_file(conninfo: str, path: Path) -> PostgresAdapter:
     """A rotated secret reaches every connection opened after the rotation."""
-    return PostgresAdapter(conninfo, credentials=SecretFile(path))
+    return PostgresAdapter(writer=PostgresEndpoint(conninfo, credentials=SecretFile(path)))
 ```
 <!-- /example -->
 
@@ -148,8 +148,8 @@ that needed the connection fails with `ConnectionAcquisitionError`, whose `reaso
 `"credentials_refused"`, and at startup `connect` fails instead.
 
 For Amazon RDS and Aurora, `parallax-aws` supplies `RdsIamCredentials`, a source that
-signs a fresh IAM token for each new connection, and `rds_postgres`, which builds the
-whole adapter. The lifecycle guide covers
+signs a fresh IAM token for each new connection, and `rds_endpoint`, which builds an
+endpoint that signs for its own host. The lifecycle guide covers
 [both](../postgresql-lifecycle.md#rds-and-aurora-authenticated-by-iam), along with
 [the three credential forms](../postgresql-lifecycle.md#where-the-password-lives) and what
 you get when a source fails.

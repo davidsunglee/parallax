@@ -18,7 +18,7 @@ from parallax.core._execution._keyed_writes import (
 )
 from parallax.core._execution._options import OMITTED, Omitted, ReadOnlyTxnOptions, TxnOptions
 from parallax.core._execution._publication import SelectedReadModel, SelectedWriteModel
-from parallax.core._execution._read_policy import (
+from parallax.core._execution._read_pipeline import (
     ReadInputs,
     ReadQuery,
     read_graph,

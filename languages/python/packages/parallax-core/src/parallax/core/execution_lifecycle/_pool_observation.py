@@ -10,6 +10,7 @@ __all__ = [
     "PoolObservation",
     "close_pool_observations",
     "register_pool_observation",
+    "register_pool_observations",
 ]
 
 
@@ -45,10 +46,11 @@ class PoolMetricsObserver(Protocol):
     def observe_pool(self, source: PoolMetricsSource, /) -> PoolObservation | None:
         """Take an interest in ``source``, or answer ``None`` to take none.
 
-        Called once, during composition, before the handle is published and only
-        where the runtime publishes a source at all. The source is stable for
-        that runtime's life, so it may be retained; sampling through it is the
-        observer's own to schedule.
+        Called once per source, during composition, before the handle is
+        published and only where the runtime publishes a source at all — a
+        runtime keeping one pool per route publishes one source per route, and
+        each names its own. A source is stable for that runtime's life, so it
+        may be retained; sampling through it is the observer's own to schedule.
 
         An ordinary failure here fails composition — no handle is published and
         the runtime that was opened is closed — because a registration that
@@ -58,18 +60,39 @@ class PoolMetricsObserver(Protocol):
 
 
 def register_pool_observation(
-    provider: object, source: PoolMetricsSource | None
+    provider: object, source: PoolMetricsSource
 ) -> PoolObservation | None:
-    """Offer ``source`` to ``provider``, where there is both a source and an interest.
+    """Offer ``source`` to ``provider``, where the Provider takes an interest.
 
     Answers ``None`` for every way there is nothing to register: no Provider, a
-    runtime publishing no source, a Provider that observes no pool, and one that
-    was offered the source and declined it. Composition holds the answer and
-    closes it; ``None`` is a shutdown with nothing to do.
+    Provider that observes no pool, and one that was offered the source and
+    declined it.
     """
-    if source is None or not isinstance(provider, PoolMetricsObserver):
+    if not isinstance(provider, PoolMetricsObserver):
         return None
     return provider.observe_pool(source)
+
+
+def register_pool_observations(
+    provider: object, sources: Sequence[PoolMetricsSource]
+) -> tuple[PoolObservation, ...]:
+    """Offer each of ``sources`` to ``provider`` once, in order.
+
+    Composition holds the answer and closes it; empty is a shutdown with
+    nothing to do. A registration that RAISES closes every one already taken
+    before the exception leaves with its identity intact, because no handle
+    will be published to close them.
+    """
+    registered: list[PoolObservation] = []
+    try:
+        for source in sources:
+            observation = register_pool_observation(provider, source)
+            if observation is not None:
+                registered.append(observation)
+    except BaseException:
+        close_pool_observations(registered)
+        raise
+    return tuple(registered)
 
 
 def close_pool_observations(observations: Sequence[PoolObservation]) -> None:

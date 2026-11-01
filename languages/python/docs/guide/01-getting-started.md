@@ -48,7 +48,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity import model_of
 from parallax.core.execution import ExecutionFailure, TxnOptions
 from parallax.evolution import ABSENT, evolve, schema_delta
-from parallax.postgres import PostgresAdapter
+from parallax.postgres import PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import (
     Database,
     NoResultFound,
@@ -142,7 +142,7 @@ Here is a complete first program. It connects, inserts a customer, and reads it 
 ```python
 def configure_the_database(conninfo: str, password: str) -> PostgresAdapter:
     """Configuration only: building an adapter opens no connection."""
-    return PostgresAdapter(conninfo, credentials=Password(password))
+    return PostgresAdapter(writer=PostgresEndpoint(conninfo, credentials=Password(password)))
 
 
 def add_and_find_a_customer(adapter: PostgresAdapter) -> Customer:
@@ -163,12 +163,13 @@ back. The rest of this chapter walks through it.
 
 ### Connect
 
-`PostgresAdapter` is configuration. The connection string says where the database is,
+`PostgresAdapter` is configuration, and its `writer` is the `PostgresEndpoint` your
+transactions and reads use. The endpoint's connection string says where the database is,
 in libpq's own syntax: `host=... dbname=...` keyword pairs, a `postgresql://` URI or a
 `service=` name. `credentials` says how to log in. Keeping the password out of the
-connection string is deliberate: building an adapter from a string that contains one
-raises `ValueError`. Building an adapter opens nothing, so you can create it once at
-startup and share it.
+connection string is deliberate: building an endpoint from a string that contains one
+raises `ValueError`. Building either opens nothing, so you can create them once at
+startup and share them.
 
 `connect` opens the runtime, including its connection pool, and returns a `Database`
 root that owns it. Close the root when your application stops, either by calling

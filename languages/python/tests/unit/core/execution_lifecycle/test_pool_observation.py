@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, cast
+from collections.abc import Sequence
+from typing import Any, ClassVar, cast
 
 import pytest
 
 from parallax.conformance.story_models import ACCOUNT_MODEL
-from parallax.core.db_port import RESOURCE_LOGGER_NAME
+from parallax.core.db_port import RESOURCE_LOGGER_NAME, RouteCapabilities
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -31,6 +32,7 @@ from parallax.core.execution_lifecycle import (
 from parallax.core.execution_lifecycle._pool_observation import (
     PoolObservation,
     register_pool_observation,
+    register_pool_observations,
 )
 from parallax.snapshot import Database, connect
 from tests._support.db_port import Read, ScriptedAdapter
@@ -108,11 +110,13 @@ _DEADLINE = 10.0
 """How long a handshake below waits before failing rather than hanging."""
 
 
-def _adapter(*, metrics: object | None = None, script: Any = ()) -> ScriptedAdapter:
-    return ScriptedAdapter(*script, metrics=metrics)  # pyright: ignore[reportArgumentType] - a source double satisfies the protocol structurally
+def _adapter(*, metrics: Sequence[DetachableSource] = (), script: Any = ()) -> ScriptedAdapter:
+    return ScriptedAdapter(*script, metrics=metrics)
 
 
-def _connected(provider: Any, *, metrics: object | None = None, script: Any = ()) -> Database[Any]:
+def _connected(
+    provider: Any, *, metrics: Sequence[DetachableSource] = (), script: Any = ()
+) -> Database[Any]:
     return connect(
         _adapter(metrics=metrics, script=script), ACCOUNT_MODEL, lifecycle_provider=provider
     )
@@ -132,8 +136,59 @@ def test_nothing_registers_without_a_source() -> None:
     # is never asked: there is nothing to offer it.
     provider = _Observes()
 
-    assert register_pool_observation(provider, None) is None
+    assert register_pool_observations(provider, ()) == ()
     assert provider.offered == []
+
+
+def test_every_source_is_offered_once_in_order() -> None:
+    writer, reader = DetachableSource(), DetachableSource(route="reader")
+    provider = _Observes()
+
+    registered = register_pool_observations(provider, (writer, reader))
+
+    assert provider.offered == [writer, reader]
+    assert registered == (provider.registration, provider.registration)
+
+
+class _RefusesSecond(_Observes):
+    """Registers the first source it is offered and refuses the next."""
+
+    def __init__(self, refusal: Exception) -> None:
+        super().__init__()
+        self._refusal = refusal
+
+    def observe_pool(self, source: Any, /) -> PoolObservation | None:
+        self.offered.append(source)
+        if len(self.offered) > 1:
+            raise self._refusal
+        return self.registration
+
+
+def test_a_registration_raising_partway_closes_every_one_already_taken() -> None:
+    refusal = RuntimeError("this exporter refuses the reader pool")
+    provider = _RefusesSecond(refusal)
+    adapter = _adapter(metrics=(DetachableSource(), DetachableSource(route="reader")))
+
+    with pytest.raises(RuntimeError) as raised:
+        connect(adapter, ACCOUNT_MODEL, lifecycle_provider=provider)
+
+    assert raised.value is refusal
+    assert provider.registration.closes == 1
+    assert adapter.closes == 1
+
+
+def test_a_handle_over_two_sources_gives_each_registration_up_once() -> None:
+    provider = _Observes()
+    db = _connected(provider, metrics=(DetachableSource(), DetachableSource(route="reader")))
+
+    db.close()
+    db.close()
+
+    assert [source.route for source in cast("list[DetachableSource]", provider.offered)] == [
+        "writer",
+        "reader",
+    ]
+    assert provider.registration.closes == 2
 
 
 def test_a_provider_that_observes_no_pool_registers_nothing() -> None:
@@ -168,7 +223,7 @@ def test_a_connected_handle_registers_the_runtime_s_source() -> None:
     source = DetachableSource()
     provider = _Observes()
 
-    db = _connected(provider, metrics=source)
+    db = _connected(provider, metrics=(source,))
     try:
         assert provider.offered == [source]
     finally:
@@ -180,7 +235,7 @@ def test_a_provider_declining_every_root_still_observes_the_pool() -> None:
     # says nothing about what it wants from the resource they run on.
     provider = _Observes(accepts=False)
 
-    db = _connected(provider, metrics=DetachableSource(), script=[Read()])
+    db = _connected(provider, metrics=(DetachableSource(),), script=[Read()])
     try:
         scoped = db.using_database_login()
         list(scoped.wire.find({"target": "Account", "predicate": {"true": {}}}).results())
@@ -194,7 +249,7 @@ def test_a_provider_declining_every_root_still_observes_the_pool() -> None:
 def test_a_runtime_publishing_no_source_offers_nothing_to_an_observing_provider() -> None:
     provider = _Observes()
 
-    db = _connected(provider, metrics=None)
+    db = _connected(provider, metrics=())
     try:
         assert provider.offered == []
     finally:
@@ -207,7 +262,7 @@ def test_a_registration_that_raises_publishes_no_handle_and_closes_the_runtime()
     # exception keeps its identity: nothing wraps or reclassifies it.
     refusal = RuntimeError("this exporter refuses to observe this pool")
     provider = _Observes(raises=refusal)
-    adapter = _adapter(metrics=DetachableSource())
+    adapter = _adapter(metrics=(DetachableSource(),))
 
     with pytest.raises(RuntimeError) as raised:
         connect(adapter, ACCOUNT_MODEL, lifecycle_provider=provider)
@@ -223,7 +278,7 @@ def test_a_registration_that_raises_publishes_no_handle_and_closes_the_runtime()
 
 def test_closing_the_handle_closes_the_registration_once_however_often_it_is_closed() -> None:
     provider = _Observes()
-    db = _connected(provider, metrics=DetachableSource())
+    db = _connected(provider, metrics=(DetachableSource(),))
 
     db.close()
     db.close()
@@ -235,7 +290,7 @@ def test_the_handle_closes_the_registration_and_never_the_provider() -> None:
     # The exporter, the queue, and the metrics client behind a registration are
     # the application's and outlive the handle.
     provider = _Observes()
-    db = _connected(provider, metrics=DetachableSource())
+    db = _connected(provider, metrics=(DetachableSource(),))
 
     db.close()
 
@@ -250,9 +305,11 @@ def test_a_runtime_that_will_not_close_still_gives_up_the_registration() -> None
         def __init__(self) -> None:
             self.metrics = DetachableSource()
 
+        routes: ClassVar = {"writer": RouteCapabilities.every_level()}
+
         @property
         def pool_metrics(self) -> Any:
-            return self.metrics
+            return (self.metrics,)
 
         @property
         def login_identity(self) -> str:
@@ -261,14 +318,14 @@ def test_a_runtime_that_will_not_close_still_gives_up_the_registration() -> None
         def open(self) -> Any:
             return self
 
-        def login_execution(self) -> Any:
+        def login_source(self) -> Any:
             return self
 
-        def principal_execution(self, authorization: object) -> Any:
+        def principal_source(self, authorization: object) -> Any:
             del authorization
             return self
 
-        def new_context(self) -> Any:
+        def new_context(self, policy: object, /) -> Any:
             raise AssertionError("no acquisition expected")
 
         def close(self) -> None:
@@ -297,9 +354,11 @@ class _ParkedRuntime:
         self._closing = threading.Lock()
         self._closed = False
 
+    routes: ClassVar = {"writer": RouteCapabilities.every_level()}
+
     @property
     def pool_metrics(self) -> Any:
-        return self.metrics
+        return (self.metrics,)
 
     @property
     def login_identity(self) -> str:
@@ -308,14 +367,14 @@ class _ParkedRuntime:
     def open(self) -> Any:
         return self
 
-    def login_execution(self) -> _ParkedRuntime:
+    def login_source(self) -> _ParkedRuntime:
         return self
 
-    def principal_execution(self, authorization: object) -> _ParkedRuntime:
+    def principal_source(self, authorization: object) -> _ParkedRuntime:
         del authorization
         return self
 
-    def new_context(self) -> Any:
+    def new_context(self, policy: object, /) -> Any:
         raise AssertionError("no acquisition expected")
 
     def close(self) -> None:
@@ -388,7 +447,7 @@ def test_a_registration_that_will_not_close_is_contained_and_reported_thinly(
     # observer that refused, whose message is application state nobody audited.
     refusal = RuntimeError("the exporter's socket is already shut: 10.0.0.4:9090")
     provider = _Observes(registration=_Registration(refuses=refusal))
-    db = _connected(provider, metrics=DetachableSource())
+    db = _connected(provider, metrics=(DetachableSource(),))
 
     with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME):
         db.close()
@@ -487,7 +546,7 @@ def test_an_unwind_attempts_every_close_even_where_one_of_them_fails() -> None:
 
 def test_a_fanned_out_composition_registers_through_a_connected_handle() -> None:
     first, second = _Observes(), _Observes()
-    db = _connected(FanoutLifecycleProvider([first, second]), metrics=DetachableSource())
+    db = _connected(FanoutLifecycleProvider([first, second]), metrics=(DetachableSource(),))
 
     db.close()
 

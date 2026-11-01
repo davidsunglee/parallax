@@ -45,7 +45,7 @@ from parallax.conformance.story_models import (
     Position,
 )
 from parallax.core import DomainModel
-from parallax.core._execution import _read_policy
+from parallax.core._execution import _read_pipeline
 from parallax.core.base import INT64, ManagedValue, NeutralType
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ArrayBind, DatabaseAdapter, MappingRow
@@ -327,7 +327,7 @@ def _counted_bindings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
         return counted
 
-    monkeypatch.setattr(_read_policy, "typed_interpretation", counting)
+    monkeypatch.setattr(_read_pipeline, "typed_interpretation", counting)
     return bindings
 
 

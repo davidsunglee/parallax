@@ -130,7 +130,7 @@ RECIPES: Final[list[Recipe]] = [
             "from parallax.core.entity import model_of\n"
             "from parallax.core.execution import ExecutionFailure, TxnOptions\n"
             "from parallax.evolution import ABSENT, evolve, schema_delta\n"
-            "from parallax.postgres import PostgresAdapter\n"
+            "from parallax.postgres import PostgresAdapter, PostgresEndpoint\n"
             "from parallax.snapshot import (\n"
             "    Database,\n"
             "    NoResultFound,\n"
@@ -631,7 +631,7 @@ RECIPES: Final[list[Recipe]] = [
             ")\n"
             "from parallax.core.execution import InvalidPrincipalError, "
             "TransactionAuthorityError\n"
-            "from parallax.postgres import PostgresAdapter, PostgresRole\n"
+            "from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole\n"
             "from parallax.snapshot import Database, ScopedDatabase, TxnContext\n"
         ),
     ),
@@ -816,8 +816,13 @@ RECIPES: Final[list[Recipe]] = [
             "from parallax.core import DomainModel\n"
             "from parallax.core.db_port import CredentialSource\n"
             "from parallax.core.execution_lifecycle import LoggingLifecycleProvider\n"
-            "from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, "
-            "PostgresRole\n"
+            "from parallax.postgres import (\n"
+            "    OnDemandOptions,\n"
+            "    PoolOptions,\n"
+            "    PostgresAdapter,\n"
+            "    PostgresEndpoint,\n"
+            "    PostgresRole,\n"
+            ")\n"
             "from parallax.snapshot import Database, connect\n"
         ),
     ),

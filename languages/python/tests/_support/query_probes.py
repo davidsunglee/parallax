@@ -14,7 +14,7 @@ import functools
 from typing import Any, Literal
 
 from parallax.core._execution._publication import SelectedReadModel, read_projection
-from parallax.core._execution._read_policy import interpreted
+from parallax.core._execution._read_pipeline import interpreted
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core.entity import DomainModel
 from parallax.core.entity._authored_resolver import object_query_node

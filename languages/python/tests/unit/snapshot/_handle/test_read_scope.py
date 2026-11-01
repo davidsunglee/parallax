@@ -21,7 +21,7 @@ every capability call and runs each body with INERT activities over whichever
 :class:`ReadInputs` the case names. That is what lets each claim be stated
 once, for both lanes and both interfaces, rather than once per handle. What
 each production read DOES inside its own bracket — adoption included — is
-`tests/unit/core/_execution/test_read_policy.py`'s subject, and what a whole read
+`tests/unit/core/_execution/test_read_pipeline.py`'s subject, and what a whole read
 answers stays the public-surface suites'.
 """
 
@@ -36,9 +36,9 @@ import pytest
 
 from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
 from parallax.core import LATEST, TX_TIME
-from parallax.core._execution import _read_policy as read_policy_module
+from parallax.core._execution import _read_pipeline as read_pipeline_module
 from parallax.core._execution._publication import SelectedReadModel
-from parallax.core._execution._read_policy import ReadInputs
+from parallax.core._execution._read_pipeline import ReadInputs
 from parallax.core._execution._retention import ReadEvidenceContext
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core.db_port import DatabaseConnection
@@ -273,6 +273,8 @@ class _RecordingScope(ExecutionScope):
             cast("Any", None),
             cast("Any", None),
             TxnOptions(),
+            "writer_only",
+            routes={},
             lifecycle=lifecycle,
             serving=cast("Any", None),
             planner=ReadPlanCache(0),
@@ -372,9 +374,9 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
             planner=planner,
         )
 
-    patch.setattr(read_policy_module, "deliver_find", recording_deliver_find)
-    patch.setattr(read_policy_module, "deliver_history", recording_deliver_history)
-    patch.setattr(read_policy_module, "find_rows", recording_find_rows)
+    patch.setattr(read_pipeline_module, "deliver_find", recording_deliver_find)
+    patch.setattr(read_pipeline_module, "deliver_history", recording_deliver_history)
+    patch.setattr(read_pipeline_module, "find_rows", recording_find_rows)
     return executed
 
 

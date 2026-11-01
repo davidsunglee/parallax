@@ -36,7 +36,7 @@ from parallax.conformance._lifecycle_recording import (
 )
 from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._publication import read_projection
-from parallax.core._execution._read_policy import (
+from parallax.core._execution._read_pipeline import (
     ReadInputs,
     _page_origin_collector,  # pyright: ignore[reportPrivateUsage] - the selection is under test
 )

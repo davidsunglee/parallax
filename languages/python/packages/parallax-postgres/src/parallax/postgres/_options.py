@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-__all__ = ["OnDemandOptions", "PoolOptions", "RetentionOptions"]
+__all__ = ["OnDemandOptions", "PoolOptions", "RetentionOptions", "positive_seconds"]
 
 
 def _integer(name: str, value: object) -> int:
@@ -20,7 +20,7 @@ def _integer(name: str, value: object) -> int:
     return value
 
 
-def _duration(name: str, value: object) -> float:
+def positive_seconds(name: str, value: object) -> float:
     """``value`` as a finite positive number of seconds.
 
     Integers are accepted and normalized to ``float``, so ``15`` and ``15.0``
@@ -75,13 +75,13 @@ def _workers(value: object) -> int:
 class _SharedRetention:
     """Every setting both retention policies carry, declared and checked once.
 
-    The PostgreSQL lifecycle guide owns their operational meanings. One shared
-    declaration keeps defaults and range checks from drifting between policies.
+    Each is a fact about one pool; the budgets an acquisition and startup spend
+    belong to the adapter, because they span the whole runtime. The PostgreSQL
+    lifecycle guide owns their operational meanings. One shared declaration
+    keeps defaults and range checks from drifting between policies.
     """
 
     max_size: int = 10
-    acquire_timeout: float = 15.0
-    startup_timeout: float = 30.0
     max_waiting: int = 0
     max_lifetime: float = 3600.0
     reconnect_timeout: float = 300.0
@@ -93,10 +93,8 @@ class _SharedRetention:
             max_size=_capacity(self.max_size),
             max_waiting=_waiting(self.max_waiting),
             num_workers=_workers(self.num_workers),
-            acquire_timeout=_duration("acquire_timeout", self.acquire_timeout),
-            startup_timeout=_duration("startup_timeout", self.startup_timeout),
-            max_lifetime=_duration("max_lifetime", self.max_lifetime),
-            reconnect_timeout=_duration("reconnect_timeout", self.reconnect_timeout),
+            max_lifetime=positive_seconds("max_lifetime", self.max_lifetime),
+            reconnect_timeout=positive_seconds("reconnect_timeout", self.reconnect_timeout),
         )
 
 
@@ -122,7 +120,7 @@ class PoolOptions(_SharedRetention):
                 f"min_size takes 0 through max_size={self.max_size} (got {self.min_size!r})"
             )
         _set_normalized_fields(
-            self, min_size=minimum, max_idle=_duration("max_idle", self.max_idle)
+            self, min_size=minimum, max_idle=positive_seconds("max_idle", self.max_idle)
         )
 
 
@@ -142,9 +140,9 @@ class OnDemandOptions(_SharedRetention):
     One establishment behavior is worth knowing before tuning: the driver
     derives its own connection-establishment timeout from whatever remains of
     the acquisition budget, overriding a ``connect_timeout`` from the connection
-    string or the environment for that creation. ``acquire_timeout`` is
-    therefore the control that matters here, and the two do not compose as
-    independent limits.
+    string or the environment for that creation. The adapter's
+    ``acquire_timeout`` is therefore the control that matters here, and the two
+    do not compose as independent limits.
     """
 
 

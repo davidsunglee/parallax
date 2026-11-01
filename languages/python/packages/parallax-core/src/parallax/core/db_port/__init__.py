@@ -80,6 +80,7 @@ __all__ = [
     "DeclaresDialect",
     "DocumentReadOrdinals",
     "DriverManaged",
+    "FallbackReason",
     "InvalidAuthorizationError",
     "Invalidated",
     "IsolationLevel",
@@ -104,6 +105,10 @@ __all__ = [
     "RollbackFailed",
     "RollbackTrigger",
     "RolledBack",
+    "Route",
+    "RouteCapabilities",
+    "RoutePolicy",
+    "RouteSelection",
     "Row",
     "StartupPhase",
     "StatementFailed",
@@ -248,6 +253,43 @@ def isolation_level(value: object) -> IsolationLevel:
 # The closed access-mode vocabulary (m-db-port): what a boundary admits beyond
 # reading. It is a request of its own, independent of the isolation level.
 AccessMode = Literal["read_only", "read_write"]
+
+# Where one lease lands (m-db-port), named by what a caller observes there:
+# `writer` serves writes and sees every committed change, while `reader` offloads
+# reads and may lag behind it. A reader promises no physical replica.
+Route = Literal["writer", "reader"]
+
+# How one acquisition asks for a route (m-execution): `<route>_<mode>`, so a
+# policy never shares a spelling with the route it lands on.
+RoutePolicy = Literal["writer_only", "reader_only", "reader_preferred"]
+
+# Why a preferred acquisition moved from the reader to the writer before any
+# modeled work began.
+FallbackReason = Literal["unavailable", "connection_lost"]
+
+
+@dataclass(frozen=True, slots=True)
+class RouteSelection:
+    """The route one acquisition was served on, and the fallback that put it there."""
+
+    route: Route
+    fallback: FallbackReason | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RouteCapabilities:
+    """What one declared route serves beyond being reachable.
+
+    ``read_only_isolation`` holds the levels a read-only transaction may begin
+    at on the route; a route that serves no transactions declares it empty.
+    """
+
+    read_only_isolation: frozenset[IsolationLevel]
+
+    @classmethod
+    def every_level(cls) -> RouteCapabilities:
+        """A route that begins a read-only transaction at every portable level."""
+        return cls(frozenset(cast("tuple[IsolationLevel, ...]", get_args(IsolationLevel))))
 
 
 @dataclass(frozen=True, slots=True)

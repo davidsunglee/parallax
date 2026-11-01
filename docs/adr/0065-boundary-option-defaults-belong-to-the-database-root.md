@@ -57,3 +57,8 @@ fields, and an omission marker inside the record would make every reader check
 for it; instead one record type holds concrete values everywhere and omission
 lives only in the transaction keyword, as a private typed marker the runner
 resolves before anything is opened.
+
+*Superseded in part (2026-11, [ADR 0082](0082-read-routing-selects-new-execution-and-is-never-a-join-constraint.md)):*
+reader/writer routing is not a join constraint. It selects the route new
+execution requests and is never consulted or compared by a join. The option
+defaults and their resolution stand.

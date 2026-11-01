@@ -23,6 +23,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from reference_harness.corpus_yaml import read_corpus_yaml
@@ -42,6 +43,9 @@ def _valid_against(schema_name: str, doc: dict[str, Any]) -> bool:
     schema = json.loads((_SCHEMAS / schema_name).read_text(encoding="utf-8"))
     validator = Draft202012Validator(schema, registry=_REGISTRY)
     return next(validator.iter_errors(doc), None) is None
+
+
+_ACQUIRED: dict[str, Any] = {"outcome": "acquired", "route": "writer"}
 
 
 def _event(sequence: int, activity: int, parent: int | None, **transition: Any) -> dict[str, Any]:
@@ -85,8 +89,8 @@ def _write_root(**attempt_finish: Any) -> dict[str, Any]:
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
-            _event(3, 3, 2, acquisitionStarted={}),
-            _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
+            _event(3, 3, 2, acquisitionStarted={"policy": "writer-only"}),
+            _event(4, 3, 2, acquisitionFinished=_ACQUIRED),
             _event(5, 4, 2, flushStarted={"trigger": "pre-commit"}),
             _event(
                 6,
@@ -769,7 +773,7 @@ def _refused_root(**attempt_finish: Any) -> dict[str, Any]:
         [
             _event(1, 1, None, transactionInvocationStarted=_OUTER_POLICY),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
-            _event(3, 3, 2, acquisitionStarted={}),
+            _event(3, 3, 2, acquisitionStarted={"policy": "writer-only"}),
             _event(
                 4,
                 3,
@@ -812,11 +816,11 @@ def test_a_participating_read_taking_a_connection_of_its_own_is_flagged() -> Non
         [
             _event(1, 1, None, transactionInvocationStarted=_OUTER_POLICY),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
-            _event(3, 3, 2, acquisitionStarted={}),
-            _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
+            _event(3, 3, 2, acquisitionStarted={"policy": "writer-only"}),
+            _event(4, 3, 2, acquisitionFinished=_ACQUIRED),
             _event(5, 4, 2, readStarted={"target": "Account", "interface": "typed"}),
-            _event(6, 5, 4, acquisitionStarted={}),
-            _event(7, 5, 4, acquisitionFinished={"outcome": "acquired"}),
+            _event(6, 5, 4, acquisitionStarted={"policy": "writer-only"}),
+            _event(7, 5, 4, acquisitionFinished=_ACQUIRED),
             _event(8, 4, 2, readFinished={"outcome": "completed"}),
             _event(9, 6, 2, releaseStarted={}),
             _event(10, 6, 2, releaseFinished={"cleanup": "returned"}),
@@ -916,8 +920,8 @@ def _stream_batch(finish: dict[str, Any], *children: dict[str, Any]) -> list[dic
 
 def _acquired_pair(owner: int, acquisition: int, release: int) -> list[dict[str, Any]]:
     return [
-        _event(1, acquisition, owner, acquisitionStarted={}),
-        _event(1, acquisition, owner, acquisitionFinished={"outcome": "acquired"}),
+        _event(1, acquisition, owner, acquisitionStarted={"policy": "writer-only"}),
+        _event(1, acquisition, owner, acquisitionFinished=_ACQUIRED),
         _event(1, release, owner, releaseStarted={}),
         _event(1, release, owner, releaseFinished={"cleanup": "returned"}),
     ]
@@ -985,11 +989,102 @@ def test_a_begin_failure_caused_by_an_acquisition_that_granted_is_flagged() -> N
     """A boundary that refused to open on a connection the attempt DID acquire
     has no child holding that failure, so it is `direct`."""
     root = _refused_root()
-    root["events"][3]["acquisitionFinished"] = {"outcome": "acquired"}
+    root["events"][3]["acquisitionFinished"] = dict(_ACQUIRED)
     problems = validate_execution(_retry_case(root))
     assert any(
         "a begin failure is caused only by an Acquisition" in problem for problem in problems
     )
+
+
+# --- routing ------------------------------------------------------------------
+
+
+def test_an_acquisition_must_name_its_policy_and_a_granted_one_its_route() -> None:
+    for transition, payload in (
+        ("acquisitionStarted", {}),
+        ("acquisitionFinished", {"outcome": "acquired"}),
+        (
+            "acquisitionFinished",
+            {"outcome": "acquired", "route": "reader", "fallback": "unavailable"},
+        ),
+    ):
+        root = _write_root()
+        position = 2 if transition == "acquisitionStarted" else 3
+        root["events"][position][transition] = payload
+        assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
+        assert not _valid_against(
+            "conformance-adapter.schema.json", _run_envelope(_lifecycle(root))
+        )
+
+
+def _paged(*pages: tuple[dict[str, Any], dict[str, Any]]) -> dict[str, Any]:
+    """A closed-early Stream whose standalone pages each acquire as *pages* say."""
+    children: list[dict[str, Any]] = []
+    activity = 2
+    for started, finished in pages:
+        batch, acquisition, release = activity, activity + 1, activity + 2
+        children += [
+            _event(1, batch, 1, streamBatchStarted={}),
+            _event(1, acquisition, batch, acquisitionStarted=started),
+            _event(1, acquisition, batch, acquisitionFinished=finished),
+            _event(1, release, batch, releaseStarted={}),
+            _event(1, release, batch, releaseFinished={"cleanup": "returned"}),
+            _event(1, batch, 1, streamBatchFinished={"outcome": "completed"}),
+        ]
+        activity += 3
+    return _stream_root({"outcome": "closedEarly"}, *children)
+
+
+_PREFERRED = {"policy": "reader-preferred"}
+_FELL_BACK = {"outcome": "acquired", "route": "writer", "fallback": "unavailable"}
+
+
+def test_a_fallback_keeps_every_later_page_on_the_writer() -> None:
+    root = _paged((_PREFERRED, _FELL_BACK), ({"policy": "writer-only"}, _ACQUIRED))
+    assert validate_execution(_retry_case(root)) == []
+
+
+def test_a_page_returning_to_the_reader_after_a_fallback_is_flagged() -> None:
+    root = _paged(
+        (_PREFERRED, _FELL_BACK),
+        (_PREFERRED, {"outcome": "acquired", "route": "reader"}),
+    )
+    problems = validate_execution(_retry_case(root))
+    assert any("stays on the writer for every later acquisition" in p for p in problems)
+
+
+@pytest.mark.parametrize(
+    ("started", "finished"),
+    [
+        ({"policy": "writer-only"}, {"outcome": "acquired", "route": "reader"}),
+        ({"policy": "reader-only"}, {"outcome": "acquired", "route": "writer"}),
+        ({"policy": "reader-only"}, _FELL_BACK),
+    ],
+    ids=["writer-only-on-reader", "reader-only-on-writer", "reader-only-by-fallback"],
+)
+def test_a_strict_policy_served_anywhere_but_its_own_route_is_flagged(
+    started: dict[str, Any], finished: dict[str, Any]
+) -> None:
+    problems = validate_execution(_retry_case(_paged((started, finished))))
+    assert any("a strict policy is served on its own route" in p for p in problems)
+
+
+def test_a_preferred_acquisition_on_the_writer_without_a_fallback_is_flagged() -> None:
+    root = _paged((_PREFERRED, _ACQUIRED))
+    problems = validate_execution(_retry_case(root))
+    assert any("only by a fallback it reports" in p for p in problems)
+
+
+def test_a_writable_attempt_requesting_a_reader_is_flagged() -> None:
+    root = _refused_root()
+    root["events"][0]["transactionInvocationStarted"] = {
+        **root["events"][0]["transactionInvocationStarted"],
+        "accessMode": "read-write",
+    }
+    assert validate_execution(_retry_case(root)) == []
+    root["events"][2]["acquisitionStarted"] = {"policy": "reader-only"}
+    problems = validate_execution(_retry_case(root))
+    assert any("a writable transaction always requests the writer" in p for p in problems)
 
 
 # --- indices that name something ---------------------------------------------
@@ -1036,8 +1131,8 @@ def _read_then_write_root(read_statement: int | None = None) -> dict[str, Any]:
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
-            _event(3, 3, 2, acquisitionStarted={}),
-            _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
+            _event(3, 3, 2, acquisitionStarted={"policy": "writer-only"}),
+            _event(4, 3, 2, acquisitionFinished=_ACQUIRED),
             _event(5, 4, 2, readStarted={"target": "Account", "interface": "wire"}),
             _event(6, 5, 4, databaseCallStarted=started),
             _event(7, 5, 4, databaseCallFinished={"outcome": "readCompleted", "returnedRows": 1}),
@@ -1148,8 +1243,8 @@ def _two_write_root(second_statement: int) -> dict[str, Any]:
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
-            _event(3, 3, 2, acquisitionStarted={}),
-            _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
+            _event(3, 3, 2, acquisitionStarted={"policy": "writer-only"}),
+            _event(4, 3, 2, acquisitionFinished=_ACQUIRED),
             _event(5, 4, 2, flushStarted={"trigger": "pre-commit"}),
             _event(
                 6,
@@ -1254,10 +1349,10 @@ def _retry_root(outcomes: list[dict[str, Any]], retries: int) -> dict[str, Any]:
             _event(len(events) + 1, attempt, 1, transactionAttemptStarted={"edition": "account"})
         )
         activity += 1
-        events.append(_event(len(events) + 1, activity, attempt, acquisitionStarted={}))
         events.append(
-            _event(len(events) + 1, activity, attempt, acquisitionFinished={"outcome": "acquired"})
+            _event(len(events) + 1, activity, attempt, acquisitionStarted={"policy": "writer-only"})
         )
+        events.append(_event(len(events) + 1, activity, attempt, acquisitionFinished=_ACQUIRED))
         activity += 1
         events.append(_event(len(events) + 1, activity, attempt, releaseStarted={}))
         events.append(
@@ -1401,8 +1496,8 @@ def _begin_failed_root() -> dict[str, Any]:
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
-            _event(3, 3, 2, acquisitionStarted={}),
-            _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
+            _event(3, 3, 2, acquisitionStarted={"policy": "writer-only"}),
+            _event(4, 3, 2, acquisitionFinished=_ACQUIRED),
             _event(5, 4, 2, releaseStarted={}),
             _event(6, 4, 2, releaseFinished={"cleanup": "returned"}),
             _event(
@@ -1446,8 +1541,8 @@ def test_a_begin_failed_attempt_is_never_followed_by_another() -> None:
     root = _begin_failed_root()
     root["events"][7:7] = [
         _event(8, 5, 1, transactionAttemptStarted={"edition": "account"}),
-        _event(9, 6, 5, acquisitionStarted={}),
-        _event(10, 6, 5, acquisitionFinished={"outcome": "acquired"}),
+        _event(9, 6, 5, acquisitionStarted={"policy": "writer-only"}),
+        _event(10, 6, 5, acquisitionFinished=_ACQUIRED),
         _event(11, 7, 5, releaseStarted={}),
         _event(12, 7, 5, releaseFinished={"cleanup": "returned"}),
         _event(13, 5, 1, transactionAttemptFinished={"outcome": "committed"}),

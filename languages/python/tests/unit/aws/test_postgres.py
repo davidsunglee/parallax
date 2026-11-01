@@ -1,10 +1,11 @@
-"""The RDS Postgres factory: configuration, already told what IAM needs. Docker-free.
+"""The RDS Postgres endpoint factory: configuration, already told what IAM needs. Docker-free.
 
-What is graded is that the adapter it returns is the one an application would
+What is graded is that the endpoint it returns is the one an application would
 have written by hand — the same destination, the same credential, the same
 retention — plus the three facts the factory exists to state once: TLS is not
 optional, the token's four bindings are not the caller's to restate, and
-everything else about libpq's grammar stays open.
+everything else about libpq's grammar stays open. Each endpoint signs for its
+own host, so a writer and a reader built here never share a token binding.
 
 Nothing here reaches AWS or a database: the factory resolves no token and opens
 nothing, which is itself one of the assertions below.
@@ -21,23 +22,22 @@ import pytest
 from psycopg.conninfo import conninfo_to_dict
 
 from parallax.aws import RdsIamCredentials
-from parallax.aws.postgres import rds_postgres
-from parallax.postgres import OnDemandOptions, PoolOptions
+from parallax.aws.postgres import rds_endpoint
+from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
 
 if TYPE_CHECKING:
     from botocore.session import Session
 
-    from parallax.postgres import PostgresAdapter
-
 _ENDPOINT = "orders.cluster-abc.us-east-1.rds.amazonaws.com"
+_READER_ENDPOINT = "orders.cluster-ro-abc.us-east-1.rds.amazonaws.com"
 
 _adapter = partial(
-    rds_postgres, host=_ENDPOINT, user="orders_service", database="orders", region="us-east-1"
+    rds_endpoint, host=_ENDPOINT, user="orders_service", database="orders", region="us-east-1"
 )
 
 
-def _destination(adapter: PostgresAdapter) -> dict[str, str]:
-    return {key: str(value) for key, value in conninfo_to_dict(adapter.connection_string).items()}
+def _destination(endpoint: PostgresEndpoint) -> dict[str, str]:
+    return {key: str(value) for key, value in conninfo_to_dict(endpoint.connection_string).items()}
 
 
 def test_the_destination_is_the_endpoint_the_token_is_signed_for_over_tls() -> None:
@@ -143,14 +143,33 @@ def test_what_the_token_is_bound_to_is_not_the_parameters_to_restate(reserved: s
     assert "hunter2" not in str(refused.value)
 
 
-def test_retention_and_preparation_are_forwarded_untouched() -> None:
+def test_retention_is_forwarded_untouched_and_defaults_to_retaining() -> None:
     pool = PoolOptions(min_size=2, max_size=20)
 
-    adapter = _adapter(pool=pool, prepare_threshold=None)
-
-    assert adapter.pool is pool
-    assert adapter.prepare_threshold is None
+    assert _adapter(pool=pool).pool is pool
     assert _adapter(pool=OnDemandOptions(max_size=3)).pool == OnDemandOptions(max_size=3)
+    assert _adapter().pool == PoolOptions()
+
+
+def test_each_endpoint_signs_for_its_own_host() -> None:
+    writer = _adapter()
+    reader = _adapter(host=_READER_ENDPOINT)
+
+    assert isinstance(writer.credentials, RdsIamCredentials)
+    assert isinstance(reader.credentials, RdsIamCredentials)
+    assert (writer.credentials.host, reader.credentials.host) == (_ENDPOINT, _READER_ENDPOINT)
+    assert _destination(reader)["host"] == _READER_ENDPOINT
+
+
+def test_the_endpoint_composes_into_the_ordinary_adapter() -> None:
+    # The application composes the adapter: the factory states the endpoint and
+    # nothing about the runtime's budgets.
+    endpoint = _adapter()
+
+    adapter = PostgresAdapter(writer=endpoint, prepare_threshold=None)
+
+    assert type(endpoint) is PostgresEndpoint
+    assert adapter.writer is endpoint
 
 
 def test_the_factory_resolves_nothing_and_opens_nothing(

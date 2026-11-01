@@ -151,8 +151,8 @@ def test_a_secret_file_is_read_through_the_configured_adapter(tmp_path: Path) ->
     adapter = configure_with_a_secret_file("postgresql://shop@localhost/shop", secret)
 
     assert type(adapter) is PostgresAdapter
-    assert isinstance(adapter.credentials, SecretFile)
-    assert adapter.credentials.resolve().secret == "s3cret"
+    assert isinstance(adapter.writer.credentials, SecretFile)
+    assert adapter.writer.credentials.resolve().secret == "s3cret"
 
 
 @pytest.mark.parametrize(

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from parallax.core.db_port import PoolAvailable, PoolDetached, PoolMeasurements, PoolSample
+from parallax.core.db_port import (
+    PoolAvailable,
+    PoolDetached,
+    PoolMeasurements,
+    PoolSample,
+    Route,
+)
 
 __all__ = ["DetachableSource"]
 
@@ -17,7 +23,10 @@ class DetachableSource:
     driver.
     """
 
-    def __init__(self, measurements: PoolMeasurements | None = None) -> None:
+    def __init__(
+        self, measurements: PoolMeasurements | None = None, *, route: Route = "writer"
+    ) -> None:
+        self.route: Route = route
         self.measurements = (
             measurements
             if measurements is not None

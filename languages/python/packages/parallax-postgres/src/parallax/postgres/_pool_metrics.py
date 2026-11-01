@@ -9,6 +9,7 @@ from parallax.core.db_port import (
     PoolMeasurements,
     PoolSample,
     PoolUnavailable,
+    Route,
 )
 from parallax.core.diagnostics import diagnostic_for
 
@@ -83,10 +84,15 @@ class PostgresPoolMetrics:
     for the teardown nor delays it — which is why this holds none either.
     """
 
-    __slots__ = ("_pool",)
+    __slots__ = ("_pool", "_route")
 
-    def __init__(self, pool: NativeStatistics) -> None:
+    def __init__(self, pool: NativeStatistics, route: Route) -> None:
         self._pool: NativeStatistics | None = pool
+        self._route: Route = route
+
+    @property
+    def route(self) -> Route:
+        return self._route
 
     def detach(self) -> None:
         """Give up the pool. Idempotent, and never reversed.

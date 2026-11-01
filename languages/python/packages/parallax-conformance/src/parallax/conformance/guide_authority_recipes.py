@@ -7,7 +7,7 @@ from pathlib import Path
 from parallax.conformance.guide_models import Customer, Order
 from parallax.core.db_port import Password
 from parallax.core.execution import TransactionAuthorityError
-from parallax.postgres import PostgresAdapter, PostgresRole
+from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, TxnContext
 
 __all__ = [
@@ -60,7 +60,7 @@ class SecretFile:
 
 def configure_with_a_secret_file(conninfo: str, path: Path) -> PostgresAdapter:
     """A rotated secret reaches every connection opened after the rotation."""
-    return PostgresAdapter(conninfo, credentials=SecretFile(path))
+    return PostgresAdapter(writer=PostgresEndpoint(conninfo, credentials=SecretFile(path)))
 
 
 def rename_a_customer(db: ScopedDatabase, customer_id: int, name: str) -> None:

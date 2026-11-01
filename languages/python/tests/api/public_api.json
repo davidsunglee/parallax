@@ -195,6 +195,7 @@
     "DeclaresDialect",
     "DocumentReadOrdinals",
     "DriverManaged",
+    "FallbackReason",
     "ISOLATION_LEVELS",
     "InvalidAuthorizationError",
     "Invalidated",
@@ -222,6 +223,10 @@
     "RollbackFailed",
     "RollbackTrigger",
     "RolledBack",
+    "Route",
+    "RouteCapabilities",
+    "RoutePolicy",
+    "RouteSelection",
     "Row",
     "StartupPhase",
     "StatementFailed",
@@ -499,6 +504,7 @@
     "OnDemandOptions",
     "PoolOptions",
     "PostgresAdapter",
+    "PostgresEndpoint",
     "PostgresRole",
     "isolation_spelling"
   ],
@@ -506,7 +512,7 @@
     "RdsIamCredentials"
   ],
   "parallax.aws.postgres": [
-    "rds_postgres"
+    "rds_endpoint"
   ],
   "parallax.snapshot": [
     "CheckedSnapshot",
@@ -774,5 +780,8 @@
     "UnsupportedSchemaEvolutionError",
     "UnsupportedSchemaOperation",
     "schema_delta"
+  ],
+  "parallax.core.db_port:RouteCapabilities": [
+    "every_level"
   ]
 }

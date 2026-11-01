@@ -22,15 +22,17 @@ specification disagree, the specification is right.
 ```python
 from parallax.core.db_port import DRIVER_MANAGED, CredentialSource, DriverManaged, Password
 from parallax.core.execution import ServingModel, prepare_model
-from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
+from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter, PostgresEndpoint
 from parallax.snapshot import connect
 ```
 
-`PostgresAdapter` is **configuration**. Constructing one opens no connection, no
-pool, and no thread: it parses the connection string, validates the credential
-declaration and the retention policy, and stores them. That is what makes it
-safe to build at import time, hold as a module constant, and share between
-threads — in any of the four retention forms.
+`PostgresAdapter` and the `PostgresEndpoint` it is given as its `writer` are
+**configuration**. Constructing either opens no connection, no pool, and no
+thread: the endpoint parses the connection string, validates the credential
+declaration and the retention policy, and stores them, and the adapter
+validates the budgets its runtime spends. That is what makes them safe to build
+at import time, hold as module constants, and share between threads — in any of
+the four retention forms.
 
 <!-- story: construction_snippet -->
 
@@ -60,15 +62,21 @@ def every_retention_form_is_one_configuration_value(
     ``DRIVER_MANAGED`` where the driver and the server settle it themselves.
     """
     return RetentionForms(
-        default=PostgresAdapter(conninfo, credentials=credentials),
+        default=PostgresAdapter(writer=PostgresEndpoint(conninfo, credentials=credentials)),
         tuned=PostgresAdapter(
-            conninfo, credentials=credentials, pool=PoolOptions(min_size=2, max_size=20)
+            writer=PostgresEndpoint(
+                conninfo, credentials=credentials, pool=PoolOptions(min_size=2, max_size=20)
+            )
         ),
         zero_minimum=PostgresAdapter(
-            conninfo, credentials=credentials, pool=PoolOptions(min_size=0, max_size=20)
+            writer=PostgresEndpoint(
+                conninfo, credentials=credentials, pool=PoolOptions(min_size=0, max_size=20)
+            )
         ),
         on_demand=PostgresAdapter(
-            conninfo, credentials=credentials, pool=OnDemandOptions(max_size=20)
+            writer=PostgresEndpoint(
+                conninfo, credentials=credentials, pool=OnDemandOptions(max_size=20)
+            )
         ),
     )
 ```
@@ -157,7 +165,7 @@ A string carrying a password is refused at construction, whatever `credentials`
 is, and the refusal never quotes the string back:
 
 ```text
-PostgresAdapter("postgresql://app:<password>@db.internal/app", credentials=Password("<password>"))
+PostgresEndpoint("postgresql://app:<password>@db.internal/app", credentials=Password("<password>"))
 ValueError: connection_string must not carry a password; supply it through credentials.
 ```
 
@@ -200,28 +208,30 @@ driver's disclosure policy rather than Parallax's.
 ### RDS and Aurora, authenticated by IAM
 
 The shipped source for AWS lives in `parallax-aws`, installed beside this
-adapter. Its `postgres` extra spells the whole deployment in one call:
+adapter. Its `postgres` extra spells one endpoint in one call:
 
 ```python
-from parallax.aws.postgres import rds_postgres
+from parallax.aws.postgres import rds_endpoint
 ```
 
 ```text
-adapter = rds_postgres(
+writer = rds_endpoint(
     host="orders.cluster-abc.us-east-1.rds.amazonaws.com",   # the endpoint you connect through
     user="orders_service",                                    # the login; IAM proves it
     database="orders",
     region="us-east-1",
     pool=PoolOptions(min_size=2, max_size=20),                # forwarded untouched
 )
+adapter = PostgresAdapter(writer=writer)
 ```
 
-What comes back is an ordinary `PostgresAdapter`: the factory resolves no token
-and opens nothing, so it is configuration exactly as the forms above are. What
-it states so a deployment need not is that the connection is encrypted and that
-the token is signed for the host, port and user the connection then uses.
-`params` keeps the rest of libpq's grammar open and may raise `sslmode` to
-`verify-ca` or `verify-full`, never lower it.
+What comes back is an ordinary `PostgresEndpoint`: the factory resolves no token
+and opens nothing, so it is configuration exactly as the forms above are, and
+the application composes the adapter around it. What it states so a deployment
+need not is that the connection is encrypted and that the token is signed for
+the host, port and user that endpoint's connections then use — each endpoint
+signs for its own host. `params` keeps the rest of libpq's grammar open and may
+raise `sslmode` to `verify-ca` or `verify-full`, never lower it.
 
 An application that composes its own connection string uses the source alone:
 
@@ -230,7 +240,7 @@ from parallax.aws import RdsIamCredentials
 ```
 
 ```text
-adapter = PostgresAdapter(
+writer = PostgresEndpoint(
     "postgresql://orders_service@orders.cluster-abc.us-east-1.rds.amazonaws.com:5432/orders"
     "?sslmode=require",
     credentials=RdsIamCredentials(
@@ -250,7 +260,7 @@ that rule lives. There is no token cache and no refresh thread.
 
 ## Retention
 
-`pool=PoolOptions(...)` keeps connections between operations;
+An endpoint's `pool=PoolOptions(...)` keeps connections between operations;
 `pool=OnDemandOptions(...)` keeps none, closing each on release unless a caller
 is already waiting for one. Omitting `pool` takes the retaining defaults.
 
@@ -258,15 +268,17 @@ is already waiting for one. Omitting `pool` takes the retaining defaults.
 |---|---|---|
 | `min_size` | 1 | — (no inventory to keep) |
 | `max_size` | 10 | 10 |
-| `acquire_timeout` | 15.0 s | 15.0 s |
-| `startup_timeout` | 30.0 s | 30.0 s |
 | `max_waiting` | 0 (uncounted) | 0 (uncounted) |
 | `max_idle` | 600.0 s | — (no inventory to retire) |
 | `max_lifetime` | 3600.0 s | 3600.0 s |
 | `reconnect_timeout` | 300.0 s | 300.0 s |
 | `num_workers` | 3 | 3 |
 
-Both records are frozen and validated at construction; change one by building
+The runtime's two budgets are the adapter's rather than a pool's, because each
+spans the whole runtime: `acquire_timeout` defaults to 15.0 s and
+`startup_timeout` to 30.0 s, and `prepare_threshold` defaults to 5.
+
+Every record is frozen and validated at construction; change one by building
 another (`dataclasses.replace` works and revalidates). The defaults are a
 starting point chosen to be safe rather than fast, and **no benchmark claims
 them optimal** — tune from measured occupancy and queue latency, which the pool
@@ -328,9 +340,10 @@ the operation's one Acquisition and Release and adds no Database Call. Nothing
 else is sent again: a write, any request after the first one answered, and a
 second failure each fail exactly as they would have.
 
-If a connection string already points at a reader endpoint, that is where its
-connections go; Parallax adds no replica routing and no second runtime to route
-between.
+If a writer endpoint's connection string points at a replica, that is where its
+connections go: nothing is inferred from the string, startup adds no
+physical-writer check, and writes through it fail natively. Every operation of
+such a root requests the writer route, which is the only one it declares.
 
 ## Timeouts
 
@@ -338,8 +351,8 @@ Five controls are often confused and are genuinely distinct:
 
 | Control | Bounds |
 |---|---|
-| `acquire_timeout` | ONE caller's wait for a connection |
-| `startup_timeout` | Becoming ready before `connect` returns — the whole of it, shared across opening, waiting, probing and releasing, never restarted between them |
+| `acquire_timeout` (the adapter's) | ONE caller's wait for a connection |
+| `startup_timeout` (the adapter's) | Becoming ready before `connect` returns — the whole of it, shared across opening, waiting, probing and releasing, never restarted between them |
 | `reconnect_timeout` | The driver's own background retrying to restore capacity |
 | `statement_timeout` (a session setting) | The server's execution of one statement |
 | Your application's own limits | Transaction duration, request deadlines |
@@ -466,9 +479,10 @@ is better told now.
 
 ## Observing the pool
 
-The runtime publishes read-only measurements. A `lifecycle_provider` that also
-implements `observe_pool` is offered them once at composition; what it answers
-with is closed when the handle closes.
+The runtime publishes read-only measurements, one source per pool, each naming
+the route its pool serves. A `lifecycle_provider` that also implements
+`observe_pool` is offered each source once at composition; what it answers with
+is closed when the handle closes.
 
 <!-- story: observation_snippet -->
 
@@ -917,9 +931,11 @@ never both and never neither.
 
 | Before | Now |
 |---|---|
-| `PostgresAdapter(open_psycopg_connection)` | `PostgresAdapter(connection_string, credentials=...)` — configuration, not a live connection |
-| `PostgresAdapter.connect(conninfo, ...)` | `PostgresAdapter(conninfo, credentials=..., prepare_threshold=...)`, opened by `connect` |
-| `PostgresAdapter("postgresql://app:<password>@host/app")` | `PostgresAdapter("postgresql://app@host/app", credentials=Password("<password>"))` — a password in the string is refused |
+| `PostgresAdapter(open_psycopg_connection)` | `PostgresAdapter(writer=PostgresEndpoint(connection_string, credentials=...))` — configuration, not a live connection |
+| `PostgresAdapter.connect(conninfo, ...)` | `PostgresAdapter(writer=PostgresEndpoint(conninfo, credentials=...), prepare_threshold=...)`, opened by `connect` |
+| `PostgresAdapter("postgresql://app:<password>@host/app")` | `PostgresEndpoint("postgresql://app@host/app", credentials=Password("<password>"))` — a password in the string is refused |
+| `PostgresAdapter(conninfo, credentials=..., pool=PoolOptions(acquire_timeout=..., startup_timeout=...))` | `PostgresAdapter(writer=PostgresEndpoint(conninfo, credentials=..., pool=PoolOptions(...)), acquire_timeout=..., startup_timeout=...)` — the budgets are the runtime's, not a pool's |
+| `rds_postgres(host=..., ..., pool=...)` | `PostgresAdapter(writer=rds_endpoint(host=..., ..., pool=...))` |
 | `adapter.connection` (raw psycopg connection) | removed; open your own connection for DDL, migrations, and fixtures |
 | `adapter.close()` | `db.close()`, or leaving the handle's `with` block |
 | `DbPort` | `DatabaseConnection` |

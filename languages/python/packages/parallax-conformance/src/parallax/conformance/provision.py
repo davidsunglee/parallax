@@ -59,6 +59,8 @@ if TYPE_CHECKING:
         OrderedWriteTransport,
         PipelineStatement,
         PoolMetricsSource,
+        Route,
+        RouteCapabilities,
         Row,
         TransactionOutcome,
     )
@@ -447,18 +449,22 @@ class _TrackedRuntime:  # pragma: no cover - exercised by the Docker-backed lane
         return self._inner.dialect
 
     @property
-    def pool_metrics(self) -> PoolMetricsSource | None:
+    def routes(self) -> Mapping[Route, RouteCapabilities]:
+        return self._inner.routes
+
+    @property
+    def pool_metrics(self) -> tuple[PoolMetricsSource, ...]:
         return self._inner.pool_metrics
 
     @property
     def login_identity(self) -> str:
         return self._inner.login_identity
 
-    def login_execution(self) -> ConnectionContextSource:
-        return self._inner.login_execution()
+    def login_source(self) -> ConnectionContextSource:
+        return self._inner.login_source()
 
-    def principal_execution(self, authorization: PostgresRole) -> ConnectionContextSource:
-        return self._inner.principal_execution(authorization)
+    def principal_source(self, authorization: PostgresRole) -> ConnectionContextSource:
+        return self._inner.principal_source(authorization)
 
     def close(self) -> None:
         self._inner.close()
@@ -561,7 +567,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             pool=PoolOptions(min_size=0, num_workers=1),
             prepare_threshold=None,
             credentials=self.credentials,
-            **conninfo_options,
+            conninfo_options=conninfo_options,
         )
 
     def _install_authority_fixtures(self) -> None:
@@ -581,16 +587,34 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         pool: PoolOptions | OnDemandOptions,
         prepare_threshold: int | None,
         credentials: CredentialSource | DriverManaged,
-        **conninfo_options: str,
+        conninfo_options: Mapping[str, str],
+        acquire_timeout: float | None = None,
+        startup_timeout: float | None = None,
     ) -> PostgresAdapter:
-        """The shipped configuration for this container, under ``conninfo_options``."""
+        """The shipped configuration for this container, under ``conninfo_options``.
+
+        An omitted budget takes the adapter's own default.
+        """
         from psycopg.conninfo import make_conninfo
 
+        from parallax.postgres import PostgresEndpoint
+
+        budgets = {
+            name: value
+            for name, value in (
+                ("acquire_timeout", acquire_timeout),
+                ("startup_timeout", startup_timeout),
+            )
+            if value is not None
+        }
         return self.adapter()(
-            make_conninfo(self._conninfo, **conninfo_options),
-            credentials=credentials,
-            pool=pool,
+            writer=PostgresEndpoint(
+                make_conninfo(self._conninfo, **conninfo_options),
+                credentials=credentials,
+                pool=pool,
+            ),
             prepare_threshold=prepare_threshold,
+            **budgets,
         )
 
     @property
@@ -693,6 +717,8 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self,
         *,
         pool: PoolOptions | OnDemandOptions | None = None,
+        acquire_timeout: float | None = None,
+        startup_timeout: float | None = None,
         prepare_threshold: int | None = None,
         settings: Mapping[str, str] | None = None,
         credentials: CredentialSource | DriverManaged | None = None,
@@ -717,7 +743,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         """
         from parallax.postgres import PoolOptions
 
-        options = (
+        options: Mapping[str, str] = (
             {}
             if not settings
             else {"options": " ".join(f"-c {name}={value}" for name, value in settings.items())}
@@ -726,7 +752,9 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             pool=pool if pool is not None else PoolOptions(),
             prepare_threshold=prepare_threshold,
             credentials=credentials if credentials is not None else self.credentials,
-            **options,
+            conninfo_options=options,
+            acquire_timeout=acquire_timeout,
+            startup_timeout=startup_timeout,
         )
 
     def adapter_for_session_default(self, level: str) -> DatabaseAdapter[PostgresRole]:

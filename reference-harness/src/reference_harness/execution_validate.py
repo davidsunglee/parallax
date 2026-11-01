@@ -51,6 +51,11 @@ observation alike (`m-execution-lifecycle`):
   and the Release LAST, a Release only where the Acquisition granted something,
   and neither containing anything: they are siblings of the work beside them
   rather than a lease around it;
+- **routing.** An Acquisition lands where the policy it requested allows — a
+  strict policy on its own route and never by fallback, a preferred one on the
+  reader unless a fallback put it on the writer — every attempt of a writable
+  invocation requests the writer, and once an acquisition of a root fell back
+  every later acquisition of that root requests the writer;
 - **history.** A transaction root is TERMINAL, so a commit ends the invocation:
   attempts run one after another rather than overlapping, at most one commits and
   it is the last, the invocation's own outcome agrees with that last attempt, an
@@ -298,6 +303,7 @@ def _check_root(root: dict[str, Any], label: str, problems: list[str]) -> list[_
     _check_balance(events, activities, root_activity, label, problems)
     _check_triggers(activities, problems)
     _check_resources(activities, problems)
+    _check_routing(activities, problems)
     _check_history(activities, root_activity, label, problems)
     return calls
 
@@ -658,6 +664,62 @@ def _check_resources(activities: dict[int, _Activity], problems: list[str]) -> N
                 f"{activity.started}; an Acquisition and a Release are siblings of the work "
                 f"beside them rather than scopes it runs inside, so neither contains anything"
             )
+
+
+_POLICY_ROUTE: dict[str, str] = {"writer-only": "writer", "reader-only": "reader"}
+
+
+def _check_routing(activities: dict[int, _Activity], problems: list[str]) -> None:
+    """What each Acquisition's requested policy says about where it landed.
+
+    The schema states each end on its own; the relation between the policy a
+    Started requested and the route its Finished names, and between one
+    acquisition's fallback and the policy every later one requests, spans
+    events. A root is one operation, so the writer stickiness a fallback earns
+    holds across every attempt and page that root opens.
+    """
+    fell_back: _Activity | None = None
+    for acquisition in activities.values():
+        if acquisition.started != "acquisitionStarted":
+            continue
+        policy = acquisition.started_payload.get("policy")
+        finished = acquisition.finished_payload
+        route = finished.get("route")
+        fallback = finished.get("fallback")
+        strict = _POLICY_ROUTE.get(str(policy))
+        if strict is not None and (fallback is not None or route not in (None, strict)):
+            problems.append(
+                f"{acquisition.label} requested {policy!r} and finished on route {route!r}"
+                f"{' by fallback' if fallback is not None else ''}; a strict policy is served "
+                f"on its own route or not at all"
+            )
+        if policy == "reader-preferred" and fallback is None and route not in (None, "reader"):
+            problems.append(
+                f"{acquisition.label} requested 'reader-preferred' and finished on route "
+                f"{route!r} naming no fallback; a preferred acquisition reaches the writer "
+                f"only by a fallback it reports"
+            )
+        if _writable_attempt(acquisition, activities) and policy != "writer-only":
+            problems.append(
+                f"{acquisition.label} requests {policy!r} for an attempt of a writable "
+                f"invocation; a writable transaction always requests the writer"
+            )
+        if fell_back is not None and policy != "writer-only":
+            problems.append(
+                f"{acquisition.label} requests {policy!r} after activity "
+                f"{fell_back.activity} fell back to the writer; an operation that fell back "
+                f"stays on the writer for every later acquisition"
+            )
+        if fallback is not None and fell_back is None:
+            fell_back = acquisition
+
+
+def _writable_attempt(acquisition: _Activity, activities: dict[int, _Activity]) -> bool:
+    owner = activities.get(acquisition.parent) if acquisition.parent is not None else None
+    if owner is None or owner.started != "transactionAttemptStarted" or owner.parent is None:
+        return False
+    invocation = activities.get(owner.parent)
+    return invocation is not None and invocation.started_payload.get("accessMode") == "read-write"
 
 
 def _granted(acquisitions: list[_Activity]) -> bool:

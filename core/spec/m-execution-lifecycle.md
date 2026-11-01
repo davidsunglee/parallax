@@ -480,8 +480,9 @@ each page owns its own connection lease (`m-db-port`). Each owner opens at most 
 **Acquisition** and at most one **Release**, both as its own direct children:
 
 ```text
-AcquisitionStarted()
-AcquisitionFinished(durationNs, Acquired | AcquisitionFailed(reason, failure, cleanupResult))
+AcquisitionStarted(policy)
+AcquisitionFinished(durationNs, Acquired(route, fallback?)
+                                | AcquisitionFailed(reason, failure, cleanupResult, route?, fallback?))
 
 ReleaseStarted()
 ReleaseFinished(durationNs, holdDurationNs, cleanupResult)
@@ -506,6 +507,17 @@ stream batch, or joined invocation runs on the attempt's connection. Nor does a
 physical connection an adapter replaces beneath the lease (`m-db-port`): the
 replacement happens inside the owner's one hold, and a statement submitted again
 on it is still one Database Call.
+
+`policy` is the Read Policy that acquisition requested (`m-execution` *Read
+routing*): `writer-only`, `reader-only`, or `reader-preferred`. `route` is the
+`m-db-port` Route the lease landed on — `writer` or `reader` — and `fallback`
+the reason a preferred acquisition moved to the writer before any modeled work,
+`unavailable` or `connection-lost`, absent where it did not. A granted
+Acquisition always names its route; a failed one names the route whose failure
+was terminal, and names none where it was refused before any route was
+selected. These are portable routing roles, never connection identity: no
+endpoint, host, pool, or credential is observable here, so the redaction rule of
+`m-execution-authority` holds unchanged.
 
 `reason` is the `m-db-port` acquisition-failure vocabulary — `timeout`,
 `queue-rejected`, `closed`, `preparation-failed`, `authorization-failed`,
@@ -557,10 +569,13 @@ capacity, idleness, and queue depth belong to the resource the operations share
 events to a Handler that would have to be retained for a root that never ends.
 
 The seam is the Provider already named at composition. A Provider that also
-implements the optional **pool observation** method is offered the runtime's
-Pool Metrics Source (`m-db-port`) once, before the Database Root is
-published, and answers with a **Pool Observation** — a registration whose only
-verb is closing it — or with nothing, which declines. Implementing the method is
+implements the optional **pool observation** method is offered each of the
+runtime's Pool Metrics Sources (`m-db-port`) once, in the order the runtime
+publishes them and before the Database Root is published, and answers each with
+a **Pool Observation** — a registration whose only verb is closing it — or with
+nothing, which declines that source. Each source names the Route whose pool it
+reads, so one Provider tells a writer pool from a reader pool without a second
+seam. Implementing the method is
 the whole declaration of interest: there is no capability flag and no second
 composition argument.
 
@@ -573,7 +588,7 @@ root and ignore it.
 ```text
 compose
   prepare model -> open ready runtime
-  offer the source to an interested provider -> registration or decline
+  offer each source to an interested provider -> registration or decline
   publish the Database Root
 
 close
@@ -582,9 +597,10 @@ close
 ```
 
 Registration happens BEFORE publication, so a registration that fails ordinarily
-fails the composition: no Database Root is published, the runtime that was opened is
-closed, and the exception keeps its own identity rather than being wrapped or
-reinterpreted as a decline. Where several Providers are composed, the ones that
+fails the composition: no Database Root is published, every registration already
+taken for an earlier source is closed, the runtime that was opened is closed, and
+the exception keeps its own identity rather than being wrapped or reinterpreted
+as a decline. Where several Providers are composed, the ones that
 already registered are closed on the way out — a registration nobody holds could
 never be closed — and every one of those closes is attempted.
 

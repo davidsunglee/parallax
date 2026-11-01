@@ -214,7 +214,7 @@ def _adapter(connection: _FakeConnection) -> ControlledAdapter:
 
 
 def _context(runtime: Any) -> Any:
-    return runtime.login_execution().new_context()
+    return runtime.login_source().new_context("writer_only")
 
 
 def _execution(connection: _FakeConnection, **kwargs: Any) -> PostgresInterleavedExecution:
@@ -485,10 +485,10 @@ def test_leaving_a_controlled_scope_revokes_what_it_yielded() -> None:
 def test_controlled_principal_source_uses_shared_role_installation_and_restoration() -> None:
     connection = _FakeConnection()
     runtime = _adapter(connection).open()
-    source = runtime.principal_execution(PostgresRole("tenant_reader"))
+    source = runtime.principal_source(PostgresRole("tenant_reader"))
 
     assert connection.statements == []
-    with source.new_context() as scoped:
+    with source.new_context("writer_only") as scoped:
         scoped.execute("select 1", [])
 
     role_command = connection.statements[0][0]
@@ -501,7 +501,7 @@ def test_controlled_role_installation_failure_refuses_and_retires_the_session() 
     failure = RuntimeError("role denied")
     connection = _FakeConnection(role_error=failure)
     runtime = _adapter(connection).open()
-    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    resource = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
         resource.__enter__()
@@ -517,7 +517,7 @@ def test_controlled_role_installation_failure_refuses_and_retires_the_session() 
 def test_controlled_role_installation_preserves_a_control_flow_exception() -> None:
     connection = _FakeConnection(role_error=KeyboardInterrupt())
     runtime = _adapter(connection).open()
-    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    resource = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
 
     with pytest.raises(KeyboardInterrupt):
         resource.__enter__()
@@ -540,7 +540,7 @@ def test_controlled_authorization_rechecks_admission_before_publication(
         runtime.close()
 
     monkeypatch.setattr(control_module, "install_role", install_then_close)
-    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    resource = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
         resource.__enter__()
@@ -565,7 +565,7 @@ def test_controlled_authorization_recheck_restoration_failure_invalidates(
         runtime.close()
 
     monkeypatch.setattr(control_module, "install_role", install_then_close)
-    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    resource = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
 
     with pytest.raises(ConnectionAcquisitionError) as refused:
         resource.__enter__()
@@ -585,7 +585,7 @@ def test_controlled_authorization_failure_reports_an_unconfirmed_disposal() -> N
         close_raises=RuntimeError("close denied"),
     )
     runtime = _adapter(connection).open()
-    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    resource = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
 
     with pytest.raises(ConnectionAcquisitionError):
         resource.__enter__()
@@ -613,7 +613,7 @@ def test_controlled_authorization_recheck_reports_an_unconfirmed_disposal(
         runtime.close()
 
     monkeypatch.setattr(control_module, "install_role", install_then_close)
-    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    resource = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
 
     with pytest.raises(ConnectionAcquisitionError):
         resource.__enter__()
@@ -629,11 +629,11 @@ def test_controlled_scope_reports_a_deferred_retirement_failure(principal: bool)
     connection = _FakeConnection(close_raises=RuntimeError("close denied"))
     runtime = _adapter(connection).open()
     source = (
-        runtime.principal_execution(PostgresRole("tenant_reader"))
+        runtime.principal_source(PostgresRole("tenant_reader"))
         if principal
-        else runtime.login_execution()
+        else runtime.login_source()
     )
-    resource = source.new_context()
+    resource = source.new_context("writer_only")
 
     with resource:
         runtime.close()
@@ -647,7 +647,7 @@ def test_controlled_scope_reports_a_deferred_retirement_failure(principal: bool)
 def test_controlled_role_restoration_failure_reports_invalidation_and_retires() -> None:
     connection = _FakeConnection(reset_error=RuntimeError("reset denied"))
     runtime = _adapter(connection).open()
-    resource = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    resource = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
 
     with resource:
         pass
@@ -665,7 +665,7 @@ def test_controlled_runtime_rejects_a_foreign_authorization_value() -> None:
     runtime = _adapter(_FakeConnection()).open()
 
     with pytest.raises(InvalidAuthorizationError, match="requires a PostgresRole"):
-        runtime.principal_execution(cast("Any", "tenant_reader"))
+        runtime.principal_source(cast("Any", "tenant_reader"))
 
 
 def test_cancelling_asks_the_driver_and_survives_a_refusal() -> None:
@@ -915,7 +915,7 @@ def test_termination_owns_principal_cleanup_until_the_session_is_condemned() -> 
     connection = _FakeConnection(parked=park_close)
     execution = _execution(connection)
     runtime = cast("Any", execution)._runtime
-    scope = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    scope = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
     scope.__enter__()
     reports: list[TerminationReport] = []
 
@@ -966,7 +966,7 @@ def test_termination_cannot_overtake_principal_restoration_before_native_io(
     connection = _FakeConnection(parked=closing.set, reset_parked=park_reset)
     execution = _execution(connection)
     runtime = cast("Any", execution)._runtime
-    scope = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    scope = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
     scope.__enter__()
 
     cleaning = threading.Thread(target=scope.__exit__, args=(None, None, None))
@@ -1011,7 +1011,7 @@ def test_termination_interrupts_a_blocked_principal_restoration() -> None:
     connection = _FakeConnection(parked=park_close, reset_parked=park_reset)
     execution = _execution(connection)
     runtime = cast("Any", execution)._runtime
-    scope = runtime.principal_execution(PostgresRole("tenant_reader")).new_context()
+    scope = runtime.principal_source(PostgresRole("tenant_reader")).new_context("writer_only")
     scope.__enter__()
 
     cleaning = threading.Thread(target=scope.__exit__, args=(None, None, None))
@@ -1331,7 +1331,7 @@ def test_a_control_exposes_its_own_session_for_the_harnesss_native_proofs() -> N
 def test_a_controlled_runtime_publishes_no_pool_measurements() -> None:
     # It manages no pool, so it keeps no bookkeeping — absence rather than a
     # source that would answer nothing.
-    assert _adapter(_FakeConnection()).open().pool_metrics is None
+    assert _adapter(_FakeConnection()).open().pool_metrics == ()
 
 
 def test_a_controlled_runtime_captures_its_actual_session_login() -> None:

@@ -406,7 +406,7 @@ PYTHON_FIRST_PARTY_GRANTS: Mapping[str, frozenset[str]] = {
     # `modules.md`'s own edges, so retry and SQL generation are inherited here
     # rather than forbidden. Write lowering is a sibling child scope, which the
     # general target set excludes, so no row can name it either way.
-    "parallax.core._execution._read_policy": frozenset(
+    "parallax.core._execution._read_pipeline": frozenset(
         {
             "parallax.core.entity",
             "parallax.core.read_delivery",
@@ -654,7 +654,7 @@ CHILD_SCOPES: Mapping[str, ChildScope] = {
     "parallax.core._execution._publication": ChildScope(
         parent="parallax.core._execution", policy="sealed"
     ),
-    "parallax.core._execution._read_policy": ChildScope(
+    "parallax.core._execution._read_pipeline": ChildScope(
         parent="parallax.core._execution", policy="ordinary"
     ),
     "parallax.core._execution._read_query": ChildScope(

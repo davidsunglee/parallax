@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from parallax.core import read_planning
@@ -11,7 +11,7 @@ from parallax.core._execution._publication import (
     ServingModel,
     read_projection,
 )
-from parallax.core._execution._read_policy import (
+from parallax.core._execution._read_pipeline import (
     ReadQuery,
     StandaloneRead,
     read_graph,
@@ -19,12 +19,13 @@ from parallax.core._execution._read_policy import (
     read_rows,
     resolved,
 )
+from parallax.core._execution._routing import OperationRouting, resolved_read_policy
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._runner import TransactionRunner
 from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.uow import Concurrency
-from parallax.core.db_port import IsolationLevel
-from parallax.core.execution_authority._authority import ExecutionCapture
+from parallax.core.db_port import IsolationLevel, Route, RouteCapabilities, RoutePolicy
+from parallax.core.execution_authority._authority import ExecutionAuthority
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     StreamBatchActivity,
@@ -44,8 +45,8 @@ __all__ = ["ExecutionScope"]
 
 class ExecutionScope:
     """One authority-selected, connectionless execution scope over a root's
-    shared resources: its captured authority, its option defaults, and the
-    standalone reads and transactions run under them.
+    shared resources: its captured authority, its option defaults, its read
+    policy, and the standalone reads and transactions run under them.
 
     Every operation refuses re-entry on its own first line. A lifecycle supplies
     two stable functions per read — the converter that captures its query
@@ -61,26 +62,58 @@ class ExecutionScope:
     a connection, because a connection belongs to one operation. A stream
     retains this scope for its whole delivery, and each of its pages is read
     inside the one read the delivery was begun as.
+
+    The read policy applies only where an operation starts new execution — a
+    standalone read, row read, or stream, or a new read-only transaction.
+    Writable transactions always request the writer, and work that joins an
+    active transaction inherits its connection without consulting this scope's
+    routing at all. ``routes`` is the runtime's own immutable declaration,
+    borrowed so a derivation can validate a policy without I/O.
     """
 
-    __slots__ = ("_capture", "_lifecycle", "_options", "_planner", "_runner", "_serving")
+    __slots__ = (
+        "_authority",
+        "_lifecycle",
+        "_options",
+        "_planner",
+        "_read_policy",
+        "_routes",
+        "_runner",
+        "_serving",
+    )
 
     def __init__(
         self,
         runner: TransactionRunner,
-        capture: ExecutionCapture,
+        authority: ExecutionAuthority,
         options: TxnOptions,
+        read_policy: RoutePolicy,
         *,
+        routes: Mapping[Route, RouteCapabilities],
         lifecycle: InstalledLifecycle | None,
         serving: ServingModel,
         planner: ReadPlanner,
     ) -> None:
         self._runner = runner
-        self._capture = capture
+        self._authority = authority
         self._options = options
+        self._read_policy: RoutePolicy = read_policy
+        self._routes = routes
         self._lifecycle = lifecycle
         self._serving = serving
         self._planner = planner
+
+    def _derived(self, options: TxnOptions, read_policy: RoutePolicy) -> ExecutionScope:
+        return ExecutionScope(
+            self._runner,
+            self._authority,
+            options,
+            read_policy,
+            routes=self._routes,
+            lifecycle=self._lifecycle,
+            serving=self._serving,
+            planner=self._planner,
+        )
 
     def with_options(
         self,
@@ -89,20 +122,22 @@ class ExecutionScope:
         concurrency: Concurrency | Omitted = OMITTED,
         isolation: IsolationLevel | Omitted = OMITTED,
     ) -> ExecutionScope:
-        """This scope's authority and resources under patched option defaults."""
-        return ExecutionScope(
-            self._runner,
-            self._capture,
+        """This scope's authority, routing, and resources under patched option
+        defaults."""
+        return self._derived(
             patch_options(
                 self._options,
                 max_retries=max_retries,
                 concurrency=concurrency,
                 isolation=isolation,
             ),
-            lifecycle=self._lifecycle,
-            serving=self._serving,
-            planner=self._planner,
+            self._read_policy,
         )
+
+    def with_routing(self, *, read_policy: RoutePolicy) -> ExecutionScope:
+        """This scope's authority, options, and resources under ``read_policy``,
+        refused without I/O where the runtime declares no route to honor it."""
+        return self._derived(self._options, resolved_read_policy(read_policy, self._routes))
 
     def read[Q, Eager](
         self,
@@ -168,7 +203,12 @@ class ExecutionScope:
         """One operation's read, adopting the selection current now."""
         adopted = AdoptedExecution(self._serving)
         selected = read_projection(adopted.adopt())
-        return StandaloneRead(self._lifecycle, adopted, selected, self._capture)
+        return StandaloneRead(
+            self._lifecycle,
+            adopted,
+            selected,
+            OperationRouting(self._authority.source, self._read_policy),
+        )
 
     def resolved(self, read: StandaloneRead, query: ReadQuery, /) -> ResolvedObjectQuery:
         return resolved(read, query)
@@ -205,7 +245,7 @@ class ExecutionScope:
         return self._runner.transact(
             fn,
             context_for,
-            capture=self._capture,
+            authority=self._authority,
             defaults=self._options,
             max_retries=max_retries,
             concurrency=concurrency,
@@ -230,8 +270,9 @@ class ExecutionScope:
         return self._runner.read_only(
             fn,
             context_for,
-            capture=self._capture,
+            authority=self._authority,
             defaults=self._options,
+            read_policy=self._read_policy,
             max_retries=max_retries,
             isolation=isolation,
         )

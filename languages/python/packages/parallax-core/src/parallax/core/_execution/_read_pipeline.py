@@ -11,12 +11,12 @@ from parallax.core._execution._page_origins import ReadEvidenceCollector
 from parallax.core._execution._publication import SelectedReadModel
 from parallax.core._execution._read_query import resolve_read_query
 from parallax.core._execution._retention import ReadEvidenceContext
+from parallax.core._execution._routing import OperationRouting
 from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._authored_resolver import typed_interpretation
 from parallax.core.entity._expressions import AuthoredQuery
-from parallax.core.execution_authority._authority import ExecutionCapture
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
@@ -276,22 +276,23 @@ class StandaloneRead:
 
     It is also where a standalone operation's connection policy lives. An eager
     read brackets one around its whole execution; each delivery page brackets a
-    lease inside its own Stream Batch.
+    lease inside its own Stream Batch. Every lease asks ``routing``, which a
+    stream holds across all of its pages.
     """
 
-    __slots__ = ("adopted", "capture", "lifecycle", "selected")
+    __slots__ = ("adopted", "lifecycle", "routing", "selected")
 
     def __init__(
         self,
         lifecycle: InstalledLifecycle | None,
         adopted: AdoptedExecution,
         selected: SelectedReadModel,
-        capture: ExecutionCapture,
+        routing: OperationRouting,
     ) -> None:
         self.lifecycle = lifecycle
         self.adopted = adopted
         self.selected = selected
-        self.capture = capture
+        self.routing = routing
 
     def eager[T](
         self,
@@ -318,8 +319,8 @@ class StandaloneRead:
                 # statement, the conversion, and the publication it is
                 # materialized into. Held until the result exists, because a
                 # graph half-built from rows is not a result anything may return.
-                resource = self.capture.source.new_context()
-                connection, held_since_ns = enter_connection(resource, read)
+                resource = self.routing.new_context()
+                connection, held_since_ns = enter_connection(resource, read, self.routing)
                 try:
                     published = body(read, ReadInputs(connection, None, None))
                 except BaseException as failure:
@@ -356,8 +357,8 @@ class StandaloneRead:
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /
     ) -> T:
         with batch as calls:
-            resource = self.capture.source.new_context()
-            connection, held_since_ns = enter_connection(resource, batch)
+            resource = self.routing.new_context()
+            connection, held_since_ns = enter_connection(resource, batch, self.routing)
             try:
                 result = body(calls, ReadInputs(connection, None, None))
             except BaseException as failure:

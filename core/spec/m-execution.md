@@ -86,6 +86,42 @@ A standalone read or stream opens no transaction, so no transaction option
 applies to it: a scope whose effective preference is `locking` does not make a
 standalone read take the shared lock (`m-read-lock`).
 
+### Read routing
+
+Read routing is a dimension of its own, carried beside the transaction options
+rather than among them: it is neither a transaction default nor something a join
+compares. A root and every scope carry one **read policy** naming how new read
+execution requests a Route (`m-db-port`): `writer-only`, `reader-only`,
+or `reader-preferred`. A root connected without one carries `reader-only` where
+its runtime declares a reader and `writer-only` otherwise. Deriving a root alias
+or a scope with a different policy composes with authority selection and
+option derivation in any order, preserves captured authority and the option
+record, and acquires nothing. A policy naming a route the runtime does not
+declare is refused where it is named — at connection or derivation, before any
+acquisition — because no acquisition could honor it; the runtime's declared
+routes are immutable, so that check needs no I/O.
+
+The policy applies only where an operation starts NEW execution:
+
+| Operation | Requests |
+|---|---|
+| A standalone read or row read, and every page of a standalone stream | the scope's read policy |
+| An outer read-only transaction, on every attempt | the scope's read policy |
+| An outer writable transaction, on every attempt | `writer-only`, whatever the scope's policy |
+| A read, stream, or joining call inside an active transaction | nothing: it runs on the attempt's connection |
+
+A join neither consults nor compares the joining scope's read policy: the join
+refusals of *Option resolution* are unchanged, and routing can never conflict
+with an active transaction. A standalone read made inside a callback stays
+standalone and requests its own scope's policy.
+
+Each operation keeps one routing state for its whole life — one eager read,
+one stream across every page, one outer invocation across every retry. Once any
+acquisition it made reports a fallback to the writer (`m-db-port`), every later
+acquisition of that operation requests `writer-only`: a later page or a
+permitted retry stays where the operation was served rather than returning to
+the route that just failed it.
+
 ## Model Editions
 
 A **Model Selection** is a fully prepared, process-local, immutable selection of

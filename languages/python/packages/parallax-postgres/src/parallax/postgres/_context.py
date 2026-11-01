@@ -22,6 +22,8 @@ from parallax.core.db_port import (
     Invalidated,
     ReleaseUnconfirmed,
     Returned,
+    Route,
+    RouteSelection,
 )
 from parallax.core.diagnostics import diagnostic_for
 from parallax.postgres._authorization import (
@@ -257,6 +259,9 @@ class PostgresConnectionContext:
     second attempt itself, and a write never are. Once no connection can be
     kept, the slot holds the cleanup that ended it instead, and that is what
     leaving reports.
+
+    Every lease is served on ``route``, which entry reports as its selection
+    whichever way it ends, a failed entry's refusal included.
     """
 
     __slots__ = (
@@ -270,6 +275,7 @@ class PostgresConnectionContext:
         "_pool",
         "_resource",
         "_role",
+        "_selection",
         "_suspect",
         "_used",
     )
@@ -281,7 +287,10 @@ class PostgresConnectionContext:
         deadline: float,
         establishment: ConnectionEstablishment,
         role: PostgresRole | None,
+        *,
+        route: Route,
     ) -> None:
+        self._selection = RouteSelection(route)
         self._pool = pool
         self._admit = admit
         self._deadline = deadline
@@ -299,10 +308,21 @@ class PostgresConnectionContext:
     def cleanup_result(self) -> CleanupResult | None:
         return self._cleanup_result
 
+    @property
+    def selection(self) -> RouteSelection | None:
+        return self._selection if self._used else None
+
     def __enter__(self) -> DatabaseConnection:
         if self._used:
             raise RuntimeError(_ENTER_ONCE if self._execution is not None else _SPENT)
         self._used = True
+        try:
+            return self._entered()
+        except ConnectionAcquisitionError as refused:
+            refused.selection = self._selection
+            raise
+
+    def _entered(self) -> DatabaseConnection:
         self._resource = checkout(self._pool, self._deadline, self._establishment)
         try:
             self._require_idle(self._current_native())

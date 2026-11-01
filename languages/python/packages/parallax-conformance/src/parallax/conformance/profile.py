@@ -191,6 +191,8 @@ class ProvisionedRun(ProfileRun):
         self,
         *,
         pool: Any = None,
+        acquire_timeout: float | None = None,
+        startup_timeout: float | None = None,
         prepare_threshold: int | None = None,
         settings: Mapping[str, str] | None = None,
         credentials: Any = None,
@@ -200,10 +202,13 @@ class ProvisionedRun(ProfileRun):
         ``settings`` are session settings a deployment would configure its
         connections with, carried so every connection this configuration opens
         already has them. ``credentials`` replaces this run's own login secret
-        with a source a credential proof supplies.
+        with a source a credential proof supplies. An omitted budget takes the
+        adapter's own default.
         """
         return self._provisioner.configured(
             pool=pool,
+            acquire_timeout=acquire_timeout,
+            startup_timeout=startup_timeout,
             prepare_threshold=prepare_threshold,
             settings=settings,
             credentials=credentials,

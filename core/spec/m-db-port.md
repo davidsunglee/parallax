@@ -276,13 +276,36 @@ provider-invalid authorization is refused at binding. Each context the source
 creates is fresh and carries that binding through exactly one acquisition.
 
 ```text
-runtime.loginExecution()                         → ConnectionContextSource
-runtime.principalExecution(authorization)        → ConnectionContextSource | InvalidAuthorization
-source.newContext()                              → ConnectionContext
+runtime.routes                                   → Route -> RouteCapabilities
+runtime.loginSource()                            → ConnectionContextSource
+runtime.principalSource(authorization)           → ConnectionContextSource | InvalidAuthorization
+source.newContext(policy)                        → ConnectionContext
+context.selection                                → RouteSelection(route, fallback?) | absent
 ```
 
 The runtime has no direct context-producing operation. Selection of login or
 principal authority is therefore explicit before any context can be created.
+
+**Routes are roles defined by what a caller observes.** A runtime declares the
+**Routes** it serves, immutably and without I/O: `writer` always, `reader`
+optionally. `writer` serves writes and sees every committed change; `reader`
+offloads reads and may lag behind the writer. A reader promises no physical
+replica — a reader endpoint may itself reach the writer — and nothing about a
+route is inferred from where its connections go. Each declared route states its
+**Route Capabilities**: the Isolation Levels a read-only transaction may begin
+at on it, empty for a route that serves no transactions. A single-endpoint
+runtime declares only `writer`, at every level.
+
+A context is created for one requested **Read Policy** (`m-execution` *Read
+routing*), which core resolves against the declared routes before asking, so a
+source is never asked for a route its runtime does not declare. Entering the
+context selects the route that serves the lease and reports it as the context's
+**Route Selection**: the route, and the **fallback reason** — `unavailable` or
+`connection-lost` — where a preferred acquisition moved from the reader to the
+writer before any modeled work. Like the cleanup result, the selection is absent
+before entry and stable once entry returns or raises; a failed entry that
+selected a route reports it on the context and on the acquisition failure it
+raises alike, and one refused before any route was selected reports none.
 
 **A runtime is ready or it is not.** Opening returns only a runtime that has
 proved it can execute: waiting for retained capacity, where a mode retains any,
@@ -398,7 +421,8 @@ exceptions, whose existing precedence and cleanup rules are unchanged.
 ## Acquisition and readiness failures are outside the SQL categories
 
 An acquisition that produces no usable connection reports one of six
-driver-neutral reasons: **timeout**, **queue rejected**, **closed**,
+driver-neutral reasons, with the Route Selection its failure was terminal on
+where it selected one: **timeout**, **queue rejected**, **closed**,
 **preparation failed**, **authorization failed**, or **credentials refused**.
 Preparation failure covers
 establishing or preparing execution access, including a direct connection attempt that failed, a session
@@ -425,9 +449,9 @@ that was produced and then refused.
 ## A pooling runtime publishes what it measures about itself
 
 A runtime that manages a pool keeps bookkeeping an operator wants and MAY
-publish a read-only **Pool Metrics Source** for it. One that manages no pool
-publishes none, and absence is an honest answer rather than a source that
-reports nothing.
+publish a read-only **Pool Metrics Source** for it — one per pool, each naming
+the Route whose pool it reads. One that manages no pool publishes none, and
+absence is an honest answer rather than a source that reports nothing.
 
 The source is **stable**: one object for the runtime's whole life, shutdown
 included, so a holder keeps what it was given and what a close changes is the

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from parallax.core._execution._routing import OperationRouting
 from parallax.core.db_port import ConnectionContext, DatabaseConnection, report_resource_issues
 from parallax.core.execution_lifecycle._activity import (
     ConnectionAcquisitionActivity,
@@ -11,10 +12,15 @@ __all__ = ["enter_connection", "exit_connection"]
 
 
 def enter_connection(
-    resource: ConnectionContext, owner: ConnectionOwnerActivity
+    resource: ConnectionContext, owner: ConnectionOwnerActivity, routing: OperationRouting
 ) -> tuple[DatabaseConnection, int | None]:
     """Acquire ``resource``'s connection under ``owner``, or raise having
     consumed its cleanup facts.
+
+    ``resource`` is the context ``routing`` created for this acquisition. The
+    route it selected is recorded on the acquisition activity and on
+    ``routing`` whichever way entry ends, so the operation's later
+    acquisitions request what that selection requires.
 
     Answers the scoped execution and the moment the hold began — ``None`` where
     nothing measured it, which is every operation nobody is observing. The
@@ -37,7 +43,7 @@ def enter_connection(
     the caller can no longer be told about, which is what the fallback log is
     for.
     """
-    acquisition = owner.acquisition()
+    acquisition = owner.acquisition(routing.policy)
     acquired: DatabaseConnection | None = None
     try:
         with acquisition:
@@ -45,9 +51,14 @@ def enter_connection(
                 acquired = resource.__enter__()
             except BaseException:
                 acquisition.call_returned()
-                acquisition.unacquired(resource.cleanup_result)
+                selection = resource.selection
+                routing.record(selection)
+                acquisition.unacquired(resource.cleanup_result, selection)
                 raise
             acquisition.call_returned()
+            selection = resource.selection
+            routing.record(selection)
+            acquisition.acquired(selection)
     except BaseException:
         if acquired is not None:
             _leave(resource, None)

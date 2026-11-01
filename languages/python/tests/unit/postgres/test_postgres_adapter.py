@@ -126,11 +126,12 @@ from tests.unit.postgres._native_pipeline_support import (
 _DIALECT = PostgresAdapter.dialect
 
 
-def test_public_surface_is_the_adapter_its_options_and_this_engines_isolation_spelling() -> None:
+def test_public_surface_is_the_adapter_its_endpoint_options_and_isolation_spelling() -> None:
     assert parallax.postgres.__all__ == [
         "OnDemandOptions",
         "PoolOptions",
         "PostgresAdapter",
+        "PostgresEndpoint",
         "PostgresRole",
         "isolation_spelling",
     ]
@@ -1704,7 +1705,12 @@ def _leased(*connections: _FakeConnection) -> tuple[PostgresConnectionContext, _
         initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
     pool = _FakePool(*connections)
     context = PostgresConnectionContext(
-        cast("Any", pool), _admitted, monotonic() + 5.0, ConnectionEstablishment(), None
+        cast("Any", pool),
+        _admitted,
+        monotonic() + 5.0,
+        ConnectionEstablishment(),
+        None,
+        route="writer",
     )
     return context, pool
 

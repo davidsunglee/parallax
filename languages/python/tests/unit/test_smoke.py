@@ -62,14 +62,15 @@ def test_top_package_public_surfaces() -> None:
         "pin_of",
         "edge_of",
     }
-    # §8 topology fixes the adapter's public exports as the adapter itself, its
-    # principal-role value, the two retention policies, and this engine's name
+    # §8 topology fixes the adapter's public exports as the adapter itself, its endpoint,
+    # its principal-role value, the two retention policies, and this engine's name
     # for each portable Isolation Level; psycopg bind mechanics (Jsonb), the
     # native pool, and the scoped connection under an acquisition stay internal.
     assert set(parallax.postgres.__all__) == {
         "OnDemandOptions",
         "PoolOptions",
         "PostgresAdapter",
+        "PostgresEndpoint",
         "PostgresRole",
         "isolation_spelling",
     }

@@ -36,7 +36,7 @@ from parallax.core.execution import ExecutionFailure, TxnOptions
 from parallax.core.read_delivery import InvalidData
 from parallax.core.unit_work import WritePreconditionError
 from parallax.evolution import ABSENT, evolve, schema_delta
-from parallax.postgres import PostgresAdapter, PostgresRole
+from parallax.postgres import PostgresAdapter, PostgresEndpoint, PostgresRole
 from parallax.snapshot import (
     Database,
     ReadOnlyTxnContext,
@@ -149,7 +149,7 @@ def table_statements(model: DomainModel) -> tuple[str, ...]:
 
 def configure_the_database(conninfo: str, password: str) -> PostgresAdapter:
     """Configuration only: building an adapter opens no connection."""
-    return PostgresAdapter(conninfo, credentials=Password(password))
+    return PostgresAdapter(writer=PostgresEndpoint(conninfo, credentials=Password(password)))
 
 
 def add_and_find_a_customer(adapter: PostgresAdapter) -> Customer:

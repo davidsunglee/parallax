@@ -87,8 +87,9 @@ def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: 
     # against a stepped clock in the unit suites instead, because an elapsed
     # time read off a live machine grades the machine.
     assert isinstance(acquisition_started, AcquisitionStarted)
+    assert acquisition_started.route_policy == "writer_only"
     assert isinstance(acquisition_finished, AcquisitionFinished)
-    assert acquisition_finished.outcome == ConnectionAcquired()
+    assert acquisition_finished.outcome == ConnectionAcquired("writer", None)
     assert isinstance(call_started, DatabaseCallStarted)
     assert call_started.kind == "read"
     assert isinstance(call_finished, DatabaseCallFinished)

@@ -7,13 +7,14 @@ from typing import Self
 
 from parallax.core._execution._options import OMITTED, Omitted, TxnOptions, patch_options
 from parallax.core._execution._publication import ServingModel
+from parallax.core._execution._routing import resolved_read_policy
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._runner import TransactionRunner
 from parallax.core._execution._unit_work.clock import Clock, SystemClock
 from parallax.core._execution._unit_work.uow import Concurrency
-from parallax.core.db_port import DatabaseRuntime, IsolationLevel
+from parallax.core.db_port import DatabaseRuntime, IsolationLevel, RoutePolicy
 from parallax.core.execution_authority._authority import (
-    ExecutionCapture,
+    ExecutionAuthority,
     Principal,
     capture_database_login,
     capture_principal,
@@ -26,7 +27,7 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.execution_lifecycle._pool_observation import (
     PoolObservation,
     close_pool_observations,
-    register_pool_observation,
+    register_pool_observations,
 )
 from parallax.core.read_delivery._read_plan import (
     DEFAULT_READ_PLAN_CACHE_CAPACITY,
@@ -42,14 +43,14 @@ class RootResources[Authorization]:
 
     It holds the runtime, the Serving Model, the Clock, the installed
     lifecycle, the shared read-plan cache instance, the transaction runner,
-    and the pool observation once, and is the identity a joining transaction's
-    ownership is settled against.
+    and one pool observation per source the runtime publishes, once, and is the
+    identity a joining transaction's ownership is settled against.
     """
 
     __slots__ = (
         "clock",
         "lifecycle",
-        "observation",
+        "observations",
         "planner",
         "runtime",
         "serving",
@@ -79,15 +80,19 @@ class RootResources[Authorization]:
             self.planner,
         )
         self.shutdown = threading.RLock()
-        self.observation: PoolObservation | None = register_pool_observation(
+        self.observations: tuple[PoolObservation, ...] = register_pool_observations(
             lifecycle_provider, runtime.pool_metrics
         )
 
-    def scope(self, capture: ExecutionCapture, options: TxnOptions) -> ExecutionScope:
+    def scope(
+        self, authority: ExecutionAuthority, options: TxnOptions, read_policy: RoutePolicy
+    ) -> ExecutionScope:
         return ExecutionScope(
             self.transaction_runner,
-            capture,
+            authority,
             options,
+            read_policy,
+            routes=self.runtime.routes,
             lifecycle=self.lifecycle,
             serving=self.serving,
             planner=self.planner,
@@ -98,22 +103,26 @@ class RootResources[Authorization]:
             try:
                 self.runtime.close()
             finally:
-                observation = self.observation
-                self.observation = None
-                if observation is not None:
-                    close_pool_observations((observation,))
+                observations = self.observations
+                self.observations = ()
+                close_pool_observations(observations)
 
 
 class DatabaseRoot[Authorization, Scope]:
     """A Database Root over one runtime, specialized by the lifecycle facade
     ``scope_for`` builds over each authority-selected :class:`ExecutionScope`.
 
-    Option aliases and execution scopes share the root's resources. Closing any
-    alias closes them for all of them; selecting authority acquires no
-    connection.
+    Option and routing aliases and execution scopes share the root's
+    resources. Closing any alias closes them for all of them; selecting
+    authority or routing acquires no connection.
+
+    ``read_policy`` is what new read execution requests. Omitted, it is
+    ``reader_only`` where the runtime declares a reader and ``writer_only``
+    otherwise; a policy the declared routes cannot honor is refused before the
+    root is built.
     """
 
-    __slots__ = ("_options", "_resources", "_scope_for")
+    __slots__ = ("_options", "_read_policy", "_resources", "_scope_for")
 
     def __init__(
         self,
@@ -122,11 +131,13 @@ class DatabaseRoot[Authorization, Scope]:
         *,
         scope_for: Callable[[ExecutionScope], Scope],
         options: TxnOptions | None = None,
+        read_policy: RoutePolicy | None = None,
         read_plan_cache_capacity: int = DEFAULT_READ_PLAN_CACHE_CAPACITY,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> None:
         capacity = check_read_plan_cache_capacity(read_plan_cache_capacity)
+        self._read_policy: RoutePolicy = resolved_read_policy(read_policy, runtime.routes)
         self._options = options if options is not None else TxnOptions()
         self._scope_for = scope_for
         self._resources = RootResources(
@@ -137,11 +148,12 @@ class DatabaseRoot[Authorization, Scope]:
             lifecycle_provider=lifecycle_provider,
         )
 
-    def _alias(self, options: TxnOptions) -> Self:
+    def _alias(self, options: TxnOptions, read_policy: RoutePolicy) -> Self:
         alias = object.__new__(type(self))
         alias._resources = self._resources
         alias._scope_for = self._scope_for
         alias._options = options
+        alias._read_policy = read_policy
         return alias
 
     def with_options(
@@ -157,16 +169,22 @@ class DatabaseRoot[Authorization, Scope]:
                 max_retries=max_retries,
                 concurrency=concurrency,
                 isolation=isolation,
-            )
+            ),
+            self._read_policy,
+        )
+
+    def with_routing(self, *, read_policy: RoutePolicy) -> Self:
+        return self._alias(
+            self._options, resolved_read_policy(read_policy, self._resources.runtime.routes)
         )
 
     def using_principal(self, principal: Principal[Authorization], /) -> Scope:
-        capture = capture_principal(self._resources.runtime, principal)
-        return self._scope_for(self._resources.scope(capture, self._options))
+        authority = capture_principal(self._resources.runtime, principal)
+        return self._scope_for(self._resources.scope(authority, self._options, self._read_policy))
 
     def using_database_login(self) -> Scope:
-        capture = capture_database_login(self._resources.runtime)
-        return self._scope_for(self._resources.scope(capture, self._options))
+        authority = capture_database_login(self._resources.runtime)
+        return self._scope_for(self._resources.scope(authority, self._options, self._read_policy))
 
     def close(self) -> None:
         self._resources.close()

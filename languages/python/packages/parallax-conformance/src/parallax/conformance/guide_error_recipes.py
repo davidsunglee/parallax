@@ -11,7 +11,7 @@ from parallax.core.db_port import CredentialSource
 from parallax.core.execution import ExecutionFailure
 from parallax.core.execution_lifecycle import LoggingLifecycleProvider
 from parallax.evolution import SchemaDelta
-from parallax.postgres import PoolOptions, PostgresAdapter, PostgresRole
+from parallax.postgres import PoolOptions, PostgresAdapter, PostgresEndpoint, PostgresRole
 from parallax.snapshot import Database, ScopedDatabase, TxnContext, connect
 
 __all__ = [
@@ -117,7 +117,9 @@ def open_the_shop_database(
     conninfo: str, credentials: CredentialSource, model: DomainModel
 ) -> Database[PostgresRole]:
     """The process's one root: a bounded pool, room for more read plans, and logging."""
-    adapter = PostgresAdapter(conninfo, credentials=credentials, pool=PoolOptions(max_size=20))
+    adapter = PostgresAdapter(
+        writer=PostgresEndpoint(conninfo, credentials=credentials, pool=PoolOptions(max_size=20))
+    )
     return connect(
         adapter,
         model,
