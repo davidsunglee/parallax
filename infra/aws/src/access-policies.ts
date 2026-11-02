@@ -49,6 +49,9 @@ function trustAnchorResources(anchors: TrustAnchors): string[] {
   ];
 }
 
+const serviceLinkedRoles = (anchors: TrustAnchors): string =>
+  `arn:aws:iam::${anchors.account}:role/aws-service-role/*`;
+
 function trustStacks(anchors: TrustAnchors): string[] {
   return [anchors.stackArn(ACCESS_STACK_NAME), anchors.stackArn(BOOTSTRAP_STACK_NAME)];
 }
@@ -208,7 +211,7 @@ export function executionPolicy(anchors: TrustAnchors): PolicyDocument {
       new PolicyStatement({
         sid: "AuroraServiceRole",
         actions: ["iam:CreateServiceLinkedRole"],
-        resources: [`arn:aws:iam::${anchors.account}:role/aws-service-role/*`],
+        resources: [serviceLinkedRoles(anchors)],
         conditions: { StringEquals: { "iam:AWSServiceName": "rds.amazonaws.com" } },
       }),
       new PolicyStatement({
@@ -237,10 +240,12 @@ export function executionPolicy(anchors: TrustAnchors): PolicyDocument {
 
 /**
  * The most the execution role, and every role the environment stack creates,
- * may ever do. It admits only the environment's services, and refuses whatever
- * could reach the trust path: its roles, policies, provider, connection, and
- * stacks; a role without this boundary; passing any role the environment does
- * not own; and new long-lived identities.
+ * may ever do. It admits only the environment's services, and IAM only over the
+ * environment's own roles and instance profiles, so no role it bounds can
+ * change an identity it does not own. It refuses whatever could reach the trust
+ * path: its roles, policies, provider, connection, and stacks; a role without
+ * this boundary; passing any role the environment does not own; and new
+ * long-lived identities.
  */
 export function boundaryPolicy(anchors: TrustAnchors): PolicyDocument {
   return new PolicyDocument({
@@ -252,7 +257,6 @@ export function boundaryPolicy(anchors: TrustAnchors): PolicyDocument {
           "lambda:*",
           "codebuild:*",
           "ssm:*",
-          "iam:*",
           "rds-db:connect",
           "rds-data:ExecuteStatement",
           "s3:GetObject",
@@ -265,6 +269,16 @@ export function boundaryPolicy(anchors: TrustAnchors): PolicyDocument {
           "codestar-connections:PassConnection",
         ],
         resources: ["*"],
+      }),
+      new PolicyStatement({
+        sid: "EnvironmentIdentities",
+        actions: ["iam:*"],
+        resources: [anchors.environmentRolePattern, anchors.environmentInstanceProfilePattern],
+      }),
+      new PolicyStatement({
+        sid: "ServiceLinkedRoles",
+        actions: ["iam:CreateServiceLinkedRole"],
+        resources: [serviceLinkedRoles(anchors)],
       }),
       new PolicyStatement({
         sid: "ProtectTrustAnchors",

@@ -175,3 +175,108 @@ export function narrowedBootstrapTemplate(template: unknown, anchors: TrustAncho
   };
   return narrowed;
 }
+
+/** How the bootstrap's file assets are encrypted: its `FileAssetsBucketKmsKeyId` parameter, and the key it created when that is empty. */
+export interface BootstrapKey {
+  readonly keyId: string;
+  readonly keyArn: string;
+}
+
+/** What the trust path relies on the narrowed bootstrap's roles holding once CloudFormation resolves them. */
+export interface BootstrapPermissions {
+  /** The deploy role's inline policies, by name, and its managed policy ARNs. */
+  readonly deployInline: Readonly<Record<string, unknown>>;
+  readonly deployManaged: readonly string[];
+  /** The file-publishing role's inline policies, by name. */
+  readonly filePublishingInline: Readonly<Record<string, unknown>>;
+  /** Who may assume the execution role. */
+  readonly executionTrust: unknown;
+}
+
+interface Resolution {
+  readonly names: Readonly<Record<string, string>>;
+  readonly conditions: Readonly<Record<string, boolean>>;
+}
+
+function lookup<T>(table: Readonly<Record<string, T>>, name: string): T {
+  const value = table[name];
+  if (value === undefined) throw new BootstrapTemplateError(`the template refers to ${name}`);
+  return value;
+}
+
+/** The value of the intrinsic `{ [name]: argument }`, as far as the narrowing resolves one. */
+function intrinsic(name: string, argument: unknown, resolution: Resolution): unknown {
+  if (name === "Fn::Sub" && typeof argument === "string") {
+    return argument.replace(/\$\{([^}]+)\}/g, (_, key: string) => lookup(resolution.names, key));
+  }
+  if (name === "Fn::If") {
+    const [condition, whenTrue, whenFalse] = list(argument, "an Fn::If");
+    const holds = lookup(resolution.conditions, String(condition));
+    return resolved(holds ? whenTrue : whenFalse, resolution);
+  }
+  throw new BootstrapTemplateError(`the template uses ${name} where the narrowing expects none`);
+}
+
+/** *value* with each `Fn::Sub` and `Fn::If` resolved; any other intrinsic means the reviewed shape changed. */
+function resolved(value: unknown, resolution: Resolution): unknown {
+  if (Array.isArray(value)) return value.map((item) => resolved(item, resolution));
+  if (typeof value !== "object" || value === null) return value;
+  const entries = Object.entries(value);
+  const [key, argument] = entries[0] ?? [""];
+  if (key === "Ref" || key.startsWith("Fn::")) return intrinsic(key, argument, resolution);
+  return Object.fromEntries(entries.map(([name, item]) => [name, resolved(item, resolution)]));
+}
+
+/**
+ * The permissions *template*, narrowed, gives the roles the deploy role
+ * reaches, resolved as CloudFormation resolves them for *anchors* and *key*.
+ *
+ * Throws {@link BootstrapTemplateError} when the template no longer has the
+ * reviewed shape.
+ */
+export function bootstrapPermissions(
+  template: unknown,
+  anchors: TrustAnchors,
+  key: BootstrapKey,
+): BootstrapPermissions {
+  const resources = object(
+    narrowedBootstrapTemplate(template, anchors)["Resources"],
+    "the template's resources",
+  );
+  const pseudo = {
+    "AWS::Partition": "aws",
+    "AWS::Region": anchors.region,
+    "AWS::AccountId": anchors.account,
+    Qualifier: anchors.qualifier,
+  };
+  const version = resource(resources, "CdkBootstrapVersion", "AWS::SSM::Parameter")["Name"];
+  const resolution: Resolution = {
+    names: {
+      ...pseudo,
+      CdkBootstrapVersion: String(resolved(version, { names: pseudo, conditions: {} })),
+      "CloudFormationExecutionRole.Arn": anchors.bootstrapRoleArn("cfn-exec"),
+      "StagingBucket.Arn": anchors.stagingBucketArn,
+      FileAssetsBucketKmsKeyId: key.keyId,
+      "FileAssetsBucketEncryptionKey.Arn": key.keyArn,
+    },
+    conditions: { CreateNewKey: key.keyId === "" },
+  };
+  const inline = (policies: readonly unknown[]): Record<string, unknown> =>
+    Object.fromEntries(
+      policies.map((policy) => {
+        const { PolicyName: name, PolicyDocument: document } = object(policy, "a policy");
+        return [String(resolved(name, resolution)), resolved(document, resolution)];
+      }),
+    );
+  const deploy = resource(resources, "DeploymentActionRole", "AWS::IAM::Role");
+  const publishing = resource(resources, "FilePublishingRoleDefaultPolicy", "AWS::IAM::Policy");
+  const execution = resource(resources, "CloudFormationExecutionRole", "AWS::IAM::Role");
+  return {
+    deployInline: inline(list(deploy["Policies"], "DeploymentActionRole's policies")),
+    deployManaged: list(resolved(deploy["ManagedPolicyArns"], resolution), "managed policies").map(
+      String,
+    ),
+    filePublishingInline: inline([publishing]),
+    executionTrust: resolved(execution["AssumeRolePolicyDocument"], resolution),
+  };
+}

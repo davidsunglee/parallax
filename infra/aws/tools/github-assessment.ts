@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { RolloutConfiguration } from "../src/rollout-configuration.ts";
 import { CHECK, judged, type Finding, type Sources } from "./findings.ts";
 
@@ -73,7 +74,7 @@ interface EnvironmentJson {
   readonly deployment_branch_policy?: unknown;
   readonly protection_rules?: readonly {
     type?: string;
-    reviewers?: readonly { type?: string; reviewer?: { login?: string } }[];
+    reviewers?: readonly { type?: string; reviewer?: { login?: string; slug?: string } }[];
   }[];
 }
 
@@ -88,26 +89,30 @@ export function environmentFinding(context: GitHubContext): Finding {
       detail: `create ${rollout.deployEnvironment}: apply github-settings`,
     };
   }
+  // Any one listed reviewer's approval releases a deployment, so the reviewer must be alone.
   const reviewers = (environment.protection_rules ?? [])
     .filter((rule) => rule.type === "required_reviewers")
     .flatMap((rule) => rule.reviewers ?? [])
-    .filter((entry) => entry.type === "User")
-    .map((entry) => entry.reviewer?.login);
+    .map(
+      (entry) => `${String(entry.type)} ${String(entry.reviewer?.login ?? entry.reviewer?.slug)}`,
+    );
   return judged(
     CHECK.environment,
     [
-      [reviewers.includes(rollout.reviewer), `${rollout.reviewer} is not a required reviewer`],
+      [
+        isDeepStrictEqual(reviewers, [`User ${rollout.reviewer}`]),
+        `the required reviewers are [${reviewers.join(", ")}], not ${rollout.reviewer} alone`,
+      ],
       [
         environment.can_admins_bypass === false,
         "administrators may bypass the environment's protections",
       ],
       [
-        JSON.stringify(environment.deployment_branch_policy) ===
-          JSON.stringify(DEPLOYMENT_BRANCH_POLICY),
+        isDeepStrictEqual(environment.deployment_branch_policy, DEPLOYMENT_BRANCH_POLICY),
         "the environment does not restrict deployments to named branches",
       ],
     ],
-    `${rollout.deployEnvironment} requires ${rollout.reviewer}'s approval, without administrator bypass`,
+    `${rollout.deployEnvironment} requires ${rollout.reviewer}'s approval alone, without administrator bypass`,
   );
 }
 

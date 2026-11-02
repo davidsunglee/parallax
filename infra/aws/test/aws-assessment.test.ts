@@ -15,10 +15,12 @@ import {
   oidcProviderFinding,
   sourceConnectionFinding,
 } from "../tools/aws-assessment.ts";
+import { bootstrapPermissions, pinnedBootstrapTemplate } from "../tools/bootstrap-template.ts";
 import {
   ABSENT_STACK,
   ACCOUNT,
   ANCHORS,
+  BOOTSTRAP_PERMISSIONS,
   healthyReplies,
   IMAGE,
   json,
@@ -27,6 +29,12 @@ import {
 } from "./rollout-world.ts";
 
 const reply = (key: string): unknown => (healthyReplies()[key] as { json: unknown }).json;
+
+const ADMINISTRATOR = "arn:aws:iam::aws:policy/AdministratorAccess";
+const everything = {
+  Version: "2012-10-17",
+  Statement: [{ Effect: "Allow", Action: "*", Resource: "*" }],
+};
 
 const caller = (arn: string, account = ACCOUNT): Record<string, Reply> => ({
   "sts get-caller-identity": json({ Account: account, Arn: arn }),
@@ -304,16 +312,83 @@ describe("the access stack check", () => {
         },
         "trusts more",
       ],
+      [
+        { [`iam list-role-policies --role-name ${DEPLOY_ROLE_NAME}`]: json({}) },
+        `${DEPLOY_ROLE_NAME} holds other permissions than ${ACCESS_STACK_NAME} defines`,
+      ],
+      [
+        {
+          [`iam list-attached-role-policies --role-name ${DEPLOY_ROLE_NAME}`]: json({
+            AttachedPolicies: [{ PolicyArn: ADMINISTRATOR }],
+          }),
+        },
+        "holds other permissions",
+      ],
+      [
+        {
+          [`iam get-role-policy --role-name ${DEPLOY_ROLE_NAME} --policy-name deploy`]: json({
+            PolicyDocument: everything,
+          }),
+        },
+        "holds other permissions",
+      ],
+      [
+        {
+          [`iam get-policy --policy-arn ${ANCHORS.boundaryPolicyArn}`]: json({
+            Policy: { DefaultVersionId: "v3" },
+          }),
+          [`iam get-policy-version --policy-arn ${ANCHORS.boundaryPolicyArn} --version-id v3`]:
+            json({ PolicyVersion: { Document: everything } }),
+        },
+        `the execution policy or boundary is not the one ${ACCESS_STACK_NAME} defines`,
+      ],
+      [
+        {
+          [`iam get-policy-version --policy-arn ${ANCHORS.executionPolicyArn} --version-id v2`]:
+            json({ PolicyVersion: {} }),
+        },
+        "is not the one",
+      ],
     ];
     for (const [replies, detail] of cases) {
       expect(accessStackFinding(world(replies).context).detail).toContain(detail);
     }
+  });
+
+  it("reads documents IAM treats alike as the same, whatever their key order or list spelling", () => {
+    const trust = reply(deployRoleKey) as {
+      Role: { AssumeRolePolicyDocument: { Statement: Record<string, unknown>[] } };
+    };
+    const [statement] = trust.Role.AssumeRolePolicyDocument.Statement;
+    const reordered = {
+      Condition: {
+        StringEquals: {
+          "token.actions.githubusercontent.com:sub": ANCHORS.deploySubject,
+          "token.actions.githubusercontent.com:aud": ["sts.amazonaws.com"],
+        },
+      },
+      Action: ["sts:AssumeRoleWithWebIdentity"],
+      Principal: { Federated: [ANCHORS.oidcProviderArn] },
+      Effect: statement?.["Effect"],
+    };
+    expect(
+      accessStackFinding(
+        world({
+          [deployRoleKey]: json({
+            Role: { AssumeRolePolicyDocument: { Statement: reordered, Version: "2012-10-17" } },
+          }),
+        }).context,
+      ).state,
+    ).toBe("verified");
   });
 });
 
 describe("the bootstrap check", () => {
   const roleKey = (kind: Parameters<typeof ANCHORS.bootstrapRoleName>[0]): string =>
     `iam get-role --role-name ${ANCHORS.bootstrapRoleName(kind)}`;
+  const role = (kind: Parameters<typeof ANCHORS.bootstrapRoleName>[0]): string =>
+    ANCHORS.bootstrapRoleName(kind);
+  const [publishingPolicy = ""] = Object.keys(BOOTSTRAP_PERMISSIONS.filePublishingInline);
 
   it("is pending until a maintainer bootstraps", () => {
     expect(
@@ -324,7 +399,7 @@ describe("the bootstrap check", () => {
     });
   });
 
-  it("verifies the narrowed variant, its parameters, every role's trust, the execution role, and the deploy scope", () => {
+  it("verifies the narrowed variant, its parameters, every role's trust, and the permissions the deploy role reaches", () => {
     expect(bootstrapFinding(world().context).state).toBe("verified");
     const parameter = (key: string, value: string) =>
       withStack(bootstrapStack, (stack) => ({
@@ -337,13 +412,11 @@ describe("the bootstrap check", () => {
         ],
       }));
     const statement = { Effect: "Allow", Action: "sts:AssumeRole" };
+    const execution = reply(roleKey("cfn-exec")) as { Role: Record<string, unknown> };
     const cases: [Record<string, Reply>, string][] = [
       [parameter("BootstrapVariant", "AWS CDK: Default Resources"), "not the narrowed variant"],
       [parameter("Qualifier", "hnb659fds"), "qualifier is not"],
-      [
-        parameter("CloudFormationExecutionPolicies", "arn:aws:iam::aws:policy/AdministratorAccess"),
-        "pinned execution policy",
-      ],
+      [parameter("CloudFormationExecutionPolicies", ADMINISTRATOR), "pinned execution policy"],
       [parameter("InputPermissionsBoundary", ""), "pinned execution policy"],
       [
         withStack(bootstrapStack, (stack) => ({ ...stack, Parameters: undefined })),
@@ -361,20 +434,66 @@ describe("the bootstrap check", () => {
         },
         "trusts someone other than",
       ],
-      [{ [roleKey("deploy")]: json({ Role: {} }) }, "trusts someone other than"],
-      [{ [roleKey("cfn-exec")]: json({ Role: {} }) }, "execution role"],
+      [{ [roleKey("image-publishing")]: json({ Role: {} }) }, "trusts someone other than"],
+      [
+        { [roleKey("cfn-exec")]: json({ Role: { ...execution.Role, PermissionsBoundary: {} } }) },
+        "lacks the boundary",
+      ],
       [
         {
-          "iam list-attached-role-policies": json({
-            AttachedPolicies: [{ PolicyArn: "arn:aws:iam::aws:policy/AdministratorAccess" }],
+          [roleKey("cfn-exec")]: json({
+            Role: {
+              ...execution.Role,
+              AssumeRolePolicyDocument: {
+                Version: "2012-10-17",
+                Statement: [
+                  {
+                    Effect: "Allow",
+                    Principal: { Service: "cloudformation.amazonaws.com" },
+                    Action: "sts:AssumeRole",
+                  },
+                  { ...statement, Principal: { AWS: "arn:aws:iam::111122223333:root" } },
+                ],
+              },
+            },
           }),
         },
-        "execution role",
+        "the execution role trusts more than CloudFormation",
       ],
-      [{ "iam list-attached-role-policies": json({}) }, "execution role"],
       [
         {
-          "iam get-role-policy": json({
+          [`iam list-attached-role-policies --role-name ${role("cfn-exec")}`]: json({
+            AttachedPolicies: [{ PolicyArn: ADMINISTRATOR }],
+          }),
+        },
+        "holds more than the bounded policy",
+      ],
+      [
+        { [`iam list-attached-role-policies --role-name ${role("cfn-exec")}`]: json({}) },
+        "holds more than the bounded policy",
+      ],
+      [
+        {
+          [`iam list-role-policies --role-name ${role("cfn-exec")}`]: json({
+            PolicyNames: ["escalate"],
+          }),
+          [`iam get-role-policy --role-name ${role("cfn-exec")} --policy-name escalate`]: json({
+            PolicyDocument: everything,
+          }),
+        },
+        "holds more than the bounded policy",
+      ],
+      [
+        {
+          [`iam get-role-policy --role-name ${role("deploy")} --policy-name default`]: json({
+            PolicyDocument: everything,
+          }),
+        },
+        `the bootstrap deploy role holds other permissions than the narrowed template's, which change ${ENVIRONMENT_STACK_NAME} alone`,
+      ],
+      [
+        {
+          [`iam get-role-policy --role-name ${role("deploy")} --policy-name default`]: json({
             PolicyDocument: {
               Statement: [
                 { Effect: "Allow", Action: ["cloudformation:UpdateStack"], Resource: "*" },
@@ -382,35 +501,86 @@ describe("the bootstrap check", () => {
             },
           }),
         },
-        `other than ${ENVIRONMENT_STACK_NAME}`,
+        "the bootstrap deploy role holds other permissions",
+      ],
+      [
+        {
+          [`iam list-attached-role-policies --role-name ${role("deploy")}`]: json({
+            AttachedPolicies: [{ PolicyArn: ADMINISTRATOR }],
+          }),
+        },
+        "the bootstrap deploy role holds other permissions",
+      ],
+      [
+        {
+          [`iam get-role-policy --role-name ${role("file-publishing")} --policy-name ${publishingPolicy}`]:
+            json({ PolicyDocument: everything }),
+        },
+        "the file-publishing role holds other permissions than the narrowed template's",
+      ],
+      [
+        { [`iam list-role-policies --role-name ${role("file-publishing")}`]: json({}) },
+        "the file-publishing role holds other permissions",
       ],
     ];
     for (const [replies, detail] of cases) {
       expect(bootstrapFinding(world(replies).context).detail).toContain(detail);
     }
-    const denied = {
+  });
+
+  it("judges the file-publishing role against the key the bootstrap created", () => {
+    const keyArn = `arn:aws:kms:us-east-2:${ACCOUNT}:key/1234abcd`;
+    const created = bootstrapPermissions(pinnedBootstrapTemplate(), ANCHORS, { keyId: "", keyArn });
+    const keyed = (outputs: unknown) => ({
+      ...withStack(bootstrapStack, (stack) => ({
+        ...stack,
+        Parameters: [
+          ...(stack["Parameters"] as { ParameterKey: string }[]).filter(
+            (entry) => entry.ParameterKey !== "FileAssetsBucketKmsKeyId",
+          ),
+          { ParameterKey: "FileAssetsBucketKmsKeyId", ParameterValue: "" },
+        ],
+        Outputs: outputs,
+      })),
+      [`iam get-role-policy --role-name ${role("file-publishing")} --policy-name ${publishingPolicy}`]:
+        json({ PolicyDocument: created.filePublishingInline[publishingPolicy] }),
+    });
+    expect(
+      bootstrapFinding(
+        world(keyed([{ OutputKey: "FileAssetKeyArn", OutputValue: keyArn }])).context,
+      ).state,
+    ).toBe("verified");
+    expect(bootstrapFinding(world(keyed(undefined)).context).detail).toContain(
+      "the file-publishing role holds other permissions",
+    );
+  });
+
+  it("ignores a refusal in a role's trust and a document's spelling", () => {
+    const [deployPolicy] = Object.values(BOOTSTRAP_PERMISSIONS.deployInline) as {
+      Statement: unknown[];
+    }[];
+    const tolerated = {
       [roleKey("image-publishing")]: json({
         Role: {
           AssumeRolePolicyDocument: {
             Statement: [
-              { ...statement, Principal: { AWS: ANCHORS.deployRoleArn } },
-              { ...statement, Effect: "Deny", Principal: { AWS: "*" } },
+              {
+                Effect: "Allow",
+                Action: "sts:AssumeRole",
+                Principal: { AWS: [ANCHORS.deployRoleArn] },
+              },
+              { Effect: "Deny", Action: "sts:AssumeRole", Principal: { AWS: "*" } },
             ],
           },
         },
       }),
-      "iam get-role-policy": json({
+      [`iam get-role-policy --role-name ${role("deploy")} --policy-name default`]: json({
         PolicyDocument: {
-          Statement: [
-            { Effect: "Allow", Action: "cloudformation:DescribeStacks", Resource: "*" },
-            { Effect: "Deny", Action: "cloudformation:*", Resource: "*" },
-          ],
+          ...deployPolicy,
+          Statement: [...(deployPolicy?.Statement ?? [])].reverse(),
         },
       }),
     };
-    expect(bootstrapFinding(world(denied).context).state).toBe("verified");
-    expect(bootstrapFinding(world({ "iam get-role-policy": json({}) }).context).state).toBe(
-      "verified",
-    );
+    expect(bootstrapFinding(world(tolerated).context).state).toBe("verified");
   });
 });

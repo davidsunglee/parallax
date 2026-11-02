@@ -332,7 +332,7 @@ infra-lint:
 [metadata("runtime:fast")]
 [doc("Duplicated-code scan over the infrastructure workspace.")]
 infra-lint-duplication:
-    pnpm exec jscpd --config {{infra}}/.jscpd.json
+    {{infra_isolated}} pnpm exec jscpd --config {{infra}}/.jscpd.json
 
 [metadata("runtime:fast")]
 [doc("Strict TypeScript over every infrastructure source, tool, and test.")]
@@ -387,7 +387,7 @@ infra-check-assembly: infra-build
 [metadata("runtime:fast")]
 [doc("Format the infrastructure workspace in place (rewrites tracked sources).")]
 infra-format:
-    cd {{infra}} && pnpm exec prettier --write .
+    cd {{infra}} && {{infra_isolated}} pnpm exec prettier --write .
 
 # ===========================================================================
 # Language: Python. The uv workspace lives under languages/python/packages/*;
