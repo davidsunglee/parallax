@@ -36,15 +36,19 @@ __all__ = [
     "PoolWatchingProvider",
     "RetentionForms",
     "RetentionShape",
+    "RoutedBalances",
     "a_handle_is_closed_by_leaving_its_scope_or_by_closing_it",
     "account_balances",
     "closing_snippet",
     "construction_snippet",
+    "each_scope_reads_where_its_policy_says",
     "every_retention_form_is_one_configuration_value",
     "observation_snippet",
     "one_configuration_opens_independent_runtimes",
     "pooled_database",
     "retention_snippet",
+    "routed_configuration",
+    "routing_snippet",
     "serve_account_balances",
     "serving_snippet",
     "the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes",
@@ -151,6 +155,61 @@ def one_configuration_opens_independent_runtimes(
     with second_root:
         second = second_root.using_database_login()
         return RetentionShape(first_rows, len(account_balances(second)))
+
+
+def routed_configuration(
+    writer_conninfo: str, reader_conninfo: str, credentials: CredentialSource | DriverManaged
+) -> PostgresAdapter:
+    """A writer and a reader on one adapter, which opens nothing either.
+
+    Each endpoint carries its own retention and credentials, and each route's
+    pool its own capacity: this root can hold up to thirty connections, ten on
+    the writer and twenty on the reader, in every process that opens it.
+    ``acquire_timeout`` is one budget per acquisition across both routes, so a
+    preferred read waits on the reader for at most half of it before the
+    writer gets the rest. ``reader_startup="deferrable"`` is what omitting it
+    means with a reader: a reader that cannot be reached when the root opens
+    leaves it opening with the reader pending, while a writer that cannot be
+    reached fails it.
+    """
+    return PostgresAdapter(
+        writer=PostgresEndpoint(writer_conninfo, credentials=credentials),
+        reader=PostgresEndpoint(
+            reader_conninfo, credentials=credentials, pool=PoolOptions(max_size=20)
+        ),
+        acquire_timeout=15.0,
+        reader_startup="deferrable",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RoutedBalances:
+    from_reader: list[Decimal]
+    from_writer: list[Decimal]
+    reader_or_writer: list[Decimal]
+
+
+def each_scope_reads_where_its_policy_says(
+    adapter: DatabaseAdapter, model: DomainModel
+) -> RoutedBalances:
+    """Three scopes over one root, each reading where its routing says.
+
+    With a reader configured, new reads default to ``reader_only``: served by
+    the reader or failed, and possibly behind the writer. ``writer_only`` is
+    how a read avoids that lag. ``reader_preferred`` reads from the reader and
+    moves to the writer only before anything runs — when the reader cannot be
+    reached, or loses its connection while being set up — and an operation
+    that moved stays on the writer for the rest of its pages and retries. None
+    of the three derivations opens anything, and writable transactions use the
+    writer whatever the scope says.
+    """
+    with connect(adapter, model) as root:
+        db = root.using_database_login()
+        return RoutedBalances(
+            from_reader=account_balances(db),
+            from_writer=account_balances(db.with_routing(read_policy="writer_only")),
+            reader_or_writer=account_balances(db.with_routing(read_policy="reader_preferred")),
+        )
 
 
 def account_balances(db: ScopedDatabase) -> list[Decimal]:
@@ -343,6 +402,10 @@ def closing_snippet() -> str:
 
 def retention_snippet() -> str:
     return _sources(one_configuration_opens_independent_runtimes, account_balances)
+
+
+def routing_snippet() -> str:
+    return _sources(routed_configuration, RoutedBalances, each_scope_reads_where_its_policy_says)
 
 
 def observation_snippet() -> str:

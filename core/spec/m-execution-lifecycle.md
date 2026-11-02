@@ -360,13 +360,13 @@ AttemptBeginFailed(failure)
 run, no child activity of the callback exists, and the outcome is terminal
 without retry however retriable the error's own category is. It carries an
 Activity Failure rather than an Attempt Failure, because there is no phase
-inside the attempt to locate and no classifier verdict to report. Its
-attribution is the ordinary rule rather than a fixed answer: the attempt's own
-Acquisition is a child it may hold, so a boundary that never opened because no
-connection was granted finishes `caused` naming that Acquisition, while one
-that refused to open on a connection the attempt did acquire finishes `direct`.
-Either way the invocation above finishes failed caused by that attempt under
-the ordinary chaining rule. A successful begin continues within the same
+inside the attempt to locate and no classifier verdict to report. An attempt's
+Acquisition is settled only once its boundary has opened (*Resource events*),
+so a boundary that never opened — no connection granted, or one granted whose
+boundary refused to open — is that Acquisition's failure, and the attempt
+finishes `caused` naming it under the ordinary Holding rule. The invocation
+above finishes failed caused by that attempt under the ordinary chaining
+rule. A successful begin continues within the same
 attempt with no second Started transition.
 
 `failure` and `triggeringFailure` are **Attempt Failures** containing:
@@ -385,12 +385,14 @@ The transaction topology is:
 
 1. Outer Invocation starts.
 2. One Transaction Attempt adopts an edition and starts.
-3. The attempt acquires the connection its boundary will open on.
-4. A begin failure — including an acquisition that granted none — finishes that
-   attempt `beginFailed` and the invocation failed, caused by the attempt,
-   without retry; the callback never runs.
-5. Successful begin continues the same attempt: callback and pre-commit work
-   run inside it.
+3. The attempt acquires the connection its boundary will open on; that
+   Acquisition finishes once the boundary has opened or failed to.
+4. A begin failure — an acquisition that granted none, or a boundary that
+   refused to open — fails that Acquisition, finishes the attempt `beginFailed`
+   caused by it, and fails the invocation, caused by the attempt, without retry;
+   the callback never runs.
+5. Successful begin finishes the Acquisition and continues the same attempt:
+   callback and pre-commit work run inside it.
 6. Commit or rollback settles the attempt, which then releases its connection
    before finishing.
 7. A retry starts another attempt under the same invocation, adopting afresh and
@@ -499,7 +501,9 @@ carry one.
 
 The Acquisition is its owner's FIRST child and the Release its LAST. A standalone
 Read acquires before its first statement; an attempt acquires before its boundary is
-asked to begin, so an acquisition that granted nothing is the begin failure above;
+asked to begin and settles that acquisition once the boundary has opened, before any
+child of its callback starts, so a boundary that never opened — on no connection or
+on one the adapter handed over — is a failed acquisition and the begin failure above;
 each standalone Stream Batch acquires after the batch opens and releases before that
 batch finishes. Root publication happens after the batch and therefore after release.
 Work that INHERITS a connection emits neither: a participating read, flush,
@@ -512,7 +516,9 @@ on it is still one Database Call.
 routing*): `writer-only`, `reader-only`, or `reader-preferred`. `route` is the
 `m-db-port` Route the lease landed on — `writer` or `reader` — and `fallback`
 the reason a preferred acquisition moved to the writer before any modeled work,
-`unavailable` or `connection-lost`, absent where it did not. A granted
+`unavailable` or `connection-lost`, absent where it did not. Both are the
+lease's final selection: an attempt's is read once its boundary opened or
+failed, so a lease the adapter moved while opening it reports where it ended. A granted
 Acquisition always names its route; a failed one names the route whose failure
 was terminal, and names none where it was refused before any route was
 selected. These are portable routing roles, never connection identity: no
@@ -534,7 +540,11 @@ or `release-unconfirmed`, each with the finite conditions it met on the way. On 
 failed Acquisition it is the partial cleanup that acquisition already ran over
 whatever it had taken, and is absent where it owned nothing to clean up; it
 rides there rather than on a Release because no hold was granted for a release
-to end. A failed Acquisition therefore emits NO Release.
+to end. A failed Acquisition therefore emits NO Release. An attempt whose
+boundary refused to open gives back the connection it was handed exactly once,
+as that failed Acquisition's cleanup, with `preparation-failed` as its reason
+unless the failure names a more specific acquisition reason; the boundary's own
+failure stays the one the attempt and the caller see.
 
 A cleanup fact never rewrites the outcome of the activity above it. A Read that
 published, a stream that exhausted or closed early, and an attempt that
@@ -546,13 +556,17 @@ rather than an outcome, stated where the events state it.
 `durationNs` follows the Database Call convention: monotonic elapsed time around
 the resource call alone, with the activity's own Started and Finished deliveries
 outside it. An Acquisition brackets asking the adapter for a connection and
-getting an answer, the cleanup a failed acquisition runs included; a Release
-brackets giving it back. `holdDurationNs` spans the whole exclusive use, from
-the moment the acquisition call answered to the moment the release completed, so
-it includes the Acquisition Finished delivery, every Handler that ran during the
-operation, and any pause a stream's consumer took. These measure
-composition-level calls: none of them claims exact physical occupancy, pure
-adapter time, or anything the adapter finishes in the background afterwards.
+getting an answer, the cleanup a failed acquisition runs included — and, for an
+attempt, on through opening its boundary, ending as the callback is about to
+begin or as the refused boundary's cleanup is answered; a Release brackets
+giving it back. `holdDurationNs` spans the whole exclusive use, from the moment
+the acquisition call answered to the moment the release completed, so it
+includes an attempt's boundary opening, the Acquisition Finished delivery,
+every Handler that ran during the operation, and any pause a stream's consumer
+took. An attempt's two intervals therefore overlap across its boundary's
+opening. These measure composition-level calls: none of them claims exact
+physical occupancy, pure adapter time, or anything the adapter finishes in the
+background afterwards.
 
 Acquisition and release still happen where no Provider is installed, where one
 declined, and after a Handler was quarantined — resource handling is execution
@@ -732,7 +746,7 @@ This module owns eleven cases:
 | retry exhaustion | every failed call, Flush, and attempt finishes before the next attempt; classifier truth remains retry-eligible when the budget ends |
 | joined invocation | the joined activity has no attempt of its own and no Acquisition, and its buffered write reaches the outer attempt's pre-commit Flush |
 | streamed delivery | a Stream root brackets one Stream Batch per page; every standalone batch acquires before its Database Calls and releases after conversion, while a participating batch emits neither resource child and uses its attempt's connection |
-| isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin, acquires a connection, finishes `beginFailed` `direct` with no callback and no retry, and releases what it took; the invocation finishes failed caused by it |
+| isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin; its Acquisition fails with the refused boundary, carrying the cleanup of the connection it was handed and followed by no Release; the attempt finishes `beginFailed` caused by it with no callback and no retry, and the invocation finishes failed caused by the attempt |
 | acquisition failure | the attempt's Acquisition grants nothing, carries the partial cleanup it ran and is followed by no Release, and the attempt finishes `beginFailed` caused by it |
 | cleanup after commit | a Release reporting an unconfirmed release leaves the attempt committed and the invocation committed |
 | predicate write | each nonempty predicate-selected write is one `predicate-write` Flush holding the writes buffered before it and then its own call, a matching-nothing one included; an empty one emits no Flush |

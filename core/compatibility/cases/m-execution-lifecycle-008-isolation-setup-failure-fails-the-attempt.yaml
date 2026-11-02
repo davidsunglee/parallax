@@ -1,7 +1,9 @@
 # Boundary case (m-execution-lifecycle x m-db-port): session setup that fails
-# opens NO boundary — the attempt that had already adopted its Model Edition
-# finishes `beginFailed`, the callback never runs, and the failure is terminal —
-# `api-conformance` lane.
+# opens NO boundary — the attempt's acquisition, settled only once its boundary
+# opens, fails with that refusal and cleans its lease up as its own, so no
+# Release follows; the attempt that had already adopted its Model Edition
+# finishes `beginFailed` caused by it, the callback never runs, and the failure
+# is terminal — `api-conformance` lane.
 model: models/account.yaml
 tags: [m-execution-lifecycle, m-unit-work, m-api-conformance, isolation, slice-snapshot-1]
 lane: api-conformance
@@ -46,20 +48,17 @@ then:
           - sequence: 4
             activity: 3
             parent: 2
-            acquisitionFinished: { outcome: acquired, route: writer }
+            acquisitionFinished:
+              outcome: failed
+              reason: preparation-failed
+              route: writer
+              cleanup: returned
+              attribution: direct
           - sequence: 5
-            activity: 4
-            parent: 2
-            releaseStarted: {}
-          - sequence: 6
-            activity: 4
-            parent: 2
-            releaseFinished: { cleanup: returned }
-          - sequence: 7
             activity: 2
             parent: 1
-            transactionAttemptFinished: { outcome: beginFailed, attribution: direct }
-          - sequence: 8
+            transactionAttemptFinished: { outcome: beginFailed, attribution: caused, cause: 3 }
+          - sequence: 6
             activity: 1
             parent: null
             transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 2 }

@@ -291,12 +291,12 @@ def test_an_acquisition_states_the_policy_it_requested_and_the_route_it_landed_o
     adapter = ScriptedAdapter(
         Read(rows=[NEW_ROW]),
         Transact(),
-        selections=[RouteSelection("reader")],
+        selections=[RouteSelection("writer", "unavailable")],
         routes=("writer", "reader"),
     )
 
     with _db(adapter, recorder) as _root_db:
-        db = _root_db.using_database_login()
+        db = _root_db.using_database_login().with_routing(read_policy="reader_preferred")
         _read(db)
         db.transact(lambda _tx: None)
 
@@ -305,8 +305,8 @@ def test_an_acquisition_states_the_policy_it_requested_and_the_route_it_landed_o
         _of(read, AcquisitionStarted),
         _of(read, AcquisitionFinished),
     )
-    assert read_started.route_policy == "reader_only"
-    assert read_finished.outcome == ConnectionAcquired("reader", None)
+    assert read_started.route_policy == "reader_preferred"
+    assert read_finished.outcome == ConnectionAcquired("writer", "unavailable")
     (attempt_started,) = _of(transaction, AcquisitionStarted)
     (attempt_finished,) = _of(transaction, AcquisitionFinished)
     assert attempt_started.route_policy == "writer_only"
@@ -573,6 +573,85 @@ def test_a_failed_acquisitions_duration_excludes_reading_its_cleanup_fact(
     assert finished.duration_ns == _STEP
 
 
+class _BurningBegin(ScriptedAdapter):
+    """A port whose boundary opening costs ``steps`` before it answers."""
+
+    def __init__(self, *script: Any, clock: _SteppingClock, steps: int, **options: Any) -> None:
+        super().__init__(*script, **options)
+        self._clock = clock
+        self._steps = steps
+
+    def transaction(self, body: Any, **options: Any) -> Any:
+        self._clock.burn(self._steps)
+        return super().transaction(body, **options)
+
+
+def test_an_attempts_acquisition_runs_through_its_boundary_and_its_hold_from_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The acquisition settles once the boundary has opened, so its duration
+    # runs from its opening reading to the reading taken as the body begins —
+    # across the five steps the BEGIN cost — while the hold still starts at the
+    # reading taken as entry returned. The two overlap across the BEGIN, and
+    # nothing of the callback is inside the acquisition.
+    clock = _stepping(monkeypatch)
+    recorder = RecordingLifecycleProvider()
+    adapter = _BurningBegin(Transact(), clock=clock, steps=5)
+
+    with _db(adapter, recorder) as _root_db:
+        _root_db.using_database_login().transact(lambda _tx: clock.burn(7))
+
+    (root,) = recorder.roots
+    (acquired,) = _of(root, AcquisitionFinished)
+    (released,) = _of(root, ReleaseFinished)
+    assert acquired.duration_ns == 7 * _STEP
+    assert released.duration_ns == _STEP
+    assert released.hold_duration_ns == 15 * _STEP
+    assert clock.readings == 5
+
+
+def test_a_refused_boundary_is_the_acquisitions_failure_measured_through_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _stepping(monkeypatch)
+    recorder = RecordingLifecycleProvider()
+    refused = DatabaseError(category=None, native_code="25P02", message="no boundary")
+    adapter = _BurningBegin(Transact(begin=refused), clock=clock, steps=5)
+
+    with _db(adapter, recorder) as _root_db, raises_contextualized(DatabaseError):
+        _root_db.using_database_login().transact(lambda _tx: None)
+
+    (root,) = recorder.roots
+    (finished,) = _of(root, AcquisitionFinished)
+    assert isinstance(finished.outcome, AcquisitionFailed)
+    assert finished.outcome.reason == "preparation_failed"
+    assert finished.outcome.cleanup_result == Returned()
+    assert finished.duration_ns == 7 * _STEP
+    assert _of(root, ReleaseStarted) == []
+    assert clock.readings == 3
+    assert adapter.cleanups == [Returned()]
+
+
+def test_a_boundary_that_moved_its_lease_reports_the_route_it_opened_on_before_any_work() -> None:
+    recorder = RecordingLifecycleProvider()
+    adapter = ScriptedAdapter(
+        Transact(Read(rows=[NEW_ROW]), rerouted=RouteSelection("writer", "connection_lost")),
+        routes=("writer", "reader"),
+    )
+
+    with _db(adapter, recorder) as _root_db:
+        db = _root_db.using_database_login().with_routing(read_policy="reader_preferred")
+        db.read_only(lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).results())
+
+    (root,) = recorder.roots
+    transitions = _transitions(root)
+    assert transitions.index("AcquisitionFinished") < transitions.index("ReadStarted")
+    (acquired,) = _of(root, AcquisitionFinished)
+    assert acquired.outcome == ConnectionAcquired("writer", "connection_lost")
+    (started,) = _of(root, AcquisitionStarted)
+    assert started.route_policy == "reader_preferred"
+
+
 def test_an_unobserved_operation_reads_no_lifecycle_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -797,6 +876,80 @@ def test_a_fatal_exception_on_the_releases_finished_deactivates_the_root_and_pro
     assert adapter.cleanups == [_handoff_failed()]
     assert provider.reported == []
     assert len(_resource_records(caplog)) == 1
+
+
+def test_a_fatal_exception_settling_an_attempts_acquisition_releases_its_lease_once() -> None:
+    # The boundary had opened when the Acquisition settled, so the interrupt
+    # raised there undoes it and the lease is given back once, through the
+    # attempt's own release; the callback never runs.
+    handler = _FailingOn(AcquisitionFinished, KeyboardInterrupt())
+    adapter = ScriptedAdapter(Transact())
+
+    with _db(adapter, _Provider(handler)) as _root_db, pytest.raises(KeyboardInterrupt):
+        _root_db.using_database_login().transact(lambda _tx: pytest.fail("never runs"))
+
+    assert adapter.acquisitions == 1
+    assert adapter.cleanups == [Returned()]
+    assert [type(call).__name__ for call in adapter.calls] == ["BeginCall", "RollbackCall"]
+
+
+def test_a_fatal_exception_settling_a_refused_boundary_still_cleans_its_lease_up_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    handler = _FailingOn(AcquisitionFinished, KeyboardInterrupt())
+    refused = DatabaseError(category=None, native_code="25P02", message="no boundary")
+    adapter = ScriptedAdapter(Transact(begin=refused), cleanup_results=[_handoff_failed()])
+
+    with (
+        caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
+        _db(adapter, _Provider(handler)) as _root_db,
+        pytest.raises(KeyboardInterrupt),
+    ):
+        _root_db.using_database_login().transact(lambda _tx: None)
+
+    assert adapter.cleanups == [_handoff_failed()]
+    assert [event for event in handler.seen if isinstance(event, ReleaseStarted)] == []
+    # Nobody received the cleanup fact, so the restricted log states it once.
+    assert len(_resource_records(caplog)) == 1
+
+
+def test_a_quarantined_handler_leaves_a_refused_boundarys_cleanup_to_the_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    handler = _FailingOn(AcquisitionStarted, RuntimeError("the exporter died"))
+    refused = DatabaseError(category=None, native_code="25P02", message="no boundary")
+    adapter = ScriptedAdapter(Transact(begin=refused), cleanup_results=[_handoff_failed()])
+
+    with (
+        caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
+        _db(adapter, _Provider(handler)) as _root_db,
+        raises_contextualized(DatabaseError),
+    ):
+        _root_db.using_database_login().transact(lambda _tx: None)
+
+    assert adapter.cleanups == [_handoff_failed()]
+    assert len(_resource_records(caplog)) == 1
+
+
+def test_a_refused_boundarys_cleanup_a_handler_received_is_not_logged_again(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    recorder = RecordingLifecycleProvider()
+    refused = DatabaseError(category=None, native_code="25P02", message="no boundary")
+    adapter = ScriptedAdapter(Transact(begin=refused), cleanup_results=[_handoff_failed()])
+
+    with (
+        caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME),
+        _db(adapter, recorder) as _root_db,
+        raises_contextualized(DatabaseError),
+    ):
+        _root_db.using_database_login().transact(lambda _tx: None)
+
+    (root,) = recorder.roots
+    (finished,) = _of(root, AcquisitionFinished)
+    assert isinstance(finished.outcome, AcquisitionFailed)
+    assert finished.outcome.cleanup_result == _handoff_failed()
+    assert _resource_records(caplog) == []
 
 
 class _UnusableRuntime:

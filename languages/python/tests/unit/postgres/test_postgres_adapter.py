@@ -1705,10 +1705,10 @@ def _leased(*connections: _FakeConnection) -> tuple[PostgresConnectionContext, _
     for connection in connections:
         initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
     pool = _FakePool(*connections)
+    route = PostgresRoute("writer", cast("Any", pool), ConnectionEstablishment())
     context = PostgresConnectionContext(
-        PostgresRoute("writer", cast("Any", pool), ConnectionEstablishment()),
+        ((route, monotonic() + 5.0),),
         _admitted,
-        monotonic() + 5.0,
         None,
         expected_login=None,
     )

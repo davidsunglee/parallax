@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from parallax.core._execution._routing import OperationRouting
 from parallax.core.db_port import ConnectionContext, DatabaseConnection, report_resource_issues
 from parallax.core.execution_lifecycle._activity import (
@@ -8,7 +10,7 @@ from parallax.core.execution_lifecycle._activity import (
     ConnectionReleaseActivity,
 )
 
-__all__ = ["enter_connection", "exit_connection"]
+__all__ = ["TransactionPreparation", "enter_connection", "exit_connection"]
 
 
 def enter_connection(
@@ -65,6 +67,99 @@ def enter_connection(
         _report_unheard(acquisition, resource)
         raise
     return acquired, acquisition.held_since_ns
+
+
+class TransactionPreparation:
+    """One outer attempt's acquisition, settled only once its boundary has opened.
+
+    An attempt's connection is not finished being prepared when the context's
+    entry returns: the native ``BEGIN`` is still to come, and a lease the
+    adapter is still setting up may change route there or fail. So the
+    acquisition stays open across the boundary's opening and settles exactly
+    once — :meth:`granted` on entry to the transaction body, before anything
+    of the attempt exists, or :meth:`unprepared` where the boundary never
+    opened. A failure while entering settles at once, as any acquisition's
+    does. Nothing modeled ever runs inside the open acquisition: the body's
+    first act is to settle it.
+
+    An unprepared lease is cleaned up here, as the failed acquisition's own
+    cleanup, so its owner opens no Release for it; a granted one is released
+    by the owner as every lease is.
+    """
+
+    __slots__ = ("_acquisition", "_resource", "_routing", "_state")
+
+    def __init__(
+        self, resource: ConnectionContext, owner: ConnectionOwnerActivity, routing: OperationRouting
+    ) -> None:
+        self._resource = resource
+        self._routing = routing
+        self._acquisition = owner.acquisition(routing.policy)
+        self._state: Literal["unentered", "pending", "granted", "unprepared"] = "unentered"
+
+    @property
+    def pending(self) -> bool:
+        """Whether the lease was entered and is not yet settled either way."""
+        return self._state == "pending"
+
+    @property
+    def releasable(self) -> bool:
+        """Whether the lease was granted, and so is its owner's to release."""
+        return self._state == "granted"
+
+    @property
+    def held_since_ns(self) -> int | None:
+        """When the lease's entry returned, for an acquisition that measured it."""
+        return self._acquisition.held_since_ns
+
+    def enter(self) -> DatabaseConnection:
+        """Open the acquisition and enter the lease, or raise having settled both."""
+        acquisition = self._acquisition
+        resource = self._resource
+        acquisition.__enter__()
+        self._state = "pending"
+        try:
+            connection = resource.__enter__()
+        except BaseException as failure:
+            acquisition.call_returned()
+            self._settle_failed(failure, entered=False)
+            raise
+        acquisition.call_returned()
+        return connection
+
+    def granted(self) -> None:
+        """Settle the acquisition as granted, on the route the lease ended on."""
+        self._state = "granted"
+        acquisition = self._acquisition
+        acquisition.prepared()
+        selection = self._resource.selection
+        self._routing.record(selection)
+        acquisition.acquired(selection)
+        acquisition.__exit__(None, None, None)
+
+    def unprepared(self, failure: BaseException) -> None:
+        """Settle the acquisition as failed by ``failure``, the boundary that
+        never opened, cleaning its lease up once as that acquisition's own."""
+        self._acquisition.prepared()
+        self._settle_failed(failure, entered=True)
+
+    def _settle_failed(self, failure: BaseException, *, entered: bool) -> None:
+        self._state = "unprepared"
+        acquisition = self._acquisition
+        resource = self._resource
+        try:
+            if entered:
+                _leave(resource, failure)
+        finally:
+            try:
+                selection = resource.selection
+                self._routing.record(selection)
+                acquisition.unacquired(resource.cleanup_result, selection)
+            finally:
+                try:
+                    acquisition.__exit__(type(failure), failure, failure.__traceback__)
+                finally:
+                    _report_unheard(acquisition, resource)
 
 
 def exit_connection(

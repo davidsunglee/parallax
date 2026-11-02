@@ -361,3 +361,73 @@ def test_a_join_never_reaches_the_read_only_capability_check() -> None:
 
     assert joined == "joined"
     assert adapter.requested_policies == ["writer_only"]
+
+
+@pytest.mark.parametrize(
+    ("isolation", "requested"),
+    [
+        ("read_committed", "reader_preferred"),
+        ("repeatable_read", "reader_preferred"),
+        ("serializable", "writer_only"),
+    ],
+)
+def test_a_preferred_read_only_level_the_reader_cannot_begin_asks_for_the_writer(
+    isolation: Any, requested: RoutePolicy
+) -> None:
+    assert read_only_policy("reader_preferred", isolation, _STANDBY) == requested
+
+
+def test_a_preferred_level_the_reader_cannot_begin_requests_the_writer_without_a_fallback() -> None:
+    # Choosing the writer for a level the reader cannot begin is decided before
+    # anything acquires, so it is no outage fallback and earns no stickiness.
+    adapter = ScriptedAdapter(Transact(), Transact(), routes=_STANDBY)
+    scope = root(adapter, read_policy="reader_preferred").using_database_login()
+
+    scope.read_only(lambda _attempt: None, itself, isolation="serializable")
+    scope.read_only(lambda _attempt: None, itself, isolation="repeatable_read")
+
+    assert adapter.requested_policies == ["writer_only", "reader_preferred"]
+
+
+# --------------------------------------------------------------------------- #
+# An attempt's selection settles once its boundary has opened.                 #
+# --------------------------------------------------------------------------- #
+
+_LOST_AT_BEGIN: Final = RouteSelection("writer", "connection_lost")
+
+
+def test_a_boundary_that_moved_its_lease_settles_the_route_it_opened_on() -> None:
+    # The lease reported the reader on entry and the writer once its BEGIN was
+    # replaced there; the attempt's callback runs once, after that settles,
+    # and every later attempt of the invocation requests the writer.
+    deadlock = DatabaseError(category="deadlock", native_code="40P01", message="deadlock")
+    adapter = ScriptedAdapter(
+        Transact(commit=deadlock, rerouted=_LOST_AT_BEGIN),
+        Transact(),
+        routes=("writer", "reader"),
+    )
+    scope = root(adapter, read_policy="reader_preferred").using_database_login()
+    callbacks: list[object] = []
+
+    scope.read_only(callbacks.append, itself, max_retries=1)
+
+    assert len(callbacks) == 2
+    assert adapter.requested_policies == ["reader_preferred", "writer_only"]
+
+
+def test_a_boundary_that_moved_its_lease_and_then_failed_still_records_the_move() -> None:
+    refused = DatabaseError(category=None, native_code="25P02", message="no boundary")
+    adapter = ScriptedAdapter(
+        Transact(begin=refused, rerouted=_LOST_AT_BEGIN),
+        routes=("writer", "reader"),
+    )
+    scope = root(adapter, read_policy="reader_preferred").using_database_login()
+
+    with pytest.raises(ExecutionFailure) as failed:
+        scope.read_only(lambda _attempt: pytest.fail("the callback must never run"), itself)
+
+    assert failed.value.cause is refused
+    assert adapter.requested_policies == ["reader_preferred"]
+    # The lease was cleaned up once, as the acquisition's own cleanup, and no
+    # release followed it.
+    assert len(adapter.cleanups) == 1

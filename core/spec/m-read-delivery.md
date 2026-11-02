@@ -676,6 +676,15 @@ is the resource form of the per-page consistency contract above, not transparent
 recovery from a connection lost while a page was running. Such a loss fails that page,
 and the already-published prefix stands.
 
+Each page's lease is a new acquisition under the delivery's Read Policy
+(`m-execution` *Read routing*), so pages may land on different Routes and, on a
+reader, observe different replay positions: rows a lagging reader has not yet
+applied may be missing, and a delivery may appear exhausted early. Neither route
+gives a standalone delivery one snapshot. A page whose acquisition fell back to the
+writer did so before it ran any statement, and every later page of that delivery
+requests the writer; a participating delivery inherits its attempt's route along
+with its connection.
+
 Capacity not occupied by the current page is available to independent work, including
 an operation started inside the consuming loop. A pool with one slot can therefore
 serve that work between page reads without waiting for the delivery's scope to close.

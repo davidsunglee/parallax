@@ -60,6 +60,30 @@ def test_the_documented_retention_forms_are_the_four_the_guide_distinguishes() -
     }
 
 
+def test_the_routed_configuration_names_each_route_s_own_retention() -> None:
+    credentials = Password("hunter2")
+
+    adapter = stories.routed_configuration(
+        "postgresql://app@writer/app", "postgresql://app@reader/app", credentials
+    )
+
+    assert adapter.writer.pool == PoolOptions()
+    assert adapter.reader is not None and adapter.reader.pool == PoolOptions(max_size=20)
+    assert (adapter.acquire_timeout, adapter.reader_startup) == (15.0, "deferrable")
+
+
+def test_each_routed_scope_requests_the_policy_its_story_names() -> None:
+    adapter = ScriptedAdapter(Read(rows=[_ROW], times=3), routes=("writer", "reader"))
+
+    balances = stories.each_scope_reads_where_its_policy_says(adapter, ACCOUNT_MODEL)
+
+    assert balances == stories.RoutedBalances(
+        [Decimal("10.00")], [Decimal("10.00")], [Decimal("10.00")]
+    )
+    assert adapter.requested_policies == ["reader_only", "writer_only", "reader_preferred"]
+    assert adapter.closes == 1
+
+
 def test_both_model_forms_connect_and_both_closes_give_the_runtime_back() -> None:
     # Two connections over one adapter, one closed by leaving its scope and one
     # closed explicitly: two runtimes opened, two closed, and the Serving Model

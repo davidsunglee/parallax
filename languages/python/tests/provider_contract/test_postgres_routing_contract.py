@@ -7,8 +7,9 @@ endpoint names itself through ``application_name``, so the server, not the
 adapter's own diagnostics, says where a lease landed. What a reader route
 observes about the writer's changes needs a real standby and is proved apart
 from this. Refusal and recovery of a pending reader, a reader authenticating
-another login, and concurrent proofs are ``tests/unit/postgres``'s, because a
-server will not produce them on demand.
+another login, concurrent proofs, the probe slot, and a connection lost while
+it is being set up are ``tests/unit/postgres``'s, because a server will not
+produce them on demand.
 """
 
 from __future__ import annotations
@@ -18,12 +19,17 @@ from contextlib import closing
 from typing import Any
 
 import pytest
+from psycopg.conninfo import make_conninfo
 
 from parallax.core.db_port import (
+    Committed,
     ConnectionAcquisitionError,
+    DatabaseConnection,
     DatabaseStartupError,
     Password,
     PoolAvailable,
+    RouteSelection,
+    Row,
 )
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresEndpoint
 
@@ -61,6 +67,10 @@ def _where(runtime: Any, policy: str, role: Any = None) -> tuple[object, ...]:
     with source.new_context(policy) as connection:
         (row,) = connection.execute(_WHERE, [])
     return row
+
+
+def _where_inside(port: DatabaseConnection) -> list[Row]:
+    return port.execute(_WHERE, [])
 
 
 def _unreachable_endpoint(profile_run: Any) -> PostgresEndpoint:
@@ -184,24 +194,104 @@ def test_an_unreachable_reader_fails_the_open_when_it_is_required(profile_run: A
     assert (failed.value.route, failed.value.phase) == ("reader", "acquire")
 
 
-@pytest.mark.adapter_smoke
-def test_a_reader_whose_login_the_server_rejects_reads_as_unreachable(
-    profile_run: Any,
-) -> None:
-    # The driver reports a refusal the server sent while connecting without its
-    # SQLSTATE, so a rejected reader login is classified exactly as an outage:
-    # required readiness fails the open on it, and deferrable readiness would
-    # defer it.
-    adapter = _routed(
-        profile_run,
-        _reader(profile_run, pool=OnDemandOptions(), credentials=Password("not-the-secret")),
-        startup_timeout=10.0,
-        reader_startup="required",
+def _missing_database(endpoint: PostgresEndpoint) -> PostgresEndpoint:
+    """``endpoint`` naming a database the server does not have."""
+    return PostgresEndpoint(
+        make_conninfo(endpoint.connection_string, dbname="parallax_no_such_database"),
+        credentials=endpoint.credentials,
+        pool=OnDemandOptions(),
     )
+
+
+@pytest.mark.adapter_smoke
+@pytest.mark.parametrize("refusal", ["rejected-password", "missing-database"])
+def test_a_reader_the_server_refuses_once_its_password_is_sent_fails_even_deferrable_startup(
+    profile_run: Any, refusal: str
+) -> None:
+    # The driver reports the refusal with no SQLSTATE, but the failed
+    # connection says it sent the password, so the server was reached and
+    # refused it: an authentication refusal rather than an outage. A database
+    # that does not exist is refused only after the login was accepted, and
+    # reaches the client the same way.
+    reader = (
+        _reader(profile_run, pool=OnDemandOptions(), credentials=Password("not-the-secret"))
+        if refusal == "rejected-password"
+        else _missing_database(_reader(profile_run))
+    )
+    adapter = _routed(profile_run, reader, startup_timeout=10.0)
 
     with pytest.raises(DatabaseStartupError) as failed:
         adapter.open()
 
     assert (failed.value.route, failed.value.phase) == ("reader", "acquire")
     cause = failed.value.__cause__
-    assert isinstance(cause, ConnectionAcquisitionError) and cause.reason == "unavailable"
+    assert isinstance(cause, ConnectionAcquisitionError)
+    assert cause.reason == "authentication_refused"
+
+
+@pytest.mark.adapter_smoke
+def test_a_preferred_read_is_served_by_a_healthy_reader(profile_run: Any) -> None:
+    runtime = _routed(profile_run, _reader(profile_run, pool=OnDemandOptions())).open()
+    try:
+        resource = runtime.login_source().new_context("reader_preferred")
+        with resource as connection:
+            (row,) = connection.execute(_WHERE, [])
+    finally:
+        runtime.close()
+
+    assert row == ("parallax-test-reader", runtime.login_identity)
+    assert resource.selection == RouteSelection("reader")
+
+
+@pytest.mark.adapter_smoke
+def test_a_preferred_read_falls_back_to_the_writer_from_an_unreachable_reader(
+    profile_run: Any,
+) -> None:
+    runtime = _routed(
+        profile_run,
+        _unreachable_endpoint(profile_run),
+        acquire_timeout=4.0,
+        startup_timeout=10.0,
+    ).open()
+    role = profile_run.authorization("role-a")
+    try:
+        resource = runtime.principal_source(role).new_context("reader_preferred")
+        with resource as connection:
+            (row,) = connection.execute(
+                "select current_setting('application_name') as route, current_user as role", []
+            )
+        transaction = runtime.login_source().new_context("reader_preferred")
+        with transaction as connection:
+            outcome = connection.transaction(
+                _where_inside,
+                isolation="repeatable_read",
+                access_mode="read_only",
+            )
+    finally:
+        runtime.close()
+
+    assert row == ("parallax-test-writer", role.name)
+    assert resource.selection == RouteSelection("writer", "unavailable")
+    assert outcome == Committed([("parallax-test-writer", runtime.login_identity)])
+    assert transaction.selection == RouteSelection("writer", "unavailable")
+
+
+@pytest.mark.adapter_smoke
+def test_a_preferred_read_does_not_fall_back_from_a_busy_reader(profile_run: Any) -> None:
+    runtime = _routed(
+        profile_run,
+        _reader(profile_run, pool=PoolOptions(min_size=0, max_size=1)),
+        acquire_timeout=1.0,
+    ).open()
+    try:
+        source = runtime.login_source()
+        with (
+            source.new_context("reader_only"),
+            pytest.raises(ConnectionAcquisitionError) as busy,
+        ):
+            source.new_context("reader_preferred").__enter__()
+    finally:
+        runtime.close()
+
+    assert busy.value.reason == "timeout"
+    assert busy.value.selection == RouteSelection("reader")

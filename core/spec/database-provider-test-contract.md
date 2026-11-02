@@ -146,9 +146,16 @@ For every supported adapter, the smoke suite covers:
   standby refuses. Readiness proves the writer and then the reader; an
   unreachable reader fails the open where the reader is required and is left
   pending where it may defer, and the open releases both routes whenever it
-  fails. A different login on the reader, refusal and recovery of a pending
-  reader, and concurrent proofs belong to the language's own internal suites,
-  because a server will not produce them on demand. No replication is involved:
+  fails. A reader the server refuses once the login's credential was offered —
+  a rejected password, or a database that does not exist — is an
+  authentication refusal that fails the open even where the reader may defer.
+  A preferred acquisition is served by a healthy reader, falls back to the
+  writer from an unreachable one — a transaction opening its boundary there,
+  under the bound authorization — and does not fall back from a reader that is
+  merely busy. A different login on the reader, refusal and recovery of a
+  pending reader, concurrent proofs, the probe slot, deadline allocation, and a
+  connection lost while being set up belong to the language's own internal
+  suites, because a server will not produce them on demand. No replication is involved:
   what the reader route observes about the writer's changes is the subject of a
   separate standby proof
 - a **connection that is idle between operations**: a standalone statement opens

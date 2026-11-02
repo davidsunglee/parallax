@@ -79,7 +79,11 @@ A `reader=PostgresEndpoint(...)` beside the `writer` declares a reader route
 with its own credentials and retention. New reads then default to it, writable
 transactions stay on the writer, and both routes must authenticate the same
 login; `reader_startup="required"` makes an unreachable reader fail `connect`
-instead of leaving the reader pending.
+instead of leaving the reader pending. `with_routing(read_policy="reader_preferred")`
+reads from the reader and moves to the writer, within the same
+`acquire_timeout`, only where the reader cannot be reached or loses its
+connection before any of your work runs; each route keeps its own `max_size`,
+so a two-route root can hold both pools' connections in every process.
 
 An endpoint's `pool=PoolOptions(...)` keeps connections between operations;
 `pool=OnDemandOptions(...)` keeps none, closing each on release unless a caller
@@ -102,8 +106,8 @@ down:
 - process and application-server lifetime — post-fork construction, the ASGI
   lifespan, offloading complete operations, and why pool capacity is not HTTP
   concurrency;
-- writer and reader routes, deferred reader readiness, and what a reader read
-  does while the reader is unreachable;
+- writer and reader routes, deferred reader readiness, preferred reads and
+  their fallback, and sizing two routes' pools;
 - connection budgeting across workers, replicas and runtimes;
 - observing the pool, and what its measurements do and do not mean;
 - which session settings are required, which are preserved;

@@ -303,9 +303,55 @@ context selects the route that serves the lease and reports it as the context's
 **Route Selection**: the route, and the **fallback reason** — `unavailable` or
 `connection-lost` — where a preferred acquisition moved from the reader to the
 writer before any modeled work. Like the cleanup result, the selection is absent
-before entry and stable once entry returns or raises; a failed entry that
-selected a route reports it on the context and on the acquisition failure it
-raises alike, and one refused before any route was selected reports none.
+before entry; a failed entry that selected a route reports it on the context and
+on the acquisition failure it raises alike, and one refused before any route was
+selected reports none. Entry's setup is not always the last: a transaction's
+outer boundary opens on the entered lease and MAY still move it (*A preferred
+acquisition*, below), so the selection is stable once the lease's setup has
+ended — at entry for every other lease, and once the outer boundary has opened
+or failed for a transaction attempt's. Nothing modeled runs before then.
+
+**A preferred acquisition tries the reader within half its budget.** Every
+acquisition has ONE absolute budget. A `reader-only` or `writer-only` one spends
+all of it on its route. A `reader-preferred` one gives the reader at most half,
+measured from the acquisition's start, and the writer whatever remains of the
+whole: every reader setup phase — checkout, admission, a pending reader's proof,
+authorization setup, and the outer boundary's opening — spends that same
+budget, and nothing earns a fresh allowance. It moves to the writer for exactly
+two reasons, both before any callback or modeled statement runs:
+
+- **unavailable** — the reader could not be reached: its checkout failed as
+  *unavailable* (below), or the reader is already known to be unreachable and
+  another acquisition is the one probing it;
+- **connection-lost** — the connection the reader handed over was lost at the
+  lease's first submission while that submission was setup — a pending reader's
+  proof, authorization setup, or the outer boundary — and the replacement rule
+  below would have permitted resubmitting it. That one replacement opportunity
+  is spent moving to the writer instead of retrying on the reader, and the lost
+  connection is disposed of first; a disposal that was not established ends the
+  acquisition rather than licensing the move.
+
+Nothing else moves it: a spent half with no failure on record, a full queue, a
+closed runtime, a credential, authentication, or authorization refusal, a
+reader `refused` at verification, any other preparation failure, and a loss
+after the lease's first submission each end the acquisition on the reader. A
+read the caller designated is modeled work, so its replacement stays on the
+route that began serving it. A lease that moved keeps the bound authorization:
+the writer's connection is authorized before it is admitted, and authorization
+setup there is no longer the lease's first submission, so it earns no
+replacement of its own.
+
+A reader known to be unreachable — its latest establishment outcome is that it
+could not be reached, and it holds no idle connection that could serve
+regardless — is tried again only on demand: one preferred acquisition at a time
+holds its **probe slot** and checks out within its half, and every other
+preferred acquisition moves to the writer at once without waiting on the
+reader. The holder's own spent half is *unavailable* only under the same
+evidence rule as any wait's; outage known before the wait does not explain it.
+Any connection the route hands over ends that knowledge. No route is skipped for
+good and nothing probes in the background, so a `reader-only` acquisition
+always waits on the reader for its whole budget and recovers as soon as the
+reader does.
 
 **A runtime is ready or it is not.** Opening returns only a runtime that has
 proved it can execute: waiting for retained capacity, where a mode retains any,
@@ -468,8 +514,16 @@ otherwise: a dial the server refused for any reason not classified here, a
 session configuration the codecs cannot execute under, a checkout that handed
 over a connection which was not idle, and a route `refused` at verification.
 Authorization failure means the provider could not establish the source's bound
-authorization. Authentication refused means the server rejected the login it
-was offered, where the driver reports that distinctly. Credentials refused means
+authorization. Authentication refused means the server was reached and refused
+the connection once it was offered the login's credential: an
+authorization-class refusal, and — where a driver reports a connect-time
+refusal without its code — a failed dial that reports the credential it sent.
+Such a refusal covers whatever the server refused once that credential was
+exchanged, a rejected credential and a refusal sent only after the login was
+accepted alike, because nothing the client receives tells them apart. A refusal
+the server sends before any credential is exchanged, with no code to name it, is
+indistinguishable from a server that cannot be reached and reads as unavailable.
+Credentials refused means
 the Credential Source produced no credential, so nothing was offered to the
 server. Each refusal is reported wherever it is what the acquisition met,
 whether it was raised on the acquiring thread or read from what the route last

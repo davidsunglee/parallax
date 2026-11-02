@@ -3,8 +3,6 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING, Literal
 
-import psycopg
-
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ConnectionAcquisitionError,
@@ -13,7 +11,7 @@ from parallax.core.db_port import (
     StartupPhase,
     report_resource_issues,
 )
-from parallax.postgres._connection import DialFailure, dial_reason
+from parallax.postgres._connection import DialFailure, session_lost
 from parallax.postgres._options import PoolOptions
 from parallax.postgres._route import (
     PROBE_SQL,
@@ -176,7 +174,7 @@ def _minimum_failure(failure: DialFailure | None) -> str:
     if failure.reason == "unavailable":
         return "no database connection this runtime tried to open could reach its server"
     if failure.reason == "authentication_refused":
-        return "no database connection this runtime opened had its login accepted"
+        return "no database connection this runtime opened was accepted once its login was offered"
     return "no database connection this runtime opened became usable"
 
 
@@ -246,7 +244,7 @@ def _probe(
 def _lost(failure: Exception) -> bool:
     """Whether a probe failed only because its connection could not be kept."""
     native = failure.__cause__ if isinstance(failure, DatabaseError) else failure
-    return isinstance(native, psycopg.Error) and dial_reason(native) == "unavailable"
+    return native is not None and session_lost(native)
 
 
 def _remaining(route: PostgresRoute, deadline: float, phase: StartupPhase) -> float:

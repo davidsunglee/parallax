@@ -2,7 +2,8 @@
 
 A database declaring a reader defaults every NEW read to it — an eager graph, a
 row read, each standalone stream page, and an outer read-only transaction — and
-keeps writable transactions on the writer. Work inside a transaction acquires
+keeps writable transactions on the writer. A preferred read that fell back keeps
+the rest of its operation on the writer. Work inside a transaction acquires
 nothing and so requests nothing, whichever context it runs in. The routing
 rules themselves are core's; these pin that the facades reach them the same way.
 """
@@ -18,7 +19,7 @@ import pytest
 
 from parallax.conformance.scripted_clock import FixedClock
 from parallax.conformance.story_models import ORDERS_MODEL, Order
-from parallax.core.db_port import Route, RouteCapabilities, RoutePolicy
+from parallax.core.db_port import Route, RouteCapabilities, RoutePolicy, RouteSelection
 from parallax.snapshot import Database, ReadOnlyTxnContext, ScopedDatabase, TxnContext, connect
 from tests._support.db_port import Read, ScriptedAdapter, Transact
 from tests._support.root_ownership import own_root
@@ -136,3 +137,44 @@ def test_a_read_only_level_the_reader_cannot_begin_is_refused_before_acquiring()
     db.with_routing(read_policy="writer_only").read_only(lambda _tx: None, isolation="serializable")
 
     assert adapter.requested_policies == ["writer_only"]
+
+
+_FELL_BACK: Final = RouteSelection("writer", "unavailable")
+
+
+@pytest.mark.parametrize("shape", list(_SHAPES))
+def test_every_preferred_read_shape_stays_on_the_writer_once_it_fell_back(shape: str) -> None:
+    # An eager read is one acquisition; a stream that fell back on its first
+    # page requests the writer for every later page, Typed and Wire alike.
+    read, script, acquisitions = _SHAPES[shape]
+    adapter = ScriptedAdapter(*script, selections=[_FELL_BACK], routes=_STANDBY)
+
+    read(_scope(adapter, "reader_preferred"))
+
+    assert adapter.requested_policies == ["reader_preferred"] + ["writer_only"] * (acquisitions - 1)
+
+
+def test_a_preferred_read_only_level_the_reader_cannot_begin_requests_the_writer() -> None:
+    adapter = ScriptedAdapter(Transact(Read(rows=_ROWS)), Transact(), routes=_STANDBY)
+    db = _scope(adapter, "reader_preferred")
+
+    db.read_only(lambda tx: tx.wire.find(_query()).results(), isolation="serializable")
+    db.read_only(lambda _tx: None, isolation="repeatable_read")
+
+    assert adapter.requested_policies == ["writer_only", "reader_preferred"]
+
+
+def test_a_preferred_read_only_transaction_that_moved_at_begin_runs_its_reads_once() -> None:
+    adapter = ScriptedAdapter(
+        Transact(Read(rows=_ROWS), rerouted=RouteSelection("writer", "connection_lost")),
+        Read(rows=_ROWS),
+        routes=_STANDBY,
+    )
+    db = _scope(adapter, "reader_preferred")
+
+    found = db.read_only(lambda tx: [order.id for order in tx.find(_query()).results()])
+    # A new operation starts afresh from the scope's own policy.
+    db.find(_query()).results()
+
+    assert found == [1, 2, 3]
+    assert adapter.requested_policies == ["reader_preferred", "reader_preferred"]

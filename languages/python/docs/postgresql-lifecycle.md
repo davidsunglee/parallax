@@ -350,9 +350,65 @@ such a root requests the writer route, which is the only one it declares.
 Giving the adapter a `reader=PostgresEndpoint(...)` as well as its `writer`
 declares a second route with its own pool, credentials and retention. The root
 still opens one runtime and closes both pools with it, and both share one
-`acquire_timeout` and one `startup_timeout`. Each pool keeps its own capacity,
-so a root with both routes at the default `max_size=10` can hold twenty
-connections, multiplied by every process that opens one.
+`acquire_timeout` and one `startup_timeout`.
+
+<!-- story: routing_snippet -->
+
+```python
+def routed_configuration(
+    writer_conninfo: str, reader_conninfo: str, credentials: CredentialSource | DriverManaged
+) -> PostgresAdapter:
+    """A writer and a reader on one adapter, which opens nothing either.
+
+    Each endpoint carries its own retention and credentials, and each route's
+    pool its own capacity: this root can hold up to thirty connections, ten on
+    the writer and twenty on the reader, in every process that opens it.
+    ``acquire_timeout`` is one budget per acquisition across both routes, so a
+    preferred read waits on the reader for at most half of it before the
+    writer gets the rest. ``reader_startup="deferrable"`` is what omitting it
+    means with a reader: a reader that cannot be reached when the root opens
+    leaves it opening with the reader pending, while a writer that cannot be
+    reached fails it.
+    """
+    return PostgresAdapter(
+        writer=PostgresEndpoint(writer_conninfo, credentials=credentials),
+        reader=PostgresEndpoint(
+            reader_conninfo, credentials=credentials, pool=PoolOptions(max_size=20)
+        ),
+        acquire_timeout=15.0,
+        reader_startup="deferrable",
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RoutedBalances:
+    from_reader: list[Decimal]
+    from_writer: list[Decimal]
+    reader_or_writer: list[Decimal]
+
+
+def each_scope_reads_where_its_policy_says(
+    adapter: DatabaseAdapter, model: DomainModel
+) -> RoutedBalances:
+    """Three scopes over one root, each reading where its routing says.
+
+    With a reader configured, new reads default to ``reader_only``: served by
+    the reader or failed, and possibly behind the writer. ``writer_only`` is
+    how a read avoids that lag. ``reader_preferred`` reads from the reader and
+    moves to the writer only before anything runs — when the reader cannot be
+    reached, or loses its connection while being set up — and an operation
+    that moved stays on the writer for the rest of its pages and retries. None
+    of the three derivations opens anything, and writable transactions use the
+    writer whatever the scope says.
+    """
+    with connect(adapter, model) as root:
+        db = root.using_database_login()
+        return RoutedBalances(
+            from_reader=account_balances(db),
+            from_writer=account_balances(db.with_routing(read_policy="writer_only")),
+            reader_or_writer=account_balances(db.with_routing(read_policy="reader_preferred")),
+        )
+```
 
 With a reader declared, new reads default to it: an eager read, each standalone
 delivery page, and every attempt of a `read_only` transaction request
@@ -363,8 +419,63 @@ writer, which is how a caller avoids replica lag; nothing fences reads behind
 writes automatically. A reader endpoint promises no physical replica: an Aurora
 reader endpoint reaches the writer when the cluster has no replicas. A hot
 standby cannot begin a Serializable read-only transaction, so the reader route
-does not declare it, and a `read_only(..., isolation="serializable")` under
-`reader_only` is refused before anything is acquired.
+does not declare it: a `read_only(..., isolation="serializable")` under
+`reader_only` is refused before anything is acquired, and under
+`reader_preferred` it requests the writer, reporting no fallback.
+
+### Preferred reads and fallback
+
+`reader_preferred` gives the reader at most half of `acquire_timeout` and the
+writer whatever remains of the whole. It moves to the writer for two reasons
+only, both before any of your code or modeled SQL runs: the reader could not be
+reached (`fallback="unavailable"`), or the connection it handed over was lost
+while it was still being set up — its proof, a principal's `SET ROLE`, or a
+transaction's first `BEGIN` (`fallback="connection_lost"`). That loss is the
+same single resend a broken connection's first request always gets, spent on
+the writer instead; a request that loses its connection after something else
+was already sent on it, and a read's own resend, are not fallbacks. Nothing is
+replayed that would not have been, and an active transaction never moves.
+
+Everything else ends the acquisition instead: a reader that is merely busy until
+its half runs out (`timeout`), a full queue, a closed root, a refused credential
+or login, a role the reader denies, a reader whose verification refused it, and
+a connection whose disposal could not be confirmed. A busy reader is never
+mistaken for an unreachable one: a spent half reads as unreachable only where a
+connection the reader tried to open during that same wait failed to reach its
+server. A retaining reader opens connections on its own threads and cannot wake
+a waiting caller when one fails, so that is noticed at the half; an on-demand
+reader opens them on the caller's thread, so it is noticed at once.
+
+Once the reader is known to be unreachable and holds no idle connection, one
+preferred acquisition at a time tries it again within its half — which is what
+re-dials it, since nothing probes it in the background — and every other one
+goes straight to the writer. The first connection it hands over clears that
+knowledge and every acquisition returns to the reader. Strict `reader_only`
+reads always wait on the reader for their whole budget, so they recover as soon
+as it does. After a fallback, the rest of that operation stays on the writer:
+every later page of a standalone delivery and every permitted retry of a
+`read_only` transaction requests `writer_only`. A transaction attempt reports
+the route its boundary actually opened on, so its Acquisition finishes only once
+`BEGIN` has opened; its acquisition duration runs through `BEGIN` while its hold
+starts when the connection was handed over.
+
+Preferred reads hide an unavailable reader by design. The `fallback` field on
+each Acquisition's diagnostics, the reader pool's own metrics and readiness, and
+the `parallax.resources` notices are how an operator sees one.
+
+### Sizing two routes
+
+Each pool keeps its own capacity, so a root with both routes at the default
+`max_size=10` can hold twenty connections, multiplied by every process that
+opens one; the sum across routes and processes has to fit the server's
+connection limit with room for its reserved and administrative connections. Size
+each route from what it serves: the connections a route needs is roughly its
+operation rate times how long each operation holds a connection, which the
+Release's `hold_duration_ns` measures, and a route whose `requests_waiting` and
+`requests_wait_ms` grow is short of capacity rather than slow. A deployment
+relying on `reader_preferred` to ride out a reader outage moves that reader's
+load onto the writer for the duration, so the writer's `max_size` and the
+server's limit decide whether it can absorb it.
 
 Readiness proves the writer first and then the reader, within what remains of
 the one `startup_timeout`, and the reader must authenticate the same login as
@@ -379,11 +490,20 @@ makes the reader serve. A reader read meanwhile waits up to its
 reader becoming verified, and the reader being refused are each reported once
 on `parallax.resources`, and each pool sample carries its route's readiness.
 
-The driver reports a login the server rejected while connecting with no
-SQLSTATE, so such a rejection reaches Parallax looking exactly like an
-unreachable server, as does a mistyped host. Under the default deferrable
-startup either one leaves the reader pending rather than failing the open; a
-deployment that wants them to fail its rollout says `reader_startup="required"`.
+The driver reports a refusal the server sent while connecting with no
+SQLSTATE. Where the endpoint's login sends a password — a configured credential
+source, an IAM token included — the failed connection still says it sent one,
+and that is read as the server refusing it (`reason="authentication_refused"`):
+a rejected password or token, an unknown login, and a refusal the server sends
+only once it accepted the login, such as a database that does not exist, all
+read this way, fail the open even under deferrable startup, and are never a
+reason to fall back. A login that sends no password carries no such sign, so a
+server refusing it before any credential is exchanged — a `pg_hba.conf`
+rejection, say — reaches Parallax looking exactly like an unreachable server,
+as does a mistyped host. Under the default deferrable startup either one leaves
+the reader pending rather than failing the open, and `reader_preferred` falls
+back from it; a deployment that wants them to fail its rollout says
+`reader_startup="required"`.
 
 ## Timeouts
 

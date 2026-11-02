@@ -93,7 +93,7 @@ Switching Principal or Database Authorization inside an active transaction is fo
 
 ## Provider binding and revocation
 
-A provider MUST apply subject authorization after checkout and before transaction begin or standalone application work, whichever Route (`m-db-port`) serves the acquisition. It MUST scope that authorization to the single acquisition.
+A provider MUST apply subject authorization after checkout and before transaction begin or standalone application work, whichever Route (`m-db-port`) serves the acquisition. It MUST scope that authorization to the single acquisition. A connection that replaces another beneath the lease — on the same route, or on the writer after a preferred acquisition fell back — carries the same captured authority and has the bound authorization installed before it is admitted; a refused authorization is never a reason to fall back.
 
 On every exit path, the provider MUST attempt to revoke subject authorization before releasing the connection. This includes successful commit, rollback, callback failure, retry, begin failure after authorization setup, cancellation, and standalone-operation completion.
 

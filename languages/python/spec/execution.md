@@ -35,14 +35,13 @@ authority-reselection operation.
 `with_routing` has no omitted form. A value outside the vocabulary raises
 `ValueError` before the adapter opens, and a policy the runtime's declared
 routes cannot honor raises `ValueError` from `connect` or `with_routing`
-without acquiring anything. These facades do not serve
-`"reader_preferred"`'s writer fallback, so they refuse it with `ValueError`
-wherever they take a policy, before opening or acquiring. `with_routing`
+without acquiring anything. `with_routing`
 returns a new alias root or scope sharing the same resources; it composes in
 any order with `using_principal`, `using_database_login`, and `with_options`.
-A new outer `read_only` whose resolved isolation its policy's route cannot
-begin raises `ValueError` before anything is observed or acquired; a
-`"reader_only"` refusal names `with_routing(read_policy='writer_only')`.
+A new outer `read_only` whose resolved isolation its strict policy's route
+cannot begin raises `ValueError` before anything is observed or acquired; a
+`"reader_only"` refusal names `with_routing(read_policy='writer_only')`, and
+under `"reader_preferred"` such an invocation requests `"writer_only"` instead.
 
 `PostgresAdapter(*, writer, reader=None, acquire_timeout=15.0,
 startup_timeout=30.0, reader_startup=OMITTED, prepare_threshold=5)` and
@@ -57,7 +56,11 @@ its reader route declares Read Committed and Repeatable Read for read-only
 transactions, never Serializable. `reader_startup` is `"deferrable"` or
 `"required"`: omitted with a reader, it defers an unreachable reader, which a
 fixed `parallax.resources` warning reports; supplied without a reader, it
-raises `ValueError`. `DatabaseStartupError.route` names which route failed. Each `connect` opens an independent runtime;
+raises `ValueError`. `DatabaseStartupError.route` names which route failed. A
+connect-time refusal psycopg reports with no SQLSTATE reads as
+`ConnectionAcquisitionError.reason == "authentication_refused"` where the failed
+connection reports it sent a password, and as `"unavailable"` otherwise; the
+first never defers a reader and never earns a preferred fallback. Each `connect` opens an independent runtime;
 closing one root does not close another made from the same configuration. A
 connection string cannot contain a password. Required `credentials=` accepts
 `Password(...)`, a source with `resolve() -> Password`, or `DRIVER_MANAGED`,

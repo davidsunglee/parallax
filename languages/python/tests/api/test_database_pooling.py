@@ -614,6 +614,24 @@ def test_one_configuration_serves_two_independent_handles(profile_run: Any) -> N
     assert shape.second_rows_after_first_closed == shape.first_rows
 
 
+def test_the_routed_configuration_reads_from_each_route_it_names(profile_run: Any) -> None:
+    # Two endpoints over this run's one database are two routes to one server,
+    # so all three scopes read the same rows; where each lease landed is the
+    # provider contract's to prove.
+    _seeded(profile_run)
+    configured = profile_run.configured()
+    adapter: Any = database_pooling_stories.routed_configuration(
+        configured.writer.connection_string,
+        configured.writer.connection_string,
+        configured.writer.credentials,
+    )
+
+    balances = database_pooling_stories.each_scope_reads_where_its_policy_says(adapter, _ACCOUNT)
+
+    assert balances.from_reader
+    assert balances.from_writer == balances.from_reader == balances.reader_or_writer
+
+
 # --------------------------------------------------------------------------- #
 # The application lifespan and the offload boundary.                           #
 # --------------------------------------------------------------------------- #

@@ -60,10 +60,11 @@ from parallax.postgres._connection import (
     ConnectionEstablishment,
     IncompatibleSessionError,
     dial_reason,
+    session_lost,
 )
 from parallax.postgres._context import PostgresConnectionContext, checkout, release
 from parallax.postgres._route import PROBE_SQL, PostgresRoute, ProbeMismatch
-from parallax.postgres._route_plan import planned_route
+from parallax.postgres._route_plan import RoutePlan
 from parallax.postgres._runtime import PostgresRuntime
 from parallax.postgres._startup import open_runtime
 from tests.unit.postgres._native_pipeline_support import Server, Statement, native_session
@@ -272,6 +273,7 @@ class _FakePool:
         self.waits: list[float] = []
         self.closes = 0
         self.late_by: float = 0.0
+        self.available = 0
 
     def wait(self, timeout: float = 30.0) -> None:
         self.waits.append(timeout)
@@ -300,7 +302,7 @@ class _FakePool:
             "pool_min": 0,
             "pool_max": 10,
             "pool_size": len(self._connections),
-            "pool_available": 0,
+            "pool_available": self.available,
             "requests_waiting": 0,
         }
 
@@ -341,9 +343,13 @@ def _context(
 ) -> Any:
     runtime = _runtime(pool)
     return PostgresConnectionContext(
-        PostgresRoute("writer", pool, _establishment()),
+        (
+            (
+                PostgresRoute("writer", pool, _establishment()),
+                deadline if deadline is not None else monotonic() + 5.0,
+            ),
+        ),
         admit if admit is not None else runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
-        deadline if deadline is not None else monotonic() + 5.0,
         role,
         expected_login=None,
     )
@@ -710,9 +716,8 @@ def test_a_timeout_names_the_initialization_refusal_on_record() -> None:
     pool = _pool(checkout_error=psycopg_pool.PoolTimeout("waited"))
     runtime = _runtime(pool)
     resource = PostgresConnectionContext(
-        PostgresRoute("writer", pool, establishment),
+        ((PostgresRoute("writer", pool, establishment), monotonic() + 5.0),),
         runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
-        monotonic() + 5.0,
         None,
         expected_login=None,
     )
@@ -735,9 +740,8 @@ def test_a_timeout_names_the_credential_refusal_on_record() -> None:
     pool = _pool(checkout_error=psycopg_pool.PoolTimeout("waited"))
     runtime = _runtime(pool)
     resource = PostgresConnectionContext(
-        PostgresRoute("writer", pool, establishment),
+        ((PostgresRoute("writer", pool, establishment), monotonic() + 5.0),),
         runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
-        monotonic() + 5.0,
         None,
         expected_login=None,
     )
@@ -812,9 +816,8 @@ def test_a_late_native_success_is_released_rather_than_admitted(
     runtime = _runtime(pool)
     monkeypatch.setattr(runtime_module, "monotonic", lambda: 1e18)
     resource = PostgresConnectionContext(
-        PostgresRoute("writer", pool, _establishment()),
+        ((PostgresRoute("writer", pool, _establishment()), monotonic() + 5.0),),
         runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
-        monotonic() + 5.0,
         None,
         expected_login=None,
     )
@@ -2584,26 +2587,50 @@ def _resource_records(caplog: pytest.LogCaptureFixture) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    ("policy", "has_reader", "route"),
+    ("policy", "has_reader", "steps"),
     [
-        ("writer_only", False, "writer"),
-        ("writer_only", True, "writer"),
-        ("reader_only", True, "reader"),
+        ("writer_only", False, [("writer", 1.0)]),
+        ("writer_only", True, [("writer", 1.0)]),
+        ("reader_only", True, [("reader", 1.0)]),
+        ("reader_preferred", True, [("reader", 0.5), ("writer", 1.0)]),
     ],
 )
-def test_a_strict_policy_plans_its_one_route(policy: Any, has_reader: bool, route: str) -> None:
-    assert planned_route(policy, has_reader=has_reader) == route
+def test_each_policy_plans_its_routes_and_their_shares_of_the_budget(
+    policy: Any, has_reader: bool, steps: list[tuple[str, float]]
+) -> None:
+    plan = RoutePlan.for_policy(policy, has_reader=has_reader)
+    assert [(step.route, step.share) for step in plan.steps] == steps
 
 
 @pytest.mark.parametrize(
     ("policy", "has_reader"),
-    [("reader_only", False), ("reader_preferred", True), ("reader_preferred", False)],
+    [("reader_only", False), ("reader_preferred", False)],
 )
 def test_a_policy_with_no_route_to_serve_it_is_refused_by_the_plan(
     policy: Any, has_reader: bool
 ) -> None:
     with pytest.raises(ValueError, match="does not serve"):
-        planned_route(policy, has_reader=has_reader)
+        RoutePlan.for_policy(policy, has_reader=has_reader)
+
+
+@pytest.mark.parametrize(
+    ("failure", "fallback"),
+    [
+        ("unavailable", "unavailable"),
+        ("connection_lost", "connection_lost"),
+        ("timeout", None),
+        ("queue_rejected", None),
+        ("closed", None),
+        ("preparation_failed", None),
+        ("authorization_failed", None),
+        ("authentication_refused", None),
+        ("credentials_refused", None),
+    ],
+)
+def test_only_an_unreachable_route_or_a_lost_setup_connection_falls_back(
+    failure: Any, fallback: str | None
+) -> None:
+    assert RoutePlan.falls_back_on(failure) == fallback
 
 
 def test_a_routed_runtime_declares_a_reader_that_cannot_begin_serializable() -> None:
@@ -2930,7 +2957,7 @@ def test_a_reader_minimum_that_met_only_an_unreachable_server_is_left_pending(
     ("failure", "message"),
     [
         (_lost("connection refused"), "could reach its server"),
-        (_Stated("28P01"), "had its login accepted"),
+        (_Stated("28P01"), "accepted once its login was offered"),
     ],
 )
 def test_a_minimum_wait_names_the_dial_failure_on_record(
@@ -3366,3 +3393,587 @@ def test_an_observed_dial_that_succeeds_records_nothing_until_initialization(
     assert establishment.connection_class.connect("") is dialed
     recorded = establishment.last_failure
     assert recorded is not None and recorded.cause is earlier
+
+
+# --------------------------------------------------------------------------- #
+# Preferred fallback: the reader within half the budget, then the writer.     #
+# --------------------------------------------------------------------------- #
+
+
+def _preferred(runtime: PostgresRuntime, role: PostgresRole | None = None) -> Any:
+    source = runtime.login_source() if role is None else runtime.principal_source(role)
+    return source.new_context("reader_preferred")
+
+
+def _refusing(failure: BaseException, *, after: Callable[[], None] = lambda: None) -> Any:
+    """A pool whose every checkout runs ``after`` and then raises ``failure``."""
+    pool = _pool()
+
+    def getconn(timeout: float | None = None) -> Any:
+        pool.checkouts.append(timeout)
+        after()
+        raise failure
+
+    pool.getconn = getconn
+    return pool
+
+
+def test_a_healthy_reader_serves_a_preferred_acquisition_within_half_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _Clock(monkeypatch)
+    writer_pool, reader_pool = _pool(), _pool()
+    resource = _preferred(_routed(writer_pool, reader_pool))
+
+    with resource as scoped:
+        scoped.execute("select 1", [])
+
+    assert reader_pool.checkouts == [7.5]
+    assert writer_pool.checkouts == []
+    assert resource.selection == RouteSelection("reader")
+
+
+def test_an_unreachable_reader_falls_back_to_the_writer_with_what_remains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An on-demand reader dials on this thread, so its failure surfaces at
+    # once and the writer gets everything the reader did not spend.
+    clock = _Clock(monkeypatch)
+    writer_pool = _pool()
+    reader_pool = _refusing(_lost("connection refused"), after=lambda: setattr(clock, "now", 3.0))
+    resource = _preferred(_routed(writer_pool, reader_pool))
+
+    with resource as scoped:
+        scoped.execute("select 1", [])
+
+    assert reader_pool.checkouts == [7.5]
+    assert writer_pool.checkouts == [12.0]
+    assert writer_pool.returned[0].statements == ["select 1"]
+    assert resource.selection == RouteSelection("writer", "unavailable")
+
+
+def test_a_reader_share_spent_while_its_dials_failed_falls_back_at_the_share_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A retaining reader dials on its own workers and cannot wake a waiter, so
+    # a failure recorded during the wait is noticed when the share runs out.
+    clock = _Clock(monkeypatch)
+    writer_pool = _pool()
+    reader_pool = _refusing(psycopg_pool.PoolTimeout("waited"))
+    runtime = _routed(writer_pool, reader_pool)
+
+    def dial_fails_meanwhile() -> None:
+        _reader_route(runtime).establishment.failed(_lost("connection refused"))
+        clock.now = 7.5
+
+    reader_pool.getconn = _refusing(
+        psycopg_pool.PoolTimeout("waited"), after=dial_fails_meanwhile
+    ).getconn
+    resource = _preferred(runtime)
+
+    with resource:
+        pass
+
+    assert writer_pool.checkouts == [7.5]
+    assert resource.selection == RouteSelection("writer", "unavailable")
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        pytest.param(psycopg_pool.PoolTimeout("waited"), "timeout", id="saturated"),
+        pytest.param(psycopg_pool.TooManyRequests("queue full"), "queue_rejected", id="queue"),
+        pytest.param(psycopg_pool.PoolClosed("closed"), "closed", id="closed"),
+        pytest.param(_Stated("28P01"), "authentication_refused", id="login-refused"),
+        pytest.param(CredentialResolutionError("no token"), "credentials_refused", id="creds"),
+        pytest.param(_Stated("3D000"), "preparation_failed", id="invalid-setup"),
+    ],
+)
+def test_a_reader_that_is_busy_refused_or_closed_ends_a_preferred_acquisition(
+    failure: BaseException, reason: str
+) -> None:
+    # None of these is something the writer would fix, and a busy reader is
+    # never mistaken for one that cannot be reached.
+    writer_pool = _pool()
+    resource = _preferred(_routed(writer_pool, _pool(checkout_error=failure)))
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == reason
+    assert refused.value.selection == RouteSelection("reader")
+    assert writer_pool.checkouts == []
+
+
+def test_a_role_the_reader_denies_is_not_a_reason_to_fall_back() -> None:
+    denied = psycopg.errors.InsufficientPrivilege("permission denied to set role")
+    writer_pool = _pool()
+    resource = _preferred(
+        _routed(writer_pool, _pool(_FakeConnection(execute_error=denied))), PostgresRole("tenant")
+    )
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "authorization_failed"
+    assert refused.value.selection == RouteSelection("reader")
+    assert writer_pool.checkouts == []
+
+
+def test_a_reader_success_after_its_share_is_refused_rather_than_used_or_fallen_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock(monkeypatch)
+    writer_pool = _pool()
+    connection = _FakeConnection()
+    reader_pool = _pool(connection)
+    getconn = reader_pool.getconn
+
+    def late(timeout: float | None = None) -> Any:
+        clock.now = 8.0
+        return getconn(timeout)
+
+    reader_pool.getconn = late
+    resource = _preferred(_routed(writer_pool, reader_pool))
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "timeout"
+    assert writer_pool.checkouts == []
+    assert reader_pool.returned == [connection]
+
+
+def test_a_refused_reader_ends_a_preferred_acquisition_as_a_configuration_failure() -> None:
+    writer_pool = _pool()
+    runtime = _routed(writer_pool, _pool(), reader_readiness="pending")
+    mismatch = ProbeMismatch("another login")
+    _reader_route(runtime).refuse(mismatch)
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        _preferred(runtime).__enter__()
+
+    assert refused.value.reason == "preparation_failed"
+    assert refused.value.__cause__ is mismatch
+    assert writer_pool.checkouts == []
+
+
+def test_a_writer_that_also_fails_after_a_fallback_reports_the_writer_and_the_fallback() -> None:
+    resource = _preferred(
+        _routed(
+            _pool(checkout_error=psycopg_pool.PoolTimeout("waited")),
+            _pool(checkout_error=_lost("connection refused")),
+        )
+    )
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "timeout"
+    assert refused.value.selection == RouteSelection("writer", "unavailable")
+    assert resource.selection == RouteSelection("writer", "unavailable")
+
+
+# --------------------------------------------------------------------------- #
+# The probe slot: one demand re-dial of a reader known to be unreachable.     #
+# --------------------------------------------------------------------------- #
+
+
+def _known_unreachable(runtime: PostgresRuntime) -> PostgresRoute:
+    reader = _reader_route(runtime)
+    reader.establishment.failed(_lost("connection refused"))
+    return reader
+
+
+def test_one_acquisition_holds_the_probe_slot_and_concurrent_ones_fall_back_at_once() -> None:
+    # Only the holder waits on the reader; whoever arrives meanwhile goes to
+    # the writer without queueing on the route that just failed.
+    writer_pool = _pool(_FakeConnection(), _FakeConnection())
+    reader_connection = _FakeConnection()
+    reader_pool = _pool(reader_connection)
+    runtime = _routed(writer_pool, reader_pool)
+    reader = _known_unreachable(runtime)
+    concurrent: list[Any] = []
+    getconn = reader_pool.getconn
+
+    def recovering(timeout: float | None = None) -> Any:
+        meanwhile = _preferred(runtime)
+        with meanwhile:
+            concurrent.append(meanwhile.selection)
+        return getconn(timeout)
+
+    reader_pool.getconn = recovering
+    holder = _preferred(runtime)
+
+    with holder:
+        pass
+    reader_pool.getconn = getconn
+
+    assert concurrent == [RouteSelection("writer", "unavailable")]
+    assert len(reader_pool.checkouts) == 1
+    assert holder.selection == RouteSelection("reader")
+    # The holder's checkout cleared the record, and the slot was given back.
+    assert reader.establishment.last_failure is None
+    assert reader.claim_probe()
+    reader.release_probe()
+    with _preferred(runtime) as scoped:
+        scoped.execute("select 1", [])
+    assert len(reader_pool.checkouts) == 2
+
+
+def test_a_reader_with_an_idle_connection_is_tried_whatever_its_record_says() -> None:
+    reader_pool = _pool()
+    reader_pool.available = 1
+    runtime = _routed(_pool(), reader_pool)
+    reader = _known_unreachable(runtime)
+    assert reader.claim_probe()
+
+    try:
+        resource = _preferred(runtime)
+        with resource:
+            pass
+    finally:
+        reader.release_probe()
+
+    assert resource.selection == RouteSelection("reader")
+
+
+def test_a_reader_whose_pool_cannot_be_measured_is_taken_to_hold_no_idle_connection() -> None:
+    reader_pool = _pool()
+
+    def unmeasurable() -> dict[str, object]:
+        raise RuntimeError("the pool's bookkeeping could not be read")
+
+    reader_pool.get_stats = unmeasurable
+    runtime = _routed(_pool(), reader_pool)
+    reader = _known_unreachable(runtime)
+    assert reader.claim_probe()
+
+    try:
+        resource = _preferred(runtime)
+        with resource:
+            pass
+    finally:
+        reader.release_probe()
+
+    assert reader_pool.checkouts == []
+    assert resource.selection == RouteSelection("writer", "unavailable")
+
+
+def test_a_probe_holder_whose_wait_saw_no_fresh_failure_times_out_rather_than_falling_back() -> (
+    None
+):
+    # Historical evidence lets the holder try the reader, but says nothing
+    # about why its own wait ran out: that is a saturated or slow route.
+    writer_pool = _pool()
+    runtime = _routed(writer_pool, _pool(checkout_error=psycopg_pool.PoolTimeout("waited")))
+    reader = _known_unreachable(runtime)
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        _preferred(runtime).__enter__()
+
+    assert refused.value.reason == "timeout"
+    assert writer_pool.checkouts == []
+    assert reader.claim_probe()
+    reader.release_probe()
+
+
+def test_a_strict_reader_always_demands_the_reader_whatever_its_record_says() -> None:
+    reader_pool = _pool()
+    runtime = _routed(_pool(), reader_pool)
+    reader = _known_unreachable(runtime)
+    assert reader.claim_probe()
+
+    try:
+        with _reader_context(runtime):
+            pass
+    finally:
+        reader.release_probe()
+
+    assert len(reader_pool.checkouts) == 1
+
+
+def test_a_handed_over_connection_clears_whatever_failure_was_on_record() -> None:
+    establishment = _establishment()
+    establishment.failed(CredentialResolutionError("no token"))
+
+    checkout(PostgresRoute("reader", _pool(), establishment), monotonic() + 5.0)
+
+    assert establishment.last_failure is None
+
+
+# --------------------------------------------------------------------------- #
+# Setup that loses its connection moves to the writer; modeled reads do not.  #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_reader_lost_installing_the_principal_falls_back_and_installs_it_on_the_writer() -> None:
+    reader_connection = _FakeConnection(lost=_lost())
+    writer_connection = _FakeConnection()
+    reader_pool, writer_pool = _pool(reader_connection), _pool(writer_connection)
+    resource = _preferred(_routed(writer_pool, reader_pool), PostgresRole("tenant_reader"))
+
+    with resource as scoped:
+        scoped.execute("select current_user", [])
+
+    assert reader_connection.closes == 1
+    assert len(reader_pool.checkouts) == 1
+    assert "SET ROLE" in writer_connection.statements[0]
+    assert writer_connection.statements[1:] == ["select current_user", "RESET ROLE"]
+    assert resource.selection == RouteSelection("writer", "connection_lost")
+
+
+def test_a_fallen_back_role_installation_earns_no_second_replacement() -> None:
+    writer_connection = _FakeConnection(lost=_lost())
+    writer_pool = _pool(writer_connection, _FakeConnection())
+    resource = _preferred(
+        _routed(writer_pool, _pool(_FakeConnection(lost=_lost()))), PostgresRole("tenant_reader")
+    )
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "authorization_failed"
+    assert refused.value.selection == RouteSelection("writer", "connection_lost")
+    assert len(writer_pool.checkouts) == 1
+
+
+def test_a_reader_lost_at_its_first_begin_opens_the_boundary_on_the_writer_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock(monkeypatch)
+    reader_connection = _FakeConnection(lost=_lost(), when_lost=lambda: setattr(clock, "now", 2.0))
+    writer_connection = _FakeConnection()
+    reader_pool, writer_pool = _pool(reader_connection), _pool(writer_connection)
+    resource = _preferred(_routed(writer_pool, reader_pool))
+    bodies: list[object] = []
+
+    def body(port: DatabaseConnection) -> list[Row]:
+        bodies.append(port)
+        return port.execute("select 1", [])
+
+    with resource as scoped:
+        assert resource.selection == RouteSelection("reader")
+        outcome = scoped.transaction(body, isolation="repeatable_read", access_mode="read_only")
+
+    assert isinstance(outcome, Committed)
+    assert len(bodies) == 1
+    assert reader_connection.statements == ["BEGIN"]
+    assert reader_connection.closes == 1
+    assert writer_pool.checkouts == [13.0]
+    assert writer_connection.statements == ["BEGIN", "select 1", "COMMIT"]
+    assert ("read_only", True) in writer_connection.characteristics
+    assert resource.selection == RouteSelection("writer", "connection_lost")
+
+
+def test_a_begin_after_the_principal_was_installed_is_no_second_opportunity() -> None:
+    def lose_after_role(text: str) -> None:
+        if text == "BEGIN":
+            reader_connection.lost = _lost()
+
+    reader_connection = _Hooked(lose_after_role)
+    writer_pool = _pool()
+    resource = _preferred(_routed(writer_pool, _pool(reader_connection)), PostgresRole("tenant"))
+
+    with resource as scoped:
+        outcome = scoped.transaction(_no_body, access_mode="read_only")
+
+    assert isinstance(outcome, BeginFailed)
+    assert writer_pool.checkouts == []
+    assert resource.selection == RouteSelection("reader")
+
+
+def test_a_pending_reader_s_lost_proof_falls_back_and_leaves_the_reader_pending() -> None:
+    writer_connection = _FakeConnection()
+    writer_pool = _pool(writer_connection)
+    runtime = _routed(writer_pool, _pool(_FakeConnection(lost=_lost())), reader_readiness="pending")
+    resource = _preferred(runtime, PostgresRole("tenant_reader"))
+
+    with resource:
+        pass
+
+    assert _reader_route(runtime).readiness() == "pending"
+    # The writer is verified, so it runs no proof, and the role is installed there.
+    assert "SET ROLE" in writer_connection.statements[0]
+    assert PROBE_SQL not in writer_connection.statements
+    assert resource.selection == RouteSelection("writer", "connection_lost")
+
+
+def test_a_modeled_read_s_replacement_stays_on_the_reader_it_began_on() -> None:
+    broken, fresh = _FakeConnection(lost=_lost()), _FakeConnection()
+    reader_pool, writer_pool = _pool(broken, fresh), _pool()
+    resource = _preferred(_routed(writer_pool, reader_pool))
+
+    with resource as scoped:
+        scoped.execute("select 1", [], read_only=True)
+
+    assert fresh.statements == ["select 1"]
+    assert writer_pool.checkouts == []
+    assert resource.selection == RouteSelection("reader")
+
+
+def test_a_reader_disposal_that_cannot_be_confirmed_refuses_the_fallback() -> None:
+    reader_connection = _FakeConnection(lost=_lost(), close_error=RuntimeError("no close"))
+    writer_pool = _pool()
+    resource = _preferred(
+        _routed(writer_pool, _pool(reader_connection)), PostgresRole("tenant_reader")
+    )
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "authorization_failed"
+    assert isinstance(resource.cleanup_result, ReleaseUnconfirmed)
+    assert writer_pool.checkouts == []
+
+
+def test_an_interrupt_a_lost_reader_setup_displaced_propagates_and_falls_back_nowhere() -> None:
+    interrupt = KeyboardInterrupt()
+    writer_pool = _pool()
+    resource = _preferred(
+        _routed(writer_pool, _pool(_FakeConnection(lost=_lost_while_draining(interrupt)))),
+        PostgresRole("tenant_reader"),
+    )
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        resource.__enter__()
+
+    assert raised.value is interrupt
+    assert writer_pool.checkouts == []
+
+
+# --------------------------------------------------------------------------- #
+# Demand re-dial: the installed pools recover a reader without background     #
+# probing once their own reconnection gives up.                               #
+# --------------------------------------------------------------------------- #
+
+
+class _RecoveringStub(_NativeStub):
+    """A native connection whose first ``refusals`` dials fail."""
+
+    refusals: ClassVar[int] = 0
+
+    @classmethod
+    def connect(cls, conninfo: str, **kwargs: object) -> _NativeStub:
+        if cls.refusals > 0:
+            cls.refusals -= 1
+            raise _lost("connection refused")
+        return super().connect(conninfo, **kwargs)
+
+
+def test_a_retaining_pool_that_gave_up_reconnecting_grows_again_on_later_demand() -> None:
+    # The library relinquishes the capacity a failed growth held once its own
+    # reconnection deadline passes, so the next checkout schedules a dial of
+    # its own: demand alone recovers a reader nothing probes in the background.
+    # Its own retry is immediate under a zero deadline, so two refusals spend it.
+    _RecoveringStub.refusals = 2
+    _NativeStub.connects = []
+    pool = psycopg_pool.ConnectionPool(
+        "",
+        connection_class=cast("Any", _RecoveringStub),
+        open=False,
+        min_size=0,
+        max_size=1,
+        num_workers=1,
+        reconnect_timeout=0.0,
+    )
+    pool.open()
+    try:
+        with pytest.raises(psycopg_pool.PoolTimeout):
+            pool.getconn(timeout=0.5)
+        recovered = pool.getconn(timeout=2.0)
+        pool.putconn(recovered)
+    finally:
+        pool.close()
+
+    assert len(_NativeStub.connects) == 1
+
+
+def test_an_on_demand_pool_dials_again_on_every_later_demand() -> None:
+    _RecoveringStub.refusals = 1
+    _NativeStub.connects = []
+    pool = psycopg_pool.NullConnectionPool(
+        "", connection_class=cast("Any", _RecoveringStub), open=False, num_workers=1
+    )
+    pool.open()
+    try:
+        with pytest.raises(psycopg.OperationalError):
+            pool.getconn(timeout=1.0)
+        recovered = pool.getconn(timeout=1.0)
+        pool.putconn(recovered)
+    finally:
+        pool.close()
+
+    assert len(_NativeStub.connects) == 1
+
+
+# --------------------------------------------------------------------------- #
+# A refusal the server sends while connecting carries no SQLSTATE.             #
+# --------------------------------------------------------------------------- #
+
+
+class _Attempt:
+    """The finished connection a driver connect failure carries."""
+
+    def __init__(self, *, used_password: bool) -> None:
+        self.used_password = used_password
+
+
+class _ConnectFailed(psycopg.OperationalError):
+    def __init__(self, attempt: _Attempt | None) -> None:
+        super().__init__("connection failed")
+        self._attempt = attempt
+
+    @property
+    def pgconn(self) -> Any:
+        return self._attempt
+
+
+@pytest.mark.parametrize(
+    ("attempt", "reason"),
+    [
+        pytest.param(_Attempt(used_password=True), "authentication_refused", id="password-sent"),
+        pytest.param(_Attempt(used_password=False), "unavailable", id="no-password-sent"),
+        pytest.param(None, "unavailable", id="never-reached"),
+    ],
+)
+def test_a_connect_refusal_after_a_password_was_sent_reads_as_the_server_refusing_it(
+    attempt: _Attempt | None, reason: str
+) -> None:
+    assert dial_reason(_ConnectFailed(attempt)) == reason
+
+
+class _Unreadable:
+    @property
+    def used_password(self) -> bool:
+        raise psycopg.OperationalError("the connection is closed")
+
+
+def test_a_connect_failure_whose_attempt_cannot_be_read_reads_as_unreachable() -> None:
+    assert dial_reason(_ConnectFailed(cast("Any", _Unreadable()))) == "unavailable"
+
+
+def test_a_lost_established_session_is_lost_whatever_password_opened_it() -> None:
+    lost = _ConnectFailed(_Attempt(used_password=True))
+
+    assert session_lost(lost)
+    assert session_lost(_Stated("57P01"))
+    assert not session_lost(_Stated("42501"))
+    assert not session_lost(RuntimeError("not a driver failure"))
+
+
+def test_a_reader_the_server_refuses_once_its_password_is_sent_fails_deferrable_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refused = _ConnectFailed(_Attempt(used_password=True))
+    writer_pool, reader_pool = _pool(), _pool(checkout_error=refused)
+    _opened_routes(monkeypatch, writer=writer_pool, reader=reader_pool)
+
+    with pytest.raises(DatabaseStartupError) as failed:
+        _open_routed()
+
+    assert (failed.value.route, failed.value.phase) == ("reader", "acquire")
+    cause = failed.value.__cause__
+    assert isinstance(cause, ConnectionAcquisitionError)
+    assert cause.reason == "authentication_refused"
+    assert (writer_pool.closes, reader_pool.closes) == (1, 1)
