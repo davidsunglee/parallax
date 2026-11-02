@@ -483,11 +483,6 @@ class TrackedAdapter:
     def dialect(self) -> Dialect:
         return self._adapter.dialect
 
-    @property
-    def configuration(self) -> PostgresAdapter:
-        """The shipped configuration each runtime is opened from."""
-        return self._adapter
-
     def open(self) -> DatabaseRuntime[PostgresRole]:
         return self._ledger.track(self._adapter.open())
 
