@@ -235,6 +235,35 @@ describe("the bounded execution role", () => {
         },
       ),
     ).toBe(true);
+    expect(
+      may(
+        "iam:CreateServiceLinkedRole",
+        `${iam}:role/aws-service-role/events.amazonaws.com/AWSServiceRoleForCloudWatchEvents`,
+        { "iam:AWSServiceName": "events.amazonaws.com" },
+      ),
+    ).toBe(true);
+    expect(
+      may(
+        "iam:CreateServiceLinkedRole",
+        `${iam}:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS`,
+        { "iam:AWSServiceName": "ecs.amazonaws.com" },
+      ),
+    ).toBe(false);
+  });
+
+  it("reads every SSM parameter the environment template resolves, and changes none", () => {
+    const parameters = Template.fromStack(stacks.environment).toJSON()["Parameters"] as Record<
+      string,
+      { Type: string; Default?: string }
+    >;
+    const resolved = Object.values(parameters)
+      .filter((parameter) => parameter.Type.startsWith("AWS::SSM::Parameter::"))
+      .map((parameter) => `arn:aws:ssm:us-east-2:${ACCOUNT}:parameter${String(parameter.Default)}`);
+    expect(resolved).toEqual([ANCHORS.bootstrapVersionParameterArn]);
+    for (const parameter of resolved) {
+      expect(may("ssm:GetParameters", parameter)).toBe(true);
+      expect(may("ssm:PutParameter", parameter)).toBe(false);
+    }
   });
 
   it("cannot reach the trust path, directly or by delegation", () => {
