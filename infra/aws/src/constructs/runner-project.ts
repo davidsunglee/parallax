@@ -1,7 +1,7 @@
 import { Duration, RemovalPolicy, Validations } from "aws-cdk-lib";
 import * as codebuild from "aws-cdk-lib/aws-codebuild";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { Policy, PolicyStatement, type IRole } from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import type * as rds from "aws-cdk-lib/aws-rds";
 import type * as ssm from "aws-cdk-lib/aws-ssm";
@@ -83,12 +83,19 @@ export class RunnerProject extends Construct {
       Type: "CODECONNECTIONS",
       Resource: props.sourceConnectionArn,
     });
-    this.project.addToRolePolicy(
-      new PolicyStatement({
-        actions: [...SOURCE_USE_ACTIONS],
-        resources: [props.sourceConnectionArn],
-      }),
-    );
+    // CodeBuild checks the source as the project's role while creating the
+    // project, so this grant must exist first. The role's default policy cannot
+    // carry it: that policy waits for the cluster it grants access to.
+    const source = new Policy(this, "SourcePolicy", {
+      roles: [this.project.role as IRole],
+      statements: [
+        new PolicyStatement({
+          actions: [...SOURCE_USE_ACTIONS],
+          resources: [props.sourceConnectionArn],
+        }),
+      ],
+    });
+    (this.project.node.defaultChild as codebuild.CfnProject).node.addDependency(source);
     props.cluster.grantConnect(this.project, props.login);
     this.project.addToRolePolicy(
       new PolicyStatement({

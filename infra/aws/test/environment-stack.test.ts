@@ -538,6 +538,27 @@ describe("the runner", () => {
     for (const { Ref } of subnets) expect(all[Ref]?.Properties["MapPublicIpOnLaunch"]).toBe(false);
   });
 
+  it("holds its source grant before CodeBuild checks the source, without waiting for the cluster", () => {
+    const [, project] = only("AWS::CodeBuild::Project");
+    const sourceGrants = (project.DependsOn ?? []).filter((id) => {
+      const policy = all[id];
+      return (
+        policy?.Type === "AWS::IAM::Policy" &&
+        JSON.stringify(policy.Properties["PolicyDocument"]).includes(
+          "codeconnections:GetConnection",
+        ) &&
+        JSON.stringify(policy.Properties["Roles"]).includes("RunnerProjectRole")
+      );
+    });
+    expect(sourceGrants).toHaveLength(1);
+    const [grant] = sourceGrants;
+    const policy = all[String(grant)];
+    expect(policy?.DependsOn).toBeUndefined();
+    const referenced = JSON.stringify(policy?.Properties).match(/"(?:Ref|Fn::GetAtt)":\[?"\w+/g);
+    expect(referenced).toHaveLength(1);
+    expect(referenced?.[0]).toContain("RunnerProjectRole");
+  });
+
   it("connects only as the conformance login and reads only the published record", () => {
     const [cluster] = only("AWS::RDS::DBCluster");
     const statements = runnerStatements() as { Action: unknown; Resource: unknown }[];
