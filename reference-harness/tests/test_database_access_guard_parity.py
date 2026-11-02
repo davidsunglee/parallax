@@ -1,10 +1,11 @@
-"""Pin the repository's two database-access guards to one analyzer.
+"""Pin the repository's two resource-access guards to one analyzer.
 
 `core/spec/language-testing.md` §5 requires the resource that defines a
 scheduling class to be reachable only through designated entry points, and makes
 that restriction a blocking check. Every scope declaring a `db` class owns one:
 `reference_harness.check_database_access` for the harness test tree, and
-`languages/python/tools/check_database_access.py` for the Python one. Two trees,
+`languages/python/tools/check_resource_access.py` for the Python one, which also
+confines the provider-hosted `cloud` class over the same analyzer. Two trees,
 two gates, one rule — so both carry the same analyzer over Python source.
 
 They carry it as copies rather than as an import. `languages/AGENTS.md` binds
@@ -38,7 +39,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _GUARDS = {
     "harness": _REPO_ROOT / "reference-harness/src/reference_harness/check_database_access.py",
-    "python": _REPO_ROOT / "languages/python/tools/check_database_access.py",
+    "python": _REPO_ROOT / "languages/python/tools/check_resource_access.py",
 }
 
 _SHARED_ANALYSER = (
@@ -48,7 +49,6 @@ _SHARED_ANALYSER = (
     "_bind",
     "_bound_names",
     "_constructor_named",
-    "_declared_database_fixtures",
     "_entry_point_span",
     "_first",
     "_held_elements",
@@ -66,15 +66,20 @@ _SHARED_ANALYSER = (
 )
 """Every definition deciding what the rule computes: the finding it reports, the
 import bindings, binding forms, local bindings, instances, and call targets it
-resolves a violation from, the waiver it honors and refuses and the message each
-violation is reported by, the fixture declarations it reads out of a classifier,
-and the two declaration checks that keep it from matching nothing."""
+resolves a violation from, the waiver it honors and refuses and the shape of the
+message each violation is reported by, and the two declaration checks that keep
+it from matching nothing. Each scope reads its own classifier, since the harness
+designates one fixture and the Python tree maps a fixture to each class."""
 
 _SCOPE_OWNED = {
     "audit": (
         "the harness declares its entry-point fixture and its classifier in two "
         "modules and the Python tree declares both in one, so the two audits walk "
         "a different number of files"
+    ),
+    "_refusal": (
+        "the harness confines one class through one fixture, while the Python tree "
+        "confines two and names the fixtures admitting each group of seams"
     ),
     "main": (
         "each scope follows its own established argument and output conventions, "
@@ -123,7 +128,7 @@ def test_both_guards_decide_a_violation_the_same_way(name: str) -> None:
     rendered = {scope: _computation(_DEFINED[scope][name]) for scope in _GUARDS}
 
     assert rendered["harness"] == rendered["python"], (
-        f"`{name}` differs between the two database-access guards. A rule corrected in one "
+        f"`{name}` differs between the two resource-access guards. A rule corrected in one "
         f"tree and not the other lets one gate accept live access the other rejects, with "
         f"both reporting success."
     )

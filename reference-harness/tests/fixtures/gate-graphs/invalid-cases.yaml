@@ -109,7 +109,7 @@
   old: "[metadata(\"runtime:medium\", \"scheduling:dbfree\")]\n[doc(\"Every harness test"
   new: "[metadata(\"runtime:medium\", \"scheduling:offline\")]\n[doc(\"Every harness test"
   code: unknown-scheduling-class
-  message: "`harness` declares the scheduling class `offline`, which is outside §5's closed vocabulary (cost, db, dbfree)"
+  message: "`harness` declares the scheduling class `offline`, which is outside §5's closed vocabulary (cloud, cost, db, dbfree)"
 
 - name: class-owner-selecting-the-other-class
   file: justfile
@@ -249,7 +249,7 @@
 
 - name: scheduling-class-outside-the-marker-catalog
   file: languages/python/pyproject.toml
-  old: "    \"dbfree: requires no live database provider\",\n"
+  old: "    \"dbfree: requires no live database provider or provider-hosted environment\",\n"
   new: ""
   code: missing-marker-catalog
   message: "`python` selects the scheduling class `dbfree` but its runner catalog does not declare it"
@@ -379,3 +379,95 @@
   new: "        run: pnpm exec vitest run"
   code: ci-embedded-gate
   message: "job `infra-check-dbfree` runs `pnpm exec vitest run`, embedding a `test` gate"
+
+- name: cloud-class-in-the-merge-gate
+  file: justfile
+  old: "check-lanes: check-dbfree check-db\n"
+  new: "check-lanes: check-dbfree check-db check-cloud\n"
+  code: excluded-class-in-merge-gate
+  message: "`check` composes `check-cloud`, which §7 excludes from it"
+
+- name: cloud-class-without-its-access-guard
+  file: justfile
+  old: " python-check-database-access python-check-cloud-access python-check-dead-code"
+  new: " python-check-database-access python-check-dead-code"
+  code: missing-scheduling-guard
+  message: "`python` declares the scheduling class `cloud` but no class aggregate runs `python-check-cloud-access`"
+
+- name: cloud-class-job-not-gated-on-relevance
+  file: .github/workflows/ci.yml
+  old: "    if: needs.cloud-relevance.outputs.relevant == 'true'\n"
+  new: ""
+  code: ungated-class-job
+  message: "job `python-check-cloud` must need `cloud-relevance` and run only when its `relevant` output says so"
+  problems: 1
+
+- name: cloud-class-job-waiting-on-its-verdict
+  file: .github/workflows/ci.yml
+  old: "    needs: cloud-relevance\n    if: needs.cloud-relevance.outputs.relevant == 'true'\n"
+  new: "    needs: [cloud-relevance, cloud-verdict]\n    if: needs.cloud-relevance.outputs.relevant == 'true'\n"
+  code: verdict-dependency
+  message: "job `python-check-cloud` needs `cloud-verdict`"
+
+- name: cloud-verdict-waiting-on-the-class-job
+  file: .github/workflows/ci.yml
+  old: "    needs: cloud-relevance\n    if: always()\n"
+  new: "    needs: [cloud-relevance, python-check-cloud]\n    if: always()\n"
+  code: verdict-dependency
+  message: "job `cloud-verdict` must need `cloud-relevance` alone and run `if: always()`"
+  problems: 1
+
+- name: cloud-verdict-skipped-by-a-failed-relevance-job
+  file: .github/workflows/ci.yml
+  old: "    needs: cloud-relevance\n    if: always()\n"
+  new: "    needs: cloud-relevance\n    if: success()\n"
+  code: verdict-dependency
+  message: "job `cloud-verdict` must need `cloud-relevance` alone"
+  problems: 1
+
+- name: cloud-relevance-without-its-answer
+  file: .github/workflows/ci.yml
+  old: "      relevant: ${{ steps.relevance.outputs.relevant }}\n"
+  new: "      answer: ${{ steps.relevance.outputs.relevant }}\n"
+  code: missing-relevance-job
+  message: "a job `cloud-relevance` must answer with a `relevant` output"
+  problems: 1
+
+- name: cloud-class-without-a-verdict
+  file: .github/workflows/ci.yml
+  old: "  cloud-verdict:\n"
+  new: "  cloud-judgement:\n"
+  code: missing-verdict-job
+  message: "an always-run job `cloud-verdict` must be its required status"
+
+- name: cloud-verdict-supervising-another-job
+  file: .github/workflows/ci.yml
+  old: "--job python-check-cloud"
+  new: "--job python-check-db"
+  code: unsupervised-class-job
+  message: "job `cloud-verdict` must run `reference_harness.cloud_verdict` over `python-check-cloud`"
+  problems: 1
+
+- name: cloud-cells-without-display-names
+  file: .github/workflows/ci.yml
+  old: "    name: python-check-cloud (${{ matrix.provider }})\n"
+  new: "    name: python-check-cloud\n"
+  code: undeclared-cells
+  message: "`python-check-cloud`'s name must render `matrix.provider`"
+  problems: 1
+
+- name: ordinary-job-running-on-the-cloud-only-triggers
+  file: .github/workflows/ci.yml
+  old: "  lint-markdown:\n    if: github.event_name == 'push' || github.event_name == 'pull_request'\n"
+  new: "  lint-markdown:\n"
+  code: unconditioned-job
+  message: "job `lint-markdown` runs on every trigger"
+  problems: 1
+
+- name: ordinary-job-widened-to-a-cloud-only-trigger
+  file: .github/workflows/ci.yml
+  old: "    if: github.event_name == 'pull_request'\n"
+  new: "    if: github.event_name == 'pull_request' || github.event_name == 'schedule'\n"
+  code: unconditioned-job
+  message: "job `commitlint` runs on every trigger"
+  problems: 1

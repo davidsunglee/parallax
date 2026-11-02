@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-import pytest
 import yaml
 
 import cost_report_adapter as adapter
@@ -312,9 +311,14 @@ def test_the_label_is_removed_for_a_same_repository_request_and_reported_for_a_f
 # --------------------------------------------------------------------------- #
 # Ordinary CI                                                                  #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("trigger", ["workflow_dispatch", "schedule"])
-def test_ordinary_ci_verifies_only_and_carries_no_observation_trigger(trigger: str) -> None:
+def test_ordinary_ci_verifies_only_and_carries_no_observation_trigger() -> None:
+    # Ordinary CI's scheduled and dispatched runs exist for the cloud path alone:
+    # they take no cost request and run neither an observation nor the evidence
+    # check, which stay with pushes and pull requests.
     ci = cast("dict[object, Any]", yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8")))
-    assert trigger not in _triggers(ci)
+    triggers = _triggers(ci)
+    assert set(triggers["workflow_dispatch"]["inputs"]) == {"environment-version"}
     assert "python-report-cost" not in ci["jobs"]
-    assert "python-check-evidence" in ci["jobs"]
+    assert ci["jobs"]["python-check-evidence"]["if"] == (
+        "github.event_name == 'push' || github.event_name == 'pull_request'"
+    )

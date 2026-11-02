@@ -25,6 +25,7 @@ import {
   FORK_APPROVAL_POLICY,
   SETTINGS_TOKEN_SECRET,
 } from "../tools/github-assessment.ts";
+import type { Clock } from "../tools/clock.ts";
 import { rolloutContext, type RolloutContext } from "../tools/rollout-context.ts";
 import type { Completed, Invocation, Shell } from "../tools/shell.ts";
 import { committedApp, committedContext } from "./committed-app.ts";
@@ -326,6 +327,26 @@ export function replyKey(invocation: Invocation): string {
 /** The two-word form of a key, for replies that answer every resource of one operation. */
 const operation = (key: string): string => key.split(" ").slice(0, 2).join(" ");
 
+/** Scripted time: it passes only when a tool sleeps, and starts at a fixed instant. */
+export class ScriptedClock implements Clock {
+  static readonly START = Date.parse("2026-11-02T12:00:00Z");
+  elapsed = 0;
+  readonly slept: number[] = [];
+
+  wall(): number {
+    return ScriptedClock.START + this.elapsed;
+  }
+
+  monotonic(): number {
+    return this.elapsed;
+  }
+
+  sleep(milliseconds: number): void {
+    this.slept.push(milliseconds);
+    this.elapsed += milliseconds;
+  }
+}
+
 export interface World {
   /** The replies in force, which a test may change as the scripted world changes. */
   readonly replies: Record<string, Reply>;
@@ -333,6 +354,7 @@ export interface World {
   readonly context: RolloutContext;
   readonly captured: Invocation[];
   readonly attached: Invocation[];
+  readonly clock: ScriptedClock;
 }
 
 /**
@@ -344,6 +366,7 @@ export function world(
   replies: Readonly<Record<string, Reply>> = {},
   attach: (invocation: Invocation) => number = () => 0,
   root?: string,
+  clock: ScriptedClock = new ScriptedClock(),
 ): World {
   const table: Record<string, Reply> = { ...healthyReplies(), ...replies };
   const answer = (reply: Reply, invocation: Invocation): Completed => {
@@ -366,7 +389,14 @@ export function world(
       return attach(invocation);
     },
   };
-  return { replies: table, shell, context: rolloutContext(shell, root), captured, attached };
+  return {
+    replies: table,
+    shell,
+    context: rolloutContext(shell, root, clock),
+    captured,
+    attached,
+    clock,
+  };
 }
 
 /** Whether *invocation* only reads: an AWS describe, get, or list; a GitHub GET; or a read-only git query. */

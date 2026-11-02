@@ -13,6 +13,7 @@ import {
 } from "../src/rollout-configuration.ts";
 import { trustAnchors, type TrustAnchors } from "../src/trust.ts";
 import type { AwsContext } from "./aws-assessment.ts";
+import { systemClock, type Clock } from "./clock.ts";
 import { sources, type Sources } from "./findings.ts";
 import type { GitHubContext } from "./github-assessment.ts";
 import type { Shell } from "./shell.ts";
@@ -50,14 +51,19 @@ export interface RolloutContext extends AwsContext, GitHubContext {
   readonly anchors: TrustAnchors;
   readonly inputs: DeployInputs;
   readonly read: Sources;
+  readonly clock: Clock;
 }
 
 function json(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-/** The rollout context committed under *root*, reached through *shell*. */
-export function rolloutContext(shell: Shell, root: string = PACKAGE_ROOT): RolloutContext {
+/** The rollout context committed under *root*, reached through *shell*, spending time on *clock*. */
+export function rolloutContext(
+  shell: Shell,
+  root: string = PACKAGE_ROOT,
+  clock: Clock = systemClock,
+): RolloutContext {
   const { context } = json(join(root, "cdk.json")) as { context: Record<string, unknown> };
   const configuration = environmentConfiguration(context[CONFIGURATION_CONTEXT_KEY]);
   const rollout = rolloutConfiguration(context[ROLLOUT_CONTEXT_KEY], configuration);
@@ -69,5 +75,6 @@ export function rolloutContext(shell: Shell, root: string = PACKAGE_ROOT): Rollo
     anchors: trustAnchors(configuration, rollout),
     inputs: deployInputs(json(join(root, "deploy-inputs.json"))),
     read: sources(shell, configuration.region),
+    clock,
   };
 }

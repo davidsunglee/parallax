@@ -1,9 +1,9 @@
-"""Unit tests for the live-database access guard.
+"""Unit tests for the resource-access guard.
 
 The guard is what makes the derived scheduling class trustworthy, so the canary
 matters more than usual: a guard that only ever returns 0 is indistinguishable
 from no guard, and the state it exists to catch fails silently on a host with
-Docker.
+Docker, or wherever a provider's credentials happen to be absent.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-import check_database_access as access
+import check_resource_access as access
 
 
 def _seams(source: str) -> list[str]:
@@ -21,16 +21,28 @@ def _seams(source: str) -> list[str]:
 
 
 def _minimal_tree(root: Path) -> None:
-    """A tests root the guard finds clean: the designated fixture, acquiring the
-    database through the declared profile, and a classifier designating exactly it."""
+    """A tests root the guard finds clean for both classes: the designated
+    fixtures — one acquiring the database through the declared profile, the
+    other opening a cloud run — the modules implementing the cloud fixture, and a
+    classifier mapping exactly those fixtures to their classes."""
     (root / "conftest.py").write_text(
-        "_DATABASE_FIXTURES = frozenset({'profile_run'})\n"
+        "_RESOURCE_FIXTURES = {'profile_run': 'db', 'aws_run': 'cloud'}\n"
         "\n"
         "\n"
         "def profile_run(profile):\n"
         "    with profile.provisioned() as run:\n"
         "        yield run\n"
+        "\n"
+        "\n"
+        "def aws_run():\n"
+        "    from tests._support.aws_run import AwsRun\n"
+        "\n"
+        "    with AwsRun.open(None, None) as run:\n"
+        "        yield run\n"
     )
+    (root / "_support").mkdir()
+    for module in ("aws_run.py", "aws_environment.py"):
+        (root / "_support" / module).write_text("")
 
 
 # --------------------------------------------------------------------------
@@ -339,7 +351,7 @@ def test_an_instance_member_that_is_not_a_declared_seam_is_reported(
         access, "INSTANCE_SEAMS", {"parallax.postgres.PostgresAdapter": frozenset({"start"})}
     )
     assert access.unbacked_instance_seams() == ("parallax.postgres.PostgresAdapter.start",)
-    assert access.main([]) == 1
+    assert access.main(["--class", "db"]) == 1
 
 
 def test_a_profile_whose_provisioner_is_not_a_declared_seam_is_reported(
@@ -352,32 +364,32 @@ def test_a_profile_whose_provisioner_is_not_a_declared_seam_is_reported(
     # acquisition, so the two halves are checked against each other.
     monkeypatch.setattr(
         access,
-        "DATABASE_SEAMS",
-        access.DATABASE_SEAMS - {"parallax.conformance.provision.Provisioner"},
+        "PROVISION_SEAMS",
+        access.PROVISION_SEAMS - {"parallax.conformance.provision.Provisioner"},
     )
     assert access.unbacked_profiles() == ("pg-full",)
-    assert access.main([]) == 1
+    assert access.main(["--class", "db"]) == 1
 
 
 def test_a_seam_whose_attribute_was_renamed_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     renamed = "parallax.postgres.PostgresAdapter.connect"
-    monkeypatch.setattr(access, "DATABASE_SEAMS", access.DATABASE_SEAMS | {renamed})
+    monkeypatch.setattr(access, "SEAMS", access.SEAMS | {renamed})
     assert access.unresolved_seams() == (renamed,)
 
 
 def test_a_seam_whose_module_disappeared_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(access, "DATABASE_SEAMS", frozenset({"parallax.pool.Pool"}))
+    monkeypatch.setattr(access, "SEAMS", frozenset({"parallax.pool.Pool"}))
     assert access.unresolved_seams() == ("parallax.pool.Pool",)
 
 
 def test_a_seam_naming_something_uncallable_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(access, "DATABASE_SEAMS", frozenset({"parallax.postgres.__doc__"}))
+    monkeypatch.setattr(access, "SEAMS", frozenset({"parallax.postgres.__doc__"}))
     assert access.unresolved_seams() == ("parallax.postgres.__doc__",)
 
 
 def test_a_minimal_tree_is_clean(tmp_path: Path) -> None:
     _minimal_tree(tmp_path)
-    assert access.audit(tmp_path) == []
+    assert access.audit(tmp_path, "db") == []
 
 
 def test_a_seam_call_outside_the_designated_fixture_is_a_violation(tmp_path: Path) -> None:
@@ -389,10 +401,10 @@ def test_a_seam_call_outside_the_designated_fixture_is_a_violation(tmp_path: Pat
         "def test_rogue():\n"
         "    Provisioner()\n"
     )
-    (finding,) = access.audit(tmp_path)
+    (finding,) = access.audit(tmp_path, "db")
     assert finding.path == "test_rogue.py"
     assert finding.line == 5
-    assert access.ENTRY_POINT_FIXTURE in finding.message
+    assert "`profile_run` in conftest.py" in finding.message
 
 
 def _rogue(root: Path, call: str) -> None:
@@ -415,7 +427,7 @@ def test_a_waiver_carrying_a_reason_excuses_the_call_beside_it(tmp_path: Path) -
     # delegate stubbed out. What it costs is a reason on the diff line.
     _minimal_tree(tmp_path)
     _rogue(tmp_path, "Provisioner()  # database-access: the container is faked in this test")
-    assert access.audit(tmp_path) == []
+    assert access.audit(tmp_path, "db") == []
 
 
 def test_a_waiver_carrying_no_reason_is_not_honored(tmp_path: Path) -> None:
@@ -426,7 +438,7 @@ def test_a_waiver_carrying_no_reason_is_not_honored(tmp_path: Path) -> None:
     _minimal_tree(tmp_path)
     for unjustified in ("# database-access:", "# database-access:   ", "# database-access"):
         _rogue(tmp_path, f"Provisioner()  {unjustified}")
-        (finding,) = access.audit(tmp_path)
+        (finding,) = access.audit(tmp_path, "db")
         assert finding.line == 5
 
 
@@ -442,7 +454,7 @@ def test_a_waiver_excuses_only_the_line_it_was_written_on(tmp_path: Path) -> Non
         "    Provisioner()  # database-access: this one is faked\n"
         "    return Provisioner()\n"
     )
-    (finding,) = access.audit(tmp_path)
+    (finding,) = access.audit(tmp_path, "db")
     assert finding.line == 6
 
 
@@ -457,7 +469,7 @@ def test_a_marker_spelled_inside_a_string_is_not_a_waiver(tmp_path: Path) -> Non
         "'application_name=# database-access: bypass'",
     ):
         _rogue(tmp_path, f"Provisioner({spelled})")
-        (finding,) = access.audit(tmp_path)
+        (finding,) = access.audit(tmp_path, "db")
         assert finding.line == 5
 
 
@@ -468,7 +480,7 @@ def test_a_waiver_speaks_for_one_call_rather_than_for_a_whole_line(tmp_path: Pat
     _minimal_tree(tmp_path)
     _rogue(tmp_path, "Provisioner(); Provisioner()  # database-access: only one is faked")
 
-    first, second = access.audit(tmp_path)
+    first, second = access.audit(tmp_path, "db")
 
     assert (first.line, second.line) == (5, 5)
     assert "2 acquisitions" in first.message
@@ -485,37 +497,39 @@ def test_a_seam_call_elsewhere_in_the_designated_module_is_a_violation(tmp_path:
         "\n"
         "    return Provisioner()\n"
     )
-    (finding,) = access.audit(tmp_path)
+    (finding,) = access.audit(tmp_path, "db")
     assert finding.path == "conftest.py"
 
 
 def test_a_missing_designated_fixture_is_a_violation(tmp_path: Path) -> None:
-    (tmp_path / "conftest.py").write_text("_DATABASE_FIXTURES = frozenset({'profile_run'})\n")
-    (finding,) = access.audit(tmp_path)
+    (tmp_path / "conftest.py").write_text(
+        "_RESOURCE_FIXTURES = {'profile_run': 'db', 'aws_run': 'cloud'}\n"
+    )
+    (finding,) = access.audit(tmp_path, "db")
     assert "is not defined here" in finding.message
 
 
 def test_a_classifier_designating_a_different_fixture_is_a_violation(tmp_path: Path) -> None:
     _minimal_tree(tmp_path)
     conftest = tmp_path / "conftest.py"
-    conftest.write_text(
-        conftest.read_text().replace("frozenset({'profile_run'})", "frozenset({'other'})")
-    )
-    (finding,) = access.audit(tmp_path)
+    conftest.write_text(conftest.read_text().replace("{'profile_run': 'db',", "{'other': 'db',"))
+    (finding,) = access.audit(tmp_path, "db")
     assert access.CLASSIFIER_CONSTANT in finding.message
 
 
 # --------------------------------------------------------------------------
 # Canary: the real tree passes, a planted rogue acquisition blocks
 # --------------------------------------------------------------------------
-def test_the_real_test_tree_confines_database_access() -> None:
-    assert access.main([]) == 0
+@pytest.mark.parametrize("resource", sorted(access.RESOURCE_CLASSES))
+def test_the_real_test_tree_confines_each_resource(resource: str) -> None:
+    assert access.main(["--class", resource]) == 0
 
 
-def test_explicit_check_uses_the_same_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _minimal_tree(tmp_path)
-    monkeypatch.setattr(access, "TESTS_ROOT", tmp_path)
-    assert access.main(["--check"]) == 0
+def test_a_class_must_be_named(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as refused:
+        access.main([])
+    assert refused.value.code == 2
+    assert "--class" in capsys.readouterr().err
 
 
 def test_a_planted_rogue_acquisition_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -524,7 +538,7 @@ def test_a_planted_rogue_acquisition_fails(tmp_path: Path, monkeypatch: pytest.M
     untracked module behind and fail a sibling gate."""
     _minimal_tree(tmp_path)
     monkeypatch.setattr(access, "TESTS_ROOT", tmp_path)
-    assert access.main([]) == 0
+    assert access.main(["--class", "db"]) == 0
 
     (tmp_path / "test_rogue.py").write_text(
         "from parallax.conformance.provision import Provisioner\n"
@@ -533,7 +547,7 @@ def test_a_planted_rogue_acquisition_fails(tmp_path: Path, monkeypatch: pytest.M
         "def test_rogue():\n"
         "    return Provisioner()\n"
     )
-    assert access.main([]) == 1
+    assert access.main(["--class", "db"]) == 1
 
 
 def test_an_unresolved_seam_fails_the_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -541,7 +555,226 @@ def test_an_unresolved_seam_fails_the_gate(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(access, "TESTS_ROOT", tmp_path)
     monkeypatch.setattr(
         access,
-        "DATABASE_SEAMS",
-        access.DATABASE_SEAMS | {"parallax.postgres.PostgresAdapter.connect"},
+        "SEAMS",
+        access.SEAMS | {"parallax.postgres.PostgresAdapter.connect"},
     )
-    assert access.main([]) == 1
+    assert access.main(["--class", "db"]) == 1
+
+
+# --------------------------------------------------------------------------
+# The admission relation: which fixture may call which group of seams
+# --------------------------------------------------------------------------
+def _module(root: Path, relative: str, body: str) -> None:
+    path = root / relative
+    path.write_text(body)
+
+
+def _within_fixture(root: Path, fixture: str, statement: str) -> None:
+    """*statement* added as the last line of *fixture*'s body in the entry module."""
+    conftest = root / "conftest.py"
+    lines = conftest.read_text().splitlines()
+    opening = next(i for i, line in enumerate(lines) if line.startswith(f"def {fixture}("))
+    end = opening
+    for index in range(opening + 1, len(lines)):
+        if lines[index].startswith("    "):
+            end = index
+        elif lines[index]:
+            break
+    lines.insert(end + 1, f"    {statement}")
+    conftest.write_text("\n".join(lines) + "\n")
+
+
+def test_a_provider_seam_in_a_test_is_a_cloud_violation_and_not_a_database_one(
+    tmp_path: Path,
+) -> None:
+    _minimal_tree(tmp_path)
+    _module(
+        tmp_path,
+        "test_rogue.py",
+        "import botocore.session\n\n\ndef test_rogue():\n    botocore.session.get_session()\n",
+    )
+    (finding,) = access.audit(tmp_path, "cloud")
+    assert (finding.path, finding.line) == ("test_rogue.py", 5)
+    assert "reaches a provider-hosted environment; only `aws_run`" in finding.message
+    assert access.audit(tmp_path, "db") == []
+
+
+def test_reaching_the_provider_inside_the_database_fixture_is_a_cloud_violation(
+    tmp_path: Path,
+) -> None:
+    _minimal_tree(tmp_path)
+    _within_fixture(tmp_path, "profile_run", "import urllib.request")
+    _within_fixture(tmp_path, "profile_run", "urllib.request.urlopen('https://example.invalid')")
+    findings = access.audit(tmp_path, "cloud")
+    assert [finding.path for finding in findings] == ["conftest.py"]
+    assert "`urllib.request.urlopen`" in findings[0].message
+
+
+def test_provisioning_a_local_server_inside_the_cloud_fixture_is_a_database_violation(
+    tmp_path: Path,
+) -> None:
+    _minimal_tree(tmp_path)
+    _within_fixture(tmp_path, "aws_run", "from parallax.conformance.provision import Provisioner")
+    _within_fixture(tmp_path, "aws_run", "Provisioner()")
+    (finding,) = access.audit(tmp_path, "db")
+    assert finding.path == "conftest.py"
+    assert "starts a local database server; only `profile_run`" in finding.message
+    assert access.audit(tmp_path, "cloud") == []
+
+
+def test_a_connection_is_admitted_through_either_fixture_and_nowhere_else(tmp_path: Path) -> None:
+    _minimal_tree(tmp_path)
+    _within_fixture(tmp_path, "aws_run", "import psycopg")
+    _within_fixture(tmp_path, "aws_run", "psycopg.connect('host=cluster')")
+    assert access.audit(tmp_path, "db") == []
+
+    _module(
+        tmp_path,
+        "test_rogue.py",
+        "import psycopg\n\n\ndef test_rogue():\n    psycopg.connect('host=anywhere')\n",
+    )
+    (finding,) = access.audit(tmp_path, "db")
+    assert finding.path == "test_rogue.py"
+    assert "opens a database connection; only `aws_run` or `profile_run`" in finding.message
+    assert access.audit(tmp_path, "cloud") == []
+
+
+def test_an_adapter_opened_on_an_instance_outside_both_fixtures_is_a_violation(
+    tmp_path: Path,
+) -> None:
+    _minimal_tree(tmp_path)
+    _module(
+        tmp_path,
+        "test_rogue.py",
+        "from parallax.postgres import PostgresAdapter\n"
+        "\n"
+        "\n"
+        "def test_rogue(writer):\n"
+        "    adapter = PostgresAdapter(writer=writer)\n"
+        "    adapter.open()\n",
+    )
+    (finding,) = access.audit(tmp_path, "db")
+    assert (finding.path, finding.line) == ("test_rogue.py", 6)
+
+
+def test_the_cloud_fixtures_implementation_may_connect_and_reach_the_provider(
+    tmp_path: Path,
+) -> None:
+    _minimal_tree(tmp_path)
+    _module(
+        tmp_path,
+        "_support/aws_run.py",
+        "import botocore.session\n"
+        "import psycopg\n"
+        "\n"
+        "\n"
+        "def opened():\n"
+        "    botocore.session.get_session()\n"
+        "    return psycopg.connect('host=cluster')\n",
+    )
+    assert access.audit(tmp_path, "cloud") == []
+    assert access.audit(tmp_path, "db") == []
+
+
+def test_the_cloud_fixtures_implementation_may_not_provision_a_local_server(
+    tmp_path: Path,
+) -> None:
+    _minimal_tree(tmp_path)
+    _module(
+        tmp_path,
+        "_support/aws_environment.py",
+        "from testcontainers.community.postgres import PostgresContainer\n"
+        "\n"
+        "\n"
+        "def started():\n"
+        "    return PostgresContainer('postgres')\n",
+    )
+    (finding,) = access.audit(tmp_path, "db")
+    assert finding.path == "_support/aws_environment.py"
+
+
+def test_each_class_honors_only_its_own_waiver(tmp_path: Path) -> None:
+    _minimal_tree(tmp_path)
+    _module(
+        tmp_path,
+        "test_rogue.py",
+        "from tests._support.aws_run import AwsRun\n"
+        "\n"
+        "\n"
+        "def test_rogue():\n"
+        "    AwsRun.open(None, None)  # database-access: the wrong class's marker\n"
+        "    AwsRun.open(None, None)  # cloud-access: the ports are scripted here\n",
+    )
+    (finding,) = access.audit(tmp_path, "cloud")
+    assert finding.line == 5
+
+
+def test_a_missing_implementation_of_the_cloud_fixture_is_a_violation(tmp_path: Path) -> None:
+    _minimal_tree(tmp_path)
+    (tmp_path / "_support" / "aws_environment.py").unlink()
+    (finding,) = access.audit(tmp_path, "cloud")
+    assert finding.path == "_support/aws_environment.py"
+    assert access.audit(tmp_path, "db") == []
+
+
+def test_a_missing_cloud_fixture_is_a_cloud_violation(tmp_path: Path) -> None:
+    _minimal_tree(tmp_path)
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text(conftest.read_text().replace("def aws_run():", "def other():"))
+    messages = [finding.message for finding in access.audit(tmp_path, "cloud")]
+    assert "the designated fixture `aws_run` is not defined here" in messages
+    assert any("AwsRun.open" in message for message in messages)
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        "{'profile_run': 'db'}",
+        "{'profile_run': 'db', 'aws_run': 'db'}",
+        "frozenset({'profile_run'})",
+        "{'profile_run': 'db', 'aws_run': CLOUD}",
+    ],
+)
+def test_a_classifier_table_other_than_the_guards_is_a_violation(
+    tmp_path: Path, table: str
+) -> None:
+    _minimal_tree(tmp_path)
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text(
+        conftest.read_text().replace("{'profile_run': 'db', 'aws_run': 'cloud'}", table)
+    )
+    (finding,) = access.audit(tmp_path, "cloud")
+    assert access.CLASSIFIER_CONSTANT in finding.message
+
+
+def test_an_annotated_classifier_table_is_read(tmp_path: Path) -> None:
+    _minimal_tree(tmp_path)
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text(
+        conftest.read_text().replace("_RESOURCE_FIXTURES = ", "_RESOURCE_FIXTURES: dict = ")
+    )
+    assert access.audit(tmp_path, "db") == []
+
+
+def test_a_missing_entry_module_is_a_violation(tmp_path: Path) -> None:
+    (finding,) = access.audit(tmp_path, "cloud")
+    assert finding.message == "conftest.py does not exist"
+
+
+def test_a_planted_provider_access_fails_the_cloud_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _minimal_tree(tmp_path)
+    monkeypatch.setattr(access, "TESTS_ROOT", tmp_path)
+    assert access.main(["--class", "cloud"]) == 0
+    _module(
+        tmp_path,
+        "test_rogue.py",
+        "from tests._support.aws_environment import PublishedEnvironment\n"
+        "\n"
+        "\n"
+        "def test_rogue():\n"
+        "    PublishedEnvironment.load()\n",
+    )
+    assert access.main(["--class", "cloud"]) == 1
+    assert "tests/test_rogue.py:5" in capsys.readouterr().err

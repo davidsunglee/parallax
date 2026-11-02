@@ -27,6 +27,13 @@ import {
   SETTINGS_TOKEN_SECRET,
   tokenFinding,
 } from "./github-assessment.ts";
+import {
+  CLOUD_EVIDENCE,
+  cloudEvidenceFinding,
+  REQUIRED_CHECK,
+  requireCloudVerdict,
+  requiredCheckFinding,
+} from "./required-check.ts";
 import { CDK_CLI, type RolloutContext } from "./rollout-context.ts";
 import { CommandError, readLine, succeeded } from "./shell.ts";
 
@@ -219,12 +226,24 @@ const settingsToken: SetupStep = {
   postconditions: (context) => guarded(CHECK.token, () => tokenFinding(context)),
 };
 
+/** Requiring the cloud verdict follows live evidence that the cloud path runs, never precedes it. */
+const requiredCheck: SetupStep = {
+  preconditions: (context) => [
+    ...repository(context),
+    ...guarded(CLOUD_EVIDENCE, () => cloudEvidenceFinding(context)),
+  ],
+  blockers: (context) => guarded(REQUIRED_CHECK, () => requiredCheckFinding(context)),
+  run: requireCloudVerdict,
+  postconditions: (context) => guarded(REQUIRED_CHECK, () => requiredCheckFinding(context)),
+};
+
 /** Every setup step, by the name `apply` and `--authorize` both take. */
 export const SETUP_STEPS: Readonly<Record<string, SetupStep>> = {
   "access-stack": accessStack,
   bootstrap,
   "github-settings": githubSettingsStep,
   "settings-token": settingsToken,
+  [REQUIRED_CHECK]: requiredCheck,
 };
 
 /**

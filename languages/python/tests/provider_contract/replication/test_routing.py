@@ -19,7 +19,7 @@ from parallax.core.db_port import BeginFailed, Committed, DatabaseConnection, Ro
 from parallax.postgres import PostgresRole
 from parallax.snapshot import ReadOnlyTxnContext, connect
 from tests._support.root_ownership import own_root
-from tests.provider_contract.replication._replication_support import (
+from tests._support.routed_reads import (
     LAYOUTS,
     MODEL,
     READS,
@@ -28,8 +28,8 @@ from tests.provider_contract.replication._replication_support import (
     Ledger,
     everything,
     insert,
-    replicated,
 )
+from tests.provider_contract.replication._replication_support import replicated
 
 pytestmark = pytest.mark.xdist_group("replication")
 

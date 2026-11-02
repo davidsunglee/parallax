@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { DISCOVERY_DEADLINE, VERDICT_DEADLINE } from "../tools/cloud-verification.ts";
 import { SETTINGS_TOKEN_SECRET } from "../tools/github-assessment.ts";
 import { PACKAGE_ROOT } from "./committed-app.ts";
 import { ANCHORS, ROLLOUT } from "./rollout-world.ts";
@@ -56,12 +57,16 @@ describe("the deploy workflow", () => {
     }
   });
 
-  it("has one job, gated to main and to the protected environment, with only OIDC and read access", () => {
+  it("has one job, gated to main and to the protected environment, with only OIDC, read, and dispatch access", () => {
     expect(Object.keys(workflow.jobs)).toEqual([jobName]);
     expect(workflow.permissions).toEqual({});
     expect(job["if"]).toBe("github.ref == 'refs/heads/main'");
     expect(job["environment"]).toBe(ROLLOUT.deployEnvironment);
-    expect(job["permissions"]).toEqual({ contents: "read", "id-token": "write" });
+    expect(job["permissions"]).toEqual({
+      actions: "write",
+      contents: "read",
+      "id-token": "write",
+    });
     expect(job["timeout-minutes"]).toEqual(expect.any(Number));
     expect(steps[0]?.run).toBe('test "$GITHUB_REF" = refs/heads/main');
   });
@@ -115,5 +120,22 @@ describe("the deploy workflow", () => {
     const evidence = steps.find(running("rollout.ts evidence"));
     expect(evidence?.shell).toBe("bash");
     expect(evidence?.run).toContain('| tee -a "$GITHUB_STEP_SUMMARY"');
+  });
+
+  it("proves the deployment through the cloud path last, under the workflow's own token", () => {
+    const verification = index(running("rollout.ts verify-cloud"));
+    expect(verification).toBe(steps.length - 1);
+    expect(index(running("rollout.ts evidence"))).toBeLessThan(verification);
+    const step = steps[verification];
+    expect(step?.env).toEqual({ GH_TOKEN: "${{ github.token }}" });
+    expect(step?.shell).toBe("bash");
+    expect(step?.run).toBe(
+      'node infra/aws/tools/rollout.ts verify-cloud --revision "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"',
+    );
+  });
+
+  it("outlasts the cloud verdict it waits for", () => {
+    const waited = (DISCOVERY_DEADLINE + VERDICT_DEADLINE) / 60_000;
+    expect(job["timeout-minutes"]).toBeGreaterThan(waited + 60);
   });
 });

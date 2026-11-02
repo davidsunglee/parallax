@@ -190,15 +190,16 @@ silently understates what it needs.
 
 ### The classes
 
-The scheduling classes are `dbfree`, `db`, and `cost`. The vocabulary is closed
-the way [§2](#2-operation-vocabulary)'s is: a class named anywhere else has no
-defined meaning and MUST NOT be declared.
+The scheduling classes are `dbfree`, `db`, `cloud`, and `cost`. The vocabulary
+is closed the way [§2](#2-operation-vocabulary)'s is: a class named anywhere else
+has no defined meaning and MUST NOT be declared.
 
 | Class | A test belongs to it when |
 |---|---|
-| `db` | Running it requires a live database |
+| `db` | Running it requires a live database the run provisions locally |
+| `cloud` | Running it requires resources a provider hosts, reached with credentials a local run does not hold |
 | `cost` | Running it requires an interpreter no other test shares, or its verdict depends on committed cost evidence |
-| `dbfree` | Running it requires neither |
+| `dbfree` | Running it requires none of these |
 
 Every class but `dbfree` names its own resource, and `dbfree` is the complement
 of their union. That is what the derived classification above rests on: a test
@@ -225,11 +226,25 @@ capture lands, binding a gate kept cheap enough to run after every change
 ([§7](#7-command-roles-and-composition)) to the slowest work the repository
 does. It is confined through an entry point of its own, as the interpreter is.
 
+`cloud`'s resource is an environment a provider hosts — a managed database
+cluster, the network around it, and the credentials that reach it. A database is
+not what separates it from `db`: a test of a hosted cluster and a test of a local
+container may open the same kind of connection. What separates them is where the
+resource comes from. A `db` test's run starts what it needs, so any host able to
+run containers can grade it; a `cloud` test needs an environment someone deployed
+and an identity entitled to it, which a local run does not and must not hold. The
+class therefore names the kind of resource rather than a vendor: a provider is a
+matrix dimension ([§9](#9-continuous-integration-contract)), not a class. A
+connection both classes open is admitted through either class's entry point;
+provisioning a local server is `db`'s alone, and reaching the provider is
+`cloud`'s alone.
+
 Each resource-bearing class is confined by a blocking check, and one of the
 scope's class aggregates ([§7](#7-command-roles-and-composition)) MUST run it:
-`<scope>-check-database-access` for `db`, and `<scope>-check-instrument-access`
-for `cost`. `dbfree` is defined by those resources' absence and owes no such
-check, because an absence has no entry point to confine.
+`<scope>-check-database-access` for `db`, `<scope>-check-cloud-access` for
+`cloud`, and `<scope>-check-instrument-access` for `cost`. `dbfree` is defined by
+those resources' absence and owes no such check, because an absence has no entry
+point to confine.
 
 A scope declares the classes its own tests populate: both where its tests divide,
 and one where the other would hold nothing and the commands
@@ -309,16 +324,26 @@ contract quantifying over the complete aggregate means it. `check` is a
 dependency-only aggregate over the same commands less the class aggregates this
 section excludes, and is what a merge gates on.
 
-`cost` is the one class `check` excludes. A gate is worth what the frequency it
-is actually run at makes it worth, and `cost` is the slowest class by a wide
-margin, paid by every local verification of every change including those that
-could not move a byte. Excluding it keeps the command a reader runs after each
-change fast enough to keep running, and forfeits no coverage: the class stays in
-`check-all`, and [§9](#9-continuous-integration-contract)'s job union gates it on
-every proposed change like any other. This is the one place this contract weighs
-elapsed time, and it weighs it against how often a gate is run rather than as a
-threshold anything passes ([§6](#6-runtime-classification)). Excluding a class is
-therefore a change to this section, never a local decision.
+`check` excludes two classes, `cost` and `cloud`, for different reasons.
+
+A gate is worth what the frequency it is actually run at makes it worth, and
+`cost` is the slowest class by a wide margin, paid by every local verification of
+every change including those that could not move a byte. Excluding it keeps the
+command a reader runs after each change fast enough to keep running, and forfeits
+no coverage: the class stays in `check-all`, and
+[§9](#9-continuous-integration-contract)'s job union gates it on every proposed
+change like any other. This is the one place this contract weighs elapsed time,
+and it weighs it against how often a gate is run rather than as a threshold
+anything passes ([§6](#6-runtime-classification)).
+
+`cloud` is excluded because a local run cannot satisfy it and must not try: its
+resource is reached only with credentials and a deployed environment that belong
+to CI, so a local merge gate composing it would either fail on every host or
+invite the credentials onto hosts that should never hold them. The class stays in
+`check-all`, and [§9](#9-continuous-integration-contract) requires it through a
+verdict that fails rather than passes when its environment is missing.
+
+Excluding a class is therefore a change to this section, never a local decision.
 
 `check` is consequently NOT complete, and nothing may describe it as though it
 were. The repository testing map explains that distinction once. Other documents
@@ -393,16 +418,47 @@ CI MUST use the same interface as local verification.
 - A job's identifier matches the command it executes.
 - The job's primary verification step invokes that command directly.
 - A job MAY expand one command across a declared language-version, database,
-  or shard matrix; the expansion MUST be recognizable as intentional rather
-  than as duplicate ownership. A shard matrix's cells partition one scheduling
-  class's selection: each cell runs its part exactly once, their union is the
-  whole class, and the partition MUST be enforced mechanically.
+  provider, or shard matrix; the expansion MUST be recognizable as intentional
+  rather than as duplicate ownership. A shard matrix's cells partition one
+  scheduling class's selection: each cell runs its part exactly once, their
+  union is the whole class, and the partition MUST be enforced mechanically. A
+  provider matrix gives each cell an explicit, deterministic display name, so
+  the set of cells a run owes is readable from the workflow itself.
 - A job MUST NOT embed a raw test, lint, build, coverage, or audit command when a
   canonical command owns that gate.
 - Setup, dependency installation, secret scanning, and event-specific checks MAY
   remain native CI steps, because they are not repository verification gates.
 - The union of jobs MUST cover the complete required repository check graph, even
   when CI parallelizes its dependencies instead of invoking the top aggregate.
+
+### Relevance-gated classes
+
+A class whose environment CI provisions at a cost — `cloud` — MAY run only for
+changes that could affect it, plus scheduled and manual runs. Its jobs are then
+skipped on every other change, and a branch protection rule reads a job skipped
+by its condition, or by a dependency that failed, as passing. Such a job
+therefore MUST NOT be the required status itself. Three jobs carry the class:
+
+- a **relevance** job deciding, from the change, whether the class runs, and
+  reporting that answer as an explicit output;
+- the **class** job, which depends on the relevance job, runs only when it
+  answered relevant, and owns the class's command across its provider matrix;
+  and
+- a **verdict** job, which is the required status. It depends on the relevance
+  job alone, runs whatever that job's outcome, and MUST NOT depend on the class
+  job, nor the class job on it: a verdict waiting on the class job's terminal
+  state would wait as long as that job's runner never arrives.
+
+The verdict passes in exactly two cases: the relevance job succeeded and
+answered not relevant, or every cell the class job's matrix owes this run
+attempt completed successfully. It observes the cells through the run's own
+record, bounded by deadlines of its own for a cell to appear and start and for
+it to finish, and it fails on anything else — a failed or cancelled relevance
+job, a cell absent or unstarted at its deadline, a cell that did not succeed, a
+cell recorded twice, or a record it cannot read. A cell's success in an earlier
+attempt of the run is not this attempt's. The verdict needs no permission to
+change the run, and a scheduled or manual run triggers only the class's path,
+never the rest of the job set.
 
 ## Why this shape
 

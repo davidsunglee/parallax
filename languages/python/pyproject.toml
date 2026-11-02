@@ -81,15 +81,17 @@ addopts = "-ra --strict-markers --strict-config"
 # describes, and removing the marker is part of the fix. Set here rather than per
 # marker so a non-strict expected failure is unrepresentable.
 xfail_strict = true
-# The first three are the scheduling partition and are never authored onto a test:
+# The first four are the scheduling partition and are never authored onto a test:
 # the collection hook in tests/conftest.py derives exactly one of them per item
-# from what that item requires — its fixture closure for a database or for the
-# committed cost evidence, the boundary its function carries for an interpreter of
-# its own — so zero is unrepresentable and two is a hard error. The other two are orthogonal focused selectors,
-# authored where they apply.
+# from what that item requires — its fixture closure for a database, for a
+# provider-hosted environment, or for the committed cost evidence, the boundary its
+# function carries for an interpreter of its own — so zero is unrepresentable and
+# two is a hard error. The other two are orthogonal focused selectors, authored
+# where they apply.
 markers = [
-    "dbfree: requires no live database provider",
-    "db: requires a live database provider",
+    "dbfree: requires no live database provider or provider-hosted environment",
+    "db: requires a live database the run provisions locally",
+    "cloud: requires a provider-hosted environment and credentials for it",
     "cost: requires an interpreter no other test shares, or the committed cost evidence",
     "compile_sweep: Docker-free compile of every compile-eligible claimed case",
     "adapter_smoke: real psycopg adapter smoke checks (Docker)",

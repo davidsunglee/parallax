@@ -21,7 +21,9 @@ on:
 
 permissions: {}
 
-# One deployment at a time, and never cancelled part-way through an update.
+# One deployment at a time, and never cancelled part-way through an update or
+# the cloud verification that proves it: a later deployment waits until this
+# one's cloud verdict is in.
 concurrency:
   group: infra-deploy
   cancel-in-progress: false
@@ -30,9 +32,12 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     environment: aws-deploy
+    # `actions: write` dispatches the cloud path on main; nothing else here
+    # writes to the repository.
     permissions:
+      actions: write
       contents: read
       id-token: write
     steps:
@@ -77,4 +82,15 @@ jobs:
           node infra/aws/tools/rollout.ts evidence
           --revision "$GITHUB_SHA"
           --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          | tee -a "$GITHUB_STEP_SUMMARY"
+      # The deployment's proof: the cloud path dispatched on main for this
+      # commit, required to observe the TestEnvironment version this deployment
+      # published, and awaited to its verdict inside this serialized rollout,
+      # so a push run racing the deployment never stands in for it.
+      - name: Verify the deployment through the cloud suite
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node infra/aws/tools/rollout.ts verify-cloud --revision "$GITHUB_SHA"
           | tee -a "$GITHUB_STEP_SUMMARY"

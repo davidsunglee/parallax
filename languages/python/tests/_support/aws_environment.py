@@ -6,6 +6,9 @@ version it names and then normalized into one :class:`AwsTestEnvironment`, so th
 suite works from a single value whichever supported version a deployment
 published. While a new version rolls out, the previous version's schema stays as
 ``test-environment.v<N>.schema.json`` and keeps its normalizer here.
+
+The record is read from the parameter store only by :meth:`PublishedEnvironment.load`,
+which the cloud fixture alone calls; everything else here is pure.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, Protocol, cast
 
 from jsonschema import exceptions
 from jsonschema.validators import validator_for
@@ -23,6 +26,8 @@ from jsonschema.validators import validator_for
 from tests._support.repo import REPO_ROOT
 
 SCHEMA_DIRECTORY = REPO_ROOT / "infra" / "aws"
+PARAMETER: Final = "/parallax/ci/aws/test-environment"
+"""Where infrastructure publishes the record."""
 CURRENT_SCHEMA = "test-environment.schema.json"
 _PREVIOUS_SCHEMA = re.compile(r"test-environment\.v(\d+)\.schema\.json")
 
@@ -127,3 +132,51 @@ NORMALIZERS: Mapping[int, Callable[[Mapping[str, Any]], AwsTestEnvironment]] = {
     1: _from_version_1,
 }
 """How each supported record version becomes the one environment value."""
+
+
+class ParameterStore(Protocol):
+    """The one parameter-store operation the suite calls."""
+
+    def get_parameter(self, *, Name: str) -> Mapping[str, Any]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedEnvironment:
+    """The environment a deployment published, and the parameter version that
+    published it, which identifies the deployment the suite ran against."""
+
+    environment: AwsTestEnvironment
+    version: int
+
+    @classmethod
+    def read(
+        cls, store: ParameterStore, region: str | None, expected_version: str | None = None
+    ) -> PublishedEnvironment:
+        """The record *store* holds, refusing one published in another Region than
+        the store's or, when *expected_version* names one, by another deployment."""
+        parameter: object = store.get_parameter(Name=PARAMETER).get("Parameter")
+        fields = cast("dict[str, Any]", parameter) if isinstance(parameter, dict) else {}
+        value: object = fields.get("Value")
+        version: object = fields.get("Version")
+        if not isinstance(value, str) or type(version) is not int:
+            raise UnreadableEnvironmentError(f"{PARAMETER} holds no versioned record")
+        environment = AwsTestEnvironment.from_record(value)
+        if environment.region != region:
+            raise UnreadableEnvironmentError(
+                f"the record names {environment.region}, but it was read in {region}"
+            )
+        if expected_version and expected_version != str(version):
+            raise UnreadableEnvironmentError(
+                f"{PARAMETER} is at version {version}, not the deployed version {expected_version}"
+            )
+        return cls(environment, version)
+
+    @classmethod
+    def load(cls, expected_version: str | None = None) -> PublishedEnvironment:
+        """The record this process's AWS identity reads in its own Region."""
+        import botocore.session
+
+        session = botocore.session.get_session()
+        region = cast("str | None", session.get_config_variable("region"))
+        store = cast("ParameterStore", session.create_client("ssm", region_name=region))
+        return cls.read(store, region, expected_version)

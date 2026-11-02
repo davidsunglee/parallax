@@ -75,7 +75,7 @@ from pathlib import Path
 __all__ = [
     "CLASSIFIER_CONSTANT",
     "CLASSIFIER_MODULE",
-    "DATABASE_SEAMS",
+    "SEAMS",
     "ENTRY_POINT_FIXTURE",
     "ENTRY_POINT_MODULE",
     "INSTANCE_SEAMS",
@@ -109,7 +109,7 @@ CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"
 # Fully qualified callables that acquire a live database. `provider_for` boots
 # and tears down a container; the two container classes are the direct route to
 # one; the two CLI entry points reach `provider_for` themselves.
-DATABASE_SEAMS: frozenset[str] = frozenset(
+SEAMS: frozenset[str] = frozenset(
     {
         "reference_harness.benchmark.main",
         "reference_harness.matrix.main",
@@ -205,13 +205,13 @@ def _resolves_to_callable(dotted: str) -> bool:
 
 
 def unresolved_seams() -> tuple[str, ...]:
-    """Every entry of :data:`DATABASE_SEAMS` that no longer names a callable.
+    """Every entry of :data:`SEAMS` that no longer names a callable.
 
     The seam set is hand-maintained against code it does not import, so a
     renamed or deleted seam would otherwise leave the guard reporting success
     over a rule that matches nothing.
     """
-    return tuple(seam for seam in sorted(DATABASE_SEAMS) if not _resolves_to_callable(seam))
+    return tuple(seam for seam in sorted(SEAMS) if not _resolves_to_callable(seam))
 
 
 def unbacked_instance_seams() -> tuple[str, ...]:
@@ -229,7 +229,7 @@ def unbacked_instance_seams() -> tuple[str, ...]:
             f"{constructor}.{member}"
             for constructor, members in INSTANCE_SEAMS.items()
             for member in members
-            if f"{constructor}.{member}" not in DATABASE_SEAMS
+            if f"{constructor}.{member}" not in SEAMS
         )
     )
 
@@ -316,7 +316,7 @@ def _acquisition_named(expression: ast.expr, bindings: dict[str, str], bound: Bo
     if held is not None:
         return _first(held, bindings, bound, _acquisition_named)
     target = _resolved_target(expression, bindings)
-    return target if target is not None and target in DATABASE_SEAMS else None
+    return target if target is not None and target in SEAMS else None
 
 
 def _first(
@@ -501,15 +501,19 @@ def _declared_database_fixtures(tree: ast.Module) -> frozenset[str] | None:
     return None
 
 
-def _unwaived(source: str, acquisitions: Sequence[tuple[int, str]]) -> list[tuple[int, str]]:
-    """Every one of *acquisitions* no waiver in *source* excuses, with the message
-    it is reported by.
+def _unwaived(
+    source: str,
+    acquisitions: Sequence[tuple[int, str]],
+    waiver: re.Pattern[str],
+    refusal: Callable[[str], str],
+) -> list[tuple[int, str]]:
+    """Every one of *acquisitions* no *waiver* in *source* excuses, with the message
+    it is reported by, which *refusal* completes for each reported target.
 
     A waiver is the line's own, not the file's: it excuses the one call a reader
-    can see beside it. It must carry a reason — a bare ``# database-access:`` is
-    not honored — so that taking the escape hatch costs a justification a
-    reviewer reads, which is the whole of what keeps a guard with an escape hatch
-    worth having.
+    can see beside it. It must carry a reason — a bare marker is not honored — so
+    that taking the escape hatch costs a justification a reviewer reads, which is
+    the whole of what keeps a guard with an escape hatch worth having.
 
     Two things follow from that, and both are decided here. The marker is a
     COMMENT the tokenizer reports, so text spelling it inside a string literal is
@@ -522,19 +526,13 @@ def _unwaived(source: str, acquisitions: Sequence[tuple[int, str]]) -> list[tupl
     waived = {
         token.start[0]
         for token in tokenize.generate_tokens(io.StringIO(source).readline)
-        if token.type == tokenize.COMMENT and _WAIVER.search(token.string) is not None
+        if token.type == tokenize.COMMENT and waiver.search(token.string) is not None
     }
     reported_on = Counter(line for line, _ in acquisitions)
     unwaived: list[tuple[int, str]] = []
     for line, target in acquisitions:
         if line not in waived:
-            unwaived.append(
-                (
-                    line,
-                    f"calls `{target}`, which acquires a live database; only the "
-                    f"`{ENTRY_POINT_FIXTURE}` fixture in {ENTRY_POINT_MODULE} may",
-                )
-            )
+            unwaived.append((line, f"calls `{target}`, {refusal(target)}"))
         elif reported_on[line] > 1:
             unwaived.append(
                 (
@@ -544,6 +542,13 @@ def _unwaived(source: str, acquisitions: Sequence[tuple[int, str]]) -> list[tupl
                 )
             )
     return unwaived
+
+
+def _refusal(_target: str) -> str:
+    return (
+        f"which acquires a live database; only the `{ENTRY_POINT_FIXTURE}` fixture in "
+        f"{ENTRY_POINT_MODULE} may"
+    )
 
 
 def audit(tests_root: Path) -> list[Finding]:
@@ -595,7 +600,8 @@ def audit(tests_root: Path) -> list[Finding]:
             if permitted is None or not permitted[0] <= line <= permitted[1]
         ]
         findings.extend(
-            Finding(relative, line, message) for line, message in _unwaived(source, acquisitions)
+            Finding(relative, line, message)
+            for line, message in _unwaived(source, acquisitions, _WAIVER, _refusal)
         )
     return findings
 

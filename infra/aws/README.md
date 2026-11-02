@@ -131,6 +131,15 @@ Actions alone, into `aws-deploy`, the one environment whose jobs can read it;
 its value passes from the terminal or a pipe straight to `gh`.
 `github-settings` never removes a branch rule it did not add.
 
+Once the cloud path has run live, `required-check` makes `cloud-verdict` a
+required status of `main`, from GitHub Actions alone, beside every check already
+required. It refuses until the authorized commit's AWS cloud cell has succeeded,
+so the requirement never precedes the evidence:
+
+```bash
+node aws/tools/rollout.ts apply required-check  --authorize required-check  --revision "$(git rev-parse HEAD)"
+```
+
 ## Spending guardrail
 
 With `budget.ownership` `manual`, the account's existing monthly cost budget is
@@ -160,6 +169,13 @@ A change that replaces a resource still deploys with rollback, which the CLI
 requires; if a stack is already failed when such a change arrives, the CLI
 rolls it back first, and a failed first creation then leaves it in
 `ROLLBACK_FAILED` for a maintainer to delete.
+
+The deployment then proves itself through the cloud suite, still inside its own
+serialized run: it dispatches `ci.yml`'s cloud path on `main`, requiring that
+run to observe the record version this deployment published, and waits for its
+`cloud-verdict`. That run, not a push run racing the deployment, is the proof
+of an infrastructure change. If `main` has moved past the deployed commit, it
+dispatches nothing and fails; the next deployment's run proves the environment.
 
 ## Working on it
 

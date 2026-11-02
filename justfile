@@ -8,6 +8,7 @@
 #   (bare)     repository-wide gates, reports, and graph introspection
 #   core-      validation of the core spec + compatibility corpus
 #   harness-   the reference harness's own code health and test suite
+#   infra-     the infrastructure the provider-hosted test environments come from
 #   python-    the Python implementation (future: java-, rust-, ...)
 #
 # Every public recipe reads `<scope>-<operation>[-<qualifier>]`, drawing its
@@ -29,7 +30,9 @@
 # A recipe declaring `[metadata("scheduling:db")]` starts Testcontainers
 # containers and needs a reachable Docker daemon. README.md "Running And
 # Inspecting The Project" has the one-time ~/.testcontainers.properties fix for
-# runtimes other than Docker Desktop.
+# runtimes other than Docker Desktop. One declaring `[metadata("scheduling:cloud")]`
+# needs a deployed provider environment and credentials for it, which only CI
+# holds.
 
 # ===========================================================================
 # Configuration: the recipe shell, lock resolution, module paths, and the recipe
@@ -89,8 +92,8 @@ check: check-gates check-lanes report-check-summary
 [parallel]
 check-lanes: check-dbfree check-db
 
-[doc("Complete gate: the merge gate plus the cost class CI also runs.")]
-check-all: check check-cost report-check-all-summary
+[doc("Complete gate: the merge gate plus the cost and cloud classes CI also runs.")]
+check-all: check check-cost check-cloud report-check-all-summary
 
 [doc("Every blocking check that needs no live database.")]
 check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree infra-check-dbfree python-check-dbfree
@@ -100,6 +103,11 @@ check-db: harness-check-db python-check-db
 
 [doc("Every blocking check needing an interpreter no other test shares, or the committed cost evidence.")]
 check-cost: python-check-cost
+
+# CI's alone: what it needs is a deployed environment and the credentials that
+# reach it, which no local run holds (core/spec/language-testing.md §7).
+[doc("Every blocking check needing resources a provider hosts.")]
+check-cloud: python-check-cloud
 
 [doc("Duplicated-code scans, one per codebase, each against its own threshold.")]
 lint-duplication: harness-lint-duplication infra-lint-duplication python-lint-duplication
@@ -133,7 +141,7 @@ report-matrix:
 [metadata("runtime:fast")]
 [doc("The line `just check` ends with when every gate it runs passed.")]
 report-check-summary:
-    @echo 'check OK: every merge-gating check in this repository passed. The cost class is not one of them: `just check-all` adds it, and CI runs it on every change.'
+    @echo 'check OK: every merge-gating check in this repository passed. The cost and cloud classes are not among them: `just check-all` adds them, and CI runs them.'
 
 [metadata("runtime:fast")]
 [doc("The line `just check-all` ends with when every gate passed.")]
@@ -396,7 +404,7 @@ infra-format:
 # ===========================================================================
 
 [doc("Every blocking check over the Python implementation.")]
-python-check: python-check-dbfree python-check-db python-check-cost
+python-check: python-check-dbfree python-check-db python-check-cost python-check-cloud
 
 [doc("Every Python check that needs no live database.")]
 python-check-dbfree: python-check-static python-check-coverage
@@ -407,8 +415,11 @@ python-check-db: python-test-db
 [doc("Every Python check needing an interpreter no other test shares, or the committed cost evidence.")]
 python-check-cost shard="1/1": python-check-instrument-access python-check-evidence (python-test-cost shard)
 
+[doc("Every Python check needing resources a provider hosts (CI only; credentials).")]
+python-check-cloud: python-test-cloud
+
 [doc("Independent Python source, packaging, and dependency validation.")]
-python-check-static: python-format-check python-lint python-typecheck python-check-database-access python-check-dead-code python-check-distribution-metadata python-check-lock python-audit python-audit-dependencies
+python-check-static: python-format-check python-lint python-typecheck python-check-database-access python-check-cloud-access python-check-dead-code python-check-distribution-metadata python-check-lock python-audit python-audit-dependencies
 
 [doc("Database-free test coverage and the source boundaries its exemptions require.")]
 python-check-coverage: python-check-imports python-coverage-diff
@@ -439,6 +450,15 @@ python-test-db:
 [doc("Every Python test reading the whole interpreter, each in one of its own, or the committed cost evidence.")]
 python-test-cost shard="1/1":
     cd {{python}} && uv run pytest -m cost -n auto --shard {{shard}}
+
+# One process, because the suite holds one lock on the shared environment for
+# its whole run. `PARALLAX_CLOUD_PROVIDERS` names the providers a CI cell runs;
+# unset, no cloud test is selected, so the run collects nothing and pytest's own
+# no-tests status fails it rather than passing it.
+[metadata("runtime:slow", "scheduling:cloud")]
+[doc("Every Python test whose fixture closure reaches a provider-hosted environment.")]
+python-test-cloud:
+    cd {{python}} && uv run pytest -m cloud
 
 # The six semantic surfaces are focused selectors for iteration, and deliberately
 # no gate's dependencies: each cuts across the scheduling partition, so an
@@ -621,9 +641,17 @@ python-check-untracked-sources:
 # defines it: an item acquiring a database outside the designated fixture would
 # be classified `dbfree` and would still pass on a host with Docker.
 [metadata("runtime:fast")]
-[doc("Live database access in the Python suite goes through the designated fixture.")]
+[doc("Live database access in the Python suite goes through the designated fixtures.")]
 python-check-database-access:
-    cd {{python}} && uv run python tools/check_database_access.py
+    cd {{python}} && uv run python tools/check_resource_access.py --class db
+
+# The same soundness condition for the provider-hosted class: an item reaching
+# the provider outside its fixture would be classified `dbfree`, and fail only
+# where credentials happen to be missing.
+[metadata("runtime:fast")]
+[doc("Provider-hosted access in the Python suite goes through the designated fixture.")]
+python-check-cloud-access:
+    cd {{python}} && uv run python tools/check_resource_access.py --class cloud
 
 # The same soundness condition one class over: an item reading the whole
 # interpreter without acquiring one of its own would be classified `dbfree`, and
