@@ -96,6 +96,7 @@ _PYTHON_EXECUTABLE_RE = re.compile(r"python(?:3(?:\.\d+)?)?")
 _REQUIREMENT_NAME_RE = re.compile(r"\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)")
 _EXTRAS_RE = re.compile(r"\s*\[([^\]]*)\]")
 _ENVIRONMENT_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_ENV_UNSET_OPTIONS = frozenset({"-u", "--unset"})
 
 
 @dataclass(frozen=True)
@@ -261,9 +262,27 @@ def _imported_modules(project: Path) -> dict[str, str]:
     return found
 
 
+def _without_environment(words: list[str]) -> list[str]:
+    """*words* with what only shapes the command's environment dropped: leading
+    assignments, and an ``env`` utility together with its options and its own
+    assignments, so the command ``env`` runs is what remains."""
+    remaining = iter(words)
+    for word in remaining:
+        if _ENVIRONMENT_ASSIGNMENT_RE.match(word):
+            continue
+        if word != "env":
+            return [word, *remaining]
+        for argument in remaining:
+            if argument in _ENV_UNSET_OPTIONS:
+                next(remaining, None)
+            elif not (argument.startswith("-") or _ENVIRONMENT_ASSIGNMENT_RE.match(argument)):
+                return [argument, *remaining]
+    return []
+
+
 def _simple_commands(script: str) -> Iterator[list[str]]:
-    """Each simple command in a shell *script*, as words, with any leading
-    environment assignments dropped."""
+    """Each simple command in a shell *script*, as words, without what only
+    shapes its environment."""
     for line in script.replace("\\\n", " ").splitlines():
         lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
@@ -274,11 +293,12 @@ def _simple_commands(script: str) -> Iterator[list[str]]:
         command: list[str] = []
         for word in [*words, ";"]:
             if word not in _SHELL_SEPARATORS:
-                if command or not _ENVIRONMENT_ASSIGNMENT_RE.match(word):
-                    command.append(word)
-            elif command:
+                command.append(word)
+                continue
+            command = _without_environment(command)
+            if command:
                 yield command
-                command = []
+            command = []
 
 
 def _python_module(arguments: Iterator[str]) -> str | None:

@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TestEnvironment",
+  "description": "Where the cloud suite finds the deployed Aurora environment and how it authenticates there. Infrastructure publishes one record; the suite reads the schema version the record names.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "writer_host",
+    "reader_host",
+    "port",
+    "region",
+    "login",
+    "cluster_id",
+    "instances",
+    "ca_bundle_url"
+  ],
+  "properties": {
+    "schema": {
+      "description": "The version of this record's shape.",
+      "const": 1
+    },
+    "writer_host": {
+      "description": "The cluster (writer) endpoint.",
+      "$ref": "#/$defs/host"
+    },
+    "reader_host": {
+      "description": "The cluster reader endpoint.",
+      "$ref": "#/$defs/host"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "region": {
+      "type": "string",
+      "pattern": "^[a-z]{2}(-[a-z]+)+-[0-9]$"
+    },
+    "login": {
+      "description": "The IAM-authenticated database login every route uses.",
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_]{0,62}$"
+    },
+    "cluster_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "instances": {
+      "description": "Every instance endpoint, so a test can inspect each physical instance directly.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/instance"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "const": "writer"
+              }
+            }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "const": "reader"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ca_bundle_url": {
+      "description": "Where the certificate bundle verifying every endpoint is published.",
+      "type": "string",
+      "pattern": "^https://truststore\\.pki\\.rds\\.amazonaws\\.com/"
+    }
+  },
+  "$defs": {
+    "host": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\\.rds\\.amazonaws\\.com$"
+    },
+    "instance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identifier", "host", "role"],
+      "properties": {
+        "identifier": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+        },
+        "host": {
+          "$ref": "#/$defs/host"
+        },
+        "role": {
+          "enum": ["writer", "reader"]
+        }
+      }
+    }
+  }
+}

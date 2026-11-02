@@ -1,0 +1,7 @@
+[
+  {
+    "advisory": "GHSA-g3hv-75wg-m249",
+    "package": "minimatch",
+    "reason": "ESLint and typescript-eslint, at their latest releases, require minimatch 10, and the fix exists only in minimatch 11. The advisory needs attacker-chosen glob patterns; the linter evaluates only the patterns committed in this scope's configuration."
+  }
+]

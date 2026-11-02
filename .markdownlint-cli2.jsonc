@@ -7,10 +7,12 @@
     "languages/**/spec/**/*.md",
     "docs/**/*.md",
     "languages/**/docs/**/*.md",
+    "infra/**/*.md",
     "*.md"
   ],
   "ignores": [
     "node_modules/**",
+    "**/node_modules/**",
     ".humanlayer/**",
     "reference-harness/**",
     "**/.venv/**"

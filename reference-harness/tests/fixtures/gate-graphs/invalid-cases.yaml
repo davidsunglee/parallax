@@ -106,8 +106,8 @@
 
 - name: scheduling-class-outside-the-vocabulary
   file: justfile
-  old: '[metadata("runtime:medium", "scheduling:dbfree")]'
-  new: '[metadata("runtime:medium", "scheduling:offline")]'
+  old: "[metadata(\"runtime:medium\", \"scheduling:dbfree\")]\n[doc(\"Every harness test"
+  new: "[metadata(\"runtime:medium\", \"scheduling:offline\")]\n[doc(\"Every harness test"
   code: unknown-scheduling-class
   message: "`harness` declares the scheduling class `offline`, which is outside §5's closed vocabulary (cost, db, dbfree)"
 
@@ -142,10 +142,17 @@
 
 - name: class-aggregate-omitting-a-scope
   file: justfile
-  old: "check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree python-check-dbfree"
-  new: "check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree"
+  old: "check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree infra-check-dbfree python-check-dbfree"
+  new: "check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree infra-check-dbfree"
   code: incomplete-aggregate
   message: "`check-dbfree` does not compose `python-check-dbfree`"
+
+- name: class-aggregate-omitting-the-infrastructure-scope
+  file: justfile
+  old: "harness-check-dbfree infra-check-dbfree python-check-dbfree"
+  new: "harness-check-dbfree python-check-dbfree"
+  code: incomplete-aggregate
+  message: "`check-dbfree` does not compose `infra-check-dbfree`"
 
 - name: classless-scope-run-by-no-class-aggregate
   file: justfile
@@ -323,3 +330,52 @@
   new: "        run: just core-check-schemas"
   code: ci-uncovered-gate
   message: "no job runs `core-check-module-graph`"
+
+- name: vitest-class-owner-selecting-another-project
+  file: justfile
+  old: "pnpm exec vitest run --project dbfree --coverage"
+  new: "pnpm exec vitest run --project unit --coverage"
+  code: scheduling-recipe-selection
+  message: "`infra-test-dbfree` selects no scheduling class rather than exactly dbfree"
+
+- name: vitest-catalog-missing-the-class
+  file: infra/vitest.projects.json
+  old: '"name": "dbfree"'
+  new: '"name": "unit"'
+  code: missing-marker-catalog
+  message: "`infra` selects the scheduling class `dbfree` but its runner catalog does not declare it"
+
+- name: prettier-rewriting-inside-a-format-check
+  file: justfile
+  old: "pnpm exec prettier --check ."
+  new: "pnpm exec prettier --write ."
+  code: inlined-operation
+  message: "`infra-format-check` performs `format`"
+
+- name: vitest-inside-a-build
+  file: justfile
+  old: "{{infra_isolated}} node tools/build.ts"
+  new: "{{infra_isolated}} pnpm exec vitest run"
+  code: inlined-operation
+  message: "`infra-build` performs `test`"
+
+- name: type-check-inside-a-lint
+  file: justfile
+  old: "pnpm exec eslint --max-warnings 0 ."
+  new: "pnpm exec tsc --noEmit -p tsconfig.json"
+  code: inlined-operation
+  message: "`infra-lint` performs `typecheck`"
+
+- name: infra-recipe-in-the-python-section
+  file: justfile
+  old: "python-format:"
+  new: "infra-format-tree:\n    true\n\npython-format:"
+  code: section-order
+  message: "`infra-format-tree` is declared after `python-audit`, which belongs to a later section"
+
+- name: ci-job-embedding-vitest
+  file: .github/workflows/ci.yml
+  old: "        run: just infra-check-dbfree"
+  new: "        run: pnpm exec vitest run"
+  code: ci-embedded-gate
+  message: "job `infra-check-dbfree` runs `pnpm exec vitest run`, embedding a `test` gate"

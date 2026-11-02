@@ -189,9 +189,10 @@ Every snippet on this page runs against a real PostgreSQL database in the test s
 The implementation lives in [`languages/python/`](languages/python/).
 [`TESTING.md`](TESTING.md) explains verification;
 [`languages/python/TESTING.md`](languages/python/TESTING.md) covers Python test
-placement and fixtures. The repository's commands run through
-[just](https://github.com/casey/just), a command runner. Run the merge gate from the
-root:
+placement and fixtures. [`infra/`](infra/aws/README.md) holds the TypeScript
+infrastructure the cloud test environment is provisioned from. The repository's
+commands run through [just](https://github.com/casey/just), a command runner, after
+`pnpm install`. Run the merge gate from the root:
 
 ```bash
 just check

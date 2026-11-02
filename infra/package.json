@@ -1,0 +1,28 @@
+{
+  "name": "@parallax/infra",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Workspace-wide tooling for the infrastructure packages beside it.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "aws-cdk": "catalog:",
+    "dependency-cruiser": "catalog:",
+    "eslint": "catalog:",
+    "jiti": "catalog:",
+    "json-schema-to-typescript": "catalog:",
+    "knip": "catalog:",
+    "prettier": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "yaml": "catalog:"
+  }
+}

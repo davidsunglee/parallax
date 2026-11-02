@@ -117,6 +117,7 @@ def test_the_harness_classifies_every_development_dependency(repo_root: Path) ->
     assert {classification.dependency for classification in inventory.classifications} == {
         "basedpyright",
         "deptry",
+        "diff-cover",
         "pytest",
         "ruff",
     }
@@ -180,6 +181,25 @@ def test_an_installed_executable_without_an_entry_point_is_invoked(tree: _Tree) 
     tree.recipes(f"lint:\n    @cd {_PROJECT} && FORCE=1 uv run binary-tool\n")
 
     assert _evidence(tree.audit(), "binary-tool") == {"invoked"}
+
+
+def test_a_tool_run_under_env_is_invoked(tree: _Tree) -> None:
+    tree.declare("isolated-tool", "unset-tool", "bare-tool")
+    for name in ("isolated-tool", "unset-tool", "bare-tool"):
+        tree.install(name, console_scripts=[name])
+    tree.recipes(
+        "lint:\n"
+        f"    cd {_PROJECT} && env -u AWS_PROFILE --unset AWS_ROLE_ARN -i HOME=/tmp"
+        " uv run isolated-tool\n"
+        f"    cd {_PROJECT} && env -u AWS_PROFILE A=1 uv run unset-tool\n"
+        f"    cd {_PROJECT} && uv run bare-tool && env -u\n"
+    )
+
+    inventory = tree.audit()
+
+    assert inventory.diagnostics == ()
+    assert _evidence(inventory, "isolated-tool") == {"invoked"}
+    assert _evidence(inventory, "unset-tool") == {"invoked"}
 
 
 def test_a_module_run_with_python_dash_m_is_invoked(tree: _Tree) -> None:

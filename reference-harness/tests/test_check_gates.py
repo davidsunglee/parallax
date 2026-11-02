@@ -18,7 +18,7 @@ from reference_harness.check_gates import (
     SURFACES,
     main,
 )
-from reference_harness.runner_config import PYTEST
+from reference_harness.runner_config import PYTEST, VITEST, read
 
 _INVALID_CASES = Path(__file__).parent / "fixtures" / "gate-graphs" / "invalid-cases.yaml"
 
@@ -33,6 +33,7 @@ _MIRRORED_FILES = (
     str(_MIRRORED_PYTHON_SPEC),
     "reference-harness/pyproject.toml",
     "languages/python/pyproject.toml",
+    f"infra/{VITEST.configuration_file}",
 )
 _MIRRORED_TEST_ROOT = Path("languages") / "python" / "tests"
 
@@ -170,6 +171,57 @@ def test_a_scope_without_runner_configuration_is_reported(
     assert "[missing-runner-configuration] `harness` declares a scheduling partition" in (
         capsys.readouterr().err
     )
+
+
+@pytest.mark.parametrize("content", [None, "not json", '{"name": "dbfree"}'])
+def test_an_unreadable_vitest_catalog_is_reported(
+    conforming_repository: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    content: str | None,
+) -> None:
+    root = _copy(conforming_repository, tmp_path / "unreadable-vitest-catalog")
+    catalog = root / "infra" / VITEST.configuration_file
+    if content is None:
+        catalog.unlink()
+    else:
+        catalog.write_text(content, encoding="utf-8")
+
+    rc = main([str(root)])
+
+    assert rc == 1
+    assert "[missing-runner-configuration] `infra` declares a scheduling partition" in (
+        capsys.readouterr().err
+    )
+
+
+def test_a_vitest_catalog_names_each_project_and_needs_no_strictness_flag(tmp_path: Path) -> None:
+    (tmp_path / VITEST.configuration_file).write_text(
+        '[{"name": "dbfree", "include": ["test/**"]}, {"include": ["x"]}, "stray"]',
+        encoding="utf-8",
+    )
+
+    config = read(tmp_path)
+
+    assert config is not None
+    assert config.profile is VITEST
+    assert config.catalog == frozenset({"dbfree"})
+    assert config.rejects_unknown_classes
+    assert config.test_paths == ()
+
+
+def test_a_pytest_configuration_is_read_before_a_vitest_one(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\nmarkers = ["dbfree: x"]\naddopts = "-ra"\n', encoding="utf-8"
+    )
+    (tmp_path / VITEST.configuration_file).write_text('[{"name": "db"}]', encoding="utf-8")
+
+    config = read(tmp_path)
+
+    assert config is not None
+    assert config.profile is PYTEST
+    assert config.catalog == frozenset({"dbfree"})
+    assert not config.rejects_unknown_classes
 
 
 def test_a_repository_without_a_ci_workflow_is_reported(
