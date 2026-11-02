@@ -31,7 +31,8 @@ const USAGE = `usage: node aws/tools/rollout.ts [preflight]
 
 /** What no configuration check can establish: only the protected deployment and the cloud run prove them. */
 export const LIVE_PROOFS: readonly string[] = [
-  "Aurora PostgreSQL 18.6 Serverless v2 accepts IAM authentication and the Data API (first deployment)",
+  "Aurora PostgreSQL 18.6 Serverless v2 accepts IAM authentication (first deployment)",
+  "the role bootstrap signs in as the master user from inside the VPC, by IAM once the first run has made it IAM-only (deployment evidence)",
   "the bounded execution policy covers every environment resource (first deployment)",
   "the role bootstrap converges on its first and on a repeated run (deployment evidence)",
   "the runner reads the source through the existing connection and its webhook queues jobs (first cloud job)",

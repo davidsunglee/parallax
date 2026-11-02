@@ -18,7 +18,7 @@ const PROVISIONER = join(
 );
 
 describe("the role bootstrap statement", () => {
-  it("is one DO block, which the Data API runs as a single statement", () => {
+  it("is one DO block, which runs as a single statement", () => {
     expect(ROLE_BOOTSTRAP_SQL.startsWith("DO $bootstrap$\n")).toBe(true);
     expect(ROLE_BOOTSTRAP_SQL.endsWith("\n$bootstrap$")).toBe(true);
     expect(ROLE_BOOTSTRAP_SQL.match(/\$bootstrap\$/g)).toHaveLength(2);

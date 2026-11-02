@@ -5,7 +5,12 @@ import { Template } from "aws-cdk-lib/assertions";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ConfigurationError } from "../src/configuration.ts";
-import { ROLE_BOOTSTRAP_ID, ROLE_BOOTSTRAP_TYPE } from "../src/constructs/aurora-cluster.ts";
+import {
+  MASTER_USER,
+  ROLE_BOOTSTRAP_ID,
+  ROLE_BOOTSTRAP_TYPE,
+  RUNTIME_CA_BUNDLE,
+} from "../src/constructs/aurora-cluster.ts";
 import { NAT_SETUP_COMMANDS } from "../src/constructs/private-network.ts";
 import {
   NAT_IMAGE_PARAMETER,
@@ -60,6 +65,26 @@ function runnerGroup(): string {
   const [, project] = only("AWS::CodeBuild::Project");
   const vpc = project.Properties["VpcConfig"] as { SecurityGroupIds: [{ "Fn::GetAtt": [string] }] };
   return vpc.SecurityGroupIds[0]["Fn::GetAtt"][0];
+}
+
+function bootstrapHandler(): [string, Resource] {
+  const [found] = resources("AWS::Lambda::Function").filter(([id]) =>
+    id.startsWith("AuroraRoleBootstrapHandler"),
+  );
+  if (found === undefined) throw new Error("expected the role-bootstrap handler");
+  return found;
+}
+
+function bootstrapGroup(): string {
+  const [, handler] = bootstrapHandler();
+  const vpc = handler.Properties["VpcConfig"] as { SecurityGroupIds: [{ "Fn::GetAtt": [string] }] };
+  return vpc.SecurityGroupIds[0]["Fn::GetAtt"][0];
+}
+
+function privateSubnets(): string[] {
+  return resources("AWS::EC2::Subnet")
+    .filter(([, subnet]) => subnet.Properties["MapPublicIpOnLaunch"] === false)
+    .map(([id]) => id);
 }
 
 function ref(id: string): { Ref: string } {
@@ -220,7 +245,7 @@ describe("the private network", () => {
 });
 
 describe("the Aurora cluster", () => {
-  it("is a private, encrypted, IAM-authenticated Aurora PostgreSQL 18.6 cluster with the Data API", () => {
+  it("is a private, encrypted, IAM-authenticated Aurora PostgreSQL 18.6 cluster without the Data API", () => {
     const [, cluster] = only("AWS::RDS::DBCluster");
     expect(cluster.Properties).toMatchObject({
       Engine: "aurora-postgresql",
@@ -229,7 +254,7 @@ describe("the Aurora cluster", () => {
       DatabaseName: CONTROL_DATABASE,
       Port: 5432,
       EnableIAMDatabaseAuthentication: true,
-      EnableHttpEndpoint: true,
+      EnableHttpEndpoint: false,
       StorageEncrypted: true,
       StorageType: "aurora",
     });
@@ -289,21 +314,27 @@ describe("the Aurora cluster", () => {
     });
   });
 
-  it("admits connections on the cluster's port from the runner's security group alone", () => {
+  it("admits connections on the cluster's port from the runner's and the role bootstrap's groups alone", () => {
     const [, cluster] = only("AWS::RDS::DBCluster");
     const [group] = cluster.Properties["VpcSecurityGroupIds"] as [{ "Fn::GetAtt": [string] }];
     const clusterGroup = group["Fn::GetAtt"][0];
     expect(all[clusterGroup]?.Properties).not.toHaveProperty("SecurityGroupIngress");
     const ingress = resources("AWS::EC2::SecurityGroupIngress").map(([, rule]) => rule.Properties);
-    expect(ingress).toEqual([
-      expect.objectContaining({
-        GroupId: { "Fn::GetAtt": [clusterGroup, "GroupId"] },
-        IpProtocol: "tcp",
-        FromPort: { "Fn::GetAtt": [only("AWS::RDS::DBCluster")[0], "Endpoint.Port"] },
-        ToPort: { "Fn::GetAtt": [only("AWS::RDS::DBCluster")[0], "Endpoint.Port"] },
-        SourceSecurityGroupId: { "Fn::GetAtt": [runnerGroup(), "GroupId"] },
-      }),
-    ]);
+    const port = { "Fn::GetAtt": [only("AWS::RDS::DBCluster")[0], "Endpoint.Port"] };
+    expect(ingress).toEqual(
+      expect.arrayContaining(
+        [runnerGroup(), bootstrapGroup()].map((source): unknown =>
+          expect.objectContaining({
+            GroupId: { "Fn::GetAtt": [clusterGroup, "GroupId"] },
+            IpProtocol: "tcp",
+            FromPort: port,
+            ToPort: port,
+            SourceSecurityGroupId: { "Fn::GetAtt": [source, "GroupId"] },
+          }),
+        ),
+      ),
+    );
+    expect(ingress).toHaveLength(2);
   });
 });
 
@@ -361,14 +392,38 @@ describe("the role bootstrap", () => {
     expect(resources("AWS::StepFunctions::StateMachine")).toEqual([]);
   });
 
-  it("targets this cluster with its own master secret", () => {
+  it("signs in to this cluster's writer as its master user, with that user's own secret", () => {
     const [cluster] = only("AWS::RDS::DBCluster");
     const [secret] = only("AWS::SecretsManager::Secret");
     const [, resource] = bootstrap();
-    expect(resource.Properties["SecretArn"]).toEqual(ref(secret));
-    const { text, intrinsics } = flatten(resource.Properties["ResourceArn"]);
-    expect(text).toBe("arn:aws:rds:us-east-2:407034905514:cluster:«0»");
-    expect(intrinsics.get("«0»")).toEqual(ref(cluster));
+    expect(resource.Properties).toMatchObject({
+      Host: { "Fn::GetAtt": [cluster, "Endpoint.Address"] },
+      Port: "5432",
+      User: MASTER_USER,
+      Database: CONTROL_DATABASE,
+      SecretArn: ref(secret),
+    });
+    expect(resource.Properties).not.toHaveProperty("ResourceArn");
+  });
+
+  it("runs inside the VPC's private subnets, verifying TLS against the runtime's CA bundle", () => {
+    const [, handler] = bootstrapHandler();
+    const network = privateSubnets();
+    expect(handler.Properties["VpcConfig"]).toEqual({
+      SecurityGroupIds: [{ "Fn::GetAtt": [bootstrapGroup(), "GroupId"] }],
+      SubnetIds: network.map(ref),
+    });
+    expect(handler.Properties["Environment"]).toEqual({
+      Variables: { NODE_EXTRA_CA_CERTS: RUNTIME_CA_BUNDLE },
+    });
+    // The writer must already admit the handler when the bootstrap first signs in.
+    const [, resource] = bootstrap();
+    const [admission] = resources("AWS::EC2::SecurityGroupIngress").find(
+      ([, rule]) =>
+        JSON.stringify(rule.Properties["SourceSecurityGroupId"]) ===
+        JSON.stringify({ "Fn::GetAtt": [bootstrapGroup(), "GroupId"] }),
+    ) ?? [""];
+    expect(resource.DependsOn).toContain(admission);
   });
 
   it("waits for the cluster, both instances, and the secret", () => {
@@ -382,7 +437,7 @@ describe("the role bootstrap", () => {
     expect(resource.DependsOn, bootstrapId).toEqual(expect.arrayContaining(expected));
   });
 
-  it("is the only principal granted the master secret, and only to execute on this cluster", () => {
+  it("is the only principal granted the master secret, and connects to this cluster as its master alone", () => {
     const [cluster] = only("AWS::RDS::DBCluster");
     const [secret] = only("AWS::SecretsManager::Secret");
     const policies = resources("AWS::IAM::Policy").filter(([, policy]) =>
@@ -394,10 +449,17 @@ describe("the role bootstrap", () => {
       Version: "2012-10-17",
       Statement: [
         {
-          Action: "rds-data:ExecuteStatement",
+          Action: "rds-db:connect",
           Effect: "Allow",
           Resource: {
-            "Fn::Join": ["", ["arn:aws:rds:us-east-2:407034905514:cluster:", ref(cluster)]],
+            "Fn::Join": [
+              "",
+              [
+                "arn:aws:rds-db:us-east-2:407034905514:dbuser:",
+                { "Fn::GetAtt": [cluster, "DBClusterResourceId"] },
+                `/${MASTER_USER}`,
+              ],
+            ],
           },
         },
         {
