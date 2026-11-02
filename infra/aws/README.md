@@ -1,16 +1,53 @@
 # AWS test environment
 
-This package defines `ParallaxCiEnvironmentStack`, the private environment the
-Aurora cloud suite runs against: a VPC whose private subnets reach the internet
-through one NAT instance, and an Aurora PostgreSQL Serverless v2 cluster with one
-writer and one reader. [`cdk.json`](cdk.json) holds the deployment's account,
-Region, zones, NAT instance type, and Aurora capacity, and the stack refuses a
-configuration that cannot describe a deployable environment.
+This package defines the two stacks the Aurora cloud suite depends on:
+
+- `ParallaxCiEnvironmentStack`, the private environment the suite runs
+  against: a VPC whose private subnets reach the internet through one NAT
+  instance, an Aurora PostgreSQL Serverless v2 cluster with one writer and one
+  reader, and an ephemeral CodeBuild runner for GitHub Actions jobs. Protected
+  CI deploys it.
+- `ParallaxCiAccessStack`, the trust path CI deploys through: the
+  `parallax-ci-deploy` role, the bounded policy CloudFormation executes the
+  environment stack with, and the permissions boundary every role the
+  environment creates carries. A maintainer deploys it; CI never can.
+
+[`cdk.json`](cdk.json) holds the deployment's account, Region, zones, NAT
+instance type, and Aurora capacity under `parallax:environment`, and the
+approved rollout inputs under `parallax:rollout`: the repository and its
+protected environment, the existing GitHub OIDC provider and CodeConnections
+connection the stacks reuse, the bootstrap qualifier, and who owns the
+spending guardrail. Both stacks refuse a configuration that cannot describe a
+deployable environment.
+
+## Trust path
+
+```text
+aws-deploy environment (main only, required reviewer)
+└── GitHub OIDC token, subject repo:davidsunglee/parallax:environment:aws-deploy
+    └── parallax-ci-deploy                        assumes nothing else; changes nothing itself
+        └── cdk-parallaxci-deploy / file-publishing roles
+            └── ParallaxCiEnvironmentStack only   never the access or bootstrap stack
+                └── cdk-parallaxci-cfn-exec-role  bounded policy + parallax-ci-boundary
+```
+
+The `ParallaxCiBootstrap` stack is the CDK bootstrap with its template
+narrowed by [`tools/bootstrap-template.ts`](tools/bootstrap-template.ts) from
+the pinned CLI's own: only `parallax-ci-deploy` may assume its roles, its
+deploy role may change and never delete the environment stack alone, and its
+execution role always holds the bounded policy and boundary rather than
+administrator access. A CLI upgrade that changes the default template fails
+that narrowing until it is reviewed again.
+
+The runner connects to the cluster only as `parallax_conformance_login`
+through IAM, and reads only the published record: it holds no master secret,
+no Data API, and no deploy access.
 
 ## What it publishes
 
-After the conformance roles are bootstrapped, the stack publishes one
-`TestEnvironment` record as the SSM parameter `/parallax/ci/aws/test-environment`.
+After the conformance roles are bootstrapped, the environment stack publishes
+one `TestEnvironment` record as the SSM parameter
+`/parallax/ci/aws/test-environment`.
 [`test-environment.schema.json`](test-environment.schema.json) is its authored
 contract; the TypeScript type in `src/generated/` is derived from it, and the
 Python suite validates a deployed record against the schema version the record
@@ -24,10 +61,65 @@ flight.
 ## Deploy inputs
 
 The NAT instance's image is the `NatInstanceImage` deployment parameter, an
-Amazon Linux 2023 arm64 image ID. CloudFormation keeps the previous value on a
-deploy that supplies none, so the instance is replaced, and patched, only when a
-reviewed deploy names a new image. Synthesis looks nothing up: everything else it
-needs is committed.
+Amazon Linux 2023 arm64 image ID committed as `natInstanceImage` in
+[`deploy-inputs.json`](deploy-inputs.json). A deploy refuses to run until one
+is committed; the preflight names the newest image to review. The instance is
+replaced, and patched, only when a reviewed change names a new image.
+Synthesis looks nothing up: everything else it needs is committed.
+
+## Setting up and checking the rollout
+
+[`tools/rollout.ts`](tools/rollout.ts) checks and sets up the rollout. No
+verification gate runs it. With no command it is a read-only preflight that
+reports every check as verified, pending (with the step that supplies it),
+drift, unchecked, or for a human to confirm, then lists what only the
+protected deployment and the cloud run can prove:
+
+```bash
+node aws/tools/rollout.ts preflight
+```
+
+Run it from `infra/`, as a maintainer in a human-controlled session such as
+CloudShell, with `gh` authenticated as a repository administrator. Each setup
+step changes something, so each needs its own authorization and the reviewed,
+unmodified `main` revision, refuses on drift, and verifies its result:
+
+```bash
+git fetch origin
+node aws/tools/rollout.ts apply access-stack    --authorize access-stack    --revision "$(git rev-parse HEAD)"
+node aws/tools/rollout.ts apply bootstrap       --authorize bootstrap       --revision "$(git rev-parse HEAD)"
+node aws/tools/rollout.ts apply github-settings --authorize github-settings --revision "$(git rev-parse HEAD)"
+node aws/tools/rollout.ts apply settings-token  --authorize settings-token  --revision "$(git rev-parse HEAD)" < token
+```
+
+`access-stack` comes first, because the bootstrap trusts the role it creates
+and attaches the policies it defines. `settings-token` places a fine-grained
+token limited to this repository, with read access to Administration and
+Actions alone, into `aws-deploy`, the one environment whose jobs can read it;
+its value passes from the terminal or a pipe straight to `gh`.
+`github-settings` never removes a branch rule it did not add.
+
+## Spending guardrail
+
+With `budget.ownership` `manual`, the account's existing monthly cost budget is
+the guardrail, and the preflight requires exactly one, with actual and
+forecast email alerts. Moving to a stack-owned budget is a reviewed change to
+`stack` ownership with a new name: the access stack creates it beside the
+manual one, so spending stays guarded, and a maintainer retires the manual
+budget only after the new one's recipients are verified. A budget of the
+configured name outside the stack is drift, never something to import.
+Budgets alert; nothing caps spending.
+
+## Deploying
+
+[`infra-deploy.yml`](../../.github/workflows/infra-deploy.yml) deploys the
+environment stack from `main`, on a push touching its inputs or on dispatch,
+after the `aws-deploy` reviewer approves. It verifies the repository's
+protections, synthesizes without credentials, verifies the account and the
+Aurora offering as the deploy role, deploys, and records the deployed
+revision, stack, role bootstrap, record, and runner in the run summary.
+A failed first creation leaves the stack in `ROLLBACK_COMPLETE`, which only a
+maintainer can delete.
 
 ## Working on it
 

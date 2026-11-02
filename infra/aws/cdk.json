@@ -13,6 +13,18 @@
         "autoPauseSeconds": 300
       }
     },
+    "parallax:rollout": {
+      "repository": "davidsunglee/parallax",
+      "deployEnvironment": "aws-deploy",
+      "deployBranch": "main",
+      "reviewer": "davidsunglee",
+      "oidcProviderArn": "arn:aws:iam::407034905514:oidc-provider/token.actions.githubusercontent.com",
+      "sourceConnectionArn": "arn:aws:codeconnections:us-east-2:407034905514:connection/55ccf245-e397-4081-89eb-ed0c32586b61",
+      "bootstrapQualifier": "parallaxci",
+      "budget": {
+        "ownership": "manual"
+      }
+    },
     "@aws-cdk-containers/ecs-service-extensions:enableDefaultLogDriver": true,
     "@aws-cdk/aws-apigateway:authorizerChangeDeploymentLogicalId": true,
     "@aws-cdk/aws-apigateway:disableCloudWatchRole": true,

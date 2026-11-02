@@ -1,6 +1,6 @@
 import { Stack, Token } from "aws-cdk-lib";
 import { describe, expect, it } from "vitest";
-import { defineEnvironment } from "../src/environment-stack.ts";
+import { defineStacks } from "../src/stacks.ts";
 import type { TestEnvironment } from "../src/generated/test-environment.ts";
 import {
   assertTestEnvironment,
@@ -39,7 +39,7 @@ function deployedRecord(): TestEnvironment {
 
 describe("the TestEnvironment record", () => {
   it("accepts the synthesized record, whose hosts are still deploy-time tokens", () => {
-    const stack = defineEnvironment(committedApp());
+    const stack = defineStacks(committedApp()).environment;
     const record = testEnvironment(stack.aurora, "us-east-2");
     expect(Token.isUnresolved(record.writer_host)).toBe(true);
     expect(() => {

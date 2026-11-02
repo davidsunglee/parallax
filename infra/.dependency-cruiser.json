@@ -72,7 +72,7 @@
       "name": "provider-not-to-another-package",
       "comment": "A provider package reaches another workspace package only through a declared dependency, never by a relative path.",
       "severity": "error",
-      "from": { "path": "^([^/]+)/(bin|src|test)/" },
+      "from": { "path": "^([^/]+)/(bin|src|test|tools)/" },
       "to": { "dependencyTypes": ["local"], "pathNot": "^$1/" }
     },
     {
