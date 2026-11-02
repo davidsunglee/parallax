@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
+from parallax.conformance._replication import LazyReplication, ReplicationPair
 from parallax.conformance.provision import Provisioner
 from parallax.core.db_port import (
     AccessMode,
@@ -145,14 +146,23 @@ class ProvisionedRun(ProfileRun):
     a run needs are delegated here rather than the provisioner being handed out:
     handing the recipe back out would give a caller that needs only the database
     this run holds the means to open a second one.
+
+    The run also owns at most one primary/standby pair, opened only when a
+    replication proof first asks for it and released with the run.
     """
 
     _provisioner: Provisioner
+    _replication: LazyReplication[ReplicationPair]
 
     def __init__(self, profile: Profile) -> None:  # pragma: no cover - Docker
         provisioner = profile.provisioner()
         ProfileRun.__init__(self, profile, provisioner.port)
         object.__setattr__(self, "_provisioner", provisioner)
+        object.__setattr__(self, "_replication", LazyReplication(ReplicationPair.open))
+
+    def replication(self) -> ReplicationPair:  # pragma: no cover - Docker
+        """This run's primary and its streaming standby, opened on first use."""
+        return self._replication.pair()
 
     def reset(  # pragma: no cover - exercised by the Docker-backed lanes
         self, model: Metamodel, fixtures: Mapping[str, object]
@@ -250,12 +260,19 @@ class ProvisionedRun(ProfileRun):
         return self._provisioner.authorization(selector)
 
     def release_case_runtimes(self) -> None:  # pragma: no cover - Docker
-        """Close every runtime a case composed a Database over and left open."""
-        self._provisioner.release_case_runtimes()
+        """Close every runtime a case composed a Database over and left open,
+        over this run's database and over its replication pair alike."""
+        try:
+            self._replication.release_runtimes()
+        finally:
+            self._provisioner.release_case_runtimes()
 
     def close(self) -> None:  # pragma: no cover - Docker
-        """Close the provisioning this run opened."""
-        self._provisioner.close()
+        """Close the replication pair, if one was opened, and the provisioning."""
+        try:
+            self._replication.close()
+        finally:
+            self._provisioner.close()
 
 
 @dataclass(frozen=True, slots=True)

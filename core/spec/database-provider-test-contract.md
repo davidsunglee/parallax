@@ -158,6 +158,19 @@ For every supported adapter, the smoke suite covers:
   suites, because a server will not produce them on demand. No replication is involved:
   what the reader route observes about the writer's changes is the subject of a
   separate standby proof
+- where the engine offers physical replication, a **reader route over a real
+  standby** of the writer, with the evidence read off the servers rather than
+  off route diagnostics: the reader's sessions are in recovery under the
+  writer's login, a write there is refused natively as a read-only
+  transaction, and a read-only transaction at a level the standby cannot begin
+  is refused natively. While the standby's replay is paused, a change the
+  writer committed is visible to a writer read and absent from reader and
+  preferred reads — eager, row, and streamed, in every representation and
+  Storage Layout — and appears once replay passes the writer's log position. A
+  standalone stream over a lagging reader can exhaust without the lagging rows,
+  and its later pages can observe a later replay position than its first; a
+  stream inside one Repeatable Read read-only transaction on the reader keeps
+  its first snapshot across replay that resumes beneath it
 - a **connection that is idle between operations**: a standalone statement opens
   no implicit whole-operation transaction, so a connection comes back with no
   transaction of its own and the next scope over it starts clean

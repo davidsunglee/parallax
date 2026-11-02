@@ -103,10 +103,11 @@ _WAIVER = re.compile(rf"#\s*{WAIVER_MARKER}:[ \t]*(?P<why>\S.*?)\s*$")
 
 # Fully qualified callables that acquire a live database. Constructing the
 # provisioner or a container starts a server; every ``open`` seam here opens a
-# socket to one; constructing a provisioned run opens the profile's own
-# provisioning. Constructing `PostgresAdapter` is deliberately absent, and now
-# for a stronger reason than before: it is immutable configuration that opens
-# nothing at all, so what acquires is `PostgresAdapter.open`. Constructing
+# socket to one, or starts a primary and its standby; constructing a
+# provisioned run opens the profile's own provisioning. Constructing
+# `PostgresAdapter` is deliberately absent, and now for a stronger reason than
+# before: it is immutable configuration that opens nothing at all, so what
+# acquires is `PostgresAdapter.open`. Constructing
 # either scoped control is likewise absent, since both take a session somebody
 # else opened — only the ``open`` that opens one for itself acquires anything.
 #
@@ -118,12 +119,14 @@ DATABASE_SEAMS: frozenset[str] = frozenset(
         "parallax.conformance._postgres_control.PostgresControl.open",
         "parallax.conformance._postgres_control.PostgresInterleavedExecution.open",
         "parallax.conformance._postgres_control.open_session",
+        "parallax.conformance._replication.ReplicationPair.open",
         "parallax.conformance.profile.ProvisionedRun",
         "parallax.conformance.provision.Provisioner",
         "parallax.postgres.PostgresAdapter.open",
         "parallax.postgres.adapter.PostgresAdapter.open",
         "psycopg.connect",
         "testcontainers.community.postgres.PostgresContainer",
+        "testcontainers.core.container.DockerContainer",
     }
 )
 

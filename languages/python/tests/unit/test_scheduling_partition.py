@@ -359,3 +359,37 @@ def test_each_focused_surface_recipe_selects_its_own_directory() -> None:
         assert match is not None, f"no recipe `{recipe}`"
         (invocation,) = match.group(1).strip().splitlines()
         assert invocation.endswith(f"uv run pytest tests/{surface}")
+
+
+def _module_group(module: Path) -> str | None:
+    """The ``xdist_group`` a test module assigns to every item through ``pytestmark``."""
+    for node in ast.parse(module.read_text(encoding="utf-8")).body:
+        if not (
+            isinstance(node, ast.Assign)
+            and [target.id for target in node.targets if isinstance(target, ast.Name)]
+            == ["pytestmark"]
+            and isinstance(node.value, ast.Call)
+            and ast.unparse(node.value.func) == "pytest.mark.xdist_group"
+        ):
+            continue
+        (name,) = node.value.args
+        return (
+            name.value if isinstance(name, ast.Constant) and isinstance(name.value, str) else None
+        )
+    return None
+
+
+def test_the_replication_proofs_share_one_worker_and_so_one_standby_pair() -> None:
+    # Each worker opens its own pair on first use, so the whole database lane
+    # adds one pair only while every proof needing it is grouped onto one
+    # worker and the class owner distributes by group.
+    proofs = sorted((TESTS_ROOT / "provider_contract" / "replication").glob("test_*.py"))
+    assert proofs
+    assert {proof.name: _module_group(proof) for proof in proofs} == {
+        proof.name: "replication" for proof in proofs
+    }
+    justfile = (REPO_ROOT / "justfile").read_text(encoding="utf-8")
+    match = re.search(r"^python-test-db:\n((?:    .*\n)+)", justfile, re.MULTILINE)
+    assert match is not None
+    (invocation,) = match.group(1).strip().splitlines()
+    assert invocation.endswith("uv run pytest -m db -n 4 --dist loadgroup")
