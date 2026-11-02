@@ -632,6 +632,54 @@ def test_a_refused_boundary_is_the_acquisitions_failure_measured_through_it(
     assert adapter.cleanups == [Returned()]
 
 
+def _charging_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _SteppingClock,
+    steps: int,
+    failure: BaseException | None = None,
+) -> None:
+    """Make giving a scripted lease back cost ``steps``, then raise ``failure``."""
+    leave = ScriptedContext.__exit__
+
+    def charged(context: ScriptedContext, *exit_args: Any) -> None:
+        clock.burn(steps)
+        leave(context, *exit_args)
+        if failure is not None:
+            raise failure
+
+    monkeypatch.setattr(ScriptedContext, "__exit__", charged)
+
+
+@pytest.mark.parametrize("interrupt", [None, KeyboardInterrupt()], ids=["completed", "interrupted"])
+def test_a_refused_boundarys_cleanup_is_inside_the_acquisitions_duration(
+    monkeypatch: pytest.MonkeyPatch, interrupt: BaseException | None
+) -> None:
+    # The lease is given back as the failed acquisition's own cleanup, so the
+    # four steps that cleanup costs are the acquisition's however it ends, and
+    # an interrupted cleanup still leaves the attempt begin-failed.
+    clock = _stepping(monkeypatch)
+    _charging_exit(monkeypatch, clock, 4, interrupt)
+    recorder = RecordingLifecycleProvider()
+    refused = DatabaseError(category=None, native_code="25P02", message="no boundary")
+    adapter = _BurningBegin(Transact(begin=refused), clock=clock, steps=5)
+
+    expected = (
+        raises_contextualized(DatabaseError)
+        if interrupt is None
+        else pytest.raises(KeyboardInterrupt)
+    )
+    with _db(adapter, recorder) as _root_db, expected:
+        _root_db.using_database_login().transact(lambda _tx: None)
+
+    (root,) = recorder.roots
+    (finished,) = _of(root, AcquisitionFinished)
+    assert isinstance(finished.outcome, AcquisitionFailed)
+    assert finished.duration_ns == 11 * _STEP
+    (attempt,) = _of(root, TransactionAttemptFinished)
+    assert isinstance(attempt.outcome, AttemptBeginFailed)
+    assert _of(root, ReleaseStarted) == []
+
+
 def test_a_boundary_that_moved_its_lease_reports_the_route_it_opened_on_before_any_work() -> None:
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(
@@ -1063,6 +1111,35 @@ def test_an_adapter_defect_escaping_acquisition_still_fails_the_attempts_begin()
     failure = begin_failed.failure
     assert isinstance(failure, CausedFailure)
     assert failure.cause_activity_id == acquisition.activity_id
+
+
+class _InterruptedBegin(ScriptedAdapter):
+    """A port interrupted while its boundary opens, before any body runs."""
+
+    def transaction(self, body: Any, **options: Any) -> Any:
+        del body, options
+        raise KeyboardInterrupt
+
+
+def test_an_interrupt_before_the_boundary_opened_leaves_the_attempt_begin_failed() -> None:
+    # Neither an interrupted acquisition nor an interrupted BEGIN opened a
+    # boundary, so neither attempt is reported as a callback that rolled back.
+    recorder = RecordingLifecycleProvider()
+    interrupted_entry = _UnusableAdapter(KeyboardInterrupt())
+    interrupted_begin = _InterruptedBegin(Transact())
+
+    for adapter in (interrupted_entry, interrupted_begin):
+        with _db(adapter, recorder) as _root_db, pytest.raises(KeyboardInterrupt):
+            _root_db.using_database_login().transact(lambda _tx: pytest.fail("never runs"))
+
+    for root in recorder.roots:
+        (finished,) = _of(root, AcquisitionFinished)
+        assert isinstance(finished.outcome, AcquisitionFailed)
+        (attempt,) = _of(root, TransactionAttemptFinished)
+        assert isinstance(attempt.outcome, AttemptBeginFailed)
+        assert _of(root, ReleaseStarted) == []
+    assert len(recorder.roots) == 2
+    assert interrupted_begin.cleanups == [Returned()]
 
 
 def test_an_ordinary_handler_failure_on_the_release_changes_no_outcome() -> None:

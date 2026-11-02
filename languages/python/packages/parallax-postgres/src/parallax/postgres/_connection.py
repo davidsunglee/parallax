@@ -1307,7 +1307,11 @@ class PostgresConnection:
         characteristics, on the connection the context replaces it with — on
         the next route of a preferred plan, since nothing modeled has run yet;
         the callback runs only once a boundary has opened, so it never runs
-        twice.
+        twice. An outer boundary that is the first submission after entry is
+        still the acquisition's setup: one that opens past the acquisition's
+        deadline, or after the runtime closed, raises that acquisition's
+        :class:`~parallax.core.db_port.ConnectionAcquisitionError` before the
+        callback runs.
 
         A call made while this session's transaction is already open joins it
         through a savepoint and leaves the characteristics to the outer

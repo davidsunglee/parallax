@@ -260,7 +260,7 @@ class _FakePool:
         checkout_error: BaseException | None = None,
         putconn_error: Exception | None = None,
         wait_error: Exception | None = None,
-        close_error: Exception | None = None,
+        close_error: BaseException | None = None,
     ) -> None:
         self._connections = list(connections) or [_FakeConnection()]
         self.checkout_error = checkout_error
@@ -2709,6 +2709,58 @@ def test_closing_detaches_both_sources_then_closes_both_pools_whatever_one_raise
     assert refused.value.reason == "closed"
 
 
+def test_an_interrupted_close_still_closes_every_later_pool() -> None:
+    interrupt = KeyboardInterrupt()
+    writer_pool, reader_pool = _pool(close_error=interrupt), _pool()
+    runtime = _routed(writer_pool, reader_pool)
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        runtime.close()
+
+    assert raised.value is interrupt
+    assert (writer_pool.closes, reader_pool.closes) == (1, 1)
+
+
+def test_an_interrupted_abandonment_still_abandons_every_other_opened_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    interrupt = KeyboardInterrupt()
+    writer_pool = _pool()
+    reader_pool = _pool(
+        _FakeConnection(rows=[{**_PROBE_ROW, "login_identity": "other"}]), close_error=interrupt
+    )
+    _opened_routes(monkeypatch, writer=writer_pool, reader=reader_pool)
+
+    with pytest.raises(KeyboardInterrupt) as raised:
+        _open_routed()
+
+    assert raised.value is interrupt
+    assert isinstance(raised.value.__context__, DatabaseStartupError)
+    assert (writer_pool.closes, reader_pool.closes) == (1, 1)
+
+
+def test_a_pool_whose_open_is_interrupted_is_closed_and_the_interrupt_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built: list[_FakePool] = []
+
+    class _Interrupted(_FakePool):
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            super().__init__()
+            built.append(self)
+
+        def open(self) -> None:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(psycopg_pool, "ConnectionPool", _Interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        _open_runtime(PoolOptions())
+
+    (pool,) = built
+    assert pool.closes == 1
+
+
 def test_routed_startup_opens_both_pools_before_proving_the_writer_then_the_reader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2906,6 +2958,32 @@ def test_a_reader_whose_budget_ran_out_between_phases_is_left_pending(
     assert reader_pool.checkouts == []
 
 
+def test_a_reader_whose_budget_ran_out_with_a_refusal_on_record_fails_deferrable_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same spent budget as above, but the reader's own background dials
+    # were refused meanwhile, so it is no outage.
+    from parallax.postgres import _route as route_module
+    from parallax.postgres import _startup as startup_module
+
+    _Clock(monkeypatch)
+    readings = iter([0.0, 0.0, 0.0, 31.0])
+    monkeypatch.setattr(startup_module, "monotonic", lambda: next(readings))
+    refusal = CredentialResolutionError("RDS IAM token could not be generated")
+    establishments = iter([_establishment(), reader_establishment := _establishment()])
+    reader_establishment.failed(refusal)
+    monkeypatch.setattr(route_module, "ConnectionEstablishment", lambda: next(establishments))
+    writer_pool, reader_pool = _pool(), _pool()
+    _opened_routes(monkeypatch, writer=writer_pool, reader=reader_pool)
+
+    with pytest.raises(DatabaseStartupError) as failed:
+        _open_routed()
+
+    assert (failed.value.route, failed.value.phase) == ("reader", "acquire")
+    assert failed.value.__cause__ is refusal
+    assert (writer_pool.closes, reader_pool.closes) == (1, 1)
+
+
 @pytest.mark.parametrize(
     "refusal",
     [
@@ -3023,6 +3101,37 @@ def test_a_reader_probe_whose_release_is_unconfirmed_fails_startup(
         _open_routed()
 
     assert (failed.value.route, failed.value.phase) == ("reader", "release")
+
+
+@pytest.mark.parametrize("failure", ["lost-probe", "late-checkout"])
+def test_a_reader_outage_whose_cleanup_is_unconfirmed_fails_deferrable_startup(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    # Unreachable and timed out are outages, but what was taken could not be
+    # shown to have been given back, which no deferral waits out.
+    clock = _Clock(monkeypatch)
+    handoff = RuntimeError("the return failed")
+    if failure == "lost-probe":
+        reader_pool = _pool(_FakeConnection(lost=_lost()), putconn_error=handoff)
+    else:
+        reader_pool = _pool(putconn_error=handoff)
+        getconn = reader_pool.getconn
+
+        def late(timeout: float | None = None) -> Any:
+            clock.now = 31.0
+            return getconn(timeout)
+
+        reader_pool.getconn = late
+    writer_pool = _pool()
+    _opened_routes(monkeypatch, writer=writer_pool, reader=reader_pool)
+
+    with pytest.raises(DatabaseStartupError) as failed:
+        _open_routed()
+
+    assert failed.value.route == "reader"
+    assert failed.value.phase == ("probe" if failure == "lost-probe" else "acquire")
+    assert isinstance(failed.value.cleanup_result, ReleaseUnconfirmed)
+    assert (writer_pool.closes, reader_pool.closes) == (1, 1)
 
 
 def test_a_pending_reader_proves_each_connection_before_its_role_and_then_serves(
@@ -3208,6 +3317,41 @@ def test_a_proof_that_succeeds_after_a_concurrent_refusal_admits_nothing() -> No
     assert str(refused.value.__cause__) == "another lease read another login"
     # The connection itself proved compatible, so it is returned rather than disposed of.
     assert resource.cleanup_result == Returned()
+    assert _reader_route(runtime).readiness() == "refused"
+
+
+def test_a_route_refused_while_a_checkout_waited_admits_nothing_handed_over() -> None:
+    connection = _FakeConnection()
+    reader_pool = _pool(connection)
+    runtime = _routed(_pool(), reader_pool, reader_readiness="pending")
+    mismatch = ProbeMismatch("another lease read another login")
+    getconn = reader_pool.getconn
+
+    def refused_meanwhile(timeout: float | None = None) -> Any:
+        _reader_route(runtime).refuse(mismatch)
+        return getconn(timeout)
+
+    reader_pool.getconn = refused_meanwhile
+    resource = _reader_context(runtime, PostgresRole("tenant_reader"))
+
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        resource.__enter__()
+
+    assert refused.value.reason == "preparation_failed"
+    assert refused.value.__cause__ is mismatch
+    assert connection.statements == []
+    assert resource.cleanup_result == Returned()
+
+
+def test_a_mismatch_whose_disposal_is_interrupted_still_refuses_the_route() -> None:
+    other = _FakeConnection(
+        rows=[{**_PROBE_ROW, "login_identity": "other"}], close_error=KeyboardInterrupt()
+    )
+    runtime = _routed(_pool(), _pool(other), reader_readiness="pending")
+
+    with pytest.raises(KeyboardInterrupt):
+        _reader_context(runtime).__enter__()
+
     assert _reader_route(runtime).readiness() == "refused"
 
 
@@ -3764,6 +3908,62 @@ def test_a_reader_lost_at_its_first_begin_opens_the_boundary_on_the_writer_once(
     assert writer_connection.statements == ["BEGIN", "select 1", "COMMIT"]
     assert ("read_only", True) in writer_connection.characteristics
     assert resource.selection == RouteSelection("writer", "connection_lost")
+
+
+@pytest.mark.parametrize("ending", ["late", "closed"])
+def test_a_boundary_that_opens_past_its_step_or_its_runtime_runs_no_callback(
+    monkeypatch: pytest.MonkeyPatch, ending: str
+) -> None:
+    # The reader's half ends at 5.0; a BEGIN answering at 20.0, or after the
+    # runtime closed, is no allowance of its own.
+    clock = _Clock(monkeypatch)
+
+    def slow_begin(text: str) -> None:
+        if text != "BEGIN":
+            return
+        if ending == "late":
+            clock.now = 20.0
+        else:
+            runtime.close()
+
+    reader_connection = _Hooked(slow_begin)
+    runtime = _routed(_pool(), _pool(reader_connection), acquire_timeout=10.0)
+    resource = _preferred(runtime)
+
+    with resource as scoped, pytest.raises(ConnectionAcquisitionError) as refused:
+        scoped.transaction(_no_body)
+
+    assert refused.value.reason == ("timeout" if ending == "late" else "closed")
+    assert refused.value.selection == RouteSelection("reader")
+    assert reader_connection.statements == ["BEGIN"]
+    assert reader_connection.closes == 1
+    assert isinstance(resource.cleanup_result, Invalidated)
+
+
+def test_a_writer_replacement_that_arrives_past_the_deadline_runs_no_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock(monkeypatch)
+    writer_connection = _FakeConnection()
+    writer_pool = _pool(writer_connection)
+    getconn = writer_pool.getconn
+
+    def late(timeout: float | None = None) -> Any:
+        clock.now = 20.0
+        return getconn(timeout)
+
+    writer_pool.getconn = late
+    resource = _preferred(
+        _routed(writer_pool, _pool(_FakeConnection(lost=_lost())), acquire_timeout=10.0)
+    )
+
+    with resource as scoped, pytest.raises(ConnectionAcquisitionError) as refused:
+        scoped.transaction(_no_body)
+
+    assert refused.value.reason == "timeout"
+    assert refused.value.selection == RouteSelection("writer", "connection_lost")
+    assert writer_connection.statements == ["BEGIN"]
+    assert writer_connection.closes == 1
 
 
 def test_a_begin_after_the_principal_was_installed_is_no_second_opportunity() -> None:

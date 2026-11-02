@@ -439,7 +439,7 @@ class TransactionRunner:
 
                         try:
                             conn = preparation.enter()
-                        except Exception as unacquired:
+                        except BaseException as unacquired:
                             # No boundary opened and no callback ran, so this is
                             # the same terminal outcome a refused BEGIN reaches:
                             # there is nothing to undo and nothing to replay.
@@ -447,11 +447,11 @@ class TransactionRunner:
                             # failed entry already ran its own cleanup and
                             # reported what that established.
                             #
-                            # Every ordinary failure of the acquisition takes
-                            # this route, not just the adapter's own refusal: an
-                            # attempt that never got a connection never opened a
-                            # boundary, whatever the reason the Acquisition
-                            # derived for it.
+                            # Every failure of the acquisition takes this
+                            # route, not just the adapter's own refusal — an
+                            # interrupt included: an attempt that never got a
+                            # connection never opened a boundary, whatever the
+                            # reason the Acquisition derived for it.
                             physical.begin_failed(unacquired)
                             raise
                         try:
@@ -577,16 +577,26 @@ def _opened[T](
         outcome = conn.transaction(body, isolation=isolation, access_mode=access_mode)
     except BaseException as failure:
         if preparation.pending:
-            preparation.unprepared(failure)
-            if isinstance(failure, Exception):
-                attempt.begin_failed(failure)
+            _begin_failed(preparation, attempt, failure)
         raise
     if isinstance(outcome, BeginFailed):
         error = outcome.error
-        preparation.unprepared(error)
-        attempt.begin_failed(error)
+        _begin_failed(preparation, attempt, error)
         raise error
     return outcome
+
+
+def _begin_failed(
+    preparation: TransactionPreparation,
+    attempt: TransactionAttemptActivity,
+    failure: BaseException,
+) -> None:
+    """Settle a boundary that never opened, however its cleanup ends: the
+    attempt is begin-failed by ``failure`` even where the cleanup was cut short."""
+    try:
+        preparation.unprepared(failure)
+    finally:
+        attempt.begin_failed(failure)
 
 
 def _attempted[T](

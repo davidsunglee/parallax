@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Literal
 
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    CleanupResult,
     ConnectionAcquisitionError,
     DatabaseStartupError,
     ReleaseUnconfirmed,
@@ -98,10 +99,23 @@ def open_runtime(
         if reader is not None and reader_route is not None:
             _start_reader(runtime, reader_route, reader, deadline, login, reader_startup)
     except BaseException:
-        for route in reversed(opened):
-            route.abandon()
+        _abandon(opened)
         raise
     return runtime
+
+
+def _abandon(opened: list[PostgresRoute]) -> None:
+    """Abandon every route opened, the latest first; an interrupt propagates
+    only once each has been attempted."""
+    interrupted: BaseException | None = None
+    for route in reversed(opened):
+        try:
+            route.abandon()
+        except BaseException as exc:
+            if interrupted is None:
+                interrupted = exc
+    if interrupted is not None:
+        raise interrupted
 
 
 def _start_reader(
@@ -201,7 +215,10 @@ def _probe(
             cleanup_result=resource.cleanup_result,
         )
         error.__cause__ = exc
-        raise _ReadinessFailure(error, outage=exc.reason in {"unavailable", "timeout"}) from None
+        raise _ReadinessFailure(
+            error,
+            outage=exc.reason in {"unavailable", "timeout"} and _confirmed(resource.cleanup_result),
+        ) from None
     try:
         login = check_probe(connection.execute(PROBE_SQL, [], read_only=True), expected_login)
     except BaseException as exc:
@@ -223,7 +240,9 @@ def _probe(
             cleanup_result=resource.cleanup_result,
         )
         error.__cause__ = exc
-        raise _ReadinessFailure(error, outage=_lost(exc)) from None
+        raise _ReadinessFailure(
+            error, outage=_lost(exc) and _confirmed(resource.cleanup_result)
+        ) from None
     resource.__exit__(None, None, None)
     result = resource.cleanup_result
     report_resource_issues("startup", result)
@@ -241,6 +260,12 @@ def _probe(
     return login
 
 
+def _confirmed(cleanup: CleanupResult | None) -> bool:
+    """Whether what a failed startup acquisition took was given back as far as
+    its release could establish; an unconfirmed release is never an outage."""
+    return not isinstance(cleanup, ReleaseUnconfirmed)
+
+
 def _lost(failure: Exception) -> bool:
     """Whether a probe failed only because its connection could not be kept."""
     native = failure.__cause__ if isinstance(failure, DatabaseError) else failure
@@ -252,17 +277,18 @@ def _remaining(route: PostgresRoute, deadline: float, phase: StartupPhase) -> fl
 
     Checked between phases rather than inside them: the budget stops the next
     step from starting and makes no claim about interrupting one already
-    running. Running out names no failure, so it is an outage's symptom rather
-    than a refusal.
+    running. Running out is an outage's symptom only where the route has no
+    refusal on record: a route whose own background dials were refused would
+    be refused again, however long it were given.
     """
     remaining = deadline - monotonic()
     if remaining <= 0.0:
-        raise _ReadinessFailure(
-            DatabaseStartupError(
-                "the database runtime did not become ready within its startup timeout",
-                route=route.route,
-                phase=phase,
-            ),
-            outage=True,
+        failure = route.establishment.last_failure
+        error = DatabaseStartupError(
+            "the database runtime did not become ready within its startup timeout",
+            route=route.route,
+            phase=phase,
         )
+        error.__cause__ = None if failure is None else failure.cause
+        raise _ReadinessFailure(error, outage=failure is None or failure.reason == "unavailable")
     return remaining

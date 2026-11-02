@@ -337,6 +337,7 @@ class PostgresConnectionContext:
         "_execution",
         "_expected_login",
         "_first_send_state",
+        "_opening",
         "_resource",
         "_role",
         "_route",
@@ -367,6 +368,7 @@ class PostgresConnectionContext:
         self._expected_login = expected_login
         self._used = False
         self._entering = False
+        self._opening = False
         self._authorized = False
         self._suspect = False
         self._first_send_state: _FirstSend = "available"
@@ -403,6 +405,7 @@ class PostgresConnectionContext:
                 break
         finally:
             self._entering = False
+        self._opening = True
         execution = PostgresConnection._from_context(self)  # pyright: ignore[reportPrivateUsage] - the facade borrowing this owner's connection
         self._execution = execution
         return execution
@@ -427,12 +430,22 @@ class PostgresConnectionContext:
             probing = True
         try:
             self._check_out(route)
+            # Readiness is read again once the wait is over, because another
+            # lease's proof may have refused the route during it.
             if route.awaiting_verification:
                 self._verify(route)
+            else:
+                self._require_unrefused(route)
             self._authorize()
         finally:
             if probing:
                 route.release_probe()
+
+    def _require_unrefused(self, route: PostgresRoute) -> None:
+        refusal = route.refusal
+        if refusal is not None:
+            self._cleanup_result = self._settled(suspect=False)
+            raise _refused(refusal)
 
     def _fall_back(self, reason: FallbackReason) -> None:
         """Move to the next step, which entry then establishes from the start."""
@@ -516,8 +529,11 @@ class PostgresConnectionContext:
         except _FellBack:
             raise
         except ProbeMismatch as mismatch:
-            self._cleanup_result = self._settled(suspect=True)
-            route.refuse(mismatch)
+            # Recorded before the cleanup, which an interrupt can cut short.
+            try:
+                route.refuse(mismatch)
+            finally:
+                self._cleanup_result = self._settled(suspect=True)
             raise _refused(mismatch)  # noqa: B904 - chained to the mismatch inside
         except BaseException as exc:
             self._cleanup_result = self._settled(suspect=True)
@@ -625,9 +641,14 @@ class PostgresConnectionContext:
         whatever it raises is its own.
 
         Where ``operation`` is ``setup`` and the plan has a later step, the
-        replacement is taken from that step's route instead.
+        replacement is taken from that step's route instead. Setup that is the
+        first submission after entry — an outer ``BEGIN`` — is still the
+        acquisition's, so once it has opened the lease is admitted against the
+        step's deadline like any other setup phase.
         """
         native = self._current_native()
+        opening = setup and self._opening
+        self._opening = False
         ambient = sys.exception()
         try:
             result = operation(native, self, *prepared)
@@ -646,10 +667,28 @@ class PostgresConnectionContext:
                 raise
         else:
             self._complete_first_send()
+            if opening:
+                self._admit_opened()
             return result
         if displaced is not None:
             raise displaced
-        return operation(self._current_native(), self, *prepared)
+        result = operation(self._current_native(), self, *prepared)
+        if opening:
+            self._admit_opened()
+        return result
+
+    def _admit_opened(self) -> None:
+        """Admit a lease whose setup ended after entry, or refuse it.
+
+        A refusal leaves the boundary that just opened to the lease's cleanup,
+        which disposes of the session rather than undoing it.
+        """
+        try:
+            self._admit(self._step_deadline)
+        except ConnectionAcquisitionError as refused:
+            self._suspect = True
+            refused.selection = self._selection
+            raise
 
     def _replace_native(self, *, across: bool) -> bool:
         """Dispose of the current connection and hold a usable replacement in its
