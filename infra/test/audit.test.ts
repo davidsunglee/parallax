@@ -85,11 +85,30 @@ describe("the dependency audit", () => {
 
   it("reads the report pnpm prints", () => {
     expect(auditReport('{"advisories": {}}', "")).toEqual({ advisories: {} });
+    expect(auditReport("null", "")).toBeNull();
+    expect(auditReport("1", "")).toBe(1);
+  });
+
+  it("refuses output that is not a report, naming what pnpm wrote to stderr", () => {
+    expect(() => auditReport("", " Error: ERR_PNPM_AUDIT_NO_LOCKFILE\n")).toThrow(
+      "pnpm audit produced no readable report: Error: ERR_PNPM_AUDIT_NO_LOCKFILE",
+    );
+  });
+
+  it("refuses the error object pnpm prints in place of a report", () => {
+    expect(() =>
+      auditReport(
+        '{"error": {"code": "ERR_PNPM_AUDIT_NO_LOCKFILE", "message": "no lockfile"}}',
+        "",
+      ),
+    ).toThrow(
+      'pnpm audit produced no readable report: {"code":"ERR_PNPM_AUDIT_NO_LOCKFILE","message":"no lockfile"}',
+    );
   });
 
   it("fails a repository pnpm cannot audit", () => {
     expect(() => workspaceAuditReport(scratch())).toThrow(
-      "pnpm audit produced no readable report: Error: ERR_PNPM_AUDIT_NO_LOCKFILE",
+      /^pnpm audit produced no readable report: .*ERR_PNPM_AUDIT_NO_LOCKFILE/,
     );
   });
 

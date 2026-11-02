@@ -86,13 +86,22 @@ export function workspaceAuditReport(repositoryRoot: string): unknown {
   return auditReport(audit.stdout, audit.stderr);
 }
 
-/** The report `pnpm audit --json` printed, refusing output that is not one. */
+/**
+ * The report `pnpm audit --json` printed, refusing output that is not one.
+ * Some pnpm releases print a failure to stderr, others as an `error` object in
+ * place of the report.
+ */
 export function auditReport(stdout: string, stderr: string): unknown {
+  let report: unknown;
   try {
-    return JSON.parse(stdout) as unknown;
+    report = JSON.parse(stdout) as unknown;
   } catch {
     throw new Error(`pnpm audit produced no readable report: ${stderr.trim()}`);
   }
+  if (typeof report === "object" && report !== null && "error" in report) {
+    throw new Error(`pnpm audit produced no readable report: ${JSON.stringify(report.error)}`);
+  }
+  return report;
 }
 
 /**
