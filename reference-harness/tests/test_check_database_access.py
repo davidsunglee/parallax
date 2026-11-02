@@ -186,19 +186,17 @@ def test_every_declared_seam_names_a_callable() -> None:
 
 def test_a_seam_whose_attribute_was_renamed_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     renamed = "reference_harness.providers.provider_for_dialect"
-    monkeypatch.setattr(access, "DATABASE_SEAMS", access.DATABASE_SEAMS | {renamed})
+    monkeypatch.setattr(access, "SEAMS", access.SEAMS | {renamed})
     assert access.unresolved_seams() == (renamed,)
 
 
 def test_a_seam_whose_module_disappeared_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(access, "DATABASE_SEAMS", frozenset({"reference_harness.pools.acquire"}))
+    monkeypatch.setattr(access, "SEAMS", frozenset({"reference_harness.pools.acquire"}))
     assert access.unresolved_seams() == ("reference_harness.pools.acquire",)
 
 
 def test_a_seam_naming_something_uncallable_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        access, "DATABASE_SEAMS", frozenset({"reference_harness.providers.__doc__"})
-    )
+    monkeypatch.setattr(access, "SEAMS", frozenset({"reference_harness.providers.__doc__"}))
     assert access.unresolved_seams() == ("reference_harness.providers.__doc__",)
 
 
@@ -281,7 +279,5 @@ def test_a_planted_rogue_acquisition_fails(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_an_unresolved_seam_fails_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        access, "DATABASE_SEAMS", access.DATABASE_SEAMS | {"reference_harness.providers.acquire"}
-    )
+    monkeypatch.setattr(access, "SEAMS", access.SEAMS | {"reference_harness.providers.acquire"})
     assert access.main([]) == 1

@@ -9,6 +9,8 @@ import {
 } from "../src/trust.ts";
 import { BOOTSTRAP_VARIANT } from "../tools/bootstrap-template.ts";
 import { CDK_CLI, PACKAGE_ROOT } from "../tools/rollout-context.ts";
+import { VERDICT_JOB } from "../tools/cloud-verification.ts";
+import { ACTIONS_APP_ID, CLOUD_CELL, REQUIRED_CHECK } from "../tools/required-check.ts";
 import { applyStep, revisionProblems, SETUP_STEPS } from "../tools/setup-steps.ts";
 import type { Invocation } from "../tools/shell.ts";
 import {
@@ -325,5 +327,89 @@ describe("the settings-token step", () => {
       apply({ [`GET ${ENVIRONMENT}`]: failed("gh: Not Found (HTTP 404)", 1) }, "settings-token")
         .status,
     ).toBe(1);
+  });
+});
+
+describe("the required-check step", () => {
+  const PROTECTION = `${REPOSITORY}/branches/main/protection/required_status_checks`;
+  const EVIDENCE = `${REPOSITORY}/commits/${REVISION}/check-runs?check_name=${encodeURIComponent(CLOUD_CELL)}&filter=latest`;
+  const proven = json({
+    check_runs: [{ status: "completed", conclusion: "success", app: { id: ACTIONS_APP_ID } }],
+  });
+  const required = (checks: readonly unknown[], strict: unknown = true): Reply =>
+    json({ strict, contexts: [], checks });
+
+  function requiring(before: Reply, evidence: Reply = proven) {
+    const patched: unknown[] = [];
+    let after: Reply | undefined;
+    const scripted = world({
+      [`GET ${EVIDENCE}`]: evidence,
+      [`GET ${PROTECTION}`]: () => after ?? before,
+      [`PATCH ${PROTECTION}`]: (invocation) => {
+        const body = JSON.parse(readFileSync(String(invocation.args[5]), "utf8")) as {
+          strict: unknown;
+          checks: unknown[];
+        };
+        patched.push(body);
+        after = required(body.checks, body.strict);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+    const status = applyStep(scripted.context, REQUIRED_CHECK, REQUIRED_CHECK, REVISION);
+    return { status, patched };
+  }
+
+  it("adds the verdict, from GitHub Actions, beside every check already required", () => {
+    const existing = { context: "check-gates", app_id: ACTIONS_APP_ID };
+    const { status, patched } = requiring(required([existing], false));
+    expect(status).toBe(0);
+    expect(patched).toEqual([
+      {
+        strict: false,
+        checks: [existing, { context: VERDICT_JOB, app_id: ACTIONS_APP_ID }],
+      },
+    ]);
+  });
+
+  it("keeps branches required up to date where nothing said otherwise, and converges a repeat", () => {
+    const already = { context: VERDICT_JOB, app_id: ACTIONS_APP_ID };
+    expect(requiring(json({})).patched).toEqual([
+      { strict: true, checks: [{ context: VERDICT_JOB, app_id: ACTIONS_APP_ID }] },
+    ]);
+    expect(requiring(required([already])).patched).toEqual([{ strict: true, checks: [already] }]);
+  });
+
+  it("waits for live evidence that the cloud path ran on the authorized commit", () => {
+    for (const evidence of [
+      json({ check_runs: [] }),
+      json({}),
+      json({
+        check_runs: [{ status: "completed", conclusion: "failure", app: { id: ACTIONS_APP_ID } }],
+      }),
+      json({ check_runs: [{ status: "completed", conclusion: "success", app: { id: 1 } }] }),
+      json({
+        check_runs: [{ status: "in_progress", conclusion: null, app: { id: ACTIONS_APP_ID } }],
+      }),
+    ]) {
+      const { status, patched } = requiring(required([]), evidence);
+      expect(status).toBe(1);
+      expect(patched).toEqual([]);
+    }
+    expect(refusals()).toContain(`${CLOUD_CELL} has not succeeded on ${REVISION}`);
+  });
+
+  it("refuses a verdict required from another source, or a branch with no protection to add to", () => {
+    expect(requiring(required([{ context: VERDICT_JOB, app_id: 1 }])).status).toBe(1);
+    expect(refusals()).toContain(`${VERDICT_JOB} is required from another source`);
+    expect(requiring(failed("gh: Branch not protected (HTTP 404)", 1)).status).toBe(1);
+  });
+
+  it("fails when the requirement does not read back", () => {
+    const scripted = world({
+      [`GET ${EVIDENCE}`]: proven,
+      [`GET ${PROTECTION}`]: required([]),
+      [`PATCH ${PROTECTION}`]: { status: 0, stdout: "", stderr: "" },
+    });
+    expect(applyStep(scripted.context, REQUIRED_CHECK, REQUIRED_CHECK, REVISION)).toBe(1);
   });
 });

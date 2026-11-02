@@ -17,7 +17,7 @@ import pytest
 
 from parallax.snapshot import ReadOnlyTxnContext, connect
 from tests._support.root_ownership import own_root
-from tests.provider_contract.replication._replication_support import (
+from tests._support.routed_reads import (
     MODEL,
     READS,
     SEEDED,
@@ -25,8 +25,8 @@ from tests.provider_contract.replication._replication_support import (
     Ledger,
     identity,
     insert,
-    replicated,
 )
+from tests.provider_contract.replication._replication_support import replicated
 
 pytestmark = pytest.mark.xdist_group("replication")
 

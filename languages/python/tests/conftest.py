@@ -24,9 +24,17 @@ if TYPE_CHECKING:
 # in a final summary so a skip is never silent; CI fails on any skip.
 _DB_SKIPS: list[str] = []
 
-# The designated entry points to a live database. A test reaching one by any other
-# route would be classified `dbfree` while needing a container.
-_DATABASE_FIXTURES = frozenset({"profile_run"})
+# The designated entry point to each confined resource, and the class reaching it
+# schedules an item in. A test reaching a resource by any other route would be
+# classified `dbfree` while needing a container or a provider's environment;
+# `tools/check_resource_access.py` holds this table to the fixtures it permits.
+_RESOURCE_FIXTURES = {"profile_run": "db", "aws_run": "cloud"}
+
+# The provider each provider-hosted fixture reaches. `PARALLAX_CLOUD_PROVIDERS`
+# names the providers a run selects; unset, it selects none, so a cloud run that
+# names no provider collects nothing and fails rather than passing.
+_CLOUD_PROVIDERS = {"aws_run": "aws"}
+_PROVIDER_SELECTION = "PARALLAX_CLOUD_PROVIDERS"
 
 # What marks an item as needing an interpreter no other test shares, spelled as
 # `tests/unit/memory_instruments.py` sets it. The runner's own module imports no
@@ -96,21 +104,71 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+def _classified(item: pytest.Item) -> str:
+    """The one scheduling class *item*'s requirements put it in."""
+    function = item if isinstance(item, pytest.Function) else None
+    if function is None:
+        return "dbfree"
+    resources = {
+        _RESOURCE_FIXTURES[fixture]
+        for fixture in function.fixturenames
+        if fixture in _RESOURCE_FIXTURES
+    }
+    needs_interpreter = getattr(function.obj, _OWN_INTERPRETER_ATTRIBUTE, False) is True
+    needs_evidence = bool(_COST_EVIDENCE_FIXTURES.intersection(function.fixturenames))
+    if len(resources) > 1:
+        raise pytest.UsageError(
+            f"{item.nodeid} requires both a live database the run provisions and a "
+            f"provider-hosted environment; a scheduling class names one resource "
+            f"(core/spec/language-testing.md §5)"
+        )
+    if resources and (needs_interpreter or needs_evidence):
+        raise pytest.UsageError(
+            f"{item.nodeid} requires both {next(iter(resources))} resources and a cost "
+            f"resource; a scheduling class names one resource (core/spec/language-testing.md §5)"
+        )
+    if resources:
+        return next(iter(resources))
+    return "cost" if needs_interpreter or needs_evidence else "dbfree"
+
+
+def _selected_providers() -> frozenset[str]:
+    named = {name.strip() for name in os.environ.get(_PROVIDER_SELECTION, "").split(",")} - {""}
+    unknown = named - set(_CLOUD_PROVIDERS.values())
+    if unknown:
+        raise pytest.UsageError(
+            f"{_PROVIDER_SELECTION} names {', '.join(sorted(unknown))}; a provider is one of "
+            f"{', '.join(sorted(set(_CLOUD_PROVIDERS.values())))}"
+        )
+    return frozenset(named)
+
+
+def _provider_of(item: pytest.Item) -> str | None:
+    names = item.fixturenames if isinstance(item, pytest.Function) else ()
+    return next((_CLOUD_PROVIDERS[name] for name in names if name in _CLOUD_PROVIDERS), None)
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Assign each collected item its scheduling class, then keep the cost
-    class's requested shard.
+    """Assign each collected item its scheduling class, keep the cloud items of
+    the selected providers, then keep the cost class's requested shard.
 
     The class is read off what the item requires — its resolved fixture closure
-    for a database or for the committed cost evidence, the boundary its function
-    carries for an interpreter of its own — rather than authored beside the test,
-    so it covers indirect requests, is decided per item rather than per module,
-    and can be neither absent nor doubled. An item that is not a test function
-    requires none of them and is therefore `dbfree`.
+    for a database, for a provider-hosted environment, or for the committed cost
+    evidence, the boundary its function carries for an interpreter of its own —
+    rather than authored beside the test, so it covers indirect requests, is
+    decided per item rather than per module, and can be neither absent nor
+    doubled. An item that is not a test function requires none of them and is
+    therefore `dbfree`.
 
-    A database beside either cost resource is a contradiction rather than a
-    precedence: a reading over the whole interpreter cannot be taken of a process
-    a container is also living in, and a verdict owed to a recapture cannot wait
-    on a container, so the run fails instead of picking a winner.
+    Two resources at once are a contradiction rather than a precedence: a reading
+    over the whole interpreter cannot be taken of a process a container is also
+    living in, a verdict owed to a recapture cannot wait on a container, and a
+    run either provisions its database or is handed a provider's, so the run
+    fails instead of picking a winner.
+
+    A cloud item runs only where its provider is selected, which no local run
+    does: collected everywhere, it is deselected unless a CI cell names its
+    provider, so no other selection can reach the provider by accident.
 
     A shard is one of N sets the cost class is balanced into by what each item
     last cost, in a deterministic order over the stable collection order, so the
@@ -119,27 +177,18 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     and the default keeps everything.
     """
     for item in items:
-        function = item if isinstance(item, pytest.Function) else None
-        needs_database = (
-            bool(_DATABASE_FIXTURES.intersection(function.fixturenames)) if function else False
-        )
-        needs_interpreter = (
-            getattr(function.obj, _OWN_INTERPRETER_ATTRIBUTE, False) is True if function else False
-        )
-        needs_evidence = (
-            bool(_COST_EVIDENCE_FIXTURES.intersection(function.fixturenames)) if function else False
-        )
-        if needs_database and (needs_interpreter or needs_evidence):
-            raise pytest.UsageError(
-                f"{item.nodeid} requires both a live database and a cost resource; "
-                f"a scheduling class names one resource (core/spec/language-testing.md §5)"
-            )
-        if needs_database:
-            item.add_marker(pytest.mark.db)
-        elif needs_interpreter or needs_evidence:
-            item.add_marker(pytest.mark.cost)
-        else:
-            item.add_marker(pytest.mark.dbfree)
+        item.add_marker(getattr(pytest.mark, _classified(item)))
+
+    providers = _selected_providers()
+    unselected = [
+        item
+        for item in items
+        if item.get_closest_marker("cloud") is not None and _provider_of(item) not in providers
+    ]
+    if unselected:
+        config.hook.pytest_deselected(items=unselected)
+        dropped = set(unselected)
+        items[:] = [item for item in items if item not in dropped]
 
     index, count = cost_durations.index_and_count(str(config.getoption("--shard")))
     if count > 1:
@@ -232,6 +281,26 @@ def profile_run(profile: Profile) -> Iterator[Any]:
         opened.close()
 
 
+@pytest.fixture(scope="session")
+def aws_run() -> Iterator[Any]:
+    """This CI run attempt's database on the deployed AWS test environment.
+
+    Unlike ``profile_run`` it never skips: a missing environment, an unreadable
+    or unexpected record, a refused lock, or a host that never answers raises, so
+    the cell fails. A dispatched run must observe the record version
+    ``PARALLAX_AWS_ENVIRONMENT_VERSION`` names, which ties its verdict to the
+    deployment that dispatched it. A termination request is delivered as an
+    interrupt so a cancelled run still releases its database and lock.
+    """
+    from tests._support.aws_environment import PublishedEnvironment
+    from tests._support.aws_run import AwsRun, RunIdentity, interrupted_on_termination
+
+    with interrupted_on_termination():
+        published = PublishedEnvironment.load(os.environ.get("PARALLAX_AWS_ENVIRONMENT_VERSION"))
+        with AwsRun.open(published, RunIdentity.from_environment(os.environ)) as run:
+            yield run
+
+
 @pytest.fixture
 def committed_cost_evidence() -> Iterator[None]:
     """Admission to read the committed cost evidence, which schedules the item in
@@ -262,13 +331,13 @@ def release_case_runtimes(request: pytest.FixtureRequest) -> Iterator[None]:
     before it ran out of cases. Each handle that closes itself retires its own;
     this is the backstop for the ones that do not.
 
-    It reads ``request.fixturenames`` rather than requesting the database
-    fixture, because requesting it would put it in every item's fixture closure
-    and reclassify the whole suite as database-backed.
+    It reads ``request.fixturenames`` rather than requesting a resource fixture,
+    because requesting one would put it in every item's fixture closure and
+    reclassify the whole suite.
     """
     with close_owned_roots():
         yield
-    for fixture in _DATABASE_FIXTURES.intersection(request.fixturenames):
+    for fixture in sorted(_RESOURCE_FIXTURES.keys() & set(request.fixturenames)):
         request.getfixturevalue(fixture).release_case_runtimes()
 
 

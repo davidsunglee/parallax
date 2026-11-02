@@ -1,9 +1,10 @@
 """The scheduling partition, and the layout it is orthogonal to.
 
 Every collected item's class is derived from what it requires by the collection
-hook in ``tests/conftest.py`` — its fixture closure for a database or for the
-committed cost evidence, the boundary its function carries for an interpreter of
-its own — so neither zero nor two classes is representable, provided the
+hook in ``tests/conftest.py`` — its fixture closure for a database, for a
+provider-hosted environment, or for the committed cost evidence, the boundary its
+function carries for an interpreter of its own — so neither zero nor two classes
+is representable, provided the
 derivation stays the only source, which is what the authored-marker check below
 pins. The remaining assertions grade the real session rather than a synthetic
 one: whichever selection is running, every item it holds is graded.
@@ -24,14 +25,14 @@ from typing import Any
 import pytest
 import yaml
 
-from check_database_access import ENTRY_POINT_FIXTURE
+from check_resource_access import RESOURCE_CLASSES
 from tests._support import committed_evidence, cost_durations
 from tests._support.repo import PY_ROOT, REPO_ROOT
 from tests.unit._session_selection_support import WHOLE_CLASS, selections
 from tests.unit.memory_instruments import takes_its_own_interpreter
 
-SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cost"})
-DATABASE_FIXTURES = frozenset({ENTRY_POINT_FIXTURE})
+SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cloud", "cost"})
+RESOURCE_FIXTURES = {entry.fixture: name for name, entry in RESOURCE_CLASSES.items()}
 EVIDENCE_FIXTURES = frozenset({committed_evidence.FIXTURE})
 ORTHOGONAL_SELECTORS = frozenset({"compile_sweep", "adapter_smoke"})
 
@@ -90,13 +91,14 @@ def test_an_items_class_agrees_with_what_it_requires(
     for item in request.session.items:
         function = item if isinstance(item, pytest.Function) else None
         closure = function.fixturenames if function else ()
-        needs_database = bool(DATABASE_FIXTURES.intersection(closure))
+        resources = {RESOURCE_FIXTURES[name] for name in closure if name in RESOURCE_FIXTURES}
         needs_cost = bool(EVIDENCE_FIXTURES.intersection(closure)) or (
             takes_its_own_interpreter(function.obj) if function else False
         )
-        assert not (needs_database and needs_cost), item.nodeid
-        if needs_database:
-            expected = {"db"}
+        assert len(resources) <= 1, item.nodeid
+        assert not (resources and needs_cost), item.nodeid
+        if resources:
+            expected = resources
         elif needs_cost:
             expected = {"cost"}
         else:
@@ -166,7 +168,7 @@ def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() 
     # whole class in collection order, the stored durations, and the cell count —
     # hold every cost item exactly once and none is empty (§9). One real sharded
     # session pins the prediction: its cost items are its cell's part, and its
-    # other items are exactly the full collection's, which is what confines
+    # other items are exactly an unsharded session's, which is what confines
     # `--shard` to the class CI splits.
     cells = _deployed_cells()
     parsed = [cost_durations.index_and_count(cell) for cell in cells]
@@ -175,7 +177,9 @@ def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() 
     # Halfway along the vector: neither the first nor the last cell, so a hook
     # that ran one end of the vector whatever cell it was given fails here.
     spot_checked = cells[len(cells) // 2]
-    cost_session, sharded_session = selections([("cost", WHOLE_CLASS), (None, spot_checked)])
+    cost_session, sharded_session, unsharded_session = selections(
+        [("cost", WHOLE_CLASS), (None, spot_checked), (None, WHOLE_CLASS)]
+    )
     cost_class = cost_session.selected
     whole = cost_session.collected
     under_one_cell = sharded_session.selected
@@ -192,7 +196,7 @@ def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() 
     in_class = set(cost_class)
     assert [item for item in under_one_cell if item in in_class] == predicted[spot_checked]
     assert [item for item in under_one_cell if item not in in_class] == [
-        item for item in whole if item not in in_class
+        item for item in unsharded_session.selected if item not in in_class
     ]
     assert [item for item in whole if item in in_class] == list(cost_class)
 
@@ -393,3 +397,81 @@ def test_the_replication_proofs_share_one_worker_and_so_one_standby_pair() -> No
     assert match is not None
     (invocation,) = match.group(1).strip().splitlines()
     assert invocation.endswith("uv run pytest -m db -n 4 --dist loadgroup")
+
+
+# --------------------------------------------------------------------------
+# The provider-hosted class: collected everywhere, run only where selected
+# --------------------------------------------------------------------------
+CLOUD_SUITE = "tests/provider_contract/aws"
+
+
+def _collect(*arguments: str, providers: str | None = None) -> subprocess.CompletedProcess[str]:
+    environment = {
+        key: value for key, value in os.environ.items() if key != "PARALLAX_CLOUD_PROVIDERS"
+    }
+    if providers is not None:
+        environment["PARALLAX_CLOUD_PROVIDERS"] = providers
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            *arguments,
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=PY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_a_cloud_run_naming_no_provider_selects_nothing_and_fails() -> None:
+    # Unset is the state of every local run, so no selection there can reach
+    # the provider; a CI cell that forgot to name its provider collects nothing,
+    # and pytest's own no-tests status fails it rather than passing it.
+    completed = _collect("-m", "cloud", CLOUD_SUITE)
+    assert completed.returncode == pytest.ExitCode.NO_TESTS_COLLECTED
+    assert "deselected" in completed.stdout
+
+
+def test_a_cloud_run_naming_its_provider_selects_the_providers_suite() -> None:
+    completed = _collect("-m", "cloud", CLOUD_SUITE, providers="aws")
+    assert completed.returncode == pytest.ExitCode.OK
+    assert "test_topology.py::" in completed.stdout
+    assert "deselected" not in completed.stdout
+
+
+def test_the_cloud_suite_is_never_part_of_another_class() -> None:
+    for scheduling_class in ("dbfree", "db", "cost"):
+        completed = _collect("-m", scheduling_class, CLOUD_SUITE, providers="aws")
+        assert completed.returncode == pytest.ExitCode.NO_TESTS_COLLECTED, scheduling_class
+
+
+def test_an_unknown_provider_is_a_usage_error() -> None:
+    completed = _collect("-m", "cloud", CLOUD_SUITE, providers="aws,gcp")
+    assert completed.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "PARALLAX_CLOUD_PROVIDERS names gcp" in completed.stderr
+
+
+@pytest.mark.parametrize(
+    ("fixtures", "refusal"),
+    [
+        ("profile_run, aws_run", "a provider-hosted environment"),
+        ("aws_run, committed_cost_evidence", "cloud resources and a cost resource"),
+    ],
+)
+def test_a_closure_reaching_two_classes_resources_fails_collection(
+    tmp_path: Path, fixtures: str, refusal: str
+) -> None:
+    # The plant lives outside the test root, with the runner's hooks loaded as a
+    # plugin, so an interrupted run leaves no stray module in the tree.
+    planted = tmp_path / "test_planted.py"
+    planted.write_text(f"def test_planted({fixtures}):\n    pass\n", encoding="utf-8")
+    completed = _collect(str(planted), "-p", "tests.conftest", "--rootdir", ".")
+    assert completed.returncode == pytest.ExitCode.USAGE_ERROR
+    assert refusal in completed.stdout + completed.stderr

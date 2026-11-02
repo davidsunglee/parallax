@@ -4,10 +4,26 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The scheduled and dispatched runs exist for the cloud path alone: every
+  # other job runs only on a push or a pull request.
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      environment-version:
+        description: The TestEnvironment parameter version the cloud run must observe
+        type: string
+        required: false
+        default: ""
 
-# Cancel superseded runs on the same ref.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref and event. The event keeps a push from
+# cancelling a scheduled or dispatched run on main, and each dispatched run has
+# a group of its own, so no later run can cancel the one a deployment waits on.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -15,6 +31,7 @@ jobs:
   # could not conclusively determine status. GitHub secret scanning should still
   # be enabled for continuous repository monitoring where available.
   secrets:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -35,6 +52,7 @@ jobs:
   # composition, the declared runtime classes, the test layout, the runner
   # configuration, and this job list. No Docker required.
   check-gates:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -54,6 +72,7 @@ jobs:
   # claim), schema/meta-schema validation + sqlglot-parse, and the
   # language-contract diagnostics against canonical inputs. No Docker required.
   core-check:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -69,6 +88,7 @@ jobs:
 
   # Markdown lint over the globs .markdownlint-cli2.jsonc declares.
   lint-markdown:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -85,6 +105,7 @@ jobs:
   # Duplicated-code scans over the harness and the Python implementation, each
   # against its own threshold.
   lint-duplication:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -118,6 +139,7 @@ jobs:
   # The harness's own code health plus every harness test whose fixture closure
   # reaches no database provider. No Docker required.
   harness-check-dbfree:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       UV_FROZEN: "1"
@@ -136,6 +158,7 @@ jobs:
   # The compatibility corpus across the database matrix. Docker is available on
   # GitHub-hosted ubuntu runners, so Testcontainers works out of the box.
   harness-check-db:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -161,6 +184,7 @@ jobs:
   # coverage. No AWS credential exists here, and every command also runs isolated
   # from any. The harness environment supplies the changed-line coverage tool.
   infra-check-dbfree:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       UV_FROZEN: "1"
@@ -188,6 +212,7 @@ jobs:
   # Static validation runs beside the tests; their canonical aggregates have
   # disjoint execution owners, including the native-source prerequisites.
   python-check-static:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       UV_FROZEN: "1"
@@ -204,6 +229,7 @@ jobs:
         run: just python-check-static
 
   python-check-coverage:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -242,6 +268,7 @@ jobs:
   # PARALLAX_REQUIRE_DB turns a provider skip into a failure here — a green run
   # has therefore exercised every database-backed check, never skipped one.
   python-check-db:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       UV_FROZEN: "1"
@@ -271,6 +298,7 @@ jobs:
   # command owns (§9), over the shards `test_scheduling_partition.py` grades
   # against this matrix.
   python-test-cost:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -301,6 +329,7 @@ jobs:
 
   # The cost class's confinement check, beside the tests it confines.
   python-check-instrument-access:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       UV_FROZEN: "1"
@@ -324,6 +353,7 @@ jobs:
   # Nothing here measures; fresh captures are the cost-report workflow's, on
   # request by label, dispatch, or the nightly schedule.
   python-check-evidence:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       UV_FROZEN: "1"
@@ -366,6 +396,7 @@ jobs:
   # (core/spec/language-testing.md §3); this job is what runs it on every change,
   # the same division that gives the prior interpreter minor its own leg above.
   python-test-pydantic-floor:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       UV_FROZEN: "1"
@@ -388,6 +419,7 @@ jobs:
   # A focused selector like the floor above, and for the same reason no
   # aggregate's dependency.
   python-test-psycopg-c:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       UV_FROZEN: "1"
@@ -405,3 +437,126 @@ jobs:
         run: uv sync --frozen
       - name: just python-test-psycopg-c
         run: just python-test-psycopg-c
+
+  # Whether this change could affect the cloud class, and so whether the cloud
+  # path runs: the pathspec list below is where relevance is decided. Scheduled
+  # and dispatched runs are always relevant. A base the checkout cannot reach is
+  # treated as relevant rather than guessed at; anything else this cannot decide
+  # fails the job, which fails the verdict.
+  cloud-relevance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      relevant: ${{ steps.relevance.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Decide relevance
+        id: relevance
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            schedule | workflow_dispatch)
+              echo "relevant=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            push | pull_request) ;;
+            *)
+              echo "no relevance rule for the $EVENT event" >&2
+              exit 1
+              ;;
+          esac
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$BASE" HEAD -- \
+            languages/python/packages \
+            languages/python/tests/_support \
+            languages/python/tests/conftest.py \
+            languages/python/tests/provider_contract/aws \
+            languages/python/pyproject.toml \
+            languages/python/uv.lock \
+            infra \
+            pnpm-lock.yaml \
+            .github/workflows \
+            justfile)"
+          if [ -n "$changed" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The cloud class against each provider's deployed environment, on that
+  # provider's runner: the AWS cell runs on the private CodeBuild runner, whose
+  # role reaches the test cluster's login and its published TestEnvironment and
+  # nothing else. A pull request from a fork reaches it only once a maintainer
+  # approves the run, through this same job. A dispatched run must observe the
+  # TestEnvironment version its dispatcher deployed.
+  python-check-cloud:
+    name: python-check-cloud (${{ matrix.provider }})
+    needs: cloud-relevance
+    if: needs.cloud-relevance.outputs.relevant == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: aws
+            runner: codebuild-parallax-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    env:
+      UV_FROZEN: "1"
+      PARALLAX_CLOUD_PROVIDERS: ${{ matrix.provider }}
+      PARALLAX_AWS_ENVIRONMENT_VERSION: ${{ inputs.environment-version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: Sync Python workspace (frozen)
+        working-directory: languages/python
+        run: uv sync --frozen
+      - name: just python-check-cloud (${{ matrix.provider }})
+        run: just python-check-cloud
+
+  # The required status for the cloud class. It needs the relevance job alone
+  # and runs whatever that job's outcome, so a cloud cell whose runner never
+  # arrives fails it within a bound instead of holding it open; it reads the
+  # cells from this run attempt's own jobs record and can change nothing.
+  cloud-verdict:
+    needs: cloud-relevance
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 125
+    permissions:
+      actions: read
+      contents: read
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: Sync harness deps
+        working-directory: reference-harness
+        run: uv sync --frozen
+      - name: Supervise the cloud cells
+        working-directory: reference-harness
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEVANCE_RESULT: ${{ needs.cloud-relevance.result }}
+          RELEVANT: ${{ needs.cloud-relevance.outputs.relevant }}
+        run: uv run python -m reference_harness.cloud_verdict --workflow ../.github/workflows/ci.yml --job python-check-cloud

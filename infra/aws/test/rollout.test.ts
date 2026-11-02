@@ -63,7 +63,10 @@ function run(
   attach?: (invocation: Invocation) => number,
 ) {
   const scripted = world(replies, attach, root ?? packageWithImage(IMAGE));
-  return { ...scripted, status: main(argv, scripted.shell, scripted.context.root) };
+  return {
+    ...scripted,
+    status: main(argv, scripted.shell, scripted.context.root, scripted.clock),
+  };
 }
 
 describe("the deploy inputs", () => {

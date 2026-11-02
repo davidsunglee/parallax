@@ -12,8 +12,11 @@
 4. After a failure, fix and rerun the focused owner. Repeat the aggregate only
    after relevant changes.
 
-The local merge gate omits the `cost` class. CI owns that class and the complete
-aggregate, `just check-all`; do not run the complete or cost aggregates locally.
+The local merge gate omits the `cost` and `cloud` classes. CI owns them and the
+complete aggregate, `just check-all`; do not run the complete, cost, or cloud
+aggregates locally. The `cloud` class needs the deployed AWS environment and
+credentials only CI's runner holds, and its required `cloud-verdict` check
+fails, rather than passes, when that environment is missing.
 While changing memory instruments or a suite that reads a whole interpreter,
 `just python-check-cost` is the focused iteration command for that work.
 

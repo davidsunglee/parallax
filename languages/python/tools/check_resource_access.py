@@ -1,11 +1,28 @@
-"""Fail when a test can reach a live database outside its designated fixture.
+"""Fail when a test can reach a class's resource outside its designated fixture.
 
 Each collected item's scheduling class is derived from its fixture closure
-(``tests/conftest.py``), so an item that acquires a database by any other route
-is classified ``dbfree`` while needing a container. That failure is silent
-rather than loud: CI runners have Docker, so the mis-classified item passes in
-the database-free job instead of erroring, and ``dbfree`` stops being true of
-what it selects.
+(``tests/conftest.py``), so an item that reaches a resource by any other route is
+classified ``dbfree`` while needing it. That failure is silent rather than loud:
+CI runners have Docker, so an item acquiring a database on its own passes in the
+database-free job, and an item reaching the provider fails only where no
+credentials happen to be present — and ``dbfree`` stops being true of what it
+selects.
+
+Two resource classes are confined, each by its own command (``--class``), over
+one table of seams sorted by what each does:
+
+* a **provisioning** seam starts a local server, and only ``profile_run`` may;
+* a **connection** seam opens a database connection, which either fixture may,
+  since a hosted cluster and a local container are reached the same way; and
+* a **provider** seam reaches the provider — its parameter store, its credential
+  chain, or the certificate bundle it publishes — and only ``aws_run`` may.
+
+The `db` command reports provisioning and connection seams outside their
+fixtures, and the `cloud` command reports provider seams outside theirs, so each
+violation is reported once, by the command whose resource it reaches. A fixture
+spans its own body in the entry module and, for ``aws_run``, the support modules
+that implement it: those modules are the fixture's own execution, reached from a
+test only through the provider seams they define.
 
 The guard is a call-level rule, not an import-level one. Importing the adapter
 or the provisioning module is legitimate — the internal-behavior surface
@@ -42,14 +59,15 @@ declared profile holds so a construction fails loudly is one of them — so the
 boundary is where a syntactic rule stops being able to tell the two apart. An
 instance arriving from a helper's return value is outside it for the same reason.
 
-One call may be waived, on the line it is reported at, by a
-``# database-access: <why>`` marker carrying a reason. The marker exists because
-a rule strong enough to catch a rogue ``adapter.open()`` also catches a test that
-proves what ``open`` delegates to with the delegate stubbed out — an acquisition
-in spelling that reaches no server. Waiving it is a reviewed diff line carrying
-its justification, exactly as ``# noqa`` and ``# pyright: ignore`` are, and a
-marker with no reason after the colon is NOT honored: an escape hatch that could
-be taken silently would be the relaxation this guard exists to refuse.
+One call may be waived, on the line it is reported at, by the reporting class's
+marker — ``# database-access: <why>`` or ``# cloud-access: <why>`` — carrying a
+reason. The marker exists because a rule strong enough to catch a rogue
+``adapter.open()`` also catches a test that proves what ``open`` delegates to with
+the delegate stubbed out — an acquisition in spelling that reaches no server.
+Waiving it is a reviewed diff line carrying its justification, exactly as
+``# noqa`` and ``# pyright: ignore`` are, and a marker with no reason after the
+colon is NOT honored: an escape hatch that could be taken silently would be the
+relaxation this guard exists to refuse.
 
 The marker is recognized as a COMMENT the tokenizer sees, and it speaks for
 exactly one call. Text spelling it inside a string literal — a connection string,
@@ -59,19 +77,19 @@ which of the two it was written for. Both follow from the same thing that makes
 the hatch worth having: the waiver a reviewer reads beside a call has to be the
 waiver the rule honored.
 
-Five structural facts are checked with it, because the rule is vacuous without
-them: every declared seam must still name an importable callable, every declared
+Structural facts are checked with it, because the rule is vacuous without them:
+every declared seam must still name an importable callable, every declared
 instance member must still be a declared seam, every declared profile must still
-hold one on a declared seam member, the designated fixture must exist, and the
-classifier's own designated set must name exactly it.
+hold one on a declared seam member, the designated fixtures and their declared
+implementing modules must exist, and the classifier's own table must map exactly
+those fixtures to their classes.
 
 Usage
 -----
-* ``python tools/check_database_access.py``          check (default)
-* ``python tools/check_database_access.py --check``  check (explicit)
+* ``python tools/check_resource_access.py --class db``     the local database
+* ``python tools/check_resource_access.py --class cloud``  the provider-hosted environment
 
-Same ``--check``/exit-1 contract as ``tools/check_untracked_sources.py``: it
-never mutates anything and exits non-zero on any finding.
+It never mutates anything and exits non-zero on any finding.
 """
 
 from __future__ import annotations
@@ -91,44 +109,62 @@ from pathlib import Path
 type Resolver = Callable[[ast.expr, dict[str, str], Bound], str | None]
 """One question asked of an expression, answered as the string it is reported by."""
 
-_TOOL = "tools/check_database_access.py"
+_TOOL = "tools/check_resource_access.py"
 TESTS_ROOT = Path(__file__).resolve().parents[1] / "tests"
 
 ENTRY_POINT_MODULE = "conftest.py"
-ENTRY_POINT_FIXTURE = "profile_run"
-CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"
+CLASSIFIER_CONSTANT = "_RESOURCE_FIXTURES"
 
-WAIVER_MARKER = "database-access"
-_WAIVER = re.compile(rf"#\s*{WAIVER_MARKER}:[ \t]*(?P<why>\S.*?)\s*$")
-
-# Fully qualified callables that acquire a live database. Constructing the
-# provisioner or a container starts a server; every ``open`` seam here opens a
-# socket to one, or starts a primary and its standby; constructing a
-# provisioned run opens the profile's own provisioning. Constructing
-# `PostgresAdapter` is deliberately absent, and now for a stronger reason than
-# before: it is immutable configuration that opens nothing at all, so what
-# acquires is `PostgresAdapter.open`. Constructing
-# either scoped control is likewise absent, since both take a session somebody
-# else opened — only the ``open`` that opens one for itself acquires anything.
-#
-# The adapter's ``open`` is declared under both the package it is exported from
-# and the module defining it, so importing the defining module is not a way past
-# the dotted resolution. Reaching it on an instance is `INSTANCE_SEAMS` below.
-DATABASE_SEAMS: frozenset[str] = frozenset(
+# Fully qualified callables that start a local server: a container, the
+# provisioner owning one, a primary and its standby, or the profile's own
+# provisioned run.
+PROVISION_SEAMS: frozenset[str] = frozenset(
     {
-        "parallax.conformance._postgres_control.PostgresControl.open",
-        "parallax.conformance._postgres_control.PostgresInterleavedExecution.open",
-        "parallax.conformance._postgres_control.open_session",
         "parallax.conformance._replication.ReplicationPair.open",
         "parallax.conformance.profile.ProvisionedRun",
         "parallax.conformance.provision.Provisioner",
-        "parallax.postgres.PostgresAdapter.open",
-        "parallax.postgres.adapter.PostgresAdapter.open",
-        "psycopg.connect",
         "testcontainers.community.postgres.PostgresContainer",
         "testcontainers.core.container.DockerContainer",
     }
 )
+
+# Fully qualified callables that open a connection to a database somebody else
+# started. Constructing `PostgresAdapter` is deliberately absent: it is immutable
+# configuration that opens nothing at all, so what acquires is
+# `PostgresAdapter.open`. Constructing either scoped control is likewise absent,
+# since both take a session somebody else opened — only the ``open`` that opens
+# one for itself acquires anything.
+#
+# The adapter's ``open`` is declared under both the package it is exported from
+# and the module defining it, so importing the defining module is not a way past
+# the dotted resolution. Reaching it on an instance is `INSTANCE_SEAMS` below.
+CONNECT_SEAMS: frozenset[str] = frozenset(
+    {
+        "parallax.conformance._postgres_control.PostgresControl.open",
+        "parallax.conformance._postgres_control.PostgresInterleavedExecution.open",
+        "parallax.conformance._postgres_control.open_session",
+        "parallax.postgres.PostgresAdapter.open",
+        "parallax.postgres.adapter.PostgresAdapter.open",
+        "psycopg.connect",
+    }
+)
+
+# Fully qualified callables that reach the provider: the published environment,
+# a cloud run's lifetime, the AWS credential chain, and the certificate bundle
+# fetched over HTTP. `parallax.aws.rds_endpoint` is deliberately absent: it is
+# configuration that resolves no credential until a connection is opened.
+AWS_SEAMS: frozenset[str] = frozenset(
+    {
+        "botocore.session.Session",
+        "botocore.session.get_session",
+        "tests._support.aws_environment.PublishedEnvironment.load",
+        "tests._support.aws_run.AwsRun.open",
+        "urllib.request.urlopen",
+    }
+)
+
+SEAMS: frozenset[str] = PROVISION_SEAMS | CONNECT_SEAMS | AWS_SEAMS
+"""Every declared seam, which the call-site analysis resolves against."""
 
 # Constructors whose INSTANCES acquire, and the members that do the acquiring.
 # Constructing an adapter is immutable configuration that opens nothing, so the
@@ -151,7 +187,53 @@ INSTANCE_SEAMS: Mapping[str, frozenset[str]] = {
 # with no importable name of their own for the dotted resolution to reach. Such a
 # call is matched by member name instead, and `unbacked_profiles` keeps that match
 # honest by requiring every declared profile to still hold a seam on one of them.
+# Both members provision.
 SEAM_MEMBERS: frozenset[str] = frozenset({"provisioned", "provisioner"})
+
+
+@dataclass(frozen=True)
+class SeamKind:
+    """What one group of seams does, which fixtures may call it, and the refusal
+    a call elsewhere is reported with."""
+
+    seams: frozenset[str]
+    fixtures: frozenset[str]
+    reaches: str
+
+
+PROVISION = SeamKind(PROVISION_SEAMS, frozenset({"profile_run"}), "starts a local database server")
+CONNECT = SeamKind(
+    CONNECT_SEAMS, frozenset({"profile_run", "aws_run"}), "opens a database connection"
+)
+PROVIDER = SeamKind(AWS_SEAMS, frozenset({"aws_run"}), "reaches a provider-hosted environment")
+
+
+@dataclass(frozen=True)
+class ResourceClass:
+    """One confined scheduling class: its designated fixture, the support modules
+    implementing that fixture, the waiver marker its command honors, and the seam
+    groups its command reports."""
+
+    fixture: str
+    implementations: tuple[str, ...]
+    marker: str
+    kinds: tuple[SeamKind, ...]
+
+    @property
+    def waiver(self) -> re.Pattern[str]:
+        return re.compile(rf"#\s*{self.marker}:[ \t]*(?P<why>\S.*?)\s*$")
+
+
+RESOURCE_CLASSES: Mapping[str, ResourceClass] = {
+    "db": ResourceClass("profile_run", (), "database-access", (PROVISION, CONNECT)),
+    "cloud": ResourceClass(
+        "aws_run",
+        ("_support/aws_run.py", "_support/aws_environment.py"),
+        "cloud-access",
+        (PROVIDER,),
+    ),
+}
+"""Each confined class by name, as `tests/conftest.py`'s classifier names it."""
 
 
 @dataclass(frozen=True)
@@ -231,13 +313,13 @@ def _resolves_to_callable(dotted: str) -> bool:
 
 
 def unresolved_seams() -> tuple[str, ...]:
-    """Every entry of :data:`DATABASE_SEAMS` that no longer names a callable.
+    """Every entry of :data:`SEAMS` that no longer names a callable.
 
     The seam set is hand-maintained against code it does not import, so a
     renamed or deleted seam would otherwise leave the guard reporting success
     over a rule that matches nothing.
     """
-    return tuple(seam for seam in sorted(DATABASE_SEAMS) if not _resolves_to_callable(seam))
+    return tuple(seam for seam in sorted(SEAMS) if not _resolves_to_callable(seam))
 
 
 def unbacked_instance_seams() -> tuple[str, ...]:
@@ -255,7 +337,7 @@ def unbacked_instance_seams() -> tuple[str, ...]:
             f"{constructor}.{member}"
             for constructor, members in INSTANCE_SEAMS.items()
             for member in members
-            if f"{constructor}.{member}" not in DATABASE_SEAMS
+            if f"{constructor}.{member}" not in SEAMS
         )
     )
 
@@ -266,7 +348,7 @@ def unbacked_profiles() -> tuple[str, ...]:
 
     A member is matched by name rather than resolved, so it guards nothing unless
     the profiles still acquire their database through one. A provisioner renamed,
-    replaced by something uncallable, or moved out of :data:`DATABASE_SEAMS` would
+    replaced by something uncallable, or moved out of :data:`SEAMS` would
     otherwise leave the audit matching a member no acquisition goes through. One
     backed member is enough: the others are further forms of opening what it
     declares — a profile provisioning itself opens the class it holds — and a form
@@ -280,7 +362,7 @@ def unbacked_profiles() -> tuple[str, ...]:
         for member in SEAM_MEMBERS:
             target = getattr(profile, member, None)
             if isinstance(target, type):
-                reached |= f"{target.__module__}.{target.__qualname__}" in DATABASE_SEAMS
+                reached |= f"{target.__module__}.{target.__qualname__}" in PROVISION_SEAMS
         if not reached:
             unbacked.append(profile.name)
     return tuple(unbacked)
@@ -368,7 +450,7 @@ def _acquisition_named(expression: ast.expr, bindings: dict[str, str], bound: Bo
     if held is not None:
         return _first(held, bindings, bound, _acquisition_named)
     target = _resolved_target(expression, bindings)
-    return target if target is not None and target in DATABASE_SEAMS else None
+    return target if target is not None and target in SEAMS else None
 
 
 def _first(
@@ -532,36 +614,50 @@ def _entry_point_span(tree: ast.Module, fixture: str) -> tuple[int, int] | None:
     return None
 
 
-def _declared_database_fixtures(tree: ast.Module) -> frozenset[str] | None:
-    """The fixture names :data:`CLASSIFIER_CONSTANT` designates, if it is assigned
-    a literal set of strings at module level."""
+def _declared_resource_fixtures(tree: ast.Module) -> dict[str, str] | None:
+    """The fixture-to-class table :data:`CLASSIFIER_CONSTANT` declares, if it is
+    assigned a literal mapping of strings to strings at module level."""
     for node in tree.body:
-        if not isinstance(node, ast.Assign):
+        targets = (
+            [node.target]
+            if isinstance(node, ast.AnnAssign)
+            else node.targets
+            if isinstance(node, ast.Assign)
+            else []
+        )
+        if CLASSIFIER_CONSTANT not in [t.id for t in targets if isinstance(t, ast.Name)]:
             continue
-        names = [t.id for t in node.targets if isinstance(t, ast.Name)]
-        if CLASSIFIER_CONSTANT not in names:
-            continue
-        value = node.value
+        value = node.value if isinstance(node, ast.Assign | ast.AnnAssign) else None
         if isinstance(value, ast.Call) and len(value.args) == 1:
             value = value.args[0]
-        if not isinstance(value, ast.Set):
+        if not isinstance(value, ast.Dict):
             return None
-        literals = [e.value for e in value.elts if isinstance(e, ast.Constant)]
-        if len(literals) != len(value.elts) or not all(isinstance(x, str) for x in literals):
+        pairs = [
+            (key.value, item.value)
+            for key, item in zip(value.keys, value.values, strict=True)
+            if isinstance(key, ast.Constant) and isinstance(item, ast.Constant)
+        ]
+        if len(pairs) != len(value.keys) or not all(
+            isinstance(key, str) and isinstance(item, str) for key, item in pairs
+        ):
             return None
-        return frozenset(str(x) for x in literals)
+        return {str(key): str(item) for key, item in pairs}
     return None
 
 
-def _unwaived(source: str, acquisitions: Sequence[tuple[int, str]]) -> list[tuple[int, str]]:
-    """Every one of *acquisitions* no waiver in *source* excuses, with the message
-    it is reported by.
+def _unwaived(
+    source: str,
+    acquisitions: Sequence[tuple[int, str]],
+    waiver: re.Pattern[str],
+    refusal: Callable[[str], str],
+) -> list[tuple[int, str]]:
+    """Every one of *acquisitions* no *waiver* in *source* excuses, with the message
+    it is reported by, which *refusal* completes for each reported target.
 
     A waiver is the line's own, not the file's: it excuses the one call a reader
-    can see beside it. It must carry a reason — a bare ``# database-access:`` is
-    not honored — so that taking the escape hatch costs a justification a
-    reviewer reads, which is the whole of what keeps a guard with an escape hatch
-    worth having.
+    can see beside it. It must carry a reason — a bare marker is not honored — so
+    that taking the escape hatch costs a justification a reviewer reads, which is
+    the whole of what keeps a guard with an escape hatch worth having.
 
     Two things follow from that, and both are decided here. The marker is a
     COMMENT the tokenizer reports, so text spelling it inside a string literal is
@@ -574,19 +670,13 @@ def _unwaived(source: str, acquisitions: Sequence[tuple[int, str]]) -> list[tupl
     waived = {
         token.start[0]
         for token in tokenize.generate_tokens(io.StringIO(source).readline)
-        if token.type == tokenize.COMMENT and _WAIVER.search(token.string) is not None
+        if token.type == tokenize.COMMENT and waiver.search(token.string) is not None
     }
     reported_on = Counter(line for line, _ in acquisitions)
     unwaived: list[tuple[int, str]] = []
     for line, target in acquisitions:
         if line not in waived:
-            unwaived.append(
-                (
-                    line,
-                    f"calls `{target}`, which acquires a live database; only the "
-                    f"`{ENTRY_POINT_FIXTURE}` fixture in {ENTRY_POINT_MODULE} may",
-                )
-            )
+            unwaived.append((line, f"calls `{target}`, {refusal(target)}"))
         elif reported_on[line] > 1:
             unwaived.append(
                 (
@@ -598,107 +688,169 @@ def _unwaived(source: str, acquisitions: Sequence[tuple[int, str]]) -> list[tupl
     return unwaived
 
 
-def audit(tests_root: Path) -> list[Finding]:
-    """Every violation under *tests_root*, addressed relative to it."""
-    findings: list[Finding] = []
-    allowed: tuple[int, int] | None = None
+def seam_kind(target: str) -> SeamKind:
+    """The group a reported acquisition belongs to. A declared seam member is
+    named by its member, which only a profile's provisioning reaches."""
+    for kind in (PROVISION, CONNECT, PROVIDER):
+        if target in kind.seams:
+            return kind
+    return PROVISION
 
+
+def _refusal(target: str) -> str:
+    kind = seam_kind(target)
+    fixtures = " or ".join(f"`{fixture}`" for fixture in sorted(kind.fixtures))
+    return f"which {kind.reaches}; only {fixtures} in {ENTRY_POINT_MODULE} may"
+
+
+@dataclass(frozen=True)
+class _Admission:
+    """Where each designated fixture runs: its body's lines in the entry module,
+    and the modules implementing it."""
+
+    spans: Mapping[str, tuple[int, int]]
+
+    def admits(self, kind: SeamKind, relative: str, line: int) -> bool:
+        for fixture in kind.fixtures:
+            if relative in _implementations(fixture):
+                return True
+            span = self.spans.get(fixture)
+            if relative == ENTRY_POINT_MODULE and span is not None and span[0] <= line <= span[1]:
+                return True
+        return False
+
+
+def _implementations(fixture: str) -> tuple[str, ...]:
+    return next(
+        (entry.implementations for entry in RESOURCE_CLASSES.values() if entry.fixture == fixture),
+        (),
+    )
+
+
+def _structure(tests_root: Path, resource: ResourceClass) -> tuple[list[Finding], _Admission]:
+    """The findings the entry module and declared implementations raise, and where
+    each designated fixture runs."""
+    findings: list[Finding] = []
     entry_module = tests_root / ENTRY_POINT_MODULE
     if not entry_module.is_file():
         findings.append(Finding(ENTRY_POINT_MODULE, 0, f"{ENTRY_POINT_MODULE} does not exist"))
-    else:
-        entry_tree = ast.parse(entry_module.read_text(encoding="utf-8"))
-        allowed = _entry_point_span(entry_tree, ENTRY_POINT_FIXTURE)
-        if allowed is None:
+        return findings, _Admission({})
+    entry_tree = ast.parse(entry_module.read_text(encoding="utf-8"))
+    spans: dict[str, tuple[int, int]] = {}
+    for entry in RESOURCE_CLASSES.values():
+        span = _entry_point_span(entry_tree, entry.fixture)
+        if span is not None:
+            spans[entry.fixture] = span
+    if resource.fixture not in spans:
+        findings.append(
+            Finding(
+                ENTRY_POINT_MODULE,
+                0,
+                f"the designated fixture `{resource.fixture}` is not defined here",
+            )
+        )
+    for implementation in resource.implementations:
+        if not (tests_root / implementation).is_file():
             findings.append(
                 Finding(
-                    ENTRY_POINT_MODULE,
-                    0,
-                    f"the designated database fixture `{ENTRY_POINT_FIXTURE}` is not defined here",
+                    implementation, 0, f"`{resource.fixture}` is implemented here, yet it is absent"
                 )
             )
-        declared = _declared_database_fixtures(entry_tree)
-        if declared != frozenset({ENTRY_POINT_FIXTURE}):
-            findings.append(
-                Finding(
-                    ENTRY_POINT_MODULE,
-                    0,
-                    f"`{CLASSIFIER_CONSTANT}` must designate exactly "
-                    f"{{{ENTRY_POINT_FIXTURE!r}}}, the fixture this guard permits; "
-                    f"it reads {declared if declared is not None else 'a non-literal set'}",
-                )
+    expected = {entry.fixture: name for name, entry in RESOURCE_CLASSES.items()}
+    declared = _declared_resource_fixtures(entry_tree)
+    if declared != expected:
+        findings.append(
+            Finding(
+                ENTRY_POINT_MODULE,
+                0,
+                f"`{CLASSIFIER_CONSTANT}` must map exactly {expected}, the fixtures this guard "
+                f"permits; it reads {'a non-literal mapping' if declared is None else declared}",
             )
+        )
+    return findings, _Admission(spans)
 
+
+def audit(tests_root: Path, class_name: str) -> list[Finding]:
+    """Every *class_name* violation under *tests_root*, addressed relative to it."""
+    resource = RESOURCE_CLASSES[class_name]
+    findings, admission = _structure(tests_root, resource)
     for path in sorted(tests_root.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
         relative = path.relative_to(tests_root).as_posix()
         source = path.read_text(encoding="utf-8")
-        permitted = allowed if relative == ENTRY_POINT_MODULE else None
         acquisitions = [
             (line, target)
             for line, target in seam_calls(ast.parse(source))
-            if permitted is None or not permitted[0] <= line <= permitted[1]
+            if seam_kind(target) in resource.kinds
+            and not admission.admits(seam_kind(target), relative, line)
         ]
         findings.extend(
-            Finding(relative, line, message) for line, message in _unwaived(source, acquisitions)
+            Finding(relative, line, message)
+            for line, message in _unwaived(source, acquisitions, resource.waiver, _refusal)
         )
     return findings
 
 
+def _report(title: str, explanation: str, entries: Sequence[object]) -> None:
+    print(f"{_TOOL}: {len(entries)} {title}\n{explanation}", file=sys.stderr)
+    for entry in entries:
+        print(f"    {entry}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Live database access is fixture-only.")
+    parser = argparse.ArgumentParser(description="Resource access is fixture-only.")
     parser.add_argument(
-        "--check",
-        action="store_true",
-        help="verify every live database acquisition goes through the designated fixture (default)",
+        "--class",
+        dest="resource_class",
+        required=True,
+        choices=sorted(RESOURCE_CLASSES),
+        help="the scheduling class whose resource to confine",
     )
-    parser.parse_args(argv)
+    arguments = parser.parse_args(argv)
+    class_name: str = arguments.resource_class
+    resource = RESOURCE_CLASSES[class_name]
+    # The provider seams live in this tree's own support modules, which resolve
+    # only with the implementation root importable.
+    root = str(TESTS_ROOT.parent)
+    if root not in sys.path:
+        sys.path.insert(0, root)
 
     stale = unresolved_seams()
     undeclared = unbacked_instance_seams()
     unbacked = unbacked_profiles()
-    findings = audit(TESTS_ROOT)
+    findings = audit(TESTS_ROOT, class_name)
     if not stale and not undeclared and not unbacked and not findings:
-        print(f"{_TOOL}: live database access is confined to `{ENTRY_POINT_FIXTURE}`")
+        print(f"{_TOOL}: `{class_name}` access is confined to `{resource.fixture}`")
         return 0
-
     if undeclared:
-        print(
-            f"{_TOOL}: {len(undeclared)} declared instance member(s) are not declared\n"
-            "  seams under their own constructor. A member matched on a typed receiver is\n"
-            "  resolved by nothing else, so one renamed away would guard nothing quietly.",
-            file=sys.stderr,
+        _report(
+            "declared instance member(s) are not declared seams under their own constructor.",
+            "  A member matched on a typed receiver is resolved by nothing else, so one\n"
+            "  renamed away would guard nothing quietly.",
+            undeclared,
         )
-        for member in undeclared:
-            print(f"    {member}", file=sys.stderr)
     if stale:
-        print(
-            f"{_TOOL}: {len(stale)} declared seam(s) name nothing importable. A seam\n"
-            "  that resolves to nothing guards nothing, and the call-site audit reports\n"
-            "  a clean tree either way.",
-            file=sys.stderr,
+        _report(
+            "declared seam(s) name nothing importable.",
+            "  A seam that resolves to nothing guards nothing, and the call-site audit\n"
+            "  reports a clean tree either way.",
+            stale,
         )
-        for seam in stale:
-            print(f"    {seam}", file=sys.stderr)
     if unbacked:
-        print(
-            f"{_TOOL}: {len(unbacked)} declared profile(s) reach no declared seam through\n"
-            "  a declared seam member. The audit matches those members by name, so a profile\n"
-            "  acquiring a database another way is acquired outside the guard.",
-            file=sys.stderr,
+        _report(
+            "declared profile(s) reach no declared seam through a declared seam member.",
+            "  The audit matches those members by name, so a profile acquiring a database\n"
+            "  another way is acquired outside the guard.",
+            unbacked,
         )
-        for profile in unbacked:
-            print(f"    {profile}", file=sys.stderr)
     if findings:
-        print(
-            f"{_TOOL}: live database access outside the designated fixture. Each\n"
-            "  collected item's scheduling class is derived from its fixture closure, so an\n"
-            "  item reaching a database another way is selected by `-m dbfree`.",
-            file=sys.stderr,
+        _report(
+            f"`{class_name}` access(es) outside the designated fixture.",
+            "  Each collected item's scheduling class is derived from its fixture closure,\n"
+            "  so an item reaching this resource another way is selected by `-m dbfree`.",
+            [f"tests/{finding}" for finding in findings],
         )
-        for finding in findings:
-            print(f"    tests/{finding}", file=sys.stderr)
     return 1
 
 

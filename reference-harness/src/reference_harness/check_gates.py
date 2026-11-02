@@ -19,6 +19,7 @@ checker that carried its own copy of the recipe list would be one.
 
 from __future__ import annotations
 
+import itertools
 import re
 import shlex
 import sys
@@ -29,7 +30,7 @@ from typing import NamedTuple
 
 import yaml
 
-from reference_harness import ci_workflow, runner_config
+from reference_harness import ci_workflow, cloud_verdict, runner_config
 from reference_harness.diagnostics import Diagnostic, report_failures
 from reference_harness.gate_graph import (
     BLOCKING_OPERATIONS,
@@ -90,10 +91,15 @@ class _Class(NamedTuple):
     merge_gate: bool
     """Whether §7 puts the class's aggregate inside `check`."""
 
+    relevance_gated: bool = False
+    """Whether §9 lets CI run the class only for relevant changes, through a
+    relevance job and an always-run verdict job."""
+
 
 _SCHEDULING_CLASSES: Mapping[str, _Class] = {
     "db": _Class("database-access", True),
     "dbfree": _Class(None, True),
+    "cloud": _Class("cloud-access", False, relevance_gated=True),
     "cost": _Class("instrument-access", False),
 }
 """§5's closed scheduling vocabulary, as the blocking check confining each class's
@@ -102,14 +108,18 @@ defining resource and whether §7's merge gate composes it.
 A class is honest only while the resource that defines it is unreachable by any
 other route, and §5 makes that restriction a blocking check of its own. `db` is
 defined by the live database, which §5 confines through
-`<scope>-check-database-access`, and `cost` by the interpreter a measurement does
-not share, which §5 confines through `<scope>-check-instrument-access`; `dbfree`
-maps to ``None`` because it is defined by the *absence* of both, and an absence
-has no entry point to confine.
+`<scope>-check-database-access`, `cloud` by the environment a provider hosts,
+confined through `<scope>-check-cloud-access`, and `cost` by the interpreter a
+measurement does not share, which §5 confines through
+`<scope>-check-instrument-access`; `dbfree` maps to ``None`` because it is
+defined by the *absence* of all three, and an absence has no entry point to
+confine.
 
-`cost` is the one class outside `check`. §7 excludes it there and keeps it in
-`check-all`, so the command run after every change stays fast enough to keep
-being run while nothing goes ungated.
+`cost` and `cloud` are the classes outside `check`. §7 excludes them there and
+keeps them in `check-all`: `cost` so the command run after every change stays
+fast enough to keep being run, and `cloud` because no local run holds what it
+needs. `cloud` is also the class §9 lets CI run only for relevant changes,
+through a relevance job and an always-run verdict job.
 
 The mapping is closed because §5's vocabulary is. A class in neither position has
 no defined membership rule and no resource anything could confine, so it is
@@ -198,6 +208,7 @@ class _Repository:
     scheduling_classes: tuple[str, ...]
     runners: Mapping[str, runner_config.RunnerConfiguration | None]
     jobs: tuple[ci_workflow.Job, ...] | None
+    workflow: ci_workflow.Workflow | None
 
     @property
     def scopes(self) -> tuple[str, ...]:
@@ -283,7 +294,7 @@ def _load_repository(root: Path, graph: GateGraph) -> _Repository:
         runners[scope] = (
             runner_config.read(directory) if directory is not None and directory.is_dir() else None
         )
-    jobs = ci_workflow.jobs(root / CI_WORKFLOW)
+    workflow = ci_workflow.read(root / CI_WORKFLOW)
     return _Repository(
         root=root,
         graph=graph,
@@ -291,7 +302,8 @@ def _load_repository(root: Path, graph: GateGraph) -> _Repository:
         language_scopes=language_scopes,
         scheduling_classes=tuple(sorted(classes)),
         runners=runners,
-        jobs=None if jobs is None else tuple(jobs),
+        jobs=None if workflow is None else workflow.jobs,
+        workflow=workflow,
     )
 
 
@@ -951,6 +963,131 @@ def _check_ci_job(
         )
 
 
+_RELEVANT_OUTPUT = "relevant"
+"""The output a relevance job answers with: ``true`` or ``false``."""
+
+_VERDICT_MODULE = "reference_harness.cloud_verdict"
+"""The supervisor a verdict job runs."""
+
+_EVENT_CONDITION_RE = re.compile(r"^github\.event_name\s*==\s*'(?:push|pull_request)'$")
+_ORDINARY_TRIGGERS = frozenset({"push", "pull_request"})
+
+
+def _relevance_gated_jobs(repository: _Repository, scheduling_class: str) -> list[ci_workflow.Job]:
+    """Every job running a gate *scheduling_class*'s aggregate owns."""
+    owners = set(repository.execution_owners(f"check-{scheduling_class}"))
+    assert repository.jobs is not None
+    return [
+        job
+        for job in repository.jobs
+        if any(
+            repository.declares(name) and owners & set(repository.execution_owners(name))
+            for name in job.invoked
+        )
+    ]
+
+
+def _check_class_job(
+    job: ci_workflow.Job, relevance: str, verdict: str, workflow: ci_workflow.Workflow
+) -> Iterator[Diagnostic]:
+    gate = f"needs.{relevance}.outputs.{_RELEVANT_OUTPUT}"
+    if relevance not in job.needs or job.condition is None or gate not in job.condition:
+        yield Diagnostic(
+            "ungated-class-job",
+            f"job `{job.identifier}` must need `{relevance}` and run only when its "
+            f"`{_RELEVANT_OUTPUT}` output says so",
+        )
+    if verdict in job.needs:
+        yield Diagnostic(
+            "verdict-dependency",
+            f"job `{job.identifier}` needs `{verdict}`; the class job and its verdict must "
+            f"not depend on each other",
+        )
+    try:
+        cloud_verdict.expected_cells(workflow, job.identifier)
+    except cloud_verdict.CellDeclarationError as refused:
+        yield Diagnostic("undeclared-cells", f"{refused}; the verdict names cells from it")
+
+
+def _check_verdict_job(
+    job: ci_workflow.Job, relevance: str, class_jobs: Sequence[str]
+) -> Iterator[Diagnostic]:
+    if job.needs != (relevance,) or job.condition != "always()":
+        yield Diagnostic(
+            "verdict-dependency",
+            f"job `{job.identifier}` must need `{relevance}` alone and run `if: always()`; a "
+            f"verdict waiting on the class job waits as long as its runner never arrives",
+        )
+    supervised = {
+        argument
+        for command in job.commands
+        if _VERDICT_MODULE in command
+        for flag, argument in itertools.pairwise(_shell_tokens(command))
+        if flag == "--job"
+    }
+    if supervised != set(class_jobs):
+        yield Diagnostic(
+            "unsupervised-class-job",
+            f"job `{job.identifier}` must run `{_VERDICT_MODULE}` over "
+            f"{', '.join(f'`{name}`' for name in class_jobs)}",
+        )
+
+
+def _event_conditioned(condition: str | None) -> bool:
+    if condition is None:
+        return False
+    return all(_EVENT_CONDITION_RE.match(part.strip()) for part in condition.split("||"))
+
+
+def _check_relevance_gating(repository: _Repository) -> Iterator[Diagnostic]:
+    """§9's relevance-gated classes: a relevance job, the class job gated on it,
+    and an always-run verdict job depending on neither the class job nor the
+    other way round — and, where the workflow adds triggers only the class's path
+    serves, no other job running on them."""
+    workflow = repository.workflow
+    if workflow is None:
+        return
+    by_identifier = {job.identifier: job for job in workflow.jobs}
+    path: set[str] = set()
+    for scheduling_class in repository.scheduling_classes:
+        record = _SCHEDULING_CLASSES.get(scheduling_class)
+        if record is None or not record.relevance_gated:
+            continue
+        relevance, verdict = f"{scheduling_class}-relevance", f"{scheduling_class}-verdict"
+        class_jobs = _relevance_gated_jobs(repository, scheduling_class)
+        path |= {relevance, verdict, *(job.identifier for job in class_jobs)}
+        relevance_job = by_identifier.get(relevance)
+        if relevance_job is None or _RELEVANT_OUTPUT not in relevance_job.outputs:
+            yield Diagnostic(
+                "missing-relevance-job",
+                f"`{scheduling_class}` runs only for relevant changes, so a job `{relevance}` "
+                f"must answer with a `{_RELEVANT_OUTPUT}` output",
+            )
+        for job in class_jobs:
+            yield from _check_class_job(job, relevance, verdict, workflow)
+        verdict_job = by_identifier.get(verdict)
+        if verdict_job is None:
+            yield Diagnostic(
+                "missing-verdict-job",
+                f"`{scheduling_class}` runs only for relevant changes, so an always-run job "
+                f"`{verdict}` must be its required status",
+            )
+        else:
+            yield from _check_verdict_job(
+                verdict_job, relevance, [job.identifier for job in class_jobs]
+            )
+    if not path or workflow.triggers <= _ORDINARY_TRIGGERS:
+        return
+    for job in workflow.jobs:
+        if job.identifier not in path and not _event_conditioned(job.condition):
+            yield Diagnostic(
+                "unconditioned-job",
+                f"job `{job.identifier}` runs on every trigger; the workflow also triggers "
+                f"for the relevance-gated path alone, so every other job runs only on "
+                f"`github.event_name == 'push'` or `'pull_request'`",
+            )
+
+
 def _operational_maps(repository: _Repository) -> dict[str | None, Path]:
     """Each operational map and the scope it speaks for. The repository's own map
     speaks for every scope, so a scoped job is answerable to two of them."""
@@ -1021,6 +1158,7 @@ _RULES = (
     _check_runner_config,
     _check_layout,
     _check_ci,
+    _check_relevance_gating,
     _check_documentation,
 )
 

@@ -39,6 +39,7 @@ of helper modules.
 |---|---|
 | `profile` | Matrix declaration only; does not open a database |
 | `profile_run` | The live Testcontainers Postgres run |
+| `aws_run` | One CI run attempt's database on the deployed Aurora environment |
 | `committed_cost_evidence` | Reading retained captures and the memory gates |
 | `wheelhouse` | Built distribution wheels |
 | `release_case_runtimes` | Autouse cleanup for roots and runtimes left open by a test |
@@ -52,17 +53,30 @@ worker.
 Tests owning a Database Root should close it explicitly or register it through
 `tests._support.root_ownership.own_root`. The cleanup fixture is a backstop.
 
-The database-access checker confines connection acquisition to the fixture.
-A line-local `# database-access: <reason>` exemption requires a meaningful
-reason, such as a mocked acquisition. When a provider is unavailable the fixture
-records the skip; `PARALLAX_REQUIRE_DB=1` makes it fail.
+Provider-hosted tests reach the Aurora environment only through `aws_run`,
+which [aws_run.py](tests/_support/aws_run.py) implements; they live under
+`tests/provider_contract/aws/`. Unlike `profile_run` it never skips: a missing
+environment, credential, lock, or answer fails the cell. Its lifetime is
+unit-tested over scripted ports, and the suite itself runs only in CI.
+
+The resource-access checker confines each class's resource to its fixture:
+provisioning a local server to `profile_run`, reaching the provider to
+`aws_run`, and opening a connection to either. A line-local
+`# database-access: <reason>` or `# cloud-access: <reason>` exemption, for the
+class reporting the call, requires a meaningful reason, such as a mocked
+acquisition. When a local provider is unavailable `profile_run` records the
+skip; `PARALLAX_REQUIRE_DB=1` makes it fail.
 
 ## Scheduling and selection
 
 The collection hook derives exactly one class from each item's resource needs:
-`db` from the live fixture closure, `cost` from the child-interpreter boundary or
-the committed-evidence fixture, otherwise `dbfree`. Do not author those markers
-onto tests. Requiring a database beside a cost resource is an error. The
+`db` or `cloud` from the resource fixture in its closure, `cost` from the
+child-interpreter boundary or the committed-evidence fixture, otherwise
+`dbfree`. Do not author those markers onto tests. Requiring two classes'
+resources is an error. A `cloud` item is selected only when
+`PARALLAX_CLOUD_PROVIDERS` names its provider, which only a CI cell does, so no
+local selection reaches the provider; a cloud run naming none collects nothing
+and fails. The
 instrument-access checker requires the boundary on every test that calls a
 whole-interpreter reader directly; any other route fails at run time, because
 each reader refuses a process the boundary did not start. Likewise the runner
