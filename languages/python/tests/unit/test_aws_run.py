@@ -180,14 +180,14 @@ def test_a_run_locks_drops_stale_databases_then_creates_and_warms_its_own() -> N
 
     assert cluster.log == [
         f"{_CONTROL}: open",
-        f"{_CONTROL}: reset role",
+        f"{_CONTROL}: set role none",
         f"{_CONTROL}: select pg_try_advisory_lock(%s)",
         f"{_CONTROL}: {cluster.log[3].split(': ', 1)[1]}",
         f'{_CONTROL}: drop database if exists "ci_1_1" with (force)',
         f"{_CONTROL}: select count(*) from pg_database where datname = %s",
         f'{_CONTROL}: create database "ci_7_2"',
         f"{_ADMIN}: open",
-        f"{_ADMIN}: reset role",
+        f"{_ADMIN}: set role none",
         *(
             entry
             for host in (_WRITER, _READER, _WRITER_INSTANCE, _READER_INSTANCE)
@@ -284,7 +284,7 @@ def test_a_paused_writer_is_waited_for_before_the_control_session() -> None:
     cluster = _Cluster(owned=[], refusing={_WRITER: 2})
     _started(cluster, clock)
 
-    assert cluster.log[:2] == [f"{_CONTROL}: open", f"{_CONTROL}: reset role"]
+    assert cluster.log[:2] == [f"{_CONTROL}: open", f"{_CONTROL}: set role none"]
     assert clock.now == 2.0
 
 
@@ -404,7 +404,7 @@ def test_an_inspection_session_is_opened_once_per_host_with_its_role_reset() -> 
     assert first is again
     assert cluster.log == [
         f"{_WRITER_INSTANCE}/ci_7_2: open",
-        f"{_WRITER_INSTANCE}/ci_7_2: reset role",
+        f"{_WRITER_INSTANCE}/ci_7_2: set role none",
     ]
 
 
