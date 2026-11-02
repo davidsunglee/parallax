@@ -4,7 +4,7 @@ import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from parallax.conformance import case_format
 from parallax.conformance._case_literal import normalize_case_literal
@@ -78,13 +78,20 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "CONFORMANCE_LOGIN",
     "ContainerDatabase",
     "Provisioner",
+    "RuntimeLedger",
+    "TrackedAdapter",
+    "conformance_credentials",
+    "database_authorization",
     "fixture_collection",
     "fixture_document",
     "fixture_literal",
     "fixture_statements",
+    "install_authority_fixtures",
     "load_fixtures",
+    "reset_database",
     "reset_statements",
     "schema_statements",
 ]
@@ -358,13 +365,131 @@ _SESSION_DEFAULTS: Mapping[str, str] = {
     "read-uncommitted": "-c default_transaction_isolation=read\\ uncommitted",
 }
 
-_TEST_LOGIN = "parallax_conformance_login"
+CONFORMANCE_LOGIN: Final[str] = "parallax_conformance_login"
+"""The login every conformance application session authenticates as."""
+
 _TEST_PASSWORD = "parallax-conformance-password"
 _DEFAULT_ROLE = "parallax_conformance_default"
 _ROLE_AUTHORIZATIONS: Mapping[str, str] = {
     "role-a": "parallax_conformance_role_a",
     "role-b": "parallax_conformance_role_b",
 }
+
+
+def conformance_credentials() -> Password:
+    """The conformance login's secret, as the adapter's credential source takes it."""
+    return Password(_TEST_PASSWORD)
+
+
+def database_authorization(selector: str) -> PostgresRole:
+    """The database authorization a case's ``role-a`` / ``role-b`` selector names."""
+    from parallax.postgres import PostgresRole
+
+    try:
+        role = _ROLE_AUTHORIZATIONS[selector]
+    except KeyError as unknown:
+        raise ValueError(f"unknown database authorization fixture {selector!r}") from unknown
+    return PostgresRole(role)
+
+
+def install_authority_fixtures(session: DatabaseConnection) -> None:
+    """Create the conformance login and the roles it may act as, on a fresh server.
+
+    This administers a server the harness started itself, so it stays apart
+    from :func:`reset_database`, which needs only a database the conformance
+    roles already exist on.
+    """
+    roles = (_DEFAULT_ROLE, *_ROLE_AUTHORIZATIONS.values())
+    for role in roles:
+        session.execute_write(f'create role "{role}"', [])
+    session.execute_write(
+        f"create role \"{CONFORMANCE_LOGIN}\" login password '{_TEST_PASSWORD}'", []
+    )
+    for role in roles:
+        session.execute_write(f'grant "{role}" to "{CONFORMANCE_LOGIN}"', [])
+    session.execute_write(f'alter role "{CONFORMANCE_LOGIN}" set role to "{_DEFAULT_ROLE}"', [])
+
+
+def reset_database(
+    session: DatabaseConnection, model: Metamodel, fixtures: Mapping[str, object]
+) -> None:
+    """Reset the schema, apply the model-derived DDL, load the fixtures, and grant
+    the conformance roles what a case's sessions do with them.
+
+    Fixture binds carry the neutral :class:`JsonDocument` carrier for value
+    objects; the adapter recognizes it at its boundary and binds the driver's
+    native structured-document type, so no psycopg bind mechanics leak here.
+    """
+    dialect = session.dialect
+    for statement in reset_statements():
+        session.execute_write(statement, [])
+    for statement in schema_statements(model, dialect):
+        session.execute_write(statement, [])
+    for sql, binds in fixture_statements(model, fixtures, dialect):
+        session.execute_write(dialect.to_driver_sql(sql), binds)
+    for role in (_DEFAULT_ROLE, *_ROLE_AUTHORIZATIONS.values()):
+        session.execute_write(f'grant usage on schema public to "{role}"', [])
+        session.execute_write(
+            f'grant select, insert, update, delete on all tables in schema public to "{role}"',
+            [],
+        )
+
+
+class RuntimeLedger:
+    """The runtimes opened through one configuration that may still be open.
+
+    A Database that is closed retires its own; what stays on the ledger is the
+    backstop for a case that composed one and did not, because a session that
+    accumulated a pool per case would run the server out of connections long
+    before the corpus ran out of cases.
+    """
+
+    def __init__(self) -> None:
+        self._opened: list[DatabaseRuntime[PostgresRole]] = []
+
+    def track(self, runtime: DatabaseRuntime[PostgresRole]) -> DatabaseRuntime[PostgresRole]:
+        """``runtime``, kept on this ledger until it closes."""
+        tracked = _TrackedRuntime(runtime, self._opened.remove)
+        self._opened.append(tracked)
+        return tracked
+
+    def release(self) -> None:
+        """Close every runtime still open, containing ordinary failures.
+
+        Every close is attempted whatever the ones before it did; the first
+        interrupt propagates only once all of them have been.
+        """
+        interrupted: BaseException | None = None
+        for runtime in tuple(self._opened):
+            try:
+                with suppress(Exception):
+                    runtime.close()
+            except BaseException as interrupt:
+                if interrupted is None:
+                    interrupted = interrupt
+        self._opened.clear()
+        if interrupted is not None:
+            raise interrupted
+
+
+class TrackedAdapter:
+    """Configuration whose every runtime is kept on one :class:`RuntimeLedger`."""
+
+    def __init__(self, adapter: PostgresAdapter, ledger: RuntimeLedger) -> None:
+        self._adapter = adapter
+        self._ledger = ledger
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._adapter.dialect
+
+    @property
+    def configuration(self) -> PostgresAdapter:
+        """The shipped configuration each runtime is opened from."""
+        return self._adapter
+
+    def open(self) -> DatabaseRuntime[PostgresRole]:
+        return self._ledger.track(self._adapter.open())
 
 
 class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed lanes
@@ -376,25 +501,20 @@ class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed la
     session, so the DDL, the fixtures, a verbatim ``given.apply`` and a golden
     read of stored state run outside anything under test.
 
-    It also keeps the runtimes it handed out. A Database that is closed retires
-    its own; what is tracked here is the backstop for a case that composed one
-    and did not, because a session that accumulated a pool per case would run the
-    server out of connections long before the corpus ran out of cases.
+    It also keeps the runtimes it handed out on a :class:`RuntimeLedger`.
     """
 
     def __init__(self, adapter: PostgresAdapter, session: DriverControl) -> None:
-        self._adapter = adapter
+        self._ledger = RuntimeLedger()
+        self._adapter = TrackedAdapter(adapter, self._ledger)
         self._session = session
-        self._opened: list[DatabaseRuntime[PostgresRole]] = []
 
     @property
     def dialect(self) -> Dialect:
         return self._session.dialect
 
     def open(self) -> DatabaseRuntime[PostgresRole]:
-        runtime = _TrackedRuntime(self._adapter.open(), self._opened.remove)
-        self._opened.append(runtime)
-        return runtime
+        return self._adapter.open()
 
     def execute(
         self,
@@ -429,14 +549,11 @@ class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed la
 
     def release_runtimes(self) -> None:
         """Close every runtime a composed Database left open."""
-        for runtime in tuple(self._opened):
-            with suppress(Exception):
-                runtime.close()
-        self._opened.clear()
+        self._ledger.release()
 
 
-class _TrackedRuntime:  # pragma: no cover - exercised by the Docker-backed lanes
-    """A runtime that tells its opener when its Database closes it.
+class _TrackedRuntime:
+    """A runtime that tells its ledger when its Database closes it.
 
     Closing is idempotent underneath, so the backstop may close one this already
     reported; what the report buys is that the backstop closes only what a case
@@ -537,7 +654,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self._session = self._control().open(
             self._admin_conninfo, autocommit=True, prepare_threshold=None
         )
-        self._install_authority_fixtures()
+        install_authority_fixtures(self._session)
         from psycopg.conninfo import make_conninfo
 
         # Composed from the container's own host, port and database rather than
@@ -548,7 +665,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             host=self._container.get_container_host_ip(),
             port=self._container.get_exposed_port(self._container.port),
             dbname=self._container.dbname,
-            user=_TEST_LOGIN,
+            user=CONFORMANCE_LOGIN,
         )
         self._database = ContainerDatabase(self._configuration(), self._session)
         # Every scoped session that may still be alive. One removes itself as
@@ -576,17 +693,6 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             credentials=self.credentials,
             conninfo_options=conninfo_options,
         )
-
-    def _install_authority_fixtures(self) -> None:
-        roles = (_DEFAULT_ROLE, *_ROLE_AUTHORIZATIONS.values())
-        for role in roles:
-            self._session.execute_write(f'create role "{role}"', [])
-        self._session.execute_write(
-            f"create role \"{_TEST_LOGIN}\" login password '{_TEST_PASSWORD}'", []
-        )
-        for role in roles:
-            self._session.execute_write(f'grant "{role}" to "{_TEST_LOGIN}"', [])
-        self._session.execute_write(f'alter role "{_TEST_LOGIN}" set role to "{_DEFAULT_ROLE}"', [])
 
     def _built(
         self,
@@ -654,11 +760,11 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
     @property
     def credentials(self) -> Password:
         """The test login's secret, as the adapter's credential source takes it."""
-        return Password(_TEST_PASSWORD)
+        return conformance_credentials()
 
     @property
     def login_identity(self) -> str:
-        return _TEST_LOGIN
+        return CONFORMANCE_LOGIN
 
     @property
     def default_role(self) -> PostgresRole:
@@ -667,13 +773,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         return PostgresRole(_DEFAULT_ROLE)
 
     def authorization(self, selector: str) -> PostgresRole:
-        from parallax.postgres import PostgresRole
-
-        try:
-            role = _ROLE_AUTHORIZATIONS[selector]
-        except KeyError as unknown:
-            raise ValueError(f"unknown database authorization fixture {selector!r}") from unknown
-        return PostgresRole(role)
+        return database_authorization(selector)
 
     def control(self, *, autocommit: bool = True) -> DriverControl:
         """A separately owned second session to the same container (provider `peer`).
@@ -825,31 +925,8 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self._database.release_runtimes()
 
     def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
-        """Reset the schema, apply the model-derived DDL, and load the fixtures.
-
-        Fixture binds carry the neutral :class:`JsonDocument` carrier for value
-        objects; the adapter recognizes it at its boundary and binds the driver's
-        native structured-document type, so no psycopg bind mechanics leak here.
-        """
-        dialect = self._session.dialect
-        for statement in reset_statements():
-            self._session.execute_write(statement, [])
-        for statement in schema_statements(model, dialect):
-            self._session.execute_write(statement, [])
-        for sql, binds in fixture_statements(model, fixtures, dialect):
-            self._session.execute_write(dialect.to_driver_sql(sql), binds)
-        self._session.execute_write(f'grant usage on schema public to "{_DEFAULT_ROLE}"', [])
-        self._session.execute_write(
-            f"grant select, insert, update, delete on all tables in schema public "
-            f'to "{_DEFAULT_ROLE}"',
-            [],
-        )
-        for role in _ROLE_AUTHORIZATIONS.values():
-            self._session.execute_write(f'grant usage on schema public to "{role}"', [])
-            self._session.execute_write(
-                f'grant select, insert, update, delete on all tables in schema public to "{role}"',
-                [],
-            )
+        """Reset the schema, apply the model-derived DDL, and load the fixtures."""
+        reset_database(self._session, model, fixtures)
 
     def close(self) -> None:
         """Close this provisioning, and anything a caller left open behind it."""

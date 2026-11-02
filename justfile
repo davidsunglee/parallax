@@ -314,11 +314,13 @@ python-test-dbfree:
 
 # A fixed worker count rather than one per core: each worker provisions a
 # Postgres container of its own, so what bounds the count is containers a host
-# can start at once, not cores.
+# can start at once, not cores. `loadgroup` keeps every test of one
+# `xdist_group` on one worker, so the replication proofs share the one
+# primary/standby pair that worker opens; ungrouped tests distribute as `load`.
 [metadata("runtime:slow", "scheduling:db")]
 [doc("Every Python test whose fixture closure reaches a database (Testcontainers; Docker).")]
 python-test-db:
-    cd {{python}} && uv run pytest -m db -n 4
+    cd {{python}} && uv run pytest -m db -n 4 --dist loadgroup
 
 # No coverage here. Every reading is taken in a child interpreter the parent does
 # not trace, so what this selects contributes nothing to a coverage report; the
@@ -392,6 +394,13 @@ python-test-pydantic-floor:
 [doc("Focused: what psycopg's transformer calls, under its C build rather than its binary build (Docker; system libpq).")]
 python-test-psycopg-c:
     cd {{python}} && PSYCOPG_IMPL=c uv run --with "psycopg-c==$(uv run python -c 'import psycopg; print(psycopg.__version__)')" python -m pytest tests/unit/postgres/test_postgres_compiled_loaders.py tests/provider_contract/test_postgres_compiled_loaders.py tests/provider_contract/test_postgres_timestamp_delivery.py tests/provider_contract/test_postgres_open_bound_bind.py
+
+# One subject of the provider surface, selected alone while iterating on the
+# standby proofs; `python-test-db` runs them.
+[metadata("runtime:medium")]
+[doc("Focused: what a reader route observes on a real streaming standby (Docker).")]
+python-test-replication:
+    cd {{python}} && uv run pytest tests/provider_contract/replication
 
 # Like the focused selectors above it this belongs to no aggregate, and for a
 # different reason: a `report` passes no judgement, so no number it prints can

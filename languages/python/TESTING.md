@@ -44,6 +44,11 @@ of helper modules.
 | `release_case_runtimes` | Autouse cleanup for roots and runtimes left open by a test |
 
 Database-backed tests acquire their database only through `profile_run`.
+Standby proofs reach a primary and its streaming standby through
+`profile_run.replication()`, which opens one pair per run on first use; they
+live under `tests/provider_contract/replication/` and carry
+`xdist_group("replication")` so the database lane opens one pair, not one per
+worker.
 Tests owning a Database Root should close it explicitly or register it through
 `tests._support.root_ownership.own_root`. The cleanup fixture is a backstop.
 

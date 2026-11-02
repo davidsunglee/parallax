@@ -1,16 +1,27 @@
 """Minimal local stub for the untyped Testcontainers Postgres package.
 
-Covers only the surface the self-managed provisioner uses; a stub keeps the
-Docker-only provisioner strict-Pyright clean without suppressing type errors.
+Covers only the surface the self-managed provisioners use; a stub keeps the
+Docker-only provisioners strict-Pyright clean without suppressing type errors.
 """
 
-class PostgresContainer:
+from typing import Self
+
+from testcontainers.core.container import DockerContainer
+
+class PostgresContainer(DockerContainer):
     port: int
+    username: str
+    password: str
     dbname: str
 
-    def __init__(self, image: str) -> None: ...
-    def start(self) -> PostgresContainer: ...
-    def stop(self) -> None: ...
+    def __init__(
+        self,
+        image: str,
+        *,
+        username: str | None = None,
+        password: str | None = None,
+        dbname: str | None = None,
+        driver: str | None = "psycopg2",
+    ) -> None: ...
+    def start(self) -> Self: ...
     def get_connection_url(self) -> str: ...
-    def get_container_host_ip(self) -> str: ...
-    def get_exposed_port(self, port: int) -> int: ...
