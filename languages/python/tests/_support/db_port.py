@@ -259,13 +259,16 @@ class Transact:
     A boundary failure is a clause here rather than an entry of its own, so a
     commit failure belonging to no transaction is unwritable: ``begin`` never
     opens and the body never runs, ``commit`` fails after a body that returned,
-    and ``rollback`` fails the undo whatever triggered it.
+    and ``rollback`` fails the undo whatever triggered it. ``rerouted`` is the
+    selection the lease reports once opening the boundary moved it, as a
+    replacement taken from another route does, whether or not it then opens.
     """
 
     body: tuple[ScriptEntry, ...]
     begin: DatabaseError | None
     commit: DatabaseError | None
     rollback: DatabaseError | None
+    rerouted: RouteSelection | None
     times: int
 
     def __init__(
@@ -274,11 +277,13 @@ class Transact:
         begin: DatabaseError | None = None,
         commit: DatabaseError | None = None,
         rollback: DatabaseError | None = None,
+        rerouted: RouteSelection | None = None,
         times: int = 1,
     ) -> None:
         if begin is not None and body:
             raise ValueError("a boundary that never opens runs no body")
         object.__setattr__(self, "body", body)
+        object.__setattr__(self, "rerouted", rerouted)
         object.__setattr__(self, "begin", begin)
         object.__setattr__(self, "commit", commit)
         object.__setattr__(self, "rollback", rollback)
@@ -352,8 +357,9 @@ class _ScriptedConnection:
     pool.
     """
 
-    def __init__(self, adapter: ScriptedAdapter) -> None:
+    def __init__(self, adapter: ScriptedAdapter, context: ScriptedContext | None = None) -> None:
         self._adapter: ScriptedAdapter | None = adapter
+        self._context = context
         self.dialect = adapter.dialect
         self.ordered_write_transport: OrderedWriteTransport | None = (
             None if adapter.ordered_write_transport is None else self._ordered
@@ -361,6 +367,12 @@ class _ScriptedConnection:
 
     def revoke(self) -> None:
         self._adapter = None
+
+    def reroute(self, selection: RouteSelection) -> None:
+        """Report ``selection`` from the acquisition this connection serves."""
+        context = self._context
+        if context is not None:
+            context.rerouted(selection)
 
     def _script(self) -> ScriptedAdapter:
         adapter = self._adapter
@@ -456,9 +468,12 @@ class ScriptedContext:
             raise refusal
         self._selection = selection
         adapter.acquisitions += 1
-        connection = _ScriptedConnection(adapter)
+        connection = _ScriptedConnection(adapter, self)
         self._connection = connection
         return connection
+
+    def rerouted(self, selection: RouteSelection) -> None:
+        self._selection = selection
 
     def __exit__(
         self,
@@ -715,6 +730,8 @@ class ScriptedAdapter:
             Transact, f"isolation={isolation!r}, access_mode={access_mode!r}"
         )
         self.calls.append(BeginCall(isolation, access_mode))
+        if entry.rerouted is not None and isinstance(on, _ScriptedConnection):
+            on.reroute(entry.rerouted)
         if entry.begin is not None:
             return BeginFailed(entry.begin)
         scope = _Scope(entry.body)

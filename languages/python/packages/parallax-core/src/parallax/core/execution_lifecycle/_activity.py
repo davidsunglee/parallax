@@ -458,6 +458,17 @@ class ConnectionAcquisitionActivity(Protocol):
         """
         ...
 
+    def prepared(self) -> None:
+        """The connection the call returned has finished being prepared.
+
+        Only a transaction attempt announces it, once its native boundary has
+        opened, because until then the acquisition can still change route or
+        fail: this becomes the endpoint the duration is measured to, while the
+        hold still began where the call returned. An acquisition that never
+        announces it is measured to the call's return.
+        """
+        ...
+
     def acquired(self, selection: RouteSelection | None, /) -> None:
         """The route a granted acquisition was served on."""
         ...
@@ -868,6 +879,8 @@ class _InertActivity:
         return False
 
     def call_returned(self) -> None: ...
+
+    def prepared(self) -> None: ...
 
     def acquired(self, selection: RouteSelection | None, /) -> None: ...
 
@@ -1459,7 +1472,11 @@ class _LiveAcquisition(_LiveActivity):
     ``duration_ns`` measures a composition-level call rather than physical
     checkout: what it brackets is asking the adapter for a connection and
     getting an answer, which for a failed acquisition includes the cleanup the
-    adapter ran over whatever it had taken.
+    adapter ran over whatever it had taken. A transaction attempt's
+    acquisition is not settled until its native boundary has opened, so its
+    duration runs on to where :meth:`prepared` was announced; the hold still
+    starts where the call returned, so the two intervals overlap across the
+    boundary's opening rather than either claiming it alone.
     """
 
     __slots__ = (
@@ -1467,6 +1484,7 @@ class _LiveAcquisition(_LiveActivity):
         "_completed_ns",
         "_held_since_ns",
         "_reported",
+        "_returned_ns",
         "_route_policy",
         "_selection",
         "_started_ns",
@@ -1478,6 +1496,7 @@ class _LiveAcquisition(_LiveActivity):
         super().__init__(publisher, parent)
         self._route_policy: RoutePolicy = route_policy
         self._started_ns = 0
+        self._returned_ns = 0
         self._completed_ns = 0
         self._held_since_ns: int | None = None
         self._cleanup_result: CleanupResult | None = None
@@ -1493,6 +1512,12 @@ class _LiveAcquisition(_LiveActivity):
         return self._reported
 
     def call_returned(self) -> None:
+        if self._publisher.active:
+            returned_ns = time.perf_counter_ns()
+            self._returned_ns = returned_ns
+            self._completed_ns = returned_ns
+
+    def prepared(self) -> None:
         if self._publisher.active:
             self._completed_ns = time.perf_counter_ns()
 
@@ -1533,9 +1558,8 @@ class _LiveAcquisition(_LiveActivity):
         publisher = self._publisher
         if not publisher.active:
             return
-        completed_ns = self._completed_ns
-        self._held_since_ns = completed_ns
-        duration_ns = completed_ns - self._started_ns
+        self._held_since_ns = self._returned_ns
+        duration_ns = self._completed_ns - self._started_ns
         selection = self._selection
         if exc is None:
             # A granted lease always landed on a route; a context reporting

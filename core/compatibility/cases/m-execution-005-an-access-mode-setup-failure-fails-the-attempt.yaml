@@ -1,6 +1,9 @@
 # Access-mode setup that fails opens NO boundary (m-db-port *Mapping
-# obligations*): the attempt that had already adopted its Model Edition finishes
-# `beginFailed`, the read-only callback never runs, and the failure is terminal.
+# obligations*): the attempt's acquisition, settled only once its boundary
+# opens, fails with that refusal and cleans its lease up as its own, so no
+# Release follows; the attempt that had already adopted its Model Edition
+# finishes `beginFailed` caused by it, the read-only callback never runs, and
+# the failure is terminal.
 model: models/account.yaml
 tags: [m-execution, m-execution-lifecycle, m-api-conformance, slice-snapshot-1]
 lane: api-conformance
@@ -28,8 +31,6 @@ then:
           - { sequence: 1, activity: 1, parent: null, transactionInvocationStarted: { invocation: outer, accessMode: read-only, retries: 10, isolation: read-committed } }
           - { sequence: 2, activity: 2, parent: 1, transactionAttemptStarted: { edition: account } }
           - { sequence: 3, activity: 3, parent: 2, acquisitionStarted: { policy: writer-only } }
-          - { sequence: 4, activity: 3, parent: 2, acquisitionFinished: { outcome: acquired, route: writer } }
-          - { sequence: 5, activity: 4, parent: 2, releaseStarted: {} }
-          - { sequence: 6, activity: 4, parent: 2, releaseFinished: { cleanup: returned } }
-          - { sequence: 7, activity: 2, parent: 1, transactionAttemptFinished: { outcome: beginFailed, attribution: direct } }
-          - { sequence: 8, activity: 1, parent: null, transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 2 } }
+          - { sequence: 4, activity: 3, parent: 2, acquisitionFinished: { outcome: failed, reason: preparation-failed, route: writer, cleanup: returned, attribution: direct } }
+          - { sequence: 5, activity: 2, parent: 1, transactionAttemptFinished: { outcome: beginFailed, attribution: caused, cause: 3 } }
+          - { sequence: 6, activity: 1, parent: null, transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 2 } }

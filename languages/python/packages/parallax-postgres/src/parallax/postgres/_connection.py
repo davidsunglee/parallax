@@ -84,6 +84,7 @@ __all__ = [
     "PostgresConnection",
     "dial_reason",
     "initialize_connection",
+    "session_lost",
 ]
 
 _REVOKED = (
@@ -633,28 +634,63 @@ type DialReason = Literal[
 def dial_reason(failure: BaseException) -> DialReason:
     """Classify one failure met while establishing a connection.
 
-    A driver connection failure that carries no SQLSTATE, a connection-class
-    SQLSTATE, a server that is not accepting connections yet, and a connect
-    timeout all mean the route could not be reached. The driver reports a
-    refusal the server sent while connecting without its SQLSTATE, so a
-    rejected login usually reaches this as unreachable too; only one that does
-    carry an authorization-class SQLSTATE reads as an authentication refusal.
-    A credential the source would not produce is its own reason, and anything
+    A connection-class SQLSTATE, a server that is not accepting connections
+    yet, a connect timeout, and a driver connection failure that carries no
+    SQLSTATE all mean the route could not be reached — except where the
+    failed connection reports that it sent the server a password. The driver
+    reports a refusal the server sent while connecting without its SQLSTATE,
+    so that report is the one structured sign the server was reached and
+    refused the login it was offered, and such a refusal reads as an
+    authentication refusal whatever the server then said: a rejected
+    password or token, an unknown login, and a refusal sent only once the
+    login was accepted, such as a database that does not exist, arrive alike.
+    A login that offers no password carries no such sign, so a server
+    refusing it before any credential is exchanged is indistinguishable from
+    one that cannot be reached. A failure that does carry an
+    authorization-class SQLSTATE is an authentication refusal too. A
+    credential the source would not produce is its own reason, and anything
     else — a SQLSTATE nothing here names, a session the codecs cannot run
     under — is a preparation failure.
+
+    Only a dial is classified here: a failure on an established session
+    reports the password that session was opened with, which says nothing
+    about why it ended; :func:`session_lost` reads those.
     """
     if isinstance(failure, CredentialResolutionError):
         return "credentials_refused"
     if isinstance(failure, psycopg.OperationalError):
         state = failure.sqlstate
-        if state is None or state.startswith("08") or state == _CANNOT_CONNECT_NOW:
+        if state is None:
+            return "authentication_refused" if _offered_password(failure) else "unavailable"
+        if state.startswith("08") or state == _CANNOT_CONNECT_NOW:
             return "unavailable"
         if state.startswith("28"):
             return "authentication_refused"
     return "preparation_failed"
 
 
+def session_lost(failure: BaseException) -> bool:
+    """Whether a failure on an established session says the session itself ended.
+
+    That is a driver connection failure with no SQLSTATE or a connection-class
+    one, or a server going away, rather than anything a statement provoked.
+    """
+    if not isinstance(failure, psycopg.OperationalError):
+        return False
+    state = failure.sqlstate
+    return state is None or state.startswith("08") or state in _SERVER_GONE
+
+
+def _offered_password(failure: psycopg.OperationalError) -> bool:
+    try:
+        attempt = failure.pgconn
+        return attempt is not None and bool(attempt.used_password)
+    except Exception:
+        return False
+
+
 _CANNOT_CONNECT_NOW: Final = "57P03"
+_SERVER_GONE: Final = frozenset({_CANNOT_CONNECT_NOW, "57P01", "57P02"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -692,11 +728,12 @@ class ConnectionEstablishment:
     rather than on any one of them. Two rules arbitrate the writes. The most
     recent failure wins, so a caller is told the last thing establishment
     actually met rather than the first. Only a connection that became USABLE
-    clears the record, so what ends a failure is the outcome a caller could
-    have been handed — a resolved credential or a completed dial is not one,
-    since that connection may still fail to dial or to initialize, and
-    clearing there would let one attempt's partial progress erase another's
-    completed failure and leave a bare timeout in its place.
+    — one initialized, or one the route handed over — clears the record, so
+    what ends a failure is the outcome a caller could have been handed: a
+    resolved credential or a completed dial is not one, since that connection
+    may still fail to dial or to initialize, and clearing there would let one
+    attempt's partial progress erase another's completed failure and leave a
+    bare timeout in its place.
     """
 
     __slots__ = ("_generation", "_lock", "connection_class", "last_failure")
@@ -717,6 +754,14 @@ class ConnectionEstablishment:
         with self._lock:
             self._generation += 1
             self.last_failure = DialFailure(reason, failure, self._generation)
+
+    def checked_out(self) -> None:
+        """Record that the route handed over a connection, which ends whatever
+        failure was on record: a route serving work is not one an outage or a
+        refusal still describes, even where that connection was retained long
+        before the failure was."""
+        if self.last_failure is not None:
+            self._usable()
 
     def _usable(self) -> None:
         with self._lock:
@@ -1112,11 +1157,16 @@ class PostgresConnection:
         return connection
 
     def _invoke_native[T, *P](
-        self, operation: _NativeOperation[T, *P], /, *prepared: *P, replay_safe: bool
+        self,
+        operation: _NativeOperation[T, *P],
+        /,
+        *prepared: *P,
+        replay_safe: bool,
+        setup: bool = False,
     ) -> T:
         context = self._context
         if context is not None:
-            return context._run_native(operation, *prepared, replay_safe=replay_safe)  # pyright: ignore[reportPrivateUsage] - the owner's one native-operation runner
+            return context._run_native(operation, *prepared, replay_safe=replay_safe, setup=setup)  # pyright: ignore[reportPrivateUsage] - the owner's one native-operation runner
         return operation(self._current_native(), None, *prepared)
 
     def execute(
@@ -1254,8 +1304,10 @@ class PostgresConnection:
 
         Under a connection context, an outer ``BEGIN`` that is the lease's first
         submission and meets a broken session is opened once more, with the same
-        characteristics, on the connection the context replaces it with; the
-        callback runs only once a boundary has opened, so it never runs twice.
+        characteristics, on the connection the context replaces it with — on
+        the next route of a preferred plan, since nothing modeled has run yet;
+        the callback runs only once a boundary has opened, so it never runs
+        twice.
 
         A call made while this session's transaction is already open joins it
         through a savepoint and leaves the characteristics to the outer
@@ -1277,6 +1329,7 @@ class PostgresConnection:
                     read_only,
                     outer or isolation is not None or access_mode is not None,
                     replay_safe=outer,
+                    setup=True,
                 )
             except psycopg.Error as exc:
                 return BeginFailed(reported_failure(self.dialect, exc))

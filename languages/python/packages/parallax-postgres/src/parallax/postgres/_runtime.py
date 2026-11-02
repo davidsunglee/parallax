@@ -23,8 +23,8 @@ from parallax.core.db_port import (
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres._authorization import PostgresRole
-from parallax.postgres._context import PostgresConnectionContext
-from parallax.postgres._route_plan import planned_route
+from parallax.postgres._context import PostgresConnectionContext, Step
+from parallax.postgres._route_plan import RoutePlan
 
 if TYPE_CHECKING:
     from parallax.postgres._route import PostgresRoute
@@ -131,18 +131,31 @@ class PostgresRuntime:
         acquisition timeout added to it. The route is still unproven, so the
         lease runs no proof of its own: startup's probe is that proof.
         """
-        return PostgresConnectionContext(route, self._admit, deadline, None, expected_login=None)
+        return PostgresConnectionContext(
+            ((route, deadline),), self._admit, None, expected_login=None
+        )
 
     def _context(self, role: PostgresRole | None, policy: RoutePolicy) -> PostgresConnectionContext:
+        """An acquisition serving ``policy`` within one acquisition budget from now.
+
+        Each step of the policy's plan must have served it by its own share of
+        that budget, and the last by all of it, so whatever an earlier step
+        spends is what a later one no longer has.
+        """
         reader = self._reader
-        planned = planned_route(policy, has_reader=reader is not None)
-        route = reader if planned == "reader" and reader is not None else self._writer
+        plan = RoutePlan.for_policy(policy, has_reader=reader is not None)
+        budget = self._acquire_timeout
+        started = monotonic()
+        deadline = started + budget
+        steps: tuple[Step, ...] = tuple(
+            (
+                self._writer if step.route == "writer" or reader is None else reader,
+                deadline if step.share >= 1.0 else started + budget * step.share,
+            )
+            for step in plan.steps
+        )
         return PostgresConnectionContext(
-            route,
-            self._admit,
-            monotonic() + self._acquire_timeout,
-            role,
-            expected_login=self._login_identity,
+            steps, self._admit, role, expected_login=self._login_identity
         )
 
     def _served(self) -> tuple[PostgresRoute, ...]:

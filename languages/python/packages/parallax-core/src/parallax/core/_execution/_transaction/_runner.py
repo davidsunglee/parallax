@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.core._execution._adoption import AdoptedExecution
-from parallax.core._execution._connection_lifecycle import enter_connection, exit_connection
+from parallax.core._execution._connection_lifecycle import (
+    TransactionPreparation,
+    exit_connection,
+)
 from parallax.core._execution._options import (
     OMITTED,
     Omitted,
@@ -37,7 +40,6 @@ from parallax.core.db_port import (
     Route,
     RouteCapabilities,
     RoutePolicy,
-    TransactionOutcome,
     isolation_level,
 )
 from parallax.core.execution_authority._authority import ExecutionAuthority, same_authority
@@ -414,13 +416,6 @@ class TransactionRunner:
                     construct = attempt_for(selection)
                     with invocation.attempt(selection.edition) as physical:
                         lifetime = TxnAttemptLifetime()
-
-                        def in_txn(conn: DatabaseConnection) -> T:
-                            attempted = construct(conn, physical, lifetime)
-                            context = context_for(attempted)
-                            active = _ActiveTransaction(attempted, context, self._root, authority)
-                            return _completed(attempted, active, fn, context)
-
                         # One connection for this attempt and everything inside
                         # it — the boundary, the reads, the flushes, the
                         # streams — acquired after the attempt started and given
@@ -430,8 +425,20 @@ class TransactionRunner:
                         # well hand back the same physical connection, which is
                         # its business rather than this loop's.
                         resource = routing.new_context()
+                        preparation = TransactionPreparation(resource, physical, routing)
+
+                        def in_txn(conn: DatabaseConnection) -> T:
+                            # The boundary has opened, so the route the lease
+                            # ended on is final before anything of the attempt
+                            # exists or its callback runs.
+                            preparation.granted()
+                            attempted = construct(conn, physical, lifetime)
+                            context = context_for(attempted)
+                            active = _ActiveTransaction(attempted, context, self._root, authority)
+                            return _completed(attempted, active, fn, context)
+
                         try:
-                            conn, held_since_ns = enter_connection(resource, physical, routing)
+                            conn = preparation.enter()
                         except Exception as unacquired:
                             # No boundary opened and no callback ran, so this is
                             # the same terminal outcome a refused BEGIN reaches:
@@ -449,17 +456,25 @@ class TransactionRunner:
                             raise
                         try:
                             settled = _attempted(
-                                conn.transaction(
-                                    in_txn, isolation=isolation, access_mode=access_mode
+                                _opened(
+                                    conn,
+                                    in_txn,
+                                    preparation,
+                                    physical,
+                                    isolation=isolation,
+                                    access_mode=access_mode,
                                 ),
                                 physical,
                                 replayable,
                                 lifetime.recognized_conflicts,
                             )
                         except BaseException as failure:
-                            exit_connection(resource, physical, held_since_ns, failure)
+                            if preparation.releasable:
+                                exit_connection(
+                                    resource, physical, preparation.held_since_ns, failure
+                                )
                             raise
-                        exit_connection(resource, physical, held_since_ns, None)
+                        exit_connection(resource, physical, preparation.held_since_ns, None)
                         return settled
 
                 def attempt() -> T:
@@ -542,13 +557,46 @@ def _mode_name(kind: type[TxnAttempt | ReadOnlyTxnAttempt]) -> str:
     return "read-only" if kind is ReadOnlyTxnAttempt else "writable"
 
 
+def _opened[T](
+    conn: DatabaseConnection,
+    body: Callable[[DatabaseConnection], T],
+    preparation: TransactionPreparation,
+    attempt: TransactionAttemptActivity,
+    *,
+    isolation: IsolationLevel,
+    access_mode: AccessMode,
+) -> Committed[T] | RolledBack | RollbackFailed:
+    """The outcome of the attempt's boundary over ``conn``, once it opened.
+
+    A boundary that never opened — refused, or interrupted by whatever escaped
+    before ``body`` ran — leaves the acquisition unprepared: it is settled as
+    failed by that, cleaning the lease up as its own, and the attempt finishes
+    begin-failed by the same failure, so no Release follows it.
+    """
+    try:
+        outcome = conn.transaction(body, isolation=isolation, access_mode=access_mode)
+    except BaseException as failure:
+        if preparation.pending:
+            preparation.unprepared(failure)
+            if isinstance(failure, Exception):
+                attempt.begin_failed(failure)
+        raise
+    if isinstance(outcome, BeginFailed):
+        error = outcome.error
+        preparation.unprepared(error)
+        attempt.begin_failed(error)
+        raise error
+    return outcome
+
+
 def _attempted[T](
-    outcome: TransactionOutcome[T],
+    outcome: Committed[T] | RolledBack | RollbackFailed,
     attempt: TransactionAttemptActivity,
     replayable: list[Exception],
     recognized: Collection[BaseException],
 ) -> T:
-    """What one physical attempt answers, from the boundary outcome the port reported.
+    """What one physical attempt whose boundary opened answers, from the outcome
+    the port reported.
 
     The port reports what happened; this decides what a caller sees, which is the
     only place the two can be reconciled — the port cannot know that a rollback
@@ -566,17 +614,14 @@ def _attempted[T](
 
     It is also where the attempt activity learns its outcome, for the same
     reason: the port's report is the only account of what the boundary did. A
-    boundary that never opened is one such outcome — the attempt had already
-    adopted and started, so it finishes as begin-failed rather than not at all,
-    and terminal however retriable the error's own category is.
+    boundary that never opened is settled before this, as the acquisition it
+    left unprepared: the attempt finishes begin-failed, terminal however
+    retriable the error's own category is.
     """
     match outcome:
         case Committed(value):
             attempt.committed()
             return value
-        case BeginFailed(error):
-            attempt.begin_failed(error)
-            raise error
         case RolledBack(trigger):
             error = trigger.error
             eligible = retry_eligible(error, recognized=recognized)

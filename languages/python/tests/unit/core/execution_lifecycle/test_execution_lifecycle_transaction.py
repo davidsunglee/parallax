@@ -36,6 +36,7 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
+    Returned,
     RolledBack,
     Row,
     TransactionOutcome,
@@ -47,6 +48,8 @@ from parallax.core.execution import (
     prepare_model,
 )
 from parallax.core.execution_lifecycle import (
+    AcquisitionFailed,
+    AcquisitionFinished,
     AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
@@ -446,26 +449,36 @@ def test_a_begin_failure_finishes_the_attempt_that_adopted_and_fails_the_invocat
     # The attempt adopted its edition and started BEFORE the boundary was asked
     # to begin, so a boundary that never opened is an attempt that finished —
     # and the edition the failure names is the one that attempt carried.
+    # The acquisition is settled only once the boundary opens, so a boundary
+    # that refused is the acquisition's own failure: its lease is cleaned up
+    # as that acquisition's cleanup, and no Release follows.
     assert _tree(root.events) == [
         ("TransactionInvocationStarted", 1, None),
         ("TransactionAttemptStarted", 2, 1),
         ("AcquisitionStarted", 3, 2),
         ("AcquisitionFinished", 3, 2),
-        ("ReleaseStarted", 4, 2),
-        ("ReleaseFinished", 4, 2),
         ("TransactionAttemptFinished", 2, 1),
         ("TransactionInvocationFinished", 1, None),
     ]
     started = root.events[1]
     assert isinstance(started, TransactionAttemptStarted)
     assert started.edition == failed_under.edition
+    acquisition = root.events[3]
+    assert isinstance(acquisition, AcquisitionFinished)
+    refused = acquisition.outcome
+    assert isinstance(refused, AcquisitionFailed)
+    assert (refused.reason, refused.route, refused.fallback) == (
+        "preparation_failed",
+        "writer",
+        None,
+    )
+    assert refused.cleanup_result == Returned()
     (begin_failed,) = _attempt_outcomes(root)
     assert isinstance(begin_failed, AttemptBeginFailed)
-    # The boundary refused on a connection this attempt DID acquire, so the
-    # attempt holds no child for that refusal and answers with its own direct
-    # failure — the Acquisition beside it granted a connection and reported
-    # nothing.
-    assert isinstance(begin_failed.failure, DirectFailure)
+    # The attempt holds the refusal under the Acquisition that failed with it,
+    # the same object rendered once.
+    assert isinstance(begin_failed.failure, CausedFailure)
+    assert begin_failed.failure.cause_activity_id == 3
     assert begin_failed.failure.diagnostic.qualified_type == "parallax.core.db_error.DatabaseError"
     failed = _finished(root)
     assert isinstance(failed, OuterInvocationFailed)
@@ -1251,9 +1264,9 @@ def test_the_attempt_started_transition_is_what_assigns_the_next_activity_id() -
 
     root = _only(recorder)
     # The attempt (2) takes its ID before it asks for anything, its Acquisition
-    # (3) and Release (4) take the next two, and the invocation's own Finished
-    # closes over 1 with no gap between them.
-    assert [event.activity_id for event in root.events] == [1, 2, 3, 3, 4, 4, 2, 1]
+    # (3) the next, which the refused boundary fails with no Release after it,
+    # and the invocation's own Finished closes over 1 with no gap between them.
+    assert [event.activity_id for event in root.events] == [1, 2, 3, 3, 2, 1]
 
 
 def test_the_first_transition_a_joined_activity_makes_is_its_own_started() -> None:

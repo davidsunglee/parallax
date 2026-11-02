@@ -18,6 +18,7 @@ from parallax.core.db_port import (
     CleanupResult,
     ConnectionAcquisitionError,
     DatabaseConnection,
+    FallbackReason,
     Invalidated,
     ReleaseUnconfirmed,
     Returned,
@@ -38,8 +39,10 @@ from parallax.postgres._connection import (
     _displaced_control_flow,  # pyright: ignore[reportPrivateUsage] - the adapter's one reading of an interrupt a driver failure displaced
     _execute_rows,  # pyright: ignore[reportPrivateUsage] - the one read operation, submitting a pending route's proof
     dial_reason,
+    session_lost,
 )
 from parallax.postgres._route import PROBE_SQL, ProbeMismatch, check_probe
+from parallax.postgres._route_plan import RoutePlan
 
 if TYPE_CHECKING:
     from parallax.postgres._connection import (
@@ -47,7 +50,7 @@ if TYPE_CHECKING:
     )
     from parallax.postgres._route import PostgresRoute
 
-__all__ = ["NativePool", "PostgresConnectionContext"]
+__all__ = ["NativePool", "PostgresConnectionContext", "Step"]
 
 type NativePool = psycopg_pool.ConnectionPool[psycopg.Connection[TupleRow]]
 """Either native pool this adapter builds; the null pool is a subclass of it."""
@@ -98,7 +101,8 @@ def checkout(route: PostgresRoute, deadline: float) -> psycopg.Connection[TupleR
     record explains it, and as a ``timeout`` otherwise; see :func:`_expired`.
     An on-demand pool establishes on this thread, so what its dial met arrives
     here as itself rather than as a timeout, and is classified on the spot
-    without consulting the record at all.
+    without consulting the record at all. A connection handed over clears the
+    record, whatever it said.
     """
     establishment = route.establishment
     waited_from = establishment.generation()
@@ -106,7 +110,7 @@ def checkout(route: PostgresRoute, deadline: float) -> psycopg.Connection[TupleR
     if remaining <= 0.0:
         raise _expired(establishment, waited_from, None)
     try:
-        return route.pool.getconn(timeout=remaining)
+        connection = route.pool.getconn(timeout=remaining)
     except psycopg_pool.PoolTimeout as exc:
         raise _expired(establishment, waited_from, exc)  # noqa: B904 - the cause is chosen above
     except psycopg_pool.TooManyRequests as exc:
@@ -122,13 +126,17 @@ def checkout(route: PostgresRoute, deadline: float) -> psycopg.Connection[TupleR
     except Exception as exc:
         reason = dial_reason(exc)
         raise ConnectionAcquisitionError(_DIAL_FAILURES[reason], reason=reason) from exc
+    establishment.checked_out()
+    return connection
 
 
 _DIAL_FAILURES: Final[dict[DialReason, str]] = {
     "unavailable": (
         "a database connection could not be established: its server could not be reached"
     ),
-    "authentication_refused": "a database connection's login was refused by its server",
+    "authentication_refused": (
+        "a database connection was refused by its server once its login was offered"
+    ),
     "credentials_refused": "a database connection could not be authenticated",
     "preparation_failed": "a database connection could not be established or prepared",
 }
@@ -140,7 +148,7 @@ _EXPIRED_FAILURES: Final[dict[DialReason, str]] = {
     ),
     "authentication_refused": (
         "no database connection became available within the acquisition timeout; the last "
-        "login this route offered was refused by its server"
+        "connection this route opened was refused by its server once its login was offered"
     ),
     "credentials_refused": (
         "no database connection could be authenticated within the acquisition timeout"
@@ -271,15 +279,26 @@ def release(
     return Invalidated(tuple(issues)) if dispose else Returned(tuple(issues))
 
 
+type Step = tuple["PostgresRoute", float]
+"""One route an acquisition may be served on, and the absolute deadline by
+which that route must have served it."""
+
+
+class _FellBack(Exception):
+    """Entry left the current step for the next one, which it now establishes."""
+
+
 class PostgresConnectionContext:
-    """One single-use acquisition of a connection from one route's native pool.
+    """One single-use acquisition of a connection, served on the first route of
+    its plan that can serve it.
 
     Creating it takes nothing. Entering it checks out, verifies the connection
-    is idle, checks admission against the deadline, proves the connection where
-    its route's readiness is still pending, installs any bound role, rechecks
-    admission after that provider work, and yields fresh execution access.
-    Leaving it revokes that access and releases the connection once, restoring
-    an installed role only where the session remains reusable.
+    is idle, checks admission against the step's deadline, proves the
+    connection where its route's readiness is still pending, installs any
+    bound role, rechecks admission after that provider work, and yields fresh
+    execution access. Leaving it revokes that access and releases the
+    connection once, restoring an installed role only where the session
+    remains reusable.
 
     Entry is permitted once and once only, including after an entry that failed:
     a failed entry has already run cleanup over whatever it took and left what
@@ -292,20 +311,29 @@ class PostgresConnectionContext:
     role installation, an outer ``BEGIN``, or a read or batch of reads its
     caller designated — run once more if it meets a broken session: the
     connection is disposed of and handed back, another is taken within the
-    original deadline, and the same prepared submission is made on it, all
+    step's deadline, and the same prepared submission is made on it, all
     inside this one acquisition. Any other submission, the second attempt
     itself, and a write never are. Once no connection can be kept, the slot
     holds the cleanup that ended it instead, and that is what leaving reports.
 
-    Every lease is served on its route, which entry reports as its selection
-    whichever way it ends, a failed entry's refusal included.
+    A plan with a later step is a preferred one. Its earlier step spends at
+    most its own share of the budget and gives way to the next only for a
+    route that could not be reached or a connection lost while it was still
+    being set up — never for a busy route, a refusal, or a closed runtime,
+    which the next route would not fix. A loss of that kind is the same one
+    opportunity a first submission has, spent moving to the next route instead
+    of retrying on this one, and only where the submission is setup: a proof,
+    a role installation, or an outer ``BEGIN``. A designated read is modeled
+    work, so its one replacement stays on the route that began serving it.
+    Whatever the plan, entry reports the route it ended on as its selection,
+    and how it got there, a failed entry's refusal included.
     """
 
     __slots__ = (
         "_admit",
         "_authorized",
         "_cleanup_result",
-        "_deadline",
+        "_entering",
         "_execution",
         "_expected_login",
         "_first_send_state",
@@ -313,26 +341,32 @@ class PostgresConnectionContext:
         "_role",
         "_route",
         "_selection",
+        "_step",
+        "_step_deadline",
+        "_steps",
         "_suspect",
         "_used",
     )
 
     def __init__(
         self,
-        route: PostgresRoute,
+        steps: tuple[Step, ...],
         admit: Admit,
-        deadline: float,
         role: PostgresRole | None,
         *,
         expected_login: str | None,
     ) -> None:
+        route, step_deadline = steps[0]
+        self._steps = steps
+        self._step = 0
         self._route = route
+        self._step_deadline = step_deadline
         self._selection = RouteSelection(route.route)
         self._admit = admit
-        self._deadline = deadline
         self._role = role
         self._expected_login = expected_login
         self._used = False
+        self._entering = False
         self._authorized = False
         self._suspect = False
         self._first_send_state: _FirstSend = "available"
@@ -359,14 +393,73 @@ class PostgresConnectionContext:
             raise
 
     def _entered(self) -> DatabaseConnection:
+        self._entering = True
+        try:
+            while True:
+                try:
+                    self._take()
+                except _FellBack:
+                    continue
+                break
+        finally:
+            self._entering = False
+        execution = PostgresConnection._from_context(self)  # pyright: ignore[reportPrivateUsage] - the facade borrowing this owner's connection
+        self._execution = execution
+        return execution
+
+    def _take(self) -> None:
+        """Establish this lease on the current step's route, or raise.
+
+        A step a later one follows does not wait on a route already known to
+        be unreachable unless it holds that route's one probe slot: whoever
+        does tries it within the step's share and so re-dials it on demand,
+        and everyone else moves on at once. The slot is given back however
+        this step ends.
+        """
         route = self._route
         refusal = route.refusal
         if refusal is not None:
             raise _refused(refusal)
-        self._resource = checkout(route, self._deadline)
+        probing = False
+        if self._step + 1 < len(self._steps) and route.known_unreachable():
+            if not route.claim_probe():
+                self._fall_back("unavailable")
+            probing = True
+        try:
+            self._check_out(route)
+            if route.awaiting_verification:
+                self._verify(route)
+            self._authorize()
+        finally:
+            if probing:
+                route.release_probe()
+
+    def _fall_back(self, reason: FallbackReason) -> None:
+        """Move to the next step, which entry then establishes from the start."""
+        self._advance(reason)
+        raise _FellBack
+
+    def _advance(self, reason: FallbackReason) -> None:
+        route, step_deadline = self._steps[self._step + 1]
+        self._step += 1
+        self._route = route
+        self._step_deadline = step_deadline
+        self._selection = RouteSelection(route.route, reason)
+
+    def _check_out(self, route: PostgresRoute) -> None:
+        try:
+            self._resource = checkout(route, self._step_deadline)
+        except ConnectionAcquisitionError as refused:
+            fallback = RoutePlan.falls_back_on(refused.reason)
+            if fallback is not None and self._step + 1 < len(self._steps):
+                self._fall_back(fallback)
+            # A step that fell back here first already disposed of what it
+            # held; that disposal is what this acquisition's cleanup established.
+            self._cleanup_result = self._settled(suspect=False)
+            raise
         try:
             self._require_idle(self._current_native())
-            self._admit(self._deadline)
+            self._admit(self._step_deadline)
         except BaseException:
             # Nothing modeled has run, so what was taken is given back through
             # the same path a completed scope uses: an idle connection returns
@@ -374,51 +467,54 @@ class PostgresConnectionContext:
             # made twice.
             self._cleanup_result = self._settled(suspect=False)
             raise
-        if route.awaiting_verification:
-            self._verify()
-        role = self._role
-        if role is not None:
-            try:
-                self._run_native(_install_role, _role_statement(role), replay_safe=True)
-            except BaseException as exc:
-                self._cleanup_result = self._settled(suspect=True)
-                if not isinstance(exc, Exception):
-                    raise
-                raise ConnectionAcquisitionError(
-                    "the requested database principal could not be installed",
-                    reason="authorization_failed",
-                ) from exc
-            self._authorized = True
-            try:
-                self._admit(self._deadline)
-            except BaseException:
-                self._cleanup_result = self._settled(suspect=False, restore_role=True)
-                self._authorized = False
-                raise
-        execution = PostgresConnection._from_context(self)  # pyright: ignore[reportPrivateUsage] - the facade borrowing this owner's connection
-        self._execution = execution
-        return execution
 
-    def _verify(self) -> None:
+    def _authorize(self) -> None:
+        role = self._role
+        if role is None:
+            return
+        try:
+            self._run_native(_install_role, _role_statement(role), replay_safe=True, setup=True)
+        except _FellBack:
+            raise
+        except BaseException as exc:
+            self._cleanup_result = self._settled(suspect=True)
+            if not isinstance(exc, Exception):
+                raise
+            raise ConnectionAcquisitionError(
+                "the requested database principal could not be installed",
+                reason="authorization_failed",
+            ) from exc
+        self._authorized = True
+        try:
+            self._admit(self._step_deadline)
+        except BaseException:
+            self._cleanup_result = self._settled(suspect=False, restore_role=True)
+            self._authorized = False
+            raise
+
+    def _verify(self, route: PostgresRoute) -> None:
         """Prove this lease's connection before anything else runs on it.
 
         The proof is the lease's first submission, so a broken session met by
         it is replaced once like any other first send — and the replacement,
         acquired while the route is still pending, is proved by that same
-        resubmission. Submitting it spends the opportunity, whatever the rows
-        then turn out to say, so nothing after it earns another.
+        resubmission. Under a preferred plan that one opportunity moves the
+        lease to the next route instead, which needs no proof of this one.
+        Submitting it spends the opportunity, whatever the rows then turn out
+        to say, so nothing after it earns another.
 
         A positive mismatch refuses the route; any other failure fails only
         this acquisition. A proof that succeeded still admits nothing on a
         route another lease refused in the meantime.
         """
-        route = self._route
         try:
             no_binds: list[object] = []
             rows = self._run_native(
-                _execute_rows, POSTGRES, _PROBE_SQL, no_binds, (), replay_safe=True
+                _execute_rows, POSTGRES, _PROBE_SQL, no_binds, (), replay_safe=True, setup=True
             )
             check_probe(rows, self._expected_login)
+        except _FellBack:
+            raise
         except ProbeMismatch as mismatch:
             self._cleanup_result = self._settled(suspect=True)
             route.refuse(mismatch)
@@ -427,7 +523,7 @@ class PostgresConnectionContext:
             self._cleanup_result = self._settled(suspect=True)
             if not isinstance(exc, Exception):
                 raise
-            lost = isinstance(exc, psycopg.Error) and dial_reason(exc) == "unavailable"
+            lost = session_lost(exc)
             raise ConnectionAcquisitionError(
                 _LOST_UNVERIFIED if lost else _UNVERIFIED,
                 reason="unavailable" if lost else "preparation_failed",
@@ -437,7 +533,7 @@ class PostgresConnectionContext:
             self._cleanup_result = self._settled(suspect=False)
             raise _refused(refusal)
         try:
-            self._admit(self._deadline)
+            self._admit(self._step_deadline)
         except BaseException:
             self._cleanup_result = self._settled(suspect=False)
             raise
@@ -506,7 +602,12 @@ class PostgresConnectionContext:
             self._first_send_state = "spent"
 
     def _run_native[T, *P](
-        self, operation: _NativeOperation[T, *P], /, *prepared: *P, replay_safe: bool
+        self,
+        operation: _NativeOperation[T, *P],
+        /,
+        *prepared: *P,
+        replay_safe: bool,
+        setup: bool = False,
     ) -> T:
         """Run ``operation`` on the current connection, replacing that connection
         once if this was the lease's first submission and it met a broken session.
@@ -522,6 +623,9 @@ class PostgresConnectionContext:
         by a failure as by a return, so the second invocation can never earn
         another; and that invocation runs outside the failure it answers, so
         whatever it raises is its own.
+
+        Where ``operation`` is ``setup`` and the plan has a later step, the
+        replacement is taken from that step's route instead.
         """
         native = self._current_native()
         ambient = sys.exception()
@@ -536,7 +640,9 @@ class PostgresConnectionContext:
             ):
                 raise
             displaced = _displaced_control_flow(failure, ambient)
-            if displaced is None and not self._replace_native():
+            if displaced is None and not self._replace_native(
+                across=setup and self._step + 1 < len(self._steps)
+            ):
                 raise
         else:
             self._complete_first_send()
@@ -545,7 +651,7 @@ class PostgresConnectionContext:
             raise displaced
         return operation(self._current_native(), self, *prepared)
 
-    def _replace_native(self) -> bool:
+    def _replace_native(self, *, across: bool) -> bool:
         """Dispose of the current connection and hold a usable replacement in its
         place, answering whether one is now held.
 
@@ -553,17 +659,28 @@ class PostgresConnectionContext:
         ordinary release, so its capacity returns before another is asked for;
         a release that could not be confirmed ends replacement, because nothing
         then vouches for what was handed back. The replacement is taken within
-        what remains of this lease's own deadline — no new allowance, and no
+        what remains of the step's own deadline — no new allowance, and no
         admission decision of its own — and must arrive idle like any
         checkout. When no usable replacement is held, the slot keeps the result
         of the last release, and the failure that asked for replacement stands.
+
+        ``across`` takes the replacement from the plan's next route, within
+        what remains of the whole budget. While entry is still under way, entry
+        itself establishes that route from the start; an outer ``BEGIN`` is
+        the only setup after entry, and the lease ran no proof or role
+        installation before it, or the ``BEGIN`` would not have been its
+        first submission — so the bare checkout is all the next route needs.
         """
         disposed = self._settled(suspect=True)
         self._resource = disposed
         if isinstance(disposed, ReleaseUnconfirmed):
             return False
+        if across:
+            if self._entering:
+                self._fall_back("connection_lost")
+            self._advance("connection_lost")
         try:
-            self._resource = checkout(self._route, self._deadline)
+            self._resource = checkout(self._route, self._step_deadline)
         except ConnectionAcquisitionError:
             return False
         try:

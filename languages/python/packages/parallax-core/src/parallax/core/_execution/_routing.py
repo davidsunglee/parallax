@@ -47,12 +47,19 @@ def read_only_policy(
     A strict policy's one route must begin a read-only transaction at that
     level, so one that cannot is refused here, before anything acquires: the
     native refusal would otherwise arrive only after a connection was taken
-    and set up, and every retry would meet it again.
+    and set up, and every retry would meet it again. A preferred policy whose
+    reader cannot asks for the writer instead, because preferring the reader
+    already means the writer wherever the reader cannot serve; that is a
+    choice made before acquiring rather than a fallback from a failure, so it
+    reports none.
     """
-    route: Route | None = (
-        "reader" if policy == "reader_only" else "writer" if policy == "writer_only" else None
-    )
-    if route is None or isolation in routes[route].read_only_isolation:
+    if policy == "reader_preferred":
+        reader = routes.get("reader")
+        if reader is not None and isolation in reader.read_only_isolation:
+            return policy
+        return "writer_only"
+    route: Route = "reader" if policy == "reader_only" else "writer"
+    if isolation in routes[route].read_only_isolation:
         return policy
     if route == "reader":
         raise ValueError(

@@ -121,7 +121,16 @@ class PostgresRoute:
     refused route or admits work on it.
     """
 
-    __slots__ = ("_lock", "_refusal", "_state", "establishment", "metrics", "pool", "route")
+    __slots__ = (
+        "_lock",
+        "_probe_slot",
+        "_refusal",
+        "_state",
+        "establishment",
+        "metrics",
+        "pool",
+        "route",
+    )
 
     def __init__(
         self, route: Route, pool: NativePool, establishment: ConnectionEstablishment
@@ -132,7 +141,39 @@ class PostgresRoute:
         self._state: _State = "unproven"
         self._refusal: ProbeMismatch | None = None
         self._lock = threading.Lock()
+        self._probe_slot = threading.Lock()
         self.metrics = PostgresPoolMetrics(pool, route, self.readiness)
+
+    def known_unreachable(self) -> bool:
+        """Whether this route's latest establishment outcome is that it could not
+        be reached and it holds no idle connection that could serve regardless.
+
+        A retained connection is handed over without dialing, so an idle one
+        makes the record irrelevant to the next checkout. A pool whose
+        measurements cannot be read is taken to hold none.
+        """
+        failure = self.establishment.last_failure
+        if failure is None or failure.reason != "unavailable":
+            return False
+        try:
+            available = self.pool.get_stats().get("pool_available", 0)
+        except Exception:
+            return True
+        return available <= 0
+
+    def claim_probe(self) -> bool:
+        """Take the one slot that lets an acquisition try this route while it is
+        known to be unreachable, answering whether this caller now holds it.
+
+        One holder at a time is what makes demand re-dial a route nothing
+        probes in the background without every concurrent caller queueing on
+        a route that just failed; the holder gives it back with
+        :meth:`release_probe` however its attempt ends.
+        """
+        return self._probe_slot.acquire(blocking=False)
+
+    def release_probe(self) -> None:
+        self._probe_slot.release()
 
     def readiness(self) -> RouteReadiness:
         """What a sample reports: an unproven route has proved nothing yet."""

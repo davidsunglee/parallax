@@ -41,6 +41,7 @@ _SNIPPETS = {
     "retention_snippet": database_pooling_stories.retention_snippet,
     "observation_snippet": database_pooling_stories.observation_snippet,
     "serving_snippet": database_pooling_stories.serving_snippet,
+    "routing_snippet": database_pooling_stories.routing_snippet,
 }
 
 

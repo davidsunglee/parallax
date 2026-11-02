@@ -120,14 +120,27 @@ serve. Once its isolation is resolved, a strict policy whose route declares no
 read-only transaction at that level (`m-db-port` *Route Capabilities*) is
 refused before the invocation is observed or anything is acquired, naming
 `writer-only` as the remedy where the route was the reader; no attempt would
-ever be able to begin there. A join never reaches this check.
+ever be able to begin there. Under `reader-preferred`, a reader that declares
+no read-only transaction at that level makes the invocation request
+`writer-only` instead, because preferring the reader already means the writer
+wherever the reader cannot serve. That is a choice made before acquiring, not a
+fallback from a failure: it reports no fallback reason and spends nothing of the
+reader's share. A join never reaches this check.
+
+Fallback adds no permission to replay. It happens only before the callback or
+any modeled statement of the acquisition begins (`m-db-port` *A preferred
+acquisition*), never moves an active transaction, and adds no retry rule: the
+retry classifier and its bound are unchanged.
 
 Each operation keeps one routing state for its whole life — one eager read,
 one stream across every page, one outer invocation across every retry. Once any
 acquisition it made reports a fallback to the writer (`m-db-port`), every later
 acquisition of that operation requests `writer-only`: a later page or a
 permitted retry stays where the operation was served rather than returning to
-the route that just failed it.
+the route that just failed it, and each such retry still begins a new attempt
+and a new snapshot. An attempt's selection is the one it reports once its
+boundary has opened or failed, so a lease moved while its boundary was opening
+is recorded as having fallen back before the callback runs.
 
 ## Model Editions
 
