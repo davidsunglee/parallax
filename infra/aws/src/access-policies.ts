@@ -158,6 +158,13 @@ export function executionPolicy(anchors: TrustAnchors): PolicyDocument {
         resources: [anchors.runnerProjectArn],
       }),
       new PolicyStatement({
+        // CloudFormation resolves the stack's SSM-typed BootstrapVersion
+        // parameter as this role when it creates a change set.
+        sid: "BootstrapVersion",
+        actions: ["ssm:GetParameters"],
+        resources: [anchors.bootstrapVersionParameterArn],
+      }),
+      new PolicyStatement({
         sid: "TestEnvironmentRecord",
         actions: ["ssm:*"],
         resources: [regional("ssm", "parameter/parallax/ci/*")],
@@ -209,10 +216,14 @@ export function executionPolicy(anchors: TrustAnchors): PolicyDocument {
         conditions: { StringEquals: { "iam:PassedToService": [...PASSED_TO_SERVICES] } },
       }),
       new PolicyStatement({
-        sid: "AuroraServiceRole",
+        // RDS's role for the cluster, and CloudWatch's role for the NAT
+        // instance's recover alarm action, each created on first use.
+        sid: "ServiceLinkedRoles",
         actions: ["iam:CreateServiceLinkedRole"],
         resources: [serviceLinkedRoles(anchors)],
-        conditions: { StringEquals: { "iam:AWSServiceName": "rds.amazonaws.com" } },
+        conditions: {
+          StringEquals: { "iam:AWSServiceName": ["rds.amazonaws.com", "events.amazonaws.com"] },
+        },
       }),
       new PolicyStatement({
         sid: "AssetCode",

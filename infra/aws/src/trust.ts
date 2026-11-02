@@ -52,6 +52,7 @@ export interface TrustAnchors {
   readonly environmentRolePattern: string;
   readonly environmentInstanceProfilePattern: string;
   readonly stagingBucketArn: string;
+  readonly bootstrapVersionParameterArn: string;
   readonly testEnvironmentParameterArn: string;
   readonly runnerProjectArn: string;
   bootstrapRoleName(role: BootstrapRole): string;
@@ -85,6 +86,7 @@ export function trustAnchors(
     environmentRolePattern: `${iam}:role/${ENVIRONMENT_STACK_NAME}-*`,
     environmentInstanceProfilePattern: `${iam}:instance-profile/${ENVIRONMENT_STACK_NAME}-*`,
     stagingBucketArn: `arn:aws:s3:::cdk-${qualifier}-assets-${account}-${region}`,
+    bootstrapVersionParameterArn: `arn:aws:ssm:${region}:${account}:parameter/cdk-bootstrap/${qualifier}/version`,
     testEnvironmentParameterArn: `arn:aws:ssm:${region}:${account}:parameter${TEST_ENVIRONMENT_PARAMETER}`,
     runnerProjectArn: `arn:aws:codebuild:${region}:${account}:project/${RUNNER_PROJECT_NAME}`,
     bootstrapRoleName,
