@@ -4,10 +4,20 @@ import { Template } from "aws-cdk-lib/assertions";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ConfigurationError } from "../src/configuration.ts";
-import { ROLE_BOOTSTRAP_ID } from "../src/constructs/aurora-cluster.ts";
-import { NAT_IMAGE_PARAMETER, type EnvironmentStack } from "../src/environment-stack.ts";
+import { ROLE_BOOTSTRAP_ID, ROLE_BOOTSTRAP_TYPE } from "../src/constructs/aurora-cluster.ts";
+import {
+  NAT_IMAGE_PARAMETER,
+  REVISION_PARAMETER,
+  ROLE_BOOTSTRAP_OUTPUTS,
+  type EnvironmentStack,
+} from "../src/environment-stack.ts";
 import { defineStacks } from "../src/stacks.ts";
-import { CONTROL_DATABASE, ROLE_BOOTSTRAP_SQL } from "../src/role-bootstrap.ts";
+import {
+  CONTROL_DATABASE,
+  CONVERGED_ROLE_FACTS,
+  ROLE_BOOTSTRAP_SQL,
+  ROLE_FACTS_SQL,
+} from "../src/role-bootstrap.ts";
 import { TEST_ENVIRONMENT_PARAMETER } from "../src/test-environment.ts";
 import { ENVIRONMENT_STACK_NAME, ENVIRONMENT_TAGS, RUNNER_PROJECT_NAME } from "../src/trust.ts";
 import { allowed } from "./policy-evaluation.ts";
@@ -267,49 +277,84 @@ describe("the Aurora cluster", () => {
 });
 
 describe("the role bootstrap", () => {
-  function sdkCall(property: "Create" | "Update"): Record<string, unknown> {
-    const [, bootstrap] = only("Custom::AWS");
-    return JSON.parse(flatten(bootstrap.Properties[property]).text) as Record<string, unknown>;
-  }
+  const bootstrap = (): [string, Resource] => only(ROLE_BOOTSTRAP_TYPE);
 
-  it("runs the authored statement on the control database on create and on update alike", () => {
-    const create = sdkCall("Create");
-    expect(create).toMatchObject({
-      service: "rds-data",
-      action: "ExecuteStatement",
-      parameters: { database: CONTROL_DATABASE, sql: ROLE_BOOTSTRAP_SQL },
-      physicalResourceId: { id: ROLE_BOOTSTRAP_ID },
+  it("runs the authored statement on the control database, then expects the converged facts back", () => {
+    const [, resource] = bootstrap();
+    expect(resource.Properties).toMatchObject({
+      Id: ROLE_BOOTSTRAP_ID,
+      Database: CONTROL_DATABASE,
+      Sql: ROLE_BOOTSTRAP_SQL,
+      FactsSql: ROLE_FACTS_SQL,
     });
-    expect(sdkCall("Update")).toEqual(create);
+    expect(JSON.parse(String(resource.Properties["ExpectedFacts"]))).toEqual(CONVERGED_ROLE_FACTS);
   });
 
-  it("does nothing on delete, and an update keeps its physical ID so it never replaces", () => {
-    const [, bootstrap] = only("Custom::AWS");
-    expect(bootstrap.Properties).not.toHaveProperty("Delete");
-    expect(sdkCall("Update")["physicalResourceId"]).toEqual({ id: ROLE_BOOTSTRAP_ID });
+  it("runs again for every deployed revision, which each deployment supplies", () => {
+    const [, resource] = bootstrap();
+    expect(resource.Properties["Revision"]).toEqual(ref(REVISION_PARAMETER));
+    const parameters = template.toJSON()["Parameters"] as Record<string, Record<string, unknown>>;
+    expect(parameters[REVISION_PARAMETER]).toEqual({
+      Type: "String",
+      AllowedPattern: "^[0-9a-f]{40}$",
+      Description: "The commit this deployment deploys",
+    });
+  });
+
+  it("records what it converged, and for which revision, as stack outputs", () => {
+    const [id] = bootstrap();
+    const outputs = template.toJSON()["Outputs"] as Record<string, { Value: unknown }>;
+    expect(outputs[ROLE_BOOTSTRAP_OUTPUTS.facts]?.Value).toEqual({ "Fn::GetAtt": [id, "Facts"] });
+    expect(outputs[ROLE_BOOTSTRAP_OUTPUTS.revision]?.Value).toEqual({
+      "Fn::GetAtt": [id, "Revision"],
+    });
+  });
+
+  it("is served by the authored handler on a pinned runtime, through a provider that only invokes it", () => {
+    const [, resource] = bootstrap();
+    const functions = resources("AWS::Lambda::Function");
+    const [handlerId, handler] =
+      functions.find(([id]) => id.startsWith("AuroraRoleBootstrapHandler")) ?? [];
+    expect(handler?.Properties).toMatchObject({
+      Runtime: "nodejs24.x",
+      Architectures: ["arm64"],
+      Handler: "index.handler",
+      Timeout: 300,
+    });
+    const [frameworkId, framework] =
+      functions.find(([id]) => id.startsWith("AuroraRoleBootstrapProvider")) ?? [];
+    expect(resource.Properties["ServiceToken"]).toEqual({ "Fn::GetAtt": [frameworkId, "Arn"] });
+    expect(framework?.Properties["Environment"]).toEqual({
+      Variables: { USER_ON_EVENT_FUNCTION_ARN: { "Fn::GetAtt": [handlerId, "Arn"] } },
+    });
+    expect(resources("AWS::StepFunctions::StateMachine")).toEqual([]);
+  });
+
+  it("lets CloudFormation name every function after the stack, as the execution policy expects", () => {
+    for (const [id, fn] of resources("AWS::Lambda::Function")) {
+      expect(fn.Properties["FunctionName"], id).toBeUndefined();
+    }
   });
 
   it("targets this cluster with its own master secret", () => {
     const [cluster] = only("AWS::RDS::DBCluster");
     const [secret] = only("AWS::SecretsManager::Secret");
-    const [, bootstrap] = only("Custom::AWS");
-    const { text, intrinsics } = flatten(bootstrap.Properties["Create"]);
-    const parameters = (JSON.parse(text) as { parameters: Record<string, string> }).parameters;
-    expect(intrinsics.get(parameters["secretArn"] ?? "")).toEqual(ref(secret));
-    const clusterArn = parameters["resourceArn"] ?? "";
-    expect(clusterArn.startsWith("arn:aws:rds:us-east-2:407034905514:cluster:")).toBe(true);
-    expect(intrinsics.get(clusterArn.slice(clusterArn.lastIndexOf(":") + 1))).toEqual(ref(cluster));
+    const [, resource] = bootstrap();
+    expect(resource.Properties["SecretArn"]).toEqual(ref(secret));
+    const { text, intrinsics } = flatten(resource.Properties["ResourceArn"]);
+    expect(text).toBe("arn:aws:rds:us-east-2:407034905514:cluster:«0»");
+    expect(intrinsics.get("«0»")).toEqual(ref(cluster));
   });
 
   it("waits for the cluster, both instances, and the secret", () => {
-    const [bootstrapId, bootstrap] = only("Custom::AWS");
+    const [bootstrapId, resource] = bootstrap();
     const expected = [
       only("AWS::RDS::DBCluster")[0],
       ...resources("AWS::RDS::DBInstance").map(([id]) => id),
       only("AWS::SecretsManager::Secret")[0],
       only("AWS::SecretsManager::SecretTargetAttachment")[0],
     ];
-    expect(bootstrap.DependsOn, bootstrapId).toEqual(expect.arrayContaining(expected));
+    expect(resource.DependsOn, bootstrapId).toEqual(expect.arrayContaining(expected));
   });
 
   it("is the only principal granted the master secret, and only to execute on this cluster", () => {
@@ -345,7 +390,7 @@ describe("the role bootstrap", () => {
 
 describe("the published TestEnvironment", () => {
   it("is published only after the role bootstrap succeeded", () => {
-    const [bootstrap] = only("Custom::AWS");
+    const [bootstrap] = only(ROLE_BOOTSTRAP_TYPE);
     const [, parameter] = only("AWS::SSM::Parameter");
     expect(parameter.Properties).toMatchObject({
       Name: TEST_ENVIRONMENT_PARAMETER,

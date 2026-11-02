@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import { runWhenMain } from "./entry.ts";
 import { INFRA_ROOT, providerPackages } from "./workspace.ts";
 
@@ -36,11 +36,45 @@ function referencedFiles(artifact: Artifact): string[] {
   ].filter((file): file is string => file !== undefined);
 }
 
+const present = (source: string | undefined): source is string => source !== undefined;
+
+function fileSources(assets: AssetManifest): string[] {
+  return Object.values(assets.files ?? {})
+    .map((asset) => asset.source.path)
+    .filter(present);
+}
+
 function assetSources(assets: AssetManifest): string[] {
   return [
-    ...Object.values(assets.files ?? {}).map((asset) => asset.source.path),
-    ...Object.values(assets.dockerImages ?? {}).map((image) => image.source.directory),
-  ].filter((source): source is string => source !== undefined);
+    ...fileSources(assets),
+    ...Object.values(assets.dockerImages ?? {})
+      .map((image) => image.source.directory)
+      .filter(present),
+  ];
+}
+
+const TYPESCRIPT = /\.[mc]?ts$/;
+
+/** The TypeScript files the staged file asset at *path* holds, which no Lambda runtime runs. */
+function typescriptIn(path: string): string[] {
+  if (!statSync(path).isDirectory()) return TYPESCRIPT.test(path) ? [basename(path)] : [];
+  return readdirSync(path, { recursive: true, encoding: "utf8" }).filter((entry) =>
+    TYPESCRIPT.test(entry),
+  );
+}
+
+function manifestProblems(assembly: string, name: string, manifestPath: string): string[] {
+  const assets = readJson(manifestPath) as AssetManifest;
+  const problems: string[] = [];
+  for (const source of assetSources(assets)) {
+    if (!existsSync(join(assembly, source))) problems.push(`${name} lacks asset ${source}`);
+  }
+  for (const source of fileSources(assets).filter((path) => existsSync(join(assembly, path)))) {
+    for (const file of typescriptIn(join(assembly, source))) {
+      problems.push(`${name} asset ${source} ships TypeScript ${file}, not built JavaScript`);
+    }
+  }
+  return problems;
 }
 
 function artifactProblems(assembly: string, name: string, artifact: Artifact): string[] {
@@ -50,11 +84,7 @@ function artifactProblems(assembly: string, name: string, artifact: Artifact): s
   }
   if (artifact.type === "cdk:asset-manifest" && artifact.properties?.file !== undefined) {
     const manifestPath = join(assembly, artifact.properties.file);
-    if (existsSync(manifestPath)) {
-      for (const source of assetSources(readJson(manifestPath) as AssetManifest)) {
-        if (!existsSync(join(assembly, source))) problems.push(`${name} lacks asset ${source}`);
-      }
-    }
+    if (existsSync(manifestPath)) problems.push(...manifestProblems(assembly, name, manifestPath));
   }
   return problems;
 }

@@ -8,6 +8,7 @@ import {
   DEPLOY_ROLE_NAME,
   ENVIRONMENT_STACK_NAME,
 } from "../src/trust.ts";
+import { CONVERGED_ROLE_FACTS } from "../src/role-bootstrap.ts";
 import { rolloutEvidence } from "../tools/deployment.ts";
 import { LIVE_PROOFS, main } from "../tools/rollout.ts";
 import { CDK_CLI, deployInputs, PACKAGE_ROOT } from "../tools/rollout-context.ts";
@@ -155,7 +156,7 @@ describe("the deploy workflow's gates", () => {
 });
 
 describe("deploying", () => {
-  it("deploys only the environment stack, from the synthesized assembly, with the reviewed image", () => {
+  it("deploys only the environment stack, from the synthesized assembly, with the reviewed image and its revision", () => {
     const root = packageWithImage(IMAGE);
     const { status, attached } = run(["deploy", "--revision", REVISION], {}, root, () => 0);
     expect(status).toBe(0);
@@ -177,6 +178,8 @@ describe("deploying", () => {
           "events",
           "--parameters",
           `${ENVIRONMENT_STACK_NAME}:NatInstanceImage=${IMAGE}`,
+          "--parameters",
+          `${ENVIRONMENT_STACK_NAME}:DeployedRevision=${REVISION}`,
         ],
         cwd: root,
       },
@@ -218,7 +221,12 @@ describe("rollout evidence", () => {
         status: "UPDATE_COMPLETE",
         updated: "2026-11-01T00:00:00Z",
       },
-      roleBootstrap: { status: "UPDATE_COMPLETE", updated: "2026-11-01T00:00:00Z" },
+      roleBootstrap: {
+        status: "UPDATE_COMPLETE",
+        updated: "2026-11-01T00:00:00Z",
+        revision: REVISION,
+        facts: CONVERGED_ROLE_FACTS,
+      },
       testEnvironment: {
         parameter: "/parallax/ci/aws/test-environment",
         version: 3,
@@ -243,6 +251,8 @@ describe("rollout evidence", () => {
     expect(printed(errors).split("\n")).toEqual([
       `evidence: ${ENVIRONMENT_STACK_NAME} is UPDATE_ROLLBACK_COMPLETE`,
       "evidence: the role bootstrap is undefined",
+      `evidence: the role bootstrap last ran for undefined, not ${REVISION}`,
+      "evidence: the role bootstrap read back facts other than the converged ones",
       "evidence: the published TestEnvironment names no schema version",
       "evidence: parallax-ci has no webhook",
     ]);
@@ -250,7 +260,40 @@ describe("rollout evidence", () => {
       [`cloudformation describe-stacks --stack-name ${ENVIRONMENT_STACK_NAME}`]: json({}),
       "codebuild batch-get-projects": json({}),
     });
-    expect(rolloutEvidence(empty.context, REVISION, url).problems).toHaveLength(1 + 1);
+    expect(rolloutEvidence(empty.context, REVISION, url).problems).toHaveLength(1 + 2 + 1);
+  });
+
+  it("fails unless this revision's bootstrap read back the converged facts", () => {
+    const withOutputs = (outputs: Record<string, string>) => ({
+      [`cloudformation describe-stacks --stack-name ${ENVIRONMENT_STACK_NAME}`]: json({
+        Stacks: [
+          {
+            StackStatus: "UPDATE_COMPLETE",
+            Outputs: Object.entries(outputs).map(([OutputKey, OutputValue]) => ({
+              OutputKey,
+              OutputValue,
+            })),
+          },
+        ],
+      }),
+    });
+    const problems = (outputs: Record<string, string>) =>
+      rolloutEvidence(world(withOutputs(outputs)).context, REVISION, url).problems;
+    const converged = JSON.stringify(CONVERGED_ROLE_FACTS);
+    expect(problems({ RoleBootstrapFacts: converged, RoleBootstrapRevision: REVISION })).toEqual(
+      [],
+    );
+    expect(problems({ RoleBootstrapFacts: converged, RoleBootstrapRevision: "feedface" })).toEqual([
+      `the role bootstrap last ran for feedface, not ${REVISION}`,
+    ]);
+    for (const facts of [
+      JSON.stringify({ ...CONVERGED_ROLE_FACTS, memberships: ["rds_iam"] }),
+      "not json",
+    ]) {
+      expect(problems({ RoleBootstrapFacts: facts, RoleBootstrapRevision: REVISION })).toEqual([
+        "the role bootstrap read back facts other than the converged ones",
+      ]);
+    }
   });
 });
 

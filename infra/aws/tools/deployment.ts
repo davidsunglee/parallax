@@ -1,4 +1,11 @@
-import { NAT_IMAGE_PARAMETER } from "../src/environment-stack.ts";
+import { isDeepStrictEqual } from "node:util";
+import { ROLE_BOOTSTRAP_TYPE } from "../src/constructs/aurora-cluster.ts";
+import {
+  NAT_IMAGE_PARAMETER,
+  REVISION_PARAMETER,
+  ROLE_BOOTSTRAP_OUTPUTS,
+} from "../src/environment-stack.ts";
+import { CONVERGED_ROLE_FACTS } from "../src/role-bootstrap.ts";
 import { TEST_ENVIRONMENT_PARAMETER } from "../src/test-environment.ts";
 import { ENVIRONMENT_STACK_NAME, RUNNER_PROJECT_NAME } from "../src/trust.ts";
 import { CDK_CLI, type RolloutContext } from "./rollout-context.ts";
@@ -7,7 +14,7 @@ import { readLine } from "./shell.ts";
 /**
  * Deploy the environment stack, and only it, from the assembly the isolated
  * build synthesized, as the checked-out *revision*, supplying the reviewed
- * NAT image.
+ * NAT image and the revision itself, which runs the role bootstrap again.
  *
  * Exit codes: 0 — deployed; 1 — refused; otherwise the CLI's own status.
  */
@@ -43,6 +50,8 @@ export function deploy(context: RolloutContext, revision: string): number {
       "events",
       "--parameters",
       `${ENVIRONMENT_STACK_NAME}:${NAT_IMAGE_PARAMETER}=${image}`,
+      "--parameters",
+      `${ENVIRONMENT_STACK_NAME}:${REVISION_PARAMETER}=${revision}`,
     ],
     cwd: context.root,
   });
@@ -53,7 +62,8 @@ export interface RolloutEvidence {
   readonly revision: string;
   readonly runUrl: string;
   readonly stack: { name: string; id: string; status: string; updated: string };
-  readonly roleBootstrap: { status: string; updated: string };
+  /** The bootstrap's state, the revision it last ran for, and the facts it read back then. */
+  readonly roleBootstrap: { status: string; updated: string; revision: string; facts: unknown };
   readonly testEnvironment: {
     parameter: string;
     version: number;
@@ -66,19 +76,24 @@ export interface RolloutEvidence {
 const COMPLETE = /^(CREATE|UPDATE)_COMPLETE$/;
 const STACK = ["--stack-name", ENVIRONMENT_STACK_NAME];
 
-function stackEvidence(context: RolloutContext): RolloutEvidence["stack"] {
+interface StackJson {
+  readonly StackId?: string;
+  readonly StackStatus?: string;
+  readonly LastUpdatedTime?: string;
+  readonly CreationTime?: string;
+  readonly Outputs?: readonly { OutputKey?: string; OutputValue?: string }[];
+}
+
+function describedStack(context: RolloutContext): StackJson {
   const { Stacks: [stack = {}] = [] } = context.read.aws([
     "cloudformation",
     "describe-stacks",
     ...STACK,
-  ]) as {
-    Stacks?: readonly {
-      StackId?: string;
-      StackStatus?: string;
-      LastUpdatedTime?: string;
-      CreationTime?: string;
-    }[];
-  };
+  ]) as { Stacks?: readonly StackJson[] };
+  return stack;
+}
+
+function stackEvidence(stack: StackJson): RolloutEvidence["stack"] {
   return {
     name: ENVIRONMENT_STACK_NAME,
     id: String(stack.StackId),
@@ -87,7 +102,19 @@ function stackEvidence(context: RolloutContext): RolloutEvidence["stack"] {
   };
 }
 
-function roleBootstrapEvidence(context: RolloutContext): RolloutEvidence["roleBootstrap"] {
+/** *text* as JSON, or itself when it is none. */
+function parsed(text: string | undefined): unknown {
+  try {
+    return JSON.parse(String(text));
+  } catch {
+    return text;
+  }
+}
+
+function roleBootstrapEvidence(
+  context: RolloutContext,
+  stack: StackJson,
+): RolloutEvidence["roleBootstrap"] {
   const { StackResources: resources = [] } = context.read.aws([
     "cloudformation",
     "describe-stack-resources",
@@ -99,8 +126,16 @@ function roleBootstrapEvidence(context: RolloutContext): RolloutEvidence["roleBo
       Timestamp?: string;
     }[];
   };
-  const bootstrap = resources.find((resource) => resource.ResourceType === "Custom::AWS");
-  return { status: String(bootstrap?.ResourceStatus), updated: String(bootstrap?.Timestamp) };
+  const bootstrap = resources.find((resource) => resource.ResourceType === ROLE_BOOTSTRAP_TYPE);
+  const outputs = new Map(
+    (stack.Outputs ?? []).map((output) => [output.OutputKey, output.OutputValue]),
+  );
+  return {
+    status: String(bootstrap?.ResourceStatus),
+    updated: String(bootstrap?.Timestamp),
+    revision: String(outputs.get(ROLE_BOOTSTRAP_OUTPUTS.revision)),
+    facts: parsed(outputs.get(ROLE_BOOTSTRAP_OUTPUTS.facts)),
+  };
 }
 
 function testEnvironmentEvidence(context: RolloutContext): RolloutEvidence["testEnvironment"] {
@@ -141,6 +176,12 @@ function evidenceProblems(evidence: RolloutEvidence): string[] {
     COMPLETE.test(evidence.roleBootstrap.status)
       ? undefined
       : `the role bootstrap is ${evidence.roleBootstrap.status}`,
+    evidence.roleBootstrap.revision === evidence.revision
+      ? undefined
+      : `the role bootstrap last ran for ${evidence.roleBootstrap.revision}, not ${evidence.revision}`,
+    isDeepStrictEqual(evidence.roleBootstrap.facts, CONVERGED_ROLE_FACTS)
+      ? undefined
+      : "the role bootstrap read back facts other than the converged ones",
     typeof evidence.testEnvironment.schema === "number"
       ? undefined
       : "the published TestEnvironment names no schema version",
@@ -154,11 +195,12 @@ export function rolloutEvidence(
   revision: string,
   runUrl: string,
 ): { evidence: RolloutEvidence; problems: string[] } {
+  const stack = describedStack(context);
   const evidence: RolloutEvidence = {
     revision,
     runUrl,
-    stack: stackEvidence(context),
-    roleBootstrap: roleBootstrapEvidence(context),
+    stack: stackEvidence(stack),
+    roleBootstrap: roleBootstrapEvidence(context, stack),
     testEnvironment: testEnvironmentEvidence(context),
     runner: runnerEvidence(context),
   };

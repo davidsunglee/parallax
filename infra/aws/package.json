@@ -9,6 +9,7 @@
     "node": ">=24"
   },
   "dependencies": {
+    "@aws-sdk/client-rds-data": "catalog:",
     "ajv": "catalog:",
     "aws-cdk-lib": "catalog:",
     "constructs": "catalog:"

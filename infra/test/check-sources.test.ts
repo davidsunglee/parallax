@@ -14,6 +14,7 @@ const SCOPE: GateScope = {
   typechecked: new Set([
     "tools/check.ts",
     "aws/src/stack.ts",
+    "aws/src/handler/index.mts",
     "aws/src/generated/record.ts",
     "aws/test/stack.test.ts",
     "aws/test/fixture.ts",
@@ -24,7 +25,7 @@ const SCOPE: GateScope = {
     { name: "dbfree", include: ["test/**/*.test.ts", "*/test/**/*.test.ts"] },
     { name: "other", include: ["test/twice.test.ts"] },
   ],
-  coverageInclude: ["tools/**/*.ts", "*/src/**/*.ts"],
+  coverageInclude: ["tools/**/*.ts", "*/src/**/*.ts", "*/src/**/*.mts"],
   coverageExclude: ["*/src/generated/**"],
 };
 
@@ -37,6 +38,7 @@ describe("the source inventory", () => {
     const tracked = [
       "tools/check.ts",
       "aws/src/stack.ts",
+      "aws/src/handler/index.mts",
       "aws/src/generated/record.ts",
       "aws/test/stack.test.ts",
       "aws/test/fixture.ts",
@@ -81,6 +83,20 @@ describe("the source inventory", () => {
     ]);
   });
 
+  it("holds TypeScript of either module format to the same gates", () => {
+    expect(
+      inventoryProblems(
+        { tracked: ["aws/lib/module.mts", "aws/lib/common.cts"], untracked: [] },
+        SCOPE,
+      ),
+    ).toEqual([
+      "aws/lib/common.cts is outside the type-checked program",
+      "aws/lib/common.cts is no test, test support, coverage-excluded file, or coverage-measured source",
+      "aws/lib/module.mts is outside the type-checked program",
+      "aws/lib/module.mts is no test, test support, coverage-excluded file, or coverage-measured source",
+    ]);
+  });
+
   it("lists tracked files and untracked ones, ignored files included", () => {
     const root = scratch({
       ".gitignore": "ignored.ts\n",
@@ -102,6 +118,8 @@ describe("the source inventory", () => {
     expect(scope.coverageExclude).toEqual(["*/src/generated/**", "vitest.config.ts"]);
     expect(scope.typechecked).toContain("tools/check-sources.ts");
     expect(scope.typechecked).toContain("aws/bin/app.ts");
+    expect(scope.typechecked).toContain("aws/src/role-bootstrap-handler/index.mts");
+    expect(scope.coverageInclude).toContain("*/src/**/*.mts");
   });
 
   it("refuses a scope whose type-check configuration cannot be read", async () => {

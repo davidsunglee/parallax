@@ -86,6 +86,7 @@ describe("the dead-code gate", () => {
   it("fails an unimported source, an undeclared dependency, and an unused export", () => {
     const box = sandbox();
     box.plant("aws/src/orphan.ts", "export const orphan = 1;\n");
+    box.plant("aws/src/stray-module.mts", "export const stray = 1;\n");
     box.plant(
       "aws/test/borrowed.test.ts",
       'import picomatch from "picomatch";\nimport { it } from "vitest";\nit("matches", () => picomatch("*"));\n',
@@ -102,6 +103,7 @@ describe("the dead-code gate", () => {
     );
     expect(outcome.status).toBe(1);
     expect(outcome.output).toMatch(/Unused files[\s\S]*infra\/aws\/src\/orphan\.ts/);
+    expect(outcome.output).toMatch(/Unused files[\s\S]*infra\/aws\/src\/stray-module\.mts/);
     expect(outcome.output).toMatch(/Unlisted dependencies[\s\S]*picomatch/);
     expect(outcome.output).toMatch(/Unused exports[\s\S]*unreferenced/);
   });
@@ -153,6 +155,7 @@ describe("the coverage gate", () => {
       "canary/src/branch.ts":
         "export function sign(value: number): string {\n  return value < 0 ? 'negative' : 'other';\n}\n",
       "canary/src/unimported.ts": "export function never(): number {\n  return 1;\n}\n",
+      "canary/src/unimported.mts": "export function nor(): number {\n  return 1;\n}\n",
       "canary/test/branch.test.ts":
         'import { expect, it } from "vitest";\nimport { sign } from "../src/branch.ts";\nit("signs", () => expect(sign(1)).toBe("other"));\n',
     });
@@ -163,6 +166,7 @@ describe("the coverage gate", () => {
     const outcome = execute(tool("vitest"), ["run", "--project", "dbfree", "--coverage"], root);
     expect(outcome.status).toBe(1);
     expect(outcome.output).toMatch(/unimported\.ts\s*\|\s*0\s*\|/);
+    expect(outcome.output).toMatch(/unimported\.mts\s*\|\s*0\s*\|/);
     expect(outcome.output).toContain(
       "Coverage for branches (50%) does not meet global threshold (95%)",
     );

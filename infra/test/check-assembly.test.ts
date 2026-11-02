@@ -87,6 +87,34 @@ describe("cloud-assembly completeness", () => {
     expect(written(error)).toContain("aws: Assets lacks asset asset.a");
   });
 
+  it("fails a file asset that ships TypeScript rather than the built handler", () => {
+    const shipped = (files: readonly string[]) =>
+      assemblyProblems(
+        join(
+          assembly({
+            ...complete,
+            assets: { files: { a: { source: { path: "asset.a" } } } },
+            present: ["Stack.template.json", "Stack.metadata.json", ...files],
+          }),
+          "aws",
+          ASSEMBLY_DIRECTORY,
+        ),
+      );
+    expect(shipped(["asset.a/index.mjs", "asset.a/lib/util.js"])).toEqual([]);
+    expect(shipped(["asset.a/index.mts", "asset.a/lib/util.ts"])).toEqual([
+      "Assets asset asset.a ships TypeScript index.mts, not built JavaScript",
+      `Assets asset asset.a ships TypeScript ${join("lib", "util.ts")}, not built JavaScript`,
+    ]);
+    const single = assembly({
+      ...complete,
+      assets: { files: { a: { source: { path: "handler.cts" } } } },
+      present: ["Stack.template.json", "Stack.metadata.json", "handler.cts"],
+    });
+    expect(assemblyProblems(join(single, "aws", ASSEMBLY_DIRECTORY))).toEqual([
+      "Assets asset handler.cts ships TypeScript handler.cts, not built JavaScript",
+    ]);
+  });
+
   it("fails an assembly whose asset manifest is gone", () => {
     const root = assembly({ manifest: complete.manifest });
     expect(assemblyProblems(join(root, "aws", ASSEMBLY_DIRECTORY))).toEqual([

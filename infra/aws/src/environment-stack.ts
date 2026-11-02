@@ -1,4 +1,5 @@
 import {
+  CfnOutput,
   CfnParameter,
   DefaultStackSynthesizer,
   PermissionsBoundary,
@@ -24,6 +25,15 @@ import {
 
 /** The deploy input naming the NAT instance's image. */
 export const NAT_IMAGE_PARAMETER = "NatInstanceImage";
+
+/** The deploy input naming the commit being deployed. */
+export const REVISION_PARAMETER = "DeployedRevision";
+
+/** The outputs recording what the latest role bootstrap converged, and for which revision. */
+export const ROLE_BOOTSTRAP_OUTPUTS = {
+  facts: "RoleBootstrapFacts",
+  revision: "RoleBootstrapRevision",
+} as const;
 
 export interface EnvironmentStackProps {
   readonly configuration: EnvironmentConfiguration;
@@ -69,9 +79,23 @@ export class EnvironmentStack extends Stack {
       natInstanceType: new ec2.InstanceType(configuration.natInstanceType),
       natImage: ec2.MachineImage.genericLinux({ [configuration.region]: natImage.valueAsString }),
     });
+    // Supplied by every deployment rather than looked up, so synthesis stays
+    // offline and a new revision always runs the role bootstrap again.
+    const revision = new CfnParameter(this, REVISION_PARAMETER, {
+      type: "String",
+      allowedPattern: "^[0-9a-f]{40}$",
+      description: "The commit this deployment deploys",
+    });
     this.aurora = new AuroraCluster(this, "Aurora", {
       vpc: this.network.vpc,
       capacity: configuration.aurora,
+      revision: revision.valueAsString,
+    });
+    new CfnOutput(this, ROLE_BOOTSTRAP_OUTPUTS.facts, {
+      value: this.aurora.bootstrap.getAttString("Facts"),
+    });
+    new CfnOutput(this, ROLE_BOOTSTRAP_OUTPUTS.revision, {
+      value: this.aurora.bootstrap.getAttString("Revision"),
     });
     this.testEnvironment = new TestEnvironmentParameter(this, "TestEnvironment", {
       record: testEnvironment(this.aurora, configuration.region),
