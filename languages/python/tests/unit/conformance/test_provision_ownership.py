@@ -244,7 +244,13 @@ def test_a_tracked_adapter_keeps_every_runtime_it_opens_on_its_ledger(
     configuration = PostgresAdapter(
         writer=PostgresEndpoint("host=nowhere.test", credentials=conformance_credentials())
     )
-    monkeypatch.setattr(PostgresAdapter, "open", _opening(log))
+    opened_from: list[PostgresAdapter] = []
+
+    def opening(opened: PostgresAdapter) -> _Runtime:
+        opened_from.append(opened)
+        return _Runtime(log, "opened")
+
+    monkeypatch.setattr(PostgresAdapter, "open", opening)
     ledger = RuntimeLedger()
     adapter = TrackedAdapter(configuration, ledger)
 
@@ -253,9 +259,6 @@ def test_a_tracked_adapter_keeps_every_runtime_it_opens_on_its_ledger(
     ledger.release()
 
     assert adapter.dialect is POSTGRES
-    assert adapter.configuration is configuration
+    assert all(opened is configuration for opened in opened_from)
+    assert len(opened_from) == 2
     assert log == ["close opened", "close opened"]
-
-
-def _opening(log: list[str]) -> Callable[[PostgresAdapter], _Runtime]:
-    return lambda _adapter: _Runtime(log, "opened")

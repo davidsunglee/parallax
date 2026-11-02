@@ -10,8 +10,9 @@ A lag proof instead commits ``local`` while replay is paused, and resumes and
 waits on log positions afterwards.
 
 Pausing replay blocks every ``remote_apply`` commit until it resumes, which is
-why the pause is a context that always resumes, and every wait here is a bounded
-poll of a server condition rather than a sleep.
+why the pause is a context that always resumes, a pair that cannot resume closes
+itself rather than serve a later proof, and every wait here is a bounded poll of
+a server condition rather than a sleep.
 """
 
 from __future__ import annotations
@@ -138,6 +139,7 @@ class ReplicationPair:
         self._resources = resources
         self._pacing = pacing
         self._ledger = RuntimeLedger()
+        self._closed = False
 
     @classmethod
     def open(
@@ -262,7 +264,8 @@ class ReplicationPair:
         """Pause the standby's replay for the body, and resume it however the body ends.
 
         The standby keeps receiving the log while paused; what it stops doing is
-        applying it, so its sessions keep seeing what was replayed before.
+        applying it, so its sessions keep seeing what was replayed before. A
+        resume that fails closes the pair, since it may still be paused.
         """
         try:
             self._standby.execute("select pg_wal_replay_pause()", [])
@@ -272,14 +275,23 @@ class ReplicationPair:
             )
             yield
         finally:
-            self._standby.execute("select pg_wal_replay_resume()", [])
+            try:
+                self._standby.execute("select pg_wal_replay_resume()", [])
+            except BaseException:
+                self.close()
+                raise
 
     def release_runtimes(self) -> None:
         """Close every runtime this pair's adapters opened and a caller left open."""
         self._ledger.release()
 
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
     def close(self) -> None:
         """Release every runtime, then the sessions, servers and network, newest first."""
+        self._closed = True
         try:
             self._ledger.release()
         finally:
@@ -305,7 +317,10 @@ def _replication_source() -> str:
 
 
 class LazyReplication[Pair: _Owned]:
-    """The one pair a run opens on first use, released with the run."""
+    """The one pair a run opens on first use, released with the run.
+
+    A pair that closed itself is replaced on the next use.
+    """
 
     __slots__ = ("_closed", "_open", "_pair")
 
@@ -317,7 +332,7 @@ class LazyReplication[Pair: _Owned]:
     def pair(self) -> Pair:
         if self._closed:
             raise RuntimeError("the run owning this replication pair has closed")
-        if self._pair is None:
+        if self._pair is None or self._pair.closed:
             self._pair = self._open()
         return self._pair
 
@@ -333,6 +348,9 @@ class LazyReplication[Pair: _Owned]:
 
 
 class _Owned(Protocol):
+    @property
+    def closed(self) -> bool: ...
+
     def release_runtimes(self) -> None: ...
 
     def close(self) -> None: ...

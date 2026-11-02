@@ -3,9 +3,10 @@
 A scripted launch stands in for the servers and scripted sessions for the
 server conditions, so what is proved here is the pair's own discipline: the
 standby is streaming before the primary waits for it, everything started is
-released newest first however opening or closing ends, replay always resumes,
-and every wait gives up at its deadline. What the standby actually shows a
-reader is proved against real servers under ``tests/provider_contract``.
+released newest first however opening or closing ends, replay always resumes
+or the pair closes, and every wait gives up at its deadline. What the standby
+actually shows a reader is proved against real servers under
+``tests/provider_contract``.
 """
 
 from __future__ import annotations
@@ -331,12 +332,20 @@ def test_releasing_runtimes_leaves_the_servers_running(monkeypatch: pytest.Monke
 
 @pytest.mark.parametrize("synchronous_commit", ["remote_apply", "local"])
 def test_the_adapter_writes_to_the_primary_and_reads_from_the_standby(
-    synchronous_commit: Any,
+    synchronous_commit: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pair = _opened(_Launch())
+    opened_from: list[PostgresAdapter] = []
 
-    configured = pair.adapter(synchronous_commit=synchronous_commit).configuration
+    def opening(configured: PostgresAdapter) -> _Runtime:
+        opened_from.append(configured)
+        return _Runtime([])
 
+    monkeypatch.setattr(PostgresAdapter, "open", opening)
+
+    pair.adapter(synchronous_commit=synchronous_commit).open()
+
+    (configured,) = opened_from
     assert configured.reader is not None
     writer = conninfo_to_dict(configured.writer.connection_string)
     reader = conninfo_to_dict(configured.reader.connection_string)
@@ -449,9 +458,27 @@ def test_replay_resumes_when_the_pause_is_never_confirmed() -> None:
     pair.close()
 
 
+def test_a_resume_that_fails_closes_the_pair_it_may_have_left_paused() -> None:
+    def refusing_resume(sql: str, binds: Sequence[object]) -> list[Row]:
+        if "replay_resume" in sql:
+            raise ConnectionError("standby session lost")
+        return _healthy_standby(sql, binds)
+
+    launch = _Launch(standby_answer=refusing_resume)
+    pair = _opened(launch)
+    launch.log.clear()
+
+    with pytest.raises(ConnectionError, match="standby session lost"), pair.paused_replay():
+        pass
+
+    assert pair.closed
+    assert launch.log == _RELEASED_NEWEST_FIRST
+
+
 class _Owned:
     def __init__(self, log: list[str]) -> None:
         self._log = log
+        self.closed = False
 
     def release_runtimes(self) -> None:
         self._log.append("release runtimes")
@@ -510,3 +537,21 @@ def test_a_lazy_pair_whose_open_failed_opens_again_on_next_use() -> None:
     lazy.pair()
 
     assert attempts == ["open", "open"]
+
+
+def test_a_lazy_pair_that_closed_itself_is_replaced_on_next_use() -> None:
+    opened: list[_Owned] = []
+
+    def open_pair() -> _Owned:
+        opened.append(_Owned([]))
+        return opened[-1]
+
+    lazy = LazyReplication(open_pair)
+    retired = lazy.pair()
+    retired.closed = True
+
+    replacement = lazy.pair()
+
+    assert replacement is not retired
+    assert lazy.pair() is replacement
+    assert opened == [retired, replacement]
