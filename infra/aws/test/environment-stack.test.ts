@@ -5,15 +5,13 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ConfigurationError } from "../src/configuration.ts";
 import { ROLE_BOOTSTRAP_ID } from "../src/constructs/aurora-cluster.ts";
-import {
-  defineEnvironment,
-  ENVIRONMENT_STACK_NAME,
-  ENVIRONMENT_TAGS,
-  NAT_IMAGE_PARAMETER,
-  type EnvironmentStack,
-} from "../src/environment-stack.ts";
+import { NAT_IMAGE_PARAMETER, type EnvironmentStack } from "../src/environment-stack.ts";
+import { defineStacks } from "../src/stacks.ts";
 import { CONTROL_DATABASE, ROLE_BOOTSTRAP_SQL } from "../src/role-bootstrap.ts";
 import { TEST_ENVIRONMENT_PARAMETER } from "../src/test-environment.ts";
+import { ENVIRONMENT_STACK_NAME, ENVIRONMENT_TAGS, RUNNER_PROJECT_NAME } from "../src/trust.ts";
+import { allowed } from "./policy-evaluation.ts";
+import { ANCHORS } from "./rollout-world.ts";
 import { committedApp, flatten, PACKAGE_ROOT } from "./committed-app.ts";
 
 interface Resource {
@@ -40,12 +38,18 @@ function only(type: string): [string, Resource] {
   return found;
 }
 
+function runnerGroup(): string {
+  const [, project] = only("AWS::CodeBuild::Project");
+  const vpc = project.Properties["VpcConfig"] as { SecurityGroupIds: [{ "Fn::GetAtt": [string] }] };
+  return vpc.SecurityGroupIds[0]["Fn::GetAtt"][0];
+}
+
 function ref(id: string): { Ref: string } {
   return { Ref: id };
 }
 
 beforeAll(() => {
-  stack = defineEnvironment(committedApp());
+  stack = defineStacks(committedApp()).environment;
   template = Template.fromStack(stack);
   all = template.toJSON()["Resources"] as Record<string, Resource>;
 });
@@ -59,7 +63,7 @@ describe("the environment stack", () => {
   });
 
   it("refuses a context that holds no deployable configuration", () => {
-    expect(() => defineEnvironment(committedApp({ "parallax:environment": undefined }))).toThrow(
+    expect(() => defineStacks(committedApp({ "parallax:environment": undefined }))).toThrow(
       ConfigurationError,
     );
   });
@@ -136,7 +140,14 @@ describe("the private network", () => {
       .map((subnet) => subnet["CidrBlock"]);
     const ingress = group?.Properties["SecurityGroupIngress"] as { CidrIp: string }[];
     expect(new Set(ingress.map((rule) => rule.CidrIp))).toEqual(new Set(privateCidrs));
-    expect(resources("AWS::EC2::SecurityGroupIngress")).toHaveLength(0);
+    const separateRules = resources("AWS::EC2::SecurityGroupIngress").map(
+      ([, rule]) => rule.Properties,
+    );
+    expect(
+      separateRules.some((rule) =>
+        JSON.stringify(rule["GroupId"]).includes(natGroup["Fn::GetAtt"][0]),
+      ),
+    ).toBe(false);
   });
 
   it("recovers the NAT instance when its system status check fails", () => {
@@ -237,10 +248,21 @@ describe("the Aurora cluster", () => {
     });
   });
 
-  it("admits no inbound traffic yet", () => {
+  it("admits connections on the cluster's port from the runner's security group alone", () => {
     const [, cluster] = only("AWS::RDS::DBCluster");
     const [group] = cluster.Properties["VpcSecurityGroupIds"] as [{ "Fn::GetAtt": [string] }];
-    expect(all[group["Fn::GetAtt"][0]]?.Properties).not.toHaveProperty("SecurityGroupIngress");
+    const clusterGroup = group["Fn::GetAtt"][0];
+    expect(all[clusterGroup]?.Properties).not.toHaveProperty("SecurityGroupIngress");
+    const ingress = resources("AWS::EC2::SecurityGroupIngress").map(([, rule]) => rule.Properties);
+    expect(ingress).toEqual([
+      expect.objectContaining({
+        GroupId: { "Fn::GetAtt": [clusterGroup, "GroupId"] },
+        IpProtocol: "tcp",
+        FromPort: { "Fn::GetAtt": [only("AWS::RDS::DBCluster")[0], "Endpoint.Port"] },
+        ToPort: { "Fn::GetAtt": [only("AWS::RDS::DBCluster")[0], "Endpoint.Port"] },
+        SourceSecurityGroupId: { "Fn::GetAtt": [runnerGroup(), "GroupId"] },
+      }),
+    ]);
   });
 });
 
@@ -374,5 +396,119 @@ describe("the published TestEnvironment", () => {
       cluster_id: "parallax-ci",
       ca_bundle_url: "https://truststore.pki.rds.amazonaws.com/us-east-2/us-east-2-bundle.pem",
     });
+  });
+});
+
+describe("the deployment trust", () => {
+  it("deploys only through its own bootstrap's roles", () => {
+    const parameters = template.toJSON()["Parameters"] as Record<string, { Default?: string }>;
+    expect(parameters["BootstrapVersion"]?.Default).toBe(
+      `/cdk-bootstrap/${ANCHORS.qualifier}/version`,
+    );
+    const synthesizer = stack.synthesizer as { cloudFormationExecutionRoleArn?: string };
+    expect(JSON.stringify(stack.resolve(synthesizer.cloudFormationExecutionRoleArn))).toContain(
+      `cdk-${ANCHORS.qualifier}-cfn-exec-role`,
+    );
+  });
+
+  it("puts the access stack's boundary on every role it creates", () => {
+    const roles = resources("AWS::IAM::Role");
+    expect(roles.length).toBeGreaterThanOrEqual(4);
+    for (const [id, role] of roles) {
+      expect(role.Properties["PermissionsBoundary"], id).toBe(ANCHORS.boundaryPolicyArn);
+    }
+  });
+
+  it("creates no identity provider, source connection, user, or managed policy of its own", () => {
+    const types = new Set(Object.values(all).map((resource) => resource.Type));
+    for (const type of [
+      "AWS::IAM::OIDCProvider",
+      "AWS::IAM::User",
+      "AWS::IAM::ManagedPolicy",
+      "AWS::CodeConnections::Connection",
+      "AWS::CodeStarConnections::Connection",
+      "AWS::CodeBuild::SourceCredential",
+      "AWS::Budgets::Budget",
+    ]) {
+      expect(types.has(type), type).toBe(false);
+    }
+  });
+});
+
+describe("the runner", () => {
+  function runnerStatements(): unknown[] {
+    const [roleId] = resources("AWS::IAM::Role").find(([id]) =>
+      id.startsWith("RunnerProjectRole"),
+    ) ?? [""];
+    return resources("AWS::IAM::Policy")
+      .filter(([, policy]) => JSON.stringify(policy.Properties["Roles"]).includes(roleId))
+      .flatMap(
+        ([, policy]) => (policy.Properties["PolicyDocument"] as { Statement: unknown[] }).Statement,
+      );
+  }
+
+  it("is an ephemeral private runner queued by workflow jobs, reading source through the existing connection", () => {
+    const [, project] = only("AWS::CodeBuild::Project");
+    expect(project.Properties).toMatchObject({
+      Name: RUNNER_PROJECT_NAME,
+      Source: {
+        Type: "GITHUB",
+        Location: "https://github.com/davidsunglee/parallax.git",
+        Auth: { Type: "CODECONNECTIONS", Resource: ANCHORS.sourceConnectionArn },
+        ReportBuildStatus: false,
+      },
+      Triggers: {
+        Webhook: true,
+        FilterGroups: [[{ Type: "EVENT", Pattern: "WORKFLOW_JOB_QUEUED" }]],
+      },
+      Environment: { PrivilegedMode: false, Type: "LINUX_CONTAINER" },
+      TimeoutInMinutes: 60,
+      QueuedTimeoutInMinutes: 30,
+      ConcurrentBuildLimit: 1,
+    });
+    const subnets = (project.Properties["VpcConfig"] as { Subnets: { Ref: string }[] }).Subnets;
+    expect(subnets).toHaveLength(2);
+    for (const { Ref } of subnets) expect(all[Ref]?.Properties["MapPublicIpOnLaunch"]).toBe(false);
+  });
+
+  it("connects only as the conformance login and reads only the published record", () => {
+    const [cluster] = only("AWS::RDS::DBCluster");
+    const statements = runnerStatements() as { Action: unknown; Resource: unknown }[];
+    const connect = statements.filter((statement) =>
+      JSON.stringify(statement.Action).includes("rds-db:connect"),
+    );
+    expect(connect).toHaveLength(1);
+    const { text, intrinsics } = flatten(connect[0]?.Resource);
+    expect(text).toMatch(
+      /^arn:aws:rds-db:us-east-2:407034905514:dbuser:«0»\/parallax_conformance_login$/,
+    );
+    expect(intrinsics.get("«0»")).toEqual({ "Fn::GetAtt": [cluster, "DBClusterResourceId"] });
+    const parameter = statements.filter((statement) =>
+      JSON.stringify(statement.Action).includes("ssm:"),
+    );
+    expect(parameter.map((statement) => statement.Action)).toEqual(["ssm:GetParameter"]);
+    const [parameterId] = only("AWS::SSM::Parameter");
+    expect(JSON.stringify(parameter[0]?.Resource)).toContain(parameterId);
+  });
+
+  it("holds no master secret, Data API, deploy, or IAM access", () => {
+    const statements = runnerStatements();
+    const [secret] = only("AWS::SecretsManager::Secret");
+    expect(JSON.stringify(statements)).not.toContain(secret);
+    for (const [action, resource] of [
+      ["secretsmanager:GetSecretValue", "*"],
+      ["rds-data:ExecuteStatement", "*"],
+      ["sts:AssumeRole", ANCHORS.bootstrapRoleArn("deploy")],
+      ["sts:AssumeRole", ANCHORS.deployRoleArn],
+      ["iam:PassRole", "*"],
+      ["cloudformation:UpdateStack", "*"],
+      ["ssm:PutParameter", "*"],
+      ["codeconnections:DeleteConnection", ANCHORS.sourceConnectionArn],
+    ]) {
+      expect(allowed(statements, String(action), String(resource)), String(action)).toBe(false);
+    }
+    expect(
+      allowed(statements, "codeconnections:GetConnectionToken", ANCHORS.sourceConnectionArn),
+    ).toBe(true);
   });
 });

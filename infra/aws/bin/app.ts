@@ -1,6 +1,6 @@
 import { App } from "aws-cdk-lib";
-import { defineEnvironment } from "../src/environment-stack.ts";
+import { defineStacks } from "../src/stacks.ts";
 
 const app = new App();
-defineEnvironment(app);
+defineStacks(app);
 app.synth();

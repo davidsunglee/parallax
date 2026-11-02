@@ -1,0 +1,80 @@
+name: infra-deploy
+
+# Deploys the AWS test environment stack, and only it, from main. The job runs
+# no proposed change's code: only main pushes and dispatch trigger it, it checks
+# out the pushed or dispatched main commit, and it reaches AWS only through the
+# reviewer-gated aws-deploy environment, whose deployment-branch rule admits
+# main alone and whose OIDC subject is the only one the deploy role trusts. The
+# access stack and the bootstrap that define that trust are maintainer-deployed
+# and beyond the deploy role's reach.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-deploy.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "justfile"
+  workflow_dispatch:
+
+permissions: {}
+
+# One deployment at a time, and never cancelled part-way through an update.
+concurrency:
+  group: infra-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: aws-deploy
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Refuse any ref but main
+        run: test "$GITHUB_REF" = refs/heads/main
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: extractions/setup-just@v4
+      - uses: pnpm/action-setup@v6.1.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The settings token reads the fork-approval policy, which needs
+      # Administration read; only this environment holds it.
+      - name: Verify repository protections
+        env:
+          GH_TOKEN: ${{ secrets.REPOSITORY_SETTINGS_READ_TOKEN }}
+        run: node infra/aws/tools/rollout.ts verify-github
+      # Synthesis runs before any AWS credential exists, and itself strips every
+      # credential source, so no app code ever runs with deploy access.
+      - name: Synthesize without credentials
+        run: just infra-build
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::407034905514:role/parallax-ci-deploy
+          role-session-name: infra-deploy-${{ github.run_id }}-${{ github.run_attempt }}
+          role-skip-session-tagging: true
+          allowed-account-ids: "407034905514"
+          aws-region: us-east-2
+      - name: Verify the account and the Aurora offering
+        run: node infra/aws/tools/rollout.ts verify-aws
+      - name: Deploy the environment stack
+        run: node infra/aws/tools/rollout.ts deploy --revision "$GITHUB_SHA"
+      # An explicit bash shell runs with pipefail, so a failed check survives the tee.
+      - name: Record rollout evidence
+        shell: bash
+        run: >-
+          node infra/aws/tools/rollout.ts evidence
+          --revision "$GITHUB_SHA"
+          --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          | tee -a "$GITHUB_STEP_SUMMARY"

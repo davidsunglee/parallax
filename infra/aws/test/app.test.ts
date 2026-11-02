@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ENVIRONMENT_STACK_NAME } from "../src/environment-stack.ts";
+import { ACCESS_STACK_NAME, ENVIRONMENT_STACK_NAME } from "../src/trust.ts";
 import { committedContext } from "./committed-app.ts";
 
 afterEach(() => {
@@ -10,7 +10,7 @@ afterEach(() => {
 });
 
 describe("the app entry point", () => {
-  it("synthesizes the environment stack from the context the CLI hands it", async () => {
+  it("synthesizes both stacks from the context the CLI hands it", async () => {
     const outdir = mkdtempSync(join(tmpdir(), "parallax-app-"));
     vi.stubEnv("CDK_OUTDIR", outdir);
     vi.stubEnv("CDK_CONTEXT_JSON", JSON.stringify(committedContext()));
@@ -21,8 +21,10 @@ describe("the app entry point", () => {
       artifacts: Record<string, unknown>;
       missing?: unknown;
     };
-    expect(Object.keys(manifest.artifacts)).toContain(ENVIRONMENT_STACK_NAME);
     expect(manifest.missing).toBeUndefined();
-    expect(existsSync(join(outdir, `${ENVIRONMENT_STACK_NAME}.template.json`))).toBe(true);
+    for (const stack of [ACCESS_STACK_NAME, ENVIRONMENT_STACK_NAME]) {
+      expect(Object.keys(manifest.artifacts)).toContain(stack);
+      expect(existsSync(join(outdir, `${stack}.template.json`))).toBe(true);
+    }
   });
 });

@@ -29,14 +29,16 @@ const CAPACITY_STEP = 0.5;
 const MAX_CAPACITY_LIMIT = 256;
 const AUTO_PAUSE_SECONDS = { min: 300, max: 86_400 } as const;
 
-function record(value: unknown, what: string): Readonly<Record<string, unknown>> {
+/** *value* as an object, or a fixed-text refusal naming *what* it should have been. */
+export function record(value: unknown, what: string): Readonly<Record<string, unknown>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new ConfigurationError(`${what} must be an object`);
   }
   return value as Record<string, unknown>;
 }
 
-function matching(value: unknown, pattern: RegExp, what: string): string {
+/** *value* as a string matching *pattern*, or a fixed-text refusal naming *what*. */
+export function matching(value: unknown, pattern: RegExp, what: string): string {
   if (typeof value !== "string" || !pattern.test(value)) {
     throw new ConfigurationError(`${what} must match ${String(pattern)}`);
   }

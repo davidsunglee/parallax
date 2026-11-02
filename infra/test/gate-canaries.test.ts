@@ -118,10 +118,10 @@ describe("the import-boundary gate", () => {
       "aws/src/reaches-tools.ts",
       'export { INFRA_ROOT } from "../../tools/workspace.ts";\n',
     );
-    box.plant("aws/src/transitive.ts", 'export { parse } from "yaml";\n');
+    box.plant("aws/src/transitive.ts", 'export { createJiti } from "jiti";\n');
     box.plant(
       "aws/src/constructs/composes.ts",
-      'export { ENVIRONMENT_STACK_NAME } from "../environment-stack.ts";\n',
+      'export { NAT_IMAGE_PARAMETER } from "../environment-stack.ts";\n',
     );
     box.plant(
       "tools/reaches-provider.ts",
@@ -173,10 +173,10 @@ describe("the duplication gate", () => {
   it("fails a repeated block over the scope's limits", () => {
     const box = sandbox();
     const block = `export function repeated(value: number): number {\n${Array.from(
-      { length: 60 },
+      { length: 300 },
       (_, index) =>
         `  const step${String(index)} = value * ${String(index + 2)} + Math.max(value, ${String(index)});`,
-    ).join("\n")}\n  return step0 + step59;\n}\n`;
+    ).join("\n")}\n  return step0 + step299;\n}\n`;
     box.plant("aws/src/first.ts", block);
     box.plant("aws/src/second.ts", block.replace("repeated", "again"));
     const outcome = execute(
