@@ -172,6 +172,7 @@ describe("deploying", () => {
           "--exclusively",
           "--require-approval",
           "never",
+          "--no-rollback",
           "--ci",
           "--no-notices",
           "--progress",

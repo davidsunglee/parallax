@@ -142,8 +142,13 @@ Aurora offering as the deploy role, deploys, and records the deployed
 revision, stack, role bootstrap, record, and runner in the run summary. The
 record fails unless the role bootstrap ran for this revision and read back the
 converged roles.
-A failed first creation leaves the stack in `ROLLBACK_COMPLETE`, which only a
-maintainer can delete.
+A deployment never rolls back on failure: the stack keeps what it created, in
+`CREATE_FAILED` or `UPDATE_FAILED`, and the next deployment resumes at the
+failed resource. A rollback could not delete the deletion-protected cluster.
+A change that replaces a resource still deploys with rollback, which the CLI
+requires; if a stack is already failed when such a change arrives, the CLI
+rolls it back first, and a failed first creation then leaves it in
+`ROLLBACK_FAILED` for a maintainer to delete.
 
 ## Working on it
 
