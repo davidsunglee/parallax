@@ -182,8 +182,13 @@ class PostgresRoute:
 
     @property
     def awaiting_verification(self) -> bool:
-        """Whether a connection this route hands over must prove it first."""
-        return self._state == "pending"
+        """Whether a connection this route hands over must prove it first.
+
+        Read under the transition lock, so an answer of no on a refused route
+        is always followed by :attr:`refusal` naming it.
+        """
+        with self._lock:
+            return self._state == "pending"
 
     @property
     def refusal(self) -> ProbeMismatch | None:
@@ -327,9 +332,12 @@ def _build_pool(
         )
     try:
         pool.open()
-    except Exception as exc:
+    except BaseException as exc:
+        # Not yet any route's, so nothing else would ever close it.
         with contextlib.suppress(Exception):
             pool.close()
+        if not isinstance(exc, Exception):
+            raise
         raise DatabaseStartupError(
             f"the database runtime's {route} connection pool could not be opened",
             route=route,

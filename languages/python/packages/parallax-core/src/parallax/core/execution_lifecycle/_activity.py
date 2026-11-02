@@ -675,7 +675,7 @@ class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
         /,
     ) -> None: ...
 
-    def begin_failed(self, error: Exception, /) -> None:
+    def begin_failed(self, error: BaseException, /) -> None:
         """The boundary never opened, so the callback never ran and this
         attempt is over; terminal, whatever ``error``'s own category says."""
         ...
@@ -896,7 +896,7 @@ class _InertActivity:
 
     def write_rows_completed(self, returned_rows: Sized, /) -> None: ...
 
-    def begin_failed(self, error: Exception, /) -> None: ...
+    def begin_failed(self, error: BaseException, /) -> None: ...
 
     def committed(self) -> None: ...
 
@@ -2124,7 +2124,7 @@ class _LiveTransactionAttempt(_LiveConnectionOwner):
             )
         )
 
-    def begin_failed(self, error: Exception, /) -> None:
+    def begin_failed(self, error: BaseException, /) -> None:
         """Finish with the boundary's own refusal, told to the invocation as
         the invocation's cause.
 

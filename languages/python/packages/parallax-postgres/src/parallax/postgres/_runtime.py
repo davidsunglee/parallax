@@ -182,7 +182,10 @@ class PostgresRuntime:
         Problems closing are reported through the restricted resource logger and
         never raised, and one route's failure to close does not stop the
         other's: close is what a caller runs while unwinding, and a handle that
-        refused to close would leave them nothing better to do.
+        refused to close would leave them nothing better to do. An interrupt is
+        not contained: the first one propagates, but only once every pool's
+        close has been attempted, since a later close would find the runtime
+        already closed.
         """
         with self._admission:
             if self._closed:
@@ -191,11 +194,17 @@ class PostgresRuntime:
         routes = self._served()
         for route in routes:
             route.metrics.detach()
+        interrupted: BaseException | None = None
         for route in routes:
             try:
                 route.pool.close()
             except Exception as exc:
                 report_resource_issues("shutdown", _shutdown_issue(exc))
+            except BaseException as exc:
+                if interrupted is None:
+                    interrupted = exc
+        if interrupted is not None:
+            raise interrupted
 
     def _admit(self, deadline: float) -> None:
         """Decide, in one critical section, whether this acquisition may proceed.

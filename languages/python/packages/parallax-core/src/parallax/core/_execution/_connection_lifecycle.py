@@ -139,8 +139,10 @@ class TransactionPreparation:
 
     def unprepared(self, failure: BaseException) -> None:
         """Settle the acquisition as failed by ``failure``, the boundary that
-        never opened, cleaning its lease up once as that acquisition's own."""
-        self._acquisition.prepared()
+        never opened, cleaning its lease up once as that acquisition's own.
+
+        The acquisition's duration ends once that cleanup has answered, however
+        it ends, because the cleanup is the failed acquisition's own work."""
         self._settle_failed(failure, entered=True)
 
     def _settle_failed(self, failure: BaseException, *, entered: bool) -> None:
@@ -149,7 +151,10 @@ class TransactionPreparation:
         resource = self._resource
         try:
             if entered:
-                _leave(resource, failure)
+                try:
+                    _leave(resource, failure)
+                finally:
+                    acquisition.prepared()
         finally:
             try:
                 selection = resource.selection
