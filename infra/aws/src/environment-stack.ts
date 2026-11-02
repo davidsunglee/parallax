@@ -1,4 +1,5 @@
 import {
+  Aspects,
   CfnOutput,
   CfnParameter,
   DefaultStackSynthesizer,
@@ -13,6 +14,7 @@ import type { EnvironmentConfiguration } from "./configuration.ts";
 import { AuroraCluster } from "./constructs/aurora-cluster.ts";
 import { PrivateNetwork } from "./constructs/private-network.ts";
 import { RunnerProject } from "./constructs/runner-project.ts";
+import { EnvironmentIdentities } from "./environment-identities.ts";
 import { CONFORMANCE_LOGIN } from "./role-bootstrap.ts";
 import type { RolloutConfiguration } from "./rollout-configuration.ts";
 import { testEnvironment, TestEnvironmentParameter } from "./test-environment.ts";
@@ -66,6 +68,7 @@ export class EnvironmentStack extends Stack {
       terminationProtection: true,
       analyticsReporting: false,
     });
+    Aspects.of(this).add(new EnvironmentIdentities());
     this.zones = configuration.availabilityZones;
     // An explicit, reviewed deploy input rather than a lookup: CloudFormation keeps
     // the previous value on every deploy that does not supply one, so the instance

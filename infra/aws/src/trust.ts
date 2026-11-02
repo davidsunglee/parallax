@@ -14,6 +14,14 @@ export const EXECUTION_POLICY_NAME = "parallax-ci-cfn-execution";
 export const BOUNDARY_POLICY_NAME = "parallax-ci-boundary";
 export const RUNNER_PROJECT_NAME = "parallax-ci";
 
+/**
+ * The IAM path every role and instance profile the environment stack creates
+ * is under, and the prefix of every function it names. Permissions match these
+ * rather than CloudFormation's generated names, which truncate the stack name.
+ */
+export const ENVIRONMENT_IAM_PATH = "/parallax-ci-environment/";
+export const ENVIRONMENT_FUNCTION_PREFIX = "parallax-ci-env-";
+
 /** The tag naming the CI environment; a stack-owned budget filters spend on it. */
 export const ENVIRONMENT_TAG = ["parallax:environment", "ci"] as const;
 
@@ -51,6 +59,7 @@ export interface TrustAnchors {
   /** Every role the environment stack creates: CloudFormation names them after it. */
   readonly environmentRolePattern: string;
   readonly environmentInstanceProfilePattern: string;
+  readonly environmentFunctionPattern: string;
   readonly stagingBucketArn: string;
   readonly bootstrapVersionParameterArn: string;
   readonly testEnvironmentParameterArn: string;
@@ -83,8 +92,9 @@ export function trustAnchors(
     executionPolicyArn: `${iam}:policy/${EXECUTION_POLICY_NAME}`,
     boundaryPolicyArn: `${iam}:policy/${BOUNDARY_POLICY_NAME}`,
     bootstrapRolePattern: `${iam}:role/cdk-${qualifier}-*`,
-    environmentRolePattern: `${iam}:role/${ENVIRONMENT_STACK_NAME}-*`,
-    environmentInstanceProfilePattern: `${iam}:instance-profile/${ENVIRONMENT_STACK_NAME}-*`,
+    environmentRolePattern: `${iam}:role${ENVIRONMENT_IAM_PATH}*`,
+    environmentInstanceProfilePattern: `${iam}:instance-profile${ENVIRONMENT_IAM_PATH}*`,
+    environmentFunctionPattern: `arn:aws:lambda:${region}:${account}:function:${ENVIRONMENT_FUNCTION_PREFIX}*`,
     stagingBucketArn: `arn:aws:s3:::cdk-${qualifier}-assets-${account}-${region}`,
     bootstrapVersionParameterArn: `arn:aws:ssm:${region}:${account}:parameter/cdk-bootstrap/${qualifier}/version`,
     testEnvironmentParameterArn: `arn:aws:ssm:${region}:${account}:parameter${TEST_ENVIRONMENT_PARAMETER}`,

@@ -150,7 +150,7 @@ export function executionPolicy(anchors: TrustAnchors): PolicyDocument {
       new PolicyStatement({
         sid: "EnvironmentFunctions",
         actions: ["lambda:*"],
-        resources: [regional("lambda", `function:${ENVIRONMENT_STACK_NAME}-*`)],
+        resources: [anchors.environmentFunctionPattern],
       }),
       new PolicyStatement({
         sid: "RunnerProject",

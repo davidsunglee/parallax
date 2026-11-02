@@ -19,7 +19,13 @@ import {
   ROLE_FACTS_SQL,
 } from "../src/role-bootstrap.ts";
 import { TEST_ENVIRONMENT_PARAMETER } from "../src/test-environment.ts";
-import { ENVIRONMENT_STACK_NAME, ENVIRONMENT_TAGS, RUNNER_PROJECT_NAME } from "../src/trust.ts";
+import {
+  ENVIRONMENT_FUNCTION_PREFIX,
+  ENVIRONMENT_IAM_PATH,
+  ENVIRONMENT_STACK_NAME,
+  ENVIRONMENT_TAGS,
+  RUNNER_PROJECT_NAME,
+} from "../src/trust.ts";
 import { allowed } from "./policy-evaluation.ts";
 import { ANCHORS } from "./rollout-world.ts";
 import { committedApp, flatten, PACKAGE_ROOT } from "./committed-app.ts";
@@ -330,12 +336,6 @@ describe("the role bootstrap", () => {
     expect(resources("AWS::StepFunctions::StateMachine")).toEqual([]);
   });
 
-  it("lets CloudFormation name every function after the stack, as the execution policy expects", () => {
-    for (const [id, fn] of resources("AWS::Lambda::Function")) {
-      expect(fn.Properties["FunctionName"], id).toBeUndefined();
-    }
-  });
-
   it("targets this cluster with its own master secret", () => {
     const [cluster] = only("AWS::RDS::DBCluster");
     const [secret] = only("AWS::SecretsManager::Secret");
@@ -462,6 +462,28 @@ describe("the deployment trust", () => {
     for (const [id, role] of roles) {
       expect(role.Properties["PermissionsBoundary"], id).toBe(ANCHORS.boundaryPolicyArn);
     }
+  });
+
+  it("puts every role and instance profile under its IAM path, and names every function", () => {
+    const identities = [...resources("AWS::IAM::Role"), ...resources("AWS::IAM::InstanceProfile")];
+    expect(identities.length).toBeGreaterThanOrEqual(5);
+    for (const [id, identity] of identities) {
+      expect(identity.Properties["Path"], id).toBe(ENVIRONMENT_IAM_PATH);
+    }
+    const names = resources("AWS::Lambda::Function").map(([, fn]) => fn.Properties["FunctionName"]);
+    expect(names.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(names).size).toBe(names.length);
+    for (const name of names) {
+      expect(name).toMatch(new RegExp(`^${ENVIRONMENT_FUNCTION_PREFIX}[A-Za-z0-9]+$`));
+      expect(String(name).length).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it("refers to the runner's role by its ARN, which carries the path", () => {
+    const [, project] = only("AWS::CodeBuild::Project");
+    expect(project.Properties["ServiceRole"]).toEqual({
+      "Fn::GetAtt": [expect.stringMatching(/^RunnerProjectRole/), "Arn"],
+    });
   });
 
   it("creates no identity provider, source connection, user, or managed policy of its own", () => {
