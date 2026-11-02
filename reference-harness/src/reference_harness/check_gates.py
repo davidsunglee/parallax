@@ -51,7 +51,7 @@ __all__ = [
     "main",
 ]
 
-_TOOLING_SCOPES: tuple[str, ...] = ("core", "harness")
+_TOOLING_SCOPES: tuple[str, ...] = ("core", "harness", "infra")
 """The scopes that validate a shared artifact or maintain the repository's own
 tooling. Every other scope is a language, discovered under ``languages/``."""
 
@@ -146,11 +146,16 @@ _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 _RUNNER_OPERATIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bruff format --check\b"), "format-check"),
     (re.compile(r"\bruff format\b"), "format"),
+    (re.compile(r"\bprettier (?:\S+ )*--check\b"), "format-check"),
+    (re.compile(r"\bprettier (?:\S+ )*--write\b"), "format"),
     (re.compile(r"\bruff check\b"), "lint"),
+    (re.compile(r"\beslint\b"), "lint"),
     (re.compile(r"\bmarkdownlint-cli2\b"), "lint"),
     (re.compile(r"\bjscpd\b"), "lint"),
     (re.compile(r"\b(?:based)?pyright\b"), "typecheck"),
+    (re.compile(r"\btsc (?:\S+ )*--noEmit\b"), "typecheck"),
     (re.compile(r"\bpytest\b"), "test"),
+    (re.compile(r"\bvitest\b"), "test"),
     (re.compile(r"\buv build\b"), "build"),
     (re.compile(r"\bpip-audit\b"), "audit"),
     (re.compile(r"\bdeptry\b"), "audit"),

@@ -48,8 +48,17 @@ export UV_FROZEN := "1"
 # Path to the reference harness module.
 harness := "reference-harness"
 
+# Path to the infrastructure workspace.
+infra := "infra"
+
 # Path to the Python implementation module.
 python := "languages/python"
+
+# The environment every infrastructure command runs in: no AWS credential, profile,
+# or role can reach it, and the instance metadata service is never asked, so no
+# verification of the infrastructure can authenticate to an account or look
+# anything up in one.
+infra_isolated := "env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_SECURITY_TOKEN -u AWS_PROFILE -u AWS_DEFAULT_PROFILE -u AWS_ROLE_ARN -u AWS_ROLE_SESSION_NAME -u AWS_WEB_IDENTITY_TOKEN_FILE -u AWS_CONTAINER_CREDENTIALS_RELATIVE_URI -u AWS_CONTAINER_CREDENTIALS_FULL_URI -u AWS_CONTAINER_AUTHORIZATION_TOKEN -u AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE -u CDK_DEFAULT_ACCOUNT -u CDK_DEFAULT_REGION AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_EC2_METADATA_DISABLED=true"
 
 # The minimum Pydantic release `parallax-core` declares. The floor and the locked
 # release are the two ends of the supported range, and the parity corpus is graded
@@ -84,7 +93,7 @@ check-lanes: check-dbfree check-db
 check-all: check check-cost report-check-all-summary
 
 [doc("Every blocking check that needs no live database.")]
-check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree python-check-dbfree
+check-dbfree: core-check lint-markdown lint-duplication harness-check-dbfree infra-check-dbfree python-check-dbfree
 
 [doc("Every blocking check that needs a live database (Docker).")]
 check-db: harness-check-db python-check-db
@@ -93,7 +102,7 @@ check-db: harness-check-db python-check-db
 check-cost: python-check-cost
 
 [doc("Duplicated-code scans, one per codebase, each against its own threshold.")]
-lint-duplication: harness-lint-duplication python-lint-duplication
+lint-duplication: harness-lint-duplication infra-lint-duplication python-lint-duplication
 
 [metadata("runtime:fast")]
 [doc("This file matches the grammar, roles, and composition core/spec/language-testing.md fixes.")]
@@ -282,6 +291,103 @@ harness-audit-dependencies:
 [doc("Format the harness in place (rewrites tracked sources).")]
 harness-format:
     cd {{harness}} && uv run ruff format .
+
+# ===========================================================================
+# Infrastructure: the TypeScript CDK packages under infra/, one pnpm workspace
+# sharing the root lockfile. Every command runs workspace-wide, so a provider
+# package added beside infra/aws is covered without a change here, and every
+# body runs under `infra_isolated`. The tools and thresholds are the workspace's
+# own configuration files.
+# ===========================================================================
+
+[doc("Every blocking check over the infrastructure workspace.")]
+infra-check: infra-check-dbfree
+
+[doc("Every infrastructure check; none needs a database or an AWS account.")]
+infra-check-dbfree: infra-format-check infra-lint infra-typecheck infra-check-dead-code infra-check-imports infra-check-sources infra-check-generated infra-check-lock infra-audit infra-audit-dependencies infra-check-assembly infra-coverage-diff
+
+[metadata("runtime:medium", "scheduling:dbfree")]
+[doc("Every infrastructure test, measuring every authored source's coverage.")]
+infra-test-dbfree:
+    cd {{infra}} && {{infra_isolated}} pnpm exec vitest run --project dbfree --coverage
+
+# Both prerequisites are soundness conditions, as for the Python scope's: an
+# authored source outside git, or outside the coverage inventory, would score no
+# changed line at all.
+[metadata("runtime:medium")]
+[doc("Every changed infrastructure line is covered.")]
+infra-coverage-diff: infra-test-dbfree infra-check-sources
+    cd {{infra}} && {{infra_isolated}} uv run --project ../{{harness}} diff-cover coverage/lcov.info --compare-branch origin/main --fail-under 100
+
+[metadata("runtime:fast")]
+[doc("Infrastructure formatting is deterministic and already applied.")]
+infra-format-check:
+    cd {{infra}} && {{infra_isolated}} pnpm exec prettier --check .
+
+[metadata("runtime:fast")]
+[doc("Type-aware ESLint over the infrastructure workspace, complexity ceiling included.")]
+infra-lint:
+    cd {{infra}} && {{infra_isolated}} pnpm exec eslint --max-warnings 0 .
+
+[metadata("runtime:fast")]
+[doc("Duplicated-code scan over the infrastructure workspace.")]
+infra-lint-duplication:
+    pnpm exec jscpd --config {{infra}}/.jscpd.json
+
+[metadata("runtime:fast")]
+[doc("Strict TypeScript over every infrastructure source, tool, and test.")]
+infra-typecheck:
+    cd {{infra}} && {{infra_isolated}} pnpm exec tsc --noEmit -p tsconfig.json
+
+[metadata("runtime:fast")]
+[doc("No unused file, export, or dependency, and no import of an undeclared package.")]
+infra-check-dead-code:
+    cd {{infra}} && {{infra_isolated}} pnpm exec knip --directory .. --config infra/knip.jsonc --workspace ./infra --workspace './infra/*'
+
+[metadata("runtime:fast")]
+[doc("Every infrastructure import keeps to the allowed dependencies and boundaries.")]
+infra-check-imports:
+    cd {{infra}} && {{infra_isolated}} pnpm exec depcruise --config .dependency-cruiser.json .
+
+[metadata("runtime:fast")]
+[doc("Every authored infrastructure source is tracked, type-checked, and tested or measured.")]
+infra-check-sources:
+    cd {{infra}} && {{infra_isolated}} node tools/check-sources.ts
+
+[metadata("runtime:fast")]
+[doc("Every type derived from an infrastructure schema is current.")]
+infra-check-generated:
+    cd {{infra}} && {{infra_isolated}} node tools/check-generated.ts
+
+[metadata("runtime:fast")]
+[doc("The shared pnpm lockfile agrees with every workspace manifest.")]
+infra-check-lock:
+    {{infra_isolated}} pnpm install --frozen-lockfile --lockfile-only
+
+[metadata("runtime:fast")]
+[doc("No known advisory reaches an infrastructure dependency, development ones included, beyond a reviewed exception.")]
+infra-audit:
+    cd {{infra}} && {{infra_isolated}} node tools/audit.ts
+
+[metadata("runtime:fast")]
+[doc("Every infrastructure dependency is pinned exactly, once, in the workspace catalog.")]
+infra-audit-dependencies:
+    cd {{infra}} && {{infra_isolated}} node tools/audit-dependencies.ts
+
+[metadata("runtime:medium")]
+[doc("Compile every provider package, then synthesize it from compiled output in an isolated environment.")]
+infra-build:
+    cd {{infra}} && {{infra_isolated}} node tools/build.ts
+
+[metadata("runtime:medium")]
+[doc("Every synthesized cloud assembly is complete and needed no uncommitted context.")]
+infra-check-assembly: infra-build
+    cd {{infra}} && {{infra_isolated}} node tools/check-assembly.ts
+
+[metadata("runtime:fast")]
+[doc("Format the infrastructure workspace in place (rewrites tracked sources).")]
+infra-format:
+    cd {{infra}} && pnpm exec prettier --write .
 
 # ===========================================================================
 # Language: Python. The uv workspace lives under languages/python/packages/*;

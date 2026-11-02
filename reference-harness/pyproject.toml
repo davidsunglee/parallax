@@ -19,6 +19,7 @@ dependencies = [
 dev = [
     "basedpyright>=1.39.10",
     "deptry==0.25.1",
+    "diff-cover>=10.6.0",
     "pytest>=8.0",
     "ruff>=0.16.3",
 ]

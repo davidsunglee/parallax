@@ -1,0 +1,102 @@
+{
+  "$schema": "https://raw.githubusercontent.com/sverweij/dependency-cruiser/main/src/schema/configuration.schema.json",
+  "forbidden": [
+    {
+      "name": "no-circular",
+      "comment": "A cycle leaves no module that can be understood or tested first.",
+      "severity": "error",
+      "from": {},
+      "to": { "circular": true }
+    },
+    {
+      "name": "not-to-unresolvable",
+      "comment": "Every import resolves to a file or an installed package.",
+      "severity": "error",
+      "from": {},
+      "to": { "couldNotResolve": true }
+    },
+    {
+      "name": "not-to-undeclared",
+      "comment": "A package is imported only by a workspace package that declares it, never through a sibling's or the root's installation.",
+      "severity": "error",
+      "from": {},
+      "to": { "dependencyTypes": ["npm-no-pkg", "npm-unknown"] }
+    },
+    {
+      "name": "not-to-deprecated",
+      "severity": "error",
+      "from": {},
+      "to": { "dependencyTypes": ["deprecated"] }
+    },
+    {
+      "name": "no-duplicate-dependency-types",
+      "comment": "A package is declared as exactly one kind of dependency.",
+      "severity": "error",
+      "from": {},
+      "to": { "moreThanOneDependencyType": true, "dependencyTypesNot": ["type-only"] }
+    },
+    {
+      "name": "production-not-to-development-dependency",
+      "comment": "What a provider synthesizes from may not import a development-only package.",
+      "severity": "error",
+      "from": { "path": "^[^/]+/(bin|src)/" },
+      "to": { "dependencyTypes": ["npm-dev"], "dependencyTypesNot": ["type-only"] }
+    },
+    {
+      "name": "production-not-to-tests-or-tools",
+      "severity": "error",
+      "from": { "path": "^[^/]+/(bin|src)/" },
+      "to": { "path": "(^|/)(test|tools)/" }
+    },
+    {
+      "name": "source-not-to-entry-point",
+      "comment": "A provider's app entry point composes its sources; nothing imports it.",
+      "severity": "error",
+      "from": { "pathNot": "^[^/]+/test/" },
+      "to": { "path": "^[^/]+/bin/" }
+    },
+    {
+      "name": "constructs-not-to-composition",
+      "comment": "A construct is composed by a stack or record, never the reverse.",
+      "severity": "error",
+      "from": { "path": "^[^/]+/src/constructs/" },
+      "to": { "path": "^[^/]+/src/(environment-stack|test-environment)\\.ts$" }
+    },
+    {
+      "name": "generated-imports-nothing",
+      "severity": "error",
+      "from": { "path": "^[^/]+/src/generated/" },
+      "to": { "dependencyTypesNot": ["core"] }
+    },
+    {
+      "name": "provider-not-to-another-package",
+      "comment": "A provider package reaches another workspace package only through a declared dependency, never by a relative path.",
+      "severity": "error",
+      "from": { "path": "^([^/]+)/(bin|src|test)/" },
+      "to": { "dependencyTypes": ["local"], "pathNot": "^$1/" }
+    },
+    {
+      "name": "tooling-not-to-provider",
+      "comment": "Workspace tooling serves every provider and depends on none.",
+      "severity": "error",
+      "from": { "path": "^(tools|test)/" },
+      "to": {
+        "dependencyTypes": ["local"],
+        "path": "^[^/]+/",
+        "pathNot": "^(tools|test)/|^[^/]+\\.(ts|json)$"
+      }
+    }
+  ],
+  "options": {
+    "doNotFollow": { "path": "node_modules" },
+    "exclude": { "path": "^(dist|cdk[.]out|coverage)/|^[^/]+/(dist|cdk[.]out|coverage)/" },
+    "tsPreCompilationDeps": true,
+    "tsConfig": { "fileName": "tsconfig.json" },
+    "combinedDependencies": false,
+    "enhancedResolveOptions": {
+      "exportsFields": ["exports"],
+      "conditionNames": ["import", "require", "node", "default", "types"],
+      "extensions": [".ts", ".js", ".json"]
+    }
+  }
+}

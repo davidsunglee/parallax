@@ -20,7 +20,7 @@ Every public verification command MUST read:
 ```
 
 - **scope** — omitted for a repository-wide command; otherwise `core`, `harness`,
-  or a language name.
+  `infra`, or a language name.
 - **operation** — exactly one entry from the closed vocabulary in [§2](#2-operation-vocabulary).
 - **qualifier** — a scheduling class ([§5](#5-scheduling-classification)), a
   semantic surface ([§3](#3-primary-semantic-surfaces)), or the subject the
@@ -28,8 +28,9 @@ Every public verification command MUST read:
 
 A scope is either a **language scope** — one language implementation, which
 ships a test suite under a published contract — or a **tooling scope**, which
-validates a shared artifact or maintains the repository's own tooling. `core`
-and `harness` are tooling scopes. The unscoped repository-wide commands compose
+validates a shared artifact or maintains the repository's own tooling. `core`,
+`harness`, and `infra` — the infrastructure the provider-hosted test
+environments are provisioned from — are tooling scopes. The unscoped repository-wide commands compose
 both kinds and are themselves governed by
 [§7](#7-command-roles-and-composition). Every rule below binds every scope
 unless it names a kind.

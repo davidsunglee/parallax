@@ -155,6 +155,36 @@ jobs:
           PARALLAX_DATABASES: ${{ matrix.database }}
         run: just harness-check-db
 
+  # Every infrastructure check: formatting, lint, types, dead code, import
+  # boundaries, the source inventory, generated types, the lockfile, dependency
+  # audits, a synthesis from compiled output, and tests with changed-line
+  # coverage. No AWS credential exists here, and every command also runs isolated
+  # from any. The harness environment supplies the changed-line coverage tool.
+  infra-check-dbfree:
+    runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # infra-coverage-diff compares changed lines against origin/main.
+          fetch-depth: 0
+      - uses: extractions/setup-just@v4
+      - uses: pnpm/action-setup@v6.1.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - run: pnpm install --frozen-lockfile
+      - name: Sync harness deps
+        working-directory: reference-harness
+        run: uv sync --frozen
+      - name: just infra-check-dbfree
+        run: just infra-check-dbfree
+
   # Static validation runs beside the tests; their canonical aggregates have
   # disjoint execution owners, including the native-source prerequisites.
   python-check-static:

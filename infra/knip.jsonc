@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreExportsUsedInFile": true,
+  // The root justfile runs it as the `depcruise` command, and Knip does not read
+  // the justfile.
+  "ignoreDependencies": ["dependency-cruiser"],
+  "workspaces": {
+    "infra": {
+      "entry": [
+        "tools/audit-dependencies.ts",
+        "tools/audit.ts",
+        "tools/build.ts",
+        "tools/check-assembly.ts",
+        "tools/check-generated.ts",
+        "tools/check-sources.ts",
+        "test/**/*.test.ts",
+      ],
+      "project": ["**/*.ts"],
+    },
+    "infra/*": {
+      "entry": ["bin/*.ts", "test/**/*.test.ts"],
+      "project": ["**/*.ts"],
+    },
+  },
+}

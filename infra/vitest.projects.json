@@ -1,0 +1,7 @@
+[
+  {
+    "name": "dbfree",
+    "description": "Every infrastructure test: none reaches a database, an AWS account, or an interpreter of its own.",
+    "include": ["test/**/*.test.ts", "*/test/**/*.test.ts"]
+  }
+]

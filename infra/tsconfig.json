@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["*.ts", "tools", "test", "*/bin", "*/src", "*/tools", "*/test"],
+  "exclude": ["**/node_modules", "**/dist", "**/cdk.out", "**/coverage"]
+}
