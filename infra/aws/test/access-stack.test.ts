@@ -356,6 +356,8 @@ describe("the boundary on environment roles", () => {
 
   it("caps even an administrator-like identity policy at the environment's services", () => {
     expect(bounded("rds-db:connect", "*")).toBe(true);
+    // The cluster has no Data API; the role bootstrap signs in from inside the VPC.
+    expect(bounded("rds-data:ExecuteStatement", "*")).toBe(false);
     expect(bounded("iam:UpdateAssumeRolePolicy", ANCHORS.deployRoleArn)).toBe(false);
     expect(bounded("iam:PassRole", ANCHORS.bootstrapRoleArn("cfn-exec"))).toBe(false);
     expect(bounded("cloudformation:UpdateStack", stack(ACCESS_STACK_NAME))).toBe(false);

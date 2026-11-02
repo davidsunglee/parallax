@@ -269,7 +269,6 @@ export function boundaryPolicy(anchors: TrustAnchors): PolicyDocument {
           "codebuild:*",
           "ssm:*",
           "rds-db:connect",
-          "rds-data:ExecuteStatement",
           "s3:GetObject",
           "kms:DescribeKey",
           "kms:CreateGrant",
