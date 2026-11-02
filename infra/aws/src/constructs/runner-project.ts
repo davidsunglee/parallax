@@ -1,7 +1,7 @@
 import { Duration, RemovalPolicy, Validations } from "aws-cdk-lib";
 import * as codebuild from "aws-cdk-lib/aws-codebuild";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
-import { Policy, PolicyStatement, type IRole } from "aws-cdk-lib/aws-iam";
+import { Policy, PolicyStatement, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import * as logs from "aws-cdk-lib/aws-logs";
 import type * as rds from "aws-cdk-lib/aws-rds";
 import type * as ssm from "aws-cdk-lib/aws-ssm";
@@ -37,8 +37,12 @@ export class RunnerProject extends Construct {
       description: "Ephemeral CI runners: outbound only",
       allowAllOutbound: true,
     });
+    const role = new Role(this, "ProjectRole", {
+      assumedBy: new ServicePrincipal("codebuild.amazonaws.com"),
+    });
     this.project = new codebuild.Project(this, "Project", {
       projectName: props.projectName,
+      role,
       description: "Ephemeral GitHub Actions runners for the Parallax cloud suite",
       source: codebuild.Source.gitHub({
         owner: props.repository.owner,
@@ -87,7 +91,7 @@ export class RunnerProject extends Construct {
     // project, so this grant must exist first. The role's default policy cannot
     // carry it: that policy waits for the cluster it grants access to.
     const source = new Policy(this, "SourcePolicy", {
-      roles: [this.project.role as IRole],
+      roles: [role],
       statements: [
         new PolicyStatement({
           actions: [...SOURCE_USE_ACTIONS],
