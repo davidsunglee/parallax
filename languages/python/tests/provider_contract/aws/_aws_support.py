@@ -16,9 +16,11 @@ APPLICATIONS: Final = {"writer": WRITER_APPLICATION, "reader": READER_APPLICATIO
 
 _HOLDS = "select count(*) from pg_stat_activity where pid = %s and application_name = %s"
 _ACTIVITY = "select pid, query_start from pg_stat_activity where application_name = %s"
-_WRITING = (
+# An open transaction rather than an assigned xid: a transaction's writes are
+# buffered until it flushes, so it has written nothing yet while its body runs.
+_IN_TRANSACTION = (
     "select count(*) from pg_stat_activity "
-    "where application_name = %s and backend_xid is not null and pid <> pg_backend_pid()"
+    "where application_name = %s and xact_start is not null and pid <> pg_backend_pid()"
 )
 
 
@@ -68,13 +70,13 @@ def activity(run: AwsRun, route: str) -> set[tuple[str, object, object]]:
     }
 
 
-def writing(run: AwsRun, route: str) -> set[str]:
-    """Every instance on which a backend of *route*'s application holds a
-    transaction that has written."""
+def in_transaction(run: AwsRun, route: str) -> set[str]:
+    """Every instance on which a backend of *route*'s application holds an open
+    transaction."""
     return {
         instance.identifier
         for instance in run.environment.instances
-        if count(run.session(instance.host), _WRITING, [APPLICATIONS[route]])
+        if count(run.session(instance.host), _IN_TRANSACTION, [APPLICATIONS[route]])
     }
 
 
