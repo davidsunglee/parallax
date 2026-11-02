@@ -15,7 +15,6 @@ import {
   oidcProviderFinding,
   sourceConnectionFinding,
 } from "../tools/aws-assessment.ts";
-import { bootstrapPermissions, pinnedBootstrapTemplate } from "../tools/bootstrap-template.ts";
 import {
   ABSENT_STACK,
   ACCOUNT,
@@ -528,31 +527,25 @@ describe("the bootstrap check", () => {
     }
   });
 
-  it("judges the file-publishing role against the key the bootstrap created", () => {
-    const keyArn = `arn:aws:kms:us-east-2:${ACCOUNT}:key/1234abcd`;
-    const created = bootstrapPermissions(pinnedBootstrapTemplate(), ANCHORS, { keyId: "", keyArn });
-    const keyed = (outputs: unknown) => ({
-      ...withStack(bootstrapStack, (stack) => ({
+  it("treats any file-asset key but the AWS managed one as drift, a created key included", () => {
+    const keyed = (keyId: string) =>
+      withStack(bootstrapStack, (stack) => ({
         ...stack,
         Parameters: [
           ...(stack["Parameters"] as { ParameterKey: string }[]).filter(
             (entry) => entry.ParameterKey !== "FileAssetsBucketKmsKeyId",
           ),
-          { ParameterKey: "FileAssetsBucketKmsKeyId", ParameterValue: "" },
+          { ParameterKey: "FileAssetsBucketKmsKeyId", ParameterValue: keyId },
         ],
-        Outputs: outputs,
-      })),
-      [`iam get-role-policy --role-name ${role("file-publishing")} --policy-name ${publishingPolicy}`]:
-        json({ PolicyDocument: created.filePublishingInline[publishingPolicy] }),
-    });
-    expect(
-      bootstrapFinding(
-        world(keyed([{ OutputKey: "FileAssetKeyArn", OutputValue: keyArn }])).context,
-      ).state,
-    ).toBe("verified");
-    expect(bootstrapFinding(world(keyed(undefined)).context).detail).toContain(
-      "the file-publishing role holds other permissions",
-    );
+      }));
+    expect(bootstrapFinding(world(keyed("AWS_MANAGED_KEY")).context).state).toBe("verified");
+    for (const keyId of ["", `arn:aws:kms:us-east-2:${ACCOUNT}:key/1234abcd`]) {
+      const finding = bootstrapFinding(world(keyed(keyId)).context);
+      expect(finding.state).toBe("drift");
+      expect(finding.detail).toContain(
+        "the bootstrap's file assets are not encrypted with the AWS managed key",
+      );
+    }
   });
 
   it("ignores a refusal in a role's trust and a document's spelling", () => {

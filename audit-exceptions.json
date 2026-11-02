@@ -1,0 +1,7 @@
+[
+  {
+    "advisory": "GHSA-238p-pmpm-9mq7",
+    "package": "katex",
+    "reason": "markdownlint 0.42.0 pins micromark-extension-math 3.1.0, which accepts only katex ^0.16, and the fix exists only in katex 0.18.2. The advisory needs KaTeX to render; markdownlint imports only the extension's math syntax and tokenizes with micromark's parse, preprocess, and postprocess, never mathHtml or an HTML compile, so katex is loaded by the extension's entry point but renderToString never runs."
+  }
+]

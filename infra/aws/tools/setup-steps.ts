@@ -9,7 +9,11 @@ import {
   oidcProviderFinding,
   sourceConnectionFinding,
 } from "./aws-assessment.ts";
-import { narrowedBootstrapTemplate, pinnedBootstrapTemplate } from "./bootstrap-template.ts";
+import {
+  BOOTSTRAP_KMS_KEY_ID,
+  narrowedBootstrapTemplate,
+  pinnedBootstrapTemplate,
+} from "./bootstrap-template.ts";
 import { budgetFindings, readBudgets } from "./budget-assessment.ts";
 import { CHECK, guarded, report, type Finding } from "./findings.ts";
 import {
@@ -111,6 +115,8 @@ const bootstrap: SetupStep = {
         anchors.executionPolicyArn,
         "--custom-permissions-boundary",
         BOUNDARY_POLICY_NAME,
+        "--bootstrap-kms-key-id",
+        BOOTSTRAP_KMS_KEY_ID,
         "--termination-protection",
         "--no-previous-parameters",
         "--no-notices",

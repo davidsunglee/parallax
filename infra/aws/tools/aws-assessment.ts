@@ -20,6 +20,7 @@ import {
   type TrustAnchors,
 } from "../src/trust.ts";
 import {
+  BOOTSTRAP_KMS_KEY_ID,
   BOOTSTRAP_VARIANT,
   bootstrapPermissions,
   pinnedBootstrapTemplate,
@@ -437,14 +438,8 @@ export function bootstrapFinding(context: AwsContext): Finding {
   const parameters = new Map(
     (stack.Parameters ?? []).map((entry) => [entry.ParameterKey, entry.ParameterValue]),
   );
-  const outputs = new Map(
-    (stack.Outputs ?? []).map((output) => [output.OutputKey, output.OutputValue]),
-  );
   const { anchors } = context;
-  const approved = bootstrapPermissions(pinnedBootstrapTemplate(), anchors, {
-    keyId: parameters.get("FileAssetsBucketKmsKeyId") ?? "",
-    keyArn: outputs.get("FileAssetKeyArn") ?? "",
-  });
+  const approved = bootstrapPermissions(pinnedBootstrapTemplate(), anchors);
   const deployRole = liveRole(context, anchors.bootstrapRoleName("deploy"));
   const publishingRole = liveRole(context, anchors.bootstrapRoleName("file-publishing"));
   const executionRole = liveRole(context, anchors.bootstrapRoleName("cfn-exec"));
@@ -464,6 +459,10 @@ export function bootstrapFinding(context: AwsContext): Finding {
         parameters.get("CloudFormationExecutionPolicies") === anchors.executionPolicyArn &&
           parameters.get("InputPermissionsBoundary") === BOUNDARY_POLICY_NAME,
         "the bootstrap was not given the pinned execution policy and boundary",
+      ],
+      [
+        parameters.get("FileAssetsBucketKmsKeyId") === BOOTSTRAP_KMS_KEY_ID,
+        "the bootstrap's file assets are not encrypted with the AWS managed key",
       ],
       [
         BOOTSTRAP_ROLES.every((role) => trustsOnlyDeployRole(context, role)),

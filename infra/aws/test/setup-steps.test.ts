@@ -172,7 +172,7 @@ describe("the access-stack step", () => {
 });
 
 describe("the bootstrap step", () => {
-  it("bootstraps the narrowed template with the bounded policy and boundary, outside the app", () => {
+  it("bootstraps the narrowed template with the bounded policy, boundary, and managed key, outside the app", () => {
     const { status, attached } = apply({}, "bootstrap");
     expect(status).toBe(0);
     const [command] = attached;
@@ -184,6 +184,7 @@ describe("the bootstrap step", () => {
     expect(flag("--toolkit-stack-name")).toBe(BOOTSTRAP_STACK_NAME);
     expect(flag("--cloudformation-execution-policies")).toBe(ANCHORS.executionPolicyArn);
     expect(flag("--custom-permissions-boundary")).toBe(BOUNDARY_POLICY_NAME);
+    expect(flag("--bootstrap-kms-key-id")).toBe("AWS_MANAGED_KEY");
     expect(args).toEqual(
       expect.arrayContaining(["--termination-protection", "--no-previous-parameters"]),
     );

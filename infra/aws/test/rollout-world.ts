@@ -86,13 +86,7 @@ const managedDocument = (name: string): unknown =>
 const DEPLOY_ROLE_POLICY = ACCESS_RESOURCES.find((resource) => resource.Type === "AWS::IAM::Role")
   ?.Properties.Policies?.[0]?.PolicyDocument;
 
-/** The bootstrap's file-asset encryption as the pinned CLI chooses it on a first bootstrap. */
-export const BOOTSTRAP_KEY = { keyId: "AWS_MANAGED_KEY", keyArn: "AWS_MANAGED_KEY" } as const;
-export const BOOTSTRAP_PERMISSIONS = bootstrapPermissions(
-  pinnedBootstrapTemplate(),
-  ANCHORS,
-  BOOTSTRAP_KEY,
-);
+export const BOOTSTRAP_PERMISSIONS = bootstrapPermissions(pinnedBootstrapTemplate(), ANCHORS);
 
 /** The reads naming role *name*'s inline policies, their documents, and its managed policies. */
 function rolePolicies(
@@ -241,9 +235,9 @@ export function healthyReplies(): Record<string, Reply> {
             ParameterValue: ANCHORS.executionPolicyArn,
           },
           { ParameterKey: "InputPermissionsBoundary", ParameterValue: BOUNDARY_POLICY_NAME },
-          { ParameterKey: "FileAssetsBucketKmsKeyId", ParameterValue: BOOTSTRAP_KEY.keyId },
+          { ParameterKey: "FileAssetsBucketKmsKeyId", ParameterValue: "AWS_MANAGED_KEY" },
         ],
-        Outputs: [{ OutputKey: "FileAssetKeyArn", OutputValue: BOOTSTRAP_KEY.keyArn }],
+        Outputs: [{ OutputKey: "FileAssetKeyArn", OutputValue: "AWS_MANAGED_KEY" }],
       },
     ),
     ...Object.fromEntries(

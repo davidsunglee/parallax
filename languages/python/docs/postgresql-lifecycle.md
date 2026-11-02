@@ -494,9 +494,12 @@ The driver reports a refusal the server sent while connecting with no
 SQLSTATE. Where the endpoint's login sends a password — a configured credential
 source, an IAM token included — the failed connection still says it sent one,
 and that is read as the server refusing it (`reason="authentication_refused"`):
-a rejected password or token, an unknown login, and a refusal the server sends
-only once it accepted the login, such as a database that does not exist, all
-read this way, fail the open even under deferrable startup, and are never a
+a rejected password or token, an unknown login, or anything else the server
+refused once the login was offered. The one exception is a database that does
+not exist: where the server's message is exactly PostgreSQL's
+`database "<name>" does not exist`, the reason is `"preparation_failed"`, and a
+reworded or translated message stays `"authentication_refused"`. Either way the
+refusal fails the open even under deferrable startup and is never a
 reason to fall back. A login that sends no password carries no such sign, so a
 server refusing it before any credential is exchanged — a `pg_hba.conf`
 rejection, say — reaches Parallax looking exactly like an unreachable server,
