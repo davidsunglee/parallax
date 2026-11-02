@@ -44,6 +44,9 @@ export function deploy(context: RolloutContext, revision: string): number {
       "--exclusively",
       "--require-approval",
       "never",
+      // A failed deployment keeps what it created, so the next one resumes at the
+      // failure: a rollback cannot delete the deletion-protected cluster.
+      "--no-rollback",
       "--ci",
       "--no-notices",
       "--progress",
