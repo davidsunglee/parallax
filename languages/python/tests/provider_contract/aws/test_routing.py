@@ -14,16 +14,23 @@ from typing import Any
 import pytest
 
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import BeginFailed, Committed, DatabaseConnection, RoutePolicy
+from parallax.core.db_port import (
+    BeginFailed,
+    CallbackRaised,
+    Committed,
+    DatabaseConnection,
+    RolledBack,
+    RoutePolicy,
+)
 from parallax.snapshot import TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.routed_reads import LAYOUTS, MODEL, READS, SEEDED, Ledger
 from tests.provider_contract.aws._aws_support import (
     activity,
     holding,
+    in_transaction,
     instances,
     seeded,
-    writing,
 )
 
 _PID = "select pg_backend_pid()"
@@ -61,8 +68,8 @@ def test_a_writable_transaction_from_a_reader_defaulted_scope_runs_on_the_writer
 
     def body(tx: TxnContext) -> None:
         tx.insert(Ledger(id=3, memo="added-3"))
-        placed.append(writing(aws_run, "writer"))
-        placed.append(writing(aws_run, "reader"))
+        placed.append(in_transaction(aws_run, "writer"))
+        placed.append(in_transaction(aws_run, "reader"))
 
     db.transact(body)
 
@@ -93,8 +100,9 @@ def test_a_write_inside_a_read_only_transaction_is_refused_natively_on_either_ro
     finally:
         runtime.close()
 
-    assert not isinstance(refused, Committed)
-    failure = getattr(refused, "error", None)
+    assert isinstance(refused, RolledBack)
+    assert isinstance(refused.trigger, CallbackRaised)
+    failure = refused.trigger.error
     assert isinstance(failure, DatabaseError)
     assert failure.native_code == "25006"
 
