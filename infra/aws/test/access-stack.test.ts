@@ -9,6 +9,7 @@ import {
   BOOTSTRAP_STACK_NAME,
   BOUNDARY_POLICY_NAME,
   DEPLOY_ROLE_NAME,
+  ENVIRONMENT_IAM_PATH,
   ENVIRONMENT_STACK_NAME,
   ENVIRONMENT_TAGS,
   EXECUTION_POLICY_NAME,
@@ -49,7 +50,7 @@ const execution = managedPolicy(EXECUTION_POLICY_NAME);
 const boundary = managedPolicy(BOUNDARY_POLICY_NAME);
 
 const iam = `arn:aws:iam::${ACCOUNT}`;
-const environmentRole = `${iam}:role/${ENVIRONMENT_STACK_NAME}-RunnerProjectRole-ABC`;
+const environmentRole = `${iam}:role${ENVIRONMENT_IAM_PATH}ParallaxCiEnvironmentStac-RunnerProjectRole-ABC`;
 const stack = (name: string): string => ANCHORS.stackArn(name).replace("*", "1");
 const protectedRoles = [
   ANCHORS.deployRoleArn,
@@ -201,22 +202,6 @@ describe("the bounded execution role", () => {
     expect(
       may("iam:PassRole", environmentRole, { "iam:PassedToService": "codebuild.amazonaws.com" }),
     ).toBe(true);
-    expect(
-      may(
-        "lambda:CreateFunction",
-        `arn:aws:lambda:us-east-2:${ACCOUNT}:function:${ENVIRONMENT_STACK_NAME}-AWS679`,
-      ),
-    ).toBe(true);
-    const roleBootstrap = (name: string): string =>
-      `arn:aws:lambda:us-east-2:${ACCOUNT}:function:${ENVIRONMENT_STACK_NAME}-AuroraRoleBootstrap${name}-AbC123`;
-    for (const action of [
-      "lambda:CreateFunction",
-      "lambda:InvokeFunction",
-      "lambda:AddPermission",
-    ]) {
-      expect(may(action, roleBootstrap("Handler05")), action).toBe(true);
-      expect(may(action, roleBootstrap("Providerframew")), action).toBe(true);
-    }
     expect(may("logs:CreateLogGroup", "*", inRegion)).toBe(true);
     expect(may("logs:PutRetentionPolicy", "*", inRegion)).toBe(true);
     expect(
@@ -249,6 +234,48 @@ describe("the bounded execution role", () => {
         { "iam:AWSServiceName": "ecs.amazonaws.com" },
       ),
     ).toBe(false);
+  });
+
+  it("creates, invokes, and on rollback deletes every identity and function the environment template names", () => {
+    const environment = Template.fromStack(stacks.environment).toJSON()["Resources"] as Record<
+      string,
+      Resource
+    >;
+    const named = (type: string): Resource["Properties"][] =>
+      Object.values(environment)
+        .filter((resource) => resource.Type === type)
+        .map((resource) => resource.Properties);
+    // CloudFormation generates the names, truncating the stack's own name to fit,
+    // so each identity is judged by its path alone.
+    const generated = "ParallaxCiEnvironmentStac-LogicalIdTruncatedTo25-AbCdEf123456";
+    for (const role of named("AWS::IAM::Role")) {
+      const arn = `${iam}:role${String(role["Path"])}${generated}`;
+      expect(may("iam:CreateRole", arn, withBoundary), arn).toBe(true);
+      for (const action of ["iam:PutRolePolicy", "iam:DetachRolePolicy", "iam:DeleteRole"]) {
+        expect(may(action, arn), `${action} ${arn}`).toBe(true);
+      }
+    }
+    for (const profile of named("AWS::IAM::InstanceProfile")) {
+      const arn = `${iam}:instance-profile${String(profile["Path"])}${generated}`;
+      for (const action of [
+        "iam:CreateInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:DeleteInstanceProfile",
+      ]) {
+        expect(may(action, arn), `${action} ${arn}`).toBe(true);
+      }
+    }
+    for (const fn of named("AWS::Lambda::Function")) {
+      const arn = `arn:aws:lambda:us-east-2:${ACCOUNT}:function:${String(fn["FunctionName"])}`;
+      for (const action of [
+        "lambda:CreateFunction",
+        "lambda:InvokeFunction",
+        "lambda:AddPermission",
+        "lambda:DeleteFunction",
+      ]) {
+        expect(may(action, arn), `${action} ${arn}`).toBe(true);
+      }
+    }
   });
 
   it("reads every SSM parameter the environment template resolves, and changes none", () => {
@@ -369,7 +396,7 @@ describe("the boundary on environment roles", () => {
     expect(
       bounded(
         "iam:AddRoleToInstanceProfile",
-        `${iam}:instance-profile/${ENVIRONMENT_STACK_NAME}-Nat`,
+        `${iam}:instance-profile${ENVIRONMENT_IAM_PATH}ParallaxCiEnvironmentStac-Nat`,
       ),
     ).toBe(true);
     expect(

@@ -1,4 +1,4 @@
-import { Duration, RemovalPolicy } from "aws-cdk-lib";
+import { Duration, RemovalPolicy, Validations } from "aws-cdk-lib";
 import * as codebuild from "aws-cdk-lib/aws-codebuild";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
@@ -70,6 +70,12 @@ export class RunnerProject extends Construct {
           }),
         },
       },
+    });
+    Validations.of(this.project).acknowledge({
+      id: "CloudFormation-Validate::E3050",
+      reason:
+        "The service role is referenced by its ARN, which carries the role's IAM path; " +
+        "the rule follows that GetAtt as though it were a Ref to the role's bare name.",
     });
     // The project reads its source through the existing connection rather than
     // account-wide source credentials, which the library cannot yet express.
