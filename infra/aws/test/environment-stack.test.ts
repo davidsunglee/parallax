@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Template } from "aws-cdk-lib/assertions";
@@ -5,6 +6,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ConfigurationError } from "../src/configuration.ts";
 import { ROLE_BOOTSTRAP_ID, ROLE_BOOTSTRAP_TYPE } from "../src/constructs/aurora-cluster.ts";
+import { NAT_SETUP_COMMANDS } from "../src/constructs/private-network.ts";
 import {
   NAT_IMAGE_PARAMETER,
   REVISION_PARAMETER,
@@ -144,6 +146,29 @@ describe("the private network", () => {
     ];
     expect(parameter).toMatchObject({ Type: "AWS::EC2::Image::Id" });
     expect(parameter).not.toHaveProperty("Default");
+  });
+
+  it("sets up forwarding within a nano instance's memory, without net-tools, failing loudly", () => {
+    const [, nat] = only("AWS::EC2::Instance");
+    const script = (nat.Properties["UserData"] as { "Fn::Base64": string })["Fn::Base64"];
+    expect(script).toBe(["#!/bin/bash", ...NAT_SETUP_COMMANDS].join("\n"));
+    const at = (command: string): number =>
+      NAT_SETUP_COMMANDS.findIndex((c) => c.includes(command));
+    expect(at("set -euo pipefail")).toBe(0);
+    expect(at("swapon")).toBeLessThan(at("dnf install -y iptables-services"));
+    expect(at("dnf install")).toBeLessThan(at("swapoff"));
+    expect(at("systemctl enable --now iptables")).toBeLessThan(at("MASQUERADE"));
+    expect(at("MASQUERADE")).toBeLessThan(at("iptables -F FORWARD"));
+    expect(at("iptables -F FORWARD")).toBeLessThan(at("iptables-save"));
+    expect(script).toContain("ip -o -4 route show default");
+    expect(script).not.toMatch(/\$\(route\b|\byum\b|\bservice iptables\b/);
+  });
+
+  it("replaces the NAT instance whenever its first-boot setup changes", () => {
+    const [id, nat] = only("AWS::EC2::Instance");
+    const script = (nat.Properties["UserData"] as { "Fn::Base64": string })["Fn::Base64"];
+    const digest = createHash("sha256").update(script).digest("hex").slice(0, 16);
+    expect(id).toMatch(new RegExp(`^NetworkVpcpublicSubnet1NatInstance[0-9A-F]{8}${digest}$`));
   });
 
   it("admits traffic to the NAT instance from the private subnets only", () => {
