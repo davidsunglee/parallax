@@ -15,6 +15,7 @@ APPLICATIONS: Final = {"writer": WRITER_APPLICATION, "reader": READER_APPLICATIO
 """The application name each route's sessions carry."""
 
 _HOLDS = "select count(*) from pg_stat_activity where pid = %s and application_name = %s"
+_BACKENDS = "select pid from pg_stat_activity where application_name = %s"
 _WRITING = (
     "select count(*) from pg_stat_activity "
     "where application_name = %s and backend_xid is not null and pid <> pg_backend_pid()"
@@ -52,6 +53,16 @@ def holding(run: AwsRun, pid: object, route: str) -> set[str]:
         instance.identifier
         for instance in run.environment.instances
         if count(run.session(instance.host), _HOLDS, [pid, APPLICATIONS[route]])
+    }
+
+
+def backends(run: AwsRun, route: str) -> set[tuple[str, object]]:
+    """Every backend carrying *route*'s application name, with the instance it
+    runs on."""
+    return {
+        (instance.identifier, pid)
+        for instance in run.environment.instances
+        for (pid,) in run.session(instance.host).execute(_BACKENDS, [APPLICATIONS[route]])
     }
 
 

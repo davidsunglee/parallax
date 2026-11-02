@@ -150,14 +150,20 @@ CONNECT_SEAMS: frozenset[str] = frozenset(
 )
 
 # Fully qualified callables that reach the provider: the published environment,
-# a cloud run's lifetime, the AWS credential chain, and the certificate bundle
-# fetched over HTTP. `parallax.aws.rds_endpoint` is deliberately absent: it is
-# configuration that resolves no credential until a connection is opened.
+# a cloud run's lifetime, the real ports that run reaches the environment through
+# (constructed on the AWS credential chain, opened by fetching the certificate
+# bundle, and opening IAM-signed sessions), the AWS credential chain, and the
+# certificate bundle fetched over HTTP. `parallax.aws.rds_endpoint` is
+# deliberately absent: it is configuration that resolves no credential until a
+# connection is opened.
 AWS_SEAMS: frozenset[str] = frozenset(
     {
         "botocore.session.Session",
         "botocore.session.get_session",
         "tests._support.aws_environment.PublishedEnvironment.load",
+        "tests._support.aws_run.AwsPorts",
+        "tests._support.aws_run.AwsPorts.open",
+        "tests._support.aws_run.AwsPorts.session",
         "tests._support.aws_run.AwsRun.open",
         "urllib.request.urlopen",
     }
@@ -179,6 +185,7 @@ SEAMS: frozenset[str] = PROVISION_SEAMS | CONNECT_SEAMS | AWS_SEAMS
 INSTANCE_SEAMS: Mapping[str, frozenset[str]] = {
     "parallax.postgres.PostgresAdapter": frozenset({"open"}),
     "parallax.postgres.adapter.PostgresAdapter": frozenset({"open"}),
+    "tests._support.aws_run.AwsPorts": frozenset({"session"}),
 }
 
 # Members through which a declared value reaches one of the seams above. A matrix

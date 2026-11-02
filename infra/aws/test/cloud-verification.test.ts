@@ -80,8 +80,29 @@ const HEALTHY: Record<string, Reply> = {
   [JOBS]: verdict("completed", "success"),
 };
 
-function verified(replies: Record<string, Reply> = {}) {
-  const scripted = world({ ...HEALTHY, ...replies });
+const NONE_YET = json({ workflow_runs: [] });
+
+/**
+ * The scripted world, in which the runs listing answers *replies*' listing only
+ * once the dispatch was made, and *earlier* before it.
+ */
+function dispatching(replies: Record<string, Reply> = {}, earlier: Reply = NONE_YET) {
+  const table = { ...HEALTHY, ...replies };
+  const [dispatch, listed] = [table[DISPATCH], table[RUNS]];
+  if (dispatch === undefined || listed === undefined) throw new Error("no reply scripted");
+  let dispatched = false;
+  return world({
+    ...table,
+    [DISPATCH]: () => {
+      dispatched = true;
+      return dispatch;
+    },
+    [RUNS]: () => (dispatched ? listed : earlier),
+  });
+}
+
+function verified(replies: Record<string, Reply> = {}, earlier: Reply = NONE_YET) {
+  const scripted = dispatching(replies, earlier);
   return { ...scripted, ...verifyCloud(scripted.context, REVISION, scripted.clock) };
 }
 
@@ -157,6 +178,31 @@ describe("proving a deployment through the cloud path", () => {
     expect(problems).toEqual(["2 dispatched runs match; none is this one"]);
   });
 
+  it("never takes a run listed before its dispatch for the one it dispatched", () => {
+    const earlier = dispatchedRun({
+      id: 70,
+      html_url: "https://github.com/davidsunglee/parallax/actions/runs/70",
+      created_at: new Date(ScriptedClock.START - 30_000).toISOString(),
+    });
+    const { problems, verification } = verified(
+      {
+        [RUNS]: inTurn(
+          json({ workflow_runs: [earlier] }),
+          json({ workflow_runs: [dispatchedRun(), earlier] }),
+        ),
+      },
+      json({ workflow_runs: [earlier] }),
+    );
+    expect(problems).toEqual([]);
+    expect(verification.run).toBe(RUN_URL);
+  });
+
+  it("dispatches nothing when it cannot list the runs already there", () => {
+    const { problems, captured } = verified({}, failed("HTTP 500"));
+    expect(problems).toEqual([`gh api --method GET ${RUNS.slice(4)} failed: HTTP 500`]);
+    expect(captured.every(readsOnly)).toBe(true);
+  });
+
   it("accepts no run another actor, event, commit, or an earlier dispatch started", () => {
     const { problems, clock } = verified({
       [RUNS]: json({
@@ -205,7 +251,7 @@ describe("proving a deployment through the cloud path", () => {
 
 describe("the verify-cloud command", () => {
   function run(argv: readonly string[], replies: Record<string, Reply> = {}) {
-    const scripted = world({ ...HEALTHY, ...replies });
+    const scripted = dispatching(replies);
     return main(argv, scripted.shell, scripted.context.root, scripted.clock);
   }
 
