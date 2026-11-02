@@ -19,7 +19,7 @@ from parallax.snapshot import TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.routed_reads import LAYOUTS, MODEL, READS, SEEDED, Ledger
 from tests.provider_contract.aws._aws_support import (
-    backends,
+    activity,
     holding,
     instances,
     seeded,
@@ -130,12 +130,15 @@ def test_every_read_shape_and_layout_reads_from_the_instances_its_scopes_policy_
     aws_run: Any, shape: str, layout: str, policy: RoutePolicy, route: str
 ) -> None:
     seeded(aws_run)
-    before = {name: backends(aws_run, name) for name in ("writer", "reader")}
     db = own_root(connect(aws_run.adapter(), MODEL, read_policy=policy)).using_database_login()
+    before = {name: activity(aws_run, name) for name in ("writer", "reader")}
 
     assert READS[shape](db, LAYOUTS[layout]) == SEEDED
-    opened = {name: backends(aws_run, name) - before[name] for name in before}
-    assert opened[route]
-    assert {identifier for identifier, _pid in opened[route]} <= instances(aws_run, route)
+    served = {
+        name: {(identifier, pid) for identifier, pid, _started in activity(aws_run, name) - idle}
+        for name, idle in before.items()
+    }
+    assert served[route]
+    assert {identifier for identifier, _pid in served[route]} <= instances(aws_run, route)
     if route == "writer":
-        assert opened["reader"] == set()
+        assert served["reader"] == set()
