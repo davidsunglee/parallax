@@ -78,8 +78,8 @@ describe("the deploy inputs", () => {
     }
   });
 
-  it("are committed with no image chosen yet", () => {
-    expect(world().context.inputs).toEqual({ natInstanceImage: null });
+  it("are committed with a reviewed image chosen", () => {
+    expect(world().context.inputs.natInstanceImage).toMatch(/^ami-/);
     expect(world().context.root).toBe(PACKAGE_ROOT);
   });
 });
