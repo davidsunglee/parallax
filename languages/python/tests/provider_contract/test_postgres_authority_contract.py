@@ -9,6 +9,7 @@ import pytest
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import ConnectionAcquisitionError, Invalidated, PoolAvailable
 from parallax.postgres import PoolOptions, PostgresRole
+from tests._support.aws_run import AS_LOGIN
 from tests._support.ended_sessions import end_backend
 
 
@@ -18,6 +19,23 @@ def _identity(connection: Any) -> tuple[int, str, str]:
         [],
     )
     return int(row[0]), str(row[1]), str(row[2])
+
+
+def test_a_cloud_run_acts_as_its_login_rather_than_the_login_s_default_role(
+    profile_run: Any,
+) -> None:
+    runtime = profile_run.configured(pool=PoolOptions(min_size=0, max_size=1)).open()
+    try:
+        with runtime.login_source().new_context("writer_only") as login:
+            _, session_user, current_user = _identity(login)
+            assert session_user == profile_run.login_identity
+            assert current_user == profile_run.default_role.name
+            login.execute_write("reset role", [])
+            assert _identity(login)[2] == profile_run.default_role.name
+            login.execute_write(AS_LOGIN, [])
+            assert _identity(login)[2] == session_user
+    finally:
+        runtime.close()
 
 
 @pytest.mark.adapter_smoke

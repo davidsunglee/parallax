@@ -4,10 +4,10 @@ The run works entirely as the conformance login the environment's role bootstrap
 created, authenticated by an IAM token signed for each host it reaches and over
 TLS verified against the certificate bundle the environment names: no
 administrative credential reaches it. Its control and administration sessions
-reset their role, because the login's CREATEDB attribute is the login's own, not
+act as the login itself, because the login's CREATEDB attribute is the login's own, not
 its default role's; every session it hands a test keeps the default role, as an
-application's does, and inspection sessions reset theirs only to see the same
-login's other sessions in full.
+application's does, and inspection sessions act as the login only to see its
+other sessions in full.
 
 Cloud runs share one cluster, so a run holds a session advisory lock on the
 control database for its whole lifetime. Under that lock any run database the
@@ -75,7 +75,8 @@ READER_APPLICATION: Final = "parallax-ci-reader"
 session finds where a route's backends physically are."""
 
 _RUN_DATABASE = re.compile(r"ci_[0-9]+_[0-9]+")
-_RESET_ROLE = "reset role"
+# `reset role` would restore the login's configured default role, not the login.
+AS_LOGIN = "set role none"
 _TRY_LOCK = "select pg_try_advisory_lock(%s)"
 _UNLOCK = "select pg_advisory_unlock(%s)"
 _OWNED = (
@@ -238,7 +239,7 @@ class AwsRun:
         teardown.push("releasing the fetched certificate bundle", self._ports.close)
         control = self._reached(self.environment.writer_host, CONTROL_DATABASE)
         teardown.push("closing the control session", control.close)
-        control.execute_write(_RESET_ROLE, [])
+        control.execute_write(AS_LOGIN, [])
         self._pacing.lock.wait_until(
             lambda: _single(control, _TRY_LOCK, [SUITE_LOCK]) is True, "the cloud suite lock"
         )
@@ -250,7 +251,7 @@ class AwsRun:
         control.execute_write(f'create database "{database}"', [])
         administration = self._ports.session(self.environment.writer_host, database)
         teardown.push("closing the administration session", administration.close)
-        administration.execute_write(_RESET_ROLE, [])
+        administration.execute_write(AS_LOGIN, [])
         self._administration = administration
         hosts = [self.environment.writer_host, self.environment.reader_host]
         for host in hosts + [instance.host for instance in self.environment.instances]:
@@ -311,7 +312,7 @@ class AwsRun:
             return held
         session = self._ports.session(host, self.identity.database)
         self._teardown.push(f"closing the inspection session on {host}", session.close)
-        session.execute_write(_RESET_ROLE, [])
+        session.execute_write(AS_LOGIN, [])
         self._sessions[host] = session
         return session
 
