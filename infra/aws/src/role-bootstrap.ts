@@ -14,7 +14,8 @@ export const CONFORMANCE_ROLES = [
   "parallax_conformance_role_b",
 ] as const;
 
-const roleArray = CONFORMANCE_ROLES.map((role) => `'${role}'`).join(", ");
+const quoted = (names: readonly string[]): string => names.map((name) => `'${name}'`).join(", ");
+const roleArray = quoted(CONFORMANCE_ROLES);
 
 /**
  * One statement converging the login and its roles, safe to run any number of
@@ -48,3 +49,42 @@ BEGIN
   ALTER DATABASE ${CONTROL_DATABASE} OWNER TO ${CONFORMANCE_LOGIN};
 END
 $bootstrap$`;
+
+/** What a converged bootstrap leaves in the cluster, as {@link ROLE_FACTS_SQL} reports it. */
+export interface RoleFacts {
+  /** Which of the login and its roles exist, sorted. */
+  readonly roles: readonly string[];
+  readonly login: { readonly canLogin: boolean; readonly createdb: boolean } | null;
+  /** The roles the login is a member of, sorted. */
+  readonly memberships: readonly string[];
+  /** The login's settings in every database. */
+  readonly settings: readonly string[] | null;
+  readonly controlOwner: string | null;
+}
+
+/** One query returning, as a single JSON text value, the {@link RoleFacts} the cluster holds now. */
+export const ROLE_FACTS_SQL = `SELECT json_build_object(
+  'roles', (SELECT coalesce(json_agg(rolname ORDER BY rolname), '[]') FROM pg_roles
+    WHERE rolname IN (${quoted([CONFORMANCE_LOGIN, ...CONFORMANCE_ROLES])})),
+  'login', (SELECT json_build_object('canLogin', rolcanlogin, 'createdb', rolcreatedb)
+    FROM pg_roles WHERE rolname = '${CONFORMANCE_LOGIN}'),
+  'memberships', (SELECT coalesce(json_agg(DISTINCT granted.rolname ORDER BY granted.rolname), '[]')
+    FROM pg_auth_members AS membership
+    JOIN pg_roles AS granted ON granted.oid = membership.roleid
+    JOIN pg_roles AS member ON member.oid = membership.member
+    WHERE member.rolname = '${CONFORMANCE_LOGIN}'),
+  'settings', (SELECT to_json(setting.setconfig) FROM pg_db_role_setting AS setting
+    JOIN pg_roles AS member ON member.oid = setting.setrole
+    WHERE member.rolname = '${CONFORMANCE_LOGIN}' AND setting.setdatabase = 0),
+  'controlOwner', (SELECT pg_get_userbyid(datdba) FROM pg_database
+    WHERE datname = '${CONTROL_DATABASE}')
+)::text`;
+
+/** The facts {@link ROLE_BOOTSTRAP_SQL} converges every run to. */
+export const CONVERGED_ROLE_FACTS: RoleFacts = {
+  roles: [CONFORMANCE_LOGIN, ...CONFORMANCE_ROLES].sort(),
+  login: { canLogin: true, createdb: true },
+  memberships: [...CONFORMANCE_ROLES, "rds_iam"].sort(),
+  settings: [`role=${DEFAULT_ROLE}`],
+  controlOwner: CONFORMANCE_LOGIN,
+};

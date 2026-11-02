@@ -18,8 +18,9 @@
       "project": ["**/*.ts"],
     },
     "infra/*": {
-      "entry": ["bin/*.ts", "test/**/*.test.ts"],
-      "project": ["**/*.ts"],
+      // A Lambda handler is an entry point the runtime loads, never an import.
+      "entry": ["bin/*.ts", "src/*-handler/index.mts", "test/**/*.test.ts"],
+      "project": ["**/*.{ts,mts}"],
     },
   },
 }

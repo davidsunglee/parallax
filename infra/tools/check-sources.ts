@@ -13,8 +13,10 @@ export const OUTPUT_DIRECTORIES: ReadonlySet<string> = new Set([
   "coverage",
 ]);
 
+/** TypeScript in each module format: a module whose own extension fixes it ships as `.mjs` or `.cjs`. */
+const TYPESCRIPT_EXTENSIONS = [".ts", ".mts", ".cts"];
 const AUTHORED_EXTENSIONS = [
-  ".ts",
+  ...TYPESCRIPT_EXTENSIONS,
   ".js",
   ".mjs",
   ".cjs",
@@ -86,7 +88,7 @@ export function inventoryProblems(listing: SourceListing, scope: GateScope): str
       problems.push(`${path} is script; authored executable code is TypeScript`);
       continue;
     }
-    if (!path.endsWith(".ts")) continue;
+    if (!TYPESCRIPT_EXTENSIONS.some((extension) => path.endsWith(extension))) continue;
     if (!scope.typechecked.has(path)) problems.push(`${path} is outside the type-checked program`);
     const problem = classificationProblem(path, scope);
     if (problem !== undefined) problems.push(problem);

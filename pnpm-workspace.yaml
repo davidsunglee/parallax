@@ -5,6 +5,7 @@ packages:
 # Every infrastructure dependency is pinned exactly, once, here; packages refer
 # to an entry with `catalog:`.
 catalog:
+  "@aws-sdk/client-rds-data": 3.1161.0
   "@eslint/js": 10.0.1
   "@types/node": 24.19.2
   "@vitest/coverage-v8": 5.0.5

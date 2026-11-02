@@ -10,7 +10,14 @@ export default defineConfig({
     })),
     coverage: {
       provider: "v8",
-      include: ["*.ts", "tools/**/*.ts", "*/bin/**/*.ts", "*/src/**/*.ts", "*/tools/**/*.ts"],
+      include: [
+        "*.ts",
+        "tools/**/*.ts",
+        "*/bin/**/*.ts",
+        "*/src/**/*.ts",
+        "*/src/**/*.mts",
+        "*/tools/**/*.ts",
+      ],
       // Generated output, and this file, which the runner loads before any test can measure it.
       exclude: ["*/src/generated/**", "vitest.config.ts"],
       // Repository-relative paths, which changed-line coverage matches against the diff.

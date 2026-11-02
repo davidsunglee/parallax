@@ -5,8 +5,10 @@ import {
   CONFORMANCE_LOGIN,
   CONFORMANCE_ROLES,
   CONTROL_DATABASE,
+  CONVERGED_ROLE_FACTS,
   DEFAULT_ROLE,
   ROLE_BOOTSTRAP_SQL,
+  ROLE_FACTS_SQL,
 } from "../src/role-bootstrap.ts";
 import { PACKAGE_ROOT } from "./committed-app.ts";
 
@@ -58,5 +60,38 @@ describe("the role bootstrap statement", () => {
     expect(provisioner).toContain(`_DEFAULT_ROLE = "${DEFAULT_ROLE}"`);
     const granted = [...provisioner.matchAll(/"role-[ab]": "([a-z_]+)"/g)].map((match) => match[1]);
     expect([DEFAULT_ROLE, ...granted]).toEqual([...CONFORMANCE_ROLES]);
+  });
+});
+
+describe("the converged facts", () => {
+  it("are read back by one query yielding one JSON text value", () => {
+    expect(ROLE_FACTS_SQL.startsWith("SELECT json_build_object(")).toBe(true);
+    expect(ROLE_FACTS_SQL.endsWith(")::text")).toBe(true);
+    expect(ROLE_FACTS_SQL).not.toContain(";");
+    for (const key of Object.keys(CONVERGED_ROLE_FACTS))
+      expect(ROLE_FACTS_SQL).toContain(`'${key}'`);
+    for (const name of [CONFORMANCE_LOGIN, ...CONFORMANCE_ROLES, CONTROL_DATABASE]) {
+      expect(ROLE_FACTS_SQL).toContain(`'${name}'`);
+    }
+  });
+
+  it("are what the statement converges: every role, the login's attributes, memberships, default role, and the database's owner", () => {
+    expect(CONVERGED_ROLE_FACTS).toEqual({
+      roles: [
+        "parallax_conformance_default",
+        "parallax_conformance_login",
+        "parallax_conformance_role_a",
+        "parallax_conformance_role_b",
+      ],
+      login: { canLogin: true, createdb: true },
+      memberships: [
+        "parallax_conformance_default",
+        "parallax_conformance_role_a",
+        "parallax_conformance_role_b",
+        "rds_iam",
+      ],
+      settings: ["role=parallax_conformance_default"],
+      controlOwner: CONFORMANCE_LOGIN,
+    });
   });
 });

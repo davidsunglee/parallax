@@ -1,6 +1,7 @@
 import { Template } from "aws-cdk-lib/assertions";
 import { CONFIGURATION_CONTEXT_KEY, environmentConfiguration } from "../src/configuration.ts";
 import { deployRoleConditions } from "../src/access-policies.ts";
+import { CONVERGED_ROLE_FACTS } from "../src/role-bootstrap.ts";
 import { ROLLOUT_CONTEXT_KEY, rolloutConfiguration } from "../src/rollout-configuration.ts";
 import { defineStacks } from "../src/stacks.ts";
 import {
@@ -269,13 +270,17 @@ export function healthyReplies(): Record<string, Reply> {
       {
         StackId: `arn:aws:cloudformation:us-east-2:${ACCOUNT}:stack/${ENVIRONMENT_STACK_NAME}/1`,
         LastUpdatedTime: "2026-11-01T00:00:00Z",
+        Outputs: [
+          { OutputKey: "RoleBootstrapFacts", OutputValue: JSON.stringify(CONVERGED_ROLE_FACTS) },
+          { OutputKey: "RoleBootstrapRevision", OutputValue: REVISION },
+        ],
       },
     ),
     [`cloudformation describe-stack-resources --stack-name ${ENVIRONMENT_STACK_NAME}`]: json({
       StackResources: [
         { ResourceType: "AWS::RDS::DBCluster", ResourceStatus: "CREATE_COMPLETE" },
         {
-          ResourceType: "Custom::AWS",
+          ResourceType: "Custom::RoleBootstrap",
           ResourceStatus: "UPDATE_COMPLETE",
           Timestamp: "2026-11-01T00:00:00Z",
         },

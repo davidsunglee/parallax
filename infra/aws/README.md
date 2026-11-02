@@ -43,6 +43,21 @@ The runner connects to the cluster only as `parallax_conformance_login`
 through IAM, and reads only the published record: it holds no master secret,
 no Data API, and no deploy access.
 
+## Role bootstrap
+
+The conformance login and its roles are converged by
+[`src/role-bootstrap-handler/index.mts`](src/role-bootstrap-handler/index.mts),
+a Lambda function serving the stack's role-bootstrap custom resource on a
+pinned Node.js runtime, whose own RDS Data API client it uses. On every
+deployment it runs the statement in [`src/role-bootstrap.ts`](src/role-bootstrap.ts)
+as the cluster's master user, waiting out a paused cluster's resumption within
+its timeout and failing at once on any other error. It then reads the
+converged roles, memberships, default role, and control-database owner back
+and fails unless they are the expected ones. Deleting the resource changes
+nothing in the database. The build compiles the handler to `index.mjs`, the
+only form a deployment ships, and the assembly check refuses an asset that
+carries TypeScript instead.
+
 ## What it publishes
 
 After the conformance roles are bootstrapped, the environment stack publishes
@@ -65,7 +80,11 @@ Amazon Linux 2023 arm64 image ID committed as `natInstanceImage` in
 [`deploy-inputs.json`](deploy-inputs.json). A deploy refuses to run until one
 is committed; the preflight names the newest image to review. The instance is
 replaced, and patched, only when a reviewed change names a new image.
-Synthesis looks nothing up: everything else it needs is committed.
+
+Each deploy also supplies the commit it deploys as the `DeployedRevision`
+parameter. A new revision runs the role bootstrap again, so every deployment
+re-proves that the roles converge. Synthesis looks nothing up: everything else
+it needs is committed.
 
 ## Setting up and checking the rollout
 
@@ -118,7 +137,9 @@ environment stack from `main`, on a push touching its inputs or on dispatch,
 after the `aws-deploy` reviewer approves. It verifies the repository's
 protections, synthesizes without credentials, verifies the account and the
 Aurora offering as the deploy role, deploys, and records the deployed
-revision, stack, role bootstrap, record, and runner in the run summary.
+revision, stack, role bootstrap, record, and runner in the run summary. The
+record fails unless the role bootstrap ran for this revision and read back the
+converged roles.
 A failed first creation leaves the stack in `ROLLBACK_COMPLETE`, which only a
 maintainer can delete.
 

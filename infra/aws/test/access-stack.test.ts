@@ -195,6 +195,21 @@ describe("the bounded execution role", () => {
         `arn:aws:lambda:us-east-2:${ACCOUNT}:function:${ENVIRONMENT_STACK_NAME}-AWS679`,
       ),
     ).toBe(true);
+    const roleBootstrap = (name: string): string =>
+      `arn:aws:lambda:us-east-2:${ACCOUNT}:function:${ENVIRONMENT_STACK_NAME}-AuroraRoleBootstrap${name}-AbC123`;
+    for (const action of [
+      "lambda:CreateFunction",
+      "lambda:InvokeFunction",
+      "lambda:AddPermission",
+    ]) {
+      expect(may(action, roleBootstrap("Handler05")), action).toBe(true);
+      expect(may(action, roleBootstrap("Providerframew")), action).toBe(true);
+    }
+    expect(may("logs:CreateLogGroup", "*", inRegion)).toBe(true);
+    expect(may("logs:PutRetentionPolicy", "*", inRegion)).toBe(true);
+    expect(
+      may("iam:PassRole", environmentRole, { "iam:PassedToService": "lambda.amazonaws.com" }),
+    ).toBe(true);
     expect(may("codebuild:CreateProject", ANCHORS.runnerProjectArn)).toBe(true);
     expect(may("ssm:PutParameter", ANCHORS.testEnvironmentParameterArn)).toBe(true);
     expect(may("s3:GetObject", `${ANCHORS.stagingBucketArn}/asset.zip`)).toBe(true);

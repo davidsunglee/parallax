@@ -1,17 +1,19 @@
-import { Duration, RemovalPolicy, Validations } from "aws-cdk-lib";
+import { fileURLToPath } from "node:url";
+import { CustomResource, Duration, RemovalPolicy, Validations } from "aws-cdk-lib";
 import type * as ec2 from "aws-cdk-lib/aws-ec2";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 import type { ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import * as rds from "aws-cdk-lib/aws-rds";
-import {
-  AwsCustomResource,
-  AwsCustomResourcePolicy,
-  PhysicalResourceId,
-  type AwsSdkCall,
-} from "aws-cdk-lib/custom-resources";
+import { Provider } from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 import type { AuroraCapacity } from "../configuration.ts";
-import { CONTROL_DATABASE, ROLE_BOOTSTRAP_SQL } from "../role-bootstrap.ts";
+import {
+  CONTROL_DATABASE,
+  CONVERGED_ROLE_FACTS,
+  ROLE_BOOTSTRAP_SQL,
+  ROLE_FACTS_SQL,
+} from "../role-bootstrap.ts";
 
 export const CLUSTER_IDENTIFIER = "parallax-ci";
 export const POSTGRES_PORT = 5432;
@@ -19,6 +21,19 @@ export const ENGINE_VERSION = rds.AuroraPostgresEngineVersion.VER_18_6;
 
 /** The physical ID every bootstrap run reports, so a changed statement updates rather than replaces it. */
 export const ROLE_BOOTSTRAP_ID = "parallax-ci-role-bootstrap";
+
+/** The custom resource type of the role bootstrap. */
+export const ROLE_BOOTSTRAP_TYPE = "Custom::RoleBootstrap";
+
+/** The runtime the role-bootstrap handler runs on, which also supplies its RDS Data API client. */
+export const ROLE_BOOTSTRAP_RUNTIME = lambda.Runtime.NODEJS_24_X;
+
+/**
+ * The handler's directory beside this module: its TypeScript source when the
+ * app runs from source, and its compiled `index.mjs` when it runs from the
+ * build, which is the only form a deployment ships.
+ */
+const ROLE_BOOTSTRAP_HANDLER = fileURLToPath(new URL("../role-bootstrap-handler", import.meta.url));
 
 export interface ClusterMember {
   readonly identifier: string;
@@ -42,6 +57,8 @@ export const CLUSTER_MEMBERS: readonly ClusterMember[] = [WRITER, ...READERS];
 export interface AuroraClusterProps {
   readonly vpc: ec2.IVpc;
   readonly capacity: AuroraCapacity;
+  /** The revision being deployed; each new one runs the role bootstrap again. */
+  readonly revision: string;
 }
 
 function serverlessInstance(member: ClusterMember): rds.IClusterInstance {
@@ -62,7 +79,7 @@ function serverlessInstance(member: ClusterMember): rds.IClusterInstance {
 export class AuroraCluster extends Construct {
   readonly cluster: rds.DatabaseCluster;
   readonly masterSecret: ISecret;
-  readonly bootstrap: AwsCustomResource;
+  readonly bootstrap: CustomResource;
 
   constructor(scope: Construct, id: string, props: AuroraClusterProps) {
     super(scope, id);
@@ -105,7 +122,7 @@ export class AuroraCluster extends Construct {
         "The synth-time CloudFormation schema lists Aurora PostgreSQL versions only through 18.4, " +
         "behind the 18.6 release this library pins and the deploy-time offering check verifies.",
     });
-    this.bootstrap = this.roleBootstrap();
+    this.bootstrap = this.roleBootstrap(props.revision);
   }
 
   /** The instance endpoint address of *member*, resolved at deploy time. */
@@ -114,35 +131,37 @@ export class AuroraCluster extends Construct {
     return instance.attrEndpointAddress;
   }
 
-  private roleBootstrap(): AwsCustomResource {
-    const secretArn = this.masterSecret.secretArn;
-    const call: AwsSdkCall = {
-      service: "rds-data",
-      action: "ExecuteStatement",
-      parameters: {
-        resourceArn: this.cluster.clusterArn,
-        secretArn,
-        database: CONTROL_DATABASE,
-        sql: ROLE_BOOTSTRAP_SQL,
-      },
-      physicalResourceId: PhysicalResourceId.of(ROLE_BOOTSTRAP_ID),
-    };
-    // No delete call: removing the resource must never drop what earlier runs converged.
-    const bootstrap = new AwsCustomResource(this, "RoleBootstrap", {
-      onCreate: call,
-      onUpdate: call,
-      installLatestAwsSdk: false,
+  private roleBootstrap(revision: string): CustomResource {
+    const handler = new lambda.Function(this, "RoleBootstrapHandler", {
+      description: "Converges the conformance roles through the Data API and reads them back",
+      runtime: ROLE_BOOTSTRAP_RUNTIME,
+      architecture: lambda.Architecture.ARM_64,
+      code: lambda.Code.fromAsset(ROLE_BOOTSTRAP_HANDLER),
+      handler: "index.handler",
       timeout: Duration.minutes(5),
-      policy: AwsCustomResourcePolicy.fromStatements([
-        new PolicyStatement({
-          actions: ["rds-data:ExecuteStatement"],
-          resources: [this.cluster.clusterArn],
-        }),
-        new PolicyStatement({
-          actions: ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
-          resources: [secretArn],
-        }),
-      ]),
+    });
+    handler.addToRolePolicy(
+      new PolicyStatement({
+        actions: ["rds-data:ExecuteStatement"],
+        resources: [this.cluster.clusterArn],
+      }),
+    );
+    this.masterSecret.grantRead(handler);
+    const provider = new Provider(this, "RoleBootstrapProvider", { onEventHandler: handler });
+    // No delete action: removing the resource must never drop what earlier runs converged.
+    const bootstrap = new CustomResource(this, "RoleBootstrap", {
+      serviceToken: provider.serviceToken,
+      resourceType: ROLE_BOOTSTRAP_TYPE,
+      properties: {
+        Id: ROLE_BOOTSTRAP_ID,
+        ResourceArn: this.cluster.clusterArn,
+        SecretArn: this.masterSecret.secretArn,
+        Database: CONTROL_DATABASE,
+        Sql: ROLE_BOOTSTRAP_SQL,
+        FactsSql: ROLE_FACTS_SQL,
+        ExpectedFacts: JSON.stringify(CONVERGED_ROLE_FACTS),
+        Revision: revision,
+      },
     });
     // The Data API answers only once the cluster, its instances, and the secret it
     // authenticates with all exist, which references alone do not order.
