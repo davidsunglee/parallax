@@ -124,17 +124,19 @@ function polled<T>(
 const because = (failure: string | undefined): string =>
   failure === undefined ? "" : ` (last failure: ${failure})`;
 
+/** The run this tool's dispatch created: a candidate not already listed before it dispatched. */
 function discovered(
   context: RolloutContext,
   revision: string,
   since: number,
+  earlier: ReadonlySet<unknown>,
   clock: Clock,
 ): WorkflowRun | string {
   return polled<WorkflowRun | string>(
     clock,
     clock.monotonic() + DISCOVERY_DEADLINE,
     () => {
-      const runs = dispatchedRuns(context, revision, since);
+      const runs = dispatchedRuns(context, revision, since).filter((run) => !earlier.has(run.id));
       if (runs.length > 1) return `${String(runs.length)} dispatched runs match; none is this one`;
       return runs[0];
     },
@@ -160,9 +162,11 @@ function verdictOf(context: RolloutContext, run: WorkflowRun, clock: Clock): str
 /**
  * Prove the deployment of *revision* through the cloud path: dispatch it on
  * the deploy branch, requiring the run to observe the TestEnvironment version
- * this deployment published, and wait for that run's verdict. It refuses when
- * the branch has moved past *revision*, since the dispatched run would test
- * another commit; the next deployment's run then verifies the environment.
+ * this deployment published, and wait for that run's verdict. A run already
+ * listed before the dispatch is an earlier dispatch's, never this one's, since
+ * a run does not report the inputs it was dispatched with. It refuses when the
+ * branch has moved past *revision*, since the dispatched run would test another
+ * commit; the next deployment's run then verifies the environment.
  */
 export function verifyCloud(
   context: RolloutContext,
@@ -191,13 +195,15 @@ export function verifyCloud(
     };
   }
   const since = clock.wall();
+  let earlier: ReadonlySet<unknown>;
   try {
+    earlier = new Set(dispatchedRuns(context, revision, since).map((run) => run.id));
     dispatch(context, version);
   } catch (error) {
     if (!(error instanceof CommandError)) throw error;
     return { verification: found(null, null), problems: [error.message] };
   }
-  const run = discovered(context, revision, since, clock);
+  const run = discovered(context, revision, since, earlier, clock);
   if (typeof run === "string") return { verification: found(null, null), problems: [run] };
   const verdict = verdictOf(context, run, clock);
   return {

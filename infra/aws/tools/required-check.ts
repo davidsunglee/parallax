@@ -15,28 +15,49 @@ export const CLOUD_CELL = "python-check-cloud (aws)";
 export const REQUIRED_CHECK = "required-check";
 export const CLOUD_EVIDENCE = "cloud-evidence";
 
+/** One required check; a `null` app accepts the check from any source. */
 interface RequiredCheck {
-  readonly context?: unknown;
-  readonly app_id?: unknown;
+  readonly context: unknown;
+  readonly app_id: unknown;
 }
 
 interface RequiredChecks {
-  readonly strict?: unknown;
-  readonly checks?: readonly RequiredCheck[];
+  readonly strict: unknown;
+  readonly checks: readonly RequiredCheck[];
 }
+
+/** What `required_status_checks` replies, in either of the forms it may list a check. */
+interface RequiredChecksReply {
+  readonly strict?: unknown;
+  readonly contexts?: readonly unknown[];
+  readonly checks?: readonly { readonly context?: unknown; readonly app_id?: unknown }[];
+}
+
+/** The `app_id` a PATCH takes to accept a check from any source. */
+const ANY_APP = -1;
 
 const protectionPath = (context: RolloutContext): string =>
   `repos/${context.anchors.repository}/branches/${context.rollout.deployBranch}/protection/required_status_checks`;
 
+/**
+ * Every check the deploy branch requires, whichever form lists it: a legacy
+ * context with no matching check is required from any source, as it was.
+ */
 function requiredChecks(context: RolloutContext): RequiredChecks {
-  return context.read.github(protectionPath(context)) as RequiredChecks;
+  const reply = context.read.github(protectionPath(context)) as RequiredChecksReply;
+  const checks = (reply.checks ?? []).map((check) => ({
+    context: check.context,
+    app_id: check.app_id === undefined || check.app_id === ANY_APP ? null : check.app_id,
+  }));
+  const legacy = (reply.contexts ?? [])
+    .filter((name) => !checks.some((check) => check.context === name))
+    .map((name) => ({ context: name, app_id: null }));
+  return { strict: reply.strict, checks: [...checks, ...legacy] };
 }
 
 /** Whether the deploy branch requires the cloud verdict, from GitHub Actions alone. */
 export function requiredCheckFinding(context: RolloutContext): Finding {
-  const verdict = (requiredChecks(context).checks ?? []).find(
-    (check) => check.context === VERDICT_JOB,
-  );
+  const verdict = requiredChecks(context).checks.find((check) => check.context === VERDICT_JOB);
   if (verdict === undefined) {
     return {
       check: REQUIRED_CHECK,
@@ -76,24 +97,45 @@ export function cloudEvidenceFinding(context: RolloutContext): Finding {
       };
 }
 
+const sameCheck = (one: RequiredCheck, other: RequiredCheck): boolean =>
+  one.context === other.context && one.app_id === other.app_id;
+
 /**
  * Require the cloud verdict on the deploy branch, keeping every check already
- * required and whether branches must be up to date. It adds; it never removes.
+ * required and whether branches must be up to date. It adds; it never removes,
+ * and it fails unless the requirement reads back with nothing lost.
  */
 export function requireCloudVerdict(context: RolloutContext): number {
   const current = requiredChecks(context);
-  const kept = (current.checks ?? []).filter((check) => check.context !== VERDICT_JOB);
+  const strict = current.strict ?? true;
+  const intended = [
+    ...current.checks.filter((check) => check.context !== VERDICT_JOB),
+    { context: VERDICT_JOB, app_id: ACTIONS_APP_ID },
+  ];
   const body = join(mkdtempSync(join(tmpdir(), "parallax-required-check-")), "checks.json");
   writeFileSync(
     body,
     JSON.stringify({
-      strict: current.strict ?? true,
-      checks: [...kept, { context: VERDICT_JOB, app_id: ACTIONS_APP_ID }],
+      strict,
+      checks: intended.map((check) => ({
+        context: check.context,
+        app_id: check.app_id ?? ANY_APP,
+      })),
     }),
   );
   succeeded(context.shell, {
     program: "gh",
     args: ["api", "--method", "PATCH", protectionPath(context), "--input", body],
   });
+  const after = requiredChecks(context);
+  const lost = intended.filter((check) => !after.checks.some((kept) => sameCheck(kept, check)));
+  const missing = [
+    ...lost.map((check) => String(check.context)),
+    ...(after.strict === strict ? [] : ["its up-to-date rule"]),
+  ];
+  if (missing.length > 0) {
+    console.error(`${REQUIRED_CHECK}: the requirement read back without ${missing.join(", ")}`);
+    return 1;
+  }
   return 0;
 }

@@ -402,6 +402,22 @@
   message: "job `python-check-cloud` must need `cloud-relevance` and run only when its `relevant` output says so"
   problems: 1
 
+- name: cloud-class-job-gated-on-the-inverted-answer
+  file: .github/workflows/ci.yml
+  old: "    if: needs.cloud-relevance.outputs.relevant == 'true'\n"
+  new: "    if: needs.cloud-relevance.outputs.relevant != 'true'\n"
+  code: ungated-class-job
+  message: "job `python-check-cloud` must need `cloud-relevance` and run only when its `relevant` output says so"
+  problems: 1
+
+- name: cloud-class-job-gated-on-the-bare-answer
+  file: .github/workflows/ci.yml
+  old: "    if: needs.cloud-relevance.outputs.relevant == 'true'\n"
+  new: "    if: needs.cloud-relevance.outputs.relevant\n"
+  code: ungated-class-job
+  message: "job `python-check-cloud` must need `cloud-relevance` and run only when its `relevant` output says so"
+  problems: 1
+
 - name: cloud-class-job-waiting-on-its-verdict
   file: .github/workflows/ci.yml
   old: "    needs: cloud-relevance\n    if: needs.cloud-relevance.outputs.relevant == 'true'\n"
@@ -444,6 +460,14 @@
   file: .github/workflows/ci.yml
   old: "--job python-check-cloud"
   new: "--job python-check-db"
+  code: unsupervised-class-job
+  message: "job `cloud-verdict` must run `reference_harness.cloud_verdict` over `python-check-cloud`"
+  problems: 1
+
+- name: cloud-verdict-naming-the-supervisor-without-running-it
+  file: .github/workflows/ci.yml
+  old: "run: uv run python -m reference_harness.cloud_verdict"
+  new: "run: echo reference_harness.cloud_verdict"
   code: unsupervised-class-job
   message: "job `cloud-verdict` must run `reference_harness.cloud_verdict` over `python-check-cloud`"
   problems: 1

@@ -371,6 +371,52 @@ describe("the required-check step", () => {
     ]);
   });
 
+  it("keeps a check required from any source, whether listed as a check or as a legacy context", () => {
+    const { status, patched } = requiring(
+      json({
+        strict: true,
+        contexts: ["lint-markdown", "check-gates"],
+        checks: [{ context: "lint-markdown", app_id: null }],
+      }),
+    );
+    expect(status).toBe(0);
+    expect(patched).toEqual([
+      {
+        strict: true,
+        checks: [
+          { context: "lint-markdown", app_id: -1 },
+          { context: "check-gates", app_id: -1 },
+          { context: VERDICT_JOB, app_id: ACTIONS_APP_ID },
+        ],
+      },
+    ]);
+  });
+
+  it("fails when an existing requirement does not read back beside the verdict", () => {
+    const existing = { context: "check-gates", app_id: ACTIONS_APP_ID };
+    const verdict = { context: VERDICT_JOB, app_id: ACTIONS_APP_ID };
+    const reads = [required([existing]), required([existing])];
+    const scripted = world({
+      [`GET ${EVIDENCE}`]: proven,
+      [`GET ${PROTECTION}`]: () => reads.shift() ?? required([verdict]),
+      [`PATCH ${PROTECTION}`]: { status: 0, stdout: "", stderr: "" },
+    });
+    expect(applyStep(scripted.context, REQUIRED_CHECK, REQUIRED_CHECK, REVISION)).toBe(1);
+    expect(refusals()).toContain("read back without check-gates");
+  });
+
+  it("fails when the up-to-date rule does not read back", () => {
+    const verdict = { context: VERDICT_JOB, app_id: ACTIONS_APP_ID };
+    const reads = [required([]), required([])];
+    const scripted = world({
+      [`GET ${EVIDENCE}`]: proven,
+      [`GET ${PROTECTION}`]: () => reads.shift() ?? required([verdict], false),
+      [`PATCH ${PROTECTION}`]: { status: 0, stdout: "", stderr: "" },
+    });
+    expect(applyStep(scripted.context, REQUIRED_CHECK, REQUIRED_CHECK, REVISION)).toBe(1);
+    expect(refusals()).toContain("read back without its up-to-date rule");
+  });
+
   it("keeps branches required up to date where nothing said otherwise, and converges a repeat", () => {
     const already = { context: VERDICT_JOB, app_id: ACTIONS_APP_ID };
     expect(requiring(json({})).patched).toEqual([

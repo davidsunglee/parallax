@@ -236,7 +236,7 @@ class AwsRun:
     def _begin(self) -> None:
         teardown = self._teardown
         teardown.push("releasing the fetched certificate bundle", self._ports.close)
-        control = self._ports.session(self.environment.writer_host, CONTROL_DATABASE)
+        control = self._reached(self.environment.writer_host, CONTROL_DATABASE)
         teardown.push("closing the control session", control.close)
         control.execute_write(_RESET_ROLE, [])
         self._pacing.lock.wait_until(
@@ -273,26 +273,34 @@ class AwsRun:
         if _single(control, _UNLOCK, [SUITE_LOCK]) is not True:
             raise CloudRunError("the cloud suite lock was not held when it was released")
 
-    def _warm(self, host: str) -> None:
-        """Wait for *host* to accept and answer a session: a paused cluster resumes
-        on the first connection attempt, readers only after the writer."""
+    def _reached(self, host: str, database: str) -> DriverControl:
+        """A session on *host*, waited for within the warming bound: a paused
+        cluster resumes on the first connection attempt, readers only after the
+        writer, and an attempt may be refused while it does."""
+        opened: list[DriverControl] = []
         refused: list[Exception] = []
 
-        def answered() -> bool:
+        def accepted() -> bool:
             try:
-                session = self._ports.session(host, self.identity.database)
+                opened.append(self._ports.session(host, database))
             except Exception as failure:
                 refused[:] = [failure]
                 return False
-            try:
-                return _single(session, _ANSWER, []) == 1
-            finally:
-                session.close()
+            return True
 
         try:
-            self._pacing.warm.wait_until(answered, f"{host} to answer")
+            self._pacing.warm.wait_until(accepted, f"{host} to answer")
         except TimeoutError as timed_out:
             raise timed_out from (refused[0] if refused else None)
+        return opened[0]
+
+    def _warm(self, host: str) -> None:
+        """Wait for *host* to accept and answer a session in the run database."""
+        session = self._reached(host, self.identity.database)
+        try:
+            _single(session, _ANSWER, [])
+        finally:
+            session.close()
 
     def session(self, host: str) -> DriverControl:
         """An inspection session on *host* in this run's database, whose role is

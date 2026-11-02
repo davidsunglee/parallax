@@ -969,6 +969,12 @@ _RELEVANT_OUTPUT = "relevant"
 _VERDICT_MODULE = "reference_harness.cloud_verdict"
 """The supervisor a verdict job runs."""
 
+_VERDICT_INVOCATIONS = (
+    ("python", "-m", _VERDICT_MODULE),
+    ("uv", "run", "python", "-m", _VERDICT_MODULE),
+)
+"""The command lines that run the supervisor, as they begin."""
+
 _EVENT_CONDITION_RE = re.compile(r"^github\.event_name\s*==\s*'(?:push|pull_request)'$")
 _ORDINARY_TRIGGERS = frozenset({"push", "pull_request"})
 
@@ -990,8 +996,8 @@ def _relevance_gated_jobs(repository: _Repository, scheduling_class: str) -> lis
 def _check_class_job(
     job: ci_workflow.Job, relevance: str, verdict: str, workflow: ci_workflow.Workflow
 ) -> Iterator[Diagnostic]:
-    gate = f"needs.{relevance}.outputs.{_RELEVANT_OUTPUT}"
-    if relevance not in job.needs or job.condition is None or gate not in job.condition:
+    gate = rf"needs\.{re.escape(relevance)}\.outputs\.{_RELEVANT_OUTPUT}\s*==\s*'true'"
+    if relevance not in job.needs or not re.fullmatch(gate, (job.condition or "").strip()):
         yield Diagnostic(
             "ungated-class-job",
             f"job `{job.identifier}` must need `{relevance}` and run only when its "
@@ -1021,8 +1027,9 @@ def _check_verdict_job(
     supervised = {
         argument
         for command in job.commands
-        if _VERDICT_MODULE in command
-        for flag, argument in itertools.pairwise(_shell_tokens(command))
+        for line in command.splitlines()
+        if _invokes_verdict(tokens := _shell_tokens(line))
+        for flag, argument in itertools.pairwise(tokens)
         if flag == "--job"
     }
     if supervised != set(class_jobs):
@@ -1031,6 +1038,10 @@ def _check_verdict_job(
             f"job `{job.identifier}` must run `{_VERDICT_MODULE}` over "
             f"{', '.join(f'`{name}`' for name in class_jobs)}",
         )
+
+
+def _invokes_verdict(tokens: Sequence[str]) -> bool:
+    return any(tuple(tokens[: len(start)]) == start for start in _VERDICT_INVOCATIONS)
 
 
 def _event_conditioned(condition: str | None) -> bool:

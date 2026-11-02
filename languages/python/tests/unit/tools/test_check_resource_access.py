@@ -657,6 +657,28 @@ def test_an_adapter_opened_on_an_instance_outside_both_fixtures_is_a_violation(
     assert (finding.path, finding.line) == ("test_rogue.py", 6)
 
 
+def test_the_real_cloud_ports_used_from_a_test_are_cloud_violations(tmp_path: Path) -> None:
+    _minimal_tree(tmp_path)
+    _module(
+        tmp_path,
+        "test_rogue.py",
+        "from tests._support.aws_run import AwsPorts\n"
+        "\n"
+        "\n"
+        "def test_rogue(environment, directory):\n"
+        "    AwsPorts.open(environment)\n"
+        "    ports = AwsPorts(environment, directory)\n"
+        "    ports.session('cluster', 'ci_1_1')\n",
+    )
+    findings = access.audit(tmp_path, "cloud")
+    assert [(finding.path, finding.line) for finding in findings] == [
+        ("test_rogue.py", 5),
+        ("test_rogue.py", 6),
+        ("test_rogue.py", 7),
+    ]
+    assert access.audit(tmp_path, "db") == []
+
+
 def test_the_cloud_fixtures_implementation_may_connect_and_reach_the_provider(
     tmp_path: Path,
 ) -> None:

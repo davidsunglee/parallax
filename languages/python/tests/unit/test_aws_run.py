@@ -279,6 +279,25 @@ def test_a_resuming_host_is_waited_for() -> None:
     assert f"{_WRITER_INSTANCE}/ci_7_2: select 1" in cluster.log
 
 
+def test_a_paused_writer_is_waited_for_before_the_control_session() -> None:
+    clock = _Clock()
+    cluster = _Cluster(owned=[], refusing={_WRITER: 2})
+    _started(cluster, clock)
+
+    assert cluster.log[:2] == [f"{_CONTROL}: open", f"{_CONTROL}: reset role"]
+    assert clock.now == 2.0
+
+
+def test_a_writer_that_never_resumes_fails_the_run_chained_to_its_last_refusal() -> None:
+    cluster = _Cluster(owned=[], refusing={_WRITER: 1_000})
+
+    with pytest.raises(TimeoutError, match=_WRITER) as timed_out:
+        _started(cluster)
+
+    assert isinstance(timed_out.value.__cause__, ConnectionError)
+    assert cluster.log == ["ports: close"]
+
+
 def test_an_unconfirmed_drop_of_a_stale_database_fails_the_run_and_still_unlocks() -> None:
     cluster = _Cluster(owned=["ci_1_1"], lingering={"ci_1_1"})
 

@@ -18,7 +18,13 @@ from parallax.core.db_port import BeginFailed, Committed, DatabaseConnection, Ro
 from parallax.snapshot import TxnContext, connect
 from tests._support.root_ownership import own_root
 from tests._support.routed_reads import LAYOUTS, MODEL, READS, SEEDED, Ledger
-from tests.provider_contract.aws._aws_support import holding, instances, seeded, writing
+from tests.provider_contract.aws._aws_support import (
+    backends,
+    holding,
+    instances,
+    seeded,
+    writing,
+)
 
 _PID = "select pg_backend_pid()"
 
@@ -114,13 +120,22 @@ def test_the_reader_refuses_serializable_and_serves_repeatable_read(aws_run: Any
     assert repeatable == Committed("repeatable read")
 
 
-@pytest.mark.parametrize("policy", ["reader_only", "writer_only"])
+@pytest.mark.parametrize(
+    ("policy", "route"),
+    [("writer_only", "writer"), ("reader_only", "reader"), ("reader_preferred", "reader")],
+)
 @pytest.mark.parametrize("layout", list(LAYOUTS))
 @pytest.mark.parametrize("shape", list(READS))
-def test_every_read_shape_and_layout_reads_the_seeded_rows_on_either_route(
-    aws_run: Any, shape: str, layout: str, policy: RoutePolicy
+def test_every_read_shape_and_layout_reads_from_the_instances_its_scopes_policy_names(
+    aws_run: Any, shape: str, layout: str, policy: RoutePolicy, route: str
 ) -> None:
     seeded(aws_run)
+    before = {name: backends(aws_run, name) for name in ("writer", "reader")}
     db = own_root(connect(aws_run.adapter(), MODEL, read_policy=policy)).using_database_login()
 
     assert READS[shape](db, LAYOUTS[layout]) == SEEDED
+    opened = {name: backends(aws_run, name) - before[name] for name in before}
+    assert opened[route]
+    assert {identifier for identifier, _pid in opened[route]} <= instances(aws_run, route)
+    if route == "writer":
+        assert opened["reader"] == set()

@@ -485,6 +485,10 @@ jobs:
             languages/python/uv.lock \
             infra \
             pnpm-lock.yaml \
+            reference-harness/src/reference_harness/cloud_verdict.py \
+            reference-harness/src/reference_harness/ci_workflow.py \
+            reference-harness/pyproject.toml \
+            reference-harness/uv.lock \
             .github/workflows \
             justfile)"
           if [ -n "$changed" ]; then
