@@ -162,13 +162,31 @@ Aurora offering as the deploy role, deploys, and records the deployed
 revision, stack, role bootstrap, record, and runner in the run summary. The
 record fails unless the role bootstrap ran for this revision and read back the
 converged roles.
-A deployment never rolls back on failure: the stack keeps what it created, in
-`CREATE_FAILED` or `UPDATE_FAILED`, and the next deployment resumes at the
-failed resource. A rollback could not delete the deletion-protected cluster.
-A change that replaces a resource still deploys with rollback, which the CLI
-requires; if a stack is already failed when such a change arrives, the CLI
-rolls it back first, and a failed first creation then leaves it in
+A deployment never rolls back the stack on failure: the stack keeps what it
+created, in `CREATE_FAILED` or `UPDATE_FAILED`, and the next deployment resumes
+at the failed resource. A rollback could not delete the deletion-protected
+cluster. A change that replaces a resource still deploys with rollback, which
+the CLI requires; if a stack is already failed when such a change arrives, the
+CLI rolls it back first, and a failed first creation then leaves it in
 `ROLLBACK_FAILED` for a maintainer to delete.
+
+CloudFormation still rolls back the failed resource itself. When that rollback
+fails too, as a custom resource's does when it repeats the failing call, the
+resource is left `UPDATE_ROLLBACK_FAILED` and CloudFormation refuses every
+change set until a maintainer rolls the stack back and skips that resource:
+
+```bash
+aws cloudformation rollback-stack           --stack-name ParallaxCiEnvironmentStack
+aws cloudformation continue-update-rollback --stack-name ParallaxCiEnvironmentStack --resources-to-skip <logical-id>
+```
+
+The second command applies once the first ends in `UPDATE_ROLLBACK_FAILED`,
+and skips only the resources the stack events show failed to roll back.
+CloudFormation then records a skipped resource at its previous state whatever
+its actual state, so skip a resource only once its failure is understood and
+the next deployment converges it again. The role bootstrap does, since it runs
+on every deployment; investigate any other resource before skipping it.
+Redeploy once the stack reaches `UPDATE_ROLLBACK_COMPLETE`.
 
 The deployment then proves itself through the cloud suite, still inside its own
 serialized run: it dispatches `ci.yml`'s cloud path on `main`, requiring that
