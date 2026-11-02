@@ -49,14 +49,25 @@ no Data API, and no deploy access.
 
 The conformance login and its roles are converged by
 [`src/role-bootstrap-handler/index.mts`](src/role-bootstrap-handler/index.mts),
-a Lambda function serving the stack's role-bootstrap custom resource on a
-pinned Node.js runtime, whose own RDS Data API client it uses. On every
-deployment it runs the statement in [`src/role-bootstrap.ts`](src/role-bootstrap.ts)
-as the cluster's master user, waiting out a paused cluster's resumption within
-its timeout and failing at once on any other error. It then reads the
-converged roles, memberships, default role, and control-database owner back
-and fails unless they are the expected ones. Deleting the resource changes
-nothing in the database. The build compiles the handler to `index.mjs`, the
+a Lambda function in the VPC's private subnets serving the stack's
+role-bootstrap custom resource on a pinned Node.js runtime. On every deployment
+it signs in to the writer as the cluster's master user over certificate-verified
+TLS and runs the statement in [`src/role-bootstrap.ts`](src/role-bootstrap.ts),
+waiting out an unreachable or resuming cluster within its timeout and failing
+at once on any other error. It then reads the converged roles, memberships,
+default role, and control-database owner back and fails unless they are the
+expected ones. Deleting the resource changes nothing in the database.
+
+The master user signs in with an IAM token, which the handler signs itself.
+The first run makes the master a member of the IAM-authenticated login, and so
+of `rds_iam`, after which PostgreSQL routes every master sign-in to IAM
+authentication; only that first run can still use the master password from its
+secret. A maintainer who needs the master reaches it the same way, with an IAM
+token from inside the VPC. The cluster has no Data API, which would offer only
+the password.
+
+The build compiles the handler to `index.mjs` and synthesis copies beside it the
+parts of the dependency-free postgres.js driver the runtime loads; that is the
 only form a deployment ships, and the assembly check refuses an asset that
 carries TypeScript instead.
 
