@@ -36,8 +36,10 @@ narrowed by [`tools/bootstrap-template.ts`](tools/bootstrap-template.ts) from
 the pinned CLI's own: only `parallax-ci-deploy` may assume its roles, its
 deploy role may change and never delete the environment stack alone, and its
 execution role always holds the bounded policy and boundary rather than
-administrator access. A CLI upgrade that changes the default template fails
-that narrowing until it is reviewed again.
+administrator access. Its file assets are encrypted with the AWS managed S3
+key, which every bootstrap passes explicitly so a re-bootstrap never creates a
+customer key; any other key is drift. A CLI upgrade that changes the default
+template fails that narrowing until it is reviewed again.
 
 The runner connects to the cluster only as `parallax_conformance_login`
 through IAM, and reads only the published record: it holds no master secret,

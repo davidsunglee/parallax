@@ -4115,8 +4115,9 @@ def test_an_on_demand_pool_dials_again_on_every_later_demand() -> None:
 class _Attempt:
     """The finished connection a driver connect failure carries."""
 
-    def __init__(self, *, used_password: bool) -> None:
+    def __init__(self, *, used_password: bool, error_message: str = "") -> None:
         self.used_password = used_password
+        self.error_message = error_message.encode()
 
 
 class _ConnectFailed(psycopg.OperationalError):
@@ -4141,6 +4142,77 @@ def test_a_connect_refusal_after_a_password_was_sent_reads_as_the_server_refusin
     attempt: _Attempt | None, reason: str
 ) -> None:
     assert dial_reason(_ConnectFailed(attempt)) == reason
+
+
+_REFUSED_AT = 'connection to server at "127.0.0.1", port 5432 failed: '
+
+
+@pytest.mark.parametrize(
+    ("server_said", "reason"),
+    [
+        pytest.param(
+            'FATAL:  database "app" does not exist\n', "preparation_failed", id="missing-database"
+        ),
+        pytest.param(
+            'FATAL:  database "a"b" does not exist\n',
+            "preparation_failed",
+            id="missing-database-quoted-name",
+        ),
+        pytest.param(
+            'FATAL:  password authentication failed for user "app"\n',
+            "authentication_refused",
+            id="rejected-password",
+        ),
+        pytest.param(
+            'FATAL:  password authentication failed for user "x: FATAL:  database "a" '
+            'does not exist"\n',
+            "authentication_refused",
+            id="login-naming-the-message",
+        ),
+        pytest.param(
+            "FATAL:  Datenbank »app« existiert nicht\n", "authentication_refused", id="translated"
+        ),
+        pytest.param(
+            'FATAL:  database "app" is missing\n', "authentication_refused", id="reworded"
+        ),
+        pytest.param(
+            'FATAL:  database "app" does not exist\n'
+            + _REFUSED_AT
+            + 'FATAL:  password authentication failed for user "app"\n',
+            "authentication_refused",
+            id="not-the-last-thing-reported",
+        ),
+    ],
+)
+def test_only_the_exact_missing_database_message_relabels_a_password_refusal(
+    server_said: str, reason: str
+) -> None:
+    refused = _ConnectFailed(_Attempt(used_password=True, error_message=_REFUSED_AT + server_said))
+
+    assert dial_reason(refused) == reason
+    assert RoutePlan.falls_back_on(dial_reason(refused)) is None
+
+
+class _MessageUnreadable:
+    used_password = True
+
+    @property
+    def error_message(self) -> bytes:
+        raise psycopg.OperationalError("the connection is closed")
+
+
+def test_a_password_refusal_whose_message_cannot_be_read_reads_as_the_login_refused() -> None:
+    assert (
+        dial_reason(_ConnectFailed(cast("Any", _MessageUnreadable()))) == "authentication_refused"
+    )
+
+
+def test_a_missing_database_message_without_a_password_sent_still_reads_as_unreachable() -> None:
+    attempt = _Attempt(
+        used_password=False, error_message=_REFUSED_AT + 'FATAL:  database "app" does not exist\n'
+    )
+
+    assert dial_reason(_ConnectFailed(attempt)) == "unavailable"
 
 
 class _Unreadable:

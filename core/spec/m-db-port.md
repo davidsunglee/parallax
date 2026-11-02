@@ -520,7 +520,13 @@ authorization-class refusal, and — where a driver reports a connect-time
 refusal without its code — a failed dial that reports the credential it sent.
 Such a refusal covers whatever the server refused once that credential was
 exchanged, a rejected credential and a refusal sent only after the login was
-accepted alike, because nothing the client receives tells them apart. A refusal
+accepted alike, because no code or other structured signal tells them apart.
+The one exception reads the server's own message: a codeless refusal whose
+message exactly matches the server's report that the requested database does
+not exist is a preparation failure, and a message that does not match — a
+reworded or translated one included — stays an authentication refusal. Either
+label means the server was reached, so the distinction changes only the
+reported reason, never fallback eligibility or readiness deferral. A refusal
 the server sends before any credential is exchanged, with no code to name it, is
 indistinguishable from a server that cannot be reached and reads as unavailable.
 Credentials refused means

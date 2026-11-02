@@ -204,15 +204,21 @@ def _missing_database(endpoint: PostgresEndpoint) -> PostgresEndpoint:
 
 
 @pytest.mark.adapter_smoke
-@pytest.mark.parametrize("refusal", ["rejected-password", "missing-database"])
+@pytest.mark.parametrize(
+    ("refusal", "reason"),
+    [
+        ("rejected-password", "authentication_refused"),
+        ("missing-database", "preparation_failed"),
+    ],
+)
 def test_a_reader_the_server_refuses_once_its_password_is_sent_fails_even_deferrable_startup(
-    profile_run: Any, refusal: str
+    profile_run: Any, refusal: str, reason: str
 ) -> None:
     # The driver reports the refusal with no SQLSTATE, but the failed
     # connection says it sent the password, so the server was reached and
-    # refused it: an authentication refusal rather than an outage. A database
-    # that does not exist is refused only after the login was accepted, and
-    # reaches the client the same way.
+    # refused it rather than being an outage. Only this server's own message
+    # tells a database that does not exist apart from a rejected login, so a
+    # server or driver that rewords it fails here.
     reader = (
         _reader(profile_run, pool=OnDemandOptions(), credentials=Password("not-the-secret"))
         if refusal == "rejected-password"
@@ -226,7 +232,7 @@ def test_a_reader_the_server_refuses_once_its_password_is_sent_fails_even_deferr
     assert (failed.value.route, failed.value.phase) == ("reader", "acquire")
     cause = failed.value.__cause__
     assert isinstance(cause, ConnectionAcquisitionError)
-    assert cause.reason == "authentication_refused"
+    assert cause.reason == reason
 
 
 @pytest.mark.adapter_smoke

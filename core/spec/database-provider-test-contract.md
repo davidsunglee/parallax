@@ -146,9 +146,10 @@ For every supported adapter, the smoke suite covers:
   standby refuses. Readiness proves the writer and then the reader; an
   unreachable reader fails the open where the reader is required and is left
   pending where it may defer, and the open releases both routes whenever it
-  fails. A reader the server refuses once the login's credential was offered —
-  a rejected password, or a database that does not exist — is an
-  authentication refusal that fails the open even where the reader may defer.
+  fails. A reader the server refuses once the login's credential was offered
+  fails the open even where the reader may defer: a rejected password as an
+  authentication refusal, and a database that does not exist as a preparation
+  failure, which pins the engine's own wording of that refusal.
   A preferred acquisition is served by a healthy reader, falls back to the
   writer from an unreachable one — a transaction opening its boundary there,
   under the bound authorization — and does not fall back from a reader that is

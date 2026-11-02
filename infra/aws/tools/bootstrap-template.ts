@@ -176,11 +176,12 @@ export function narrowedBootstrapTemplate(template: unknown, anchors: TrustAncho
   return narrowed;
 }
 
-/** How the bootstrap's file assets are encrypted: its `FileAssetsBucketKmsKeyId` parameter, and the key it created when that is empty. */
-export interface BootstrapKey {
-  readonly keyId: string;
-  readonly keyArn: string;
-}
+/**
+ * The bootstrap's `FileAssetsBucketKmsKeyId`: the AWS managed S3 key. Passed
+ * on every bootstrap, because a re-bootstrap without previous parameters
+ * otherwise takes the template's default, which creates a customer key.
+ */
+export const BOOTSTRAP_KMS_KEY_ID = "AWS_MANAGED_KEY";
 
 /** What the trust path relies on the narrowed bootstrap's roles holding once CloudFormation resolves them. */
 export interface BootstrapPermissions {
@@ -229,7 +230,8 @@ function resolved(value: unknown, resolution: Resolution): unknown {
 
 /**
  * The permissions *template*, narrowed, gives the roles the deploy role
- * reaches, resolved as CloudFormation resolves them for *anchors* and *key*.
+ * reaches, resolved as CloudFormation resolves them for *anchors* and
+ * {@link BOOTSTRAP_KMS_KEY_ID}.
  *
  * Throws {@link BootstrapTemplateError} when the template no longer has the
  * reviewed shape.
@@ -237,7 +239,6 @@ function resolved(value: unknown, resolution: Resolution): unknown {
 export function bootstrapPermissions(
   template: unknown,
   anchors: TrustAnchors,
-  key: BootstrapKey,
 ): BootstrapPermissions {
   const resources = object(
     narrowedBootstrapTemplate(template, anchors)["Resources"],
@@ -256,10 +257,9 @@ export function bootstrapPermissions(
       CdkBootstrapVersion: String(resolved(version, { names: pseudo, conditions: {} })),
       "CloudFormationExecutionRole.Arn": anchors.bootstrapRoleArn("cfn-exec"),
       "StagingBucket.Arn": anchors.stagingBucketArn,
-      FileAssetsBucketKmsKeyId: key.keyId,
-      "FileAssetsBucketEncryptionKey.Arn": key.keyArn,
+      FileAssetsBucketKmsKeyId: BOOTSTRAP_KMS_KEY_ID,
     },
-    conditions: { CreateNewKey: key.keyId === "" },
+    conditions: { CreateNewKey: false },
   };
   const inline = (policies: readonly unknown[]): Record<string, unknown> =>
     Object.fromEntries(

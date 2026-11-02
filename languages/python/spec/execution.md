@@ -59,8 +59,11 @@ fixed `parallax.resources` warning reports; supplied without a reader, it
 raises `ValueError`. `DatabaseStartupError.route` names which route failed. A
 connect-time refusal psycopg reports with no SQLSTATE reads as
 `ConnectionAcquisitionError.reason == "authentication_refused"` where the failed
-connection reports it sent a password, and as `"unavailable"` otherwise; the
-first never defers a reader and never earns a preferred fallback. Each `connect` opens an independent runtime;
+connection reports it sent a password, and as `"unavailable"` otherwise. Among
+the refusals that sent a password, one whose libpq message ends with the
+server's exact `FATAL:  database "<name>" does not exist` reads as
+`"preparation_failed"`. Neither of those two reasons defers a reader or earns
+a preferred fallback. Each `connect` opens an independent runtime;
 closing one root does not close another made from the same configuration. A
 connection string cannot contain a password. Required `credentials=` accepts
 `Password(...)`, a source with `resolve() -> Password`, or `DRIVER_MANAGED`,

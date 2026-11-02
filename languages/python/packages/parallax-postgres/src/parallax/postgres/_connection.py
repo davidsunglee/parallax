@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import struct
 import sys
 import threading
@@ -640,10 +641,8 @@ def dial_reason(failure: BaseException) -> DialReason:
     failed connection reports that it sent the server a password. The driver
     reports a refusal the server sent while connecting without its SQLSTATE,
     so that report is the one structured sign the server was reached and
-    refused the login it was offered, and such a refusal reads as an
-    authentication refusal whatever the server then said: a rejected
-    password or token, an unknown login, and a refusal sent only once the
-    login was accepted, such as a database that does not exist, arrive alike.
+    refused the connection once it was offered the login; :func:`_login_refusal`
+    labels that refusal, and whichever label it picks, the route was reached.
     A login that offers no password carries no such sign, so a server
     refusing it before any credential is exchanged is indistinguishable from
     one that cannot be reached. A failure that does carry an
@@ -661,7 +660,7 @@ def dial_reason(failure: BaseException) -> DialReason:
     if isinstance(failure, psycopg.OperationalError):
         state = failure.sqlstate
         if state is None:
-            return "authentication_refused" if _offered_password(failure) else "unavailable"
+            return _login_refusal(failure) if _offered_password(failure) else "unavailable"
         if state.startswith("08") or state == _CANNOT_CONNECT_NOW:
             return "unavailable"
         if state.startswith("28"):
@@ -689,6 +688,31 @@ def _offered_password(failure: psycopg.OperationalError) -> bool:
         return False
 
 
+type _LoginRefusal = Literal["authentication_refused", "preparation_failed"]
+
+
+def _login_refusal(failure: psycopg.OperationalError) -> _LoginRefusal:
+    """Label a refusal the server sent once it was offered the login's password.
+
+    A rejected password or token, an unknown login, and a database that does
+    not exist arrive alike, so only the server's own message tells the last
+    apart from a rejected login. A message that does not match exactly — a
+    reworded or translated one included — reads as the login being refused.
+    """
+    try:
+        attempt = failure.pgconn
+        message = "" if attempt is None else attempt.error_message.decode("utf-8", "replace")
+    except Exception:
+        return "authentication_refused"
+    return "preparation_failed" if _MISSING_DATABASE.search(message) else "authentication_refused"
+
+
+# The server's message for a database that does not exist, as the last line
+# the attempt reported. The server prints the name unescaped, so the name may
+# itself hold double quotes.
+_MISSING_DATABASE: Final = re.compile(
+    r'(?:^|: )FATAL:  database "[^\n]*" does not exist\n?\Z', re.MULTILINE
+)
 _CANNOT_CONNECT_NOW: Final = "57P03"
 _SERVER_GONE: Final = frozenset({_CANNOT_CONNECT_NOW, "57P01", "57P02"})
 

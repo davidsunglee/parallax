@@ -8,7 +8,7 @@ import {
   pinnedBootstrapTemplate,
 } from "../tools/bootstrap-template.ts";
 import { allowed } from "./policy-evaluation.ts";
-import { ACCOUNT, ANCHORS, BOOTSTRAP_KEY } from "./rollout-world.ts";
+import { ACCOUNT, ANCHORS } from "./rollout-world.ts";
 
 type Template = Record<string, Record<string, Record<string, unknown>>>;
 
@@ -197,7 +197,7 @@ describe("the narrowed bootstrap template", () => {
 });
 
 describe("the narrowed bootstrap's resolved permissions", () => {
-  const managedKey = bootstrapPermissions(pinned, ANCHORS, BOOTSTRAP_KEY);
+  const managedKey = bootstrapPermissions(pinned, ANCHORS);
   const publishing = `cdk-parallaxci-file-publishing-role-default-policy-${ACCOUNT}-us-east-2`;
   const keyResource = (permissions: typeof managedKey): unknown =>
     (
@@ -240,13 +240,6 @@ describe("the narrowed bootstrap's resolved permissions", () => {
     });
   });
 
-  it("name the key a bootstrap created when it was given none", () => {
-    const created = `arn:aws:kms:us-east-2:${ACCOUNT}:key/1234abcd`;
-    expect(keyResource(bootstrapPermissions(pinned, ANCHORS, { keyId: "", keyArn: created }))).toBe(
-      created,
-    );
-  });
-
   it("refuse a template referring to anything the narrowing does not resolve", () => {
     const planted = (resource: unknown): unknown => {
       const copy = structuredClone(pinned);
@@ -262,12 +255,10 @@ describe("the narrowed bootstrap's resolved permissions", () => {
       [{ "Fn::Sub": "${Elsewhere.Arn}" }, "refers to Elsewhere.Arn"],
       [{ "Fn::If": ["Unreviewed", "*", "*"] }, "refers to Unreviewed"],
     ] as const) {
-      expect(() => bootstrapPermissions(planted(resource), ANCHORS, BOOTSTRAP_KEY)).toThrow(
+      expect(() => bootstrapPermissions(planted(resource), ANCHORS)).toThrow(
         BootstrapTemplateError,
       );
-      expect(() => bootstrapPermissions(planted(resource), ANCHORS, BOOTSTRAP_KEY)).toThrow(
-        message,
-      );
+      expect(() => bootstrapPermissions(planted(resource), ANCHORS)).toThrow(message);
     }
   });
 });
