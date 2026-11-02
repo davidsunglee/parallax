@@ -1,6 +1,12 @@
+import { isDeepStrictEqual } from "node:util";
 import type { EnvironmentConfiguration } from "../src/configuration.ts";
 import { ACCESS_OUTPUTS } from "../src/access-stack.ts";
-import { deployRoleConditions } from "../src/access-policies.ts";
+import {
+  boundaryPolicy,
+  deployRoleConditions,
+  deployRolePolicy,
+  executionPolicy,
+} from "../src/access-policies.ts";
 import { ENGINE_VERSION } from "../src/constructs/aurora-cluster.ts";
 import {
   ACCESS_STACK_NAME,
@@ -13,7 +19,11 @@ import {
   type BootstrapRole,
   type TrustAnchors,
 } from "../src/trust.ts";
-import { BOOTSTRAP_VARIANT } from "./bootstrap-template.ts";
+import {
+  BOOTSTRAP_VARIANT,
+  bootstrapPermissions,
+  pinnedBootstrapTemplate,
+} from "./bootstrap-template.ts";
 import { CHECK, judged, type Expectation, type Finding, type Sources } from "./findings.ts";
 
 export interface AwsContext {
@@ -235,39 +245,97 @@ function settled(stack: StackDescription, name: string): Expectation[] {
   ];
 }
 
-interface PolicyStatementJson {
-  readonly Effect?: string;
-  readonly Principal?: unknown;
-  readonly Action?: unknown;
-  readonly Resource?: unknown;
-  readonly Condition?: unknown;
-}
-
-function statements(document: unknown): PolicyStatementJson[] {
-  return asList(
-    (document as { Statement?: unknown } | undefined)?.Statement,
-  ) as PolicyStatementJson[];
-}
-
-function roleTrust(context: AwsContext, name: string): PolicyStatementJson[] {
-  const { Role: role } = context.read.aws(["iam", "get-role", "--role-name", name]) as {
-    Role?: { AssumeRolePolicyDocument?: unknown };
-  };
-  return statements(role?.AssumeRolePolicyDocument);
-}
-
-/** Whether the deploy role admits exactly the one protected environment through the existing provider. */
-function deployRoleTrusted(context: AwsContext): boolean {
-  const trust = roleTrust(context, DEPLOY_ROLE_NAME);
-  const [statement] = trust;
-  return (
-    trust.length === 1 &&
-    statement?.Effect === "Allow" &&
-    JSON.stringify(statement.Principal) ===
-      JSON.stringify({ Federated: context.anchors.oidcProviderArn }) &&
-    sameSet(asList(statement.Action), ["sts:AssumeRoleWithWebIdentity"]) &&
-    JSON.stringify(statement.Condition) === JSON.stringify(deployRoleConditions(context.anchors))
+/**
+ * *value* spelled canonically, so documents IAM treats alike compare equal:
+ * keys sorted, lists unordered, and a one-element list as its element.
+ */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const items = value
+      .map(canonical)
+      .sort((left, right) => ordered(JSON.stringify(left), JSON.stringify(right)));
+    return items.length === 1 ? items[0] : items;
+  }
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => ordered(left, right))
+      .map(([key, item]) => [key, canonical(item)]),
   );
+}
+
+const ordered = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
+
+const equivalent = (left: unknown, right: unknown): boolean =>
+  isDeepStrictEqual(canonical(left), canonical(right));
+
+interface LiveRole {
+  readonly trust: unknown;
+  readonly boundary: string | undefined;
+  /** Its inline policies' documents, by name. */
+  readonly inline: Readonly<Record<string, unknown>>;
+  readonly managed: readonly string[];
+}
+
+/** Who may assume role *name*, and everything it may do. */
+function liveRole(context: AwsContext, name: string): LiveRole {
+  const role = ["--role-name", name];
+  const { Role: found } = context.read.aws(["iam", "get-role", ...role]) as {
+    Role?: {
+      AssumeRolePolicyDocument?: unknown;
+      PermissionsBoundary?: { PermissionsBoundaryArn?: string };
+    };
+  };
+  const { PolicyNames: inline = [] } = context.read.aws(["iam", "list-role-policies", ...role]) as {
+    PolicyNames?: readonly string[];
+  };
+  const { AttachedPolicies: attached = [] } = context.read.aws([
+    "iam",
+    "list-attached-role-policies",
+    ...role,
+  ]) as { AttachedPolicies?: readonly { PolicyArn?: string }[] };
+  return {
+    trust: found?.AssumeRolePolicyDocument,
+    boundary: found?.PermissionsBoundary?.PermissionsBoundaryArn,
+    inline: Object.fromEntries(
+      inline.map((policy) => {
+        const { PolicyDocument: document } = context.read.aws([
+          "iam",
+          "get-role-policy",
+          ...role,
+          "--policy-name",
+          policy,
+        ]) as { PolicyDocument?: unknown };
+        return [policy, document];
+      }),
+    ),
+    managed: attached.map((policy) => String(policy.PolicyArn)),
+  };
+}
+
+/** Whether *role* holds exactly the inline and managed policies approved for it. */
+function permits(
+  role: LiveRole,
+  inline: Readonly<Record<string, unknown>>,
+  managed: readonly string[],
+): boolean {
+  return equivalent(role.inline, inline) && sameSet(role.managed, managed);
+}
+
+/** The document of the managed policy *arn*'s default version. */
+function managedPolicyDocument(context: AwsContext, arn: string): unknown {
+  const { Policy: policy } = context.read.aws(["iam", "get-policy", "--policy-arn", arn]) as {
+    Policy?: { DefaultVersionId?: string };
+  };
+  const { PolicyVersion: version } = context.read.aws([
+    "iam",
+    "get-policy-version",
+    "--policy-arn",
+    arn,
+    "--version-id",
+    String(policy?.DefaultVersionId),
+  ]) as { PolicyVersion?: { Document?: unknown } };
+  return version?.Document;
 }
 
 export function accessStackFinding(context: AwsContext): Finding {
@@ -283,6 +351,16 @@ export function accessStackFinding(context: AwsContext): Finding {
     (stack.Outputs ?? []).map((output) => [output.OutputKey, output.OutputValue]),
   );
   const { anchors } = context;
+  const deployRole = liveRole(context, DEPLOY_ROLE_NAME);
+  const deployTrust = {
+    Version: "2012-10-17",
+    Statement: {
+      Effect: "Allow",
+      Principal: { Federated: anchors.oidcProviderArn },
+      Action: "sts:AssumeRoleWithWebIdentity",
+      Condition: deployRoleConditions(anchors),
+    },
+  };
   return judged(
     CHECK.accessStack,
     [
@@ -296,7 +374,25 @@ export function accessStackFinding(context: AwsContext): Finding {
           outputs.get(ACCESS_OUTPUTS.boundaryPolicyArn) === anchors.boundaryPolicyArn,
         "the execution policy or boundary is not the pinned one",
       ],
-      [deployRoleTrusted(context), `${DEPLOY_ROLE_NAME} trusts more than ${anchors.deploySubject}`],
+      [
+        equivalent(deployRole.trust, deployTrust),
+        `${DEPLOY_ROLE_NAME} trusts more than ${anchors.deploySubject}`,
+      ],
+      [
+        permits(deployRole, { deploy: deployRolePolicy(anchors).toJSON() }, []),
+        `${DEPLOY_ROLE_NAME} holds other permissions than ${ACCESS_STACK_NAME} defines`,
+      ],
+      [
+        equivalent(
+          managedPolicyDocument(context, anchors.executionPolicyArn),
+          executionPolicy(anchors).toJSON(),
+        ) &&
+          equivalent(
+            managedPolicyDocument(context, anchors.boundaryPolicyArn),
+            boundaryPolicy(anchors).toJSON(),
+          ),
+        `the execution policy or boundary is not the one ${ACCESS_STACK_NAME} defines`,
+      ],
     ],
     `${DEPLOY_ROLE_NAME} trusts only ${anchors.deploySubject}`,
   );
@@ -310,58 +406,23 @@ const BOOTSTRAP_ROLES: readonly BootstrapRole[] = [
 ];
 
 function trustsOnlyDeployRole(context: AwsContext, role: BootstrapRole): boolean {
-  const trust = roleTrust(context, context.anchors.bootstrapRoleName(role));
+  const { Role: found } = context.read.aws([
+    "iam",
+    "get-role",
+    "--role-name",
+    context.anchors.bootstrapRoleName(role),
+  ]) as { Role?: { AssumeRolePolicyDocument?: unknown } };
+  const trust = asList(
+    (found?.AssumeRolePolicyDocument as { Statement?: unknown } | undefined)?.Statement,
+  ) as { Effect?: string; Principal?: unknown }[];
   return (
     trust.length > 0 &&
     trust.every(
       (statement) =>
         statement.Effect !== "Allow" ||
-        JSON.stringify(statement.Principal) ===
-          JSON.stringify({ AWS: context.anchors.deployRoleArn }),
+        equivalent(statement.Principal, { AWS: context.anchors.deployRoleArn }),
     )
   );
-}
-
-function executionRoleBounded(context: AwsContext): boolean {
-  const name = context.anchors.bootstrapRoleName("cfn-exec");
-  const { Role: role } = context.read.aws(["iam", "get-role", "--role-name", name]) as {
-    Role?: { PermissionsBoundary?: { PermissionsBoundaryArn?: string } };
-  };
-  const { AttachedPolicies: attached = [] } = context.read.aws([
-    "iam",
-    "list-attached-role-policies",
-    "--role-name",
-    name,
-  ]) as { AttachedPolicies?: readonly { PolicyArn?: string }[] };
-  return (
-    role?.PermissionsBoundary?.PermissionsBoundaryArn === context.anchors.boundaryPolicyArn &&
-    sameSet(
-      attached.map((policy) => policy.PolicyArn),
-      [context.anchors.executionPolicyArn],
-    )
-  );
-}
-
-const STACK_MUTATION = /^cloudformation:(?!(Describe|Get|List|Validate|Detect|Estimate))/;
-
-/** Whether every CloudFormation change the bootstrap deploy role is allowed targets only the environment stack. */
-function deployRoleConfined(context: AwsContext): boolean {
-  const { PolicyDocument: document } = context.read.aws([
-    "iam",
-    "get-role-policy",
-    "--role-name",
-    context.anchors.bootstrapRoleName("deploy"),
-    "--policy-name",
-    "default",
-  ]) as { PolicyDocument?: unknown };
-  return statements(document)
-    .filter((statement) => statement.Effect === "Allow")
-    .filter((statement) =>
-      asList(statement.Action).some((action) => STACK_MUTATION.test(String(action))),
-    )
-    .every((statement) =>
-      sameSet(asList(statement.Resource), [context.anchors.stackArn(ENVIRONMENT_STACK_NAME)]),
-    );
 }
 
 export function bootstrapFinding(context: AwsContext): Finding {
@@ -376,7 +437,17 @@ export function bootstrapFinding(context: AwsContext): Finding {
   const parameters = new Map(
     (stack.Parameters ?? []).map((entry) => [entry.ParameterKey, entry.ParameterValue]),
   );
+  const outputs = new Map(
+    (stack.Outputs ?? []).map((output) => [output.OutputKey, output.OutputValue]),
+  );
   const { anchors } = context;
+  const approved = bootstrapPermissions(pinnedBootstrapTemplate(), anchors, {
+    keyId: parameters.get("FileAssetsBucketKmsKeyId") ?? "",
+    keyArn: outputs.get("FileAssetKeyArn") ?? "",
+  });
+  const deployRole = liveRole(context, anchors.bootstrapRoleName("deploy"));
+  const publishingRole = liveRole(context, anchors.bootstrapRoleName("file-publishing"));
+  const executionRole = liveRole(context, anchors.bootstrapRoleName("cfn-exec"));
   return judged(
     CHECK.bootstrap,
     [
@@ -399,12 +470,18 @@ export function bootstrapFinding(context: AwsContext): Finding {
         `a bootstrap role trusts someone other than ${DEPLOY_ROLE_NAME}`,
       ],
       [
-        executionRoleBounded(context),
-        "the execution role holds more than the bounded policy, or lacks the boundary",
+        equivalent(executionRole.trust, approved.executionTrust) &&
+          executionRole.boundary === anchors.boundaryPolicyArn &&
+          permits(executionRole, {}, [anchors.executionPolicyArn]),
+        "the execution role trusts more than CloudFormation, holds more than the bounded policy, or lacks the boundary",
       ],
       [
-        deployRoleConfined(context),
-        `the bootstrap deploy role may change a stack other than ${ENVIRONMENT_STACK_NAME}`,
+        permits(deployRole, approved.deployInline, approved.deployManaged),
+        `the bootstrap deploy role holds other permissions than the narrowed template's, which change ${ENVIRONMENT_STACK_NAME} alone`,
+      ],
+      [
+        permits(publishingRole, approved.filePublishingInline, []),
+        "the file-publishing role holds other permissions than the narrowed template's",
       ],
     ],
     `${BOOTSTRAP_STACK_NAME} trusts only ${DEPLOY_ROLE_NAME} and executes under the boundary`,

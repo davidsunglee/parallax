@@ -81,7 +81,7 @@ describe("the deploy environment checks", () => {
     }
   });
 
-  it("require the reviewer, no administrator bypass, and named-branch deployment", () => {
+  it("require the reviewer alone, no administrator bypass, and named-branch deployment", () => {
     expect(environmentFinding(world().context).state).toBe("verified");
     const environment = (fields: Record<string, unknown>): Record<string, Reply> => ({
       [`GET ${ENVIRONMENT}`]: json({
@@ -96,12 +96,49 @@ describe("the deploy environment checks", () => {
         ...fields,
       }),
     });
+    expect(
+      environmentFinding(
+        world(
+          environment({
+            deployment_branch_policy: { custom_branch_policies: true, protected_branches: false },
+          }),
+        ).context,
+      ).state,
+    ).toBe("verified");
     for (const [fields, expected] of [
-      [{ protection_rules: undefined }, "davidsunglee is not a required reviewer"],
-      [{ protection_rules: [{ type: "required_reviewers" }] }, "not a required reviewer"],
+      [{ protection_rules: undefined }, "the required reviewers are [], not davidsunglee alone"],
+      [{ protection_rules: [{ type: "required_reviewers" }] }, "not davidsunglee alone"],
       [
         { protection_rules: [{ type: "required_reviewers", reviewers: [{ type: "User" }] }] },
-        "not a required reviewer",
+        "[User undefined]",
+      ],
+      [
+        {
+          protection_rules: [
+            {
+              type: "required_reviewers",
+              reviewers: [
+                { type: "User", reviewer: { login: ROLLOUT.reviewer } },
+                { type: "User", reviewer: { login: "collaborator" } },
+              ],
+            },
+          ],
+        },
+        "[User davidsunglee, User collaborator], not davidsunglee alone",
+      ],
+      [
+        {
+          protection_rules: [
+            {
+              type: "required_reviewers",
+              reviewers: [
+                { type: "Team", reviewer: { slug: "maintainers" } },
+                { type: "User", reviewer: { login: ROLLOUT.reviewer } },
+              ],
+            },
+          ],
+        },
+        "[Team maintainers, User davidsunglee]",
       ],
       [{ can_admins_bypass: true }, "administrators may bypass"],
       [

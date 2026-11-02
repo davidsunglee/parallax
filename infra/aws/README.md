@@ -102,11 +102,12 @@ its value passes from the terminal or a pipe straight to `gh`.
 ## Spending guardrail
 
 With `budget.ownership` `manual`, the account's existing monthly cost budget is
-the guardrail, and the preflight requires exactly one, with actual and
-forecast email alerts. Moving to a stack-owned budget is a reviewed change to
-`stack` ownership with a new name: the access stack creates it beside the
-manual one, so spending stays guarded, and a maintainer retires the manual
-budget only after the new one's recipients are verified. A budget of the
+the guardrail, and the preflight requires exactly one, unfiltered, with actual
+and forecast email alerts that fire by the time spending reaches its limit.
+Moving to a stack-owned budget is a reviewed change to `stack` ownership with a
+new name: the access stack creates it only beside a manual guardrail still in
+force, so spending stays guarded, and a maintainer retires the manual budget
+only after the new one's recipients are verified. A budget of the
 configured name outside the stack is drift, never something to import.
 Budgets alert; nothing caps spending.
 

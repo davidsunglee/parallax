@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { ACCESS_STACK_NAME, BOOTSTRAP_STACK_NAME, ENVIRONMENT_STACK_NAME } from "../src/trust.ts";
 import {
   BOOTSTRAP_VARIANT,
+  bootstrapPermissions,
   BootstrapTemplateError,
   narrowedBootstrapTemplate,
   pinnedBootstrapTemplate,
 } from "../tools/bootstrap-template.ts";
 import { allowed } from "./policy-evaluation.ts";
-import { ANCHORS } from "./rollout-world.ts";
+import { ACCOUNT, ANCHORS, BOOTSTRAP_KEY } from "./rollout-world.ts";
 
 type Template = Record<string, Record<string, Record<string, unknown>>>;
 
@@ -191,6 +192,82 @@ describe("the narrowed bootstrap template", () => {
     for (const [template, message] of cases) {
       expect(() => narrowedBootstrapTemplate(template, ANCHORS)).toThrow(BootstrapTemplateError);
       expect(() => narrowedBootstrapTemplate(template, ANCHORS)).toThrow(message);
+    }
+  });
+});
+
+describe("the narrowed bootstrap's resolved permissions", () => {
+  const managedKey = bootstrapPermissions(pinned, ANCHORS, BOOTSTRAP_KEY);
+  const publishing = `cdk-parallaxci-file-publishing-role-default-policy-${ACCOUNT}-us-east-2`;
+  const keyResource = (permissions: typeof managedKey): unknown =>
+    (
+      permissions.filePublishingInline[publishing] as {
+        Statement: { Action: string[]; Resource: unknown }[];
+      }
+    ).Statement.find((statement) => statement.Action.includes("kms:Decrypt"))?.Resource;
+
+  it("are what CloudFormation resolves the narrowed roles to, with no intrinsic left", () => {
+    expect(JSON.stringify(managedKey)).not.toMatch(/Fn::|"Ref"/);
+    const [deploy] = Object.values(managedKey.deployInline) as {
+      Statement: Record<string, unknown>[];
+    }[];
+    expect(Object.keys(managedKey.deployInline)).toEqual(["default"]);
+    expect(deploy?.Statement).toContainEqual({
+      Action: "iam:PassRole",
+      Resource: ANCHORS.bootstrapRoleArn("cfn-exec"),
+      Effect: "Allow",
+    });
+    expect(deploy?.Statement).toContainEqual(
+      expect.objectContaining({
+        Sid: "ReadVersion",
+        Resource: [`arn:aws:ssm:us-east-2:${ACCOUNT}:parameter/cdk-bootstrap/parallaxci/version`],
+      }),
+    );
+    expect(managedKey.deployManaged).toEqual([
+      "arn:aws:iam::aws:policy/AWSCloudFormationReadOnlyAccess",
+    ]);
+    expect(Object.keys(managedKey.filePublishingInline)).toEqual([publishing]);
+    expect(keyResource(managedKey)).toBe(`arn:aws:kms:us-east-2:${ACCOUNT}:key/AWS_MANAGED_KEY`);
+    expect(managedKey.executionTrust).toEqual({
+      Statement: [
+        {
+          Action: "sts:AssumeRole",
+          Effect: "Allow",
+          Principal: { Service: "cloudformation.amazonaws.com" },
+        },
+      ],
+      Version: "2012-10-17",
+    });
+  });
+
+  it("name the key a bootstrap created when it was given none", () => {
+    const created = `arn:aws:kms:us-east-2:${ACCOUNT}:key/1234abcd`;
+    expect(keyResource(bootstrapPermissions(pinned, ANCHORS, { keyId: "", keyArn: created }))).toBe(
+      created,
+    );
+  });
+
+  it("refuse a template referring to anything the narrowing does not resolve", () => {
+    const planted = (resource: unknown): unknown => {
+      const copy = structuredClone(pinned);
+      const policy = properties(copy, "FilePublishingRoleDefaultPolicy")["PolicyDocument"] as {
+        Statement: unknown[];
+      };
+      policy.Statement.push({ Effect: "Allow", Action: "s3:GetObject", Resource: resource });
+      return copy;
+    };
+    for (const [resource, message] of [
+      [{ Ref: "StagingBucket" }, "uses Ref where the narrowing expects none"],
+      [{ "Fn::GetAtt": ["StagingBucket", "Arn"] }, "uses Fn::GetAtt"],
+      [{ "Fn::Sub": "${Elsewhere.Arn}" }, "refers to Elsewhere.Arn"],
+      [{ "Fn::If": ["Unreviewed", "*", "*"] }, "refers to Unreviewed"],
+    ] as const) {
+      expect(() => bootstrapPermissions(planted(resource), ANCHORS, BOOTSTRAP_KEY)).toThrow(
+        BootstrapTemplateError,
+      );
+      expect(() => bootstrapPermissions(planted(resource), ANCHORS, BOOTSTRAP_KEY)).toThrow(
+        message,
+      );
     }
   });
 });

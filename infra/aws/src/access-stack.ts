@@ -37,6 +37,11 @@ export interface AccessStackProps {
   readonly budget: StackBudget | undefined;
 }
 
+/** The cost filters a stack-owned budget watches the tagged environment through. */
+export const STACK_BUDGET_FILTERS: Readonly<Record<string, readonly string[]>> = {
+  TagKeyValue: [`user:${ENVIRONMENT_TAG.join("$")}`],
+};
+
 function notification(type: "ACTUAL" | "FORECASTED", recipients: readonly string[]) {
   return {
     notification: {
@@ -113,7 +118,7 @@ export class AccessStack extends Stack {
         timeUnit: "MONTHLY",
         budgetLimit: { amount: budget.limitUsd, unit: "USD" },
         // Billing must have the tag activated for cost allocation before it filters anything.
-        costFilters: { TagKeyValue: [`user:${ENVIRONMENT_TAG.join("$")}`] },
+        costFilters: STACK_BUDGET_FILTERS,
       },
       notificationsWithSubscribers: [
         notification("ACTUAL", budget.recipients),

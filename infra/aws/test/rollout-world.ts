@@ -1,19 +1,22 @@
+import { Template } from "aws-cdk-lib/assertions";
 import { CONFIGURATION_CONTEXT_KEY, environmentConfiguration } from "../src/configuration.ts";
 import { deployRoleConditions } from "../src/access-policies.ts";
 import { ROLLOUT_CONTEXT_KEY, rolloutConfiguration } from "../src/rollout-configuration.ts";
+import { defineStacks } from "../src/stacks.ts";
 import {
   ACCESS_STACK_NAME,
   BOOTSTRAP_STACK_NAME,
   BOUNDARY_POLICY_NAME,
   DEPLOY_ROLE_NAME,
   ENVIRONMENT_STACK_NAME,
+  EXECUTION_POLICY_NAME,
   GITHUB_OIDC_AUDIENCE,
   GITHUB_OIDC_ISSUER,
   trustAnchors,
 } from "../src/trust.ts";
 import {
   BOOTSTRAP_VARIANT,
-  narrowedBootstrapTemplate,
+  bootstrapPermissions,
   pinnedBootstrapTemplate,
 } from "../tools/bootstrap-template.ts";
 import {
@@ -23,7 +26,7 @@ import {
 } from "../tools/github-assessment.ts";
 import { rolloutContext, type RolloutContext } from "../tools/rollout-context.ts";
 import type { Completed, Invocation, Shell } from "../tools/shell.ts";
-import { committedContext } from "./committed-app.ts";
+import { committedApp, committedContext } from "./committed-app.ts";
 
 export const CONFIGURATION = environmentConfiguration(
   committedContext()[CONFIGURATION_CONTEXT_KEY],
@@ -60,11 +63,64 @@ const trust = (principal: unknown): Reply =>
     },
   });
 
-function narrowedDeployPolicy(): unknown {
-  const resources = narrowedBootstrapTemplate(pinnedBootstrapTemplate(), ANCHORS)[
-    "Resources"
-  ] as Record<string, { Properties: { Policies: [{ PolicyDocument: unknown }] } }>;
-  return resources["DeploymentActionRole"]?.Properties.Policies[0].PolicyDocument;
+interface PolicyResource {
+  readonly Type: string;
+  readonly Properties: {
+    readonly ManagedPolicyName?: string;
+    readonly PolicyDocument?: unknown;
+    readonly Policies?: readonly { PolicyDocument: unknown }[];
+  };
+}
+
+/** The access stack's policy documents as CloudFormation hands them to IAM: synthesized, not as authored. */
+const ACCESS_RESOURCES = Object.values(
+  Template.fromStack(defineStacks(committedApp()).access).toJSON()["Resources"] as Record<
+    string,
+    PolicyResource
+  >,
+);
+const managedDocument = (name: string): unknown =>
+  ACCESS_RESOURCES.find((resource) => resource.Properties.ManagedPolicyName === name)?.Properties
+    .PolicyDocument;
+const DEPLOY_ROLE_POLICY = ACCESS_RESOURCES.find((resource) => resource.Type === "AWS::IAM::Role")
+  ?.Properties.Policies?.[0]?.PolicyDocument;
+
+/** The bootstrap's file-asset encryption as the pinned CLI chooses it on a first bootstrap. */
+export const BOOTSTRAP_KEY = { keyId: "AWS_MANAGED_KEY", keyArn: "AWS_MANAGED_KEY" } as const;
+export const BOOTSTRAP_PERMISSIONS = bootstrapPermissions(
+  pinnedBootstrapTemplate(),
+  ANCHORS,
+  BOOTSTRAP_KEY,
+);
+
+/** The reads naming role *name*'s inline policies, their documents, and its managed policies. */
+function rolePolicies(
+  name: string,
+  inline: Readonly<Record<string, unknown>>,
+  managed: readonly string[],
+): Record<string, Reply> {
+  return {
+    [`iam list-role-policies --role-name ${name}`]: json({ PolicyNames: Object.keys(inline) }),
+    ...Object.fromEntries(
+      Object.entries(inline).map(([policy, document]) => [
+        `iam get-role-policy --role-name ${name} --policy-name ${policy}`,
+        json({ RoleName: name, PolicyName: policy, PolicyDocument: document }),
+      ]),
+    ),
+    [`iam list-attached-role-policies --role-name ${name}`]: json({
+      AttachedPolicies: managed.map((arn) => ({ PolicyArn: arn })),
+    }),
+  };
+}
+
+/** The reads of managed policy *arn*'s default version. */
+function managedPolicy(arn: string, document: unknown): Record<string, Reply> {
+  return {
+    [`iam get-policy --policy-arn ${arn}`]: json({ Policy: { Arn: arn, DefaultVersionId: "v2" } }),
+    [`iam get-policy-version --policy-arn ${arn} --version-id v2`]: json({
+      PolicyVersion: { Document: document, VersionId: "v2", IsDefaultVersion: true },
+    }),
+  };
 }
 
 /** Every read a fully set-up rollout answers, keyed as {@link replyKey} names commands. */
@@ -129,7 +185,15 @@ export function healthyReplies(): Record<string, Reply> {
       ],
     }),
     "budgets describe-notifications-for-budget": json({
-      Notifications: [{ NotificationType: "ACTUAL" }, { NotificationType: "FORECASTED" }],
+      Notifications: [
+        { NotificationType: "ACTUAL", ComparisonOperator: "GREATER_THAN", Threshold: 85 },
+        {
+          NotificationType: "FORECASTED",
+          ComparisonOperator: "GREATER_THAN",
+          Threshold: 100,
+          ThresholdType: "PERCENTAGE",
+        },
+      ],
     }),
     "budgets describe-subscribers-for-notification": json({
       Subscribers: [
@@ -162,6 +226,9 @@ export function healthyReplies(): Record<string, Reply> {
         },
       },
     }),
+    ...rolePolicies(DEPLOY_ROLE_NAME, { deploy: DEPLOY_ROLE_POLICY }, []),
+    ...managedPolicy(ANCHORS.executionPolicyArn, managedDocument(EXECUTION_POLICY_NAME)),
+    ...managedPolicy(ANCHORS.boundaryPolicyArn, managedDocument(BOUNDARY_POLICY_NAME)),
     [`cloudformation describe-stacks --stack-name ${BOOTSTRAP_STACK_NAME}`]: stack(
       "UPDATE_COMPLETE",
       {
@@ -173,7 +240,9 @@ export function healthyReplies(): Record<string, Reply> {
             ParameterValue: ANCHORS.executionPolicyArn,
           },
           { ParameterKey: "InputPermissionsBoundary", ParameterValue: BOUNDARY_POLICY_NAME },
+          { ParameterKey: "FileAssetsBucketKmsKeyId", ParameterValue: BOOTSTRAP_KEY.keyId },
         ],
+        Outputs: [{ OutputKey: "FileAssetKeyArn", OutputValue: BOOTSTRAP_KEY.keyArn }],
       },
     ),
     ...Object.fromEntries(
@@ -183,12 +252,18 @@ export function healthyReplies(): Record<string, Reply> {
       ]),
     ),
     [`iam get-role --role-name ${role("cfn-exec")}`]: json({
-      Role: { PermissionsBoundary: { PermissionsBoundaryArn: ANCHORS.boundaryPolicyArn } },
+      Role: {
+        AssumeRolePolicyDocument: BOOTSTRAP_PERMISSIONS.executionTrust,
+        PermissionsBoundary: { PermissionsBoundaryArn: ANCHORS.boundaryPolicyArn },
+      },
     }),
-    "iam list-attached-role-policies": json({
-      AttachedPolicies: [{ PolicyArn: ANCHORS.executionPolicyArn }],
-    }),
-    "iam get-role-policy": json({ PolicyDocument: narrowedDeployPolicy() }),
+    ...rolePolicies(
+      role("deploy"),
+      BOOTSTRAP_PERMISSIONS.deployInline,
+      BOOTSTRAP_PERMISSIONS.deployManaged,
+    ),
+    ...rolePolicies(role("file-publishing"), BOOTSTRAP_PERMISSIONS.filePublishingInline, []),
+    ...rolePolicies(role("cfn-exec"), {}, [ANCHORS.executionPolicyArn]),
     [`cloudformation describe-stacks --stack-name ${ENVIRONMENT_STACK_NAME}`]: stack(
       "UPDATE_COMPLETE",
       {
@@ -223,10 +298,7 @@ export function healthyReplies(): Record<string, Reply> {
         { type: "wait_timer" },
         {
           type: "required_reviewers",
-          reviewers: [
-            { type: "Team", reviewer: { login: "other" } },
-            { type: "User", reviewer: { login: ROLLOUT.reviewer } },
-          ],
+          reviewers: [{ type: "User", reviewer: { login: ROLLOUT.reviewer } }],
         },
       ],
     }),

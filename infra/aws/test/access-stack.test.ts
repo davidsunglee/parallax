@@ -281,6 +281,49 @@ describe("the boundary on environment roles", () => {
     expect(bounded("iam:CreateRole", environmentRole)).toBe(false);
   });
 
+  it("lets an environment role granted administrator access change no identity the environment does not own", () => {
+    expect(
+      allowedWithin(execution, boundary, "iam:AttachRolePolicy", environmentRole, {
+        "iam:PolicyARN": "arn:aws:iam::aws:policy/AdministratorAccess",
+      }),
+    ).toBe(true);
+    const existingAdministrators = [
+      `${iam}:role/OrganizationAccountAccessRole`,
+      `${iam}:role/aws-reserved/sso.amazonaws.com/us-east-2/AWSReservedSSO_AdministratorAccess_1`,
+    ];
+    for (const role of existingAdministrators) {
+      for (const action of [
+        "iam:UpdateAssumeRolePolicy",
+        "iam:AttachRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+      ]) {
+        expect(bounded(action, role), `${action} ${role}`).toBe(false);
+      }
+    }
+    for (const [action, resource] of [
+      ["iam:CreatePolicy", `${iam}:policy/Escalator`],
+      ["iam:AttachUserPolicy", `${iam}:user/someone`],
+      ["iam:PutGroupPolicy", `${iam}:group/Admins`],
+      ["iam:AddUserToGroup", `${iam}:group/Admins`],
+    ] as const) {
+      expect(bounded(action, resource), `${action} ${resource}`).toBe(false);
+    }
+    expect(bounded("iam:PutRolePolicy", environmentRole)).toBe(true);
+    expect(
+      bounded(
+        "iam:AddRoleToInstanceProfile",
+        `${iam}:instance-profile/${ENVIRONMENT_STACK_NAME}-Nat`,
+      ),
+    ).toBe(true);
+    expect(
+      bounded(
+        "iam:CreateServiceLinkedRole",
+        `${iam}:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS`,
+      ),
+    ).toBe(true);
+  });
+
   it("fits the managed policy size limit", () => {
     for (const statements of [execution, boundary]) {
       expect(
