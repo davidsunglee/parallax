@@ -1,7 +1,7 @@
 import {
   CfnOutput,
-  CliCredentialsStackSynthesizer,
   Duration,
+  LegacyStackSynthesizer,
   Stack,
   Tags,
   type IStackSynthesizer,
@@ -68,10 +68,11 @@ export class AccessStack extends Stack {
     const { anchors } = props;
     super(scope, id, {
       env: { account: anchors.account, region: anchors.region },
-      // jsii's `T | undefined` class members versus the interface's optional ones
-      synthesizer: new CliCredentialsStackSynthesizer({
-        qualifier: anchors.qualifier,
-      }) as IStackSynthesizer,
+      // It deploys before the bootstrap exists, so it may name no bootstrap
+      // role or asset bucket: the CLI deploys it with the maintainer's own
+      // credentials and passes its template inline. The cast bridges jsii's
+      // `T | undefined` class members and the interface's optional ones.
+      synthesizer: new LegacyStackSynthesizer() as IStackSynthesizer,
       terminationProtection: true,
       analyticsReporting: false,
     });

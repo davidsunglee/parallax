@@ -1,3 +1,4 @@
+import type { App } from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
 import { describe, expect, it } from "vitest";
 import { ACCESS_OUTPUTS } from "../src/access-stack.ts";
@@ -65,6 +66,17 @@ describe("the access stack", () => {
     const json = template.toJSON() as { Parameters?: Record<string, unknown>; Rules?: unknown };
     expect(json.Parameters?.["BootstrapVersion"]).toBeUndefined();
     expect(json.Rules).toBeUndefined();
+  });
+
+  it("deploys with the caller's own credentials, publishing nothing to a bootstrap bucket", () => {
+    const assembly = (stacks.access.node.root as App).synth();
+    const artifact = assembly.getStackByName(ACCESS_STACK_NAME);
+    expect(artifact.assumeRoleArn).toBeUndefined();
+    expect(artifact.cloudFormationExecutionRoleArn).toBeUndefined();
+    expect(artifact.stackTemplateAssetObjectUrl).toBeUndefined();
+    expect(artifact.dependencies).toEqual([]);
+    // CloudFormation's limit for a template passed inline rather than from S3
+    expect(JSON.stringify(artifact.template).length).toBeLessThan(51_200);
   });
 
   it("references the existing GitHub provider rather than creating one", () => {
