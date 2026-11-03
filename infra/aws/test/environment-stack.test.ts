@@ -618,7 +618,7 @@ describe("the runner", () => {
       Environment: { PrivilegedMode: false, Type: "LINUX_CONTAINER" },
       TimeoutInMinutes: 60,
       QueuedTimeoutInMinutes: 30,
-      ConcurrentBuildLimit: 1,
+      ConcurrentBuildLimit: 2,
     });
     const subnets = (project.Properties["VpcConfig"] as { Subnets: { Ref: string }[] }).Subnets;
     expect(subnets).toHaveLength(2);

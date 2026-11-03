@@ -54,14 +54,14 @@ __all__ = [
     "supervise",
 ]
 
-QUEUE_DEADLINE = 40 * 60.0
+QUEUE_DEADLINE = 60 * 60.0
 """Seconds from the verdict's start by which every expected cell has started.
 
-It exceeds the provider runner's own queue timeout, so a cell that the provider
-gave up on is reported here rather than waited on for as long as the workflow
-would keep a job queued."""
+This includes waiting behind other runs in the workflow's concurrency group
+and admission to the provider runner. A missing runner or excessive backlog
+still fails within this bound."""
 
-COMPLETION_DEADLINE = 110 * 60.0
+COMPLETION_DEADLINE = 130 * 60.0
 """Seconds from the verdict's start by which every expected cell has finished:
 the queue deadline plus the class job's own timeout, with margin."""
 
