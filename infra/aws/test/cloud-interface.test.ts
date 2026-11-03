@@ -5,7 +5,11 @@ import { parse } from "yaml";
 import { CONTROL_DATABASE } from "../src/role-bootstrap.ts";
 import { TEST_ENVIRONMENT_PARAMETER } from "../src/test-environment.ts";
 import { RUNNER_PROJECT_NAME } from "../src/trust.ts";
-import { ENVIRONMENT_VERSION_INPUT, VERDICT_JOB } from "../tools/cloud-verification.ts";
+import {
+  ENVIRONMENT_VERSION_INPUT,
+  VERDICT_DEADLINE,
+  VERDICT_JOB,
+} from "../tools/cloud-verification.ts";
 import { CLOUD_CELL } from "../tools/required-check.ts";
 import { PACKAGE_ROOT } from "./committed-app.ts";
 
@@ -14,7 +18,7 @@ const read = (relative: string): string => readFileSync(join(REPOSITORY_ROOT, re
 
 interface Workflow {
   readonly on: { workflow_dispatch: { inputs: Record<string, { required: boolean }> } };
-  readonly concurrency: { group: string };
+  readonly concurrency: { group: string; "cancel-in-progress": boolean };
   readonly jobs: Record<string, Record<string, unknown>>;
 }
 
@@ -46,11 +50,26 @@ describe("the cloud path this environment serves", () => {
     ]);
   });
 
+  it("queues cloud cells across refs and events without replacing pending work", () => {
+    expect(cloudJob["concurrency"]).toEqual({
+      group: "cloud-${{ matrix.provider }}",
+      queue: "max",
+      "cancel-in-progress": false,
+    });
+    expect(ci.concurrency["cancel-in-progress"]).toBe(true);
+  });
+
   it("gives every dispatched run a concurrency group of its own, so nothing cancels the one a deployment waits on", () => {
     expect(ci.concurrency.group).toContain("${{ github.event_name }}");
     expect(ci.concurrency.group).toContain(
       "${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}",
     );
+  });
+
+  it("lets the relevance and verdict jobs finish before deployment verification expires", () => {
+    const relevanceMinutes = Number(ci.jobs["cloud-relevance"]?.["timeout-minutes"]);
+    const verdictMinutes = Number(ci.jobs[VERDICT_JOB]?.["timeout-minutes"]);
+    expect(VERDICT_DEADLINE).toBeGreaterThan((relevanceMinutes + verdictMinutes) * 60_000);
   });
 
   it("is read by the suite under the names this environment publishes and creates", () => {

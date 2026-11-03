@@ -64,7 +64,8 @@ export class RunnerProject extends Construct {
       securityGroups: [this.securityGroup],
       timeout: Duration.minutes(60),
       queuedTimeout: Duration.minutes(30),
-      concurrentBuildLimit: 1,
+      // GitHub queues cloud jobs; the second slot admits a job while its predecessor shuts down.
+      concurrentBuildLimit: 2,
       badge: false,
       logging: {
         cloudWatch: {

@@ -212,6 +212,21 @@ def test_a_cell_never_discovered_fails_at_the_queue_deadline_with_a_rerun_instru
     assert clock.now - 1_000.0 < QUEUE_DEADLINE + POLL_INTERVAL + 1
 
 
+def test_a_cell_waiting_for_other_runs_can_start_after_fifty_minutes() -> None:
+    clock = _Clock()
+    waiting = [_pages(_job(status="pending", conclusion=None))] * int(50 * 60 / POLL_INTERVAL)
+    record = _Record(
+        [
+            *waiting,
+            _pages(_job(status="queued", conclusion=None)),
+            _pages(_job(status="in_progress", conclusion=None)),
+            _pages(_job()),
+        ]
+    )
+    assert _judge(record, clock).passed
+    assert clock.now - 1_000.0 >= 50 * 60
+
+
 def test_a_cell_never_started_fails_at_the_queue_deadline() -> None:
     clock = _Clock()
     verdict = _judge(_Record([_pages(_job(status="queued", conclusion=None))]), clock)

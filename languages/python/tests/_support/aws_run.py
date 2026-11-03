@@ -84,6 +84,20 @@ _OWNED = (
     "where r.rolname = current_user order by d.datname"
 )
 _PRESENT = "select count(*) from pg_database where datname = %s"
+_DROP_OWNER = (
+    "select datdba = (select oid from pg_roles where rolname = current_user) "
+    "from pg_database where datname = %s"
+)
+_DROP_CLIENTS = (
+    "select pg_terminate_backend(pid) from pg_stat_activity "
+    "where datname = %s and usename = current_user and backend_type = 'client backend'"
+)
+_DROP_BLOCKERS = (
+    "select pid, usename, backend_type, application_name, state from pg_stat_activity "
+    "where datname = %s order by pid"
+)
+_STATEMENT_TIMEOUT = "select current_setting('statement_timeout')"
+_SET_TIMEOUT = "select set_config('statement_timeout', %s, false)"
 _ANSWER = "select 1"
 _TABLES = (
     "select coalesce(string_agg(tablename, ',' order by tablename), '') "
@@ -266,7 +280,35 @@ class AwsRun:
     def _drop(self, control: DriverControl, database: str) -> None:
         if not _RUN_DATABASE.fullmatch(database):
             raise CloudRunError(f"{database!r} is not a run database this suite may drop")
-        control.execute_write(f'drop database if exists "{database}" with (force)', [])
+        previous = _single(control, _STATEMENT_TIMEOUT, [])
+        failures: list[BaseException] = []
+        try:
+            control.execute(_SET_TIMEOUT, ["30s"])
+            self._drop_owned(control, database)
+        except BaseException as failure:
+            failures.append(failure)
+            try:
+                blockers = control.execute(_DROP_BLOCKERS, [database])
+                failure.add_note(f"remaining backends in {database}: {blockers!r}")
+            except Exception as unavailable:
+                failure.add_note(f"remaining backend metadata unavailable: {unavailable!r}")
+        finally:
+            try:
+                control.execute(_SET_TIMEOUT, [previous])
+            except Exception as failure:
+                failures.append(failure)
+        _raise(failures)
+
+    def _drop_owned(self, control: DriverControl, database: str) -> None:
+        owner = control.execute(_DROP_OWNER, [database])
+        if not owner:
+            return
+        if owner != [(True,)]:
+            raise CloudRunError(f"{database} is not owned by the cloud login")
+        control.execute_write(f'alter database "{database}" allow_connections false', [])
+        control.execute(_DROP_CLIENTS, [database])
+        # Ordinary DROP handles autovacuum; FORCE tries to signal its unowned backend.
+        control.execute_write(f'drop database if exists "{database}"', [])
         if _single(control, _PRESENT, [database]) != 0:
             raise CloudRunError(f"dropping {database} was not confirmed; it may have leaked")
 

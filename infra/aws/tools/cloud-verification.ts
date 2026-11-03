@@ -17,7 +17,7 @@ export const DISPATCHER = "github-actions[bot]";
 
 /** How long a dispatched run may take to appear, and its verdict to finish. */
 export const DISCOVERY_DEADLINE = 10 * 60_000;
-export const VERDICT_DEADLINE = 140 * 60_000;
+export const VERDICT_DEADLINE = 160 * 60_000;
 export const POLL_INTERVAL = 30_000;
 
 /** How far the API's clock may run behind this one when a run's creation is compared with the dispatch. */

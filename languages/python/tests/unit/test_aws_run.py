@@ -72,6 +72,9 @@ class _Cluster:
     """What the scripted server answers, and everything said to it."""
 
     log: list[str] = field(default_factory=list[str])
+    timeout: str = "0"
+    owners: dict[str, bool | None] = field(default_factory=dict[str, bool | None])
+    blockers: list[tuple[Any, ...]] = field(default_factory=list[tuple[Any, ...]])
     owned: list[str] = field(default_factory=lambda: [CONTROL_DATABASE, "ci_1_1", "ci_x"])
     lock_after: int = 0
     unlocked: bool = True
@@ -97,6 +100,23 @@ class _Cluster:
         if "pg_tables" in sql:
             listed = self.tables.get(session.host, [])
             return [(listed.pop(0) if len(listed) > 1 else (listed[0] if listed else "t"),)]
+        return self.cleanup_answer(sql, binds)
+
+    def cleanup_answer(self, sql: str, binds: Sequence[object]) -> list[tuple[Any, ...]]:
+        if sql.startswith("select datdba ="):
+            owner = self.owners.get(str(binds[0]), True)
+            return [] if owner is None else [(owner,)]
+        if sql == "select current_setting('statement_timeout')":
+            return [(self.timeout,)]
+        if sql == "select set_config('statement_timeout', %s, false)":
+            self.timeout = str(binds[0])
+            return [(self.timeout,)]
+        if sql.startswith("select pg_terminate_backend"):
+            assert binds and "usename = current_user" in sql
+            assert "backend_type = 'client backend'" in sql
+            return []
+        if sql.startswith("select pid, usename"):
+            return self.blockers
         raise AssertionError(sql)
 
 
@@ -174,6 +194,21 @@ _CONTROL = f"{_WRITER}/{CONTROL_DATABASE}"
 _ADMIN = f"{_WRITER}/ci_7_2"
 
 
+def _drop_steps(database: str) -> list[str]:
+    return [
+        f"{_CONTROL}: select current_setting('statement_timeout')",
+        f"{_CONTROL}: select set_config('statement_timeout', %s, false)",
+        f"{_CONTROL}: select datdba = (select oid from pg_roles where rolname = current_user) "
+        "from pg_database where datname = %s",
+        f'{_CONTROL}: alter database "{database}" allow_connections false',
+        f"{_CONTROL}: select pg_terminate_backend(pid) from pg_stat_activity "
+        "where datname = %s and usename = current_user and backend_type = 'client backend'",
+        f'{_CONTROL}: drop database if exists "{database}"',
+        f"{_CONTROL}: select count(*) from pg_database where datname = %s",
+        f"{_CONTROL}: select set_config('statement_timeout', %s, false)",
+    ]
+
+
 def test_a_run_locks_drops_stale_databases_then_creates_and_warms_its_own() -> None:
     cluster = _Cluster()
     _started(cluster)
@@ -183,8 +218,7 @@ def test_a_run_locks_drops_stale_databases_then_creates_and_warms_its_own() -> N
         f"{_CONTROL}: set role none",
         f"{_CONTROL}: select pg_try_advisory_lock(%s)",
         f"{_CONTROL}: {cluster.log[3].split(': ', 1)[1]}",
-        f'{_CONTROL}: drop database if exists "ci_1_1" with (force)',
-        f"{_CONTROL}: select count(*) from pg_database where datname = %s",
+        *_drop_steps("ci_1_1"),
         f'{_CONTROL}: create database "ci_7_2"',
         f"{_ADMIN}: open",
         f"{_ADMIN}: set role none",
@@ -213,8 +247,7 @@ def test_closing_releases_in_ownership_order_and_only_once() -> None:
     assert cluster.log == [
         f"{_READER_INSTANCE}/ci_7_2: close",
         f"{_ADMIN}: close",
-        f'{_CONTROL}: drop database if exists "ci_7_2" with (force)',
-        f"{_CONTROL}: select count(*) from pg_database where datname = %s",
+        *_drop_steps("ci_7_2"),
         f"{_CONTROL}: select pg_advisory_unlock(%s)",
         f"{_CONTROL}: close",
         "ports: close",
@@ -229,8 +262,8 @@ def test_the_janitor_drops_only_run_databases() -> None:
 
     dropped = [entry for entry in cluster.log if "drop database" in entry]
     assert dropped == [
-        f'{_CONTROL}: drop database if exists "ci_9_1" with (force)',
-        f'{_CONTROL}: drop database if exists "ci_3_4" with (force)',
+        f'{_CONTROL}: drop database if exists "ci_9_1"',
+        f'{_CONTROL}: drop database if exists "ci_3_4"',
     ]
 
 
@@ -263,10 +296,9 @@ def test_a_host_that_never_answers_fails_the_run_chained_to_its_last_refusal() -
         _started(cluster)
 
     assert isinstance(timed_out.value.__cause__, ConnectionError)
-    assert cluster.log[-6:] == [
+    assert cluster.log[-12:] == [
         f"{_ADMIN}: close",
-        f'{_CONTROL}: drop database if exists "ci_7_2" with (force)',
-        f"{_CONTROL}: select count(*) from pg_database where datname = %s",
+        *_drop_steps("ci_7_2"),
         f"{_CONTROL}: select pg_advisory_unlock(%s)",
         f"{_CONTROL}: close",
         "ports: close",
@@ -491,3 +523,84 @@ def test_a_termination_request_arrives_as_an_interrupt_only_for_the_duration() -
         with pytest.raises(KeyboardInterrupt):
             terminate(signal.SIGTERM, None)
     assert signal.getsignal(signal.SIGTERM) == before
+
+
+def test_drop_does_not_force_terminate_background_workers() -> None:
+    cluster = _Cluster(owned=[])
+    run, _ = _started(cluster)
+    cluster.failing['drop database if exists "ci_7_2" with (force)'] = PermissionError(
+        "permission denied to terminate process"
+    )
+    run.close()
+    assert f'{_CONTROL}: drop database if exists "ci_7_2"' in cluster.log
+
+
+def test_drop_preserves_an_unrelated_sessions_failure() -> None:
+    cluster = _Cluster(owned=[])
+    run, _ = _started(cluster)
+    failure = PermissionError("unrelated client remains")
+    cluster.failing['drop database if exists "ci_7_2"'] = failure
+    with pytest.raises(PermissionError) as refused:
+        run.close()
+    assert refused.value is failure
+    assert cluster.log[-3:] == [
+        f"{_CONTROL}: select pg_advisory_unlock(%s)",
+        f"{_CONTROL}: close",
+        "ports: close",
+    ]
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_drop_restores_the_control_timeout_after_success_and_failure(fails: bool) -> None:
+    cluster = _Cluster(owned=[], timeout="7s")
+    run, _ = _started(cluster)
+    failure = TimeoutError("drop timed out")
+    if fails:
+        cluster.failing['drop database if exists "ci_7_2"'] = failure
+        cluster.blockers = [(42, "other_login", "client backend", "other_application", "idle")]
+        with pytest.raises(TimeoutError) as refused:
+            run.close()
+        assert refused.value is failure
+        assert any("other_login" in note for note in refused.value.__notes__)
+    else:
+        run.close()
+    assert cluster.timeout == "7s"
+
+
+def test_drop_refuses_a_database_not_owned_by_the_login_before_any_mutation() -> None:
+    cluster = _Cluster(owned=["ci_1_1"], owners={"ci_1_1": False})
+    with pytest.raises(CloudRunError, match="not owned"):
+        _started(cluster)
+    assert not any("alter database" in entry or "drop database" in entry for entry in cluster.log)
+
+
+def test_drop_of_an_already_absent_database_does_not_mutate_anything() -> None:
+    cluster = _Cluster(owned=["ci_1_1"], owners={"ci_1_1": None})
+    _started(cluster)
+    assert not any("alter database" in entry or "drop database" in entry for entry in cluster.log)
+
+
+def test_blocker_diagnostic_failure_does_not_replace_drop_failure() -> None:
+    from tests._support.aws_run import _DROP_BLOCKERS
+
+    cluster = _Cluster(owned=[])
+    run, _ = _started(cluster)
+    failure = PermissionError("drop refused")
+    cluster.failing['drop database if exists "ci_7_2"'] = failure
+    cluster.failing[_DROP_BLOCKERS] = ConnectionError("connection lost")
+    with pytest.raises(PermissionError) as refused:
+        run.close()
+    assert refused.value is failure
+    assert any("metadata unavailable" in note for note in refused.value.__notes__)
+
+
+def test_failure_restoring_timeout_is_raised_beside_the_drop_failure() -> None:
+    from tests._support.aws_run import _SET_TIMEOUT
+
+    cluster = _Cluster(owned=[])
+    run, _ = _started(cluster)
+    cluster.failing[_SET_TIMEOUT] = ConnectionError("cannot set timeout")
+    with pytest.raises(ExceptionGroup) as failures:
+        run.close()
+    assert len(failures.value.exceptions) == 2
+    assert all(isinstance(error, ConnectionError) for error in failures.value.exceptions)
