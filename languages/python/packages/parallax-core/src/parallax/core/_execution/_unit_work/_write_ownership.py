@@ -10,14 +10,8 @@ from typing import Final, Literal, final
 
 from parallax.core import temporal_read
 from parallax.core._execution._unit_work._errors import KeyedWriteValueError, UnitOfWorkError
+from parallax.core._execution._unit_work.evidence import InsertionIdentity, RetainedObservation
 from parallax.core._execution._unit_work.instructions import ASSIGNMENT_MUTATIONS
-from parallax.core._execution._unit_work.retain import (
-    NO_INSERTION_AUTHORITY,
-    InsertionIdentity,
-    KeyedWriteRefusalAdvice,
-    NoInsertionAuthority,
-    RetainedObservation,
-)
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
     InsertionAuthorizedWrite,
@@ -44,9 +38,42 @@ from parallax.core.write_plan.plan import (
 from parallax.core.write_plan.steps import Finite, MaxPlusOne, SelfIncrement
 
 __all__ = [
+    "NO_INSERTION_AUTHORITY",
     "InsertionComposition",
+    "KeyedWriteRefusalAdvice",
+    "NoInsertionAuthority",
     "WriteOwnership",
 ]
+
+
+@final
+class NoInsertionAuthority:
+    """The answer an insertion authority query gives where no admitted
+    insertion's authority stands: distinct from the ``None`` window of a
+    standing insertion without Valid Time."""
+
+    __slots__ = ()
+
+
+NO_INSERTION_AUTHORITY: Final = NoInsertionAuthority()
+
+
+@dataclass(frozen=True, slots=True)
+class KeyedWriteRefusalAdvice:
+    """The repair a keyed-write value refusal names, spelled in the interface
+    that supplied the carrier it concerns.
+
+    Each field completes one neutral refusal: ``not_stored`` a value no read
+    produced, ``already_stored`` a published value handed to an insert, and
+    ``repeated_insert`` an insert of an object whose insertion still stands. A
+    representation supplies one shared value; the refusal that is raised, its
+    code, and its order are decided without it.
+    """
+
+    not_stored: str
+    already_stored: str
+    repeated_insert: str
+
 
 type _PendingInsertionState = Literal["opening", "ended_opening"]
 """How an insertion of the buffer stands, while the buffer holds it.

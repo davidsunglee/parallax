@@ -6,6 +6,7 @@ from operator import itemgetter
 
 from parallax.core import inheritance, relationship, temporal_read
 from parallax.core._execution._unit_work.clock import TransactionInstant
+from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     ExpectedVersion,
@@ -13,7 +14,6 @@ from parallax.core._execution._unit_work.instructions import (
     PreparedPredicateInstruction,
     derive_keyed_instruction,
 )
-from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import (
     ActorIdentity,
     AuditDecoration,

@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 
 from parallax.core import read_planning
-from parallax.core._execution._unit_work.retain import ReadEvidence
+from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core.entity import Entity, EntityGraphConstruction, IncludePath
 from parallax.core.entity._expressions import include_traversal
 from parallax.core.entity._layout import CatalogedModel

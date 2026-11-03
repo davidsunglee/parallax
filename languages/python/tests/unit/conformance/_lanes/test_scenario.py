@@ -34,11 +34,11 @@ from parallax.conformance.simulated_temporal_store import (
 )
 from parallax.core import opt_lock
 from parallax.core._execution._unit_work import instructions
+from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
 )
-from parallax.core._execution._unit_work.retain import KeyedWriteRefusalAdvice
 from parallax.core._execution._unit_work.write_items import (
     InsertionAuthorizedWrite,
     KeyedInsert,

@@ -17,13 +17,13 @@ from typing import Final, cast
 
 from parallax.core import Attr, Bitemporal, Document, DomainModel, Entity, attr, temporal_read
 from parallax.core._execution._planning import build_write_planner
+from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     PreparedTargetInstruction,
     prepare_wire_write,
 )
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange
-from parallax.core._execution._unit_work.retain import RetainedTargetState
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     TargetWrite,

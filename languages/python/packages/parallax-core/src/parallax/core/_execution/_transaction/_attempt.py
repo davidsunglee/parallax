@@ -36,6 +36,7 @@ from parallax.core._execution._unit_work.acquisition import (
     TargetReadRequest,
 )
 from parallax.core._execution._unit_work.clock import Clock
+from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PredicateMutation,
@@ -45,7 +46,6 @@ from parallax.core._execution._unit_work.instructions import (
     prepare_typed_write,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.retain import ReadEvidence
 from parallax.core._execution._unit_work.strategy import ActorIdentity
 from parallax.core._execution._unit_work.uow import (
     Concurrency,

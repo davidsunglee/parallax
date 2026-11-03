@@ -22,7 +22,7 @@ from parallax.core._execution._read_pipeline import (
 from parallax.core._execution._routing import OperationRouting, resolved_read_policy
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._transaction._runner import TransactionRunner
-from parallax.core._execution._unit_work.retain import ReadEvidence
+from parallax.core._execution._unit_work.evidence import ReadEvidence
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.db_port import IsolationLevel, Route, RouteCapabilities, RoutePolicy
 from parallax.core.execution_authority._authority import ExecutionAuthority

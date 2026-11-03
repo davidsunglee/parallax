@@ -10,19 +10,19 @@ from weakref import WeakValueDictionary
 from parallax.core._execution._unit_work._errors import WriteEvidenceError
 from parallax.core._execution._unit_work._write_ownership import (
     InsertionComposition,
+    KeyedWriteRefusalAdvice,
+    NoInsertionAuthority,
     WriteOwnership,
 )
 from parallax.core._execution._unit_work.claims import SettledEvidence
-from parallax.core._execution._unit_work.instructions import KeyedMutation
-from parallax.core._execution._unit_work.lifetime import AttemptLifetime
-from parallax.core._execution._unit_work.retain import (
+from parallax.core._execution._unit_work.evidence import (
     InsertionIdentity,
-    KeyedWriteRefusalAdvice,
-    NoInsertionAuthority,
     ParticipationToken,
     ReadEvidence,
     RetainedObservation,
 )
+from parallax.core._execution._unit_work.instructions import KeyedMutation
+from parallax.core._execution._unit_work.lifetime import AttemptLifetime
 from parallax.core._execution._unit_work.strategy import Concurrency, EvidencePolicyLookup
 from parallax.core._execution._unit_work.write_items import (
     ComposedBitemporalOpening,
@@ -454,7 +454,7 @@ class SourceAuthority:
         with — whose start is where a write it authorizes starts — while its
         authority stands in this attempt, ``None`` for a standing insertion of
         an object without Valid Time, or
-        :data:`~parallax.core._execution._unit_work.retain.NO_INSERTION_AUTHORITY`
+        :data:`~parallax.core._execution._unit_work._write_ownership.NO_INSERTION_AUTHORITY`
         once it does not stand: never issued here, retired by the complete
         removal of what it opened, or superseded by a later insertion of the
         same object."""

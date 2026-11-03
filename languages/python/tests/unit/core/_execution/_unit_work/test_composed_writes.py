@@ -12,11 +12,11 @@ import pytest
 from parallax.core import temporal_read
 from parallax.core._execution._planning import build_write_planner
 from parallax.core._execution._unit_work.admission import WriteAdmission
+from parallax.core._execution._unit_work.evidence import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.instructions import (
     PreparedKeyedInstruction,
     prepare_wire_write,
 )
-from parallax.core._execution._unit_work.retain import ParticipationToken, ReadEvidence
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_items import (
     ComposedTemporalWrite,

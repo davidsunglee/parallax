@@ -19,13 +19,13 @@ from parallax.core._execution._transaction._attempt import (
     TxnAttempt,
     WriteVerb,
 )
+from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     TargetMutation,
     TargetWriteInstruction,
 )
 from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core._execution._unit_work.retain import KeyedWriteRefusalAdvice
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from tests._support.db_port import ScriptedAdapter, Transact
 from tests.unit.core._execution._execution_support import itself, scope

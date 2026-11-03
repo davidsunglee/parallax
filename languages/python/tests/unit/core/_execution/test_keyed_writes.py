@@ -23,18 +23,18 @@ from parallax.core._execution._unit_work._errors import (
     UnitOfWorkError,
     WriteEvidenceError,
 )
+from parallax.core._execution._unit_work._write_ownership import KeyedWriteRefusalAdvice
+from parallax.core._execution._unit_work.evidence import (
+    InsertionIdentity,
+    ParticipationToken,
+    ReadEvidence,
+)
 from parallax.core._execution._unit_work.instructions import (
     KeyedMutation,
     PreparedKeyedInstruction,
     prepare_typed_write,
 )
 from parallax.core._execution._unit_work.preparation import WritePreparation
-from parallax.core._execution._unit_work.retain import (
-    InsertionIdentity,
-    KeyedWriteRefusalAdvice,
-    ParticipationToken,
-    ReadEvidence,
-)
 from parallax.core._execution._unit_work.write_items import InsertionAuthorizedWrite, KeyedInsert
 from parallax.core.entity._model import model_of
 from parallax.core.execution import ExecutionFailure

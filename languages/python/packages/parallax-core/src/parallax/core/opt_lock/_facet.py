@@ -6,8 +6,8 @@ from types import MappingProxyType
 from typing import Final, Protocol, TypeGuard
 
 from parallax.core._execution._unit_work.claims import SettledEvidence
+from parallax.core._execution._unit_work.evidence import RetainedObservation
 from parallax.core._execution._unit_work.instructions import INSERT_MUTATIONS, KeyedMutation
-from parallax.core._execution._unit_work.retain import RetainedObservation
 from parallax.core._execution._unit_work.uow import Concurrency
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, FacetKey, Metamodel
 from parallax.core.write_plan import ObjectKey

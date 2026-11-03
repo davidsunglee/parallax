@@ -729,6 +729,68 @@ def test_model_publication_seal_allows_its_declared_imports(
     assert own.imports_escaping_a_sealed_child_row([relative]) == []
 
 
+_UNIT_WORK = "parallax.core._execution._unit_work"
+_EVIDENCE = f"{_UNIT_WORK}.evidence"
+_EVIDENCE_FILE = "parallax-core/src/parallax/core/_execution/_unit_work/evidence.py"
+
+
+def _evidence_with(statement: str) -> None:
+    evidence = _scratch_package_path(_EVIDENCE_FILE)
+    evidence.write_text(f"{evidence.read_text()}\n{statement}\n")
+
+
+def test_the_evidence_seal_admits_exactly_its_declared_vocabulary() -> None:
+    source = _scratch_package_path(_EVIDENCE_FILE).read_text()
+    imported = own.first_party_imports(source, own.containing_package(_EVIDENCE_FILE))
+    granted = dag.PYTHON_FIRST_PARTY_GRANTS[_EVIDENCE]
+    assert imported
+    assert all(any(dag.is_in_scope(one, scope) for scope in granted) for one in imported)
+    assert own.owning_scopes(_EVIDENCE, dag.declared_first_party_scopes()) == [
+        "parallax.core._execution",
+        _UNIT_WORK,
+        _EVIDENCE,
+    ]
+    assert own.imports_escaping_a_sealed_child_row(own.production_files()) == []
+
+
+@pytest.mark.parametrize(
+    ("statement", "escaped"),
+    [
+        (f"from {_UNIT_WORK}.claims import SettledEvidence", f"{_UNIT_WORK}.claims"),
+        ("from .claims import SettledEvidence", f"{_UNIT_WORK}.claims"),
+        (f"from {_UNIT_WORK} import uow", _UNIT_WORK),
+        ("from . import uow", _UNIT_WORK),
+        (f"import {_UNIT_WORK}.clock", f"{_UNIT_WORK}.clock"),
+    ],
+)
+def test_the_evidence_seal_refuses_the_unit_of_work_around_it(
+    statement: str, escaped: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The evidence row sits inside the unit of work's package, so no contract
+    # sourced there can name a module of it; every spelling of that reach is
+    # refused over the file instead, whatever the module itself imports.
+    _evidence_with(statement)
+    assert own.main([]) == 1
+    err = capsys.readouterr().err
+    assert f"evidence.py (imports {escaped}, which {_EVIDENCE}'s own row cannot reject)" in err
+
+
+def test_the_unit_of_work_seal_still_grades_its_sealed_child_files(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A reach past the unit of work into the execution package lands outside
+    # the evidence scope's parent, so the evidence seal is silent; the unit of
+    # work's own seal walks the same file and refuses it.
+    _evidence_with("from parallax.core._execution._retention import ReadEvidenceContext")
+    assert own.main([]) == 1
+    err = capsys.readouterr().err
+    assert (
+        "evidence.py (imports parallax.core._execution._retention, "
+        f"which {_UNIT_WORK}'s own row cannot reject)"
+    ) in err
+    assert f"which {_EVIDENCE}'s own row" not in err
+
+
 # --------------------------------------------------------------------------
 # Canary 6: an exemption that no longer describes the tree.
 # --------------------------------------------------------------------------

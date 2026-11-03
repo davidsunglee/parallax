@@ -517,7 +517,7 @@ exhausted, failed or stopped early.
 - `parallax.core._execution._read_pipeline:_page_origin_collector`
 - `parallax.core._execution._page_origins:ReadEvidenceCollector`
 - `parallax.core.read_delivery._page_reader:EMPTY_PAGE_ORIGIN_COLLECTOR`
-- `parallax.core._execution._unit_work.retain:ReadEvidence`
+- `parallax.core._execution._unit_work.evidence:ReadEvidence`
 - `parallax.core._execution._retention:ReadEvidenceContext`
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority`
 - `parallax.core._execution._unit_work.source_authority:SourceAuthority.resolve_read_evidence`

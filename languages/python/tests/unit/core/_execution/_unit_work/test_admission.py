@@ -16,20 +16,22 @@ import pytest
 
 from parallax.conformance.class_models import MODELS as CLASS_MODELS
 from parallax.core import inheritance, temporal_read
+from parallax.core._execution._unit_work._write_ownership import (
+    NO_INSERTION_AUTHORITY,
+    KeyedWriteRefusalAdvice,
+)
+from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.admission import BufferOutcome, WriteAdmission
 from parallax.core._execution._unit_work.claims import WriteIntent
+from parallax.core._execution._unit_work.evidence import (
+    InsertionIdentity,
+    ParticipationToken,
+    ReadEvidence,
+)
 from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
     PreparedKeyedInstruction,
     prepare_wire_write,
-)
-from parallax.core._execution._unit_work.retain import (
-    NO_INSERTION_AUTHORITY,
-    InsertionIdentity,
-    KeyedWriteRefusalAdvice,
-    ParticipationToken,
-    ReadEvidence,
-    RetainedTargetState,
 )
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.write_items import (

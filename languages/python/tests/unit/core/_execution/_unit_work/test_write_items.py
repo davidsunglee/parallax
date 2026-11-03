@@ -10,19 +10,19 @@ from typing import TYPE_CHECKING, Final, cast
 import pytest
 
 from parallax.core import inheritance
+from parallax.core._execution._unit_work.acquisition import RetainedTargetState
 from parallax.core._execution._unit_work.claims import WriteIntent, WriteIntentKind
+from parallax.core._execution._unit_work.evidence import (
+    InsertionIdentity,
+    ParticipationToken,
+    ReadEvidence,
+)
 from parallax.core._execution._unit_work.instructions import (
     ExpectedTxStart,
     PreparedKeyedInstruction,
     derive_keyed_instruction,
     prepare_typed_write,
     prepare_wire_write,
-)
-from parallax.core._execution._unit_work.retain import (
-    InsertionIdentity,
-    ParticipationToken,
-    ReadEvidence,
-    RetainedTargetState,
 )
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,

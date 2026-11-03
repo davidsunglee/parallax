@@ -6,8 +6,8 @@ from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
 from parallax.core._execution._unit_work.claims import SettledEvidence
 from parallax.core._execution._unit_work.clock import TransactionInstant
+from parallax.core._execution._unit_work.evidence import RetainedObservation
 from parallax.core._execution._unit_work.instructions import KeyedMutation
-from parallax.core._execution._unit_work.retain import RetainedObservation
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,

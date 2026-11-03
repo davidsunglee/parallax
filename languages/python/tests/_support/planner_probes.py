@@ -10,19 +10,19 @@ from typing import Final
 
 from parallax.core import opt_lock, temporal_read
 from parallax.core._execution._transaction._lifetime import TxnAttemptLifetime
+from parallax.core._execution._unit_work._write_ownership import NoInsertionAuthority
 from parallax.core._execution._unit_work.acquisition import AcquireRows, RowConsumer, RowRequest
 from parallax.core._execution._unit_work.admission import WriteAdmission
+from parallax.core._execution._unit_work.evidence import (
+    InsertionIdentity,
+    ParticipationToken,
+    ReadEvidence,
+    RetainedObservation,
+)
 from parallax.core._execution._unit_work.instructions import (
     INSERT_MUTATIONS,
     PreparedKeyedInstruction,
     prepare_typed_write,
-)
-from parallax.core._execution._unit_work.retain import (
-    InsertionIdentity,
-    NoInsertionAuthority,
-    ParticipationToken,
-    ReadEvidence,
-    RetainedObservation,
 )
 from parallax.core._execution._unit_work.source_authority import SourceAuthority
 from parallax.core._execution._unit_work.strategy import ActorIdentity, Concurrency

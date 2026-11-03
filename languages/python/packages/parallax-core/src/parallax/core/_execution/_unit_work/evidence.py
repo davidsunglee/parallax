@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Final, cast, final
+from typing import Final, cast
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.temporal_read import Pin
-from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey, TemporalObjectStateKey
+from parallax.core.write_plan.keys import ObjectKey, ObjectStateKey
 from parallax.core.write_plan.observe import StateObservation
 
 __all__ = [
-    "NO_INSERTION_AUTHORITY",
     "InsertionIdentity",
-    "KeyedWriteRefusalAdvice",
-    "NoInsertionAuthority",
     "ParticipationToken",
     "ReadEvidence",
     "RetainedObservation",
-    "RetainedTargetState",
 ]
 
 
@@ -37,35 +32,6 @@ class InsertionIdentity:
 
     def __init__(self, object_key: ObjectKey) -> None:
         self.object_key: Final = object_key
-
-
-@final
-class NoInsertionAuthority:
-    """The answer an insertion authority query gives where no admitted
-    insertion's authority stands: distinct from the ``None`` window of a
-    standing insertion without Valid Time."""
-
-    __slots__ = ()
-
-
-NO_INSERTION_AUTHORITY: Final = NoInsertionAuthority()
-
-
-@dataclass(frozen=True, slots=True)
-class KeyedWriteRefusalAdvice:
-    """The repair a keyed-write value refusal names, spelled in the interface
-    that supplied the carrier it concerns.
-
-    Each field completes one neutral refusal: ``not_stored`` a value no read
-    produced, ``already_stored`` a published value handed to an insert, and
-    ``repeated_insert`` an insert of an object whose insertion still stands. A
-    representation supplies one shared value; the refusal that is raised, its
-    code, and its order are decided without it.
-    """
-
-    not_stored: str
-    already_stored: str
-    repeated_insert: str
 
 
 class ParticipationToken:
@@ -130,48 +96,6 @@ class RetainedObservation:
     def invalidate(self) -> None:
         """Record that a successful own change replaced the observed state."""
         self._invalidated = True
-
-
-class RetainedTargetState:
-    """The stored row a Locking temporal target write's acquisition
-    read whole, kept for the range that write settles as pending data rather
-    than evidence: its Attributes judged, its Value Object occurrences still
-    pending, its raw Structured Column beside them.
-
-    ``state`` is the exact milestone the row is, by its own coordinates, and
-    ``read_at`` the attempt's change count when the read ran, which
-    together decide whether the row is still current when the range binds. It
-    grants no authority: the caller's condition proved at admission stays the
-    write's own.
-
-    The row and document are handed over once, by :meth:`take`, so the range
-    that reuses or discards them leaves nothing pinned behind it.
-    """
-
-    __slots__ = ("_document", "_row", "read_at", "state")
-
-    def __init__(
-        self,
-        state: TemporalObjectStateKey,
-        read_at: int,
-        row: tuple[object, ...],
-        document: object | None,
-    ) -> None:
-        self.state: Final = state
-        self.read_at: Final = read_at
-        self._row: tuple[object, ...] | None = row
-        self._document = document
-
-    def take(self) -> tuple[tuple[object, ...], object | None] | None:
-        """The row and its document, released from this state, or ``None``
-        once an earlier call took them."""
-        row = self._row
-        if row is None:
-            return None
-        document = self._document
-        self._row = None
-        self._document = None
-        return row, document
 
 
 class ReadEvidence:

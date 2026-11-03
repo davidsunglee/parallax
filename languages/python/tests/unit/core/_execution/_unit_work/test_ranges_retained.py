@@ -18,11 +18,11 @@ from parallax.core._execution._unit_work import ranges as ranges_module
 from parallax.core._execution._unit_work.acquisition import (
     CompletionRequest,
     CoverageReadRequest,
+    RetainedTargetState,
     RowConsumer,
     RowRequest,
 )
 from parallax.core._execution._unit_work.ranges import DeferredTemporalRange, RangeBindings
-from parallax.core._execution._unit_work.retain import RetainedTargetState
 from parallax.core._execution._unit_work.write_items import (
     AdmittedWrite,
     TargetWrite,

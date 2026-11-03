@@ -26,6 +26,12 @@ from parallax.core._execution._unit_work.effects import (
     enforce_affected_rows,
     returns_allocated_keys,
 )
+from parallax.core._execution._unit_work.evidence import (
+    InsertionIdentity,
+    ParticipationToken,
+    ReadEvidence,
+    RetainedObservation,
+)
 from parallax.core._execution._unit_work.instructions import (
     AMEND_MUTATIONS,
     ASSIGNMENT_MUTATIONS,
@@ -46,12 +52,6 @@ from parallax.core._execution._unit_work.instructions import (
     WriteRejectedError,
 )
 from parallax.core._execution._unit_work.keys import object_key
-from parallax.core._execution._unit_work.retain import (
-    InsertionIdentity,
-    ParticipationToken,
-    ReadEvidence,
-    RetainedObservation,
-)
 from parallax.core._execution._unit_work.strategy import (
     NO_AUDIT,
     DatabaseLoginActor,
