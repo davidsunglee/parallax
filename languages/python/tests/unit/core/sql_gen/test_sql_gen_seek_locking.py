@@ -12,8 +12,46 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import OrderKey, object_query, validate_object_query
 from parallax.core.object_query._resolved import ContinuationCoordinate
 from parallax.core.predicate import TrueNode
-from parallax.core.sql_gen._compile import compile_read
+from parallax.core.sql_gen._compile import compile_read, compile_template
 from tests.unit._corpus_model_support import model, target
+
+
+def test_locking_continuation_binds_document_coordinates_in_projection_order(
+    profile_run: ProvisionedRun,
+) -> None:
+    metamodel = model("document-layout")
+    entity = target(metamodel, "Trip")
+    query = object_query(
+        entity.identity,
+        TrueNode(),
+        order_by=(
+            OrderKey(attr="parallax.compatibility.Trip.travelerId"),
+            OrderKey(attr="parallax.compatibility.Trip.nights"),
+        ),
+    )
+    pages = continuation.plan(validate_object_query(entity, query, metamodel), metamodel)
+    cold = pages.after(ContinuationCoordinate((1, 0, 50)), limit=1)
+    current = pages.after(ContinuationCoordinate((1, 1, 52)), limit=2)
+    template = compile_template(
+        read_planning.plan(
+            cold, metamodel, projection=read_planning.ReadProjectionRequest("none", False)
+        ).root,
+        metamodel,
+        POSTGRES,
+        lock="locking",
+    )
+    compiled = template.render(query=current)
+    profile_run.reset(metamodel, provision.load_fixtures("models/document-layout.yaml"))
+    with closing(profile_run.control(autocommit=False)) as connection:
+        rows = connection.execute(
+            POSTGRES.to_driver_sql(compiled.statement.sql),
+            compiled.statement.wire_binds(),
+            compiled.document_reads,
+        )
+    assert compiled.document_reads == ((2, 3),)
+    assert [tuple(row[:2]) for row in rows] == [(51, 1), (53, 2)]
+    assert [tuple(row[-3:]) for row in rows] == [(1, 3, 51), (2, 7, 53)]
+    assert all(len(row) == 6 for row in rows)
 
 
 @pytest.mark.parametrize("locked_id", [5, 7], ids=["ordinary-branch", "null-tail-branch"])

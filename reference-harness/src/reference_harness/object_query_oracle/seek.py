@@ -821,6 +821,7 @@ def refuse_a_malformed_continuing_wrapper(
                 nulls_first=term.nulls == "first",
                 nullable=term.nullable,
                 neutral_type=term.neutral_type,
+                document_path=tuple(term.path_binds) if locking is not None else (),
             )
             for term, alias in zip(terms, aliases, strict=True)
         ),

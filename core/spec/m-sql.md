@@ -675,11 +675,14 @@ two-arm form keeps both union inputs unlocked: PostgreSQL permits no locking
 clause on a `UNION` result or either input. The outer SELECT joins the derived
 relation back to the read's one physical base Table as `t0`, equating EVERY
 column of that Table Layout's `physical_primary_key` in canonical key order,
-then orders and caps the derived result and ends with `for share of t0`. The
-derived relation continues to carry the read projection and hidden capture cells,
-so result ordinals and capture order do not move; the join exists solely to name
-and lock the exact base rows the arms selected. A temporal key therefore includes
-all of its physical edge components, and a TPH or single-concrete inheritance read
+then projects, orders, and caps the physical base rows and ends with
+`for share of t0`. The outer projection reads payload, revision evidence, and
+hidden capture cells from `t0`, using the same expressions and result layout
+as an ordinary read of that Table. It MUST NOT return those values from the
+derived relation: a row updated while the statement waits must be observed as
+the state protected by the acquired lock (`m-read-lock`). The derived relation
+selects candidate identities; it supplies no returned state. A temporal key
+therefore includes all of its physical edge components, and a TPH or single-concrete inheritance read
 uses its shared or concrete Table's complete key. A key projected through an
 encoded result alias compares the base key through that same lossless projection.
 The form remains one statement and one atomic shared-lock acquisition, so every
@@ -724,9 +727,10 @@ Continuation Order names and still author the pages that continue past it
 Seek binds append after the caller's authored predicate binds, so bind order stays
 caller-first; the ordering clause's own path binds follow them, and the cap last.
 In a two-arm continuing page all binds of the non-NULL range arm precede all binds of
-the NULL-tail arm. In PostgreSQL's locking form, any encoded base-key expressions in
-the identity join follow both arms in physical-key order; the outer cap follows the
-join. All three cap binds carry the same requested page size. A capture cell's path
+the NULL-tail arm. In PostgreSQL's locking form, the outer projection's scalar
+encoding and capture-path binds precede both arms. Encoded base-key expressions in
+the identity join follow both arms in physical-key order, followed by the outer
+physical ordering's path binds and the cap. All three cap binds carry the same requested page size. A capture cell's path
 binds precede every bind below them in its arm — a wrapped `union all`'s branch binds
 included — because the cell's holes precede them in the text. A statement whose
 fragments are assembled in any other order sends one fragment's data to another's
@@ -1924,7 +1928,8 @@ sequence (rule 1 scopes per branch, and the wrap adds one table-less outer scope
 cap therefore applies to the union's rows rather than to each branch's, and its `?`
 bind follows every branch bind.
 
-The outer select projects the union's own result aliases through; a `Document` slot
+For this unlocked multi-table read, the outer select projects the union's own
+result aliases through; a `Document` slot
 is the one exception, because a presence cell carries no result alias and so cannot
 be addressed from outside the derived table — each branch projects that slot as a
 single aliased cell **instead of** the *Document read pair* it projects unwrapped,

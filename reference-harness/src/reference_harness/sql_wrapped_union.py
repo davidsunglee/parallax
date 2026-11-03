@@ -19,7 +19,7 @@ not.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import sqlglot
 from sqlglot import exp
@@ -73,8 +73,8 @@ class WrapFacts:
 
     ``limit`` is the authored cap itself, not merely whether one exists, so the tail's
     cap bind is compared with the row count the query asked for. ``binds`` is the whole
-    statement's bind list in order; the outer wrap's own binds are its trailing
-    entries, because they follow every branch's (m-sql). ``None`` where the caller has
+    statement's bind list in order. The outer projection binds first; the join,
+    ordering, and cap binds follow every branch (m-sql). ``None`` where the caller has
     no bind list to grade against. ``lock_table`` and ``physical_identity`` are
     present together for PostgreSQL's locking continuation: each identity pair is
     the derived result alias and base Column, in the Table Layout's physical-key
@@ -204,7 +204,7 @@ def _wrap_presence_cell(node: Expr | None) -> str | None:
 
 
 def _assert_wrap_projection(
-    select: exp.Select, union: exp.SetOperation, facts: WrapFacts | None
+    select: exp.Select, aliases: list[str], facts: WrapFacts | None
 ) -> None:
     """Every union result alias projected through the wrap, once, in the union's order.
 
@@ -224,7 +224,6 @@ def _assert_wrap_projection(
     supports.
     """
     cells: list[Expr] = list(select.expressions)
-    aliases = union.named_selects
     position = 0
     for alias in aliases:
         document = None if facts is None else alias in facts.document_aliases
@@ -254,6 +253,77 @@ def _assert_wrap_projection(
             f"union's {len(aliases)} result alias(es) {aliases}; only a Document read pair "
             f"adds a cell, and every alias is projected through exactly once (m-sql)"
         )
+
+
+def _first_select(node: Expr) -> exp.Select:
+    while isinstance(node, (exp.Subquery, exp.SetOperation)):
+        node = node.this
+    if not isinstance(node, exp.Select):
+        raise NonCanonicalError("a locking continuation arm must select physical rows")
+    return node
+
+
+def _physical_expression(expression: Expr, scope: exp.Select, table: str) -> Expr:
+    """Resolve a selected expression through derived aliases to the locked Table."""
+    source = scope.args.get("from_")
+    relation = source.this if isinstance(source, exp.From) else None
+
+    def resolve(node: Expr) -> Expr:
+        if not isinstance(node, exp.Column):
+            return node
+        if relation is None or node.table != relation.alias_or_name:
+            raise NonCanonicalError("a locking projection must read only its physical base row")
+        if isinstance(relation, exp.Table) and relation.name == table:
+            return exp.column(node.name, table="t0", quoted=node.this.args.get("quoted", False))
+        if isinstance(relation, exp.Subquery):
+            inner = _first_select(relation.this)
+            for cell in inner.expressions:
+                if cell.alias_or_name == node.name:
+                    value = cell.this if isinstance(cell, exp.Alias) else cell
+                    return _physical_expression(value, inner, table)
+                if isinstance(cell, exp.Star):
+                    inner_source = inner.args["from_"].this
+                    return _physical_expression(
+                        exp.column(node.name, table=inner_source.alias_or_name), inner, table
+                    )
+        raise NonCanonicalError("a locking projection must resolve to its physical base Table")
+
+    return expression.transform(resolve)
+
+
+def _assert_locked_projection(
+    select: exp.Select, union: exp.SetOperation, facts: WrapFacts | None
+) -> exp.Select:
+    """Payload and coordinates repeat the arm's projection from the locked row."""
+    arm = _first_select(union)
+    table = select.args["joins"][0].this.name
+    expected: list[Expr] = []
+    for cell in arm.expressions:
+        physical = _physical_expression(cell, arm, table)
+        if cell.alias_or_name and physical.alias_or_name != cell.alias_or_name:
+            physical = exp.alias_(physical, cell.alias_or_name)
+        expected.append(physical)
+    if list(select.expressions) != expected:
+        raise NonCanonicalError(
+            "wrapped `union all`: a locking projection must select its payload and "
+            "continuation coordinates from the protected physical row"
+        )
+    aliases: list[Expr] = []
+    for cell in select.expressions:
+        if isinstance(cell, exp.Not) and isinstance(cell.this, exp.Is):
+            aliases.append(
+                cell.transform(
+                    lambda node: (
+                        exp.column(node.name, table="u") if isinstance(node, exp.Column) else node
+                    )
+                )
+            )
+        else:
+            aliases.append(exp.column(cell.alias_or_name, table="u"))
+    _assert_wrap_projection(
+        exp.Select(expressions=aliases), [alias for alias in union.named_selects if alias], facts
+    )
+    return arm
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,11 +587,11 @@ def _assert_authored_wrap_order(
 
 
 def _assert_wrap_binds(facts: WrapFacts, expected: list[_OrderTerm], dialect: str) -> None:
-    """The outer wrap's binds are the ones the read it lowers puts there.
+    """The outer join, ordering, and cap bind the read's trailing values.
 
     PostgreSQL's encoded physical-identity expressions bind first, in physical-key
     order, followed by the Document paths its ``order by`` extracts under, in term
-    order, then the cap. A wrap's binds follow every branch's (m-sql), so those are the
+    order, then the cap. These binds follow every branch's (m-sql), so those are the
     bind list's trailing entries. Comparing the VALUES is what refuses an encoded key,
     path, or cap whose shape is canonical but whose value belongs to another fragment.
     """
@@ -671,6 +741,58 @@ def _assert_wrap_tail(
     _assert_wrap_binds(facts, expected, dialect)
 
 
+def _assert_locked_tail(
+    select: exp.Select, arm: exp.Select, dialect: str, facts: WrapFacts | None
+) -> None:
+    table = select.args["joins"][0].this.name
+    order = select.args.get("order")
+    arm_order = arm.args.get("order")
+    expected_order = None if arm_order is None else _physical_expression(arm_order, arm, table)
+    if order != expected_order:
+        raise NonCanonicalError(
+            "wrapped `union all`: a locking continuation orders by its physical-row expressions"
+        )
+    _assert_wrap_cap_shape(select)
+    if facts is None:
+        return
+    # Grade the authored order against the arm's capture aliases, then substitute
+    # the physical expressions whose equality the projection check established.
+    cells = {cell.alias_or_name: cell for cell in select.expressions}
+    seam = _DIALECT_SEAM[dialect]
+    expected: list[_OrderTerm] = []
+    for key in facts.order_keys:
+        cell = cells.get(key.alias)
+        if cell is None:
+            raise NonCanonicalError("a locking continuation omits an ordering coordinate")
+        value = cell.this if isinstance(cell, exp.Alias) else cell
+        for term in _expected_order_terms(key, seam):
+            expected.append(replace(term, expression=value.sql(dialect=sqlglot_dialect(dialect))))
+    terms = [] if order is None else list(order.expressions)
+    _assert_authored_wrap_order(terms, dialect, expected)
+    if bool(select.args.get("limit")) is not (facts.limit is not None):
+        raise NonCanonicalError("a locking continuation must retain its authored cap")
+    _assert_wrap_binds(facts, expected, dialect)
+    if facts.binds is not None:
+        coordinates = {key.alias: key for key in facts.order_keys}
+        projection_binds = tuple(
+            bind
+            for cell in select.expressions
+            for bind in (
+                _path_binds(coordinates[cell.alias].document_path, seam)
+                if cell.alias in coordinates
+                else ("hex",)
+                if cell.find(exp.Encode) is not None
+                else ()
+            )
+        )
+        width = sum(len(list(cell.find_all(exp.Placeholder))) for cell in select.expressions)
+        if width != len(projection_binds) or tuple(facts.binds[:width]) != projection_binds:
+            raise NonCanonicalError(
+                "wrapped `union all`: the outer locking projection binds must match "
+                "its physical expressions"
+            )
+
+
 def wrapped_union_source(
     select: exp.Select, dialect: str, facts: WrapFacts | None = None
 ) -> exp.SetOperation | None:
@@ -685,7 +807,7 @@ def wrapped_union_source(
     PostgreSQL's two-arm locking continuation uses the same derived alias and tail but
     adds one unqualified inner join from ``u`` to its one physical base Table as ``t0``
     over the complete physical identity, then ``for share of t0``. Its branches remain
-    unlocked; the outer relation exists only to name and lock the rows they selected.
+    unlocked; the outer projection and ordering read the protected base row.
 
     ``None`` means *select* does not take a set operation as its sole ``from`` source
     at all — the locking table-per-hierarchy partitioned read JOINS its derived
@@ -731,8 +853,12 @@ def wrapped_union_source(
             "wrapped `union all`: joins and locks belong only to the PostgreSQL "
             "physical-identity locking form"
         )
-    _assert_wrap_projection(select, union, facts)
-    _assert_wrap_tail(select, union, dialect, facts)
+    if locked:
+        arm = _assert_locked_projection(select, union, facts)
+        _assert_locked_tail(select, arm, dialect, facts)
+    else:
+        _assert_wrap_projection(select, union.named_selects, facts)
+        _assert_wrap_tail(select, union, dialect, facts)
     return union
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 import sqlglot
+from sqlglot import exp
 
 from reference_harness.sql_canonical import NonCanonicalError, sqlglot_dialect
 from reference_harness.sql_normalize import is_canonical, normalize
@@ -402,23 +403,23 @@ _DOCUMENT_WRAP = (
 _ID_KEY = (WrapOrderKey(alias="id", descending=False, nulls_first=False, nullable=False),)
 
 _LOCKED_WRAP = (
-    "select u.id, u.out_z, u.parallax_seek_0 from (("
+    "select t0.id, t0.out_z, t0.id parallax_seek_0 from (("
     "select t0.id, t0.out_z, t0.id parallax_seek_0 from history t0 "
     "where t0.id > ? order by t0.id asc limit ?) union all ("
     "select t0.id, t0.out_z, t0.id parallax_seek_0 from history t0 "
     "where t0.id is null order by t0.id asc limit ?)) u "
     "join history t0 on u.id = t0.id and u.out_z = t0.out_z "
-    "order by u.parallax_seek_0 asc limit ? for share of t0"
+    "order by t0.id asc limit ? for share of t0"
 )
 
 _ENCODED_LOCKED_WRAP = (
-    "select u.id_hex, u.parallax_seek_0 from (("
+    "select encode(t0.id, ?) id_hex, t0.id parallax_seek_0 from (("
     "select encode(t0.id, ?) id_hex, t0.id parallax_seek_0 from encoded_key t0 "
     "where t0.id > ? order by t0.id asc limit ?) union all ("
     "select encode(t0.id, ?) id_hex, t0.id parallax_seek_0 from encoded_key t0 "
     "where t0.id is null order by t0.id asc limit ?)) u "
     "join encoded_key t0 on u.id_hex = encode(t0.id, ?) "
-    "order by u.parallax_seek_0 asc limit ? for share of t0"
+    "order by t0.id asc limit ? for share of t0"
 )
 
 
@@ -487,7 +488,7 @@ def test_a_locking_wrap_admits_an_encoded_physical_identity_projection() -> None
             ),
         ),
         limit=2,
-        binds=("hex", b"1", 2, "hex", 2, "hex", 2),
+        binds=("hex", "hex", b"1", 2, "hex", 2, "hex", 2),
         lock_table="encoded_key",
         physical_identity=(("id_hex", "id"),),
         identity_binds=("hex",),
@@ -509,7 +510,7 @@ def test_a_locking_wrap_admits_an_encoded_physical_identity_projection() -> None
             _facts(
                 order_keys=facts.order_keys,
                 limit=2,
-                binds=("hex", b"1", 2, "hex", 2, "base64", 2),
+                binds=("hex", "hex", b"1", 2, "hex", 2, "base64", 2),
                 lock_table="encoded_key",
                 physical_identity=(("id_hex", "id"),),
                 identity_binds=("hex",),
@@ -1132,3 +1133,105 @@ def test_reassociation_flattens_a_nested_and_chain() -> None:
     assert not is_canonical(folded, "postgres")
     assert normalize(folded, "postgres") == flat
     assert is_canonical(flat, "postgres")
+
+
+@pytest.mark.parametrize(
+    ("correct", "stale"),
+    [
+        ("select t0.id", "select u.id"),
+        ("t0.out_z, t0.id parallax_seek_0", "u.out_z, t0.id parallax_seek_0"),
+        ("t0.id parallax_seek_0 from ((", "u.parallax_seek_0 from (("),
+        (
+            "order by t0.id asc limit ? for share",
+            "order by u.parallax_seek_0 asc limit ? for share",
+        ),
+    ],
+)
+def test_locking_continuations_refuse_stale_derived_state(correct: str, stale: str) -> None:
+    assert not is_canonical(_LOCKED_WRAP.replace(correct, stale, 1), "postgres")
+
+
+def test_locking_projection_encoding_binds_precede_the_arms() -> None:
+    facts = _facts(
+        order_keys=(WrapOrderKey("parallax_seek_0", False, False, False),),
+        limit=2,
+        binds=("base64", "hex", b"1", 2, "hex", 2, "hex", 2),
+        lock_table="encoded_key",
+        physical_identity=(("id_hex", "id"),),
+        identity_binds=("hex",),
+    )
+    tree = sqlglot.parse_one(_ENCODED_LOCKED_WRAP, read="postgres")
+    assert isinstance(tree, exp.Select)
+    with pytest.raises(NonCanonicalError, match="outer locking projection binds"):
+        wrapped_union_source(tree, "postgres", facts)
+
+
+def test_locking_document_projection_keeps_coordinate_paths_and_bind_order() -> None:
+    coordinate = "cast(jsonb_extract_path_text(t0.payload, ?) as bigint)"
+    sql = _LOCKED_WRAP.replace(
+        "t0.out_z, t0.id parallax_seek_0",
+        "t0.out_z, not t0.payload is null, t0.payload, "
+        f"t0.id parallax_seek_0, {coordinate} parallax_seek_1",
+    ).replace("order by t0.id asc", f"order by t0.id asc, {coordinate} asc")
+    facts = _facts(
+        document_aliases=frozenset({"payload"}),
+        order_keys=(
+            WrapOrderKey("parallax_seek_0", False, False, False),
+            WrapOrderKey("parallax_seek_1", False, False, False, ("score",), "int64"),
+        ),
+        limit=2,
+        binds=("score", "score", 1, "score", 2, "score", "score", 2, "score", 2),
+        lock_table="history",
+        physical_identity=(("id", "id"), ("out_z", "out_z")),
+    )
+    tree = sqlglot.parse_one(sql, read="postgres")
+    assert isinstance(tree, exp.Select)
+    assert wrapped_union_source(tree, "postgres", facts) is not None
+    assert is_canonical(sql)
+    for stale in (
+        sql.replace("not t0.payload is null, t0.payload", "not u.payload is null, u.payload", 1),
+        sql.replace(coordinate, coordinate.replace("t0.payload", "u.payload"), 1),
+    ):
+        assert not is_canonical(stale)
+
+
+def test_locking_projection_resolves_a_partitioned_arm_to_its_physical_table() -> None:
+    arm = (
+        "select p1.id, p1.out_z from (select * from history t1 where t1.kind = ?) p1 "
+        "union all select p2.id, p2.out_z "
+        "from (select * from history t2 where t2.kind = ?) p2"
+    )
+    sql = _LOCKED_WRAP.replace(
+        "select t0.id, t0.out_z, t0.id parallax_seek_0 from history t0",
+        f"select u.id, u.out_z, u.id parallax_seek_0 from ({arm}) u",
+    )
+    # Each partition keeps its own derived scope; the enclosing locking query
+    # still returns the physical row's cells rather than those derived values.
+    tree = sqlglot.parse_one(sql, read="postgres")
+    assert isinstance(tree, exp.Select)
+    outer = tree.args["from_"].this.this
+    for branch in (outer.this, outer.expression):
+        branch_select = branch.this
+        for column in branch_select.args["where"].find_all(exp.Column):
+            column.set("table", exp.to_identifier("u"))
+        for column in branch_select.args["order"].find_all(exp.Column):
+            column.set("table", exp.to_identifier("u"))
+    assert wrapped_union_source(tree, "postgres") is not None
+
+
+def test_locking_projection_preserves_an_encoded_alias_from_a_derived_arm() -> None:
+    arm = (
+        "select u.id_hex, u.id parallax_seek_0 from "
+        "(select encode(t1.id, ?) id_hex, t1.id from encoded_key t1) u"
+    )
+    sql = _ENCODED_LOCKED_WRAP.replace(
+        "select encode(t0.id, ?) id_hex, t0.id parallax_seek_0 from encoded_key t0", arm
+    )
+    tree = sqlglot.parse_one(sql, read="postgres")
+    assert isinstance(tree, exp.Select)
+    union = tree.args["from_"].this.this
+    for branch in (union.this, union.expression):
+        for clause in ("where", "order"):
+            for column in branch.this.args[clause].find_all(exp.Column):
+                column.set("table", exp.to_identifier("u"))
+    assert wrapped_union_source(tree, "postgres") is not None

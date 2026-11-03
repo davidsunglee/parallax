@@ -568,10 +568,8 @@ def test_a_locking_continuation_omitting_a_physical_key_component_is_refused(
 def test_an_encoded_locking_continuation_grades_join_binds_after_both_arms(
     damaged_case: CaseLoader, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A bytes primary key adds one `hex` bind to each arm projection and another to
-    # the outer identity join. The join bind follows both complete arm bind lists and
-    # precedes the outer cap; this scripted delivery proves that exact eight-value
-    # sequence without relying on the rows authored by the int64 Account fixture.
+    # The outer projection encodes the locked key before either arm binds;
+    # the identity join encodes it again after both arms.
     case = _locking_stream_step(damaged_case(_LOCKING_CONTINUATION))
     case.model.entity_defs[0]["attributes"][0]["type"] = "bytes"
     first, second = _statements(case)
@@ -580,9 +578,6 @@ def test_an_encoded_locking_continuation_grades_join_binds_after_both_arms(
     )
     first["binds"] = ["hex", 3]
     second_sql = second["sql"]["postgres"].replace(
-        "select u.id, u.owner", "select u.id_hex, u.owner", 1
-    )
-    second_sql = second_sql.replace(
         "select t0.id, t0.owner", "select encode(t0.id, ?) id_hex, t0.owner"
     )
     second["sql"]["postgres"] = second_sql.replace(
@@ -591,6 +586,7 @@ def test_an_encoded_locking_continuation_grades_join_binds_after_both_arms(
         1,
     )
     second["binds"]["postgres"] = [
+        "hex",
         "hex",
         b"\x02",
         b"\x02",
@@ -1315,3 +1311,45 @@ def test_a_streamed_position_with_no_concrete_ends_without_a_page_statement(
     )
 
     assert reads.calls == []
+
+
+def test_a_locking_wrapper_repeats_projection_and_ordering_binds_in_text_order() -> None:
+    coordinate = "cast(jsonb_extract_path_text(t0.payload, ?) as bigint)"
+    first = (
+        "select encode(t0.id, ?) id_hex, "
+        f"{coordinate} parallax_seek_1 from account t0 where t0.owner = ? "
+        f"order by t0.id asc, {coordinate} asc limit ? for share of t0"
+    )
+    arm = first.removesuffix(" for share of t0").replace(
+        "where t0.owner = ?", "where t0.owner = ? and t0.id > ?"
+    )
+    binds, types = stream_oracle._continuing_page_binds(
+        first,
+        arm,
+        ["hex", "score", "Ada", "score"],
+        stream_oracle.seek.ComposedSeek("id > ?", (b"\x02",), ("bytes",)),
+        3,
+        null_tail=True,
+        locking=stream_oracle.seek.LockingContinuationFacts(
+            "account", (("id_hex", "id"),), ("hex",)
+        ),
+    )
+    assert binds == [
+        "hex",
+        "score",
+        "hex",
+        "score",
+        "Ada",
+        b"\x02",
+        "score",
+        3,
+        "hex",
+        "score",
+        "Ada",
+        "score",
+        3,
+        "hex",
+        "score",
+        3,
+    ]
+    assert types == [None] * 5 + ["bytes"] + [None] * 10
