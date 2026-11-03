@@ -13,10 +13,11 @@ an eager fetch — have no spelling here rather than a rejection rule.
 `m-predicate` depends on `m-metamodel` (resolved predicates are bound to
 canonical Entity, Attribute, Relationship, and Value Object Identities), on
 `m-inheritance` (the `narrow` node constrains a polymorphic entity position
-against the family's effective concrete-subtype set), and on `m-wire` (for
-serialized typed-literal conversion and each scalar type's encoded JSON kind). Relationship behavior is
-not reconstructed here: `m-navigate` consumes the compiled `m-relationship`
-facet.
+against the family's effective concrete-subtype set), on `m-relationship` (a
+relationship segment resolves to its compiled direction: oriented join, target,
+and target multiplicity), and on `m-wire` (for serialized typed-literal
+conversion and each scalar type's encoded JSON kind). Relationship navigation
+behavior belongs to `m-navigate`.
 
 The canonical schema is
 [`core/schemas/predicate.schema.json`](../schemas/predicate.schema.json).

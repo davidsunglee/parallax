@@ -23,7 +23,7 @@ import pytest
 from parallax.conformance import _case_ingress, case_format
 from parallax.core import inheritance
 from parallax.core.base import INFINITY
-from parallax.core.metamodel import AttributeMetadata, RelationshipIdentity
+from parallax.core.metamodel import AttributeMetadata
 from parallax.core.object_query import (
     AsOf,
     History,
@@ -103,6 +103,7 @@ _COLLECTIONS = records("predicate-collections")
 _CONTACT = records("contact")
 _CUSTOMER = records("customer")
 _ORDERS = records("orders")
+_PERSON = records("person")
 _POSITION = records("position")
 _SHARED_LOCAL_NAME = records("shared-local-name")
 _TRAVERSAL = records("predicate-traversal")
@@ -867,6 +868,11 @@ def test_a_path_follows_a_to_one_relationship_and_refuses_a_to_many_one() -> Non
     assert exc.rule == "path-crosses-many"
 
 
+def test_a_path_cannot_continue_through_a_reverse_to_many() -> None:
+    exc = _rejects(_eq("Owner.baskets.label", "a"), _COLLECTIONS, "Owner")
+    assert exc.rule == "path-crosses-many"
+
+
 @pytest.mark.parametrize(
     ("op", "target", "meta"),
     [
@@ -1227,6 +1233,118 @@ def test_presence_resolves_to_its_single_object() -> None:
     assert related.target.identity.name == "order"
 
 
+@pytest.mark.parametrize(
+    ("meta", "root", "op", "identity", "target", "source_attribute", "target_attribute"),
+    [
+        pytest.param(
+            _ORDERS,
+            "Order",
+            Quantifier("any", "Order.items"),
+            ("Order", "items"),
+            "OrderItem",
+            "Order.id",
+            "OrderItem.orderId",
+            id="one-to-many-defining",
+        ),
+        pytest.param(
+            _ORDERS,
+            "OrderItem",
+            Presence("exists", "OrderItem.order"),
+            ("OrderItem", "order"),
+            "Order",
+            "OrderItem.orderId",
+            "Order.id",
+            id="one-to-many-reverse",
+        ),
+        pytest.param(
+            _COLLECTIONS,
+            "Basket",
+            Presence("exists", "Basket.owner"),
+            ("Basket", "owner"),
+            "Owner",
+            "Basket.ownerId",
+            "Owner.id",
+            id="many-to-one-defining",
+        ),
+        pytest.param(
+            _COLLECTIONS,
+            "Owner",
+            Quantifier("any", "Owner.baskets"),
+            ("Owner", "baskets"),
+            "Basket",
+            "Owner.id",
+            "Basket.ownerId",
+            id="many-to-one-reverse",
+        ),
+        pytest.param(
+            _PERSON,
+            "Person",
+            Presence("exists", "Person.passport"),
+            ("Person", "passport"),
+            "Passport",
+            "Person.id",
+            "Passport.personId",
+            id="one-to-one-defining",
+        ),
+        pytest.param(
+            _PERSON,
+            "Passport",
+            Presence("exists", "Passport.holder"),
+            ("Passport", "holder"),
+            "Person",
+            "Passport.personId",
+            "Person.id",
+            id="one-to-one-reverse",
+        ),
+        pytest.param(
+            _ANIMAL,
+            "Person",
+            Quantifier("any", "Person.animals"),
+            ("Person", "animals"),
+            "Animal",
+            "Person.id",
+            "Animal.ownerId",
+            id="polymorphic-target-defining",
+        ),
+        pytest.param(
+            _ANIMAL,
+            "Dog",
+            Presence("exists", "Dog.owner"),
+            ("Animal", "owner"),
+            "Person",
+            "Animal.ownerId",
+            "Person.id",
+            id="inherited-reverse-from-a-subtype",
+        ),
+    ],
+)
+def test_each_relationship_direction_resolves_its_target_and_oriented_join(
+    meta: Metamodel,
+    root: str,
+    op: PredicateNode,
+    identity: tuple[str, str],
+    target: str,
+    source_attribute: str,
+    target_attribute: str,
+) -> None:
+    resolved = _resolved(root, op, meta)
+    if isinstance(resolved, ResolvedQuantifier):
+        relationship = resolved.collection
+    else:
+        assert isinstance(resolved, ResolvedPresence)
+        relationship = resolved.target
+    assert isinstance(relationship, ResolvedRelationship)
+
+    assert (relationship.identity.source_entity.name, relationship.identity.name) == identity
+    assert relationship.target.identity.name == target
+    assert _qualified_name(relationship.source_attribute) == source_attribute
+    assert _qualified_name(relationship.target_attribute) == target_attribute
+
+
+def _qualified_name(attribute: AttributeMetadata) -> str:
+    return f"{attribute.identity.entity.name}.{attribute.identity.name}"
+
+
 def test_a_relationship_match_resolves_its_operand_at_the_related_entity() -> None:
     matched = _resolved(
         "OrderItem", Presence("exists", "OrderItem.order", _eq("name", "A")), _ORDERS
@@ -1314,10 +1432,6 @@ def test_generated_predicate_products_reject_missing_or_mistyped_semantics() -> 
         managed_comparison(op="eq", member=member, value=cast("Any", "1"))
     with pytest.raises(ValueError, match="at least one term"):
         conjunction(ResolvedConstant(True))
-    with pytest.raises(ValueError, match="no resolved relationship direction"):
-        predicate_validation._direction_join(  # pyright: ignore[reportPrivateUsage]
-            RelationshipIdentity(root.identity, "missing"), model
-        )
 
 
 def test_generated_compositions_group_alternatives_and_drop_identity_terms() -> None:

@@ -27,10 +27,13 @@ def render_relationship_candidate(
     branch: _RelationshipCandidateBranch, parent: _CandidateRenderScope, alias: str | None = None
 ) -> RenderedRelationshipCandidate:
     """Allocate one branch alias, or adopt ``alias``, and render its correlation
-    against ``parent``'s own source endpoint and its family guard."""
+    against ``parent``'s own source attribute and its family guard."""
     alias = parent.next_alias() if alias is None else alias
     child = parent.child(branch.entity, alias)
-    correlation = f"{child.column_for(branch.related)} = {parent.column_for(branch.source)}"
+    correlation = (
+        f"{child.column_for(branch.target_attribute)} = "
+        f"{parent.column_for(branch.source_attribute)}"
+    )
     guard_sql: str | None = None
     guard_binds: tuple[object, ...] = ()
     if branch.family_guard is not None:
