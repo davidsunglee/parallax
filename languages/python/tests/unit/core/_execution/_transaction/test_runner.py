@@ -21,8 +21,6 @@ lifecycle Attempt does is its own suites'.
 from __future__ import annotations
 
 import contextlib
-import itertools
-import random
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
@@ -31,8 +29,7 @@ from typing import Any, Final, cast
 
 import pytest
 
-from parallax.conformance._lifecycle_recording import RecordingLifecycleProvider
-from parallax.core import Attr, DomainModel, Entity, Int32, attr, auto_retry, index
+from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
 from parallax.core._execution._scope import ExecutionScope
 from parallax.core._execution._transaction._attempt import ReadOnlyTxnAttempt, TxnAttempt
 from parallax.core._execution._unit_work.uow import EscapedTransactionError
@@ -1070,13 +1067,18 @@ def test_a_non_retriable_database_error_is_not_replayed() -> None:
 
 class _ReleaseObservingAdapter(ScriptedAdapter):
     """A scripted adapter whose connections record what each release was told
-    ended the attempt, and whose ``interrupted`` release raises instead."""
+    ended the attempt, and whose ``failing_release`` raises ``release_failure``."""
 
-    def __init__(self, *script: Transact, interrupted: int | None = None) -> None:
+    def __init__(
+        self,
+        *script: Transact,
+        failing_release: int | None = None,
+        release_failure: BaseException | None = None,
+    ) -> None:
         super().__init__(*script)
         self.released_after: list[BaseException | None] = []
-        self.interrupt = KeyboardInterrupt()
-        self.interrupted = interrupted
+        self.release_failure = release_failure or KeyboardInterrupt()
+        self.failing_release = failing_release
 
     def open(self) -> ScriptedRuntime:
         adapter = self
@@ -1108,8 +1110,8 @@ class _ObservedContext(ScriptedContext):
         super().__exit__(exc_type, exc, traceback)
         adapter = self._adapter
         adapter.released_after.append(exc)
-        if len(adapter.released_after) == adapter.interrupted:
-            raise adapter.interrupt
+        if len(adapter.released_after) == adapter.failing_release:
+            raise adapter.release_failure
 
 
 def test_the_release_after_an_eligible_failure_is_told_the_failure_itself() -> None:
@@ -1122,10 +1124,10 @@ def test_the_release_after_an_eligible_failure_is_told_the_failure_itself() -> N
 
 
 def test_a_release_that_fails_after_an_eligible_failure_ends_the_invocation() -> None:
-    port = _ReleaseObservingAdapter(Transact(commit=deadlock()), Transact(), interrupted=1)
+    port = _ReleaseObservingAdapter(Transact(commit=deadlock()), Transact(), failing_release=1)
     with pytest.raises(KeyboardInterrupt) as excinfo:
         scope(port).transact(lambda _tx: "ok", itself)
-    assert excinfo.value is port.interrupt
+    assert excinfo.value is port.release_failure
     assert port.calls.count(BeginCall()) == 1
     (released_after,) = port.released_after
     assert excinfo.value.__context__ is released_after
@@ -1160,45 +1162,43 @@ def test_a_handler_failing_after_an_eligible_failure_is_reported_against_it() ->
     assert "RetryCandidate" not in reported.diagnostic.stack
 
 
-class _AtTheCeiling(random.Random):
-    """Draws every delay at the top of its range."""
-
-    def uniform(self, a: float, b: float) -> float:
-        del a
-        return b
-
-
-_TICK_S = 0.004
-
-
 @dataclass(frozen=True, slots=True)
-class _Wait:
-    """What had happened when the loop slept: the delay, the lifecycle
-    transitions delivered so far, and the connections already released."""
+class _Progress:
+    """A lifecycle transition, and the rollbacks and releases the port had
+    completed when it was delivered."""
 
-    seconds: float
-    transitions: tuple[str, ...]
-    released: int
+    transition: str
+    rollbacks: int
+    releases: int
 
 
-def _waits_recorded(
-    monkeypatch: pytest.MonkeyPatch, recorder: RecordingLifecycleProvider, port: ScriptedAdapter
-) -> list[_Wait]:
-    """Substitute the loop's sleep, recording each wait against ``recorder``'s
-    one root and ``port``'s releases, draw every delay at its ceiling, and
-    advance the loop's clock by ``_TICK_S`` per reading."""
-    waits: list[_Wait] = []
+class _PortProgress:
+    """Records how far ``port`` had got at every lifecycle transition."""
 
-    def sleep(seconds: float) -> None:
-        (root,) = recorder.roots
-        transitions = tuple(type(event).__name__ for event in root.events)
-        waits.append(_Wait(seconds, transitions, len(port.cleanups)))
+    def __init__(self, port: ScriptedAdapter) -> None:
+        self.port = port
+        self.events: list[ExecutionEvent] = []
+        self.progress: list[_Progress] = []
 
-    ticks = itertools.count()
-    monkeypatch.setattr(auto_retry, "_sleep", sleep)
-    monkeypatch.setattr(auto_retry, "_rng", _AtTheCeiling(0))
-    monkeypatch.setattr(auto_retry, "_clock", lambda: next(ticks) * _TICK_S)
-    return waits
+    def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler:
+        del execution
+        return self
+
+    def handle(self, event: ExecutionEvent, /) -> None:
+        self.events.append(event)
+        self.progress.append(
+            _Progress(
+                type(event).__name__,
+                self.port.calls.count(RollbackCall()),
+                len(self.port.cleanups),
+            )
+        )
+
+    def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
+        del error
+
+    def count(self, transition: str) -> int:
+        return [reached.transition for reached in self.progress].count(transition)
 
 
 def _committing(_attempts: list[int]) -> Callable[[TxnAttempt], str]:
@@ -1219,54 +1219,98 @@ def _conflicting_once(attempts: list[int]) -> Callable[[TxnAttempt], str]:
     ("script", "body"),
     [
         ((Transact(commit=deadlock()), Transact()), _committing),
+        ((Transact(commit=deadlock()), Transact(commit=deadlock()), Transact()), _committing),
         ((Transact(), Transact()), _conflicting_once),
     ],
-    ids=["deadlock-at-commit", "conflict-in-the-callback"],
+    ids=["deadlock-at-commit", "deadlock-at-commit-twice", "conflict-in-the-callback"],
 )
-def test_a_replay_waits_only_after_the_failed_attempt_released_and_finished(
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_replay_starts_only_after_the_failed_attempt_rolled_back_released_and_finished(
     script: tuple[Transact, ...],
     body: Callable[[list[int]], Callable[[TxnAttempt], str]],
 ) -> None:
-    recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(*script)
-    waits = _waits_recorded(monkeypatch, recorder, port)
+    observed = _PortProgress(port)
 
-    assert scope(port, provider=recorder).transact(body([]), itself) == "ok"
+    assert scope(port, provider=observed).transact(body([]), itself) == "ok"
 
-    (wait,) = waits
-    assert wait.seconds == auto_retry._window(1, _TICK_S)  # pyright: ignore[reportPrivateUsage] - the first attempt's window over one reading
-    assert wait.released == 1
-    assert wait.transitions[-3:] == (
-        "ReleaseStarted",
-        "ReleaseFinished",
-        "TransactionAttemptFinished",
-    )
-    (root,) = recorder.roots
-    after = [type(event).__name__ for event in root.events[len(wait.transitions) :]]
-    assert after[0] == "TransactionAttemptStarted"
-    finished = root.events[len(wait.transitions) - 1]
-    assert isinstance(finished, TransactionAttemptFinished)
-    assert isinstance(finished.outcome, AttemptRolledBack)
-    assert finished.outcome.failure.retry_eligible
+    starts = [
+        position
+        for position, reached in enumerate(observed.progress)
+        if reached.transition == "TransactionAttemptStarted"
+    ]
+    assert len(starts) == len(script)
+    assert observed.progress[starts[0]] == _Progress("TransactionAttemptStarted", 0, 0)
+    for failed, replay in enumerate(starts[1:], start=1):
+        assert observed.progress[replay - 3 : replay + 1] == [
+            _Progress("ReleaseStarted", failed, failed - 1),
+            _Progress("ReleaseFinished", failed, failed),
+            _Progress("TransactionAttemptFinished", failed, failed),
+            _Progress("TransactionAttemptStarted", failed, failed),
+        ]
+        finished = observed.events[replay - 1]
+        assert isinstance(finished, TransactionAttemptFinished)
+        assert isinstance(finished.outcome, AttemptRolledBack)
+        assert finished.outcome.failure.retry_eligible
+    assert len(port.cleanups) == len(script)
 
 
-def test_nothing_that_ends_the_invocation_waits(monkeypatch: pytest.MonkeyPatch) -> None:
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(
-        Transact(begin=deadlock()),
-        Transact(commit=DatabaseError(category="uniqueViolation", native_code="23505", message="")),
-        Transact(commit=deadlock()),
-    )
-    waits = _waits_recorded(monkeypatch, recorder, port)
-    db = scope(port)
-    with raises_contextualized(DatabaseError):
-        db.transact(_must_not_run_callback, itself)
-    with raises_contextualized(DatabaseError):
-        db.transact(lambda _tx: "ok", itself)
-    with raises_contextualized(DatabaseError):
-        db.transact(lambda _tx: "ok", itself, max_retries=0)
-    assert waits == []
+@pytest.mark.parametrize(
+    ("port_for", "keywords"),
+    [
+        (lambda: ScriptedAdapter(Transact(begin=deadlock()), Transact()), {}),
+        (
+            lambda: ScriptedAdapter(
+                Transact(
+                    commit=deadlock(),
+                    rollback=DatabaseError(category=None, native_code=None, message="lost"),
+                ),
+                Transact(),
+            ),
+            {},
+        ),
+        (
+            lambda: _ReleaseObservingAdapter(
+                Transact(commit=deadlock()),
+                Transact(),
+                failing_release=1,
+                release_failure=RuntimeError("the release failed"),
+            ),
+            {},
+        ),
+        (
+            lambda: _ReleaseObservingAdapter(
+                Transact(commit=deadlock()), Transact(), failing_release=1
+            ),
+            {},
+        ),
+        (
+            lambda: ScriptedAdapter(
+                Transact(
+                    commit=DatabaseError(
+                        category="uniqueViolation", native_code="23505", message=""
+                    )
+                ),
+                Transact(),
+            ),
+            {},
+        ),
+        (lambda: ScriptedAdapter(Transact(commit=deadlock()), Transact()), {"max_retries": 0}),
+    ],
+    ids=["begin", "rollback", "release", "release-interrupted", "not-retryable", "zero-bound"],
+)
+def test_a_failure_that_ends_the_invocation_starts_no_second_attempt(
+    port_for: Callable[[], ScriptedAdapter], keywords: dict[str, Any]
+) -> None:
+    port = port_for()
+    observed = _PortProgress(port)
+
+    with pytest.raises((ExecutionFailure, KeyboardInterrupt)):
+        scope(port, provider=observed).transact(lambda _tx: "ok", itself, **keywords)
+
+    assert observed.count("TransactionAttemptStarted") == 1
+    assert observed.count("TransactionAttemptFinished") == 1
+    assert port.calls.count(BeginCall()) == 1
+    assert len(port.cleanups) == 1
 
 
 def _chain(failure: BaseException) -> list[BaseException]:
