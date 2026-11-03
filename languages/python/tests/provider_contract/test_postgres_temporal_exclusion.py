@@ -227,9 +227,10 @@ def test_every_accepted_key_type_is_excluded_by_equality(
 # --------------------------------------------------------------------------- #
 # Adopting named keys, checks, and the exclusion on an existing table         #
 # --------------------------------------------------------------------------- #
-def _legacy(profile_run: Any) -> TemporalHistoryConstraints:
+def _legacy(profile_run: Any, *, inverted: bool = True) -> TemporalHistoryConstraints:
     """A ``position`` table as a release before named temporal keys created it:
-    its key named by the database, no checks, no exclusion, and illegal rows."""
+    its key named by the database, no checks, no exclusion, and illegal rows:
+    an overlapping pair and, if ``inverted``, a row whose interval is inverted."""
     constraints = _constraints(_provision(profile_run, "position.yaml"), "position")
     assert constraints.valid_axis is not None
     for name in (
@@ -242,7 +243,8 @@ def _legacy(profile_run: Any) -> TemporalHistoryConstraints:
         f"alter table position rename constraint {constraints.primary_key_name} to position_pkey",
         [],
     )
-    profile_run.port.execute_write(_INSERT_POSITION, [1, "A", 1, _JAN, INFINITY, _MAR, _FEB])
+    if inverted:
+        profile_run.port.execute_write(_INSERT_POSITION, [1, "A", 1, _JAN, INFINITY, _MAR, _FEB])
     profile_run.port.execute_write(_INSERT_POSITION, [2, "B", 1, _JAN, _SEP, _JAN, INFINITY])
     profile_run.port.execute_write(_INSERT_POSITION, [2, "B", 2, _JUN, INFINITY, _FEB, INFINITY])
     return constraints
@@ -277,8 +279,9 @@ def test_an_exclusion_over_an_inverted_interval_cannot_even_form_its_range(
 
 
 def test_an_exclusion_over_overlapping_rows_fails_and_adds_nothing(profile_run: Any) -> None:
-    constraints = _legacy(profile_run)
-    profile_run.port.execute_write("delete from position where pos_id = %s", [1])
+    # Never stored rather than deleted: the exclusion's index build still forms
+    # the range of a deleted row while any snapshot older than the delete is open.
+    constraints = _legacy(profile_run, inverted=False)
     error = _refused(profile_run, _add_exclusion(constraints), [])
     assert (error.category, error.native_code) == ("constraintViolation", "23P01")
     assert error.constraint_name == constraints.exclusion_name
