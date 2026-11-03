@@ -491,24 +491,44 @@ def _race(
     """Run ``first`` and ``second`` as two Databases' transactions whose first
     attempts both read before either writes, each retried under the default
     policy; answer each one's escaping failure, if any, and every database
-    call failure either attempt met, as (category, native code)."""
+    call failure either attempt met, as (category, native code).
+
+    Attempt ``n`` of one writer starts only once the other has ended its
+    attempt ``n - 1``, by starting the next or settling. A serializable replay
+    begun while the other's commit is still becoming visible is canceled again
+    until it is, so without this order a slow commit would decide whether the
+    retry budget outlasts it."""
     provider = RecordingLifecycleProvider()
     barrier = threading.Barrier(2, timeout=10.0)
+    progress = threading.Condition()
+    started = [0, 0]
+    settled = [False, False]
     outcomes: list[BaseException | None] = [None, None]
 
     def run(index: int, work: _Work, db: ScopedDatabase) -> None:
-        attempts: list[None] = []
+        peer = 1 - index
 
         def attempt(tx: TxnContext) -> None:
-            attempts.append(None)
+            with progress:
+                started[index] += 1
+                number = started[index]
+                progress.notify_all()
+                assert progress.wait_for(
+                    lambda: number == 1 or started[peer] >= number or settled[peer],
+                    timeout=10.0,
+                )
             work(tx)
-            if len(attempts) == 1:
+            if number == 1:
                 barrier.wait()
 
         try:
             db.transact(attempt, isolation=isolation, max_retries=3)
         except BaseException as failure:  # inspected on the test's thread
             outcomes[index] = failure
+        finally:
+            with progress:
+                settled[index] = True
+                progress.notify_all()
 
     instants = [_FEB, _MAR, _APR, _MAY]
     threads = [
